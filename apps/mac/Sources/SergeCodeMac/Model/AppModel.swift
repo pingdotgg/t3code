@@ -175,13 +175,35 @@ public final class AppModel {
 
     // MARK: - Commands
 
-    public func send(text: String) async {
-        guard let threadID = selectedThreadID, !text.isEmpty else { return }
+    public func send(text: String, attachments: [OutgoingAttachment] = []) async {
+        guard let threadID = selectedThreadID, !(text.isEmpty && attachments.isEmpty) else { return }
         do {
-            try await backend.sendMessage(threadID: threadID, text: text)
+            try await backend.sendMessage(threadID: threadID, text: text, attachments: attachments)
         } catch {
             lastError = String(describing: error)
         }
+    }
+
+    public func searchWorkspace(query: String) async -> [WorkspaceEntry] {
+        guard let projectID = selectedThread?.projectID else { return [] }
+        do {
+            return try await backend.searchWorkspace(projectID: projectID, query: query)
+        } catch {
+            // Mention search is best-effort UI sugar; a transient failure
+            // should not surface as a banner error.
+            return []
+        }
+    }
+
+    /// Slash commands for the selected thread's provider instance.
+    public var selectedThreadSlashCommands: [SlashCommandInfo] {
+        guard let thread = selectedThread else { return [] }
+        if let instanceID = thread.modelInstanceID,
+            let instance = providers.first(where: { $0.id == instanceID })
+        {
+            return instance.slashCommands
+        }
+        return providers.first { $0.kind == thread.provider }?.slashCommands ?? []
     }
 
     public func createThread(projectID: String, provider: ProviderKind) async {

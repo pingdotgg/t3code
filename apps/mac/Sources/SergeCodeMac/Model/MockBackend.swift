@@ -49,8 +49,14 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         await state.archiveThread(id: id)
     }
 
-    public func sendMessage(threadID: String, text: String) async throws {
-        await state.sendMessage(threadID: threadID, text: text)
+    public func sendMessage(
+        threadID: String, text: String, attachments: [OutgoingAttachment]
+    ) async throws {
+        await state.sendMessage(threadID: threadID, text: text, attachments: attachments)
+    }
+
+    public func searchWorkspace(projectID: String, query: String) async throws -> [WorkspaceEntry] {
+        await state.searchWorkspace(query: query)
     }
 
     public func cancelTurn(threadID: String) async throws {
@@ -226,10 +232,27 @@ private actor MockState {
         emit(.threadUpserted(thread))
     }
 
-    func sendMessage(threadID: String, text: String) async {
+    func searchWorkspace(query: String) -> [WorkspaceEntry] {
+        let all = [
+            WorkspaceEntry(path: "Sources/SergeCodeMac/Model/AppModel.swift", isDirectory: false),
+            WorkspaceEntry(path: "Sources/SergeCodeMac/Model/LiveBackend.swift", isDirectory: false),
+            WorkspaceEntry(path: "Sources/SergeCodeMac/UI/Chat", isDirectory: true),
+            WorkspaceEntry(path: "Sources/T3Kit/T3Client.swift", isDirectory: false),
+            WorkspaceEntry(path: "Tests/T3KitTests/T3KitTests.swift", isDirectory: false),
+            WorkspaceEntry(path: "Package.swift", isDirectory: false),
+        ]
+        let lowered = query.lowercased()
+        return lowered.isEmpty ? all : all.filter { $0.path.lowercased().contains(lowered) }
+    }
+
+    func sendMessage(threadID: String, text: String, attachments: [OutgoingAttachment] = []) async {
         guard var thread = threadsByID[threadID] else { return }
 
-        let userItem = TimelineItem.userMessage(id: nextID("msg"), text: text, at: Date())
+        let attachmentSuffix =
+            attachments.isEmpty
+            ? "" : "\n\n(\(attachments.count) attachment\(attachments.count == 1 ? "" : "s"))"
+        let userItem = TimelineItem.userMessage(
+            id: nextID("msg"), text: text + attachmentSuffix, at: Date())
         timelinesByThread[threadID, default: []].append(userItem)
         emit(.timelineAppended(threadID: threadID, item: userItem))
 

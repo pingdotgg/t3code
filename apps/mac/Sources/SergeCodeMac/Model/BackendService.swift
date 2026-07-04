@@ -45,9 +45,12 @@ public protocol BackendService: Sendable {
     /// Every selectable (instance, model) pair across configured providers.
     func models() async throws -> [ModelOption]
 
+    /// Fuzzy filename search in a project's workspace (composer @-mentions).
+    func searchWorkspace(projectID: String, query: String) async throws -> [WorkspaceEntry]
+
     func createThread(projectID: String, provider: ProviderKind) async throws -> ChatThread
     func archiveThread(id: String) async throws
-    func sendMessage(threadID: String, text: String) async throws
+    func sendMessage(threadID: String, text: String, attachments: [OutgoingAttachment]) async throws
     func cancelTurn(threadID: String) async throws
     func respondToApproval(id: String, approve: Bool) async throws
     /// Answer a pending user-input request. `answers` maps each question id

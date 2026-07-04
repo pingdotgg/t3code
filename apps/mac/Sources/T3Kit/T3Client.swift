@@ -84,7 +84,7 @@ public actor T3Client {
 
     // MARK: - Generic call helpers
 
-    private func call<Payload: Encodable, Success: Decodable>(
+    func call<Payload: Encodable, Success: Decodable>(
         _ tag: String, _ payload: Payload
     ) async throws -> Success {
         let payloadJSON = try Self.encodeToJSON(payload)
@@ -96,7 +96,7 @@ public actor T3Client {
         }
     }
 
-    private func streamCall<Payload: Encodable & Sendable, Item: Decodable & Sendable>(
+    func streamCall<Payload: Encodable & Sendable, Item: Decodable & Sendable>(
         _ tag: String, _ payload: Payload
     ) -> AsyncThrowingStream<Item, Error> {
         AsyncThrowingStream { continuation in
@@ -122,7 +122,7 @@ public actor T3Client {
         }
     }
 
-    private static func encodeToJSON(_ value: some Encodable) throws -> JSONValue {
+    static func encodeToJSON(_ value: some Encodable) throws -> JSONValue {
         let data = try WireCoding.encoder.encode(value)
         return try WireCoding.decoder.decode(JSONValue.self, from: data)
     }

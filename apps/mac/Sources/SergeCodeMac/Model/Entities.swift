@@ -349,17 +349,68 @@ public enum ProviderAvailability: String, Sendable {
     case available, missing, authRequired
 }
 
+/// A provider-native slash command (typed into the composer as `/name`).
+public struct SlashCommandInfo: Identifiable, Hashable, Sendable {
+    public var name: String
+    public var detail: String?
+    public var argumentHint: String?
+
+    public var id: String { name }
+
+    public init(name: String, detail: String? = nil, argumentHint: String? = nil) {
+        self.name = name
+        self.detail = detail
+        self.argumentHint = argumentHint
+    }
+}
+
 public struct ProviderInstance: Identifiable, Sendable {
     public var id: String
     public var kind: ProviderKind
     public var availability: ProviderAvailability
     public var version: String?
+    public var slashCommands: [SlashCommandInfo]
 
-    public init(id: String, kind: ProviderKind, availability: ProviderAvailability, version: String?) {
+    public init(
+        id: String, kind: ProviderKind, availability: ProviderAvailability, version: String?,
+        slashCommands: [SlashCommandInfo] = []
+    ) {
         self.id = id
         self.kind = kind
         self.availability = availability
         self.version = version
+        self.slashCommands = slashCommands
+    }
+}
+
+/// One file/directory hit from a workspace search (composer @-mentions).
+public struct WorkspaceEntry: Identifiable, Hashable, Sendable {
+    public var path: String
+    public var isDirectory: Bool
+
+    public var id: String { path }
+
+    public init(path: String, isDirectory: Bool) {
+        self.path = path
+        self.isDirectory = isDirectory
+    }
+}
+
+/// An image staged in the composer, ready to upload with the next turn.
+public struct OutgoingAttachment: Identifiable, Hashable, Sendable {
+    public var id: String
+    public var name: String
+    public var mimeType: String
+    public var sizeBytes: Int
+    /// base64 `data:` URL — the wire upload shape embeds bytes inline.
+    public var dataURL: String
+
+    public init(id: String, name: String, mimeType: String, sizeBytes: Int, dataURL: String) {
+        self.id = id
+        self.name = name
+        self.mimeType = mimeType
+        self.sizeBytes = sizeBytes
+        self.dataURL = dataURL
     }
 }
 

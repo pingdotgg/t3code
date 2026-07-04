@@ -861,15 +861,31 @@ public actor LiveBackend: BackendService {
         // The shell subscription re-emits the thread with archivedAt set.
     }
 
-    public func sendMessage(threadID: String, text: String) async throws {
+    public func sendMessage(
+        threadID: String, text: String, attachments: [OutgoingAttachment]
+    ) async throws {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
         // The wire command requires modes; echo the thread's current ones so a
         // send never silently flips an approval-required thread to full access.
         let thread = threadsByID[threadID]
+        let uploads = attachments.map { attachment in
+            UploadChatAttachment(
+                name: attachment.name, mimeType: attachment.mimeType,
+                sizeBytes: attachment.sizeBytes, dataUrl: attachment.dataURL)
+        }
         _ = try await client.startTurn(
-            threadId: threadID, text: text,
+            threadId: threadID, text: text, attachments: uploads,
             runtimeMode: thread.map { Self.wireRuntimeMode($0.runtimeMode) } ?? .wireDefault,
             interactionMode: thread.map { Self.wireInteractionMode($0.interactionMode) } ?? .wireDefault)
+    }
+
+    public func searchWorkspace(projectID: String, query: String) async throws -> [WorkspaceEntry] {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        guard let project = projectsByID[projectID] else { return [] }
+        let result = try await client.searchEntries(cwd: project.path, query: query, limit: 20)
+        return result.entries.map {
+            WorkspaceEntry(path: $0.path, isDirectory: $0.kind == .directory)
+        }
     }
 
     public func implementPlan(threadID: String, planID: String) async throws {
@@ -1207,7 +1223,11 @@ public actor LiveBackend: BackendService {
             guard let kind = providerKind(fromDriver: provider.driver) else { return nil }
             return ProviderInstance(
                 id: provider.instanceId, kind: kind, availability: availability(for: provider),
-                version: provider.version)
+                version: provider.version,
+                slashCommands: provider.slashCommands.map {
+                    SlashCommandInfo(
+                        name: $0.name, detail: $0.description, argumentHint: $0.input?.hint)
+                })
         }
         .sorted { $0.id < $1.id }
     }
