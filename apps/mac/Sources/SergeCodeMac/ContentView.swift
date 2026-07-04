@@ -1,51 +1,75 @@
 import SwiftUI
 
-struct ContentView: View {
-    @UIState private var selection: String?
+// App shell. File kept as ContentView.swift for historical reasons but now
+// hosts RootView, the top-level NavigationSplitView wired to AppModel.
+struct RootView: View {
+    let model: AppModel
+
+    @UIState private var showInspector = true
+    @UIState private var showNewSessionSheet = false
 
     var body: some View {
         NavigationSplitView {
-            List(selection: $selection) {
-                Section("Sessions") {
-                    Label("No sessions yet", systemImage: "tray")
-                        .foregroundStyle(.secondary)
+            SidebarView(model: model)
+                .navigationSplitViewColumnWidth(min: 220, ideal: 280)
+        } detail: {
+            if let thread = model.selectedThread {
+                ThreadDetailView(model: model, thread: thread, showInspector: $showInspector)
+            } else {
+                EmptyStateView {
+                    showNewSessionSheet = true
                 }
             }
-            .navigationSplitViewColumnWidth(min: 220, ideal: 260)
-        } detail: {
-            VStack(spacing: 16) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 44))
-                    .foregroundStyle(.tint)
-                Text("SergeCode")
-                    .font(.largeTitle.bold())
-                Text("Native macOS client — Liquid Glass scaffold")
-                    .foregroundStyle(.secondary)
-                Button("New Session") {}
-                    .buttonStyle(.glass)
-                    .controlSize(.large)
-            }
-            .padding(32)
-            .glassEffect(.regular, in: .rect(cornerRadius: 24))
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .toolbar {
+            ToolbarItem(placement: .navigation) {
+                ConnectionStatusPill(phase: model.connection)
+            }
+            ToolbarItem(placement: .primaryAction) {
+                newSessionMenu
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button {
+                    showInspector.toggle()
                 } label: {
-                    Label("New Session", systemImage: "plus")
+                    Label("Inspector", systemImage: "sidebar.right")
                 }
+                .disabled(model.selectedThread == nil)
             }
         }
-    }
-}
-
-struct SettingsView: View {
-    var body: some View {
-        Form {
-            Text("Settings placeholder")
+        .sheet(isPresented: $showNewSessionSheet) {
+            NewSessionSheet(model: model, isPresented: $showNewSessionSheet)
         }
-        .padding(20)
-        .frame(width: 420, height: 240)
+    }
+
+    /// Toolbar "New Session" menu: pick an existing project + provider
+    /// directly (calls model.createThread immediately), or fall through to
+    /// the glass sheet to add a new project first.
+    @ViewBuilder
+    private var newSessionMenu: some View {
+        Menu {
+            if model.projects.isEmpty {
+                Text("No projects yet")
+            }
+            ForEach(model.projects) { project in
+                Menu(project.name) {
+                    ForEach(ProviderKind.allCases) { provider in
+                        Button {
+                            Task { await model.createThread(projectID: project.id, provider: provider) }
+                        } label: {
+                            Label(provider.displayName, systemImage: "bolt")
+                        }
+                    }
+                }
+            }
+            Divider()
+            Button {
+                showNewSessionSheet = true
+            } label: {
+                Label("Add Project…", systemImage: "folder.badge.plus")
+            }
+        } label: {
+            Label("New Session", systemImage: "plus")
+        }
     }
 }

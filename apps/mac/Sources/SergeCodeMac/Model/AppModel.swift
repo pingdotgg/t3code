@@ -8,7 +8,6 @@ public final class AppModel {
     public private(set) var projects: [Project] = []
     public private(set) var threads: [ChatThread] = []
     public private(set) var timelines: [String: [TimelineItem]] = [:]
-    public private(set) var pendingApprovals: [ApprovalRequest] = []
     public private(set) var providers: [ProviderInstance] = []
     public private(set) var diffs: [String: [DiffFile]] = [:]
     public private(set) var checkpoints: [String: [Checkpoint]] = [:]
@@ -31,17 +30,14 @@ public final class AppModel {
         selectedThreadID.flatMap { timelines[$0] } ?? []
     }
 
-    public func approvals(for threadID: String) -> [ApprovalRequest] {
-        pendingApprovals.filter { $0.threadID == threadID }
-    }
-
     // MARK: - Lifecycle
 
     public func start() {
         guard eventTask == nil else { return }
         let stream = backend.events
+        let backend = backend
         eventTask = Task { [weak self] in
-            await self?.backend.start()
+            async let _ = backend.start()
             for await event in stream {
                 self?.apply(event)
             }
@@ -77,10 +73,15 @@ public final class AppModel {
             appendDelta(threadID: threadID, messageID: messageID, delta: delta)
         case .assistantCompleted(let threadID, let messageID):
             finishStreaming(threadID: threadID, messageID: messageID)
-        case .approvalRequested(let request):
-            pendingApprovals.append(request)
+        case .approvalRequested:
+            break
         case .approvalResolved(let id):
-            pendingApprovals.removeAll { $0.id == id }
+            for threadID in timelines.keys {
+                if let index = timelines[threadID]?.firstIndex(where: { $0.id == id }) {
+                    timelines[threadID]?.remove(at: index)
+                    break
+                }
+            }
         case .diffInvalidated(let threadID):
             Task { await refreshDiff(threadID: threadID) }
         case .providersChanged(let list):
@@ -89,7 +90,7 @@ public final class AppModel {
     }
 
     private func appendDelta(threadID: String, messageID: String, delta: String) {
-        guard var items = timelines[threadID] else { return }
+        var items = timelines[threadID] ?? []
         for (index, item) in items.enumerated() {
             if case .assistantMessage(let id, let markdown, _, let at) = item, id == messageID {
                 items[index] = .assistantMessage(id: id, markdown: markdown + delta, isStreaming: true, at: at)
