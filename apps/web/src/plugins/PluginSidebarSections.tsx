@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useRouter } from "@tanstack/react-router";
 import { createElement, type FunctionComponent } from "react";
 import type { PluginSidebarSectionRenderProps } from "@t3tools/plugin-sdk-web";
 
@@ -22,6 +23,7 @@ export function getVisiblePluginSidebarSections(snapshot: PluginUiRegistrySnapsh
 export function PluginSidebarSections() {
   const snapshot = useAtomValue(pluginUiRegistryAtom);
   const environmentId = useActiveEnvironmentId();
+  const router = useRouter();
   const sections = getVisiblePluginSidebarSections(snapshot);
 
   if (sections.length === 0) {
@@ -31,8 +33,15 @@ export function PluginSidebarSections() {
   return (
     <>
       {sections.map((section) => {
+        // Build the base path as a real href for the active history mode so a
+        // plugin's `<a href={`${routeBasePath}/...`}>` navigates correctly. The
+        // desktop app uses hash history (`#/...`) and the web app uses browser
+        // history (`/...`); a bare path only works in the latter, so hand plugins
+        // a mode-correct base via the router's `createHref`.
         const routeBasePath =
-          environmentId === null ? null : `/${environmentId}/p/${section.pluginId}`;
+          environmentId === null
+            ? null
+            : router.history.createHref(`/${environmentId}/p/${section.pluginId}`);
         return (
           <SidebarGroup key={`${section.pluginId}:${section.id}`} className="px-2 py-2">
             <SidebarGroupLabel>{section.title}</SidebarGroupLabel>
