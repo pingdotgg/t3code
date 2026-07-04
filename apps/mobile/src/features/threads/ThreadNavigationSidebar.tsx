@@ -1,5 +1,8 @@
 import { isLiquidGlassSupported, LiquidGlassView } from "@callstack/liquid-glass";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type {
+  EnvironmentProject,
+  EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/shell";
 import { LegendList } from "@legendapp/list/react-native";
 import type { MenuAction } from "@react-native-menu/menu";
 import { SymbolView } from "expo-symbols";
@@ -107,6 +110,7 @@ interface ThreadNavigationSidebarProps {
   readonly selectedThreadKey: string | null;
   readonly onOpenSettings: () => void;
   readonly onOpenEnvironmentSettings: () => void;
+  readonly onNewThreadInProject: (project: EnvironmentProject) => void;
   readonly onSearchQueryChange: (query: string) => void;
   readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
   readonly onRequestVisibility: () => void;
@@ -413,6 +417,14 @@ function ThreadNavigationSidebarPane(
               isFirst={item.isFirst}
               groupKey={item.group.key}
               onGroupAction={updateGroupDisplay}
+              // Same gating as the compact Home list: aggregated groups have no
+              // single target project, and pending-project groups hold a
+              // placeholder shell rather than a real project.
+              onNewThread={
+                item.group.projects.length === 1 && !item.group.key.startsWith("pending-project:")
+                  ? props.onNewThreadInProject
+                  : undefined
+              }
               project={item.group.representative}
               threadCount={item.group.threads.length + item.group.pendingTasks.length}
               title={item.group.title}
@@ -480,6 +492,7 @@ function ThreadNavigationSidebarPane(
       handleSwipeableWillOpen,
       openPendingTask,
       projectCwdByKey,
+      props.onNewThreadInProject,
       props.selectedThreadKey,
       props.width,
       savedConnectionsById,
