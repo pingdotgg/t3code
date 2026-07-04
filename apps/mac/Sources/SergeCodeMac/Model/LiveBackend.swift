@@ -45,10 +45,11 @@ import T3Kit
 //    is the source of truth for status (per-thread `thread.session-set` events
 //    are intentionally NOT used to mutate status, to avoid fighting the shell
 //    projection which already reflects session changes).
-//  * Assistant streaming: the wire has no per-token delta on subscribeThread;
-//    growing `thread.message-sent` payloads for the same messageId are diffed
-//    into `assistantDelta`s (prefix-suffix). A non-append replacement can't be
-//    expressed as a delta and is skipped (see `assistantDelta(new:old:)`).
+//  * Assistant streaming: repeated `thread.message-sent` events for one
+//    messageId carry DELTA chunks in `text` while `streaming` is true, and
+//    the terminal `streaming: false` event replaces the full text only when
+//    its `text` is non-empty (matching projector.ts, which appends streaming
+//    chunks and keeps the accumulated text on an empty completion).
 //  * OrchestrationProposedPlan has no dedicated TimelineItem case -> rendered as
 //    a `.notice`. System messages -> `.notice`. Activity tones map: .tool ->
 //    toolEvent(.succeeded), .error -> toolEvent(.failed), .info -> notice.
@@ -815,6 +816,11 @@ public actor LiveBackend: BackendService {
                     item: .userMessage(id: messageID, text: payload.text, at: at)))
 
         case .assistant:
+            // Wire semantics (projector.ts "thread.message-sent"): while
+            // `streaming` is true, `text` is an append-only DELTA chunk; the
+            // terminal `streaming: false` event replaces the full text only
+            // when non-empty — providers routinely finish with `text: ""`,
+            // which means "keep what streamed".
             if !alreadySeen {
                 seenMessageIDs[threadID, default: []].insert(messageID)
                 assistantTextByMessage[threadID, default: [:]][messageID] = payload.text
@@ -824,21 +830,22 @@ public actor LiveBackend: BackendService {
                         item: .assistantMessage(
                             id: messageID, markdown: payload.text,
                             isStreaming: payload.streaming, at: at)))
-            } else {
-                let old = assistantTextByMessage[threadID]?[messageID] ?? ""
-                let delta = Self.assistantDelta(new: payload.text, old: old)
-                assistantTextByMessage[threadID, default: [:]][messageID] = payload.text
-                if !delta.isEmpty {
-                    emit(.assistantDelta(threadID: threadID, messageID: messageID, delta: delta))
+            } else if payload.streaming {
+                if !payload.text.isEmpty {
+                    let old = assistantTextByMessage[threadID]?[messageID] ?? ""
+                    assistantTextByMessage[threadID, default: [:]][messageID] = old + payload.text
+                    emit(
+                        .assistantDelta(
+                            threadID: threadID, messageID: messageID, delta: payload.text))
                 }
             }
             if !payload.streaming {
-                // The terminal, non-streaming `message-sent` is authoritative —
-                // pass the server's full text so the UI corrects any lossy/
-                // skipped delta (see `assistantDelta(new:old:)`) on completion.
+                let accumulated = assistantTextByMessage[threadID]?[messageID] ?? ""
+                let finalText = payload.text.isEmpty ? accumulated : payload.text
+                assistantTextByMessage[threadID, default: [:]][messageID] = finalText
                 emit(
                     .assistantCompleted(
-                        threadID: threadID, messageID: messageID, markdown: payload.text))
+                        threadID: threadID, messageID: messageID, markdown: finalText))
             }
 
         case .system:
@@ -849,16 +856,6 @@ public actor LiveBackend: BackendService {
                     threadID: threadID,
                     item: .notice(id: messageID, text: payload.text, at: at)))
         }
-    }
-
-    /// A wire `message-sent` carries the full assistant text, not a delta; we
-    /// diff against the last-seen text. A pure append yields the new suffix; a
-    /// non-append replacement can't be represented as a delta and is skipped
-    /// (returns "") rather than corrupting the rendered message.
-    private static func assistantDelta(new: String, old: String) -> String {
-        if old.isEmpty { return new }
-        if new.hasPrefix(old) { return String(new.dropFirst(old.count)) }
-        return ""
     }
 
     private func resolveSnapshotWaiters(threadID: String, items: [TimelineItem]) {
