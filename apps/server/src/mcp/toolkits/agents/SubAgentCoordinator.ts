@@ -107,11 +107,24 @@ const finalAssistantText = (thread: OrchestrationThread): string | null => {
   return null;
 };
 
+const hasTurnStartFailureSince = (thread: OrchestrationThread, sinceIso: string): boolean =>
+  thread.activities.some(
+    (activity) =>
+      activity.tone === "error" &&
+      activity.kind === "provider.turn.start.failed" &&
+      activity.createdAt >= sinceIso,
+  );
+
 const turnStatus = (thread: OrchestrationThread, sinceIso: string): SubAgentStatus => {
   const latestTurn = thread.latestTurn;
   // The projection lags the dispatched turn-start command; treat a missing
-  // or older latest turn as the requested turn still spinning up.
-  if (!latestTurn || latestTurn.requestedAt < sinceIso) return "running";
+  // or older latest turn as the requested turn still spinning up — unless the
+  // provider already failed before creating the turn (invalid model, session
+  // start error, ...), which ProviderCommandReactor records only as an error
+  // activity on the thread.
+  if (!latestTurn || latestTurn.requestedAt < sinceIso) {
+    return hasTurnStartFailureSince(thread, sinceIso) ? "error" : "running";
+  }
   if (latestTurn.state === "running") return "running";
   if ((thread.session?.activeTurnId ?? null) !== null) return "running";
   return latestTurn.state;

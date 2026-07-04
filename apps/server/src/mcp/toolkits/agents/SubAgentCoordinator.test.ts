@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  EventId,
   MessageId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -370,6 +371,46 @@ it.effect("reports running when the sub-agent has not finished before the timeou
     yield* TestClock.adjust(Duration.seconds(2));
     const result = yield* Fiber.join(waiting);
     expect(result.status).toBe("running");
+    expect(result.finalText).toBeNull();
+  }),
+);
+
+it.effect("reports error when the provider fails before the turn is created", () =>
+  Effect.gen(function* () {
+    const [coordinator, harness] = yield* makeCoordinator();
+
+    const spawned = yield* coordinator.spawn(makeScope(), {
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      prompt: "Task that never starts.",
+    });
+    // A pre-turn failure (invalid model, session start error) leaves latestTurn
+    // null; ProviderCommandReactor records it only as an error activity.
+    harness.setThreadDetail((threadId) =>
+      threadId === spawned.threadId
+        ? Option.some(
+            makeThreadDetail(spawned.threadId, {
+              latestTurn: null,
+              activities: [
+                {
+                  id: EventId.make("event-1"),
+                  tone: "error",
+                  kind: "provider.turn.start.failed",
+                  summary: "Provider turn start failed",
+                  payload: { detail: "model not found" },
+                  turnId: null,
+                  createdAt: "9999-01-01T00:00:00.000Z",
+                },
+              ],
+            }),
+          )
+        : Option.none(),
+    );
+
+    const result = yield* coordinator.wait(makeScope(), {
+      threadId: spawned.threadId,
+      timeoutSeconds: 5,
+    });
+    expect(result.status).toBe("error");
     expect(result.finalText).toBeNull();
   }),
 );
