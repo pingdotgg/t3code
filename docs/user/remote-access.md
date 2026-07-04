@@ -61,10 +61,11 @@ For `https://app.t3.codes`, prefer an HTTPS Tailnet or other HTTPS endpoint. A p
 
 Use this when you want to run the server without a GUI, for example on a remote machine over SSH.
 
-Run the server with `t3 serve`.
+Run the server with `t3 serve`. Note that `npx t3` installs upstream T3 Code, not this fork —
+run the fork's CLI from a SergeCode checkout (after `pnpm install`) instead:
 
 ```bash
-npx t3 serve --host "$(tailscale ip -4)"
+node apps/server/src/bin.ts serve --host "$(tailscale ip -4)"
 ```
 
 `t3 serve` starts the server without opening a browser and prints:
@@ -86,14 +87,14 @@ Use `t3 serve --help` for the full flag reference. It supports the same general 
 For hosted web pairing over Tailscale HTTPS, opt in to Tailscale Serve:
 
 ```bash
-npx t3 serve --tailscale-serve
+node apps/server/src/bin.ts serve --tailscale-serve
 ```
 
 By default this configures Tailscale Serve on HTTPS port 443 and advertises
 `https://machine.tailnet.ts.net/`. Advanced users can choose a different HTTPS port:
 
 ```bash
-npx t3 serve --tailscale-serve --tailscale-serve-port 8443
+node apps/server/src/bin.ts serve --tailscale-serve --tailscale-serve-port 8443
 ```
 
 > Note

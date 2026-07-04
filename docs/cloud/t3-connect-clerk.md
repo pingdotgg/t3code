@@ -183,12 +183,13 @@ after native dependency, main-process, preload, entitlement, provisioning, or si
 renderer-only changes can reuse the installed app.
 
 For the default development ports, run `pnpm dev:web` in one terminal and launch the installed
-binary from another:
+binary from another. The installed bundle is still named `T3 Code (Alpha)` — the desktop
+packaging (`productName`, artifact names) has not been rebranded:
 
 ```sh
 VITE_DEV_SERVER_URL=http://127.0.0.1:5733 \
 T3CODE_PORT=13773 \
-  "/Applications/SergeCode (Alpha).app/Contents/MacOS/SergeCode (Alpha)"
+  "/Applications/T3 Code (Alpha).app/Contents/MacOS/T3 Code (Alpha)"
 ```
 
 After changing Associated Domains, bump the build version before rebuilding; macOS may otherwise
@@ -197,8 +198,8 @@ reuse stale Shared Web Credentials metadata for the same app/version pair.
 Verify the installed bundle before testing:
 
 ```sh
-codesign --verify --deep --strict "/Applications/SergeCode (Alpha).app"
-codesign -d --entitlements :- "/Applications/SergeCode (Alpha).app"
+codesign --verify --deep --strict "/Applications/T3 Code (Alpha).app"
+codesign -d --entitlements :- "/Applications/T3 Code (Alpha).app"
 ```
 
 The current mobile UI uses Clerk's native authentication view. If a future mobile browser OAuth
