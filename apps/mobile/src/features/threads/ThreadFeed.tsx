@@ -471,6 +471,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
         link: markdownLinkColor,
         blockquote: markdownBlockquoteBorder,
         border: markdownHrColor,
+        surface: "transparent",
         surfaceLight: markdownBlockquoteBg,
         accent: markdownLinkColor,
         tableBorder: markdownHrColor,
