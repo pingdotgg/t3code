@@ -11,12 +11,27 @@ public enum SidecarEntryPathResolver {
     /// then appends `apps/server/dist/bin.mjs`. Only meaningful for local
     /// checkouts where SidecarKit's sources live at their usual path.
     public static func devDefaultEntryPath(sourceFile: String = #filePath) -> String {
-        var url = URL(fileURLWithPath: sourceFile)
-        // SidecarConfig.swift -> SidecarKit -> Sources -> mac -> apps -> repoRoot
-        for _ in 0..<5 {
+        // `#filePath` is not reliably absolute here: the app-bundle build
+        // invokes swiftc with `-working-directory <repo>/apps`, baking a
+        // value that resolves to `<repo>/apps/apps/...` at runtime — which
+        // broke the old fixed five-component walk. Walk upward instead and
+        // take the first ancestor that actually contains the built entry.
+        var url = URL(fileURLWithPath: sourceFile).deletingLastPathComponent()
+        for _ in 0..<12 {
+            let candidate = url.appendingPathComponent("apps/server/dist/bin.mjs")
+            if FileManager.default.fileExists(atPath: candidate.path) {
+                return candidate.path
+            }
             url.deleteLastPathComponent()
         }
-        return url.appendingPathComponent("apps/server/dist/bin.mjs").path
+        // Nothing found (server not built yet / sources moved): fall back to
+        // the historical repo-root guess so error messages still name a
+        // plausible path.
+        var fixed = URL(fileURLWithPath: sourceFile)
+        for _ in 0..<5 {
+            fixed.deleteLastPathComponent()
+        }
+        return fixed.appendingPathComponent("apps/server/dist/bin.mjs").path
     }
 }
 

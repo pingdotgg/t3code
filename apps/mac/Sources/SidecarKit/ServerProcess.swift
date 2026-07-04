@@ -36,6 +36,8 @@ public actor ServerProcess {
     private var desiredRunning = false
     private var restartAttempt = 0
     private var restartTask: Task<Void, Never>?
+    /// App Nap suppression token held while the sidecar is desired-running.
+    private var activityToken: NSObjectProtocol?
     private var currentState: SidecarState = .idle
     private var stateContinuations: [UUID: AsyncStream<SidecarState>.Continuation] = [:]
     /// Bumped by every `start()`/`stop()` entry. `stop()` captures its value
@@ -90,6 +92,16 @@ public actor ServerProcess {
         guard !desiredRunning else { return }
         desiredRunning = true
         restartAttempt = 0
+        // App Nap / RunningBoard suspends the whole process coalition of a
+        // Finder/`open`-launched app that looks idle — including the spawned
+        // node child (observed as the sidecar sitting in `T` state, never
+        // booting). Hold an activity assertion for the sidecar's lifetime
+        // so the coalition stays runnable.
+        if activityToken == nil {
+            activityToken = ProcessInfo.processInfo.beginActivity(
+                options: [.userInitiated, .automaticTerminationDisabled],
+                reason: "t3 server sidecar running")
+        }
         // Supersede any stop() currently unwinding through its await points
         // so its teardown no-ops instead of clobbering this run once it
         // resumes (see `operationGeneration` doc comment above).
@@ -103,6 +115,10 @@ public actor ServerProcess {
         desiredRunning = false
         restartTask?.cancel()
         restartTask = nil
+        if let token = activityToken {
+            activityToken = nil
+            ProcessInfo.processInfo.endActivity(token)
+        }
         // Invalidate any in-flight readiness poll / termination callback
         // from the run being stopped so they no-op instead of racing a
         // subsequent start().
