@@ -290,6 +290,7 @@ function MarkdownCodeBlock(props: {
   readonly backgroundColor: string;
   readonly borderColor: string;
   readonly content: string;
+  readonly copyTintColor: ColorValue;
   readonly headerTextColor: string;
   readonly fontSize: number;
   readonly highlightCode: boolean;
@@ -298,8 +299,10 @@ function MarkdownCodeBlock(props: {
   readonly textColor: string;
   readonly theme: ReviewDiffTheme;
 }) {
+  const content = props.content.replace(/\n$/, "");
+  const languageLabel = props.language?.trim() || "text";
   const highlighted = useMarkdownCodeHighlight({
-    code: props.content,
+    code: content,
     enabled: props.highlightCode && Boolean(props.language?.trim()),
     language: props.language,
     theme: props.theme,
@@ -320,29 +323,41 @@ function MarkdownCodeBlock(props: {
         overflow: "hidden",
       }}
     >
-      {props.language ? (
-        <View
+      <View
+        style={{
+          borderBottomWidth: 1,
+          borderBottomColor: props.borderColor,
+          paddingLeft: 14,
+          paddingRight: 6,
+          paddingVertical: 4,
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 8,
+        }}
+      >
+        <NativeText
+          numberOfLines={1}
           style={{
-            borderBottomWidth: 1,
-            borderBottomColor: props.borderColor,
-            paddingHorizontal: 14,
-            paddingVertical: 8,
+            flex: 1,
+            color: props.headerTextColor,
+            fontFamily: MARKDOWN_MONO_FONT,
+            fontSize: props.fontSize,
+            opacity: 0.7,
+            textTransform: "uppercase",
+            ...(Platform.OS === "android" ? { includeFontPadding: false } : null),
           }}
         >
-          <NativeText
-            style={{
-              color: props.headerTextColor,
-              fontFamily: MARKDOWN_MONO_FONT,
-              fontSize: props.fontSize,
-              opacity: 0.7,
-              textTransform: "uppercase",
-              ...(Platform.OS === "android" ? { includeFontPadding: false } : null),
-            }}
-          >
-            {props.language}
-          </NativeText>
-        </View>
-      ) : null}
+          {languageLabel}
+        </NativeText>
+        <CopyTextButton
+          accessibilityLabel="Copy code"
+          text={content}
+          tintColor={props.copyTintColor}
+          buttonSize={32}
+          iconSize={16}
+        />
+      </View>
       <ScrollView
         horizontal
         bounces={false}
@@ -402,7 +417,7 @@ function MarkdownCodeBlock(props: {
                 }
                 return renderedLine;
               })
-            : props.content}
+            : content}
         </NativeText>
       </ScrollView>
     </View>
@@ -445,7 +460,9 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
   );
   const themeMode = colorScheme === "dark" ? "dark" : "light";
   const colors = MARKDOWN_COLORS[themeMode];
+  const iconSubtleColor = String(useThemeColor("--color-icon-subtle"));
   const inlineSkillForeground = String(useThemeColor("--color-inline-skill-foreground"));
+  const userBubbleForegroundMuted = String(useThemeColor("--color-user-bubble-foreground-muted"));
 
   return useMemo(() => {
     const markdownBodyColor = colors.body;
@@ -554,6 +571,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
       inlineCodeTextColor: string,
       blockBackgroundColor: string,
       blockTextColor: string,
+      copyTintColor: ColorValue,
       preserveSoftBreaks: boolean,
       highlightCode: boolean,
     ): CustomRenderers => ({
@@ -668,8 +686,9 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
           backgroundColor={blockBackgroundColor}
           borderColor={markdownHrColor}
           content={content}
+          copyTintColor={copyTintColor}
           fontSize={markdownFontSizes.codeBlockFontSize}
-          headerTextColor={markdownBodyColor}
+          headerTextColor={blockTextColor}
           highlightCode={highlightCode}
           language={language}
           lineHeight={markdownFontSizes.codeBlockLineHeight}
@@ -733,6 +752,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
           markdownUserInlineCodeText,
           markdownUserFenceBg,
           markdownUserFenceText,
+          userBubbleForegroundMuted,
           true,
           false,
         ),
@@ -765,6 +785,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
           markdownInlineCodeText,
           markdownCodeBg,
           markdownCodeText,
+          iconSubtleColor,
           false,
           true,
         ),
@@ -790,7 +811,16 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
         },
       },
     };
-  }, [colors, inlineSkillForeground, markdownFontSizes, nativeMarkdownTypography, onLinkPress, themeMode]);
+  }, [
+    colors,
+    iconSubtleColor,
+    inlineSkillForeground,
+    markdownFontSizes,
+    nativeMarkdownTypography,
+    onLinkPress,
+    themeMode,
+    userBubbleForegroundMuted,
+  ]);
 }
 
 function renderFeedEntry(
