@@ -53,6 +53,13 @@ export interface WorkflowProviderResponseInput {
   readonly text?: string | undefined;
 }
 
+export interface WorkflowPendingRequestLiveInput {
+  readonly threadId: ThreadId;
+  readonly requestId: ApprovalRequestId;
+  readonly responseKind: WorkflowProviderResponseKind;
+  readonly questionId?: string | undefined;
+}
+
 export interface WorkflowAgentPortShape {
   readonly ensureStarted: (
     req: WorkflowDispatchRequest,
@@ -80,6 +87,9 @@ export interface WorkflowAgentPortShape {
   readonly respond: (
     input: WorkflowProviderResponseInput,
   ) => Effect.Effect<void, WorkflowEventStoreError>;
+  readonly isPendingRequestLive: (
+    input: WorkflowPendingRequestLiveInput,
+  ) => Effect.Effect<boolean, WorkflowEventStoreError>;
   readonly cleanupSession: (threadId: ThreadId) => Effect.Effect<void>;
   readonly recoverPending: () => Effect.Effect<void, WorkflowEventStoreError>;
 }

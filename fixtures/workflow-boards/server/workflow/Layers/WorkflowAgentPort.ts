@@ -243,6 +243,22 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  const isPendingRequestLive: WorkflowAgentPortShape["isPendingRequestLive"] = (input) =>
+    readPendingRequest(input.threadId).pipe(
+      Effect.map((pending) => {
+        if (pending === null) {
+          return false;
+        }
+        if (pending.kind !== input.responseKind || pending.requestId !== input.requestId) {
+          return false;
+        }
+        if (input.responseKind !== "user-input" || pending.kind !== "user-input") {
+          return true;
+        }
+        return input.questionId === undefined || pending.questionId === input.questionId;
+      }),
+    );
+
   const cleanupSession: WorkflowAgentPortShape["cleanupSession"] = (threadId) =>
     agents
       .interruptTurn({ threadId })
@@ -692,6 +708,7 @@ const make = Effect.gen(function* () {
     confirmStep,
     readCapturedOutput: (input) => readCapturedOutputFromProjection(projections, input),
     respond,
+    isPendingRequestLive,
     cleanupSession,
     recoverPending,
   } satisfies WorkflowAgentPortShape;

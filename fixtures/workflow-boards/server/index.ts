@@ -9,9 +9,10 @@ const toPluginError = (error: unknown): Error =>
 export default definePlugin({
   register: (hostApi) =>
     Effect.gen(function* () {
-      // Acquire the database capability so activation fails loudly if the
-      // manifest ever drops the "database" declaration.
+      // Acquire required capabilities so activation fails loudly if the
+      // manifest ever drops a declaration recovery/runtime code relies on.
       yield* hostApi.database;
+      yield* hostApi.filesystem;
       const registration: PluginRegistration = {
         migrations: [migration001],
       };
