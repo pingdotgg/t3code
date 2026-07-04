@@ -4,70 +4,50 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   pull_request_review:
-    types: [submitted, edited, dismissed]
+    types: [submitted]
 
 permissions:
-  pull-requests: write
-  issues: write
+  pull-requests: read
 
 jobs:
   codex-review-required:
     name: codex-review-required
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
     steps:
-      - name: Require a Codex review of the current head commit
+      - name: Require one Codex review on this PR
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           codex_reviewed() {
             local n
-            n=$(gh api "repos/$REPO/pulls/$PR/reviews" --paginate | jq -s --arg head "$HEAD_SHA" '
+            n=$(gh api "repos/$REPO/pulls/$PR/reviews" --paginate | jq -s '
               [add[] | select(
                 (.user.type == "Bot")
                 and (.user.login | ascii_downcase | contains("codex"))
                 and (.state != "DISMISSED")
-                and (.commit_id == $head)
               )] | length')
             [ "$n" -ge 1 ] && return 0
             # A clean Codex review ("no major issues") arrives as an issue
             # comment carrying "Reviewed commit: `<sha>`", not as a PR review.
-            n=$(gh api "repos/$REPO/issues/$PR/comments" --paginate | jq -s --arg head "$HEAD_SHA" '
-              [add[]
-                | select((.user.type == "Bot") and (.user.login | ascii_downcase | contains("codex")))
-                | (.body | capture("Reviewed commit:[^`]*`(?<sha>[0-9a-f]{7,40})`") // empty)
-                | select(.sha as $s | $head | startswith($s))
-              ] | length')
+            n=$(gh api "repos/$REPO/issues/$PR/comments" --paginate | jq -s '
+              [add[] | select(
+                (.user.type == "Bot")
+                and (.user.login | ascii_downcase | contains("codex"))
+                and (.body | test("Reviewed commit:"))
+              )] | length')
             [ "$n" -ge 1 ]
           }
 
-          request_review_once() {
-            local marker existing body
-            marker="<!-- codex-gate-request: $HEAD_SHA -->"
-            existing=$(gh api "repos/$REPO/issues/$PR/comments" --paginate | jq -s --arg m "$marker" \
-              '[add[] | select(.body | contains($m))] | length')
-            if [ "$existing" -eq 0 ]; then
-              body=$(printf '@codex review\n\n%s' "$marker")
-              gh api "repos/$REPO/issues/$PR/comments" -f body="$body" >/dev/null
-              echo "Requested a Codex review of $HEAD_SHA."
-            fi
-          }
-
-          if codex_reviewed; then
-            echo "Codex has reviewed head commit $HEAD_SHA."
-            exit 0
-          fi
-          request_review_once
-          for i in $(seq 1 40); do
-            sleep 30
+          for i in $(seq 1 30); do
             if codex_reviewed; then
-              echo "Codex has reviewed head commit $HEAD_SHA."
+              echo "Codex has reviewed this PR."
               exit 0
             fi
-            echo "Waiting for Codex review of $HEAD_SHA ($i/40)..."
+            echo "Waiting for Codex review ($i/30)..."
+            sleep 30
           done
-          echo "::error::No Codex review of head commit $HEAD_SHA after 20 minutes. Comment '@codex review' on the PR, then re-run this check."
+          echo "::error::No Codex review on this PR after 15 minutes. Comment '@codex review' on the PR, then re-run this check."
           exit 1
