@@ -102,7 +102,7 @@ const config: ExpoConfig = {
     icon: "./assets/icon.png",
     package: variant.androidPackage,
     adaptiveIcon: {
-      backgroundColor: "#E6F4FE",
+      backgroundColor: "#DCE9E0",
       foregroundImage: "./assets/android-icon-foreground.png",
       backgroundImage: "./assets/android-icon-background.png",
       monochromeImage: "./assets/android-icon-monochrome.png",
@@ -129,11 +129,11 @@ const config: ExpoConfig = {
       {
         image: "./assets/splash-icon.png",
         resizeMode: "contain",
-        backgroundColor: "#ffffff",
+        backgroundColor: "#f2f4f0",
         imageWidth: 220,
         dark: {
           image: "./assets/splash-icon.png",
-          backgroundColor: "#0a0a0a",
+          backgroundColor: "#0b0d0b",
         },
       },
     ],
