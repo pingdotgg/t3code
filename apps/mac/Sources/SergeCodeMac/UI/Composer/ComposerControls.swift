@@ -9,6 +9,7 @@ struct ComposerControlsRow: View {
     var body: some View {
         HStack(spacing: 10) {
             ModelPickerMenu(thread: thread, model: model)
+            EffortMenu(thread: thread, model: model)
             RuntimeModeMenu(thread: thread, model: model)
             PlanModeToggle(thread: thread, model: model)
             Spacer()
@@ -63,6 +64,53 @@ private struct ModelPickerMenu: View {
             return current.displayName
         }
         return thread.modelID ?? thread.provider.displayName
+    }
+}
+
+/// Reasoning-effort picker for the thread's current model. Hidden when the
+/// model exposes no effort option descriptor (e.g. Cursor's composer).
+private struct EffortMenu: View {
+    let thread: ChatThread
+    let model: AppModel
+
+    var body: some View {
+        if let option = currentModelOption, !option.effortChoices.isEmpty {
+            Menu {
+                ForEach(option.effortChoices) { choice in
+                    Button {
+                        Task { await model.setReasoningEffort(choice.id) }
+                    } label: {
+                        if choice.id == effectiveEffort(of: option) {
+                            Label(choice.label, systemImage: "checkmark")
+                        } else {
+                            Text(choice.label)
+                        }
+                    }
+                }
+            } label: {
+                Label(currentLabel(of: option), systemImage: "brain")
+                    .font(.caption)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("Reasoning effort")
+        }
+    }
+
+    private var currentModelOption: ModelOption? {
+        model.models.first {
+            $0.instanceID == thread.modelInstanceID && $0.modelID == thread.modelID
+        }
+    }
+
+    /// Explicit thread selection, else the model's default choice.
+    private func effectiveEffort(of option: ModelOption) -> String? {
+        thread.reasoningEffort ?? option.effortChoices.first(where: \.isDefault)?.id
+    }
+
+    private func currentLabel(of option: ModelOption) -> String {
+        let effort = effectiveEffort(of: option)
+        return option.effortChoices.first { $0.id == effort }?.label ?? "Effort"
     }
 }
 

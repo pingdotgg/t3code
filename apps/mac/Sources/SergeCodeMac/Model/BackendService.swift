@@ -73,6 +73,9 @@ public protocol BackendService: Sendable {
     func setInteractionMode(threadID: String, mode: ThreadInteractionMode) async throws
     /// Repoint the thread at a different provider instance/model.
     func setModel(threadID: String, model: ModelOption) async throws
+    /// Set the thread's reasoning-effort option (a choice id from the
+    /// model's `effortChoices`). Throws when the model has no effort option.
+    func setReasoningEffort(threadID: String, value: String) async throws
     /// Start an implementation turn from a proposed plan (plan-mode follow-up).
     func implementPlan(threadID: String, planID: String) async throws
 
