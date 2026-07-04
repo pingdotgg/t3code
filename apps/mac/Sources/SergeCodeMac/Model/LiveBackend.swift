@@ -1524,15 +1524,46 @@ public actor LiveBackend: BackendService {
         switch activity.tone {
         case .tool:
             return .toolEvent(
-                id: activity.id, name: activity.kind, detail: activity.summary,
+                id: activity.id, name: Self.toolName(activity),
+                detail: Self.toolDetail(activity.payload),
                 status: .succeeded, at: at)
         case .error:
             return .toolEvent(
-                id: activity.id, name: activity.kind, detail: activity.summary,
+                id: activity.id, name: Self.toolName(activity),
+                detail: Self.toolDetail(activity.payload),
                 status: .failed, at: at)
         case .info, .approval:
             return .notice(id: activity.id, text: activity.summary, at: at)
         }
+    }
+
+    /// Row title for a tool activity: the human summary ("Read foo.swift"),
+    /// not the wire kind ("tool.completed").
+    private static func toolName(_ activity: OrchestrationThreadActivity) -> String {
+        activity.summary.isEmpty ? activity.kind : activity.summary
+    }
+
+    /// Expandable body for a tool row: the payload's `detail` string plus a
+    /// pretty-printed `data` object when present (tool args/output). Empty
+    /// when the payload carries neither, which hides the disclosure chevron.
+    static func toolDetail(_ payload: JSONValue) -> String {
+        guard let object = payload.objectValue else { return "" }
+        var parts: [String] = []
+        if let detail = object["detail"]?.stringValue,
+            !detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            parts.append(detail)
+        }
+        if let data = object["data"], data != .null {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            if let encoded = try? encoder.encode(data),
+                let string = String(data: encoded, encoding: .utf8), string != "{}"
+            {
+                parts.append(string)
+            }
+        }
+        return parts.joined(separator: "\n\n")
     }
 
     private func approvalKind(_ kind: String) -> ApprovalKind {

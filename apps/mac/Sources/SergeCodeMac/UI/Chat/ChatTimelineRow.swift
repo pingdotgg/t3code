@@ -75,6 +75,9 @@ private struct ToolEventRow: View {
                             .rotationEffect(.degrees(isExpanded ? 90 : 0))
                     }
                 }
+                // Whole-row hit target: without this only the glyphs and text
+                // are clickable and the disclosure feels dead.
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(detail.isEmpty)
