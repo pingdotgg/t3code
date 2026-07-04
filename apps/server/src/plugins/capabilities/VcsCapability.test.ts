@@ -3,7 +3,7 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { CheckpointRef, type VcsError } from "@t3tools/contracts";
+import { CheckpointRef, GitCommandError, type VcsError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -341,10 +341,11 @@ it.layer(TestLayer)("VcsCapability", (it) => {
 
           // A nonexistent ref makes `git merge` exit nonzero with NO unmerged
           // files. This is a genuine error and must NOT be masked as a conflict.
-          const exit = yield* Effect.exit(
-            vcs.merge({ worktreePath: repo, ref: "does-not-exist-ref", abortOnConflict: true }),
-          );
-          expect(exit._tag).toBe("Failure");
+          const error = yield* vcs
+            .merge({ worktreePath: repo, ref: "does-not-exist-ref", abortOnConflict: true })
+            .pipe(Effect.flip);
+          expect(error).toBeInstanceOf(GitCommandError);
+          expect((error as GitCommandError).stderr).toContain("does-not-exist-ref");
           // Best-effort abort keeps the tree clean even on a genuine failure.
           expect(yield* git(repo, ["status", "--porcelain"])).toBe("");
         }),

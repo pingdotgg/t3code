@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { PluginId, ProjectId } from "@t3tools/contracts";
+import { type PluginCapability, PluginId, ProjectId } from "@t3tools/contracts";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -473,11 +473,21 @@ layer("workflow-boards fixture plugin", (it) => {
             pluginId,
             version: "0.1.0",
           });
-          assert.equal(staged.manifest.id, pluginId);
-          assert.deepEqual(Object.keys(staged.capabilityDescriptions).sort(), [
+          const expectedCapabilities: PluginCapability[] = [
             "database",
             "filesystem",
-          ]);
+            "agents",
+            "projections.read",
+            "vcs",
+            "terminals",
+            "sourceControl",
+            "environments.read",
+          ];
+          assert.equal(staged.manifest.id, pluginId);
+          assert.deepEqual(
+            Object.keys(staged.capabilityDescriptions).sort(),
+            [...expectedCapabilities].sort(),
+          );
 
           const confirmed = yield* handlers.confirmInstall(staged.stageToken);
           assert.equal(confirmed.plugin.id, pluginId);
@@ -488,14 +498,14 @@ layer("workflow-boards fixture plugin", (it) => {
               id: plugin.id,
               state: plugin.state,
               hasWeb: plugin.hasWeb,
-              capabilities: plugin.capabilities,
+              capabilities: [...plugin.capabilities].sort(),
               lastError: plugin.lastError,
             })),
             {
               id: pluginId,
               state: "active",
               hasWeb: false,
-              capabilities: ["database", "filesystem"],
+              capabilities: [...expectedCapabilities].sort(),
               lastError: null,
             },
           );

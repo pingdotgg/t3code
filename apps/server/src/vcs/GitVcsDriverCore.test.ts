@@ -110,7 +110,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("does not retain git arguments or stderr in command failures", () =>
+    it.effect("keeps capped stderr available without exposing args or stderr in messages", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const driver = yield* GitVcsDriver.GitVcsDriver;
@@ -134,10 +134,11 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         });
         assert.isNumber(error.exitCode);
         assert.isAbove(error.stderrLength ?? 0, 0);
+        assert.isString(error.stderr);
+        assert.include(error.stderr ?? "", secret);
         assert.notInclude(error.detail, secret);
         assert.notInclude(error.message, secret);
         assert.notProperty(error, "args");
-        assert.notProperty(error, "stderr");
       }),
     );
 

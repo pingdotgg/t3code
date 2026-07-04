@@ -90,6 +90,7 @@ function gitCommandError(input: {
     ...(input.exitCode !== undefined ? { exitCode: input.exitCode } : {}),
     ...(input.stdout !== undefined ? { stdoutLength: input.stdout.length } : {}),
     ...(input.stderr !== undefined ? { stderrLength: input.stderr.length } : {}),
+    ...(input.stderr !== undefined ? { stderr: GitCommandError.capStderr(input.stderr) } : {}),
     detail: input.detail,
   });
 }

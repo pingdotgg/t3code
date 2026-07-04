@@ -320,6 +320,11 @@ export const VcsPullResult = Schema.Struct({
 export type VcsPullResult = typeof VcsPullResult.Type;
 
 // RPC / domain errors
+const ERROR_STDERR_MAX_CHARS = 8_192;
+
+const capErrorStderr = (stderr: string): string =>
+  stderr.length > ERROR_STDERR_MAX_CHARS ? stderr.slice(0, ERROR_STDERR_MAX_CHARS) : stderr;
+
 export class GitCommandError extends Schema.TaggedErrorClass<GitCommandError>()("GitCommandError", {
   operation: Schema.String,
   command: Schema.String,
@@ -328,12 +333,17 @@ export class GitCommandError extends Schema.TaggedErrorClass<GitCommandError>()(
   exitCode: Schema.optional(Schema.Number),
   stdoutLength: Schema.optional(Schema.Number),
   stderrLength: Schema.optional(Schema.Number),
+  stderr: Schema.optional(Schema.String),
   outputLength: Schema.optional(Schema.Number),
   detail: Schema.String,
   cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {
     return `Git command failed in ${this.operation} (${this.cwd}): ${this.detail}`;
+  }
+
+  static capStderr(stderr: string): string {
+    return capErrorStderr(stderr);
   }
 }
 

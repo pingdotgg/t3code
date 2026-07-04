@@ -466,6 +466,7 @@ export interface FileStat {
   readonly type: "file" | "directory" | "other";
   readonly size: number;
   readonly mtime: number;
+  readonly realPath?: string;
 }
 
 export interface DirEntry {

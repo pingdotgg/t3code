@@ -346,6 +346,41 @@ describe("GitHubCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("keeps gh merge stderr matchable through the command error cause", () =>
+    Effect.gen(function* () {
+      const stderr = "Pull request is not mergeable: branch protection rules must be satisfied.";
+      mockRun.mockReturnValueOnce(
+        Effect.fail(
+          new VcsProcessExitError({
+            operation: "GitHubCli.execute",
+            command: "gh",
+            cwd: "/repo",
+            argumentCount: 5,
+            exitCode: 1,
+            detail: "Process exited with a non-zero status.",
+            failureKind: "command-failed",
+            stderr,
+            stderrLength: stderr.length,
+            stderrTruncated: false,
+          }),
+        ),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const error = yield* gh
+        .mergePullRequest({
+          cwd: "/repo",
+          number: 42,
+          strategy: "squash",
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(error._tag, "GitHubCliCommandError");
+      assert.equal((error.cause as { readonly stderr?: string }).stderr, stderr);
+      assert.notInclude(error.message, "branch protection");
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("parses pull request detail output", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(

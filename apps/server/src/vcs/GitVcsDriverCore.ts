@@ -85,6 +85,8 @@ const NON_REPOSITORY_REMOTE_STATUS_DETAILS = Object.freeze<GitVcsDriver.GitRemot
   aheadOfDefaultCount: 0,
 });
 
+const cappedGitStderr = (stderr: string): string => GitCommandError.capStderr(stderr);
+
 type TraceTailState = {
   processedChars: number;
   remainder: string;
@@ -744,6 +746,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             exitCode,
             stdoutLength: stdout.text.length,
             stderrLength: stderr.text.length,
+            stderr: cappedGitStderr(stderr.text),
           });
         }
 
@@ -825,6 +828,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
             stdoutLength: result.stdout.length,
             stderrLength: result.stderr.length,
+            stderr: cappedGitStderr(result.stderr),
           }),
         );
       }),

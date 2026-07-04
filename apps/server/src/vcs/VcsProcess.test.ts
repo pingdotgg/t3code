@@ -107,6 +107,7 @@ describe("VcsProcess.run", () => {
         exitCode: 2,
         detail: "Process exited with a non-zero status.",
         failureKind: "command-failed",
+        stderr: secretStderr,
         stderrLength: secretStderr.length,
         stderrTruncated: false,
       });
@@ -115,7 +116,7 @@ describe("VcsProcess.run", () => {
     }).pipe(provideLive),
   );
 
-  it.effect("classifies authentication failures without retaining stderr", () =>
+  it.effect("classifies authentication failures with capped stderr off the message", () =>
     Effect.gen(function* () {
       const secretStderr = "authentication failed for token super-secret-token";
       const error = yield* run({
@@ -132,6 +133,7 @@ describe("VcsProcess.run", () => {
         exitCode: 1,
         detail: "Authentication failed.",
         failureKind: "authentication",
+        stderr: secretStderr,
         stderrLength: secretStderr.length,
         stderrTruncated: false,
       });

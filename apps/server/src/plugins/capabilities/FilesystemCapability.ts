@@ -707,6 +707,7 @@ function makeCapability(input: {
           type: statType(stat),
           size: stat.size,
           mtime: stat.mtimeMs,
+          realPath,
         };
       }),
     listDir: (context) =>

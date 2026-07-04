@@ -86,6 +86,11 @@ export interface VcsProcessExitFailure {
   readonly stderrTruncated: boolean;
 }
 
+const ERROR_STDERR_MAX_CHARS = 8_192;
+
+const capErrorStderr = (stderr: string): string =>
+  stderr.length > ERROR_STDERR_MAX_CHARS ? stderr.slice(0, ERROR_STDERR_MAX_CHARS) : stderr;
+
 export class VcsProcessSpawnError extends Schema.TaggedErrorClass<VcsProcessSpawnError>()(
   "VcsProcessSpawnError",
   {
@@ -118,6 +123,7 @@ export class VcsProcessExitError extends Schema.TaggedErrorClass<VcsProcessExitE
     exitCode: Schema.Number,
     detail: Schema.String,
     failureKind: Schema.optional(VcsProcessExitFailureKind),
+    stderr: Schema.optional(Schema.String),
     stderrLength: Schema.optional(NonNegativeInt),
     stderrTruncated: Schema.optional(Schema.Boolean),
   },
@@ -147,6 +153,7 @@ export class VcsProcessExitError extends Schema.TaggedErrorClass<VcsProcessExitE
       exitCode: error.exitCode,
       detail,
       failureKind,
+      stderr: capErrorStderr(error.stderr),
       stderrLength: error.stderr.length,
       stderrTruncated: error.stderrTruncated,
     });
