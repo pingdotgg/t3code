@@ -17,6 +17,7 @@ import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
+import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 
 export type HomeProjectSortOrder = Exclude<SidebarProjectSortOrder, "manual">;
 
@@ -25,25 +26,32 @@ export interface HomeThreadGroup {
   readonly title: string;
   readonly representative: EnvironmentProject;
   readonly projects: ReadonlyArray<EnvironmentProject>;
+  readonly pendingTasks: ReadonlyArray<PendingNewTask>;
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
 }
 
 interface MutableHomeThreadGroup {
   readonly key: string;
   readonly projects: EnvironmentProject[];
+  readonly pendingTasks: PendingNewTask[];
   readonly threads: EnvironmentThreadShell[];
 }
 
 function groupSortTimestamp(group: HomeThreadGroup, sortOrder: HomeProjectSortOrder): number {
-  return group.threads.reduce(
+  const latestThread = group.threads.reduce(
     (latest, thread) => Math.max(latest, getThreadSortTimestamp(thread, sortOrder)),
     Number.NEGATIVE_INFINITY,
   );
+  return group.pendingTasks.reduce((latest, pendingTask) => {
+    const timestamp = Date.parse(pendingTask.message.createdAt);
+    return Number.isNaN(timestamp) ? latest : Math.max(latest, timestamp);
+  }, latestThread);
 }
 
 export function buildHomeThreadGroups(input: {
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
+  readonly pendingTasks?: ReadonlyArray<PendingNewTask>;
   readonly environmentId: EnvironmentId | null;
   readonly searchQuery: string;
   readonly projectSortOrder: HomeProjectSortOrder;
@@ -68,8 +76,47 @@ export function buildHomeThreadGroups(input: {
     if (existing) {
       existing.projects.push(project);
     } else {
-      groups.set(groupKey, { key: groupKey, projects: [project], threads: [] });
+      groups.set(groupKey, { key: groupKey, projects: [project], pendingTasks: [], threads: [] });
     }
+  }
+
+  for (const pendingTask of input.pendingTasks ?? []) {
+    if (input.environmentId !== null && pendingTask.message.environmentId !== input.environmentId) {
+      continue;
+    }
+
+    const physicalKey = scopedProjectKey(
+      pendingTask.message.environmentId,
+      pendingTask.creation.projectId,
+    );
+    let groupKey = groupKeyByProjectKey.get(physicalKey);
+    if (!groupKey) {
+      // The project shell is not loaded (environment offline / project gone).
+      // A queued task must stay visible and deletable regardless, so build a
+      // standalone group from the metadata snapshotted at enqueue time.
+      groupKey = `pending-project:${physicalKey}`;
+      groupKeyByProjectKey.set(physicalKey, groupKey);
+      groups.set(groupKey, {
+        key: groupKey,
+        projects: [
+          {
+            environmentId: pendingTask.message.environmentId,
+            id: pendingTask.creation.projectId,
+            title: pendingTask.creation.projectTitle ?? "Unknown project",
+            workspaceRoot:
+              pendingTask.creation.projectCwd ?? String(pendingTask.creation.projectId),
+            repositoryIdentity: null,
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: pendingTask.message.createdAt,
+            updatedAt: pendingTask.message.createdAt,
+          },
+        ],
+        pendingTasks: [],
+        threads: [],
+      });
+    }
+    groups.get(groupKey)?.pendingTasks.push(pendingTask);
   }
 
   for (const thread of input.threads) {
@@ -93,7 +140,7 @@ export function buildHomeThreadGroups(input: {
 
   for (const group of groups.values()) {
     const representative = group.projects[0];
-    if (!representative || group.threads.length === 0) {
+    if (!representative || (group.threads.length === 0 && group.pendingTasks.length === 0)) {
       continue;
     }
 
@@ -108,8 +155,13 @@ export function buildHomeThreadGroups(input: {
     const matchingThreads = groupMatches
       ? group.threads
       : group.threads.filter((thread) => thread.title.toLocaleLowerCase().includes(query));
+    const matchingPendingTasks = groupMatches
+      ? group.pendingTasks
+      : group.pendingTasks.filter((pendingTask) =>
+          pendingTask.title.toLocaleLowerCase().includes(query),
+        );
 
-    if (matchingThreads.length === 0) {
+    if (matchingThreads.length === 0 && matchingPendingTasks.length === 0) {
       continue;
     }
 
@@ -118,6 +170,7 @@ export function buildHomeThreadGroups(input: {
       title,
       representative,
       projects: group.projects,
+      pendingTasks: matchingPendingTasks,
       threads: sortThreads(matchingThreads, input.threadSortOrder),
     });
   }

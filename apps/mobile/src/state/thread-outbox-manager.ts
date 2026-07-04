@@ -15,6 +15,7 @@ export class ThreadOutboxManagerError extends Schema.TaggedErrorClass<ThreadOutb
     operation: Schema.Literals([
       "load",
       "enqueue",
+      "update",
       "remove",
       "clear-environment-load",
       "clear-environment-remove",
@@ -103,6 +104,35 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
       setMessages([...currentMessages(), message]);
     });
 
+  // Rewrites an already-queued message. A no-op when the message has been
+  // removed in the meantime (e.g. deleted or delivered), so a trailing editor
+  // flush can never resurrect it. Returns whether the message was updated.
+  const update = (message: QueuedThreadMessage): Promise<boolean> =>
+    serialize(async () => {
+      const exists = currentMessages().some(
+        (candidate) => candidate.messageId === message.messageId,
+      );
+      if (!exists) {
+        return false;
+      }
+      try {
+        await options.storage.write(message);
+      } catch (cause) {
+        throw new ThreadOutboxManagerError({
+          operation: "update",
+          environmentId: message.environmentId,
+          threadId: message.threadId,
+          messageId: message.messageId,
+          cause,
+        });
+      }
+      setMessages([
+        ...currentMessages().filter((candidate) => candidate.messageId !== message.messageId),
+        message,
+      ]);
+      return true;
+    });
+
   const remove = (message: QueuedThreadMessage): Promise<void> =>
     serialize(async () => {
       try {
@@ -171,6 +201,7 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
     serialize,
     load,
     enqueue,
+    update,
     remove,
     clearEnvironment,
   };
