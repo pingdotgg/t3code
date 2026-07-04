@@ -211,10 +211,13 @@ public actor T3Client {
                     defaultModelSelection: defaultModelSelection, createdAt: T3Clock.nowISO8601())))
     }
 
+    /// Partial project-meta update; `nil` fields are omitted (left untouched).
+    /// `defaultModelSelection` is `optional(NullOr)`: pass `.some(nil)` to
+    /// clear the project default, `.some(value)` to set it.
     @discardableResult
     public func updateProject(
         projectId: String, title: String? = nil, workspaceRoot: String? = nil,
-        defaultModelSelection: ModelSelection? = nil, scripts: [ProjectScript]? = nil
+        defaultModelSelection: ModelSelection?? = nil, scripts: [ProjectScript]? = nil
     ) async throws -> DispatchResult {
         try await dispatch(
             .projectMetaUpdate(

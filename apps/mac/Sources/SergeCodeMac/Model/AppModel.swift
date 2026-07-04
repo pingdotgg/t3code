@@ -322,9 +322,10 @@ public final class AppModel {
         }
     }
 
-    /// Non-archived sessions of a project (what the delete confirmation counts).
+    /// Every session of a project, archived included — the delete cascade
+    /// removes archived threads too, so the confirmation must count them.
     public func sessionCount(for project: Project) -> Int {
-        threads.count { $0.projectID == project.id && $0.status != .archived }
+        threads.count { $0.projectID == project.id }
     }
 
     public func renameProject(_ project: Project, to name: String) async {
