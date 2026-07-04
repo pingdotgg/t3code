@@ -932,7 +932,7 @@ public actor LiveBackend: BackendService {
                         displayName: model.name, provider: kind,
                         // The wire has no per-instance default marker; the first
                         // listed model is what `modelSelection(for:)` picks for
-                        // new threads, so mark that one.
+                        // new threads absent a last-used pick, so mark that one.
                         isDefault: model.slug == provider.models.first?.slug,
                         effortOptionID: effort?.id,
                         effortChoices: effort?.options.map {
@@ -977,7 +977,7 @@ public actor LiveBackend: BackendService {
         }
         let thread = ChatThread(
             id: threadID, projectID: projectID, title: title, provider: provider, status: .idle,
-            updatedAt: Date())
+            updatedAt: Date(), modelInstanceID: selection.instanceId, modelID: selection.model)
         threadsByID[threadID] = thread
         modelSelectionsByThread[threadID] = selection
         threadEnvByThread[threadID] = ThreadEnvState(
@@ -1227,6 +1227,7 @@ public actor LiveBackend: BackendService {
         let selection = ModelSelection(instanceId: model.instanceID, model: model.modelID)
         _ = try await client.updateThreadMeta(threadId: threadID, modelSelection: selection)
         modelSelectionsByThread[threadID] = selection
+        rememberModelSelection(selection, for: model.provider)
         updateCachedThread(threadID) {
             $0.modelInstanceID = model.instanceID
             $0.modelID = model.modelID
@@ -1797,6 +1798,9 @@ public actor LiveBackend: BackendService {
     }
 
     private func modelSelection(for provider: ProviderKind) -> ModelSelection? {
+        // Prefer the model the user last picked for this provider kind, so a
+        // new thread doesn't silently reset to the instance's first model.
+        if let remembered = lastUsedModelSelection(for: provider) { return remembered }
         // Same bar as the provider list UI (`availability(for:)`): an
         // uninstalled/unauthenticated instance, or one with no models, can't
         // run a thread — returning nil surfaces `noProviderForKind` instead
@@ -1808,6 +1812,37 @@ public actor LiveBackend: BackendService {
         }
         guard let chosen, let model = chosen.models.first?.slug else { return nil }
         return ModelSelection(instanceId: chosen.instanceId, model: model)
+    }
+
+    // MARK: - Last-used model memory
+
+    private static func lastUsedModelKey(for provider: ProviderKind) -> String {
+        "lastUsedModel.\(provider.rawValue)"
+    }
+
+    private func rememberModelSelection(_ selection: ModelSelection, for provider: ProviderKind) {
+        UserDefaults.standard.set(
+            "\(selection.instanceId)\t\(selection.model)",
+            forKey: Self.lastUsedModelKey(for: provider))
+    }
+
+    /// The remembered selection, only while it still points at an available
+    /// instance of this kind that lists the model — a stale entry (provider
+    /// uninstalled, model retired) falls through to the default pick.
+    private func lastUsedModelSelection(for provider: ProviderKind) -> ModelSelection? {
+        guard
+            let raw = UserDefaults.standard.string(forKey: Self.lastUsedModelKey(for: provider))
+        else { return nil }
+        let parts = raw.split(separator: "\t", maxSplits: 1).map(String.init)
+        guard parts.count == 2 else { return nil }
+        let (instanceID, modelSlug) = (parts[0], parts[1])
+        guard
+            let instance = providersByInstanceId[instanceID],
+            providerKind(fromDriver: instance.driver) == provider,
+            availability(for: instance) == .available,
+            instance.models.contains(where: { $0.slug == modelSlug })
+        else { return nil }
+        return ModelSelection(instanceId: instanceID, model: modelSlug)
     }
 }
 
