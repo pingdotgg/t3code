@@ -68,6 +68,10 @@ import { showDesktopConfirmDialog } from "./confirmDialog.ts";
 import { resolveDesktopServerExposure } from "./serverExposure.ts";
 import { syncShellEnvironment } from "./syncShellEnvironment.ts";
 import { waitForBackendStartupReady } from "./backendStartupReadiness.ts";
+import {
+  createPackagedStartupLoadingUrl,
+  navigatePackagedStartupWindow,
+} from "./packagedStartupWindow.ts";
 import { getAutoUpdateDisabledReason, shouldBroadcastDownloadProgress } from "./updateState.ts";
 import { doesVersionMatchDesktopUpdateChannel } from "./updateChannels.ts";
 import { ServerListeningDetector } from "./serverListeningDetector.ts";
@@ -504,18 +508,21 @@ async function waitForBackendWindowReady(baseUrl: string): Promise<"listening" |
 
 function ensureInitialBackendWindowOpen(): void {
   const existingWindow = mainWindow ?? BrowserWindow.getAllWindows()[0] ?? null;
-  if (isDevelopment || existingWindow !== null || backendInitialWindowOpenInFlight !== null) {
+  if (isDevelopment || backendInitialWindowOpenInFlight !== null) {
     return;
+  }
+  const startupWindow =
+    existingWindow ?? createWindow(createPackagedStartupLoadingUrl(APP_DISPLAY_NAME));
+  if (!existingWindow) {
+    mainWindow = startupWindow;
+    writeDesktopLogHeader("bootstrap loading window created");
   }
 
   const nextOpen = waitForBackendWindowReady(backendHttpUrl)
-    .then((source) => {
+    .then(async (source) => {
       writeDesktopLogHeader(`bootstrap backend ready source=${source}`);
-      if (mainWindow ?? BrowserWindow.getAllWindows()[0]) {
-        return;
-      }
-      mainWindow = createWindow();
-      writeDesktopLogHeader("bootstrap main window created");
+      await navigatePackagedStartupWindow(startupWindow, backendHttpUrl);
+      writeDesktopLogHeader("bootstrap loading window navigated to backend");
     })
     .catch((error) => {
       if (isBackendReadinessAborted(error)) {
@@ -2038,7 +2045,7 @@ function syncAllWindowAppearance(): void {
 
 nativeTheme.on("updated", syncAllWindowAppearance);
 
-function createWindow(): BrowserWindow {
+function createWindow(initialUrl?: string): BrowserWindow {
   const window = new BrowserWindow({
     width: 1100,
     height: 780,
@@ -2143,7 +2150,7 @@ function createWindow(): BrowserWindow {
     void window.loadURL(resolveDesktopDevServerUrl());
     window.webContents.openDevTools({ mode: "detach" });
   } else {
-    void window.loadURL(backendHttpUrl);
+    void window.loadURL(initialUrl ?? backendHttpUrl);
   }
 
   window.on("closed", () => {

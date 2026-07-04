@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 
+import * as Crypto from "node:crypto";
+
 import desktopPackageJson from "../apps/desktop/package.json" with { type: "json" };
+import rootPackageJson from "../package.json" with { type: "json" };
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
 
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
@@ -223,6 +226,21 @@ interface StagePackageJson {
     readonly "electron-builder": string;
   };
   readonly overrides: Record<string, unknown>;
+}
+
+interface DesktopStageCacheKeyInput {
+  readonly platform: typeof BuildPlatform.Type;
+  readonly arch: typeof BuildArch.Type;
+  readonly target: string;
+  readonly lockfile: string;
+  readonly packageManager: string;
+  readonly dependencies: Record<string, unknown>;
+  readonly devDependencies: StagePackageJson["devDependencies"];
+  readonly overrides: Record<string, unknown>;
+}
+
+export function resolveDesktopStageCacheKey(input: DesktopStageCacheKeyInput): string {
+  return Crypto.createHash("sha256").update(JSON.stringify(input)).digest("hex").slice(0, 20);
 }
 
 const AzureTrustedSigningOptionsConfig = Config.all({
@@ -679,7 +697,7 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
 
   if (platform === "mac") {
     buildConfig.mac = {
-      target: target === "dmg" ? [target, "zip"] : [target],
+      ...(target === "dir" ? {} : { target: target === "dmg" ? [target, "zip"] : [target] }),
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
     };
@@ -808,13 +826,6 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const appVersion = options.version ?? serverPackageJson.version;
   const iconAssets = resolveDesktopBuildIconAssets(appVersion);
   const commitHash = yield* resolveGitCommitHash(repoRoot);
-  const mkdir = options.keepStage ? fs.makeTempDirectory : fs.makeTempDirectoryScoped;
-  const stageRoot = yield* mkdir({
-    prefix: `t3code-desktop-${options.platform}-stage-`,
-  });
-
-  const stageAppDir = path.join(stageRoot, "app");
-  const stageResourcesDir = path.join(stageAppDir, "apps/desktop/resources");
   const distDirs = {
     desktopDist: path.join(repoRoot, "apps/desktop/dist-electron"),
     desktopResources: path.join(repoRoot, "apps/desktop/resources"),
@@ -849,6 +860,51 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   }
 
   yield* validateBundledClientAssets(path.dirname(bundledClientEntry));
+
+  const stageDevDependencies = {
+    electron: electronVersion,
+    "electron-builder": electronBuilderVersion,
+  } satisfies StagePackageJson["devDependencies"];
+  const lockfile = yield* fs.readFileString(path.join(repoRoot, "pnpm-lock.yaml"));
+  const stageCacheKey = resolveDesktopStageCacheKey({
+    platform: options.platform,
+    arch: options.arch,
+    target: options.target,
+    lockfile,
+    packageManager: rootPackageJson.packageManager,
+    dependencies: {
+      ...resolvedServerDependencies,
+      ...resolvedDesktopRuntimeDependencies,
+    },
+    devDependencies: stageDevDependencies,
+    overrides: resolvedOverrides,
+  });
+  const stageRoot = options.keepStage
+    ? yield* fs.makeTempDirectory({ prefix: `t3code-desktop-${options.platform}-stage-` })
+    : path.join(
+        options.outputDir,
+        ".desktop-stage-cache",
+        `${options.platform}-${options.arch}-${options.flavor}-${options.target}-${stageCacheKey}`,
+      );
+  const stageAppDir = path.join(stageRoot, "app");
+  const stageResourcesDir = path.join(stageAppDir, "apps/desktop/resources");
+  const dependencyCacheMarker = path.join(stageAppDir, ".dependencies-ready");
+  const hasCachedDependencies =
+    !options.keepStage &&
+    (yield* fs.exists(path.join(stageAppDir, "node_modules"))) &&
+    (yield* fs.exists(dependencyCacheMarker));
+
+  yield* fs.makeDirectory(stageAppDir, { recursive: true });
+  // Keep pnpm from walking up into the repository workspace. The staged app is
+  // intentionally standalone and has its own dependency graph/cache lifecycle.
+  yield* fs.writeFileString(path.join(stageAppDir, "pnpm-workspace.yaml"), "packages: []\n");
+  for (const mutablePath of [
+    path.join(stageAppDir, "apps/desktop"),
+    path.join(stageAppDir, "apps/server"),
+    path.join(stageAppDir, "dist"),
+  ]) {
+    yield* fs.remove(mutablePath, { recursive: true, force: true });
+  }
 
   yield* fs.makeDirectory(path.join(stageAppDir, "apps/desktop"), { recursive: true });
   yield* fs.makeDirectory(path.join(stageAppDir, "apps/server"), { recursive: true });
@@ -894,25 +950,28 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       ...resolvedServerDependencies,
       ...resolvedDesktopRuntimeDependencies,
     },
-    devDependencies: {
-      electron: electronVersion,
-      "electron-builder": electronBuilderVersion,
-    },
+    devDependencies: stageDevDependencies,
     overrides: resolvedOverrides,
   };
 
   const stagePackageJsonString = yield* encodeJsonString(stagePackageJson);
   yield* fs.writeFileString(path.join(stageAppDir, "package.json"), `${stagePackageJsonString}\n`);
 
-  yield* Effect.log("[desktop-artifact] Installing staged packaging dependencies...");
-  yield* runCommand(
-    ChildProcess.make({
-      cwd: stageAppDir,
-      ...commandOutputOptions(options.verbose),
-      // Windows needs shell mode to resolve .cmd shims.
-      shell: process.platform === "win32",
-    })`pnpm install --no-optional --ignore-scripts`,
-  );
+  if (hasCachedDependencies) {
+    yield* Effect.log(`[desktop-artifact] Reusing staged dependencies (${stageCacheKey})...`);
+  } else {
+    yield* Effect.log("[desktop-artifact] Installing staged packaging dependencies...");
+    yield* fs.remove(path.join(stageAppDir, "node_modules"), { recursive: true, force: true });
+    yield* runCommand(
+      ChildProcess.make({
+        cwd: stageAppDir,
+        ...commandOutputOptions(options.verbose),
+        // Windows needs shell mode to resolve .cmd shims.
+        shell: process.platform === "win32",
+      })`pnpm install --no-optional --ignore-scripts`,
+    );
+    yield* fs.writeFileString(dependencyCacheMarker, `${stageCacheKey}\n`);
+  }
 
   const buildEnv: NodeJS.ProcessEnv = {
     ...process.env,
@@ -945,13 +1004,25 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     `[desktop-artifact] Building ${options.platform}/${options.target} (arch=${options.arch}, version=${appVersion})...`,
   );
   yield* runCommand(
-    ChildProcess.make({
-      cwd: stageAppDir,
-      env: buildEnv,
-      ...commandOutputOptions(options.verbose),
-      // Windows needs shell mode to resolve .cmd shims.
-      shell: process.platform === "win32",
-    })`pnpm exec electron-builder ${platformConfig.cliFlag} --${options.arch} --publish never`,
+    ChildProcess.make(
+      "pnpm",
+      [
+        "exec",
+        "electron-builder",
+        platformConfig.cliFlag,
+        `--${options.arch}`,
+        "--publish",
+        "never",
+        ...(options.target === "dir" ? ["--dir"] : []),
+      ],
+      {
+        cwd: stageAppDir,
+        env: buildEnv,
+        ...commandOutputOptions(options.verbose),
+        // Windows needs shell mode to resolve .cmd shims.
+        shell: process.platform === "win32",
+      },
+    ),
   );
 
   const stageDistDir = path.join(stageAppDir, "dist");
@@ -965,6 +1036,41 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* fs.makeDirectory(options.outputDir, { recursive: true });
 
   const copiedArtifacts: string[] = [];
+  if (options.platform === "mac" && options.target === "dir") {
+    const unpackedDir = path.join(
+      stageDistDir,
+      options.arch === "x64" ? "mac" : `mac-${options.arch}`,
+    );
+    const appBundleName = `${resolveDesktopProductName(appVersion, options.flavor)}.app`;
+    const from = path.join(unpackedDir, appBundleName);
+    const to = path.join(options.outputDir, appBundleName);
+    if (!(yield* fs.exists(from))) {
+      return yield* new BuildScriptError({
+        message: `Unpacked app bundle was not found at ${from}`,
+      });
+    }
+    if (!options.signed) {
+      // Flipping Electron fuses rewrites the framework binaries. Archive
+      // targets get a final sealing pass while `--dir` does not consistently
+      // reseal every nested helper/framework, which macOS terminates at launch.
+      yield* runCommand(
+        ChildProcess.make(
+          "codesign",
+          ["--force", "--deep", "--sign", "-", "--timestamp=none", from],
+          {
+            ...commandOutputOptions(options.verbose),
+          },
+        ),
+      );
+    }
+    yield* fs.remove(to, { recursive: true, force: true });
+    yield* runCommand(
+      ChildProcess.make("ditto", [from, to], {
+        ...commandOutputOptions(options.verbose),
+      }),
+    );
+    copiedArtifacts.push(to);
+  }
   for (const entry of stageEntries) {
     const from = path.join(stageDistDir, entry);
     const stat = yield* fs.stat(from).pipe(Effect.orElseSucceed(() => null));

@@ -8,6 +8,7 @@ import {
   resolveDesktopArtifactName,
   resolveDesktopBuildIconAssets,
   resolveDesktopProductName,
+  resolveDesktopStageCacheKey,
   resolveDesktopUpdateChannel,
   resolveElectronFuses,
   resolveMockUpdateServerPort,
@@ -68,6 +69,29 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.equal(resolveDesktopAppId("dev"), "com.t3tools.t3code.dev");
     assert.equal(resolveDesktopArtifactName("alpha"), "T3-Code-${version}-${arch}.${ext}");
     assert.equal(resolveDesktopArtifactName("dev"), "T3-Code-Dev-${version}-${arch}.${ext}");
+  });
+
+  it("keys staged dependencies by dependency and toolchain inputs, not app code", () => {
+    const base = {
+      platform: "mac" as const,
+      arch: "arm64" as const,
+      target: "dir",
+      lockfile: "lockfile-v1",
+      packageManager: "pnpm@10.24.0",
+      dependencies: { effect: "1.0.0" },
+      devDependencies: { electron: "40.6.0", "electron-builder": "26.15.3" },
+      overrides: {},
+    };
+
+    assert.equal(resolveDesktopStageCacheKey(base), resolveDesktopStageCacheKey({ ...base }));
+    assert.notEqual(
+      resolveDesktopStageCacheKey(base),
+      resolveDesktopStageCacheKey({ ...base, lockfile: "lockfile-v2" }),
+    );
+    assert.notEqual(
+      resolveDesktopStageCacheKey(base),
+      resolveDesktopStageCacheKey({ ...base, target: "dmg" }),
+    );
   });
 
   it("switches desktop packaging icons to the nightly artwork for nightly versions", () => {

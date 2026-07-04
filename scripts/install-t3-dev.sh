@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 #
-# Build the arm64 macOS Dev DMG and install it into /Applications, replacing any
-# previous Dev installation. Quits the running Dev app first, clears quarantine,
-# and launches the freshly installed build.
+# Build the arm64 macOS Dev app directly and install it into /Applications,
+# replacing any previous Dev installation. The default fast path skips DMG/ZIP
+# creation; pass --dmg when validating the release artifact path.
 #
 # Usage:
 #   scripts/install-t3-dev.sh              # build + install + launch Dev
-#   scripts/install-t3-dev.sh --no-build   # reuse the existing Dev DMG
+#   scripts/install-t3-dev.sh --no-build   # reuse the existing unpacked Dev app
 #   scripts/install-t3-dev.sh --no-launch  # skip the open at the end
+#   scripts/install-t3-dev.sh --dmg        # build and install through a Dev DMG
 #
 set -euo pipefail
 
@@ -21,10 +22,12 @@ RELEASE_DIR="${REPO_ROOT}/release"
 
 DO_BUILD=1
 DO_LAUNCH=1
+USE_DMG=0
 for arg in "$@"; do
   case "$arg" in
     --no-build) DO_BUILD=0 ;;
     --no-launch) DO_LAUNCH=0 ;;
+    --dmg) USE_DMG=1 ;;
     -h|--help)
       sed -n '2,12p' "$0"
       exit 0
@@ -50,29 +53,30 @@ log() { printf '\n[install-t3-dev] %s\n' "$*"; }
 
 log "Quitting any running ${APP_NAME} instance..."
 osascript -e "tell application \"${APP_NAME}\" to quit" >/dev/null 2>&1 || true
-# Give the app a moment to exit cleanly, then force-kill any stragglers.
-sleep 1
+# Wait only as long as needed for a clean exit, then force-kill stragglers.
+for _ in {1..20}; do
+  if ! pgrep -f "${APP_BUNDLE}/Contents/MacOS/" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.05
+done
 pkill -f "${APP_BUNDLE}/Contents/MacOS/" >/dev/null 2>&1 || true
 
 if [[ "$DO_BUILD" -eq 1 ]]; then
-  log "Building ${APP_FLAVOR} arm64 DMG (this takes ~1 minute)..."
-  rm -f "${RELEASE_DIR}"/T3-Code-Dev-*-arm64.dmg \
-        "${RELEASE_DIR}"/T3-Code-Dev-*-arm64.dmg.blockmap \
-        "${RELEASE_DIR}"/T3-Code-Dev-*-arm64.zip \
-        "${RELEASE_DIR}"/T3-Code-Dev-*-arm64.zip.blockmap
-  ( cd "$REPO_ROOT" && node scripts/build-desktop-artifact.ts --platform mac --target dmg --arch arm64 --flavor "$APP_FLAVOR" )
+  if [[ "$USE_DMG" -eq 1 ]]; then
+    log "Building ${APP_FLAVOR} arm64 DMG..."
+    rm -f "${RELEASE_DIR}"/T3-Code-Dev-*-arm64.dmg \
+          "${RELEASE_DIR}"/T3-Code-Dev-*-arm64.dmg.blockmap \
+          "${RELEASE_DIR}"/T3-Code-Dev-*-arm64.zip \
+          "${RELEASE_DIR}"/T3-Code-Dev-*-arm64.zip.blockmap
+    ( cd "$REPO_ROOT" && node scripts/build-desktop-artifact.ts --platform mac --target dmg --arch arm64 --flavor "$APP_FLAVOR" )
+  else
+    log "Building unpacked ${APP_FLAVOR} arm64 app..."
+    rm -rf "${RELEASE_DIR}/${APP_BUNDLE}"
+    ( cd "$REPO_ROOT" && node scripts/build-desktop-artifact.ts --platform mac --target dir --arch arm64 --flavor "$APP_FLAVOR" )
+  fi
 fi
 
-DMG_PATH="$(ls -t "${RELEASE_DIR}"/${ARTIFACT_GLOB} 2>/dev/null | head -n 1 || true)"
-if [[ -z "$DMG_PATH" || ! -f "$DMG_PATH" ]]; then
-  echo "No arm64 DMG found in ${RELEASE_DIR}." >&2
-  echo "Re-run without --no-build to produce one." >&2
-  exit 1
-fi
-log "Using DMG: ${DMG_PATH}"
-
-# Mount the DMG into a temporary mount point and ensure we always detach it,
-# even if ditto/cp fails.
 MOUNT_POINT=""
 cleanup() {
   if [[ -n "$MOUNT_POINT" && -d "$MOUNT_POINT" ]]; then
@@ -81,18 +85,29 @@ cleanup() {
 }
 trap cleanup EXIT
 
-log "Mounting DMG..."
-ATTACH_OUTPUT="$(hdiutil attach -nobrowse -readonly -plist "$DMG_PATH")"
-# Pull the first /Volumes/* mount point out of the plist.
-MOUNT_POINT="$(printf '%s' "$ATTACH_OUTPUT" \
-  | /usr/bin/awk '/<string>\/Volumes\//{ sub(/.*<string>/,""); sub(/<\/string>.*/,""); print; exit }')"
-if [[ -z "$MOUNT_POINT" || ! -d "$MOUNT_POINT" ]]; then
-  echo "Failed to determine DMG mount point." >&2
-  exit 1
+if [[ "$USE_DMG" -eq 1 ]]; then
+  DMG_PATH="$(ls -t "${RELEASE_DIR}"/${ARTIFACT_GLOB} 2>/dev/null | head -n 1 || true)"
+  if [[ -z "$DMG_PATH" || ! -f "$DMG_PATH" ]]; then
+    echo "No arm64 DMG found in ${RELEASE_DIR}." >&2
+    echo "Re-run without --no-build to produce one." >&2
+    exit 1
+  fi
+  log "Using DMG: ${DMG_PATH}"
+  log "Mounting DMG..."
+  ATTACH_OUTPUT="$(hdiutil attach -nobrowse -readonly -plist "$DMG_PATH")"
+  MOUNT_POINT="$(printf '%s' "$ATTACH_OUTPUT" \
+    | /usr/bin/awk '/<string>\/Volumes\//{ sub(/.*<string>/,""); sub(/<\/string>.*/,""); print; exit }')"
+  if [[ -z "$MOUNT_POINT" || ! -d "$MOUNT_POINT" ]]; then
+    echo "Failed to determine DMG mount point." >&2
+    exit 1
+  fi
+  log "Mounted at: ${MOUNT_POINT}"
+  SRC_APP="${MOUNT_POINT}/${APP_BUNDLE}"
+else
+  SRC_APP="${RELEASE_DIR}/${APP_BUNDLE}"
+  log "Using unpacked app: ${SRC_APP}"
 fi
-log "Mounted at: ${MOUNT_POINT}"
 
-SRC_APP="${MOUNT_POINT}/${APP_BUNDLE}"
 if [[ ! -d "$SRC_APP" ]]; then
   echo "Source app not found at ${SRC_APP}." >&2
   ls -la "$MOUNT_POINT" >&2
