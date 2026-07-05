@@ -19,7 +19,7 @@ struct ChatTimelineRowView: View {
     private func singleRow(_ item: TimelineItem) -> some View {
         switch item {
         case .userMessage(_, let text, _):
-            UserMessageBubble(text: text)
+            UserMessageBubble(text: text, model: model)
         case .assistantMessage(_, let markdown, let isStreaming, _):
             AssistantMarkdownView(markdown: markdown, isStreaming: isStreaming)
         case .toolEvent(_, let name, let detail, let kind, let status, _):
@@ -48,19 +48,76 @@ struct ChatTimelineRowView: View {
     }
 }
 
-/// Right-aligned solid bubble for the user's own messages.
+/// Right-aligned solid bubble for the user's own messages, with a
+/// hover-revealed action row (copy / edit / retry). Sessions are stateful on
+/// the provider side, so Edit and Retry send a new message rather than
+/// rewriting history: Edit stages the text in the composer, Retry resends it
+/// as-is.
 private struct UserMessageBubble: View {
     let text: String
+    let model: AppModel
+
+    @UIState private var isHovering = false
+    /// Local double-click guard: `canResend` flips only after the thread's
+    /// status round-trips to `.running`, which is async.
+    @UIState private var isResending = false
+
+    /// Resending mid-turn would interleave with the running agent; the
+    /// composer's send path has the same gate.
+    private var canResend: Bool {
+        model.connection == .ready && model.selectedThread?.status != .running && !isResending
+    }
 
     var body: some View {
         HStack {
             Spacer(minLength: 48)
-            Text(text)
-                .textSelection(.enabled)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 16))
-                .foregroundStyle(.white)
+            VStack(alignment: .trailing, spacing: 3) {
+                Text(text)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 16))
+                    .foregroundStyle(.white)
+
+                // Row keeps its layout slot and fades on hover — overlaying
+                // would collide with the next timeline row.
+                HStack(spacing: 2) {
+                    CopyActionButton(text: text)
+                    MessageActionButton(
+                        systemImage: "pencil", help: "Edit in composer and resend",
+                        disabled: !canResend
+                    ) {
+                        model.stageComposerText(text)
+                    }
+                    MessageActionButton(
+                        systemImage: "arrow.clockwise", help: "Send this message again",
+                        disabled: !canResend
+                    ) {
+                        resend()
+                    }
+                }
+                .opacity(isHovering ? 1 : 0)
+            }
+            // Hover and context menu live on the bubble stack, not the full
+            // row — the spacer's empty area shouldn't reveal actions.
+            .onHover { isHovering = $0 }
+            .animation(Motion.fade, value: isHovering)
+            .contextMenu {
+                Button("Copy") { Pasteboard.copy(text) }
+                Button("Edit in Composer") { model.stageComposerText(text) }
+                    .disabled(!canResend)
+                Button("Retry") { resend() }
+                    .disabled(!canResend)
+            }
+        }
+    }
+
+    private func resend() {
+        guard canResend else { return }
+        isResending = true
+        Task {
+            await model.send(text: text)
+            isResending = false
         }
     }
 }
