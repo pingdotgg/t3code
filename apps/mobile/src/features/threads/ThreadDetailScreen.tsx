@@ -15,9 +15,10 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { formatElapsed } from "@t3tools/shared/orchestrationTiming";
+import { BlurView } from "expo-blur";
 import * as Haptics from "expo-haptics";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { View, type GestureResponderEvent } from "react-native";
+import { StyleSheet, useColorScheme, View, type GestureResponderEvent } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -179,6 +180,7 @@ const WorkingDurationPill = memo(function WorkingDurationPill(props: {
   readonly startedAt: string;
 }) {
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const isDarkMode = useColorScheme() === "dark";
 
   useEffect(() => {
     const intervalId = setInterval(() => {
@@ -191,16 +193,24 @@ const WorkingDurationPill = memo(function WorkingDurationPill(props: {
 
   return (
     <View className="px-4 pb-2" style={{ flexShrink: 0 }}>
-      <View className="self-start rounded-full border border-neutral-200/80 bg-neutral-50/90 px-3 py-2 dark:border-white/[0.08] dark:bg-white/[0.04]">
-        <View className="flex-row items-center gap-2">
-          <View className="flex-row items-center gap-1">
-            <View className="h-1.5 w-1.5 rounded-full bg-neutral-400 dark:bg-neutral-500" />
-            <View className="h-1.5 w-1.5 rounded-full bg-neutral-400/80 dark:bg-neutral-500/80" />
-            <View className="h-1.5 w-1.5 rounded-full bg-neutral-400/60 dark:bg-neutral-500/60" />
+      <View className="self-start overflow-hidden rounded-full border border-neutral-200/80 dark:border-white/[0.08]">
+        <BlurView
+          intensity={28}
+          tint={isDarkMode ? "dark" : "light"}
+          experimentalBlurMethod="dimezisBlurView"
+          style={StyleSheet.absoluteFill}
+        />
+        <View className="bg-neutral-50/60 px-3 py-2 dark:bg-white/[0.03]">
+          <View className="flex-row items-center gap-2">
+            <View className="flex-row items-center gap-1">
+              <View className="h-1.5 w-1.5 rounded-full bg-neutral-400 dark:bg-neutral-500" />
+              <View className="h-1.5 w-1.5 rounded-full bg-neutral-400/80 dark:bg-neutral-500/80" />
+              <View className="h-1.5 w-1.5 rounded-full bg-neutral-400/60 dark:bg-neutral-500/60" />
+            </View>
+            <Text className="font-t3-medium text-xs text-neutral-600 dark:text-neutral-400">
+              Working for {durationLabel}
+            </Text>
           </View>
-          <Text className="font-t3-medium text-xs text-neutral-600 dark:text-neutral-400">
-            Working for {durationLabel}
-          </Text>
         </View>
       </View>
     </View>

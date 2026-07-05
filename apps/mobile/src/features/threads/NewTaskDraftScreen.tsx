@@ -1,7 +1,7 @@
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { Alert, InteractionManager, View, useColorScheme } from "react-native";
+import { Alert, InteractionManager, Platform, View, useColorScheme } from "react-native";
 import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
@@ -446,26 +446,37 @@ export function NewTaskDraftScreen(props: {
     );
   }
 
+  const isAndroid = Platform.OS === "android";
+  const promptEditor = (
+    <ComposerEditor
+      ref={promptInputRef}
+      autoFocus
+      multiline
+      scrollEnabled
+      value={flow.prompt}
+      skills={flow.selectedProviderSkills}
+      onChangeText={flow.setPrompt}
+      onPasteImages={(uris) => void handleNativePasteImages(uris)}
+      placeholder={`Describe a coding task in ${selectedProject.title}`}
+      style={isAndroid ? { maxHeight: 160, minHeight: 44 } : { flex: 1, minHeight: 0 }}
+      textStyle={bodyText}
+    />
+  );
+
   return (
     <View className="flex-1 bg-sheet">
       <NativeStackScreenOptions options={{ title: selectedProject.title }} />
 
       <KeyboardAvoidingView automaticOffset behavior="padding" style={{ flex: 1 }}>
-        <View style={{ flex: 1, minHeight: 0, paddingHorizontal: 20, paddingTop: 8 }}>
-          <ComposerEditor
-            ref={promptInputRef}
-            autoFocus
-            multiline
-            scrollEnabled
-            value={flow.prompt}
-            skills={flow.selectedProviderSkills}
-            onChangeText={flow.setPrompt}
-            onPasteImages={(uris) => void handleNativePasteImages(uris)}
-            placeholder={`Describe a coding task in ${selectedProject.title}`}
-            style={{ flex: 1, minHeight: 0 }}
-            textStyle={bodyText}
-          />
-        </View>
+        {isAndroid ? (
+          // Android reads like an empty thread: blank canvas above, prompt
+          // docked in the bottom bar with the composer controls.
+          <View style={{ flex: 1 }} />
+        ) : (
+          <View style={{ flex: 1, minHeight: 0, paddingHorizontal: 20, paddingTop: 8 }}>
+            {promptEditor}
+          </View>
+        )}
 
         <View
           style={{
@@ -474,6 +485,9 @@ export function NewTaskDraftScreen(props: {
             paddingBottom: controlsBottomPadding,
           }}
         >
+          {isAndroid ? (
+            <View style={{ paddingHorizontal: 20, paddingTop: 10 }}>{promptEditor}</View>
+          ) : null}
           {flow.attachments.length > 0 ? (
             <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
               <ComposerAttachmentStrip

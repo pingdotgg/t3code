@@ -409,9 +409,15 @@ export const RootStack = createNativeStackNavigator({
       options: {
         gestureEnabled: true,
         headerShown: false,
-        presentation: "formSheet",
-        sheetAllowedDetents: [0.7, 0.92],
-        sheetGrabberVisible: true,
+        // Android pushes settings as a regular full page with an in-screen
+        // back header; iOS keeps the detented form sheet.
+        ...(Platform.OS === "android"
+          ? { presentation: "card" as const }
+          : {
+              presentation: "formSheet" as const,
+              sheetAllowedDetents: [0.7, 0.92],
+              sheetGrabberVisible: true,
+            }),
       },
     }),
     Connections: createNativeStackScreen({
