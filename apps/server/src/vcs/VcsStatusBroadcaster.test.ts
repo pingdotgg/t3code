@@ -268,6 +268,45 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
 
+  it.effect("refreshes both parts without an upstream fetch when requested", () => {
+    const state = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus as VcsStatusRemoteResult | null,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+      remoteStatusRefreshUpstreamValues: [] as Array<boolean | undefined>,
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const initial = yield* broadcaster.getStatus({ cwd: "/repo" });
+
+      state.currentLocalStatus = {
+        ...baseLocalStatus,
+        hasWorkingTreeChanges: true,
+      };
+      state.currentRemoteStatus = {
+        ...baseRemoteStatus,
+        aheadOfDefaultCount: 4,
+      };
+
+      const refreshed = yield* broadcaster.refreshStatusWithoutFetch("/repo");
+      const cached = yield* broadcaster.getStatus({ cwd: "/repo" });
+
+      assert.deepStrictEqual(initial, baseStatus);
+      assert.deepStrictEqual(refreshed, {
+        ...state.currentLocalStatus,
+        ...state.currentRemoteStatus,
+      });
+      assert.deepStrictEqual(cached, refreshed);
+      assert.deepStrictEqual(state.remoteStatusRefreshUpstreamValues, [undefined, false]);
+      assert.equal(state.localInvalidationCalls, 1);
+      assert.equal(state.remoteInvalidationCalls, 0);
+    }).pipe(Effect.provide(makeTestLayer(state)));
+  });
+
   it.effect("normalizes symlinked CWDs before cache lookup and workflow calls", () => {
     const seenCwds: string[] = [];
     const state = {

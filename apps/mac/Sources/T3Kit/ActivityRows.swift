@@ -78,6 +78,17 @@ public enum ActivityRows {
                     itemType: nil, phase: .succeeded)
             }
 
+        case ActivityKind.runtimeWarning:
+            // Unknown-SDK-message warnings whose whole body is the server's
+            // no-content marker (describeUnknownSdkMessage) carry nothing a
+            // user can act on — e.g. Claude's 'commands_changed' pushes in
+            // threads persisted before the server learned to ignore them.
+            // Warnings with real preview text keep their notice row via the
+            // tone fallthrough below.
+            if activity.summary.hasSuffix("(no displayable text content)") {
+                return nil
+            }
+
         case ActivityKind.toolUpdated, ActivityKind.toolCompleted:
             // ExitPlanMode markers are internal plan-boundary bookkeeping,
             // not user-facing tool work (web: isPlanBoundaryToolActivity).

@@ -111,6 +111,16 @@ public protocol BackendService: Sendable {
         threadID: String, action: GitAction, commitMessage: String?
     ) async throws -> GitActionOutcome
 
+    // Mobile (iPhone) pairing — Settings ▸ iPhone.
+
+    /// Whether the running sidecar is bound beyond loopback, i.e. reachable
+    /// by the mobile app on the local network. False when the user enabled
+    /// mobile access after this launch (the bind host is fixed per process).
+    func isServerLanReachable() async -> Bool
+    /// Mint a fresh one-time pairing credential and the QR-able pairing URL
+    /// the SergeCode mobile app scans to connect to this machine.
+    func mintMobilePairing() async throws -> MobilePairingInfo
+
     /// Server-side settings (the editable subset).
     func settings() async throws -> AppSettings
     /// Applies the full editable subset as a patch; returns the merged result.
@@ -119,4 +129,20 @@ public protocol BackendService: Sendable {
     func refreshProviders() async throws
     /// Run a provider CLI's own update command.
     func updateProvider(instanceID: String) async throws
+}
+
+/// One freshly-minted mobile pairing handshake: the URL the iPhone scans
+/// (`http://<lan-ip>:<port>/pair#token=<code>`, the same shape the server's
+/// headless `serve` prints — apps/server/src/startupAccess.ts
+/// `buildPairingUrl`), the raw code for manual entry, and its expiry.
+public struct MobilePairingInfo: Sendable, Equatable {
+    public let pairingURL: URL
+    public let credential: String
+    public let expiresAt: Date
+
+    public init(pairingURL: URL, credential: String, expiresAt: Date) {
+        self.pairingURL = pairingURL
+        self.credential = credential
+        self.expiresAt = expiresAt
+    }
 }

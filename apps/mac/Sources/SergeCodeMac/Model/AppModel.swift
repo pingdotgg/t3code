@@ -25,6 +25,16 @@ public final class AppModel {
     /// In-app dictation (mic → local ASR → on-device cleanup → composer).
     public let dictation = DictationController()
 
+    /// Text staged for the composer by a timeline action (Edit on a sent
+    /// message). The composer consumes it via `takeComposerPrefill`. A fresh
+    /// UUID per staging makes repeat edits of the same text observable.
+    public private(set) var composerPrefill: ComposerPrefill?
+
+    public struct ComposerPrefill: Equatable, Sendable {
+        public let id: UUID
+        public let text: String
+    }
+
     private let backend: any BackendService
     private var eventTask: Task<Void, Never>?
 
@@ -202,6 +212,17 @@ public final class AppModel {
 
     // MARK: - Commands
 
+    /// Stages `text` for the composer (Edit action on a sent message).
+    public func stageComposerText(_ text: String) {
+        composerPrefill = ComposerPrefill(id: UUID(), text: text)
+    }
+
+    /// Marks the staged prefill consumed. Returns it, or nil if already taken.
+    public func takeComposerPrefill() -> ComposerPrefill? {
+        defer { composerPrefill = nil }
+        return composerPrefill
+    }
+
     public func send(text: String, attachments: [OutgoingAttachment] = []) async {
         guard let threadID = selectedThreadID, !(text.isEmpty && attachments.isEmpty) else { return }
         do {
@@ -367,6 +388,18 @@ public final class AppModel {
         } catch {
             lastError = String(describing: error)
         }
+    }
+
+    // MARK: - Mobile pairing (Settings ▸ iPhone)
+
+    public func isServerLanReachable() async -> Bool {
+        await backend.isServerLanReachable()
+    }
+
+    /// Throws so the settings tab can render the failure inline rather than
+    /// routing through the global `lastError` banner.
+    public func mintMobilePairing() async throws -> MobilePairingInfo {
+        try await backend.mintMobilePairing()
     }
 
     // MARK: - Settings / providers / archive

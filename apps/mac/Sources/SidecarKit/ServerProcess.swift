@@ -243,7 +243,12 @@ public actor ServerProcess {
     // MARK: - Readiness
 
     private func pollReadiness(runID: UUID, pid: Int32) async {
-        guard let url = URL(string: "http://\(config.host):\(config.port)\(Self.readinessPath)") else {
+        // A wildcard bind (0.0.0.0 / ::, used when LAN access for the mobile
+        // app is enabled) is not a connectable address; probe via loopback.
+        let probeHost =
+            (config.host == "0.0.0.0" || config.host == "::" || config.host == "[::]")
+            ? "127.0.0.1" : config.host
+        guard let url = URL(string: "http://\(probeHost):\(config.port)\(Self.readinessPath)") else {
             return
         }
         let deadline = Date().addingTimeInterval(Self.readinessTimeout)

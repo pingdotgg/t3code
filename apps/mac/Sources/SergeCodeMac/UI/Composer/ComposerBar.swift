@@ -22,6 +22,7 @@ public struct ComposerBar: View {
     @UIState private var mentionSearchTask: Task<Void, Never>?
 
     @UIState private var showDictationDownloadPrompt = false
+    @FocusState private var editorFocused: Bool
 
     private static let maxAttachments = 8
     private static let maxAttachmentBytes = 10 * 1024 * 1024
@@ -128,6 +129,7 @@ public struct ComposerBar: View {
 
                     TextEditor(text: $draft)
                         .font(.body)
+                        .focused($editorFocused)
                         .scrollContentBackground(.hidden)
                         .frame(minHeight: 22, maxHeight: 120)
                         .fixedSize(horizontal: false, vertical: true)
@@ -241,6 +243,14 @@ public struct ComposerBar: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Allow SurgeCode to use the microphone in Privacy & Security → Microphone.")
+        }
+        // Edit action on a sent message: load its text as the draft. An
+        // in-progress draft is replaced — the edit gesture is explicit intent
+        // to compose from the old message.
+        .onChange(of: model.composerPrefill) { _, prefill in
+            guard prefill != nil, let staged = model.takeComposerPrefill() else { return }
+            draft = staged.text
+            editorFocused = true
         }
         .fileImporter(
             isPresented: $showFileImporter, allowedContentTypes: [.image],
