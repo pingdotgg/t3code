@@ -14,6 +14,11 @@ public enum DictationModelStatus: Equatable, Sendable {
     case notDownloaded
     case downloading(Double)
     case ready
+
+    public var isDownloading: Bool {
+        if case .downloading = self { return true }
+        return false
+    }
 }
 
 /// Drives the in-app dictation flow: mic capture → local Parakeet v3
@@ -44,6 +49,9 @@ public final class DictationController {
     public var modelCacheDirectory: URL { AsrModels.defaultCacheDirectory(for: .v3) }
 
     public static let autoLanguage = "auto"
+    /// Parakeet v3's supported language hints, exposed as plain codes so the
+    /// settings UI doesn't need to import FluidAudio.
+    public static let supportedLanguageCodes: [String] = Language.allCases.map(\.rawValue)
     private static let cleanupKey = "dictation.cleanupEnabled"
     private static let languageKey = "dictation.language"
 
@@ -173,6 +181,18 @@ public final class DictationController {
         return manager
     }
 
+    #if DEBUG
+        /// UIProbe/E2E hook: run the real transcribe → clean pipeline on an
+        /// audio file instead of the microphone (downloads models if absent).
+        public func processAudioFileForProbe(_ url: URL) async throws -> (raw: String, cleaned: String) {
+            let manager = try await loadedASRManager()
+            let result = try await manager.transcribeFile(url, language: Language(rawValue: languageCode))
+            let raw = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let cleaned = await cleaner.clean(raw)
+            return (raw, cleaned)
+        }
+    #endif
+
     // MARK: - Errors
 
     private func presentError(_ message: String) {
@@ -194,5 +214,10 @@ extension AsrManager {
     ) async throws -> ASRResult {
         var decoderState = TdtDecoderState.make(decoderLayers: decoderLayerCount)
         return try await transcribe(buffer, decoderState: &decoderState, language: language)
+    }
+
+    func transcribeFile(_ url: URL, language: Language?) async throws -> ASRResult {
+        var decoderState = TdtDecoderState.make(decoderLayers: decoderLayerCount)
+        return try await transcribe(url, decoderState: &decoderState, language: language)
     }
 }

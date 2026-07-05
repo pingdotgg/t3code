@@ -18,6 +18,9 @@ public struct SettingsScene: View {
             ProvidersSettingsTab(model: model)
                 .tabItem { Label("Providers", systemImage: "puzzlepiece.extension") }
 
+            DictationSettingsTab(model: model)
+                .tabItem { Label("Dictation", systemImage: "mic") }
+
             ArchiveSettingsTab(model: model)
                 .tabItem { Label("Archive", systemImage: "archivebox") }
 
@@ -112,6 +115,104 @@ private struct GeneralSettingsTab: View {
                 draft = next
                 Task { await model.saveSettings(next) }
             })
+    }
+}
+
+// MARK: - Dictation
+
+// Internal (not private) so the DEBUG UIProbe can host it directly.
+struct DictationSettingsTab: View {
+    @Bindable private var dictation: DictationController
+
+    init(model: AppModel) {
+        dictation = model.dictation
+    }
+
+    var body: some View {
+        Form {
+            Section("Speech model") {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Parakeet v3 (on-device)")
+                        Text("25 languages · ~2.5 GB · runs on the Neural Engine")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    modelStatusControl
+                }
+                .padding(.vertical, 2)
+
+                LabeledContent("Storage") {
+                    Text(dictation.modelCacheDirectory.path(percentEncoded: false))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+
+            Section("Transcript cleanup") {
+                Toggle(
+                    "Clean up transcript with on-device AI",
+                    isOn: $dictation.cleanupEnabled)
+                Text(
+                    dictation.cleanupAvailable
+                        ? "Fixes punctuation and removes filler words with the built-in Apple Intelligence model. Nothing leaves this Mac."
+                        : "Requires Apple Intelligence. Until it's enabled, dictation inserts the raw transcript."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
+            Section("Language") {
+                Picker("Spoken language", selection: $dictation.languageCode) {
+                    Text("Auto-detect").tag(DictationController.autoLanguage)
+                    ForEach(DictationController.supportedLanguageCodes, id: \.self) { code in
+                        Text(Self.languageName(for: code)).tag(code)
+                    }
+                }
+            }
+
+            Section {
+                Text("Dictation is fully local: audio and transcripts never leave this Mac.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+        .animation(Motion.ambient, value: dictation.modelStatus)
+    }
+
+    @ViewBuilder
+    private var modelStatusControl: some View {
+        switch dictation.modelStatus {
+        case .notDownloaded:
+            Button("Download") { dictation.downloadModel() }
+        case .downloading(let fraction):
+            HStack(spacing: 8) {
+                ProgressView(value: fraction)
+                    .frame(width: 90)
+                Text(fraction.formatted(.percent.precision(.fractionLength(0))))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+        case .ready:
+            HStack(spacing: 10) {
+                Label("Downloaded", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                    .font(.callout)
+                Button("Remove") { dictation.removeModel() }
+                    .controlSize(.small)
+            }
+        }
+    }
+
+    private static func languageName(for code: String) -> String {
+        Locale.current.localizedString(forLanguageCode: code)?.capitalized ?? code
     }
 }
 

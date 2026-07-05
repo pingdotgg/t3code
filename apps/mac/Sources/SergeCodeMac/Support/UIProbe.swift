@@ -45,8 +45,46 @@
                 print("UIProbe: no horizontally scrollable diff view found")
             }
 
+            print(
+                "UIProbe: dictation modelStatus=\(model.dictation.modelStatus) "
+                    + "cleanupAvailable=\(model.dictation.cleanupAvailable) "
+                    + "state=\(model.dictation.state)")
+            await snapshotDictationSettingsTab(model: model, dir: dir)
+
+            // Optional dictation E2E: transcribe + clean a wav/aiff on disk
+            // through the real pipeline (exercises model download, Parakeet,
+            // and Foundation Models cleanup — everything but the mic tap).
+            if let audioPath = ProcessInfo.processInfo.environment["SERGECODE_DICTATION_AUDIO"],
+                !audioPath.isEmpty
+            {
+                do {
+                    let (raw, cleaned) = try await model.dictation.processAudioFileForProbe(
+                        URL(fileURLWithPath: audioPath))
+                    print("UIProbe: dictation raw=\(raw)")
+                    print("UIProbe: dictation cleaned=\(cleaned)")
+                } catch {
+                    print("UIProbe: dictation e2e failed: \(error)")
+                }
+            }
+
             print("UIProbe: done")
             NSApp.terminate(nil)
+        }
+
+        /// Hosts the Dictation settings tab in its own window and captures
+        /// it (the real Settings scene won't order in during headless mock
+        /// runs, so render the tab directly).
+        private static func snapshotDictationSettingsTab(model: AppModel, dir: String) async {
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 560, height: 420),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            window.contentViewController = NSHostingController(
+                rootView: DictationSettingsTab(model: model)
+                    .frame(width: 560, height: 420))
+            window.orderFront(nil)
+            try? await Task.sleep(for: .seconds(1))
+            snapshot("3-settings-dictation", window: window, dir: dir)
+            window.orderOut(nil)
         }
 
         /// The diff panel's PanScrollView: the scroll view whose document
@@ -73,8 +111,15 @@
         }
 
         private static func snapshot(_ name: String, dir: String) {
-            guard let window = NSApp.windows.first(where: { $0.isVisible }),
-                let view = window.contentView,
+            guard let window = NSApp.windows.first(where: { $0.isVisible }) else {
+                print("UIProbe: snapshot \(name) failed (no window)")
+                return
+            }
+            snapshot(name, window: window, dir: dir)
+        }
+
+        private static func snapshot(_ name: String, window: NSWindow, dir: String) {
+            guard let view = window.contentView,
                 let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
             else {
                 print("UIProbe: snapshot \(name) failed (no window)")
