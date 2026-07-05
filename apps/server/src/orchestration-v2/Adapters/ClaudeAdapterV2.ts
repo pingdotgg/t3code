@@ -276,16 +276,23 @@ export class ClaudeAgentSdkQueryRunnerError extends Schema.TaggedErrorClass<Clau
   },
 ) {
   override get message(): string {
-    const detail =
-      this.cause instanceof Error
-        ? this.cause.message
-        : typeof this.cause === "string"
-          ? this.cause
-          : null;
-    return detail === null || detail.trim().length === 0
-      ? `Claude Agent SDK query failed (${this.method}).`
-      : `Claude Agent SDK query failed (${this.method}): ${detail}`;
+    return `Claude Agent SDK query failed (${this.method}).`;
   }
+}
+
+/**
+ * Provider-failure payloads render the failure's own message, so the runner
+ * wrapper would mask the actionable SDK error (missing binary, resume
+ * rejection, spawn failure). Surface the underlying error to the existing
+ * redaction/bounding pipeline in makeProviderFailure; the wrapper stays the
+ * failure for anything that is not a real Error.
+ */
+const isClaudeAgentSdkQueryRunnerError = Schema.is(ClaudeAgentSdkQueryRunnerError);
+
+function claudeProviderFailureCause(failure: unknown): unknown {
+  return isClaudeAgentSdkQueryRunnerError(failure) && failure.cause instanceof Error
+    ? failure.cause
+    : failure;
 }
 
 export interface ClaudeAgentSdkQueryRunnerShape {
@@ -2744,7 +2751,10 @@ export function makeClaudeAdapterV2(
               ? {}
               : {
                   failure: makeProviderFailure({
-                    cause: cause === undefined ? undefined : Cause.squash(cause),
+                    cause:
+                      cause === undefined
+                        ? undefined
+                        : claudeProviderFailureCause(Cause.squash(cause)),
                     class: "transport_error",
                   }),
                 }),
