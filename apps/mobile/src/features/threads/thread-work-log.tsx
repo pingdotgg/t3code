@@ -138,10 +138,7 @@ export function ThreadWorkLog(props: {
                     />
                   </View>
 
-                  <Text
-                    className="min-w-0 flex-1 text-xs leading-4 text-foreground"
-                    numberOfLines={1}
-                  >
+                  <Text className="min-w-0 flex-1 text-xs text-foreground" numberOfLines={1}>
                     <Text
                       className={cn(
                         "font-t3-medium text-foreground",
@@ -202,7 +199,7 @@ export function ThreadWorkLog(props: {
                   >
                     <Text
                       selectable
-                      className="text-2xs leading-[17px] text-foreground-muted"
+                      className="text-2xs leading-normal text-foreground-muted"
                       style={{ fontFamily: "ui-monospace" }}
                     >
                       {row.fullDetail}

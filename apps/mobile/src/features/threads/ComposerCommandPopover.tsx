@@ -7,8 +7,6 @@ import { Pressable, ScrollView, useColorScheme, View, type ViewStyle } from "rea
 
 import { AppText as Text } from "../../components/AppText";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
-import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
-
 export type ComposerCommandItem =
   | {
       readonly id: string;
@@ -165,11 +163,11 @@ const CommandRow = memo(function CommandRow(props: {
       </Text>
       {props.item.description ? (
         <Text
+          className="text-xs"
           numberOfLines={1}
           style={{
             flex: 1,
             minWidth: 0,
-            fontSize: MOBILE_TYPOGRAPHY.label.fontSize,
             color: "#a1a1aa",
           }}
         >

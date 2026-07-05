@@ -73,10 +73,10 @@ export function EnvironmentConnectionNotice(props: {
           />
         )}
 
-        <Text className="text-center text-lg font-t3-bold leading-[22px] text-foreground">
+        <Text className="text-center text-lg font-t3-bold text-foreground">
           {noticeTitle(props.connection.phase, props.environmentLabel)}
         </Text>
-        <Text className="text-center text-sm leading-[20px] text-foreground-muted">
+        <Text className="text-center text-sm leading-normal text-foreground-muted">
           {noticeDetail(props.connection.phase, props.resourceName, props.connection.error)}
           {props.connection.traceId ? (
             <>

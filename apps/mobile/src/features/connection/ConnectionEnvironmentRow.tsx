@@ -76,16 +76,16 @@ export function ConnectionEnvironmentRow(props: {
         />
 
         <View className="flex-1 gap-0.5">
-          <Text className="text-base font-t3-bold leading-[21px] text-foreground" numberOfLines={1}>
+          <Text className="text-base font-t3-bold leading-snug text-foreground" numberOfLines={1}>
             {props.environment.environmentLabel}
           </Text>
-          <Text className="text-xs leading-[16px] text-foreground-muted" numberOfLines={1}>
+          <Text className="text-xs text-foreground-muted" numberOfLines={1}>
             {props.environment.displayUrl}
           </Text>
           {statusLabel ? (
             <Text
               className={cn(
-                "text-xs leading-[16px]",
+                "text-xs",
                 hasConnectionFailure ? "text-rose-500 dark:text-rose-400" : "text-foreground-muted",
               )}
               numberOfLines={props.expanded ? undefined : 1}
@@ -134,7 +134,7 @@ export function ConnectionEnvironmentRow(props: {
           className="gap-3 px-4 pb-4"
         >
           {props.environment.isRelayManaged ? (
-            <Text className="text-sm leading-[18px] text-foreground-muted">
+            <Text className="text-sm text-foreground-muted">
               Managed by T3 Cloud. Tunnel details update automatically.
             </Text>
           ) : (

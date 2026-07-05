@@ -4,7 +4,7 @@ import { type LegendListRef } from "@legendapp/list/react-native";
 import type { EnvironmentId, MessageId, ThreadId, TurnId } from "@t3tools/contracts";
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import { SymbolView } from "expo-symbols";
-import { useRouter } from "expo-router";
+import { useNavigation } from "@react-navigation/native";
 import {
   memo,
   useCallback,
@@ -25,6 +25,10 @@ import {
   ActivityIndicator,
   Image,
   Linking,
+  Platform,
+  type LayoutChangeEvent,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -37,7 +41,7 @@ import {
 import { TouchableOpacity } from "react-native-gesture-handler";
 import ImageViewing from "react-native-image-viewing";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import type { SharedValue } from "react-native-reanimated";
+import { type SharedValue } from "react-native-reanimated";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import {
@@ -58,14 +62,16 @@ import {
   buildNativeReviewDiffData,
   createNativeReviewDiffTheme,
   NATIVE_REVIEW_DIFF_CONTENT_WIDTH,
-  NATIVE_REVIEW_DIFF_ROW_HEIGHT,
-  NATIVE_REVIEW_DIFF_STYLE,
 } from "../review/nativeReviewDiffAdapter";
 import { buildReviewParsedDiff } from "../review/reviewModel";
 import { cn } from "../../lib/cn";
-import type { LayoutVariant } from "../../lib/layout";
-import { buildThreadFilesNavigation } from "../../lib/routes";
-import { MOBILE_CODE_SURFACE, MOBILE_TYPOGRAPHY } from "../../lib/typography";
+import { deriveCenteredContentHorizontalPadding, type LayoutVariant } from "../../lib/layout";
+import {
+  resolveMarkdownFontSizes,
+  resolveNativeMarkdownTypography,
+} from "../../lib/appearancePreferences";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";
 import { markdownFileIconSource } from "@t3tools/mobile-markdown-text/file-icons";
 import { resolveMarkdownLinkPresentation } from "@t3tools/mobile-markdown-text/links";
 import {
@@ -82,7 +88,6 @@ const MESSAGE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
   hour: "numeric",
   minute: "2-digit",
 });
-
 function formatMessageTime(input: string): string {
   const timestamp = Date.parse(input);
   if (Number.isNaN(timestamp)) {
@@ -105,7 +110,10 @@ export interface ThreadFeedProps {
   readonly contentInsetEndAdjustment: SharedValue<number>;
   readonly contentTopInset?: number;
   readonly contentBottomInset?: number;
+  readonly contentMaxWidth?: number;
   readonly layoutVariant?: LayoutVariant;
+  readonly usesAutomaticContentInsets?: boolean;
+  readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
 }
 
@@ -273,6 +281,15 @@ function useReviewCommentColors(): ReviewCommentColors {
 
 function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSets {
   const colorScheme = useColorScheme();
+  const { appearance } = useAppearancePreferences();
+  const markdownFontSizes = useMemo(
+    () => resolveMarkdownFontSizes(appearance.baseFontSize),
+    [appearance.baseFontSize],
+  );
+  const nativeMarkdownTypography = useMemo(
+    () => resolveNativeMarkdownTypography(appearance.baseFontSize),
+    [appearance.baseFontSize],
+  );
   const colors = MARKDOWN_COLORS[colorScheme === "dark" ? "dark" : "light"];
   const inlineSkillForeground = String(useThemeColor("--color-inline-skill-foreground"));
 
@@ -316,14 +333,14 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
         xl: 16,
       },
       fontSizes: {
-        s: 13,
-        m: 15,
-        h1: 20,
-        h2: 18,
-        h3: 16,
-        h4: 14,
-        h5: 14,
-        h6: 14,
+        s: markdownFontSizes.s,
+        m: markdownFontSizes.m,
+        h1: markdownFontSizes.h1,
+        h2: markdownFontSizes.h2,
+        h3: markdownFontSizes.h3,
+        h4: markdownFontSizes.h4,
+        h5: markdownFontSizes.h5,
+        h6: markdownFontSizes.h6,
       },
       fontFamilies: {
         regular: "DMSans_400Regular",
@@ -345,7 +362,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
       list: { marginTop: 4, marginBottom: 8 },
       list_item: { marginTop: 0, marginBottom: 4 },
       task_list_item: { marginTop: 0, marginBottom: 4 },
-      text: { lineHeight: 22 },
+      text: { lineHeight: markdownFontSizes.bodyLineHeight },
       bold: {
         fontWeight: "700",
         color: markdownStrongColor,
@@ -454,7 +471,8 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
                     marginRight: 5,
                     color: inlineTextColor,
                     fontFamily: "DMSans_400Regular",
-                    ...MOBILE_TYPOGRAPHY.body,
+                    fontSize: markdownFontSizes.m,
+                    lineHeight: markdownFontSizes.bodyLineHeight,
                     textAlign: ordered ? "right" : "center",
                   }}
                 >
@@ -475,8 +493,8 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
             style={{
               color: inlineCodeTextColor,
               fontFamily: "ui-monospace",
-              fontSize: MOBILE_TYPOGRAPHY.label.fontSize,
-              lineHeight: 22,
+              fontSize: markdownFontSizes.codeBlockFontSize,
+              lineHeight: markdownFontSizes.bodyLineHeight,
             }}
           >
             {value}
@@ -512,7 +530,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
                 style={{
                   color: markdownBodyColor,
                   fontFamily: "ui-monospace",
-                  fontSize: MOBILE_TYPOGRAPHY.label.fontSize,
+                  fontSize: markdownFontSizes.codeBlockFontSize,
                   opacity: 0.7,
                   textTransform: "uppercase",
                 }}
@@ -532,8 +550,8 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
               style={{
                 color: blockTextColor,
                 fontFamily: "ui-monospace",
-                fontSize: MOBILE_TYPOGRAPHY.label.fontSize,
-                lineHeight: 18,
+                fontSize: markdownFontSizes.codeBlockFontSize,
+                lineHeight: markdownFontSizes.codeBlockLineHeight,
               }}
             >
               {content}
@@ -612,7 +630,9 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
           skillTextColor: "#f0abfc",
           quoteMarkerColor: markdownUserBodyColor,
           dividerColor: markdownUserBodyColor,
-          ...MOBILE_TYPOGRAPHY.body,
+          fontSize: nativeMarkdownTypography.fontSize,
+          lineHeight: nativeMarkdownTypography.lineHeight,
+          headingFontSizes: nativeMarkdownTypography.headingFontSizes,
           fontFamily: "DMSans_400Regular",
           headingFontFamily: "DMSans_700Bold",
           boldFontFamily: "DMSans_700Bold",
@@ -641,14 +661,16 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
           skillTextColor: inlineSkillForeground,
           quoteMarkerColor: markdownBlockquoteBorder,
           dividerColor: markdownHrColor,
-          ...MOBILE_TYPOGRAPHY.body,
+          fontSize: nativeMarkdownTypography.fontSize,
+          lineHeight: nativeMarkdownTypography.lineHeight,
+          headingFontSizes: nativeMarkdownTypography.headingFontSizes,
           fontFamily: "DMSans_400Regular",
           headingFontFamily: "DMSans_700Bold",
           boldFontFamily: "DMSans_700Bold",
         },
       },
     };
-  }, [colors, inlineSkillForeground, onLinkPress]);
+  }, [colors, inlineSkillForeground, markdownFontSizes, nativeMarkdownTypography, onLinkPress]);
 }
 
 function renderFeedEntry(
@@ -924,6 +946,7 @@ const ReviewCommentCard = memo(function ReviewCommentCard(props: {
   readonly comment: ReviewInlineComment;
   readonly colors: ReviewCommentColors;
 }) {
+  const { codeSurface, nativeReviewDiffStyle } = useAppearanceCodeSurface();
   const colorScheme = useColorScheme();
   const appearanceScheme = colorScheme === "light" ? "light" : "dark";
   const NativeReviewDiffView = resolveNativeReviewDiffView();
@@ -946,18 +969,21 @@ const ReviewCommentCard = memo(function ReviewCommentCard(props: {
     () => JSON.stringify(nativeReviewDiffTheme),
     [nativeReviewDiffTheme],
   );
-  const nativeStyleJson = useMemo(() => JSON.stringify(NATIVE_REVIEW_DIFF_STYLE), []);
+  const nativeStyleJson = useMemo(
+    () => JSON.stringify(nativeReviewDiffStyle),
+    [nativeReviewDiffStyle],
+  );
   const nativeDiffHeight = useMemo(
     () =>
       Math.min(
         360,
         Math.max(
           112,
-          compactNativeRows.length * NATIVE_REVIEW_DIFF_ROW_HEIGHT +
-            NATIVE_REVIEW_DIFF_STYLE.fileHeaderVerticalMargin,
+          compactNativeRows.length * nativeReviewDiffStyle.rowHeight +
+            nativeReviewDiffStyle.fileHeaderVerticalMargin,
         ),
       ),
-    [compactNativeRows.length],
+    [compactNativeRows.length, nativeReviewDiffStyle],
   );
   const shouldRenderNativeDiff = NativeReviewDiffView != null && compactNativeRows.length > 0;
 
@@ -987,7 +1013,7 @@ const ReviewCommentCard = memo(function ReviewCommentCard(props: {
         </View>
         <View className="min-w-0 flex-1">
           <Text
-            className="font-mono text-xs leading-[16px]"
+            className="font-mono text-xs"
             numberOfLines={1}
             style={{ color: props.colors.text }}
           >
@@ -1010,7 +1036,7 @@ const ReviewCommentCard = memo(function ReviewCommentCard(props: {
             style={StyleSheet.absoluteFill}
             appearanceScheme={appearanceScheme}
             contentWidth={NATIVE_REVIEW_DIFF_CONTENT_WIDTH}
-            rowHeight={NATIVE_REVIEW_DIFF_ROW_HEIGHT}
+            rowHeight={nativeReviewDiffStyle.rowHeight}
             rowsJson={nativeRowsJson}
             styleJson={nativeStyleJson}
             themeJson={nativeThemeJson}
@@ -1032,8 +1058,8 @@ const ReviewCommentCard = memo(function ReviewCommentCard(props: {
             style={{
               color: props.colors.text,
               fontFamily: "ui-monospace",
-              fontSize: MOBILE_CODE_SURFACE.fontSize,
-              lineHeight: MOBILE_CODE_SURFACE.rowHeight,
+              fontSize: codeSurface.fontSize,
+              lineHeight: codeSurface.rowHeight,
             }}
           >
             {props.comment.diff.trim()}
@@ -1042,11 +1068,7 @@ const ReviewCommentCard = memo(function ReviewCommentCard(props: {
       ) : null}
       {props.comment.text.length > 0 ? (
         <View className="border-t px-3 py-3" style={{ borderColor: props.colors.border }}>
-          <Text
-            selectable
-            className="text-base leading-[21px]"
-            style={{ color: props.colors.text }}
-          >
+          <Text selectable className="text-base leading-snug" style={{ color: props.colors.text }}>
             {props.comment.text}
           </Text>
         </View>
@@ -1087,7 +1109,6 @@ function ThreadFeedPlaceholder(props: {
   readonly bottomInset: number;
   readonly detail: string;
   readonly horizontalPadding: number;
-  readonly loading?: boolean;
   readonly title: string;
   readonly topInset: number;
 }) {
@@ -1104,9 +1125,8 @@ function ThreadFeedPlaceholder(props: {
       }}
     >
       <View className="max-w-[320px] items-center gap-2">
-        {props.loading ? <ActivityIndicator style={{ marginBottom: 6 }} /> : null}
         <Text className="text-center font-t3-bold text-lg text-foreground">{props.title}</Text>
-        <Text className="text-center text-sm leading-5 text-foreground-secondary">
+        <Text className="text-center text-sm leading-normal text-foreground-secondary">
           {props.detail}
         </Text>
       </View>
@@ -1115,13 +1135,17 @@ function ThreadFeedPlaceholder(props: {
 }
 
 export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
-  const router = useRouter();
+  const navigation = useNavigation();
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const foldSettleFrameRef = useRef<number | null>(null);
   const foldSettleSecondFrameRef = useRef<number | null>(null);
   const disclosureAnchorKeyRef = useRef<string | null>(null);
+  const headerMaterialVisibleRef = useRef(false);
   const previousLatestTurnRef = useRef(props.latestTurn);
-  const { width: viewportWidth } = useWindowDimensions();
+  const { width: windowWidth } = useWindowDimensions();
+  const [viewportWidth, setViewportWidth] = useState(() =>
+    props.layoutVariant === "split" ? 0 : windowWidth,
+  );
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
   const [interactionState, setInteractionState] = useState<{
     readonly copiedRowId: string | null;
@@ -1140,12 +1164,19 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     headers?: Record<string, string>;
   } | null>(null);
   const horizontalPadding = props.layoutVariant === "split" ? 20 : 16;
-  const contentWidth = Math.max(0, viewportWidth - horizontalPadding * 2);
+  const contentHorizontalPadding = deriveCenteredContentHorizontalPadding({
+    viewportWidth,
+    maxContentWidth: props.contentMaxWidth ?? null,
+    minimumPadding: horizontalPadding,
+  });
+  const contentWidth = Math.max(0, viewportWidth - contentHorizontalPadding * 2);
   const userBubbleMaxWidth = contentWidth * 0.85;
   const reviewCommentBubbleWidth = Math.min(Math.max(280, contentWidth * 0.85), contentWidth);
   const insets = useSafeAreaInsets();
   const topContentInset = props.contentTopInset ?? insets.top + 44;
   const bottomContentInset = props.contentBottomInset ?? 18;
+  const usesNativeAutomaticInsets =
+    props.usesAutomaticContentInsets === true && Platform.OS === "ios";
 
   const iconSubtleColor = useThemeColor("--color-icon-subtle");
   const userBubbleColor = useThemeColor("--color-user-bubble");
@@ -1159,13 +1190,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         );
         if (relativePath) {
           void Haptics.selectionAsync();
-          router.push(
-            buildThreadFilesNavigation(
-              { environmentId: props.environmentId, threadId: props.threadId },
-              relativePath,
-              presentation.line,
-            ),
-          );
+          navigation.navigate("ThreadFile", {
+            environmentId: String(props.environmentId),
+            threadId: String(props.threadId),
+            path: relativePath.split("/").filter((segment) => segment.length > 0),
+            ...(presentation.line ? { line: String(presentation.line) } : {}),
+          });
         }
         return;
       }
@@ -1174,7 +1204,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         void Linking.openURL(presentation.href);
       }
     },
-    [props.environmentId, props.threadId, props.workspaceRoot, router],
+    [props.environmentId, props.threadId, props.workspaceRoot, navigation],
   );
   const markdownStyles = useMarkdownStyles(onMarkdownLinkPress);
   const reviewCommentColors = useReviewCommentColors();
@@ -1188,6 +1218,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       markdownStyles,
       reviewCommentColors,
       userBubbleColor,
+      viewportWidth,
     }),
     [
       copiedRowId,
@@ -1196,8 +1227,34 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       markdownStyles,
       reviewCommentColors,
       userBubbleColor,
+      viewportWidth,
     ],
   );
+  const reportHeaderMaterialVisibility = useCallback(
+    (visible: boolean) => {
+      if (headerMaterialVisibleRef.current === visible) {
+        return;
+      }
+      headerMaterialVisibleRef.current = visible;
+      props.onHeaderMaterialVisibilityChange?.(visible);
+    },
+    [props.onHeaderMaterialVisibilityChange],
+  );
+  const handleScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      reportHeaderMaterialVisibility(event.nativeEvent.contentOffset.y + topContentInset > 6);
+    },
+    [reportHeaderMaterialVisibility, topContentInset],
+  );
+  const handleViewportLayout = useCallback((event: LayoutChangeEvent) => {
+    const nextWidth = Math.round(event.nativeEvent.layout.width);
+    setViewportWidth((current) => (Math.abs(current - nextWidth) > 1 ? nextWidth : current));
+  }, []);
+
+  useEffect(() => {
+    reportHeaderMaterialVisibility(false);
+  }, [props.threadId, reportHeaderMaterialVisibility]);
+
   const expandedWorkGroupIds = useMemo(() => {
     const ids = new Set<string>();
     for (const [groupId, expanded] of Object.entries(expandedWorkGroups)) {
@@ -1217,6 +1274,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       ),
     [expandedTurnIds, expandedWorkGroupIds, props.feed, props.latestTurn],
   );
+
   const anchoredEndSpace = useMemo(
     () =>
       resolveChatListAnchoredEndSpace(
@@ -1424,19 +1482,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     ],
   );
 
-  if (props.contentPresentation.kind === "loading") {
-    return (
-      <ThreadFeedPlaceholder
-        title="Loading conversation"
-        detail="Fetching the latest messages from this environment."
-        loading
-        topInset={topContentInset}
-        bottomInset={bottomContentInset}
-        horizontalPadding={horizontalPadding}
-      />
-    );
-  }
-
   if (props.contentPresentation.kind === "unavailable") {
     return (
       <ThreadFeedPlaceholder
@@ -1451,48 +1496,76 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
 
   return (
     <>
-      <View style={{ flex: 1 }}>
-        <KeyboardAwareLegendList
-          ref={props.listRef}
-          key={props.threadId}
-          style={{ flex: 1 }}
-          automaticallyAdjustsScrollIndicatorInsets={false}
-          scrollIndicatorInsets={{ top: topContentInset, bottom: 0 }}
-          {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
-          contentInsetEndAdjustment={props.contentInsetEndAdjustment}
-          freeze={props.freeze}
-          maintainScrollAtEnd={
-            disclosureToggleSettling
-              ? false
-              : {
-                  animated: false,
-                  on: {
-                    dataChange: true,
-                    itemLayout: true,
-                    layout: true,
-                  },
+      <View style={{ flex: 1 }} onLayout={handleViewportLayout}>
+        <View style={{ flex: 1 }}>
+          <KeyboardAwareLegendList
+            ref={props.listRef}
+            // The empty↔filled key remounts the list when messages first
+            // arrive. LegendList's maintainScrollAtEnd calls scrollToEnd(),
+            // which is blind to UIKit's adjustedContentInset — inserting into
+            // an already-attached list under a transparent header can pin
+            // short content at offset 0 (one header-height too high). A fresh
+            // mount positions during attach, where UIKit applies the inset.
+            key={`${props.threadId}:${props.feed.length === 0 ? "empty" : "filled"}`}
+            style={{ flex: 1 }}
+            // RN 0.81+ drops touches inside the contentInset area
+            // (facebook/react-native#54123); the anchored end space after a send
+            // is pure inset, so without this the blank region can't be scrolled.
+            applyWorkaroundForContentInsetHitTestBug
+            contentInsetAdjustmentBehavior={usesNativeAutomaticInsets ? "automatic" : "never"}
+            automaticallyAdjustsScrollIndicatorInsets={usesNativeAutomaticInsets}
+            {...(usesNativeAutomaticInsets
+              ? {
+                  // Do NOT pass a manual `contentInset` here. Like the Home
+                  // ScrollView, we rely purely on `contentInsetAdjustmentBehavior:
+                  // "automatic"` so UIKit derives the top inset from the transparent
+                  // header. A manual contentInset (which LegendList consumes into its
+                  // own layout math) collapses the scroll view's adjustedContentInset
+                  // top to 0, leaving the iOS 26/27 scroll-edge effect no region to
+                  // render into — which is why the header blur was missing on threads.
+                  scrollIndicatorInsets: { top: 0, left: 0, right: 0, bottom: 0 },
                 }
-          }
-          maintainVisibleContentPosition={maintainVisibleContentPosition}
-          data={presentedFeed}
-          extraData={listAppearanceData}
-          renderItem={renderItem}
-          keyExtractor={(entry) => entry.id}
-          getItemType={(entry) =>
-            entry.type === "message" ? `message:${entry.message.role}` : entry.type
-          }
-          keyboardShouldPersistTaps="always"
-          keyboardDismissMode="none"
-          keyboardLiftBehavior="whenAtEnd"
-          estimatedItemSize={180}
-          initialScrollAtEnd
-          ListHeaderComponent={<View style={{ height: topContentInset }} />}
-          contentContainerStyle={{
-            paddingTop: 12,
-            paddingHorizontal: horizontalPadding,
-          }}
-        />
-        {props.feed.length === 0 ? (
+              : { scrollIndicatorInsets: { top: topContentInset, bottom: 0 } })}
+            {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
+            contentInsetEndAdjustment={props.contentInsetEndAdjustment}
+            freeze={props.freeze}
+            maintainScrollAtEnd={
+              disclosureToggleSettling
+                ? false
+                : {
+                    animated: false,
+                    on: {
+                      dataChange: true,
+                      itemLayout: true,
+                      layout: true,
+                    },
+                  }
+            }
+            maintainVisibleContentPosition={maintainVisibleContentPosition}
+            data={presentedFeed}
+            extraData={listAppearanceData}
+            renderItem={renderItem}
+            keyExtractor={(entry) => entry.id}
+            getItemType={(entry) =>
+              entry.type === "message" ? `message:${entry.message.role}` : entry.type
+            }
+            keyboardShouldPersistTaps="always"
+            keyboardDismissMode="none"
+            keyboardLiftBehavior="whenAtEnd"
+            estimatedItemSize={180}
+            initialScrollAtEnd
+            onScroll={handleScroll}
+            scrollEventThrottle={16}
+            ListHeaderComponent={
+              usesNativeAutomaticInsets ? null : <View style={{ height: topContentInset }} />
+            }
+            contentContainerStyle={{
+              paddingTop: 12,
+              paddingHorizontal: contentHorizontalPadding,
+            }}
+          />
+        </View>
+        {props.feed.length === 0 && props.contentPresentation.kind === "ready" ? (
           <View pointerEvents="none" style={StyleSheet.absoluteFill}>
             <ThreadFeedPlaceholder
               title="No conversation yet"
