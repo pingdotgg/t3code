@@ -69,6 +69,14 @@ private struct ToolEventRow: View {
                     statusIcon
                     Text(name)
                         .font(.callout)
+                        .layoutPriority(1)
+                    if let preview = detailPreview {
+                        Text(preview)
+                            .font(.system(.caption, design: .monospaced))
+                            .opacity(0.5)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
                     Spacer()
                     if !detail.isEmpty {
                         Image(systemName: "chevron.right")
@@ -99,6 +107,17 @@ private struct ToolEventRow: View {
         .padding(.vertical, 6)
         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
         .animation(Motion.ambient, value: status)
+    }
+
+    /// First line of the invocation detail (e.g. the bash command), shown
+    /// dimmed next to the title so the row is glanceable without expanding.
+    private var detailPreview: String? {
+        let firstLine = detail
+            .split(whereSeparator: \.isNewline)
+            .first
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        guard let firstLine, !firstLine.isEmpty else { return nil }
+        return firstLine
     }
 
     /// One `Image` whose name/tint swap rides `.contentTransition` — the
