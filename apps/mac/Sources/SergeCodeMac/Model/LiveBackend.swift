@@ -1735,14 +1735,16 @@ public actor LiveBackend: BackendService {
     /// tool call / task, so consumers upsert rather than append.
     private func mapActivity(_ activity: OrchestrationThreadActivity, at: Date) -> TimelineItem? {
         switch ActivityRows.row(for: activity) {
-        case .tool(let id, let title, let detail, let phase):
+        case .tool(let id, let title, let detail, let itemType, let phase):
             let status: ToolEventStatus =
                 switch phase {
                 case .running: .running
                 case .succeeded: .succeeded
                 case .failed: .failed
                 }
-            return .toolEvent(id: id, name: title, detail: detail, status: status, at: at)
+            return .toolEvent(
+                id: id, name: title, detail: detail, kind: ToolEventKind(itemType: itemType),
+                status: status, at: at)
         case .reasoning(let id, let text):
             return .reasoning(id: id, text: text, at: at)
         case .notice(let id, let text):

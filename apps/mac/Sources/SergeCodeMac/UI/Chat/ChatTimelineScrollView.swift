@@ -28,7 +28,8 @@ struct ChatTimelineScrollView: View {
                         .frame(height: 1)
                         .id(Self.bottomAnchorID)
                 }
-                .padding(16)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 16)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 // Keyed to count, not content: new rows rise in, but
                 // per-token streaming updates never re-trigger layout
@@ -75,7 +76,7 @@ struct ChatTimelineScrollView: View {
         case .reasoning(let id, let text, _):
             // Streaming reasoning replaces the row's text in place (same id).
             return "\(items.count)|\(id)|\(text.count)"
-        case .toolEvent(let id, _, let detail, let status, _):
+        case .toolEvent(let id, _, let detail, _, let status, _):
             // Lifecycle upserts mutate status/detail without changing count.
             return "\(items.count)|\(id)|\(detail.count)|\(status)"
         default:
