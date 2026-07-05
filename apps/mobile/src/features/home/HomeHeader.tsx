@@ -57,8 +57,8 @@ export function HomeHeader(props: {
 
 type HomeHeaderProps = Parameters<typeof HomeHeader>[0];
 
-function checkedMenuTitle(checked: boolean, title: string) {
-  return checked ? `✓ ${title}` : title;
+function checkedMenuState(checked: boolean) {
+  return checked ? ("on" as const) : undefined;
 }
 
 function AndroidHomeHeader(props: HomeHeaderProps) {
@@ -80,14 +80,13 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
         subactions: [
           {
             id: "environment:all",
-            title: checkedMenuTitle(props.selectedEnvironmentId === null, "All environments"),
+            title: "All environments",
+            state: checkedMenuState(props.selectedEnvironmentId === null),
           },
           ...props.environments.map((environment) => ({
             id: `environment:${environment.environmentId}`,
-            title: checkedMenuTitle(
-              props.selectedEnvironmentId === environment.environmentId,
-              environment.label,
-            ),
+            title: environment.label,
+            state: checkedMenuState(props.selectedEnvironmentId === environment.environmentId),
           })),
         ],
       },
@@ -96,7 +95,8 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
         title: "Sort projects",
         subactions: PROJECT_SORT_OPTIONS.map((option) => ({
           id: `project-sort:${option.value}`,
-          title: checkedMenuTitle(props.projectSortOrder === option.value, option.label),
+          title: option.label,
+          state: checkedMenuState(props.projectSortOrder === option.value),
         })),
       },
       {
@@ -104,7 +104,8 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
         title: "Sort threads",
         subactions: THREAD_SORT_OPTIONS.map((option) => ({
           id: `thread-sort:${option.value}`,
-          title: checkedMenuTitle(props.threadSortOrder === option.value, option.label),
+          title: option.label,
+          state: checkedMenuState(props.threadSortOrder === option.value),
         })),
       },
       {
@@ -112,7 +113,8 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
         title: "Group projects",
         subactions: PROJECT_GROUPING_OPTIONS.map((option) => ({
           id: `project-grouping:${option.value}`,
-          title: checkedMenuTitle(props.projectGroupingMode === option.value, option.label),
+          title: option.label,
+          state: checkedMenuState(props.projectGroupingMode === option.value),
         })),
       },
     ],
@@ -248,11 +250,6 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
               accessibilityLabel="Open settings"
               icon="gearshape"
               onPress={props.onOpenSettings}
-            />
-            <ControlPill
-              accessibilityLabel="New task"
-              icon="square.and.pencil"
-              onPress={props.onStartNewTask}
             />
           </View>
 

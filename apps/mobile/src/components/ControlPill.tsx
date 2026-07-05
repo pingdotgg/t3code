@@ -1,6 +1,6 @@
-import { MenuView } from "@react-native-menu/menu";
+import { MenuView, type MenuAction } from "@react-native-menu/menu";
 import type { ComponentProps, ReactNode } from "react";
-import { Pressable, useColorScheme, View } from "react-native";
+import { Platform, Pressable, useColorScheme, View } from "react-native";
 import { useThemeColor } from "../lib/useThemeColor";
 
 import { cn } from "../lib/cn";
@@ -74,15 +74,40 @@ export function ControlPill(props: {
   );
 }
 
+/**
+ * Android renders checkable menu rows with a square CheckBox widget. Replace
+ * the checkable state with a check glyph (the plugin-provided drawable) on the
+ * selected item so all selector menus show a plain check icon instead.
+ */
+function withAndroidSelectionIcons(
+  actions: ReadonlyArray<MenuAction> | undefined,
+  checkColor: string,
+): MenuAction[] | undefined {
+  if (!actions) {
+    return undefined;
+  }
+  return actions.map((action) => ({
+    ...action,
+    state: undefined,
+    ...(action.state === "on" ? { image: "ic_menu_check", imageColor: checkColor } : {}),
+    subactions: withAndroidSelectionIcons(action.subactions, checkColor),
+  }));
+}
+
 export function ControlPillMenu(
   props: Omit<ComponentProps<typeof MenuView>, "children" | "themeVariant"> & {
     readonly children: ReactNode;
   },
 ) {
   const isDarkMode = useColorScheme() === "dark";
+  const foregroundColor = useThemeColor("--color-foreground");
+  const actions =
+    Platform.OS === "android"
+      ? (withAndroidSelectionIcons(props.actions, foregroundColor as string) ?? [])
+      : props.actions;
 
   return (
-    <MenuView {...props} themeVariant={isDarkMode ? "dark" : "light"}>
+    <MenuView {...props} actions={actions} themeVariant={isDarkMode ? "dark" : "light"}>
       {props.children}
     </MenuView>
   );

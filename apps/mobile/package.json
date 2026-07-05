@@ -80,6 +80,7 @@
     "expo": "~56.0.12",
     "expo-asset": "~56.0.17",
     "expo-auth-session": "~56.0.14",
+    "expo-blur": "~56.0.3",
     "expo-build-properties": "~56.0.19",
     "expo-camera": "~56.0.8",
     "expo-clipboard": "~56.0.4",
