@@ -65,6 +65,29 @@ type OpenCodeSubscribedEvent =
     ? TEvent
     : never;
 
+function trimText(value: string | undefined | null): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+function openCodeEventSessionId(event: OpenCodeSubscribedEvent): string | undefined {
+  const properties = "properties" in event ? event.properties : undefined;
+  if (!properties || typeof properties !== "object") {
+    return undefined;
+  }
+
+  const sessionID = (properties as { readonly sessionID?: unknown }).sessionID;
+  return typeof sessionID === "string" ? sessionID : undefined;
+}
+
+function openCodeEventSessionTitle(event: OpenCodeSubscribedEvent): string | undefined {
+  if (event.type !== "session.updated") {
+    return undefined;
+  }
+
+  return trimText(event.properties.info.title);
+}
+
 interface OpenCodeSessionContext {
   session: ProviderSession;
   readonly client: OpencodeClient;
@@ -646,8 +669,7 @@ export function makeOpenCodeAdapter(
       context: OpenCodeSessionContext,
       event: OpenCodeSubscribedEvent,
     ) {
-      const payloadSessionId =
-        "properties" in event ? (event.properties as { sessionID?: unknown }).sessionID : undefined;
+      const payloadSessionId = openCodeEventSessionId(event);
       if (payloadSessionId !== context.openCodeSessionId) {
         return;
       }
@@ -666,6 +688,26 @@ export function makeOpenCodeAdapter(
       });
 
       switch (event.type) {
+        case "session.updated": {
+          const title = openCodeEventSessionTitle(event);
+          if (title) {
+            yield* emit({
+              ...(yield* buildEventBase({
+                threadId: context.session.threadId,
+                raw: event,
+              })),
+              type: "thread.metadata.updated",
+              payload: {
+                name: title,
+                metadata: {
+                  sessionID: context.openCodeSessionId,
+                },
+              },
+            });
+          }
+          break;
+        }
+
         case "message.updated": {
           context.messageRoleById.set(event.properties.info.id, event.properties.info.role);
           if (event.properties.info.role === "assistant") {
@@ -1072,7 +1114,6 @@ export function makeOpenCodeAdapter(
               }
               const openCodeSession = yield* runOpenCodeSdk("session.create", () =>
                 client.session.create({
-                  title: `T3 Code ${input.threadId}`,
                   permission: buildOpenCodePermissionRules(input.runtimeMode),
                 }),
               );
