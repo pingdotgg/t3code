@@ -762,12 +762,16 @@ public struct ProjectMetaUpdateCommand: Encodable, Sendable {
     public var projectId: String
     public var title: String?
     public var workspaceRoot: String?
-    public var defaultModelSelection: ModelSelection?
+    public var defaultModelSelection: ModelSelection??  // optional(NullOr) — outer nil omits the key, inner nil sends null
     public var scripts: [ProjectScript]?
 
+    /// `defaultModelSelection` is `Schema.optional(Schema.NullOr(x))`:
+    /// leave at the default `nil` to omit the key entirely (don't touch),
+    /// pass `.some(nil)` to explicitly clear it to `null`, or `.some(value)`
+    /// to set it.
     public init(
         commandId: String, projectId: String, title: String? = nil, workspaceRoot: String? = nil,
-        defaultModelSelection: ModelSelection? = nil, scripts: [ProjectScript]? = nil
+        defaultModelSelection: ModelSelection?? = nil, scripts: [ProjectScript]? = nil
     ) {
         self.commandId = commandId
         self.projectId = projectId
@@ -775,6 +779,21 @@ public struct ProjectMetaUpdateCommand: Encodable, Sendable {
         self.workspaceRoot = workspaceRoot
         self.defaultModelSelection = defaultModelSelection
         self.scripts = scripts
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case type, commandId, projectId, title, workspaceRoot, defaultModelSelection, scripts
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(type, forKey: .type)
+        try c.encode(commandId, forKey: .commandId)
+        try c.encode(projectId, forKey: .projectId)
+        try c.encodeIfPresent(title, forKey: .title)
+        try c.encodeIfPresent(workspaceRoot, forKey: .workspaceRoot)
+        if let defaultModelSelection { try c.encode(defaultModelSelection, forKey: .defaultModelSelection) }
+        try c.encodeIfPresent(scripts, forKey: .scripts)
     }
 }
 

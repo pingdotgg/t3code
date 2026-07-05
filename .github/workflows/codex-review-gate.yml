@@ -8,6 +8,7 @@ on:
 
 permissions:
   pull-requests: read
+  issues: read
 
 jobs:
   codex-review-required:
@@ -37,6 +38,17 @@ jobs:
                 (.user.type == "Bot")
                 and (.user.login | ascii_downcase | contains("codex"))
                 and (.body | test("Reviewed commit:"))
+              )] | length')
+            [ "$n" -ge 1 ] && return 0
+            # Newer Codex leaves no comment at all when the PR is clean —
+            # just a +1 reaction on the PR itself. ("eyes" means review
+            # in progress, so it does not count as a verdict.)
+            # Note: unlike the reviews/comments endpoints, reactions report
+            # the bot with user.type "User", so match the [bot] login suffix.
+            n=$(gh api "repos/$REPO/issues/$PR/reactions" --paginate | jq -s '
+              [add[] | select(
+                (.user.login | ascii_downcase | (contains("codex") and endswith("[bot]")))
+                and (.content == "+1")
               )] | length')
             [ "$n" -ge 1 ]
           }

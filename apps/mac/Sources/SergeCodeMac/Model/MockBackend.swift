@@ -71,11 +71,11 @@ public final class MockBackend: BackendService, @unchecked Sendable {
 
     public func updateProvider(instanceID: String) async throws {}
 
-    public func watchVcsStatus(projectID: String) async throws {
-        await state.emitVcsStatus(projectID: projectID)
+    public func watchVcsStatus(threadID: String) async throws {
+        await state.emitVcsStatus(threadID: threadID)
     }
 
-    public func listBranches(projectID: String, query: String?) async throws -> [BranchRef] {
+    public func listBranches(threadID: String, query: String?) async throws -> [BranchRef] {
         [
             BranchRef(name: "main", isCurrent: false, isDefault: true, isRemote: false),
             BranchRef(name: "feat/native-mac-app", isCurrent: true, isDefault: false, isRemote: false),
@@ -86,18 +86,18 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         }
     }
 
-    public func switchBranch(projectID: String, name: String) async throws {
-        await state.emitVcsStatus(projectID: projectID, branch: name)
+    public func switchBranch(threadID: String, name: String) async throws {
+        await state.emitVcsStatus(threadID: threadID, branch: name)
     }
 
-    public func createBranch(projectID: String, name: String) async throws {
-        await state.emitVcsStatus(projectID: projectID, branch: name)
+    public func createBranch(threadID: String, name: String) async throws {
+        await state.emitVcsStatus(threadID: threadID, branch: name)
     }
 
-    public func pull(projectID: String) async throws {}
+    public func pull(threadID: String) async throws {}
 
     public func runGitAction(
-        projectID: String, action: GitAction, commitMessage: String?
+        threadID: String, action: GitAction, commitMessage: String?
     ) async throws -> GitActionOutcome {
         try? await Task.sleep(nanoseconds: 400_000_000)
         return GitActionOutcome(
@@ -112,15 +112,15 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         await state.sendMessage(threadID: threadID, text: text, attachments: attachments)
     }
 
-    public func searchWorkspace(projectID: String, query: String) async throws -> [WorkspaceEntry] {
+    public func searchWorkspace(threadID: String, query: String) async throws -> [WorkspaceEntry] {
         await state.searchWorkspace(query: query)
     }
 
-    public func listWorkspace(projectID: String, subpath: String) async throws -> [WorkspaceEntry] {
+    public func listWorkspace(threadID: String, subpath: String) async throws -> [WorkspaceEntry] {
         await state.searchWorkspace(query: "")
     }
 
-    public func readWorkspaceFile(projectID: String, path: String) async throws -> FilePreview {
+    public func readWorkspaceFile(threadID: String, path: String) async throws -> FilePreview {
         FilePreview(
             path: path,
             contents: "// mock contents of \(path)\nimport Foundation\n\nlet answer = 42\n",
@@ -128,7 +128,7 @@ public final class MockBackend: BackendService, @unchecked Sendable {
     }
 
     public func openInEditor(
-        projectID: String, subpath: String?, editor: ExternalEditor
+        threadID: String, subpath: String?, editor: ExternalEditor
     ) async throws {}
 
     public func cancelTurn(threadID: String) async throws {
@@ -181,6 +181,14 @@ public final class MockBackend: BackendService, @unchecked Sendable {
 
     public func addProject(path: String) async throws -> Project {
         await state.addProject(path: path)
+    }
+
+    public func renameProject(id: String, name: String) async throws {
+        await state.renameProject(id: id, name: name)
+    }
+
+    public func deleteProject(id: String) async throws {
+        await state.deleteProject(id: id)
     }
 }
 
@@ -426,10 +434,10 @@ private actor MockState {
         ]
     }
 
-    func emitVcsStatus(projectID: String, branch: String = "feat/native-mac-app") {
+    func emitVcsStatus(threadID: String, branch: String = "feat/native-mac-app") {
         emit(
             .vcsStatusChanged(
-                projectID: projectID,
+                threadID: threadID,
                 status: VcsStatus(
                     isRepo: true, branch: branch, isDefaultBranch: branch == "main",
                     changedFileCount: 3, insertions: 120, deletions: 14, aheadCount: 2,
@@ -518,7 +526,27 @@ private actor MockState {
         let name = (path as NSString).lastPathComponent
         let project = Project(id: nextID("project"), name: name.isEmpty ? path : name, path: path)
         projectsByID[project.id] = project
+        emit(.projectsChanged(projects()))
         return project
+    }
+
+    func renameProject(id: String, name: String) {
+        guard var project = projectsByID[id] else { return }
+        project.name = name
+        projectsByID[id] = project
+        emit(.projectsChanged(projects()))
+    }
+
+    func deleteProject(id: String) {
+        guard projectsByID.removeValue(forKey: id) != nil else { return }
+        emit(.projectsChanged(projects()))
+        for (threadID, thread) in threadsByID where thread.projectID == id {
+            threadsByID[threadID] = nil
+            timelinesByThread[threadID] = nil
+            diffsByThread[threadID] = nil
+            checkpointsByThread[threadID] = nil
+            emit(.threadRemoved(id: threadID))
+        }
     }
 
     // MARK: - Seed data

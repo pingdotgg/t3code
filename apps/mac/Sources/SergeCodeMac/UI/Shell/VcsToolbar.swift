@@ -15,7 +15,7 @@ struct VcsToolbar: View {
     @UIState private var isRunningAction = false
 
     var body: some View {
-        if let status = model.selectedProjectVcsStatus(), status.isRepo {
+        if let status = model.selectedVcsStatus(), status.isRepo {
             vcsStrip(status)
                 .transition(Motion.unfold)
         }
