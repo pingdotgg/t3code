@@ -91,6 +91,36 @@ struct ToolDetailParsingTests {
         #expect(ParsedToolDetail.parse(detail: "  ", itemType: nil) == .plain(""))
     }
 
+    @Test func mcpToolWithFileLikeFieldsStaysPlain() {
+        // An MCP tool whose input merely contains path/content fields must
+        // not masquerade as a file edit — the item type is authoritative.
+        let detail = #"mcp__fs__save: {"path": "a.txt", "content": "hi"}"#
+        let parsed = ParsedToolDetail.parse(detail: detail, itemType: "mcp_tool_call")
+        #expect(parsed == .plain(detail))
+    }
+
+    @Test func mcpToolWithCommandFieldStaysPlain() {
+        let detail = #"mcp__runner__exec: {"command": "rm -rf /tmp/x"}"#
+        let parsed = ParsedToolDetail.parse(detail: detail, itemType: "mcp_tool_call")
+        #expect(parsed == .plain(detail))
+    }
+
+    @Test func knownEditToolWithoutItemTypeStillParses() {
+        let parsed = ParsedToolDetail.parse(
+            detail: #"Edit: {"file_path": "a.swift", "old_string": "x", "new_string": "y"}"#,
+            itemType: nil)
+        #expect(
+            parsed
+                == .fileChange(
+                    path: "a.swift", edits: [ToolFileEdit(oldText: "x", newText: "y")]))
+    }
+
+    @Test func unknownToolWithoutItemTypeStaysPlain() {
+        let detail = #"Deploy: {"file_path": "a.swift", "content": "x"}"#
+        let parsed = ParsedToolDetail.parse(detail: detail, itemType: nil)
+        #expect(parsed == .plain(detail))
+    }
+
     @Test func urlLikeDetailIsNotMistakenForToolPrefix() {
         // "https://…" has a colon but the remainder isn't JSON and this isn't
         // a command row, so it must survive untouched.

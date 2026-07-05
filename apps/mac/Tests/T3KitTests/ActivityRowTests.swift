@@ -127,6 +127,68 @@ struct ActivityRowTests {
         #expect(row == nil)
     }
 
+    @Test func fileChangeDetailIsRebuiltFromUntruncatedData() {
+        // payload.detail is truncated server-side (~180 chars); the full tool
+        // input in payload.data must win so diffs render complete edits.
+        let row = ActivityRows.row(
+            for: activity(
+                kind: "tool.completed", summary: "Edit",
+                payload: .object([
+                    "itemType": .string("file_change"),
+                    "detail": .string("Edit: {\"file_path\": \"a.swift\", \"old_st"),
+                    "data": .object([
+                        "toolName": .string("Edit"),
+                        "input": .object([
+                            "file_path": .string("a.swift"),
+                            "old_string": .string("let x = 1"),
+                            "new_string": .string("let x = 2"),
+                        ]),
+                    ]),
+                ])))
+        let expectedDetail =
+            #"Edit: {"file_path":"a.swift","new_string":"let x = 2","old_string":"let x = 1"}"#
+        #expect(
+            row == .tool(
+                id: "a1", title: "Edit", detail: expectedDetail, itemType: "file_change",
+                phase: .succeeded))
+    }
+
+    @Test func commandDetailIsRebuiltFromUntruncatedData() {
+        let row = ActivityRows.row(
+            for: activity(
+                kind: "tool.completed", summary: "Bash",
+                payload: .object([
+                    "itemType": .string("command_execution"),
+                    "detail": .string("Bash: swift build --package-pa"),
+                    "data": .object([
+                        "toolName": .string("Bash"),
+                        "input": .object([
+                            "command": .string("swift build --package-path apps/mac && swift test")
+                        ]),
+                    ]),
+                ])))
+        #expect(
+            row == .tool(
+                id: "a1", title: "Bash",
+                detail: "Bash: swift build --package-path apps/mac && swift test",
+                itemType: "command_execution", phase: .succeeded))
+    }
+
+    @Test func dataWithoutInputFallsBackToPayloadDetail() {
+        let row = ActivityRows.row(
+            for: activity(
+                kind: "tool.completed", summary: "Bash",
+                payload: .object([
+                    "itemType": .string("command_execution"),
+                    "detail": .string("swift build"),
+                    "data": .object(["toolCallId": .string("call-9")]),
+                ])))
+        #expect(
+            row == .tool(
+                id: "tool:call-9", title: "Bash", detail: "swift build",
+                itemType: "command_execution", phase: .succeeded))
+    }
+
     // MARK: Task progress / completion
 
     @Test func taskProgressSurfacesReasoningTextWithStableId() {

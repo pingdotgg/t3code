@@ -115,7 +115,9 @@ public enum ActivityRows {
         let title =
             nonEmpty(normalizeToolTitle(activity.summary))
             ?? humanizedItemType(payload?.itemType) ?? "Tool"
-        var detail = nonEmpty(payload?.detail).map(stripTrailingExitCode) ?? ""
+        var detail =
+            detailFromData(activity.payload, itemType: payload?.itemType)
+            ?? nonEmpty(payload?.detail).map(stripTrailingExitCode) ?? ""
         // A detail that just restates the title is dead weight in the
         // disclosure body.
         if compactLabel(detail) == compactLabel(title) { detail = "" }
@@ -138,6 +140,42 @@ public enum ActivityRows {
 
     private static func toolCallId(in payload: JSONValue) -> String? {
         nonEmpty(payload.objectValue?["data"]?.objectValue?["toolCallId"]?.stringValue)
+    }
+
+    /// Rebuilds the detail string from `payload.data` (`{ toolName, input }`,
+    /// which ingestion passes through verbatim) when the tool kind has a
+    /// structured rendering. `payload.detail` is truncated server-side
+    /// (~180 chars), so real file edits and long command lines only survive
+    /// via the raw input.
+    private static func detailFromData(_ payload: JSONValue, itemType: String?) -> String? {
+        guard let data = payload.objectValue?["data"]?.objectValue,
+            let input = data["input"]?.objectValue
+        else { return nil }
+        let toolName = nonEmpty(data["toolName"]?.stringValue) ?? "Tool"
+
+        switch itemType {
+        case "command_execution":
+            guard let command = nonEmpty((input["command"] ?? input["cmd"])?.stringValue)
+            else { return nil }
+            return "\(toolName): \(command)"
+        case "file_change":
+            let hasPath = ["file_path", "path", "filePath"].contains { input[$0] != nil }
+            guard hasPath else { return nil }
+            var subset: [String: JSONValue] = [:]
+            for key in [
+                "file_path", "path", "filePath", "old_string", "new_string", "content", "edits",
+            ] {
+                if let value = input[key] { subset[key] = value }
+            }
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            guard let encoded = try? encoder.encode(JSONValue.object(subset)),
+                let json = String(data: encoded, encoding: .utf8)
+            else { return nil }
+            return "\(toolName): \(json)"
+        default:
+            return nil
+        }
     }
 
     /// Best-effort human detail for activities without a typed payload.

@@ -221,21 +221,25 @@ extension Array where Element == TimelineItem {
         // Searches backwards past interleaved rows (reasoning updates land
         // between a tool's start and its completion), not just `last` —
         // otherwise the completion appends a duplicate and the original row
-        // is stuck "running" forever.
-        if case .toolEvent(let id, let name, let detail, _, _, _) = item,
-            let index = lastIndex(where: { existing in
-                guard
-                    case .toolEvent(
-                        let existingID, let existingName, let existingDetail, _, .running, _) =
-                        existing
-                else { return false }
-                return existingName == name
+        // is stuck "running" forever. Bounded at the current turn: crossing
+        // a user message (or checkpoint, which marks a turn end) could fold
+        // a fresh same-name invocation into a stale row from an old turn.
+        if case .toolEvent(let id, let name, let detail, _, _, _) = item {
+            search: for index in indices.reversed() {
+                switch self[index] {
+                case .userMessage, .checkpoint:
+                    break search
+                case .toolEvent(
+                    let existingID, let existingName, let existingDetail, _, .running, _)
+                where existingName == name
                     && (existingDetail == detail
-                        || (existingID.hasPrefix("tool:") && !id.hasPrefix("tool:")))
-            })
-        {
-            self[index] = item.preservingToolMetadata(of: self[index])
-            return
+                        || (existingID.hasPrefix("tool:") && !id.hasPrefix("tool:"))):
+                    self[index] = item.preservingToolMetadata(of: self[index])
+                    return
+                default:
+                    continue
+                }
+            }
         }
         append(item)
     }

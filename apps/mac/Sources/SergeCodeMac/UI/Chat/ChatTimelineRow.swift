@@ -75,16 +75,28 @@ private struct ToolEventRow: View {
         ToolDetailParseCache.parsed(detail: detail, itemType: kind.wireItemType)
     }
 
+    private enum DisplayState {
+        case running, succeeded, failed
+        /// Thread stopped while the row was still "running": the tool is
+        /// finished by definition, but its outcome was never reported (the
+        /// turn may have completed, errored or been interrupted), so it gets
+        /// a neutral done mark rather than claiming success or failure.
+        case settled
+    }
+
     /// Providers don't always close every tool's lifecycle (a completion can
     /// arrive uncorrelated, or not at all). Once the thread has settled, a
-    /// row still marked running is finished by definition — show it done
-    /// (mirrors the web client's turn-settled indicator rule).
-    private var displayStatus: ToolEventStatus {
-        guard status == .running else { return status }
-        switch threadStatus {
-        case .running, .waitingApproval, nil: return .running
-        case .error: return .failed
-        case .idle, .archived: return .succeeded
+    /// row still marked running stops pulsing (mirrors the web client's
+    /// turn-settled indicator rule).
+    private var displayState: DisplayState {
+        switch status {
+        case .succeeded: return .succeeded
+        case .failed: return .failed
+        case .running:
+            switch threadStatus {
+            case .running, .waitingApproval, nil: return .running
+            case .idle, .archived, .error: return .settled
+            }
         }
     }
 
@@ -145,7 +157,7 @@ private struct ToolEventRow: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
-        .animation(Motion.ambient, value: displayStatus)
+        .animation(Motion.ambient, value: displayState)
     }
 
     @ViewBuilder
@@ -174,24 +186,26 @@ private struct ToolEventRow: View {
     /// running → done flip morphs instead of hard-swapping glyphs.
     private var statusIcon: some View {
         Image(systemName: iconName)
-            .symbolEffect(.pulse, isActive: displayStatus == .running)
+            .symbolEffect(.pulse, isActive: displayState == .running)
             .foregroundStyle(iconTint)
             .contentTransition(.symbolEffect(.replace))
     }
 
     private var iconName: String {
-        switch displayStatus {
+        switch displayState {
         case .running: "circle.dotted"
         case .succeeded: "checkmark.circle.fill"
         case .failed: "xmark.circle.fill"
+        case .settled: "checkmark.circle"
         }
     }
 
     private var iconTint: Color {
-        switch displayStatus {
+        switch displayState {
         case .running: .secondary
         case .succeeded: .green
         case .failed: .red
+        case .settled: .secondary
         }
     }
 }

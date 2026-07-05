@@ -39,7 +39,7 @@ public enum ParsedToolDetail: Sendable, Equatable {
         guard !trimmed.isEmpty else { return .plain("") }
 
         if let (toolName, json) = splitToolJSON(trimmed),
-            let parsed = parseToolInput(toolName: toolName, json: json)
+            let parsed = parseToolInput(toolName: toolName, json: json, itemType: itemType)
         {
             return parsed
         }
@@ -65,16 +65,33 @@ public enum ParsedToolDetail: Sendable, Equatable {
         return (name, rest)
     }
 
-    private static func parseToolInput(toolName: String, json: String) -> ParsedToolDetail? {
+    /// Tool names whose JSON input is a file edit, for rows arriving without
+    /// an item type (tone fallbacks). With an item type present the type is
+    /// authoritative — an MCP tool whose input merely *contains* path/content
+    /// fields must not masquerade as an edit.
+    private static let editToolNames: Set<String> = [
+        "edit", "write", "multiedit", "notebookedit", "edit_file", "write_file",
+        "create_file", "apply_patch", "str_replace_editor", "str_replace_based_edit_tool",
+    ]
+
+    private static func parseToolInput(
+        toolName: String, json: String, itemType: String?
+    ) -> ParsedToolDetail? {
         guard let data = json.data(using: .utf8),
             let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
 
-        if let command = (object["command"] ?? object["cmd"]) as? String,
+        if itemType == nil || itemType == "command_execution",
+            let command = (object["command"] ?? object["cmd"]) as? String,
             !command.trimmingCharacters(in: .whitespaces).isEmpty
         {
             return .command(command.trimmingCharacters(in: .whitespacesAndNewlines))
         }
+
+        guard
+            itemType == "file_change"
+                || (itemType == nil && editToolNames.contains(toolName.lowercased()))
+        else { return nil }
 
         guard
             let path = (object["file_path"] ?? object["path"] ?? object["filePath"]) as? String,
