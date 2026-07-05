@@ -25,6 +25,29 @@ public final class AppModel {
     private let backend: any BackendService
     private var eventTask: Task<Void, Never>?
 
+    // MARK: - Event intake buffers
+    //
+    // Streaming backends emit one event per wire chunk. Applying each one
+    // individually made every token of every thread a separate @Observable
+    // mutation — and, because `timelines` and friends are single stored
+    // properties, a separate invalidation of every view reading them. Events
+    // are buffered and applied as one transaction per ~33ms tick instead:
+    // one property write per touched thread per flush.
+
+    /// Bounds pending-buffer growth under bursts: past this, flush now.
+    static let maxPendingEvents = 256
+
+    @ObservationIgnored private var pendingEvents: [BackendEvent] = []
+    @ObservationIgnored private var flushScheduled = false
+    /// threadID → (messageID, index) of the actively streaming assistant
+    /// message, so per-token appends skip the O(n) timeline scan. Entries
+    /// are validated against the array before use — a stale index costs one
+    /// rescan, never a wrong write.
+    @ObservationIgnored private var streamingIndex: [String: (messageID: String, index: Int)] = [:]
+    /// Approval/user-input request id → threadID, so resolving one is a
+    /// keyed removal instead of a scan across every thread's timeline.
+    @ObservationIgnored private var interactionThreadByID: [String: String] = [:]
+
     public init(backend: any BackendService) {
         self.backend = backend
     }
@@ -46,18 +69,151 @@ public final class AppModel {
         eventTask = Task { [weak self] in
             async let _ = backend.start()
             for await event in stream {
-                self?.apply(event)
+                self?.enqueue(event)
             }
         }
     }
 
     public func shutdown() async {
+        flushPendingEvents()
         eventTask?.cancel()
         eventTask = nil
         await backend.stop()
     }
 
-    private func apply(_ event: BackendEvent) {
+    // MARK: - Event intake
+
+    /// Internal (not private) so the batch reducer is unit-testable.
+    func enqueue(_ event: BackendEvent) {
+        pendingEvents.append(event)
+        // Connection changes flush immediately: reconnect UX must be
+        // instant, and the `.ready → refreshAll()` path must not trail the
+        // events buffered behind it.
+        if case .connection = event {
+            flushPendingEvents()
+            return
+        }
+        if pendingEvents.count >= Self.maxPendingEvents {
+            flushPendingEvents()
+            return
+        }
+        scheduleFlush()
+    }
+
+    private func scheduleFlush() {
+        guard !flushScheduled else { return }
+        flushScheduled = true
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(33))
+            self?.flushPendingEvents()
+        }
+    }
+
+    func flushPendingEvents() {
+        flushScheduled = false
+        guard !pendingEvents.isEmpty else { return }
+        let events = pendingEvents
+        pendingEvents.removeAll(keepingCapacity: true)
+        applyBatch(events)
+    }
+
+    /// Applies a batch in arrival order, but stages timeline mutations in a
+    /// scratch dictionary so each touched thread gets exactly one
+    /// `timelines[threadID] = …` write per flush (one observation
+    /// invalidation), no matter how many events landed for it.
+    private func applyBatch(_ events: [BackendEvent]) {
+        var touched: [String: [TimelineItem]] = [:]
+
+        func currentItems(_ threadID: String) -> [TimelineItem] {
+            touched[threadID] ?? timelines[threadID] ?? []
+        }
+
+        // A run of deltas for the same message collapses to one string
+        // concatenation and one array write.
+        var deltaThreadID: String?
+        var deltaMessageID = ""
+        var deltaText = ""
+        func flushPendingDelta() {
+            guard let threadID = deltaThreadID else { return }
+            var items = currentItems(threadID)
+            applyDelta(threadID: threadID, messageID: deltaMessageID, delta: deltaText, items: &items)
+            touched[threadID] = items
+            deltaThreadID = nil
+            deltaText = ""
+        }
+
+        func resolveInteraction(_ id: String) {
+            func removeItem(threadID: String) -> Bool {
+                var items = currentItems(threadID)
+                guard let index = items.firstIndex(where: { $0.id == id }) else { return false }
+                items.remove(at: index)
+                touched[threadID] = items
+                // Removal shifts indices; the streaming index self-validates,
+                // but drop it so the next delta rescans instead of racing.
+                streamingIndex[threadID] = nil
+                return true
+            }
+
+            if let threadID = interactionThreadByID.removeValue(forKey: id),
+                removeItem(threadID: threadID)
+            {
+                return
+            }
+            // Fallback for items that predate the map (e.g. from a snapshot
+            // loaded via loadTimelineIfNeeded rather than an event).
+            for threadID in Set(timelines.keys).union(touched.keys) {
+                if removeItem(threadID: threadID) {
+                    return
+                }
+            }
+        }
+
+        for event in events {
+            if case .assistantDelta(let threadID, let messageID, let delta) = event {
+                if deltaThreadID == threadID, deltaMessageID == messageID {
+                    deltaText += delta
+                } else {
+                    flushPendingDelta()
+                    deltaThreadID = threadID
+                    deltaMessageID = messageID
+                    deltaText = delta
+                }
+                continue
+            }
+            flushPendingDelta()
+
+            switch event {
+            case .timelineAppended(let threadID, let item):
+                // Upsert: lifecycle updates arrive with the stable row id of
+                // an earlier item (tool call updated -> completed, streaming
+                // reasoning text) and must replace it, not stack.
+                var items = currentItems(threadID)
+                items.upsertTimelineItem(item)
+                touched[threadID] = items
+                recordInteraction(item, threadID: threadID)
+            case .timelineReset(let threadID, let items):
+                touched[threadID] = items
+                streamingIndex[threadID] = nil
+                for item in items { recordInteraction(item, threadID: threadID) }
+            case .assistantCompleted(let threadID, let messageID, let markdown):
+                var items = currentItems(threadID)
+                finishStreaming(
+                    threadID: threadID, messageID: messageID, markdown: markdown, items: &items)
+                touched[threadID] = items
+            case .approvalResolved(let id), .userInputResolved(let id):
+                resolveInteraction(id)
+            default:
+                applyNonTimeline(event)
+            }
+        }
+        flushPendingDelta()
+
+        for (threadID, items) in touched {
+            timelines[threadID] = items
+        }
+    }
+
+    private func applyNonTimeline(_ event: BackendEvent) {
         switch event {
         case .connection(let phase):
             connection = phase
@@ -83,26 +239,8 @@ public final class AppModel {
             threads.removeAll { $0.id == id }
             vcsStatuses[id] = nil
             if selectedThreadID == id { selectedThreadID = nil }
-        case .timelineAppended(let threadID, let item):
-            // Upsert: lifecycle updates arrive with the stable row id of an
-            // earlier item (tool call updated -> completed, streaming
-            // reasoning text) and must replace it, not stack.
-            timelines[threadID, default: []].upsertTimelineItem(item)
-        case .timelineReset(let threadID, let items):
-            timelines[threadID] = items
-        case .assistantDelta(let threadID, let messageID, let delta):
-            appendDelta(threadID: threadID, messageID: messageID, delta: delta)
-        case .assistantCompleted(let threadID, let messageID, let markdown):
-            finishStreaming(threadID: threadID, messageID: messageID, markdown: markdown)
         case .approvalRequested, .userInputRequested:
             break
-        case .approvalResolved(let id), .userInputResolved(let id):
-            for threadID in timelines.keys {
-                if let index = timelines[threadID]?.firstIndex(where: { $0.id == id }) {
-                    timelines[threadID]?.remove(at: index)
-                    break
-                }
-            }
         case .diffInvalidated(let threadID):
             // Diff invalidation always coincides with a checkpoint change
             // (new checkpoint completed, or a revert pruned some), so refresh
@@ -120,28 +258,68 @@ public final class AppModel {
             planProgress[threadID] = progress
         case .vcsStatusChanged(let threadID, let status):
             vcsStatuses[threadID] = status
+        case .timelineAppended, .timelineReset, .assistantDelta, .assistantCompleted,
+            .approvalResolved, .userInputResolved:
+            // Timeline events are staged by applyBatch; never reach here.
+            assertionFailure("timeline event routed past the batch reducer")
         }
     }
 
-    private func appendDelta(threadID: String, messageID: String, delta: String) {
-        var items = timelines[threadID] ?? []
+    private func recordInteraction(_ item: TimelineItem, threadID: String) {
+        switch item {
+        case .approval(let request):
+            interactionThreadByID[request.id] = threadID
+        case .userInput(let request):
+            interactionThreadByID[request.id] = threadID
+        default:
+            break
+        }
+    }
+
+    private func applyDelta(
+        threadID: String, messageID: String, delta: String, items: inout [TimelineItem]
+    ) {
+        if let cached = streamingIndex[threadID], cached.messageID == messageID,
+            items.indices.contains(cached.index),
+            case .assistantMessage(let id, let markdown, _, let at) = items[cached.index],
+            id == messageID
+        {
+            items[cached.index] = .assistantMessage(
+                id: id, markdown: markdown + delta, isStreaming: true, at: at)
+            return
+        }
         for (index, item) in items.enumerated() {
             if case .assistantMessage(let id, let markdown, _, let at) = item, id == messageID {
-                items[index] = .assistantMessage(id: id, markdown: markdown + delta, isStreaming: true, at: at)
-                timelines[threadID] = items
+                items[index] = .assistantMessage(
+                    id: id, markdown: markdown + delta, isStreaming: true, at: at)
+                streamingIndex[threadID] = (messageID, index)
                 return
             }
         }
         items.append(.assistantMessage(id: messageID, markdown: delta, isStreaming: true, at: Date()))
-        timelines[threadID] = items
+        streamingIndex[threadID] = (messageID, items.count - 1)
     }
 
-    private func finishStreaming(threadID: String, messageID: String, markdown: String) {
-        guard var items = timelines[threadID] else { return }
+    private func finishStreaming(
+        threadID: String, messageID: String, markdown: String, items: inout [TimelineItem]
+    ) {
+        defer {
+            if streamingIndex[threadID]?.messageID == messageID {
+                streamingIndex[threadID] = nil
+            }
+        }
+        if let cached = streamingIndex[threadID], cached.messageID == messageID,
+            items.indices.contains(cached.index),
+            case .assistantMessage(let id, _, _, let at) = items[cached.index], id == messageID
+        {
+            items[cached.index] = .assistantMessage(
+                id: id, markdown: markdown, isStreaming: false, at: at)
+            return
+        }
         for (index, item) in items.enumerated() {
             if case .assistantMessage(let id, _, _, let at) = item, id == messageID {
-                items[index] = .assistantMessage(id: id, markdown: markdown, isStreaming: false, at: at)
-                timelines[threadID] = items
+                items[index] = .assistantMessage(
+                    id: id, markdown: markdown, isStreaming: false, at: at)
                 return
             }
         }
