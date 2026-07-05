@@ -22,6 +22,9 @@ public final class AppModel {
     public var selectedThreadID: String?
     public var lastError: String?
 
+    /// In-app dictation (mic → local ASR → on-device cleanup → composer).
+    public let dictation = DictationController()
+
     /// Text staged for the composer by a timeline action (Edit on a sent
     /// message). The composer consumes it via `takeComposerPrefill`. A fresh
     /// UUID per staging makes repeat edits of the same text observable.

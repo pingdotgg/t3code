@@ -26,5 +26,7 @@
     <string>NSApplication</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.developer-tools</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>SurgeCode uses the microphone for local, on-device dictation. Audio never leaves your Mac.</string>
 </dict>
 </plist>

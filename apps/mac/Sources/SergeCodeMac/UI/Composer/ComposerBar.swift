@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -20,6 +21,7 @@ public struct ComposerBar: View {
     @UIState private var mentionQuery: String?
     @UIState private var mentionSearchTask: Task<Void, Never>?
 
+    @UIState private var showDictationDownloadPrompt = false
     @FocusState private var editorFocused: Bool
 
     private static let maxAttachments = 8
@@ -106,6 +108,14 @@ public struct ComposerBar: View {
                     .transition(Motion.rise)
             }
 
+            if let dictationError = model.dictation.lastError {
+                Text(dictationError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .padding(.horizontal, 4)
+                    .transition(Motion.rise)
+            }
+
             GlassEffectContainer {
                 HStack(alignment: .bottom, spacing: 10) {
                     Button {
@@ -162,6 +172,8 @@ public struct ComposerBar: View {
                             return .handled
                         }
 
+                    dictationButton
+
                     // While a draft claims the smart button for sending, stop
                     // stays reachable as its own compact control — a running
                     // turn must always be cancellable without discarding the
@@ -211,7 +223,27 @@ public struct ComposerBar: View {
         .animation(Motion.enter, value: mentionResults.map(\.id))
         .animation(Motion.enter, value: attachments.map(\.id))
         .animation(Motion.enter, value: attachmentError)
+        .animation(Motion.enter, value: model.dictation.lastError)
         .animation(Motion.snap, value: isThreadRunning)
+        .task {
+            model.dictation.insertHandler = { text in
+                appendDictated(text)
+            }
+        }
+        .alert("Download dictation model?", isPresented: $showDictationDownloadPrompt) {
+            Button("Download") { model.dictation.downloadModel() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                "Dictation runs fully on this Mac using the Parakeet v3 speech model — a one-time ~2.5 GB download."
+            )
+        }
+        .alert("Microphone access needed", isPresented: micPermissionDeniedBinding) {
+            Button("Open System Settings") { openMicrophonePrivacySettings() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Allow SurgeCode to use the microphone in Privacy & Security → Microphone.")
+        }
         // Edit action on a sent message: load its text as the draft. An
         // in-progress draft is replaced — the edit gesture is explicit intent
         // to compose from the old message.
@@ -227,6 +259,82 @@ public struct ComposerBar: View {
             if case .success(let urls) = result {
                 attach(urls: urls)
             }
+        }
+    }
+
+    // MARK: - Dictation
+
+    private var isRecording: Bool {
+        model.dictation.state == .recording
+    }
+
+    /// Mic control mirrors the smart send button's shape: one button whose
+    /// icon, tint, and behavior track the dictation state machine.
+    @ViewBuilder
+    private var dictationButton: some View {
+        let dictation = model.dictation
+        Button {
+            switch (dictation.state, dictation.modelStatus) {
+            case (.recording, _), (.idle, .ready):
+                dictation.toggleRecording()
+            case (.idle, .notDownloaded):
+                showDictationDownloadPrompt = true
+            default:
+                break
+            }
+        } label: {
+            switch (dictation.state, dictation.modelStatus) {
+            case (_, .downloading(let fraction)):
+                ProgressView(value: fraction)
+                    .progressViewStyle(.circular)
+                    .controlSize(.small)
+            case (.processing, _):
+                ProgressView()
+                    .controlSize(.small)
+            default:
+                Image(systemName: isRecording ? "mic.fill" : "mic")
+                    .contentTransition(.symbolEffect(.replace))
+                    .symbolEffect(.pulse, isActive: isRecording && !Motion.reduceMotion)
+            }
+        }
+        .buttonStyle(.glass)
+        .tint(isRecording ? .red : nil)
+        .disabled(
+            dictation.state == .processing || dictation.modelStatus.isDownloading
+        )
+        .help(dictationHelp)
+        .animation(Motion.snap, value: isRecording)
+    }
+
+    private var dictationHelp: String {
+        switch (model.dictation.state, model.dictation.modelStatus) {
+        case (.recording, _): "Stop dictating"
+        case (.processing, _): "Transcribing…"
+        case (_, .downloading): "Downloading the dictation model…"
+        case (_, .notDownloaded): "Dictate (downloads the on-device speech model first)"
+        default: "Dictate (on-device)"
+        }
+    }
+
+    private var micPermissionDeniedBinding: Binding<Bool> {
+        Binding(
+            get: { model.dictation.micPermissionDenied },
+            set: { model.dictation.micPermissionDenied = $0 })
+    }
+
+    private func openMicrophonePrivacySettings() {
+        let url = URL(
+            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!
+        NSWorkspace.shared.open(url)
+    }
+
+    private func appendDictated(_ text: String) {
+        if draft.isEmpty {
+            draft = text
+        } else if draft.hasSuffix(" ") || draft.hasSuffix("\n") {
+            draft += text
+        } else {
+            draft += " " + text
         }
     }
 

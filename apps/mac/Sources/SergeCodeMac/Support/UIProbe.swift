@@ -97,8 +97,31 @@
                 await snapshotSettings(
                     tab: .connection, name: "8-settings-connection", model: model, dir: dir)
                 MobileAccessPreference.setEnabled(previousMobileAccess)
+                await snapshotSettings(
+                    tab: .dictation, name: "9-settings-dictation", model: model, dir: dir)
             } else {
                 print("UIProbe: skipping settings snapshots (live backend run)")
+            }
+
+            print(
+                "UIProbe: dictation modelStatus=\(model.dictation.modelStatus) "
+                    + "cleanupAvailable=\(model.dictation.cleanupAvailable) "
+                    + "state=\(model.dictation.state)")
+
+            // Optional dictation E2E: transcribe + clean a wav/aiff on disk
+            // through the real pipeline (exercises model download, Parakeet,
+            // and Foundation Models cleanup — everything but the mic tap).
+            if let audioPath = ProcessInfo.processInfo.environment["SERGECODE_DICTATION_AUDIO"],
+                !audioPath.isEmpty
+            {
+                do {
+                    let (raw, cleaned) = try await model.dictation.processAudioFileForProbe(
+                        URL(fileURLWithPath: audioPath))
+                    print("UIProbe: dictation raw=\(raw)")
+                    print("UIProbe: dictation cleaned=\(cleaned)")
+                } catch {
+                    print("UIProbe: dictation e2e failed: \(error)")
+                }
             }
 
             print("UIProbe: done")
@@ -193,8 +216,15 @@
         }
 
         private static func snapshot(_ name: String, dir: String) {
-            guard let window = NSApp.windows.first(where: { $0.isVisible }),
-                let view = window.contentView,
+            guard let window = NSApp.windows.first(where: { $0.isVisible }) else {
+                print("UIProbe: snapshot \(name) failed (no window)")
+                return
+            }
+            snapshot(name, window: window, dir: dir)
+        }
+
+        private static func snapshot(_ name: String, window: NSWindow, dir: String) {
+            guard let view = window.contentView,
                 let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
             else {
                 print("UIProbe: snapshot \(name) failed (no window)")
