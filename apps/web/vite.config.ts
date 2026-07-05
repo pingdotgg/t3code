@@ -84,7 +84,7 @@ const devProxyTarget = resolveDevProxyTarget(configuredWsUrl);
 
 export default defineConfig(() => {
   return {
-    base: "",
+    base: configuredHostedStaticApp === "true" ? "/" : "",
     plugins: [
       tanstackRouter(),
       react(),

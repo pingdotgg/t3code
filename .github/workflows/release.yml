@@ -687,6 +687,18 @@ jobs:
       - name: Build web package
         run: vp run --filter @t3tools/web build
 
+      - name: Smoke web dist asset paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -Eq '(src|href)="assets/' apps/web/dist/index.html; then
+            echo "Web dist entry assets must be root-relative for deep links." >&2
+            grep -En '(src|href)="assets/' apps/web/dist/index.html >&2
+            exit 1
+          fi
+          grep -q 'src="/assets/' apps/web/dist/index.html
+          grep -q 'href="/assets/' apps/web/dist/index.html
+
       - name: Archive web dist
         shell: bash
         run: |
