@@ -115,6 +115,10 @@
       "types": "./src/state/sourceControl.ts",
       "default": "./src/state/sourceControl.ts"
     },
+    "./state/linear": {
+      "types": "./src/state/linear.ts",
+      "default": "./src/state/linear.ts"
+    },
     "./state/terminal": {
       "types": "./src/state/terminal.ts",
       "default": "./src/state/terminal.ts"

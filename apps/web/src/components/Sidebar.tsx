@@ -22,6 +22,7 @@ import {
   ThreadWorktreeIndicator,
 } from "./ThreadStatusIndicators";
 import { ProjectFavicon } from "./ProjectFavicon";
+import { LinearBrowsePopover } from "./LinearBrowsePopover";
 import { useAtomValue } from "@effect/atom-react";
 import { autoAnimate } from "@formkit/auto-animate";
 import React, { useCallback, useEffect, memo, useMemo, useRef, useState } from "react";
@@ -2283,6 +2284,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             </TooltipPopup>
           </Tooltip>
         )}
+        {project.memberProjects[0] ? (
+          <LinearBrowsePopover
+            environmentId={project.memberProjects[0].environmentId}
+            projectId={project.memberProjects[0].id}
+            projectName={project.displayName}
+          />
+        ) : null}
         <Tooltip>
           <TooltipTrigger
             render={

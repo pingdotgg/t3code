@@ -99,6 +99,7 @@ import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
+import * as LinearApi from "./linear/LinearApi.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
@@ -299,6 +300,11 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.sourceControlLookupRepository, AuthOrchestrationReadScope],
   [WS_METHODS.sourceControlCloneRepository, AuthOrchestrationOperateScope],
   [WS_METHODS.sourceControlPublishRepository, AuthOrchestrationOperateScope],
+  [WS_METHODS.linearAuthStatus, AuthOrchestrationReadScope],
+  [WS_METHODS.linearSearchIssues, AuthOrchestrationReadScope],
+  [WS_METHODS.linearFetchIssues, AuthOrchestrationReadScope],
+  [WS_METHODS.linearSetToken, AuthOrchestrationOperateScope],
+  [WS_METHODS.linearClearToken, AuthOrchestrationOperateScope],
   [WS_METHODS.projectsListEntries, AuthOrchestrationReadScope],
   [WS_METHODS.projectsReadFile, AuthOrchestrationReadScope],
   [WS_METHODS.projectsSearchEntries, AuthOrchestrationReadScope],
@@ -419,6 +425,7 @@ const makeWsRpcLayer = (
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
       const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
+      const linear = yield* LinearApi.LinearApi;
       const automaticGitFetchInterval = serverSettings.getSettings.pipe(
         Effect.map((settings) => settings.automaticGitFetchInterval),
         Effect.catch((cause) =>
@@ -1322,6 +1329,28 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "source-control",
             },
           ),
+        [WS_METHODS.linearAuthStatus]: (_input) =>
+          observeRpcEffect(WS_METHODS.linearAuthStatus, linear.probeAuth, {
+            "rpc.aggregate": "linear",
+          }),
+        [WS_METHODS.linearSearchIssues]: (input) =>
+          observeRpcEffect(WS_METHODS.linearSearchIssues, linear.searchIssues(input), {
+            "rpc.aggregate": "linear",
+          }),
+        [WS_METHODS.linearFetchIssues]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.linearFetchIssues,
+            linear.fetchIssues(input).pipe(Effect.map((issues) => ({ issues }))),
+            { "rpc.aggregate": "linear" },
+          ),
+        [WS_METHODS.linearSetToken]: (input) =>
+          observeRpcEffect(WS_METHODS.linearSetToken, linear.setToken(input.token), {
+            "rpc.aggregate": "linear",
+          }),
+        [WS_METHODS.linearClearToken]: (_input) =>
+          observeRpcEffect(WS_METHODS.linearClearToken, linear.clearToken, {
+            "rpc.aggregate": "linear",
+          }),
         [WS_METHODS.projectsSearchEntries]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsSearchEntries,
@@ -1815,6 +1844,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
             makeWsRpcLayer(session, previewAutomationBroker).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(ProviderMaintenanceRunner.layer),
+              Layer.provide(LinearApi.layer),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(
