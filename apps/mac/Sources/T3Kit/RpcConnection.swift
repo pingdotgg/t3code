@@ -35,6 +35,9 @@ public actor RpcConnection {
         case stream(AsyncThrowingStream<JSONValue, Error>.Continuation)
     }
 
+    /// Incoming WS message cap (64 MiB). See `connect()`.
+    static let maxIncomingMessageBytes = 64 * 1024 * 1024
+
     private let url: URL
     private let urlSession: URLSession
 
@@ -80,6 +83,13 @@ public actor RpcConnection {
         guard task == nil else { return }
         currentState = .connecting
         let task = urlSession.webSocketTask(with: url)
+        // A thread snapshot arrives as one WS text message and can far exceed
+        // URLSession's 1 MiB default; hitting the cap makes `receive()` throw,
+        // which tears the session down and — because the supervisor re-opens
+        // the same subscriptions — locks the app in a reconnect loop the
+        // server never even sees. Long-lived threads reach several MiB, so
+        // give plenty of headroom.
+        task.maximumMessageSize = Self.maxIncomingMessageBytes
         self.task = task
         task.resume()
         awaitingPong = false
