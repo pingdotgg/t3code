@@ -34,7 +34,8 @@ struct ChatTimelineScrollView: View {
                         .frame(height: 1)
                         .id(Self.bottomAnchorID)
                 }
-                .padding(16)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 16)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 // Keyed to count, not content: new rows rise in, but
                 // per-token streaming updates never re-trigger layout

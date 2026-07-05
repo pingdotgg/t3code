@@ -21,6 +21,11 @@ public struct ChatScreen: View {
                 VcsToolbar(model: model)
                 ChatTimelineScrollView(model: model, isPinnedToBottom: $isPinnedToBottom)
                 ComposerBar(model: model)
+                    // Breathing room against the window edges and sidebars —
+                    // the floating glass composer shouldn't touch chrome.
+                    .padding(.horizontal, 16)
+                    .padding(.top, 4)
+                    .padding(.bottom, 14)
             } else {
                 ChatEmptyStateView()
                     .transition(.opacity)

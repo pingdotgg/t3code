@@ -45,7 +45,10 @@ struct ActivityRowTests {
                     "status": .string("inProgress"),
                     "detail": .string("Sources/App/Main.swift"),
                 ])))
-        #expect(row == .tool(id: "a1", title: "Read", detail: "Sources/App/Main.swift", phase: .running))
+        #expect(
+            row == .tool(
+                id: "a1", title: "Read", detail: "Sources/App/Main.swift",
+                itemType: "file_read", phase: .running))
     }
 
     @Test func toolLifecycleSharesRowIdViaToolCallId() {
@@ -63,8 +66,14 @@ struct ActivityRowTests {
                     "itemType": .string("command_execution"),
                     "data": .object(["toolCallId": .string("call-7")]),
                 ])))
-        #expect(updated == .tool(id: "tool:call-7", title: "Bash", detail: "", phase: .running))
-        #expect(completed == .tool(id: "tool:call-7", title: "Bash", detail: "", phase: .succeeded))
+        #expect(
+            updated == .tool(
+                id: "tool:call-7", title: "Bash", detail: "",
+                itemType: "command_execution", phase: .running))
+        #expect(
+            completed == .tool(
+                id: "tool:call-7", title: "Bash", detail: "",
+                itemType: "command_execution", phase: .succeeded))
     }
 
     @Test func toolCompletedStripsExitCodeMarkerAndCompletedSuffix() {
@@ -75,7 +84,10 @@ struct ActivityRowTests {
                     "itemType": .string("command_execution"),
                     "detail": .string("swift build <exited with exit code 0>"),
                 ])))
-        #expect(row == .tool(id: "a1", title: "Terminal", detail: "swift build", phase: .succeeded))
+        #expect(
+            row == .tool(
+                id: "a1", title: "Terminal", detail: "swift build",
+                itemType: "command_execution", phase: .succeeded))
     }
 
     @Test func toolFailureStatusMapsToFailedPhase() {
@@ -83,7 +95,7 @@ struct ActivityRowTests {
             for: activity(
                 kind: "tool.updated", summary: "Edit",
                 payload: .object(["status": .string("failed")])))
-        #expect(row == .tool(id: "a1", title: "Edit", detail: "", phase: .failed))
+        #expect(row == .tool(id: "a1", title: "Edit", detail: "", itemType: nil, phase: .failed))
     }
 
     @Test func emptySummaryFallsBackToHumanizedItemType() {
@@ -91,7 +103,10 @@ struct ActivityRowTests {
             for: activity(
                 kind: "tool.updated", summary: "",
                 payload: .object(["itemType": .string("web_search")])))
-        #expect(row == .tool(id: "a1", title: "Web search", detail: "", phase: .running))
+        #expect(
+            row == .tool(
+                id: "a1", title: "Web search", detail: "", itemType: "web_search",
+                phase: .running))
     }
 
     @Test func detailDuplicatingTitleIsDropped() {
@@ -99,7 +114,7 @@ struct ActivityRowTests {
             for: activity(
                 kind: "tool.completed", summary: "Read file",
                 payload: .object(["detail": .string("  read   FILE ")])))
-        #expect(row == .tool(id: "a1", title: "Read file", detail: "", phase: .succeeded))
+        #expect(row == .tool(id: "a1", title: "Read file", detail: "", itemType: nil, phase: .succeeded))
     }
 
     @Test func planBoundaryToolActivityIsSkipped() {
@@ -110,6 +125,68 @@ struct ActivityRowTests {
                     "detail": .string("ExitPlanMode: plan approved"),
                 ])))
         #expect(row == nil)
+    }
+
+    @Test func fileChangeDetailIsRebuiltFromUntruncatedData() {
+        // payload.detail is truncated server-side (~180 chars); the full tool
+        // input in payload.data must win so diffs render complete edits.
+        let row = ActivityRows.row(
+            for: activity(
+                kind: "tool.completed", summary: "Edit",
+                payload: .object([
+                    "itemType": .string("file_change"),
+                    "detail": .string("Edit: {\"file_path\": \"a.swift\", \"old_st"),
+                    "data": .object([
+                        "toolName": .string("Edit"),
+                        "input": .object([
+                            "file_path": .string("a.swift"),
+                            "old_string": .string("let x = 1"),
+                            "new_string": .string("let x = 2"),
+                        ]),
+                    ]),
+                ])))
+        let expectedDetail =
+            #"Edit: {"file_path":"a.swift","new_string":"let x = 2","old_string":"let x = 1"}"#
+        #expect(
+            row == .tool(
+                id: "a1", title: "Edit", detail: expectedDetail, itemType: "file_change",
+                phase: .succeeded))
+    }
+
+    @Test func commandDetailIsRebuiltFromUntruncatedData() {
+        let row = ActivityRows.row(
+            for: activity(
+                kind: "tool.completed", summary: "Bash",
+                payload: .object([
+                    "itemType": .string("command_execution"),
+                    "detail": .string("Bash: swift build --package-pa"),
+                    "data": .object([
+                        "toolName": .string("Bash"),
+                        "input": .object([
+                            "command": .string("swift build --package-path apps/mac && swift test")
+                        ]),
+                    ]),
+                ])))
+        #expect(
+            row == .tool(
+                id: "a1", title: "Bash",
+                detail: "Bash: swift build --package-path apps/mac && swift test",
+                itemType: "command_execution", phase: .succeeded))
+    }
+
+    @Test func dataWithoutInputFallsBackToPayloadDetail() {
+        let row = ActivityRows.row(
+            for: activity(
+                kind: "tool.completed", summary: "Bash",
+                payload: .object([
+                    "itemType": .string("command_execution"),
+                    "detail": .string("swift build"),
+                    "data": .object(["toolCallId": .string("call-9")]),
+                ])))
+        #expect(
+            row == .tool(
+                id: "tool:call-9", title: "Bash", detail: "swift build",
+                itemType: "command_execution", phase: .succeeded))
     }
 
     // MARK: Task progress / completion
@@ -150,7 +227,9 @@ struct ActivityRowTests {
                     "detail": .string("Refactored the log mapper"),
                 ])))
         #expect(
-            row == .tool(id: "a1", title: "Task completed", detail: "Refactored the log mapper", phase: .succeeded))
+            row == .tool(
+                id: "a1", title: "Task completed", detail: "Refactored the log mapper",
+                itemType: nil, phase: .succeeded))
     }
 
     @Test func stoppedTaskCompletionSurfacesAsNotice() {
@@ -177,7 +256,7 @@ struct ActivityRowTests {
             for: activity(
                 tone: .error, kind: "task.completed", summary: "Task failed",
                 payload: .object(["status": .string("failed")])))
-        #expect(row == .tool(id: "a1", title: "Task failed", detail: "", phase: .failed))
+        #expect(row == .tool(id: "a1", title: "Task failed", detail: "", itemType: nil, phase: .failed))
     }
 
     // MARK: Tone fallbacks
@@ -187,7 +266,10 @@ struct ActivityRowTests {
             for: activity(
                 tone: .error, kind: "turn.error", summary: "Turn failed",
                 payload: .object(["message": .string("provider crashed")])))
-        #expect(row == .tool(id: "a1", title: "Turn failed", detail: "provider crashed", phase: .failed))
+        #expect(
+            row == .tool(
+                id: "a1", title: "Turn failed", detail: "provider crashed", itemType: nil,
+                phase: .failed))
     }
 
     @Test func infoToneBecomesNotice() {

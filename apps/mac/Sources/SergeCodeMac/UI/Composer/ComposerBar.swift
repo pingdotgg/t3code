@@ -122,9 +122,13 @@ public struct ComposerBar: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .overlay(alignment: .topLeading) {
                             if draft.isEmpty {
+                                // Matches NSTextView's text origin (no top
+                                // inset, 5pt line-fragment padding) so the
+                                // placeholder sits exactly where typed text
+                                // appears.
                                 Text("Message…  (@ to mention files, / for commands)")
+                                    .font(.body)
                                     .foregroundStyle(.tertiary)
-                                    .padding(.top, 8)
                                     .padding(.leading, 5)
                                     .allowsHitTesting(false)
                                     .transition(.opacity)
