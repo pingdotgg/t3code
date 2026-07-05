@@ -1,4 +1,5 @@
 import Foundation
+import T3Kit
 
 // Render-level condensing over `TimelineItem`: once the agent has moved past
 // a burst of tool work (it said something afterwards), that burst reads as
@@ -38,7 +39,11 @@ extension Array where Element == TimelineItem {
     /// still running, and a later item already follows it (the agent has
     /// responded and moved on). The trailing run of a live turn stays as
     /// individual rows so the user can watch work happen.
-    public func groupedForDisplay() -> [TimelineDisplayItem] {
+    ///
+    /// `threadIsSettled`: providers don't always close every tool's
+    /// lifecycle, so once the thread has settled a row still marked running
+    /// counts as finished (mirrors ToolEventRow's settled display state).
+    public func groupedForDisplay(threadIsSettled: Bool = false) -> [TimelineDisplayItem] {
         var result: [TimelineDisplayItem] = []
         var run: [TimelineItem] = []
 
@@ -46,12 +51,12 @@ extension Array where Element == TimelineItem {
             defer { run.removeAll() }
             guard !run.isEmpty else { return }
             let tools = run.compactMap { item -> ToolCall? in
-                guard case .toolEvent(_, let name, let detail, let status, _) = item else {
+                guard case .toolEvent(_, _, let detail, let kind, let status, _) = item else {
                     return nil
                 }
-                return ToolCall(name: name, detail: detail, status: status)
+                return ToolCall(detail: detail, kind: kind, status: status)
             }
-            let allFinished = tools.allSatisfy { $0.status != .running }
+            let allFinished = threadIsSettled || tools.allSatisfy { $0.status != .running }
             guard somethingFollows, allFinished, tools.count >= 2 else {
                 result.append(contentsOf: run.map { .single($0) })
                 return
@@ -83,20 +88,27 @@ extension Array where Element == TimelineItem {
     }
 
     private struct ToolCall {
-        var name: String
         var detail: String
+        var kind: ToolEventKind
         var status: ToolEventStatus
     }
 
-    /// Heuristic file-edit count: tools whose name says they mutate files,
-    /// deduplicated by their detail line (usually the path). Falls back to
-    /// the invocation count when details are empty.
+    /// Distinct files touched by the run's file-change tools, keyed on the
+    /// path parsed out of the edit payload so repeated edits to one file
+    /// count once. Unparseable payloads (the server truncates long inputs)
+    /// fall back to the raw detail string as the dedup key; details are
+    /// ≤400 chars so parsing per grouping pass stays cheap.
     private static func editedFileCount(of tools: [ToolCall]) -> Int {
-        let edits = tools.filter {
-            let name = $0.name.lowercased()
-            return name.contains("edit") || name.contains("write") || name.contains("patch")
-        }
-        let distinctDetails = Set(edits.map(\.detail).filter { !$0.isEmpty })
-        return distinctDetails.isEmpty ? edits.count : distinctDetails.count
+        let keys = tools.lazy
+            .filter { $0.kind == .fileChange }
+            .map { tool -> String in
+                if case .fileChange(let path, _) = ParsedToolDetail.parse(
+                    detail: tool.detail, itemType: "file_change")
+                {
+                    return path
+                }
+                return tool.detail
+            }
+        return Set(keys).count
     }
 }

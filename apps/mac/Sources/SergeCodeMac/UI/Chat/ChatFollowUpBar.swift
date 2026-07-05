@@ -60,11 +60,17 @@ struct ChatFollowUpBar: View {
     // MARK: - Turn done → create PR
 
     /// Only once the agent has actually answered (not a fresh thread), on a
-    /// feature branch with something to ship and no PR yet.
+    /// feature branch with something to ship, a remote to push to, and no
+    /// PR yet. "Something to ship" is a real delta — working-tree changes,
+    /// unpushed commits, or commits ahead of the default branch (the pushed
+    /// branch with no PR case, where aheadCount is 0) — never the mere
+    /// absence of an upstream, which would offer PRs for empty branches.
     private func shouldOfferPR(thread: ChatThread, vcs: VcsStatus) -> Bool {
-        guard thread.status == .idle, vcs.isRepo, !vcs.isDefaultBranch, vcs.prNumber == nil
+        guard thread.status == .idle, vcs.isRepo, vcs.hasPrimaryRemote, !vcs.isDefaultBranch,
+            vcs.prNumber == nil
         else { return false }
-        let hasShippableWork = vcs.changedFileCount > 0 || vcs.aheadCount > 0 || !vcs.hasUpstream
+        let hasShippableWork = vcs.changedFileCount > 0 || vcs.aheadCount > 0
+            || (vcs.aheadOfDefaultCount ?? 0) > 0
         guard hasShippableWork else { return false }
         return model.selectedTimeline().contains {
             if case .assistantMessage(_, _, let isStreaming, _) = $0 { return !isStreaming }
