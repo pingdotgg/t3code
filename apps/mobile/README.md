@@ -66,22 +66,36 @@ The native lint task runs SwiftLint for Swift plus ktlint and detekt for Kotlin.
 ## Installing on a device with a free Apple ID
 
 Local device installs without T3 Tools team membership: sign in to Xcode with
-your Apple ID (Personal Team), then build with personal signing:
+your Apple ID (Personal Team), find your team ID in Xcode → Settings →
+Accounts, then build with personal signing (device UDID from
+`xcrun devicectl list devices`):
 
 ```bash
-SERGECODE_PERSONAL_SIGNING=1 APP_VARIANT=development EXPO_NO_GIT_STATUS=1 \
+export SERGECODE_PERSONAL_SIGNING=1 SERGECODE_PERSONAL_TEAM_ID=<your-team-id>
+export UDID=<device-udid>
+APP_VARIANT=development EXPO_NO_GIT_STATUS=1 \
   npx expo prebuild --clean --platform ios --no-install
 cd ios && pod install && xcodebuild -workspace T3CodeDev.xcworkspace \
-  -scheme T3CodeDev -configuration Debug -destination "id=<device-udid>" \
-  -allowProvisioningUpdates -allowProvisioningDeviceRegistration build
+  -scheme T3CodeDev -configuration Debug -destination "id=$UDID" \
+  -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
+  -derivedDataPath build build
+xcrun devicectl device install app --device "$UDID" \
+  build/Build/Products/Debug-iphoneos/T3CodeDev.app
+xcrun devicectl device process launch --device "$UDID" \
+  "dev.$(echo "$SERGECODE_PERSONAL_TEAM_ID" | tr '[:upper:]' '[:lower:]').t3code.development"
 ```
 
-This swaps in your Personal Team (override with `SERGECODE_PERSONAL_TEAM_ID`),
-uses a private bundle id, and drops what free accounts cannot sign: the
-widgets extension, app groups, push, Sign in with Apple, and associated
+Then start Metro (`APP_VARIANT=development npx expo start --dev-client`) and
+pick the server in the dev launcher on the phone (same WiFi).
+
+This signs with your Personal Team, derives a per-team bundle id
+(`dev.<teamid>.t3code.development`, override with
+`SERGECODE_PERSONAL_BUNDLE_ID`), and drops what free accounts cannot sign:
+the widgets extension, app groups, push, Sign in with Apple, and associated
 domains. Signatures expire after 7 days — rebuild to refresh. Trust the
 developer profile on the phone (Settings → General → VPN & Device Management)
-on first launch. Never use this mode for EAS or store builds.
+on first launch. The mode refuses to run for EAS builds or any
+`APP_VARIANT` other than `development`.
 
 ## Alpine scenery (Unsplash)
 

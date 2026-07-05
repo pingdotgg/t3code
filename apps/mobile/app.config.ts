@@ -63,12 +63,32 @@ const variant = VARIANT_CONFIG[APP_VARIANT];
 // instead of the pinned T3 Tools team. Personal teams cannot sign app
 // groups, push, or associated domains, and cannot claim another team's
 // bundle identifier — so this drops the widgets extension and associated
-// domains and uses a private bundle id. Local installs only; never for
-// EAS/store builds.
+// domains and uses a team-derived bundle id. Local development installs
+// only; hosted (EAS) and non-development builds refuse the flag outright.
 const personalSigning = process.env.SERGECODE_PERSONAL_SIGNING === "1";
-const PERSONAL_TEAM_ID = process.env.SERGECODE_PERSONAL_TEAM_ID ?? "78A5P57U23";
+if (personalSigning && (process.env.EAS_BUILD === "true" || process.env.EAS_BUILD_PROFILE)) {
+  throw new Error(
+    "SERGECODE_PERSONAL_SIGNING is for local device installs and must never reach an EAS build.",
+  );
+}
+if (personalSigning && APP_VARIANT !== "development") {
+  throw new Error(
+    `SERGECODE_PERSONAL_SIGNING only supports APP_VARIANT=development (got "${APP_VARIANT}").`,
+  );
+}
+const PERSONAL_TEAM_ID = process.env.SERGECODE_PERSONAL_TEAM_ID;
+if (personalSigning && !PERSONAL_TEAM_ID) {
+  throw new Error(
+    "SERGECODE_PERSONAL_SIGNING requires SERGECODE_PERSONAL_TEAM_ID (your Personal Team ID, " +
+      "shown in Xcode → Settings → Accounts).",
+  );
+}
+// Derived from the team id so two developers never collide on one bundle id;
+// Apple bundle ids are case-insensitive alphanumerics + dots/hyphens, and
+// team ids are already alphanumeric.
 const iosBundleIdentifier = personalSigning
-  ? `com.sergeserb2.t3code.${APP_VARIANT === "production" ? "app" : APP_VARIANT}`
+  ? (process.env.SERGECODE_PERSONAL_BUNDLE_ID ??
+    `dev.${PERSONAL_TEAM_ID!.toLowerCase()}.t3code.development`)
   : variant.iosBundleIdentifier;
 
 const config: ExpoConfig = {
@@ -96,7 +116,7 @@ const config: ExpoConfig = {
     // Pin code signing to the T3 Tools team so non-interactive `expo run:ios`
     // does not fall back to a personal team (which cannot sign app groups,
     // Sign in with Apple, or push notification entitlements).
-    appleTeamId: personalSigning ? PERSONAL_TEAM_ID : "ARK85ZXQ4Z",
+    appleTeamId: personalSigning ? PERSONAL_TEAM_ID! : "ARK85ZXQ4Z",
     ...(personalSigning
       ? {}
       : {
