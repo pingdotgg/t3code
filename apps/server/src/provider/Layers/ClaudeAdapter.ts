@@ -2741,6 +2741,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         return;
       case "thinking_tokens":
         return;
+      case "commands_changed":
+        // Slash-command list push; nothing here consumes the command list,
+        // and surfacing it as a runtime warning puts noise in the chat.
+        return;
       case "permission_denied":
         yield* offerRuntimeEvent({
           ...base,
