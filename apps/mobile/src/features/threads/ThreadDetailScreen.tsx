@@ -21,7 +21,7 @@ import { View, type GestureResponderEvent } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { runOnJS } from "react-native-reanimated";
+import Animated, { runOnJS } from "react-native-reanimated";
 
 import { AppText as Text } from "../../components/AppText";
 import type { ComposerEditorHandle } from "../../components/ComposerEditor";
@@ -35,6 +35,7 @@ import type {
   PendingUserInputDraftAnswer,
   ThreadFeedEntry,
 } from "../../lib/threadActivity";
+import { bannerDrop, materialize } from "../../lib/motion";
 import { PendingApprovalCard } from "./PendingApprovalCard";
 import { PendingUserInputCard } from "./PendingUserInputCard";
 import {
@@ -428,11 +429,17 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             >
               <View style={{ alignSelf: "center", maxWidth: contentMaxWidth, width: "100%" }}>
                 {props.activeWorkStartedAt ? (
-                  <WorkingDurationPill startedAt={props.activeWorkStartedAt} />
+                  <Animated.View entering={bannerDrop()}>
+                    <WorkingDurationPill startedAt={props.activeWorkStartedAt} />
+                  </Animated.View>
                 ) : null}
 
                 {props.activePendingApproval || props.activePendingUserInput ? (
-                  <View className="gap-3 px-4 pb-3" style={{ flexShrink: 0 }}>
+                  <Animated.View
+                    entering={materialize()}
+                    className="gap-3 px-4 pb-3"
+                    style={{ flexShrink: 0 }}
+                  >
                     {props.activePendingApproval ? (
                       <PendingApprovalCard
                         approval={props.activePendingApproval}
@@ -451,7 +458,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                         onSubmit={props.onSubmitUserInput}
                       />
                     ) : null}
-                  </View>
+                  </Animated.View>
                 ) : null}
               </View>
 
