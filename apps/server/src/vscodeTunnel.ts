@@ -24,12 +24,53 @@ const decodeVSCodeTunnelStatusJson = Schema.decodeUnknownOption(
 
 function extractVSCodeTunnelStatusJson(stdout: string): string {
   const trimmed = stdout.trim();
-  const jsonLine =
-    trimmed
-      .split(/\r?\n/)
-      .find((line) => line.trim().startsWith("{"))
-      ?.trim() ?? "";
-  return jsonLine || trimmed;
+  const start = trimmed.indexOf("{");
+  if (start < 0) {
+    return trimmed;
+  }
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < trimmed.length; index += 1) {
+    const char = trimmed[index];
+    if (char === undefined) break;
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return trimmed.slice(start, index + 1);
+      }
+    }
+  }
+
+  return trimmed.slice(start);
 }
 
 const UNCHECKED_STATUS: ServerVSCodeTunnelStatus = {
