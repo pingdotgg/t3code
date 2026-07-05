@@ -23,6 +23,7 @@ import {
 } from "./ThreadStatusIndicators";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { LinearBrowsePopover } from "./LinearBrowsePopover";
+import { LinearIssueBadge } from "./linear/LinearIssueBadge";
 import { useAtomValue } from "@effect/atom-react";
 import { autoAnimate } from "@formkit/auto-animate";
 import React, { useCallback, useEffect, memo, useMemo, useRef, useState } from "react";
@@ -740,6 +741,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
           )}
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          {thread.linearIssue ? <LinearIssueBadge issue={thread.linearIssue} /> : null}
           {discoveredPorts.length > 0 && (
             <Tooltip>
               <TooltipTrigger

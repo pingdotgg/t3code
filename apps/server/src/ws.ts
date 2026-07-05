@@ -844,6 +844,9 @@ const makeWsRpcLayer = (
                 interactionMode: bootstrap.createThread.interactionMode,
                 branch: bootstrap.createThread.branch,
                 worktreePath: bootstrap.createThread.worktreePath,
+                ...(bootstrap.createThread.linearIssue !== undefined
+                  ? { linearIssue: bootstrap.createThread.linearIssue }
+                  : {}),
                 createdAt: bootstrap.createThread.createdAt,
               });
               createdThread = true;

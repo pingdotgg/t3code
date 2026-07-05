@@ -8,6 +8,7 @@
  */
 import {
   IsoDateTime,
+  LinearIssueLink,
   ModelSelection,
   NonNegativeInt,
   ProjectId,
@@ -32,6 +33,7 @@ export const ProjectionThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
+  linearIssue: Schema.NullOr(LinearIssueLink),
   latestTurnId: Schema.NullOr(TurnId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
