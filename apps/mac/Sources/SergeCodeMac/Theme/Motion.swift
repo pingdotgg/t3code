@@ -96,12 +96,16 @@ enum Motion {
             )
     }
 
-    /// Inline detail unfolding beneath a disclosure row.
+    /// Inline detail unfolding beneath a disclosure row: fade with a small
+    /// upward drift. Not `.move(edge: .top)` — that offsets the content by
+    /// its full height, so a tall body (e.g. an expanded tool group) slides
+    /// in from far above its row and reads as falling from the top of the
+    /// window.
     static var unfold: AnyTransition {
         reduceMotion
             ? .opacity
             : .asymmetric(
-                insertion: .opacity.combined(with: .move(edge: .top)),
+                insertion: .opacity.combined(with: .offset(y: -6)),
                 removal: .opacity
             )
     }

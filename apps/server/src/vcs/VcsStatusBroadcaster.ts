@@ -161,6 +161,9 @@ export class VcsStatusBroadcaster extends Context.Service<
       cwd: string,
     ) => Effect.Effect<VcsStatusLocalResult, GitManagerServiceError>;
     readonly refreshStatus: (cwd: string) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
+    readonly refreshStatusWithoutFetch: (
+      cwd: string,
+    ) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
     readonly streamStatus: (
       input: VcsStatusInput,
       options?: StreamStatusOptions,
@@ -377,6 +380,21 @@ export const make = Effect.gen(function* () {
     return yield* updateCachedStatus(cwd, local, remote, { publish: true });
   });
 
+  // Recomputes both status parts without a network `git fetch`: divergence
+  // counts come from the already-fetched remote-tracking refs, so the result
+  // lands in milliseconds instead of waiting on the periodic fetch poller.
+  // (PR lookup still asks the hosting provider; failures degrade to no PR.)
+  const refreshStatusWithoutFetch: VcsStatusBroadcaster["Service"]["refreshStatusWithoutFetch"] =
+    Effect.fn("VcsStatusBroadcaster.refreshStatusWithoutFetch")(function* (rawCwd) {
+      const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
+      yield* workflow.invalidateLocalStatus(cwd);
+      const [local, remote] = yield* Effect.all(
+        [workflow.localStatus({ cwd }), workflow.remoteStatus({ cwd }, { refreshUpstream: false })],
+        { concurrency: "unbounded" },
+      );
+      return yield* updateCachedStatus(cwd, local, remote, { publish: true });
+    });
+
   const makeRemoteRefreshLoop = (
     cwd: string,
     automaticRemoteRefreshInterval: Effect.Effect<Duration.Duration, never>,
@@ -536,6 +554,7 @@ export const make = Effect.gen(function* () {
     getStatus,
     refreshLocalStatus,
     refreshStatus,
+    refreshStatusWithoutFetch,
     streamStatus,
   });
 });

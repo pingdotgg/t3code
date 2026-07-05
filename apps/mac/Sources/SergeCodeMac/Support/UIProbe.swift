@@ -22,14 +22,30 @@
                 atPath: dir, withIntermediateDirectories: true)
 
             // Let the mock backend load, then select a thread so the
-            // inspector has content.
+            // inspector has content. Prefer thread-1: it's the one the mock
+            // seeds with plan progress, so the plan strip is exercised too.
             try? await Task.sleep(for: .seconds(2))
             if model.selectedThreadID == nil {
-                model.selectedThreadID = model.threads.first?.id
+                model.selectedThreadID =
+                    model.threads.first { $0.id == "thread-1" }?.id ?? model.threads.first?.id
             }
             // Let the inspector present and the diff refresh land.
             try? await Task.sleep(for: .seconds(2))
             snapshot("1-inspector-diff", dir: dir)
+
+            // Plan strip above the composer: expand, snapshot, collapse.
+            toggleSection("plan")
+            try? await Task.sleep(for: .seconds(1))
+            snapshot("2-plan-expanded", dir: dir)
+            toggleSection("plan")
+            try? await Task.sleep(for: .seconds(1))
+
+            // Checkpoints section under the diff: expand and snapshot.
+            toggleSection("checkpoints")
+            try? await Task.sleep(for: .seconds(1))
+            snapshot("3-checkpoints-expanded", dir: dir)
+            toggleSection("checkpoints")
+            try? await Task.sleep(for: .seconds(1))
 
             if let diffScroll = widestScrollView() {
                 let doc = diffScroll.documentView?.frame.width ?? 0
@@ -40,10 +56,29 @@
                 diffScroll.reflectScrolledClipView(diffScroll.contentView)
                 print("UIProbe: scrolled to x=\(diffScroll.contentView.bounds.origin.x)")
                 try? await Task.sleep(for: .seconds(1))
-                snapshot("2-diff-hscrolled", dir: dir)
+                snapshot("4-diff-hscrolled", dir: dir)
             } else {
                 print("UIProbe: no horizontally scrollable diff view found")
             }
+
+            // Message actions: Edit stages text that the composer must pick
+            // up as its draft (visible in its NSTextView) and consume.
+            let marker = "Probe edit: resend me"
+            model.stageComposerText(marker)
+            try? await Task.sleep(for: .seconds(1))
+            let staged = textView(containing: marker) != nil
+            print("UIProbe: edit prefill in composer=\(staged) consumed=\(model.composerPrefill == nil)")
+            snapshot("5-composer-prefill", dir: dir)
+
+            // Retry: resending an existing user message appends a new user
+            // row to the timeline (mock backend echoes sends).
+            let before = userMessageCount(model)
+            if let text = firstUserMessageText(model) {
+                await model.send(text: text)
+            }
+            try? await Task.sleep(for: .seconds(1))
+            print("UIProbe: retry user rows before=\(before) after=\(userMessageCount(model))")
+            snapshot("6-after-retry", dir: dir)
 
             // Settings ▸ iPhone: enable the mobile-access preference so the
             // mock backend reports LAN-reachable and the QR pairing card
@@ -58,9 +93,9 @@
                 let previousMobileAccess = MobileAccessPreference.isEnabled
                 MobileAccessPreference.setEnabled(true)
                 await snapshotSettings(
-                    tab: .iphone, name: "3-settings-iphone", model: model, dir: dir)
+                    tab: .iphone, name: "7-settings-iphone", model: model, dir: dir)
                 await snapshotSettings(
-                    tab: .connection, name: "4-settings-connection", model: model, dir: dir)
+                    tab: .connection, name: "8-settings-connection", model: model, dir: dir)
                 MobileAccessPreference.setEnabled(previousMobileAccess)
             } else {
                 print("UIProbe: skipping settings snapshots (live backend run)")
@@ -96,6 +131,42 @@
                 }
             }
             window.orderOut(nil)
+        }
+
+        /// Toggles a collapsible section via the probe notification hook
+        /// (see UIProbeHooks.swift) — SwiftUI's AX tree doesn't resolve for
+        /// same-process clients, so buttons can't be pressed through AX here.
+        private static func toggleSection(_ key: String) {
+            NotificationCenter.default.post(name: .uiProbeToggleSection, object: key)
+            print("UIProbe: toggled section '\(key)'")
+        }
+
+        private static func userMessageCount(_ model: AppModel) -> Int {
+            model.selectedTimeline().count {
+                if case .userMessage = $0 { return true } else { return false }
+            }
+        }
+
+        private static func firstUserMessageText(_ model: AppModel) -> String? {
+            for item in model.selectedTimeline() {
+                if case .userMessage(_, let text, _) = item { return text }
+            }
+            return nil
+        }
+
+        private static func textView(containing needle: String) -> NSTextView? {
+            guard let root = NSApp.windows.first(where: { $0.isVisible })?.contentView
+            else { return nil }
+            return textViews(in: root).first { $0.string.contains(needle) }
+        }
+
+        private static func textViews(in view: NSView) -> [NSTextView] {
+            var found: [NSTextView] = []
+            for subview in view.subviews {
+                if let text = subview as? NSTextView { found.append(text) }
+                found += textViews(in: subview)
+            }
+            return found
         }
 
         /// The diff panel's PanScrollView: the scroll view whose document

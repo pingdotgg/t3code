@@ -1,12 +1,14 @@
 import SwiftUI
 
-// Checkpoint list for a thread: restore any prior checkpoint after a
-// confirmation dialog. Content stays opaque; only the header bar is glass.
+// Collapsible checkpoint section docked under the diff panel: restore any
+// prior checkpoint after a confirmation dialog. Content stays opaque; only
+// the header bar is glass.
 
 public struct CheckpointListView: View {
     private let model: AppModel
     private let threadID: String
 
+    @UIState private var isExpanded = false
     @UIState private var pendingRestore: Checkpoint?
     @UIState private var isConfirmingRestore = false
 
@@ -22,15 +24,24 @@ public struct CheckpointListView: View {
     public var body: some View {
         VStack(spacing: 0) {
             header
-            Divider()
-            if checkpoints.isEmpty {
-                emptyState
-                    .transition(Motion.paneSwap)
-            } else {
-                list
-                    .transition(Motion.paneSwap)
+            if isExpanded {
+                Divider()
+                Group {
+                    if checkpoints.isEmpty {
+                        emptyState
+                    } else {
+                        list
+                    }
+                }
+                .frame(height: 220)
+                .transition(Motion.unfold)
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .uiProbeToggleSection)) { note in
+            guard note.object as? String == "checkpoints" else { return }
+            withAnimation(Motion.snap) { isExpanded.toggle() }
+        }
+        .animation(Motion.settle, value: isExpanded)
         .animation(Motion.settle, value: checkpoints.isEmpty)
         .task(id: threadID) {
             await model.refreshCheckpoints(threadID: threadID)
@@ -53,16 +64,31 @@ public struct CheckpointListView: View {
 
     private var header: some View {
         HStack {
-            Label("Checkpoints", systemImage: "clock.arrow.circlepath")
-                .font(.headline)
-            if !checkpoints.isEmpty {
-                Text("\(checkpoints.count)")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .contentTransition(.numericText())
-                    .transition(.opacity)
+            Button {
+                withAnimation(Motion.snap) { isExpanded.toggle() }
+            } label: {
+                HStack(spacing: 8) {
+                    Label("Checkpoints", systemImage: "clock.arrow.circlepath")
+                        .font(.headline)
+                    if !checkpoints.isEmpty {
+                        Text("\(checkpoints.count)")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .contentTransition(.numericText())
+                            .transition(.opacity)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                }
+                .contentShape(Rectangle())
             }
-            Spacer()
+            .buttonStyle(.plain)
+            .help(isExpanded ? "Collapse checkpoints" : "Expand checkpoints")
+            .accessibilityIdentifier("checkpoints-toggle")
+
             Button {
                 Task { await model.refreshCheckpoints(threadID: threadID) }
             } label: {

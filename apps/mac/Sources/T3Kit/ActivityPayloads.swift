@@ -31,6 +31,9 @@ public enum ActivityKind {
     public static let taskStarted = "task.started"
     public static let taskProgress = "task.progress"
     public static let taskCompleted = "task.completed"
+    /// Tone `.info`: adapter-side warning about a provider message the
+    /// server couldn't project (ProviderRuntimeIngestion.ts).
+    public static let runtimeWarning = "runtime.warning"
 }
 
 // MARK: - tool.updated / tool.completed

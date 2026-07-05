@@ -81,13 +81,15 @@ provider status, light/dark.
 
 v2 (feature parity — landed): user-input prompt cards, plan mode +
 proposed-plan cards with implement action, runtime-mode picker, model
-picker, context-window meter, live plan-progress (todo) inspector tab,
-composer @-file-mentions (projects.searchEntries), image attachments
-(inline base64 dataUrl), slash-command menu, editable settings
+picker, context-window meter, live plan-progress (todo) strip above the
+composer, composer @-file-mentions (projects.searchEntries), image
+attachments (inline base64 dataUrl), slash-command menu, editable settings
 (server.getSettings/updateSettings), provider refresh + CLI update,
 archived-thread management, git/VCS (subscribeVcsStatus, branch
 switch/create, pull, stacked commit/push/PR actions with outcome banner,
-PR links), workspace file browser + preview + open-in-external-editor.
+PR links). The trailing inspector is a single diff panel with a
+collapsible checkpoints section; the workspace file browser was removed
+(backend workspace RPCs remain for @-mentions).
 
 Out (excluded or later): embedded terminal (needs a SwiftTerm dependency —
 Package.swift change to coordinate), browser preview/automation, PR review

@@ -334,6 +334,9 @@ export const makeOrchestrationIntegrationHarness = (
         Layer.succeed(VcsStatusBroadcaster, {
           getStatus: () => Effect.die("getStatus should not be called in this test"),
           refreshLocalStatus: () =>
+            Effect.die("refreshLocalStatus should not be called in this test"),
+          refreshStatus: () => Effect.die("refreshStatus should not be called in this test"),
+          refreshStatusWithoutFetch: () =>
             Effect.succeed({
               isRepo: true,
               hasPrimaryRemote: false,
@@ -341,8 +344,12 @@ export const makeOrchestrationIntegrationHarness = (
               refName: "main",
               hasWorkingTreeChanges: false,
               workingTree: { files: [], insertions: 0, deletions: 0 },
+              hasUpstream: false,
+              aheadCount: 0,
+              behindCount: 0,
+              aheadOfDefaultCount: 0,
+              pr: null,
             }),
-          refreshStatus: () => Effect.die("refreshStatus should not be called in this test"),
           streamStatus: () => Stream.empty,
         }),
       ),
