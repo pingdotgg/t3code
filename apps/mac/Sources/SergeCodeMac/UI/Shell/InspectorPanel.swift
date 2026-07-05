@@ -10,14 +10,9 @@ struct InspectorPanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("Inspector Tab", selection: $tab) {
-                ForEach(InspectorTab.allCases) { tab in
-                    Text(tab.title).tag(tab)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(12)
+            InspectorTabBar(selection: $tab)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
 
             Divider()
 
@@ -54,10 +49,71 @@ private enum InspectorTab: String, CaseIterable, Identifiable, Hashable {
     var title: String {
         switch self {
         case .diff: "Diff"
-        case .checkpoints: "Checkpoints"
+        case .checkpoints: "History"
         case .plan: "Plan"
         case .files: "Files"
         }
+    }
+
+    var icon: String {
+        switch self {
+        case .diff: "plus.forwardslash.minus"
+        case .checkpoints: "clock.arrow.circlepath"
+        case .plan: "checklist"
+        case .files: "folder"
+        }
+    }
+}
+
+/// Custom inspector tab switcher: equal-width segments over a glass capsule,
+/// with an alpine-moss pill that slides under the selected tab. Replaces the
+/// stock segmented picker so the inspector chrome carries the app's identity.
+private struct InspectorTabBar: View {
+    @Binding var selection: InspectorTab
+
+    private let tabs = InspectorTab.allCases
+
+    var body: some View {
+        GeometryReader { proxy in
+            let segmentWidth = proxy.size.width / CGFloat(tabs.count)
+            let selectedIndex = tabs.firstIndex(of: selection) ?? 0
+
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(AlpineTheme.accent.gradient)
+                    .frame(width: segmentWidth, height: proxy.size.height)
+                    .offset(x: segmentWidth * CGFloat(selectedIndex))
+                    .animation(Motion.snap, value: selection)
+
+                HStack(spacing: 0) {
+                    ForEach(tabs) { tab in
+                        segmentButton(tab, width: segmentWidth)
+                    }
+                }
+            }
+        }
+        .frame(height: 46)
+        .glassEffect(.regular, in: .capsule)
+    }
+
+    private func segmentButton(_ tab: InspectorTab, width: CGFloat) -> some View {
+        Button {
+            selection = tab
+        } label: {
+            VStack(spacing: 3) {
+                Image(systemName: tab.icon)
+                    .font(.system(size: 13, weight: .medium))
+                Text(tab.title)
+                    .font(.caption2.weight(.medium))
+            }
+            .foregroundStyle(selection == tab ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
+            .frame(width: width, height: 46)
+            .contentShape(.capsule)
+            .animation(Motion.ambient, value: selection)
+        }
+        .buttonStyle(.plain)
+        .help(tab.title)
+        .accessibilityAddTraits(selection == tab ? .isSelected : [])
     }
 }
 

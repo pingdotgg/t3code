@@ -16,10 +16,8 @@ struct RootView: View {
         } detail: {
             Group {
                 if let thread = model.selectedThread {
-                    ThreadDetailView(
-                        model: model, scenery: scenery, thread: thread,
-                        showInspector: $showInspector)
-                    .transition(.opacity)
+                    ThreadDetailView(model: model, scenery: scenery, thread: thread)
+                        .transition(.opacity)
                 } else {
                     EmptyStateView(scenery: scenery) {
                         showNewSessionSheet = true
@@ -30,6 +28,23 @@ struct RootView: View {
             // Keyed to presence, not thread id — thread → thread switches
             // cross-fade inside ChatScreen; this only covers hero ↔ chat.
             .animation(Motion.settle, value: model.selectedThread == nil)
+            // The inspector hangs off this stable node, not off the
+            // per-thread detail view: re-presenting it on every thread
+            // switch (and inside the cross-fade above) reset its column
+            // width and flashed/clipped the panel.
+            .inspector(isPresented: $showInspector) {
+                Group {
+                    if let thread = model.selectedThread {
+                        InspectorPanel(model: model, threadID: thread.id)
+                    } else {
+                        ContentUnavailableView(
+                            "No Session",
+                            systemImage: "sidebar.right",
+                            description: Text("Select a session to inspect its changes."))
+                    }
+                }
+                .inspectorColumnWidth(min: 300, ideal: 360, max: 480)
+            }
         }
         .toolbar {
             ToolbarItem(placement: .navigation) {
