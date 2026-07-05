@@ -375,38 +375,50 @@ export const RootStack = createNativeStackNavigator({
     GitOverview: createNativeStackScreen({
       screen: GitOverviewSheet,
       linking: `${THREAD_LINKING_PREFIX}/git`,
-      options: {
-        presentation: "formSheet",
-        sheetAllowedDetents: [0.55, 0.92],
-        sheetGrabberVisible: true,
-      },
+      options:
+        Platform.OS === "android"
+          ? { presentation: "card" as const, headerShown: false }
+          : {
+              presentation: "formSheet" as const,
+              sheetAllowedDetents: [0.55, 0.92],
+              sheetGrabberVisible: true,
+            },
     }),
     GitCommit: createNativeStackScreen({
       screen: GitCommitSheet,
       linking: `${THREAD_LINKING_PREFIX}/git/commit`,
-      options: {
-        presentation: "formSheet",
-        sheetAllowedDetents: [0.55, 0.92],
-        sheetGrabberVisible: true,
-      },
+      options:
+        Platform.OS === "android"
+          ? { presentation: "card" as const, headerShown: false }
+          : {
+              presentation: "formSheet" as const,
+              sheetAllowedDetents: [0.55, 0.92],
+              sheetGrabberVisible: true,
+            },
     }),
     GitBranches: createNativeStackScreen({
       screen: GitBranchesSheet,
       linking: `${THREAD_LINKING_PREFIX}/git/branches`,
-      options: {
-        presentation: "formSheet",
-        sheetAllowedDetents: [0.55, 0.92],
-        sheetGrabberVisible: true,
-      },
+      options:
+        Platform.OS === "android"
+          ? { presentation: "card" as const, headerShown: false }
+          : {
+              presentation: "formSheet" as const,
+              sheetAllowedDetents: [0.55, 0.92],
+              sheetGrabberVisible: true,
+            },
     }),
     GitConfirm: createNativeStackScreen({
       screen: GitConfirmSheet,
       linking: `${THREAD_LINKING_PREFIX}/git-confirm`,
-      options: {
-        presentation: "formSheet",
-        sheetAllowedDetents: [0.45, 0.7],
-        sheetGrabberVisible: true,
-      },
+      options:
+        Platform.OS === "android"
+          ? { presentation: "card" as const, headerShown: false }
+          : {
+              presentation: "formSheet" as const,
+              sheetAllowedDetents: [0.45, 0.7],
+              sheetGrabberVisible: true,
+            },
     }),
     SettingsSheet: createNativeStackScreen({
       screen: SettingsSheetStack,
@@ -444,9 +456,14 @@ export const RootStack = createNativeStackNavigator({
       linking: "connections",
       options: {
         title: "Environments",
-        presentation: "formSheet",
-        sheetAllowedDetents: [0.55, 0.7],
-        sheetGrabberVisible: true,
+        // Android: full page with the native back header; iOS keeps the sheet.
+        ...(Platform.OS === "android"
+          ? { presentation: "card" as const }
+          : {
+              presentation: "formSheet" as const,
+              sheetAllowedDetents: [0.55, 0.7],
+              sheetGrabberVisible: true,
+            }),
       },
     }),
     ConnectionsNew: createNativeStackScreen({

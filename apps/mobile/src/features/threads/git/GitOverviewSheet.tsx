@@ -9,6 +9,8 @@ import { useNavigation, type StaticScreenProps } from "@react-navigation/native"
 import { SymbolView } from "../../../components/AppSymbol";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
+
+import { AndroidScreenHeader } from "../../../components/AndroidScreenHeader";
 import { Screen, ScreenStack, ScreenStackHeaderConfig } from "react-native-screens";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../../lib/useThemeColor";
@@ -350,12 +352,16 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
       collapsable={false}
       className={isInspector ? "flex-1 border-l border-border bg-sheet" : "flex-1 bg-sheet"}
     >
-      <View
-        style={{
-          minHeight: isInspector ? (props.headerInset ?? 0) : 16,
-          paddingTop: isInspector ? (props.headerInset ?? 0) : 8,
-        }}
-      />
+      {Platform.OS === "android" && !isInspector ? (
+        <AndroidScreenHeader title="Git Controls" onBack={() => navigation.goBack()} />
+      ) : (
+        <View
+          style={{
+            minHeight: isInspector ? (props.headerInset ?? 0) : 16,
+            paddingTop: isInspector ? (props.headerInset ?? 0) : 8,
+          }}
+        />
+      )}
 
       <View
         className={
