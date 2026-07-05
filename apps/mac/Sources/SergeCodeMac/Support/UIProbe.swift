@@ -47,13 +47,24 @@
 
             // Settings ▸ iPhone: enable the mobile-access preference so the
             // mock backend reports LAN-reachable and the QR pairing card
-            // renders; restore the previous value afterward.
-            let previousMobileAccess = MobileAccessPreference.isEnabled
-            MobileAccessPreference.setEnabled(true)
-            await snapshotSettings(tab: .iphone, name: "3-settings-iphone", model: model, dir: dir)
-            await snapshotSettings(
-                tab: .connection, name: "4-settings-connection", model: model, dir: dir)
-            MobileAccessPreference.setEnabled(previousMobileAccess)
+            // renders; restore the previous value afterward. Mock runs only:
+            // against LiveBackend the sidecar's bind host was fixed at spawn,
+            // so flipping the preference here would capture a misleading
+            // "restart required" (or loopback) state.
+            let isMockRun =
+                CommandLine.arguments.contains("--mock")
+                || ProcessInfo.processInfo.environment["SERGECODE_MOCK"] == "1"
+            if isMockRun {
+                let previousMobileAccess = MobileAccessPreference.isEnabled
+                MobileAccessPreference.setEnabled(true)
+                await snapshotSettings(
+                    tab: .iphone, name: "3-settings-iphone", model: model, dir: dir)
+                await snapshotSettings(
+                    tab: .connection, name: "4-settings-connection", model: model, dir: dir)
+                MobileAccessPreference.setEnabled(previousMobileAccess)
+            } else {
+                print("UIProbe: skipping settings snapshots (live backend run)")
+            }
 
             print("UIProbe: done")
             NSApp.terminate(nil)

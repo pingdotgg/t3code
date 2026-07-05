@@ -33,7 +33,9 @@ public enum LanAddressResolver {
         var cursor = interfaces
         while let current = cursor {
             defer { cursor = current.pointee.ifa_next }
-            let flags = Int32(current.pointee.ifa_flags)
+            // bitPattern: ifa_flags is a UInt32 bitfield; a value-preserving
+            // Int32(_:) would trap if a flag ever used the high bit.
+            let flags = Int32(bitPattern: current.pointee.ifa_flags)
             guard (flags & IFF_UP) != 0, (flags & IFF_LOOPBACK) == 0,
                 let addressPointer = current.pointee.ifa_addr,
                 addressPointer.pointee.sa_family == sa_family_t(AF_INET)

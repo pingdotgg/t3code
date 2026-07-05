@@ -404,7 +404,10 @@ private struct PhoneSettingsTab: View {
         .padding()
         .animation(Motion.settle, value: allowConnections)
         .animation(Motion.settle, value: pairing)
-        .task {
+        // Re-probe whenever the connection phase moves (the sidecar may
+        // still be launching when Settings opens) or the toggle flips —
+        // a one-shot .task would leave `lanReachable` stale.
+        .task(id: "\(String(describing: model.connection))-\(allowConnections)") {
             lanReachable = await model.isServerLanReachable()
             checkedReachability = true
         }
@@ -556,7 +559,9 @@ private struct ConnectionSettingsTab: View {
         }
         .formStyle(.grouped)
         .padding()
-        .task { lanReachable = await model.isServerLanReachable() }
+        // Keyed to the connection phase so the row updates if the server
+        // comes up (or restarts) after the Settings window opened.
+        .task(id: model.connection) { lanReachable = await model.isServerLanReachable() }
     }
 }
 
