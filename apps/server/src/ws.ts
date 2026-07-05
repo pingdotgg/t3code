@@ -1817,11 +1817,20 @@ const makeWsRpcLayer = (
                     },
                   })),
                 );
-              const vscodeTunnelSettingsUpdates: Stream.Stream<ServerConfigStreamEvent> =
-                serverSettings.streamChanges.pipe(
+              const vscodeTunnelSettingsUpdates: Stream.Stream<ServerConfigStreamEvent> = (() => {
+                let previousTunnelEnabled: boolean | undefined;
+                return serverSettings.streamChanges.pipe(
                   Stream.map((settings) => ServerSettings.redactServerSettingsForClient(settings)),
+                  Stream.filter((settings) => {
+                    const changed =
+                      previousTunnelEnabled === undefined ||
+                      previousTunnelEnabled !== settings.enableVSCodeRemoteTunnels;
+                    previousTunnelEnabled = settings.enableVSCodeRemoteTunnels;
+                    return changed;
+                  }),
                   Stream.mapEffect(toVSCodeTunnelUpdateEvent),
                 );
+              })();
               const vscodeTunnelPeriodicUpdates: Stream.Stream<ServerConfigStreamEvent> =
                 Stream.tick(VSCODE_TUNNEL_REFRESH_INTERVAL).pipe(
                   Stream.mapEffect(() =>
