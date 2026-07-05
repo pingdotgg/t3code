@@ -154,10 +154,32 @@ public enum ToolEventStatus: String, Sendable {
     case running, succeeded, failed
 }
 
+/// Broad category of a tool invocation, folded from the wire `itemType`
+/// (ProviderRuntimeIngestion.ts); drives the row icon and how the detail
+/// body renders (command line vs file diff vs plain text).
+public enum ToolEventKind: String, Sendable {
+    case command, fileChange, fileRead, webSearch, mcpCall, subagent, imageView, other
+
+    public init(itemType: String?) {
+        switch itemType {
+        case "command_execution": self = .command
+        case "file_change": self = .fileChange
+        case "file_read": self = .fileRead
+        case "web_search": self = .webSearch
+        case "mcp_tool_call": self = .mcpCall
+        case "collab_agent_tool_call": self = .subagent
+        case "image_view": self = .imageView
+        default: self = .other
+        }
+    }
+}
+
 public enum TimelineItem: Identifiable, Sendable {
     case userMessage(id: String, text: String, at: Date)
     case assistantMessage(id: String, markdown: String, isStreaming: Bool, at: Date)
-    case toolEvent(id: String, name: String, detail: String, status: ToolEventStatus, at: Date)
+    case toolEvent(
+        id: String, name: String, detail: String, kind: ToolEventKind,
+        status: ToolEventStatus, at: Date)
     case approval(ApprovalRequest)
     case userInput(UserInputRequest)
     case checkpoint(Checkpoint)
@@ -171,7 +193,7 @@ public enum TimelineItem: Identifiable, Sendable {
         switch self {
         case .userMessage(let id, _, _): id
         case .assistantMessage(let id, _, _, _): id
-        case .toolEvent(let id, _, _, _, _): id
+        case .toolEvent(let id, _, _, _, _, _): id
         case .approval(let request): request.id
         case .userInput(let request): request.id
         case .checkpoint(let checkpoint): checkpoint.id
@@ -193,15 +215,26 @@ extension Array where Element == TimelineItem {
     /// merely share a name stay separate rows.
     public mutating func upsertTimelineItem(_ item: TimelineItem) {
         if let index = lastIndex(where: { $0.id == item.id }) {
-            self[index] = item.preservingToolDetail(of: self[index])
+            self[index] = item.preservingToolMetadata(of: self[index])
             return
         }
-        if case .toolEvent(let id, let name, let detail, _, _) = item,
-            case .toolEvent(let lastID, let lastName, let lastDetail, .running, _)? = last,
-            lastName == name,
-            lastDetail == detail || (lastID.hasPrefix("tool:") && !id.hasPrefix("tool:"))
+        // Searches backwards past interleaved rows (reasoning updates land
+        // between a tool's start and its completion), not just `last` —
+        // otherwise the completion appends a duplicate and the original row
+        // is stuck "running" forever.
+        if case .toolEvent(let id, let name, let detail, _, _, _) = item,
+            let index = lastIndex(where: { existing in
+                guard
+                    case .toolEvent(
+                        let existingID, let existingName, let existingDetail, _, .running, _) =
+                        existing
+                else { return false }
+                return existingName == name
+                    && (existingDetail == detail
+                        || (existingID.hasPrefix("tool:") && !id.hasPrefix("tool:")))
+            })
         {
-            self[count - 1] = item.preservingToolDetail(of: self[count - 1])
+            self[index] = item.preservingToolMetadata(of: self[index])
             return
         }
         append(item)
@@ -209,16 +242,19 @@ extension Array where Element == TimelineItem {
 }
 
 extension TimelineItem {
-    /// Lifecycle replacement keeps the expandable body when the newer event
-    /// omits it: `tool.completed` often carries no `payload.detail`, and
-    /// blanking the row would drop the command/path shown while running.
-    fileprivate func preservingToolDetail(of existing: TimelineItem) -> TimelineItem {
-        guard case .toolEvent(let id, let name, let detail, let status, let at) = self,
-            detail.isEmpty,
-            case .toolEvent(_, _, let existingDetail, _, _) = existing,
-            !existingDetail.isEmpty
+    /// Lifecycle replacement keeps what the newer event omits: `tool.completed`
+    /// often carries no `payload.detail` (blanking the row would drop the
+    /// command/path shown while running) and tone-fallback events carry no
+    /// `itemType` (which would reset the row's icon to the generic one).
+    fileprivate func preservingToolMetadata(of existing: TimelineItem) -> TimelineItem {
+        guard case .toolEvent(let id, let name, let detail, let kind, let status, let at) = self,
+            case .toolEvent(_, _, let existingDetail, let existingKind, _, _) = existing
         else { return self }
-        return .toolEvent(id: id, name: name, detail: existingDetail, status: status, at: at)
+        let mergedDetail = detail.isEmpty ? existingDetail : detail
+        let mergedKind = kind == .other ? existingKind : kind
+        guard mergedDetail != detail || mergedKind != kind else { return self }
+        return .toolEvent(
+            id: id, name: name, detail: mergedDetail, kind: mergedKind, status: status, at: at)
     }
 }
 
