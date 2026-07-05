@@ -149,7 +149,7 @@ export function mapCodexModelCapabilities(
   if (serviceTiers.length > 0) {
     optionDescriptors.push({
       id: "serviceTier",
-      label: "Service Tier",
+      label: "Speed Tier",
       type: "select",
       options: [
         {

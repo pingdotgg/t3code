@@ -6,12 +6,15 @@ import {
   ChartNoAxesCombinedIcon,
   ChevronRightIcon,
   CloudIcon,
+  EllipsisIcon,
   FolderPlusIcon,
   FolderKanbanIcon,
+  GitBranchPlusIcon,
   Globe2Icon,
   HomeIcon,
   ListTodoIcon,
   MessageSquareIcon,
+  PinIcon,
   SearchIcon,
   SquarePenIcon,
   TerminalIcon,
@@ -163,10 +166,14 @@ import { Input } from "./ui/input";
 import {
   Menu,
   MenuGroup,
+  MenuItem,
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
   MenuSeparator,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
   MenuTrigger,
 } from "./ui/menu";
 import {
@@ -176,7 +183,6 @@ import {
   NumberFieldIncrement,
   NumberFieldInput,
 } from "./ui/number-field";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import {
   SidebarContent,
@@ -222,7 +228,6 @@ import { primaryServerConfigAtom, primaryServerKeybindingsAtom } from "../state/
 import { markAppNavRouteSidebarMotionInstant } from "../appNavSidebarMotion";
 import {
   derivePhysicalProjectKey,
-  deriveProjectGroupingOverrideKey,
   getProjectOrderKey,
   selectProjectGroupingSettings,
 } from "../logicalProject";
@@ -332,17 +337,6 @@ function projectExpansionPreferenceKeys(project: SidebarProjectSnapshot): string
     ...project.memberProjects.map((member) => member.physicalProjectKey),
     ...project.memberProjects.map((member) => legacyProjectCwdPreferenceKey(member.workspaceRoot)),
   ];
-}
-
-function projectGroupingModeDescription(mode: SidebarProjectGroupingMode): string {
-  switch (mode) {
-    case "repository":
-      return "Projects from the same repository share one sidebar row.";
-    case "repository_path":
-      return "Projects group only when both the repository and repo-relative path match.";
-    case "separate":
-      return "Every project path gets its own sidebar row.";
-  }
 }
 
 function buildThreadJumpLabelMap(input: {
@@ -1027,7 +1021,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
   return (
     <SidebarMenuSub
       ref={attachThreadListAutoAnimateRef}
-      className="mx-0.5 my-0 w-full translate-x-0 gap-0.5 overflow-hidden px-1 py-0 sm:mx-1 sm:px-1.5"
+      className="ml-3 mr-0.5 my-0 w-[calc(100%-0.75rem)] translate-x-0 gap-0.5 overflow-hidden px-1 py-0 sm:ml-3 sm:mr-1 sm:px-1.5"
     >
       {shouldShowThreadPanel && showEmptyThreadState ? (
         <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
@@ -1157,7 +1151,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const appSettingsConfirmThreadArchive = useClientSettings<boolean>(
     (settings) => settings.confirmThreadArchive,
   );
-  const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const serverConfigs = useServerConfigs();
   const deleteProject = useAtomCommand(projectEnvironment.delete, {
     reportFailure: false,
@@ -1168,7 +1161,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
-  const updateSettings = useUpdateClientSettings();
   const sidebarThreadPreviewCount = useClientSettings<SidebarThreadPreviewCount>(
     (settings) => settings.sidebarThreadPreviewCount,
   );
@@ -1260,11 +1252,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     null,
   );
   const [projectRenameTitle, setProjectRenameTitle] = useState("");
-  const [projectGroupingTarget, setProjectGroupingTarget] =
-    useState<SidebarProjectGroupMember | null>(null);
-  const [projectGroupingSelection, setProjectGroupingSelection] = useState<
-    SidebarProjectGroupingMode | "inherit"
-  >("inherit");
   const renamingCommittedRef = useRef(false);
   const renamingInputRef = useRef<HTMLInputElement | null>(null);
   const confirmArchiveButtonRefs = useRef(new Map<string, HTMLButtonElement>());
@@ -1472,17 +1459,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     setProjectRenameTitle(member.title);
   }, []);
 
-  const openProjectGroupingDialog = useCallback(
-    (member: SidebarProjectGroupMember) => {
-      const overrideKey = deriveProjectGroupingOverrideKey(member);
-      setProjectGroupingTarget(member);
-      setProjectGroupingSelection(
-        projectGroupingSettings.sidebarProjectGroupingOverrides?.[overrideKey] ?? "inherit",
-      );
-    },
-    [projectGroupingSettings.sidebarProjectGroupingOverrides],
-  );
-
   const removeProject = useCallback(
     async (member: SidebarProjectGroupMember, options: { force?: boolean } = {}) => {
       const memberProjectRef = scopeProjectRef(member.environmentId, member.id);
@@ -1645,7 +1621,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
         const actionHandlers = new Map<string, () => Promise<void> | void>();
         const makeLeaf = (
-          action: "rename" | "grouping" | "copy-path" | "delete",
+          action: "pin" | "rename" | "reveal" | "worktree" | "archive" | "delete",
           member: SidebarProjectGroupMember,
           options?: {
             destructive?: boolean;
@@ -1655,14 +1631,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           const id = `${action}:${member.physicalProjectKey}`;
           actionHandlers.set(id, () => {
             switch (action) {
+              case "pin":
+              case "reveal":
+              case "worktree":
+              case "archive":
+                return;
               case "rename":
                 openProjectRenameDialog(member);
-                return;
-              case "grouping":
-                openProjectGroupingDialog(member);
-                return;
-              case "copy-path":
-                copyPathToClipboard(member.workspaceRoot, { path: member.workspaceRoot });
                 return;
               case "delete":
                 return handleRemoveProject(member);
@@ -1678,10 +1653,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         };
 
         const buildTargetedItem = (
-          action: "rename" | "grouping" | "copy-path" | "delete",
+          action: "pin" | "rename" | "reveal" | "worktree" | "archive" | "delete",
           label: string,
           options?: {
             destructive?: boolean;
+            disabled?: boolean;
             isDisabled?: (member: SidebarProjectGroupMember) => boolean;
           },
         ): ContextMenuItem<string> => {
@@ -1690,7 +1666,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             return {
               ...makeLeaf(action, singleMember, {
                 ...(options?.destructive ? { destructive: true } : {}),
-                ...(options?.isDisabled?.(singleMember) ? { disabled: true } : {}),
+                ...(options?.disabled || options?.isDisabled?.(singleMember)
+                  ? { disabled: true }
+                  : {}),
               }),
               label,
               ...(action === "delete" ? { icon: "trash" } : {}),
@@ -1704,7 +1682,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             children: project.memberProjects.map((member) =>
               makeLeaf(action, member, {
                 ...(options?.destructive ? { destructive: true } : {}),
-                ...(options?.isDisabled?.(member) ? { disabled: true } : {}),
+                ...(options?.disabled || options?.isDisabled?.(member) ? { disabled: true } : {}),
               }),
             ),
           };
@@ -1712,9 +1690,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
         const clicked = await api.contextMenu.show(
           [
-            buildTargetedItem("rename", "Rename"),
-            buildTargetedItem("grouping", "Group into..."),
-            buildTargetedItem("copy-path", "Copy Path"),
+            buildTargetedItem("pin", "Pin project", { disabled: true }),
+            buildTargetedItem("rename", "Edit details"),
+            buildTargetedItem("reveal", "Reveal in Finder", { disabled: true }),
+            buildTargetedItem("worktree", "Create permanent worktree", { disabled: true }),
+            buildTargetedItem("archive", "Archive chats", { disabled: true }),
             buildTargetedItem("delete", "Remove", {
               destructive: true,
             }),
@@ -1733,9 +1713,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       })();
     },
     [
-      copyPathToClipboard,
       handleRemoveProject,
-      openProjectGroupingDialog,
       openProjectRenameDialog,
       project.groupedProjectCount,
       project.memberProjects,
@@ -2122,43 +2100,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Failed to rename project",
+          title: "Failed to update project",
           description: error instanceof Error ? error.message : "An error occurred.",
         }),
       );
     }
   }, [closeProjectRenameDialog, projectRenameTarget, projectRenameTitle, updateProject]);
-
-  const closeProjectGroupingDialog = useCallback(() => {
-    setProjectGroupingTarget(null);
-    setProjectGroupingSelection("inherit");
-  }, []);
-
-  const saveProjectGroupingPreference = useCallback(() => {
-    if (!projectGroupingTarget) {
-      return;
-    }
-
-    const overrideKey = deriveProjectGroupingOverrideKey(projectGroupingTarget);
-    const nextOverrides = {
-      ...projectGroupingSettings.sidebarProjectGroupingOverrides,
-    };
-    if (projectGroupingSelection === "inherit") {
-      delete nextOverrides[overrideKey];
-    } else {
-      nextOverrides[overrideKey] = projectGroupingSelection;
-    }
-    updateSettings({
-      sidebarProjectGroupingOverrides: nextOverrides,
-    });
-    closeProjectGroupingDialog();
-  }, [
-    closeProjectGroupingDialog,
-    projectGroupingSelection,
-    projectGroupingSettings.sidebarProjectGroupingOverrides,
-    projectGroupingTarget,
-    updateSettings,
-  ]);
 
   const handleThreadContextMenu = useCallback(
     async (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
@@ -2246,13 +2193,59 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     ],
   );
 
+  const renderTargetedProjectMenuAction = (action: {
+    key: string;
+    label: string;
+    icon: LucideIcon;
+    disabled?: boolean;
+    destructive?: boolean;
+    onSelect: (member: SidebarProjectGroupMember) => void;
+  }): React.ReactNode => {
+    const Icon = action.icon;
+    const variant = action.destructive ? "destructive" : "default";
+    if (project.memberProjects.length === 1) {
+      const member = project.memberProjects[0]!;
+      return (
+        <MenuItem
+          key={action.key}
+          disabled={action.disabled}
+          variant={variant}
+          onClick={() => action.onSelect(member)}
+        >
+          <Icon className="size-4" />
+          {action.label}
+        </MenuItem>
+      );
+    }
+
+    return (
+      <MenuSub key={action.key}>
+        <MenuSubTrigger disabled={action.disabled}>
+          <Icon className="size-4" />
+          {action.label}
+        </MenuSubTrigger>
+        <MenuSubPopup className="min-w-52">
+          {project.memberProjects.map((member) => (
+            <MenuItem
+              key={`${action.key}:${member.physicalProjectKey}`}
+              variant={variant}
+              onClick={() => action.onSelect(member)}
+            >
+              {formatProjectMemberActionLabel(member, project.groupedProjectCount)}
+            </MenuItem>
+          ))}
+        </MenuSubPopup>
+      </MenuSub>
+    );
+  };
+
   return (
     <>
       <div className="group/project-header relative">
         <SidebarMenuButton
           ref={isManualProjectSorting ? dragHandleProps?.setActivatorNodeRef : undefined}
           size="sm"
-          className={`gap-2 px-2 py-1.5 pr-8 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground max-sm:pr-14 ${
+          className={`gap-2 px-2 py-1.5 pr-14 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground max-sm:pr-14 ${
             isManualProjectSorting ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
           }`}
           {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.attributes : {})}
@@ -2326,6 +2319,66 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             </TooltipPopup>
           </Tooltip>
         )}
+        <Menu>
+          <MenuTrigger
+            render={
+              <button
+                type="button"
+                aria-label={`Open project menu for ${project.displayName}`}
+                className={`${SIDEBAR_ICON_ACTION_BUTTON_CLASS} pointer-events-none absolute top-[calc(50%+1px)] right-6 -translate-y-1/2 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100`}
+              />
+            }
+          >
+            <EllipsisIcon className="size-3.5" />
+          </MenuTrigger>
+          <MenuPopup align="end" className="min-w-58" side="bottom">
+            {renderTargetedProjectMenuAction({
+              key: "pin",
+              label: "Pin project",
+              icon: PinIcon,
+              disabled: true,
+              onSelect: () => {},
+            })}
+            <MenuSeparator />
+            {renderTargetedProjectMenuAction({
+              key: "edit-details",
+              label: "Edit details",
+              icon: SquarePenIcon,
+              onSelect: openProjectRenameDialog,
+            })}
+            {renderTargetedProjectMenuAction({
+              key: "reveal",
+              label: "Reveal in Finder",
+              icon: FolderKanbanIcon,
+              disabled: true,
+              onSelect: () => {},
+            })}
+            {renderTargetedProjectMenuAction({
+              key: "permanent-worktree",
+              label: "Create permanent worktree",
+              icon: GitBranchPlusIcon,
+              disabled: true,
+              onSelect: () => {},
+            })}
+            {renderTargetedProjectMenuAction({
+              key: "archive-chats",
+              label: "Archive chats",
+              icon: ArchiveIcon,
+              disabled: true,
+              onSelect: () => {},
+            })}
+            <MenuSeparator />
+            {renderTargetedProjectMenuAction({
+              key: "remove",
+              label: "Remove",
+              icon: TriangleAlertIcon,
+              destructive: true,
+              onSelect: (member) => {
+                void handleRemoveProject(member);
+              },
+            })}
+          </MenuPopup>
+        </Menu>
         <Tooltip>
           <TooltipTrigger
             render={
@@ -2395,11 +2448,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       >
         <DialogPopup className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Rename project</DialogTitle>
+            <DialogTitle>Edit project details</DialogTitle>
             <DialogDescription>
               {projectRenameTarget
-                ? `Update the title for ${projectRenameTarget.workspaceRoot}.`
-                : "Update the project title."}
+                ? `Update details for ${projectRenameTarget.workspaceRoot}.`
+                : "Update the project details."}
             </DialogDescription>
           </DialogHeader>
           <DialogPanel className="space-y-4">
@@ -2428,77 +2481,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               Cancel
             </Button>
             <Button onClick={() => void submitProjectRename()}>Save</Button>
-          </DialogFooter>
-        </DialogPopup>
-      </Dialog>
-
-      <Dialog
-        open={projectGroupingTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            closeProjectGroupingDialog();
-          }
-        }}
-      >
-        <DialogPopup className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Project grouping</DialogTitle>
-            <DialogDescription>
-              {projectGroupingTarget
-                ? `Choose how ${projectGroupingTarget.workspaceRoot} should be grouped in the sidebar.`
-                : "Choose how this project should be grouped in the sidebar."}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogPanel className="space-y-4">
-            <div className="grid gap-1.5">
-              <span className="text-xs font-medium text-foreground">Grouping rule</span>
-              <Select
-                value={projectGroupingSelection}
-                onValueChange={(value) => {
-                  if (
-                    value === "inherit" ||
-                    value === "repository" ||
-                    value === "repository_path" ||
-                    value === "separate"
-                  ) {
-                    setProjectGroupingSelection(value);
-                  }
-                }}
-              >
-                <SelectTrigger className="w-full" aria-label="Project grouping rule">
-                  <SelectValue>
-                    {projectGroupingSelection === "inherit"
-                      ? `Use global default (${PROJECT_GROUPING_MODE_LABELS[projectGroupingSettings.sidebarProjectGroupingMode]})`
-                      : PROJECT_GROUPING_MODE_LABELS[projectGroupingSelection]}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem hideIndicator value="inherit">
-                    Use global default
-                  </SelectItem>
-                  <SelectItem hideIndicator value="repository">
-                    {PROJECT_GROUPING_MODE_LABELS.repository}
-                  </SelectItem>
-                  <SelectItem hideIndicator value="repository_path">
-                    {PROJECT_GROUPING_MODE_LABELS.repository_path}
-                  </SelectItem>
-                  <SelectItem hideIndicator value="separate">
-                    {PROJECT_GROUPING_MODE_LABELS.separate}
-                  </SelectItem>
-                </SelectPopup>
-              </Select>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {projectGroupingSelection === "inherit"
-                ? projectGroupingModeDescription(projectGroupingSettings.sidebarProjectGroupingMode)
-                : projectGroupingModeDescription(projectGroupingSelection)}
-            </p>
-          </DialogPanel>
-          <DialogFooter>
-            <Button variant="outline" onClick={closeProjectGroupingDialog}>
-              Cancel
-            </Button>
-            <Button onClick={saveProjectGroupingPreference}>Save</Button>
           </DialogFooter>
         </DialogPopup>
       </Dialog>

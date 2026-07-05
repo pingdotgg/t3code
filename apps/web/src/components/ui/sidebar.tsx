@@ -570,7 +570,33 @@ function SidebarRail({
   }, [resolvedResizable]);
 
   React.useEffect(() => {
+    const stopAnyActiveResize = () => {
+      const resizeState = resizeStateRef.current;
+      if (!resizeState) {
+        return;
+      }
+      suppressClickRef.current = resizeState.moved;
+      stopResize(resizeState.pointerId);
+    };
+    const stopActiveResize = (event: PointerEvent) => {
+      const resizeState = resizeStateRef.current;
+      if (!resizeState || resizeState.pointerId !== event.pointerId) {
+        return;
+      }
+      suppressClickRef.current = resizeState.moved;
+      stopResize(event.pointerId);
+    };
+
+    window.addEventListener("pointerup", stopActiveResize);
+    window.addEventListener("pointercancel", stopActiveResize);
+    window.addEventListener("mouseup", stopAnyActiveResize);
+    window.addEventListener("blur", stopAnyActiveResize);
+
     return () => {
+      window.removeEventListener("pointerup", stopActiveResize);
+      window.removeEventListener("pointercancel", stopActiveResize);
+      window.removeEventListener("mouseup", stopAnyActiveResize);
+      window.removeEventListener("blur", stopAnyActiveResize);
       const resizeState = resizeStateRef.current;
       if (resizeState?.rafId != null) {
         window.cancelAnimationFrame(resizeState.rafId);

@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { useEffect, type CSSProperties, type ReactNode } from "react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 
-import { shouldShowSecondarySidebar } from "../appNavRoutes";
+import { isChatSurfacePathname, shouldShowSecondarySidebar } from "../appNavRoutes";
 import { isElectron } from "../env";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import { isMacPlatform } from "../lib/utils";
@@ -69,6 +69,7 @@ function SidebarControl() {
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const pathname = useLocation({ select: (location) => location.pathname });
+  const showChatSidebar = isChatSurfacePathname(pathname);
   const sidebarWidth = shouldShowSecondarySidebar(pathname)
     ? THREAD_SIDEBAR_DEFAULT_WIDTH
     : THREAD_SIDEBAR_APP_NAV_RAIL_WIDTH;
@@ -101,18 +102,31 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
     };
   }, [navigate]);
 
+  useEffect(() => {
+    if (showChatSidebar || typeof document === "undefined") {
+      return;
+    }
+    document
+      .querySelector<HTMLElement>("[data-slot='sidebar-wrapper']")
+      ?.style.setProperty("--sidebar-width", sidebarWidth);
+  }, [showChatSidebar, sidebarWidth]);
+
   return (
     <SidebarProvider className="h-dvh! min-h-0!" defaultOpen style={macosWindowControlsStyle}>
       <Sidebar
         side="left"
         collapsible="icon"
         className="border-r border-border bg-card text-foreground"
-        resizable={{
-          minWidth: THREAD_SIDEBAR_MIN_WIDTH,
-          shouldAcceptWidth: ({ nextWidth, wrapper }) =>
-            wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
-          storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
-        }}
+        resizable={
+          showChatSidebar
+            ? {
+                minWidth: THREAD_SIDEBAR_MIN_WIDTH,
+                shouldAcceptWidth: ({ nextWidth, wrapper }) =>
+                  wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
+                storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
+              }
+            : false
+        }
       >
         <ThreadSidebar />
         <SidebarRail />

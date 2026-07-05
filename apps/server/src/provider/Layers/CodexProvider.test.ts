@@ -43,7 +43,7 @@ it("maps current Codex model capability fields", () => {
     },
     {
       id: "serviceTier",
-      label: "Service Tier",
+      label: "Speed Tier",
       type: "select",
       options: [
         { id: "default", label: "Standard" },
@@ -88,7 +88,7 @@ it("uses standard routing when the catalog has no default service tier", () => {
   assert.deepStrictEqual(capabilities.optionDescriptors, [
     {
       id: "serviceTier",
-      label: "Service Tier",
+      label: "Speed Tier",
       type: "select",
       options: [
         { id: "default", label: "Standard", isDefault: true },
