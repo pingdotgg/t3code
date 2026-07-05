@@ -45,8 +45,55 @@
                 print("UIProbe: no horizontally scrollable diff view found")
             }
 
+            // Message actions: Edit stages text that the composer must pick
+            // up as its draft (visible in its NSTextView) and consume.
+            let marker = "Probe edit: resend me"
+            model.stageComposerText(marker)
+            try? await Task.sleep(for: .seconds(1))
+            let staged = textView(containing: marker) != nil
+            print("UIProbe: edit prefill in composer=\(staged) consumed=\(model.composerPrefill == nil)")
+            snapshot("3-composer-prefill", dir: dir)
+
+            // Retry: resending an existing user message appends a new user
+            // row to the timeline (mock backend echoes sends).
+            let before = userMessageCount(model)
+            if let text = firstUserMessageText(model) {
+                await model.send(text: text)
+            }
+            try? await Task.sleep(for: .seconds(1))
+            print("UIProbe: retry user rows before=\(before) after=\(userMessageCount(model))")
+            snapshot("4-after-retry", dir: dir)
+
             print("UIProbe: done")
             NSApp.terminate(nil)
+        }
+
+        private static func userMessageCount(_ model: AppModel) -> Int {
+            model.selectedTimeline().count {
+                if case .userMessage = $0 { return true } else { return false }
+            }
+        }
+
+        private static func firstUserMessageText(_ model: AppModel) -> String? {
+            for item in model.selectedTimeline() {
+                if case .userMessage(_, let text, _) = item { return text }
+            }
+            return nil
+        }
+
+        private static func textView(containing needle: String) -> NSTextView? {
+            guard let root = NSApp.windows.first(where: { $0.isVisible })?.contentView
+            else { return nil }
+            return textViews(in: root).first { $0.string.contains(needle) }
+        }
+
+        private static func textViews(in view: NSView) -> [NSTextView] {
+            var found: [NSTextView] = []
+            for subview in view.subviews {
+                if let text = subview as? NSTextView { found.append(text) }
+                found += textViews(in: subview)
+            }
+            return found
         }
 
         /// The diff panel's PanScrollView: the scroll view whose document

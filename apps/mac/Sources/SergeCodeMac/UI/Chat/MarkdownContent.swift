@@ -81,6 +81,8 @@ struct AssistantMarkdownView: View {
     let markdown: String
     let isStreaming: Bool
 
+    @UIState private var isHovering = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(parseMarkdownSegments(markdown)) { segment in
@@ -97,10 +99,20 @@ struct AssistantMarkdownView: View {
                     .foregroundStyle(.secondary)
                     .accessibilityLabel("Assistant is responding")
                     .transition(.opacity)
+            } else {
+                // Copies the raw markdown, not the rendered text — pasted
+                // content survives round-trips into editors and issues.
+                CopyActionButton(text: markdown)
+                    .opacity(isHovering ? 1 : 0)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .onHover { isHovering = $0 }
+        .animation(Motion.fade, value: isHovering)
         .animation(Motion.fade, value: isStreaming)
+        .contextMenu {
+            Button("Copy as Markdown") { Pasteboard.copy(markdown) }
+        }
     }
 }
 
@@ -312,12 +324,19 @@ private struct MarkdownCodeBlock: View {
     let language: String?
     let code: String
 
+    @UIState private var isHovering = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if let language, !language.isEmpty {
-                Text(language.uppercased())
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                if let language, !language.isEmpty {
+                    Text(language.uppercased())
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                CopyActionButton(text: code)
+                    .opacity(isHovering ? 1 : 0)
             }
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(code)
@@ -325,6 +344,8 @@ private struct MarkdownCodeBlock: View {
                     .textSelection(.enabled)
             }
         }
+        .onHover { isHovering = $0 }
+        .animation(Motion.fade, value: isHovering)
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         // Solid opaque fill — code blocks live inside long-form assistant
