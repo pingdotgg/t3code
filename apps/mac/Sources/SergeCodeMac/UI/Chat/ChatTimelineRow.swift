@@ -77,7 +77,9 @@ private struct ToolGroupRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Button {
-                withAnimation(Motion.snap) { isExpanded.toggle() }
+                // Settle, not snap: expanding can reveal dozens of rows, and
+                // the quick snap curve makes that layout shift feel violent.
+                withAnimation(Motion.settle) { isExpanded.toggle() }
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: summary.failedCount > 0
