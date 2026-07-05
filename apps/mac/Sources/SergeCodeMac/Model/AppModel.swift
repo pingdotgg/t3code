@@ -22,6 +22,9 @@ public final class AppModel {
     public var selectedThreadID: String?
     public var lastError: String?
 
+    /// In-app dictation (mic → local ASR → on-device cleanup → composer).
+    public let dictation = DictationController()
+
     private let backend: any BackendService
     private var eventTask: Task<Void, Never>?
 
