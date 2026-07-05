@@ -157,6 +157,7 @@ struct DictationSettingsTab: View {
                 Toggle(
                     "Clean up transcript with on-device AI",
                     isOn: $dictation.cleanupEnabled)
+                    .disabled(!dictation.cleanupAvailable)
                 Text(
                     dictation.cleanupAvailable
                         ? "Fixes punctuation and removes filler words with the built-in Apple Intelligence model. Nothing leaves this Mac."

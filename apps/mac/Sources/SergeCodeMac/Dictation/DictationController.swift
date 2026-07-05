@@ -58,6 +58,9 @@ public final class DictationController {
     private let recorder = AudioRecorder()
     private let cleaner = TranscriptCleaner()
     private var asrManager: AsrManager?
+    /// In-flight load, shared so the recording warm-up and finishRecording
+    /// don't both load the models.
+    private var asrLoadTask: Task<AsrManager, Error>?
     private var errorDismissTask: Task<Void, Never>?
 
     public init() {
@@ -166,17 +169,30 @@ public final class DictationController {
     public func removeModel() {
         guard modelStatus == .ready, state == .idle else { return }
         asrManager = nil
-        try? FileManager.default.removeItem(at: modelCacheDirectory)
-        modelStatus = .notDownloaded
+        asrLoadTask?.cancel()
+        asrLoadTask = nil
+        do {
+            try FileManager.default.removeItem(at: modelCacheDirectory)
+            modelStatus = .notDownloaded
+        } catch {
+            presentError("Could not remove the dictation model.")
+        }
     }
 
     private func loadedASRManager() async throws -> AsrManager {
         if let asrManager { return asrManager }
+        if let asrLoadTask { return try await asrLoadTask.value }
         // Models are on disk (modelStatus == .ready) but not loaded yet this
         // launch; downloadAndLoad short-circuits the network when files exist.
-        let models = try await AsrModels.downloadAndLoad(version: .v3)
-        let manager = AsrManager(config: .default)
-        try await manager.loadModels(models)
+        let task = Task {
+            let models = try await AsrModels.downloadAndLoad(version: .v3)
+            let manager = AsrManager(config: .default)
+            try await manager.loadModels(models)
+            return manager
+        }
+        asrLoadTask = task
+        defer { asrLoadTask = nil }
+        let manager = try await task.value
         asrManager = manager
         return manager
     }
