@@ -228,6 +228,66 @@ describe("SceneryStore", () => {
     expect(store.dailyFeatured()?.id).toBe(second);
   });
 
+  it("ignores a cached pool when the build has no client (keyless = washes only)", async () => {
+    const storage = makeMemorySceneryStorage();
+    storage.state.pool = {
+      fetchedAt: "2026-07-01T00:00:00Z",
+      photos: [{ ...photo("cached"), name: "Seceda" }],
+    };
+    storage.state.assignments = { "thread-1": "cached" };
+    const { store, registry } = makeStore({ client: null, storage });
+    await store.start();
+
+    const state = registry.get(sceneryStateAtom);
+    expect(state.pool).toHaveLength(0);
+    expect(store.photoFor("thread-1")).toBeNull();
+    // Assignments survive so a future keyed build restores the scene.
+    expect(state.assignments["thread-1"]).toBe("cached");
+  });
+
+  it("resolves cached-pool readiness without waiting for the network refresh", async () => {
+    let released = false;
+    let releaseSearch: (() => void) | null = null;
+    const hangingClient: UnsplashClient = {
+      // First search hangs until released; later ones resolve immediately.
+      searchPhotos: () =>
+        released
+          ? Promise.resolve([photo("p0")])
+          : new Promise((resolve) => {
+              releaseSearch = () => {
+                released = true;
+                resolve([photo("p0")]);
+              };
+            }),
+      registerDownload: async () => {},
+    };
+    const { store } = makeStore({ client: hangingClient });
+
+    // Must resolve while the Unsplash search is still pending.
+    await store.whenCachedPoolLoaded();
+    expect(store.peekNextScene()).toBeNull();
+
+    releaseSearch!();
+    await store.start();
+    expect(store.peekNextScene()).not.toBeNull();
+  });
+
+  it("unassign frees a reservation and its title number", async () => {
+    const client = makeClient([photo("p0")]);
+    const { store, storage } = makeStore({ client });
+    await store.start();
+
+    const scene = store.peekNextScene()!;
+    store.assign(scene.id, "pending-thread");
+    expect(store.threadTitle(scene)).toBe(`${SCENE_NAMES[0]} · 2`);
+
+    store.unassign("pending-thread");
+    expect(store.threadTitle(scene)).toBe(SCENE_NAMES[0]);
+    expect(storage.state.assignments["pending-thread"]).toBeUndefined();
+    // Unassigning an unknown key is a no-op.
+    store.unassign("never-assigned");
+  });
+
   it("pings download_location once per photo", async () => {
     const client = makeClient([photo("p0")]);
     const { store, storage } = makeStore({ client });

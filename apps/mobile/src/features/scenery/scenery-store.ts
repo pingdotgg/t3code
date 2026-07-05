@@ -119,6 +119,7 @@ export class SceneryStore {
   private registeredDownloads = new Set<string>();
   private poolFetchedAt: Date | null = null;
   private startPromise: Promise<void> | null = null;
+  private diskLoadPromise: Promise<void> | null = null;
 
   constructor(options: SceneryStoreOptions = {}) {
     this.registry = options.registry ?? appAtomRegistry;
@@ -130,12 +131,13 @@ export class SceneryStore {
 
   /**
    * Load the cached pool, then refresh from the API when empty or stale.
-   * Idempotent: concurrent callers share one load, so code that needs the
-   * pool (scene-thread creation on first launch) can await readiness.
+   * Idempotent: concurrent callers share one load. Flows that must not
+   * stall on the network (thread creation) await `whenCachedPoolLoaded`
+   * instead.
    */
   start(): Promise<void> {
     this.startPromise ??= (async () => {
-      await this.loadFromDisk();
+      await this.ensureDiskLoaded();
       const age = this.poolFetchedAt
         ? this.now().getTime() - this.poolFetchedAt.getTime()
         : Number.POSITIVE_INFINITY;
@@ -145,6 +147,25 @@ export class SceneryStore {
       this.publish(true);
     })();
     return this.startPromise;
+  }
+
+  /**
+   * Cached-pool readiness: resolves once the disk snapshot is loaded, while
+   * the full start (Unsplash refresh) continues in the background. Thread
+   * creation awaits this instead of start() so an unreachable image API can
+   * never delay startTurn — a fresh install just gets the prompt-derived
+   * title fallback.
+   */
+  async whenCachedPoolLoaded(): Promise<void> {
+    void this.start();
+    await this.ensureDiskLoaded();
+  }
+
+  private ensureDiskLoaded(): Promise<void> {
+    this.diskLoadPromise ??= this.loadFromDisk().then(() => {
+      this.publish();
+    });
+    return this.diskLoadPromise;
   }
 
   /**
@@ -200,6 +221,19 @@ export class SceneryStore {
     this.publish();
   }
 
+  /**
+   * Drop a reservation whose thread never materialized (a deleted pending
+   * task), so phantom uses stop skewing least-used spread and title
+   * numbering. Delivered threads keep their assignment.
+   */
+  unassign(threadKey: string): void {
+    if (!(threadKey in this.assignments)) return;
+    const { [threadKey]: _removed, ...rest } = this.assignments;
+    this.assignments = rest;
+    void this.storage.saveAssignments(this.assignments);
+    this.publish();
+  }
+
   /** Photo for the daily-featured empty-state hero. */
   dailyFeatured(): SceneryPhoto | null {
     const state = this.registry.get(sceneryStateAtom);
@@ -251,7 +285,12 @@ export class SceneryStore {
       this.storage.loadAssignments(),
       this.storage.loadRegisteredDownloads(),
     ]);
-    if (poolFile !== null) {
+    // Ignore a pool cached by an earlier keyed build when this build has no
+    // client: keyless means washes only — we can neither refresh the pool
+    // nor honor the download-registration guideline for those photos.
+    // Assignments are kept so a future keyed build restores each thread's
+    // scene.
+    if (poolFile !== null && this.client !== null) {
       this.pool = poolFile.photos;
       const fetchedAt = new Date(poolFile.fetchedAt);
       this.poolFetchedAt = Number.isNaN(fetchedAt.getTime()) ? null : fetchedAt;

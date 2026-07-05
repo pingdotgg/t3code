@@ -21,6 +21,7 @@ export const SceneryImage = memo(function SceneryImage(props: {
   /** Wash seed when no photo is available (thread key, any stable id). */
   readonly fallbackSeed: string;
   readonly style?: StyleProp<ViewStyle>;
+  readonly pointerEvents?: "none" | "box-none" | "auto" | "box-only";
 }) {
   const reduceMotion = useReducedMotion();
   const photoId = props.photo?.id ?? null;
@@ -33,6 +34,7 @@ export const SceneryImage = memo(function SceneryImage(props: {
 
   return (
     <View
+      pointerEvents={props.pointerEvents}
       style={[
         { overflow: "hidden" },
         washGradientStyle(photoId ?? props.fallbackSeed),

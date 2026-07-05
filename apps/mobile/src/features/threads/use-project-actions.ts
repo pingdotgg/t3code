@@ -57,11 +57,12 @@ export function useCreateProjectThread() {
       const threadId = ThreadId.make(metadata.threadId);
       const initialMessageText = input.initialMessageText.trim();
 
-      // First launch races the initial pool fetch; start() is idempotent and
-      // waits for it, so early threads still get a scene name + assignment.
+      // Cached pool only: never let an Unsplash refresh delay startTurn. A
+      // fresh install with no cached pool just falls back to the
+      // prompt-derived title while the refresh finishes in the background.
       let scene = input.scene ?? null;
       if (input.scene === undefined) {
-        await appSceneryStore.start();
+        await appSceneryStore.whenCachedPoolLoaded();
         const next = appSceneryStore.peekNextScene();
         scene = next ? { title: appSceneryStore.threadTitle(next), photoId: next.id } : null;
       }
