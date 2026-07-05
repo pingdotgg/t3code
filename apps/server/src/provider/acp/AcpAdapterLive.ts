@@ -788,7 +788,7 @@ export function makeAcpAdapterLive<UserInputResponse>(
             };
           }
           const activeTurnId = ctx.activeTurnId ?? ctx.session.activeTurnId;
-          if (turnId !== undefined && activeTurnId !== turnId) {
+          if (turnId !== undefined && activeTurnId !== undefined && activeTurnId !== turnId) {
             return { _tag: "Ignore" as const };
           }
           const interruptedTurnId = turnId ?? activeTurnId;
@@ -813,11 +813,12 @@ export function makeAcpAdapterLive<UserInputResponse>(
               return;
             }
             const activeTurnId = ctx.activeTurnId ?? ctx.session.activeTurnId;
-            if (turnId !== undefined && activeTurnId !== turnId) {
+            if (turnId !== undefined && activeTurnId !== undefined && activeTurnId !== turnId) {
               return;
             }
             if (
               observed.interruptedTurnId !== undefined &&
+              activeTurnId !== undefined &&
               activeTurnId !== observed.interruptedTurnId
             ) {
               return;

@@ -13,7 +13,6 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 
 import { mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
 import {
-  type AcpAdapterPendingUserInput,
   acpPromptSettlementBelongsToContext,
   handleAcpUserInputRequest,
 } from "../acp/AcpAdapterRuntime.ts";
@@ -42,6 +41,7 @@ import { type EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const PROVIDER = ProviderDriverKind.make("devin");
 const DEVIN_RESUME_VERSION = 1 as const;
+type DevinUserInputResponse = EffectAcpSchema.ElicitationResponse | DevinAskQuestionResponse;
 
 export interface DevinAdapterLiveOptions extends AcpAdapterLiveOptions {
   readonly nativeEventLogger?: EventNdjsonLogger;
@@ -56,9 +56,7 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
   return Effect.gen(function* () {
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
-    return yield* makeAcpAdapterLive<
-      EffectAcpSchema.ElicitationResponse | DevinAskQuestionResponse
-    >(
+    return yield* makeAcpAdapterLive<DevinUserInputResponse>(
       {
         provider: PROVIDER,
         providerLabel: "Devin",
@@ -94,19 +92,11 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
             // URL-mode elicitations can be completed out-of-band by the agent
             // (session/elicitation/complete), so track their request ids.
             const urlElicitationRequestIds = new Map<string, ApprovalRequestId>();
-            const pendingElicitations = input.pendingUserInputs as Map<
-              ApprovalRequestId,
-              AcpAdapterPendingUserInput<EffectAcpSchema.ElicitationResponse>
-            >;
-            const pendingAskQuestions = input.pendingUserInputs as Map<
-              ApprovalRequestId,
-              AcpAdapterPendingUserInput<DevinAskQuestionResponse>
-            >;
             yield* input.acp.handleElicitation((params) => {
               const elicitationId = params.mode === "url" ? params.elicitationId : undefined;
               return input.mapAcpCallbackFailure(
                 handleAcpUserInputRequest<
-                  EffectAcpSchema.ElicitationResponse,
+                  DevinUserInputResponse,
                   ProviderAdapterRequestError,
                   never,
                   ProviderAdapterRequestError
@@ -123,11 +113,11 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
                         action: { action: "cancel" },
                       }) satisfies EffectAcpSchema.ElicitationResponse,
                     validateResponse: (response) =>
-                      response.action.action === "decline"
+                      "action" in response && response.action.action === "decline"
                         ? "Invalid Devin elicitation response: missing required answers."
                         : undefined,
                   },
-                  pendingUserInputs: pendingElicitations,
+                  pendingUserInputs: input.pendingUserInputs,
                   ...(elicitationId !== undefined
                     ? {
                         onOpened: (requestId: ApprovalRequestId) => {
@@ -143,7 +133,12 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
                   makeEventStamp: input.makeEventStamp,
                   offerRuntimeEvent: input.offerRuntimeEvent,
                   logNative: input.logNative,
-                }),
+                }).pipe(
+                  Effect.map(
+                    (response): EffectAcpSchema.ElicitationResponse =>
+                      "action" in response ? response : { action: { action: "cancel" } },
+                  ),
+                ),
               );
             });
             yield* input.acp.handleElicitationComplete((notification) =>
@@ -197,7 +192,7 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
               }
               return input.mapAcpCallbackFailure(
                 handleAcpUserInputRequest<
-                  DevinAskQuestionResponse,
+                  DevinUserInputResponse,
                   ProviderAdapterRequestError,
                   never,
                   ProviderAdapterRequestError
@@ -208,7 +203,7 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
                   source: "acp.devin.extension",
                   request: params,
                   prompt,
-                  pendingUserInputs: pendingAskQuestions,
+                  pendingUserInputs: input.pendingUserInputs,
                   resolveTurnId: input.resolveActiveTurnId,
                   makeRequestId: input.nextApprovalRequestId,
                   makeEventStamp: input.makeEventStamp,

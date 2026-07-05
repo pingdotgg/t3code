@@ -9,7 +9,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
-import { ProviderDriverKind, ThreadId } from "@t3tools/contracts";
+import { ProviderDriverKind, ThreadId, TurnId } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
 import { makeAcpAdapterLive } from "./AcpAdapterLive.ts";
@@ -127,4 +127,86 @@ it.effect(
 
       yield* adapter.stopSession(threadId);
     }).pipe(Effect.provide(acpAdapterLiveTestLayer), TestClock.withLive),
+);
+
+it.effect("cancels a session for a specific turn when no active turn is registered yet", () =>
+  Effect.gen(function* () {
+    const provider = ProviderDriverKind.make("test-acp");
+    const threadId = ThreadId.make("acp-interrupt-specific-turn-before-registration");
+    const turnId = TurnId.make("turn-before-registration");
+    let cancelCalls = 0;
+
+    const acp = {
+      handleRequestPermission: noopHandler as TestAcpRuntime["handleRequestPermission"],
+      handleElicitation: noopHandler as TestAcpRuntime["handleElicitation"],
+      handleReadTextFile: noopHandler as TestAcpRuntime["handleReadTextFile"],
+      handleWriteTextFile: noopHandler as TestAcpRuntime["handleWriteTextFile"],
+      handleCreateTerminal: noopHandler as TestAcpRuntime["handleCreateTerminal"],
+      handleTerminalOutput: noopHandler as TestAcpRuntime["handleTerminalOutput"],
+      handleTerminalWaitForExit: noopHandler as TestAcpRuntime["handleTerminalWaitForExit"],
+      handleTerminalKill: noopHandler as TestAcpRuntime["handleTerminalKill"],
+      handleTerminalRelease: noopHandler as TestAcpRuntime["handleTerminalRelease"],
+      handleSessionUpdate: noopHandler as TestAcpRuntime["handleSessionUpdate"],
+      handleElicitationComplete: noopHandler as TestAcpRuntime["handleElicitationComplete"],
+      handleUnknownExtRequest: noopHandler as TestAcpRuntime["handleUnknownExtRequest"],
+      handleUnknownExtNotification: noopHandler as TestAcpRuntime["handleUnknownExtNotification"],
+      handleExtRequest: noopHandler as TestAcpRuntime["handleExtRequest"],
+      handleExtNotification: noopHandler as TestAcpRuntime["handleExtNotification"],
+      start: () =>
+        Effect.succeed({
+          sessionId: "test-acp-session",
+          initializeResult: {
+            protocolVersion: 1,
+            agentCapabilities: { promptCapabilities: {} },
+          } satisfies EffectAcpSchema.InitializeResponse,
+          sessionSetupResult: {
+            sessionId: "test-acp-session",
+          } satisfies EffectAcpSchema.NewSessionResponse,
+          modelConfigId: undefined,
+        }),
+      getEvents: () => Stream.empty,
+      drainEvents: Effect.void,
+      getModeState: Effect.sync(() => undefined),
+      getConfigOptions: Effect.succeed([]),
+      prompt: () => Effect.succeed({ stopReason: "end_turn" as const }),
+      cancel: Effect.sync(() => {
+        cancelCalls += 1;
+      }),
+      setMode: () => unsupported<EffectAcpSchema.SetSessionModeResponse>(),
+      setConfigOption: () => unsupported<EffectAcpSchema.SetSessionConfigOptionResponse>(),
+      setModel: () => unsupported<void>(),
+      setSessionModel: () => unsupported<EffectAcpSchema.SetSessionModelResponse>(),
+      request: () => unsupported<unknown>(),
+      notify: () => unsupported<void>(),
+    } satisfies TestAcpRuntime;
+
+    const adapter = yield* makeAcpAdapterLive<never>({
+      provider,
+      providerLabel: "Test ACP",
+      resumeSchemaVersion: 1,
+      readyReason: "test-ready",
+      respondToUserInputMethod: "session/elicitation",
+      capabilities: { sessionModelSwitch: "unsupported" },
+      completedStopReasonFromPromptResponse: (response) => response.stopReason,
+      makeAcpRuntime: () => Effect.succeed(acp),
+      registerAcpCallbacks: () => Effect.void,
+      bindSessionModel: () =>
+        Effect.succeed({ currentModelId: undefined, displayModel: undefined }),
+      prepareTurnModel: () =>
+        Effect.succeed({ currentModelId: undefined, displayModel: undefined }),
+    });
+
+    yield* adapter.startSession({
+      threadId,
+      provider,
+      cwd: process.cwd(),
+      runtimeMode: "full-access",
+    });
+
+    yield* adapter.interruptTurn(threadId, turnId);
+
+    assert.equal(cancelCalls, 1);
+
+    yield* adapter.stopSession(threadId);
+  }).pipe(Effect.provide(acpAdapterLiveTestLayer)),
 );
