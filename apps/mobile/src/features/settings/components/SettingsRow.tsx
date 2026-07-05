@@ -1,7 +1,8 @@
 import { useNavigation } from "@react-navigation/native";
-import { SymbolView } from "expo-symbols";
 import type { ComponentProps } from "react";
 import { Pressable, View } from "react-native";
+
+import { SymbolView } from "../../../components/AppSymbol";
 
 import { AppText as Text } from "../../../components/AppText";
 import { useThemeColor } from "../../../lib/useThemeColor";
