@@ -76,13 +76,14 @@ function openCodeEventSessionId(event: OpenCodeSubscribedEvent): string | undefi
     return undefined;
   }
 
-  const info = (properties as { readonly info?: { readonly id?: unknown } }).info;
-  const sessionIDFromInfo = info && typeof info.id === "string" ? info.id : undefined;
-  if (sessionIDFromInfo) {
-    return sessionIDFromInfo;
-  }
   const sessionID = (properties as { readonly sessionID?: unknown }).sessionID;
-  return typeof sessionID === "string" ? sessionID : undefined;
+  const sessionIDFromProperties = typeof sessionID === "string" ? sessionID : undefined;
+  if (sessionIDFromProperties) {
+    return sessionIDFromProperties;
+  }
+
+  const info = (properties as { readonly info?: { readonly id?: unknown } }).info;
+  return info && typeof info.id === "string" ? info.id : undefined;
 }
 
 function openCodeEventSessionTitle(event: OpenCodeSubscribedEvent): string | undefined {
