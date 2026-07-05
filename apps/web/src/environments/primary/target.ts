@@ -141,22 +141,16 @@ export function isLoopbackHostname(hostname: string): boolean {
   return LOOPBACK_HOSTNAMES.has(normalizeHostname(hostname));
 }
 
-function resolveHttpRequestBaseUrl(primaryTarget: PrimaryEnvironmentTarget): string {
-  const httpBaseUrl = primaryTarget.target.httpBaseUrl;
+function resolveCurrentDevServerOrigin(): string | null {
   const configuredDevServerUrl = import.meta.env.VITE_DEV_SERVER_URL?.trim();
   if (!configuredDevServerUrl) {
-    return httpBaseUrl;
+    return null;
   }
 
   const currentUrl = parseTargetUrl({
     rawValue: window.location.href,
     source: "window-origin",
     urlKind: "window-location-url",
-  });
-  const targetUrl = parseTargetUrl({
-    rawValue: httpBaseUrl,
-    source: primaryTarget.source,
-    urlKind: "http-base-url",
   });
   const devServerUrl = parseTargetUrl({
     rawValue: configuredDevServerUrl,
@@ -165,20 +159,38 @@ function resolveHttpRequestBaseUrl(primaryTarget: PrimaryEnvironmentTarget): str
     urlKind: "development-server-url",
   });
 
-  const isCurrentOriginDevServer =
-    (currentUrl.protocol === "http:" || currentUrl.protocol === "https:") &&
-    currentUrl.origin === devServerUrl.origin;
+  if (currentUrl.protocol !== "http:" && currentUrl.protocol !== "https:") {
+    return null;
+  }
 
-  if (
-    !isCurrentOriginDevServer ||
-    currentUrl.origin === targetUrl.origin ||
-    !isLoopbackHostname(currentUrl.hostname) ||
-    !isLoopbackHostname(targetUrl.hostname)
-  ) {
+  const isExactDevServerOrigin = currentUrl.origin === devServerUrl.origin;
+  const isLanAliasForLoopbackDevServer =
+    !isLoopbackHostname(currentUrl.hostname) &&
+    isLoopbackHostname(devServerUrl.hostname) &&
+    currentUrl.protocol === devServerUrl.protocol &&
+    currentUrl.port === devServerUrl.port;
+
+  return isExactDevServerOrigin || isLanAliasForLoopbackDevServer ? currentUrl.origin : null;
+}
+
+function resolveHttpRequestBaseUrl(primaryTarget: PrimaryEnvironmentTarget): string {
+  const httpBaseUrl = primaryTarget.target.httpBaseUrl;
+  const devServerOrigin = resolveCurrentDevServerOrigin();
+  if (!devServerOrigin) {
     return httpBaseUrl;
   }
 
-  return currentUrl.origin;
+  const targetUrl = parseTargetUrl({
+    rawValue: httpBaseUrl,
+    source: primaryTarget.source,
+    urlKind: "http-base-url",
+  });
+
+  if (devServerOrigin === targetUrl.origin || !isLoopbackHostname(targetUrl.hostname)) {
+    return httpBaseUrl;
+  }
+
+  return devServerOrigin;
 }
 
 function resolveConfiguredPrimaryTarget(): PrimaryEnvironmentTarget | null {
@@ -267,6 +279,60 @@ function resolveDesktopPrimaryTarget(): PrimaryEnvironmentTarget | null {
   };
 }
 
+function isHttpWindowOrigin(): boolean {
+  return window.location.protocol === "http:" || window.location.protocol === "https:";
+}
+
+function replaceLoopbackHostname(
+  rawValue: string,
+  hostname: string,
+  urlKind: "http-base-url" | "websocket-base-url",
+): string {
+  const url = parseTargetUrl({
+    rawValue,
+    source: "configured",
+    urlKind,
+  });
+  if (isLoopbackHostname(url.hostname)) {
+    url.hostname = hostname;
+  }
+  return url.toString();
+}
+
+function resolveConfiguredTargetForWindow(
+  target: PrimaryEnvironmentTarget,
+): PrimaryEnvironmentTarget {
+  if (!isHttpWindowOrigin() || isLoopbackHostname(window.location.hostname)) {
+    return target;
+  }
+
+  const devServerOrigin = resolveCurrentDevServerOrigin();
+  if (!devServerOrigin) {
+    return target;
+  }
+
+  const configuredHttpUrl = parseTargetUrl({
+    rawValue: target.target.httpBaseUrl,
+    source: "configured",
+    urlKind: "http-base-url",
+  });
+  const httpBaseUrl = isLoopbackHostname(configuredHttpUrl.hostname)
+    ? new URL(devServerOrigin).toString()
+    : configuredHttpUrl.toString();
+
+  return {
+    source: target.source,
+    target: {
+      httpBaseUrl,
+      wsBaseUrl: replaceLoopbackHostname(
+        target.target.wsBaseUrl,
+        window.location.hostname,
+        "websocket-base-url",
+      ),
+    },
+  };
+}
+
 export function resolvePrimaryEnvironmentHttpUrl(
   pathname: string,
   searchParams?: Record<string, string>,
@@ -286,9 +352,15 @@ export function resolvePrimaryEnvironmentHttpUrl(
 }
 
 export function readPrimaryEnvironmentTarget(): PrimaryEnvironmentTarget {
-  return (
-    resolveDesktopPrimaryTarget() ??
-    resolveConfiguredPrimaryTarget() ??
-    resolveWindowOriginPrimaryTarget()
-  );
+  const desktopTarget = resolveDesktopPrimaryTarget();
+  if (desktopTarget) {
+    return desktopTarget;
+  }
+
+  const configuredTarget = resolveConfiguredPrimaryTarget();
+  if (configuredTarget) {
+    return resolveConfiguredTargetForWindow(configuredTarget);
+  }
+
+  return resolveWindowOriginPrimaryTarget();
 }
