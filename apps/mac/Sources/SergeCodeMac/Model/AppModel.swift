@@ -387,6 +387,18 @@ public final class AppModel {
         }
     }
 
+    // MARK: - Mobile pairing (Settings ▸ iPhone)
+
+    public func isServerLanReachable() async -> Bool {
+        await backend.isServerLanReachable()
+    }
+
+    /// Throws so the settings tab can render the failure inline rather than
+    /// routing through the global `lastError` banner.
+    public func mintMobilePairing() async throws -> MobilePairingInfo {
+        try await backend.mintMobilePairing()
+    }
+
     // MARK: - Settings / providers / archive
 
     public private(set) var settings: AppSettings?

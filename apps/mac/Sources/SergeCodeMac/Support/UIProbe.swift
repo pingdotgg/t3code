@@ -80,8 +80,57 @@
             print("UIProbe: retry user rows before=\(before) after=\(userMessageCount(model))")
             snapshot("6-after-retry", dir: dir)
 
+            // Settings ▸ iPhone: enable the mobile-access preference so the
+            // mock backend reports LAN-reachable and the QR pairing card
+            // renders; restore the previous value afterward. Mock runs only:
+            // against LiveBackend the sidecar's bind host was fixed at spawn,
+            // so flipping the preference here would capture a misleading
+            // "restart required" (or loopback) state.
+            let isMockRun =
+                CommandLine.arguments.contains("--mock")
+                || ProcessInfo.processInfo.environment["SERGECODE_MOCK"] == "1"
+            if isMockRun {
+                let previousMobileAccess = MobileAccessPreference.isEnabled
+                MobileAccessPreference.setEnabled(true)
+                await snapshotSettings(
+                    tab: .iphone, name: "7-settings-iphone", model: model, dir: dir)
+                await snapshotSettings(
+                    tab: .connection, name: "8-settings-connection", model: model, dir: dir)
+                MobileAccessPreference.setEnabled(previousMobileAccess)
+            } else {
+                print("UIProbe: skipping settings snapshots (live backend run)")
+            }
+
             print("UIProbe: done")
             NSApp.terminate(nil)
+        }
+
+        /// Hosts SettingsScene in its own window on `tab` and captures it —
+        /// the real Settings scene can't be opened programmatically without
+        /// the menu, and this exercises the identical view tree.
+        private static func snapshotSettings(
+            tab: SettingsTab, name: String, model: AppModel, dir: String
+        ) async {
+            let hosting = NSHostingView(
+                rootView: SettingsScene(model: model, initialTab: tab))
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 560, height: 420),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            window.contentView = hosting
+            window.orderFront(nil)
+            // Let async .task loads (reachability check, pairing mint) land.
+            try? await Task.sleep(for: .seconds(2))
+            if let view = window.contentView,
+                let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
+            {
+                view.cacheDisplay(in: view.bounds, to: rep)
+                if let data = rep.representation(using: .png, properties: [:]) {
+                    let url = URL(fileURLWithPath: dir).appendingPathComponent("\(name).png")
+                    try? data.write(to: url)
+                    print("UIProbe: wrote \(url.path)")
+                }
+            }
+            window.orderOut(nil)
         }
 
         /// Toggles a collapsible section via the probe notification hook

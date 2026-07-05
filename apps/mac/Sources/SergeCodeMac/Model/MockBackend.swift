@@ -59,6 +59,19 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         await state.deleteThread(id: id)
     }
 
+    public func isServerLanReachable() async -> Bool {
+        // The mock pretends the LAN bind is active so the pairing UI is
+        // fully exercisable without a real sidecar.
+        MobileAccessPreference.isEnabled
+    }
+
+    public func mintMobilePairing() async throws -> MobilePairingInfo {
+        MobilePairingInfo(
+            pairingURL: URL(string: "http://192.168.1.42:3773/pair#token=MOCKPAIR2345")!,
+            credential: "MOCKPAIR2345",
+            expiresAt: Date().addingTimeInterval(5 * 60))
+    }
+
     public func settings() async throws -> AppSettings {
         await state.settings
     }

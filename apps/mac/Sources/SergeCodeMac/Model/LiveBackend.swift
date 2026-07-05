@@ -158,7 +158,20 @@ public actor LiveBackend: BackendService {
         return path
     }()
 
-    public init() {
+    /// When true, the sidecar binds `0.0.0.0` instead of loopback so the
+    /// SergeCode mobile app can connect over the local network. Auth is
+    /// still required (pairing token exchange + per-connection wsTicket);
+    /// the server flips its policy to `remote-reachable`, which keeps the
+    /// desktop-bootstrap method available (EnvironmentAuthPolicy.ts).
+    /// Fixed for the life of the process; read from
+    /// `MobileAccessPreference` at construction (App.swift).
+    private let allowLanAccess: Bool
+    /// Port of the running sidecar, captured at spawn for the mobile
+    /// pairing URL.
+    private var sidecarPort: Int?
+
+    public init(allowLanAccess: Bool = false) {
+        self.allowLanAccess = allowLanAccess
         let (stream, continuation) = AsyncStream<BackendEvent>.makeStream()
         self.events = stream
         self.continuation = continuation
@@ -186,14 +199,19 @@ public actor LiveBackend: BackendService {
 
         let sidecarConfig: SidecarConfig
         do {
-            sidecarConfig = try SidecarConfig(nodePath: nodePath, entryPath: entryPath)
+            sidecarConfig = try SidecarConfig(
+                nodePath: nodePath, entryPath: entryPath,
+                host: allowLanAccess ? "0.0.0.0" : "127.0.0.1")
         } catch {
             emit(.connection(.failed("Could not configure the server sidecar: \(error)")))
             return
         }
+        sidecarPort = sidecarConfig.port
 
+        // The app's own connection always goes over loopback, regardless of
+        // the bind host (0.0.0.0 is not a connectable address).
         let kit = T3KitConfig(
-            host: sidecarConfig.host, port: sidecarConfig.port, desktopBootstrapToken: token)
+            host: "127.0.0.1", port: sidecarConfig.port, desktopBootstrapToken: token)
         authClient = AuthClient(config: kit.authConfig)
 
         let process = ServerProcess(config: sidecarConfig, bootstrapToken: token)
@@ -1539,6 +1557,34 @@ public actor LiveBackend: BackendService {
         return outcome
     }
 
+    // MARK: - BackendService: mobile pairing
+
+    public func isServerLanReachable() async -> Bool {
+        allowLanAccess && serverProcess != nil
+    }
+
+    public func mintMobilePairing() async throws -> MobilePairingInfo {
+        guard allowLanAccess else { throw LiveBackendError.mobileAccessDisabled }
+        guard let auth = authClient, let port = sidecarPort, currentClient != nil else {
+            throw LiveBackendError.notConnected
+        }
+        guard let address = LanAddressResolver.primaryIPv4() else {
+            throw LiveBackendError.noLanAddress
+        }
+        let accessToken = try await auth.acquireAccessToken()
+        let minted = try await auth.mintPairingCredential(accessToken: accessToken, label: "iPhone")
+        // Same shape the server's headless `serve` QR encodes
+        // (startupAccess.ts buildPairingUrl): path /pair, token in the URL
+        // fragment so it never appears in request logs.
+        guard let url = URL(string: "http://\(address):\(port)/pair#token=\(minted.credential)")
+        else {
+            throw LiveBackendError.noLanAddress
+        }
+        let expiresAt = WireDate.parse(minted.expiresAt) ?? Date().addingTimeInterval(5 * 60)
+        return MobilePairingInfo(
+            pairingURL: url, credential: minted.credential, expiresAt: expiresAt)
+    }
+
     // MARK: - BackendService: settings + providers
 
     public func settings() async throws -> AppSettings {
@@ -1891,6 +1937,11 @@ public enum LiveBackendError: Error, Sendable {
     case unknownThread(String)
     /// The thread's model exposes no reasoning-effort option descriptor.
     case noEffortOption(String)
+    /// Mobile pairing requested while the sidecar is loopback-only (the
+    /// preference was off at launch); relaunch applies the new bind host.
+    case mobileAccessDisabled
+    /// No non-loopback IPv4 interface found — not on a network.
+    case noLanAddress
 }
 
 // MARK: - Unified diff parsing (getFullThreadDiff string -> [DiffFile])
