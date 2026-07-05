@@ -8,10 +8,12 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import { mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
 import {
+  type AcpAdapterPendingUserInput,
   acpPromptSettlementBelongsToContext,
   handleAcpUserInputRequest,
 } from "../acp/AcpAdapterRuntime.ts";
@@ -25,8 +27,13 @@ import {
   resolveDevinAcpDisplayModelId,
   resolveDevinAcpModelSelection,
 } from "../acp/DevinAcpSupport.ts";
+import {
+  makeDevinAskQuestionPrompt,
+  methodLooksLikeDevinAskQuestion,
+  type DevinAskQuestionResponse,
+} from "../acp/DevinAcpExtension.ts";
 import { makeDevinElicitationPrompt } from "../acp/DevinElicitation.ts";
-import { ProviderAdapterProcessError } from "../Errors.ts";
+import { ProviderAdapterProcessError, type ProviderAdapterRequestError } from "../Errors.ts";
 import { type EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const PROVIDER = ProviderDriverKind.make("devin");
@@ -45,7 +52,9 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
   return Effect.gen(function* () {
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
-    return yield* makeAcpAdapterLive<EffectAcpSchema.ElicitationResponse>(
+    return yield* makeAcpAdapterLive<
+      EffectAcpSchema.ElicitationResponse | DevinAskQuestionResponse
+    >(
       {
         provider: PROVIDER,
         providerLabel: "Devin",
@@ -81,10 +90,23 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
             // URL-mode elicitations can be completed out-of-band by the agent
             // (session/elicitation/complete), so track their request ids.
             const urlElicitationRequestIds = new Map<string, ApprovalRequestId>();
+            const pendingElicitations = input.pendingUserInputs as Map<
+              ApprovalRequestId,
+              AcpAdapterPendingUserInput<EffectAcpSchema.ElicitationResponse>
+            >;
+            const pendingAskQuestions = input.pendingUserInputs as Map<
+              ApprovalRequestId,
+              AcpAdapterPendingUserInput<DevinAskQuestionResponse>
+            >;
             yield* input.acp.handleElicitation((params) => {
               const elicitationId = params.mode === "url" ? params.elicitationId : undefined;
               return input.mapAcpCallbackFailure(
-                handleAcpUserInputRequest({
+                handleAcpUserInputRequest<
+                  EffectAcpSchema.ElicitationResponse,
+                  ProviderAdapterRequestError,
+                  never,
+                  ProviderAdapterRequestError
+                >({
                   provider: PROVIDER,
                   threadId: input.threadId,
                   method: "session/elicitation",
@@ -101,7 +123,7 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
                         ? "Invalid Devin elicitation response: missing required answers."
                         : undefined,
                   },
-                  pendingUserInputs: input.pendingUserInputs,
+                  pendingUserInputs: pendingElicitations,
                   ...(elicitationId !== undefined
                     ? {
                         onOpened: (requestId: ApprovalRequestId) => {
@@ -135,6 +157,41 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
                 }).pipe(Effect.asVoid);
               }),
             );
+            yield* input.acp.handleUnknownExtRequest((method, params) => {
+              if (!methodLooksLikeDevinAskQuestion(method)) {
+                return Effect.fail(EffectAcpErrors.AcpRequestError.methodNotFound(method));
+              }
+              const prompt = makeDevinAskQuestionPrompt(params);
+              if (!prompt) {
+                return Effect.fail(
+                  EffectAcpErrors.AcpRequestError.invalidParams(
+                    "Invalid Devin ask-question payload",
+                    params,
+                  ),
+                );
+              }
+              return input.mapAcpCallbackFailure(
+                handleAcpUserInputRequest<
+                  DevinAskQuestionResponse,
+                  ProviderAdapterRequestError,
+                  never,
+                  ProviderAdapterRequestError
+                >({
+                  provider: PROVIDER,
+                  threadId: input.threadId,
+                  method,
+                  source: "acp.devin.extension",
+                  request: params,
+                  prompt,
+                  pendingUserInputs: pendingAskQuestions,
+                  resolveTurnId: input.resolveActiveTurnId,
+                  makeRequestId: input.nextApprovalRequestId,
+                  makeEventStamp: input.makeEventStamp,
+                  offerRuntimeEvent: input.offerRuntimeEvent,
+                  logNative: input.logNative,
+                }),
+              );
+            });
           }),
         bindSessionModel: (input) =>
           Effect.gen(function* () {

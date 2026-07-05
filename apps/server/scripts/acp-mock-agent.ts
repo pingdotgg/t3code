@@ -19,6 +19,7 @@ const emitInterleavedAssistantToolCalls =
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
 const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
 const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION === "1";
+const emitDevinAskQuestion = process.env.T3_ACP_EMIT_DEVIN_ASK_QUESTION === "1";
 const emitElicitation = process.env.T3_ACP_EMIT_ELICITATION === "1";
 const emitUrlElicitationComplete = process.env.T3_ACP_EMIT_URL_ELICITATION_COMPLETE === "1";
 const emitXAiPromptCompleteThenHang = process.env.T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG === "1";
@@ -817,6 +818,49 @@ const program = Effect.gen(function* () {
           result.answers === null
         ) {
           throw new Error("Expected accepted _x.ai/ask_user_question response answers.");
+        }
+
+        return { stopReason: "end_turn" };
+      }
+
+      if (emitDevinAskQuestion) {
+        const result = yield* agent.client.extRequest("devin/ask_question", {
+          toolCallId: "devin-ask-question-tool-call-1",
+          title: "Question",
+          questions: [
+            {
+              id: "scope",
+              prompt: "Which scope should Devin use?",
+              options: [
+                {
+                  id: "workspace",
+                  label: "Workspace",
+                  description: "Use the current workspace",
+                },
+                {
+                  id: "session",
+                  label: "Session",
+                  description: "Only use this session",
+                },
+              ],
+            },
+          ],
+        });
+        if (typeof result !== "object" || result === null || !("outcome" in result)) {
+          throw new Error("Expected Devin ask-question response outcome.");
+        }
+        if (result.outcome === "cancelled") {
+          return { stopReason: "end_turn" };
+        }
+        if (
+          result.outcome !== "accepted" ||
+          !("answers" in result) ||
+          typeof result.answers !== "object" ||
+          result.answers === null ||
+          !("scope" in result.answers) ||
+          result.answers.scope !== "workspace"
+        ) {
+          throw new Error("Unexpected Devin ask-question response answers.");
         }
 
         return { stopReason: "end_turn" };

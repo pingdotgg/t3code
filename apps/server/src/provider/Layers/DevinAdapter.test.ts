@@ -284,6 +284,83 @@ it.layer(devinAdapterTestLayer)("DevinAdapterLive", (it) => {
     }),
   );
 
+  it.effect("handles Devin ask-question extension requests", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("devin-ask-question-extension");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockDevinWrapper({
+          T3_ACP_EMIT_DEVIN_ASK_QUESTION: "1",
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const requested =
+        yield* Deferred.make<Extract<ProviderRuntimeEvent, { type: "user-input.requested" }>>();
+      const resolved =
+        yield* Deferred.make<Extract<ProviderRuntimeEvent, { type: "user-input.resolved" }>>();
+
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) => {
+        if (String(event.threadId) !== String(threadId)) {
+          return Effect.void;
+        }
+        if (event.type === "user-input.requested") {
+          return Deferred.succeed(requested, event).pipe(Effect.ignore);
+        }
+        if (event.type === "user-input.resolved") {
+          return Deferred.succeed(resolved, event).pipe(Effect.ignore);
+        }
+        return Effect.void;
+      }).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("devin"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+
+      const sendTurnFiber = yield* adapter
+        .sendTurn({ threadId, input: "ask before continuing", attachments: [] })
+        .pipe(Effect.forkChild);
+
+      const requestedEvent = yield* Deferred.await(requested);
+      assert.equal(requestedEvent.raw?.method, "devin/ask_question");
+      assert.deepEqual(
+        requestedEvent.payload.questions.map((question) => ({
+          id: question.id,
+          question: question.question,
+          options: question.options.map((option) => option.label),
+          multiSelect: question.multiSelect,
+        })),
+        [
+          {
+            id: "scope",
+            question: "Which scope should Devin use?",
+            options: ["Workspace", "Session"],
+            multiSelect: false,
+          },
+        ],
+      );
+
+      yield* adapter.respondToUserInput(
+        threadId,
+        ApprovalRequestId.make(String(requestedEvent.requestId)),
+        {
+          scope: "Workspace",
+        },
+      );
+
+      const resolvedEvent = yield* Deferred.await(resolved);
+      assert.deepEqual(resolvedEvent.payload.answers, {
+        scope: "Workspace",
+      });
+      assert.equal(String(resolvedEvent.turnId), String(requestedEvent.turnId));
+      yield* Fiber.join(sendTurnFiber);
+
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("accepts URL elicitation completion notifications", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("devin-url-elicitation-complete");
