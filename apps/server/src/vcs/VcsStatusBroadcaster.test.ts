@@ -5,6 +5,7 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -714,5 +715,56 @@ describe("VcsStatusBroadcaster", () => {
       yield* Deferred.await(remoteInterrupted);
       assert.isTrue(Option.isSome(yield* Deferred.poll(remoteInterrupted)));
     }).pipe(Effect.provide(testLayer));
+  });
+  it.effect("joins concurrent refreshStatus calls for the same cwd", () => {
+    const state = {
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+    };
+
+    return Effect.gen(function* () {
+      const gate = yield* Deferred.make<void>();
+      const testLayer = VcsStatusBroadcaster.layer.pipe(
+        Layer.provideMerge(NodeServices.layer),
+        Layer.provide(
+          Layer.mock(GitWorkflowService.GitWorkflowService)({
+            localStatus: () =>
+              Deferred.await(gate).pipe(
+                Effect.map(() => {
+                  state.localStatusCalls += 1;
+                  return baseLocalStatus;
+                }),
+              ),
+            remoteStatus: () =>
+              Effect.sync(() => {
+                state.remoteStatusCalls += 1;
+                return baseRemoteStatus;
+              }),
+            invalidateLocalStatus: () => Effect.void,
+            invalidateRemoteStatus: () => Effect.void,
+          }),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+
+        // Both callers start while the first refresh is held open by the
+        // gate; the second must join the in-flight refresh instead of
+        // running its own git status + fetch pair.
+        const first = yield* broadcaster.refreshStatus("/repo").pipe(Effect.forkChild);
+        const second = yield* broadcaster.refreshStatus("/repo").pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(gate, undefined);
+
+        const firstResult = yield* Fiber.join(first);
+        const secondResult = yield* Fiber.join(second);
+
+        assert.deepStrictEqual(firstResult, baseStatus);
+        assert.deepStrictEqual(secondResult, baseStatus);
+        assert.equal(state.localStatusCalls, 1);
+        assert.equal(state.remoteStatusCalls, 1);
+      }).pipe(Effect.provide(testLayer));
+    });
   });
 });
