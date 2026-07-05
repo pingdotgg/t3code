@@ -63,6 +63,26 @@ node ../../scripts/mobile-native-static-check.ts
 
 The native lint task runs SwiftLint for Swift plus ktlint and detekt for Kotlin. Missing native tools are reported as warnings and skipped locally. CI installs the default toolset from `apps/mobile/Brewfile` before running the native checks.
 
+## Installing on a device with a free Apple ID
+
+Local device installs without T3 Tools team membership: sign in to Xcode with
+your Apple ID (Personal Team), then build with personal signing:
+
+```bash
+SERGECODE_PERSONAL_SIGNING=1 APP_VARIANT=development EXPO_NO_GIT_STATUS=1 \
+  npx expo prebuild --clean --platform ios --no-install
+cd ios && pod install && xcodebuild -workspace T3CodeDev.xcworkspace \
+  -scheme T3CodeDev -configuration Debug -destination "id=<device-udid>" \
+  -allowProvisioningUpdates -allowProvisioningDeviceRegistration build
+```
+
+This swaps in your Personal Team (override with `SERGECODE_PERSONAL_TEAM_ID`),
+uses a private bundle id, and drops what free accounts cannot sign: the
+widgets extension, app groups, push, Sign in with Apple, and associated
+domains. Signatures expire after 7 days — rebuild to refresh. Trust the
+developer profile on the phone (Settings → General → VPN & Device Management)
+on first launch. Never use this mode for EAS or store builds.
+
 ## Alpine scenery (Unsplash)
 
 The app's Dolomites scenery (thread thumbnails, chat wallpaper, daily hero) is

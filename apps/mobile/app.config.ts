@@ -59,6 +59,18 @@ function resolveAppVariant(value: string | undefined): AppVariant {
 
 const variant = VARIANT_CONFIG[APP_VARIANT];
 
+// Free-Apple-ID device builds: sign with the developer's Personal Team
+// instead of the pinned T3 Tools team. Personal teams cannot sign app
+// groups, push, or associated domains, and cannot claim another team's
+// bundle identifier — so this drops the widgets extension and associated
+// domains and uses a private bundle id. Local installs only; never for
+// EAS/store builds.
+const personalSigning = process.env.SERGECODE_PERSONAL_SIGNING === "1";
+const PERSONAL_TEAM_ID = process.env.SERGECODE_PERSONAL_TEAM_ID ?? "78A5P57U23";
+const iosBundleIdentifier = personalSigning
+  ? `com.sergeserb2.t3code.${APP_VARIANT === "production" ? "app" : APP_VARIANT}`
+  : variant.iosBundleIdentifier;
+
 const config: ExpoConfig = {
   name: variant.appName,
   slug: "t3-code",
@@ -80,15 +92,19 @@ const config: ExpoConfig = {
   ios: {
     icon: variant.iosIcon,
     supportsTablet: true,
-    bundleIdentifier: variant.iosBundleIdentifier,
+    bundleIdentifier: iosBundleIdentifier,
     // Pin code signing to the T3 Tools team so non-interactive `expo run:ios`
     // does not fall back to a personal team (which cannot sign app groups,
     // Sign in with Apple, or push notification entitlements).
-    appleTeamId: "ARK85ZXQ4Z",
-    associatedDomains: [
-      `applinks:${variant.relyingParty}`,
-      `webcredentials:${variant.relyingParty}`,
-    ],
+    appleTeamId: personalSigning ? PERSONAL_TEAM_ID : "ARK85ZXQ4Z",
+    ...(personalSigning
+      ? {}
+      : {
+          associatedDomains: [
+            `applinks:${variant.relyingParty}`,
+            `webcredentials:${variant.relyingParty}`,
+          ],
+        }),
     infoPlist: {
       NSAppTransportSecurity: {
         NSAllowsArbitraryLoads: true,
@@ -113,6 +129,10 @@ const config: ExpoConfig = {
     favicon: "./assets/favicon.png",
   },
   plugins: [
+    // Expo entitlement mods compose LIFO (each plugin wraps the previous),
+    // so registering this FIRST makes it run LAST — after Clerk & co. have
+    // added the entitlements a Personal Team cannot sign.
+    ...(personalSigning ? ["./plugins/withPersonalTeamEntitlements.cjs"] : []),
     "expo-font",
     "expo-secure-store",
     ["@clerk/expo", { theme: "./clerk-theme.json" }],
@@ -151,25 +171,32 @@ const config: ExpoConfig = {
       },
     ],
     "./plugins/withIosCocoaPodsUuidCache.cjs",
-    [
-      "expo-widgets",
-      {
-        bundleIdentifier: `${variant.iosBundleIdentifier}.widgets`,
-        groupIdentifier: `group.${variant.iosBundleIdentifier}`,
-        enablePushNotifications: true,
-        widgets: [
-          {
-            name: "AgentActivity",
-            displayName: "Agent Activity",
-            description: "Shows the current state of active T3 Code agents.",
-            supportedFamilies: ["systemSmall", "systemMedium", "accessoryRectangular"],
-          },
-        ],
-      },
-    ],
+    // Personal-team signing cannot carry the widgets extension (app group +
+    // push entitlements); see personalSigning above.
+    ...(personalSigning
+      ? []
+      : [
+          [
+            "expo-widgets",
+            {
+              bundleIdentifier: `${variant.iosBundleIdentifier}.widgets`,
+              groupIdentifier: `group.${variant.iosBundleIdentifier}`,
+              enablePushNotifications: true,
+              widgets: [
+                {
+                  name: "AgentActivity",
+                  displayName: "Agent Activity",
+                  description: "Shows the current state of active T3 Code agents.",
+                  supportedFamilies: ["systemSmall", "systemMedium", "accessoryRectangular"],
+                },
+              ],
+            },
+          ] as const,
+        ]),
     "./plugins/withIosSceneLifecycle.cjs",
     "./plugins/withAndroidCleartextTraffic.cjs",
-  ],
+    "./plugins/withIosPodDeploymentFloor.cjs",
+  ] as ExpoConfig["plugins"],
   extra: {
     appVariant: APP_VARIANT,
     relay: {
