@@ -1,4 +1,4 @@
-# SergeCode for macOS — Architecture
+# SurgeCode for macOS — Architecture
 
 Native macOS client for the t3 server. SwiftUI with Liquid Glass (macOS 26+),
 no Electron, no web view. The existing Node server (`apps/server`, npm package
@@ -6,7 +6,7 @@ no Electron, no web view. The existing Node server (`apps/server`, npm package
 
 ```
 ┌───────────────────────────────────────────────┐
-│ SergeCode.app (SwiftUI, macOS 26+)            │
+│ SurgeCode.app (SwiftUI, macOS 26+)            │
 │                                               │
 │  SergeCodeMac (app target)                    │
 │   • Liquid Glass UI: sidebar, chat, diffs     │
@@ -99,7 +99,7 @@ chrome, never for long-form reading surfaces.
 ## Build without Xcode
 
 Only Command Line Tools are required. `scripts/make-app.sh` runs
-`swift build` and assembles `dist/SergeCode.app` (hand-written Info.plist,
+`swift build` and assembles `dist/SurgeCode.app` (hand-written Info.plist,
 ad-hoc codesign). CRITICAL: the macOS 27 beta SDK defines SwiftUI `@State`,
 `@Entry`, `@Animatable` as compiler macros in a `SwiftUIMacros` plugin that
 ships only with Xcode. Rules for all Swift code in this package:
@@ -127,4 +127,4 @@ automatically and falls back to ad-hoc with a warning):
 2. Trust it for code signing:
    `security add-trusted-cert -p codeSign <cert.pem>` (approve the prompt).
 3. Rebuild with `scripts/make-app.sh`; on first Finder launch approve the
-   "SergeCode would like to access files in your Documents folder" dialog.
+   "SurgeCode would like to access files in your Documents folder" dialog.

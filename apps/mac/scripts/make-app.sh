@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build SergeCode.app without Xcode: SwiftPM binary + hand-assembled bundle.
+# Build SurgeCode.app without Xcode: SwiftPM binary + hand-assembled bundle.
 # Usage: scripts/make-app.sh [--debug]
 set -euo pipefail
 
@@ -12,11 +12,12 @@ fi
 swift build --package-path "$MAC_DIR" -c "$CONFIG"
 
 BIN="$MAC_DIR/.build/$CONFIG/SergeCodeMac"
-APP="$MAC_DIR/dist/SergeCode.app"
+APP="$MAC_DIR/dist/SurgeCode.app"
 
-rm -rf "$APP"
+rm -rf "$APP" "$MAC_DIR/dist/SergeCode.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$MAC_DIR/Support/Info.plist" "$APP/Contents/Info.plist"
+cp "$MAC_DIR/Support/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 cp "$BIN" "$APP/Contents/MacOS/SergeCodeMac"
 
 # Prefer the stable self-signed identity when present: TCC permissions
