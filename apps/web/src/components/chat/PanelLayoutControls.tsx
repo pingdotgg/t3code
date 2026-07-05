@@ -1,12 +1,12 @@
 import { Maximize2Icon, Minimize2Icon, PanelBottomIcon, PanelRightIcon } from "lucide-react";
 import { memo } from "react";
 
-import { PROJECT_HOST_TERMINAL_UNAVAILABLE_REASON } from "~/projectHostControls";
 import { Toggle } from "../ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 interface PanelLayoutControlsProps {
-  terminalAvailable: boolean;
+  terminalToggleAvailable: boolean;
+  terminalToggleUnavailableReason: string | null;
   terminalOpen: boolean;
   terminalShortcutLabel: string | null;
   rightPanelAvailable: boolean;
@@ -17,7 +17,8 @@ interface PanelLayoutControlsProps {
 }
 
 export const PanelLayoutControls = memo(function PanelLayoutControls({
-  terminalAvailable,
+  terminalToggleAvailable,
+  terminalToggleUnavailableReason,
   terminalOpen,
   terminalShortcutLabel,
   rightPanelAvailable,
@@ -41,16 +42,16 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
               aria-label="Toggle terminal drawer"
               variant="ghost"
               size="sm"
-              disabled={!terminalAvailable}
+              disabled={!terminalToggleAvailable}
             >
               <PanelBottomIcon className="size-3.5" />
             </Toggle>
           }
         />
         <TooltipPopup side="bottom">
-          {terminalAvailable
+          {terminalToggleAvailable
             ? `Toggle terminal drawer${terminalShortcutLabel ? ` (${terminalShortcutLabel})` : ""}`
-            : PROJECT_HOST_TERMINAL_UNAVAILABLE_REASON}
+            : terminalToggleUnavailableReason}
         </TooltipPopup>
       </Tooltip>
       <Tooltip>

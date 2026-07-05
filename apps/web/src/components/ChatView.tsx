@@ -22,6 +22,7 @@ import {
 } from "@t3tools/contracts";
 import {
   connectionStatusText,
+  type EnvironmentConnectionPhase,
   type EnvironmentConnectionPresentation,
 } from "@t3tools/client-runtime/connection";
 import {
@@ -1453,20 +1454,17 @@ function ChatViewContent(props: ChatViewProps) {
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
   const activeEnvironment =
     activeThread == null ? null : (environmentById.get(activeThread.environmentId) ?? null);
-  const activeEnvironmentConnectionPhase = activeEnvironment?.connection.phase ?? null;
+  const activeEnvironmentConnectionPhase: EnvironmentConnectionPhase | null =
+    activeEnvironment?.connection.phase ?? null;
   const activeEnvironmentUnavailable =
     activeEnvironment !== null && activeEnvironmentConnectionPhase !== "connected";
   const activeEnvironmentUnavailableLabel = activeEnvironment?.label ?? null;
   const hasActiveProject = activeProject !== null;
-  const projectHostControls = useMemo(
-    () =>
-      deriveProjectHostControlAvailability({
-        hasActiveProject,
-        environmentConnectionPhase: activeEnvironmentConnectionPhase,
-        terminalDrawerOpen: terminalUiState.terminalOpen,
-      }),
-    [activeEnvironmentConnectionPhase, hasActiveProject, terminalUiState.terminalOpen],
-  );
+  const projectHostControls = deriveProjectHostControlAvailability({
+    hasActiveProject,
+    environmentConnectionPhase: activeEnvironmentConnectionPhase,
+    terminalDrawerOpen: terminalUiState.terminalOpen,
+  });
   const terminalUiAvailable = projectHostControls.terminalControlsAvailable;
   const activeEnvironmentUnavailableState = useMemo<EnvironmentUnavailableState | null>(() => {
     if (!activeEnvironmentUnavailable || !activeEnvironmentUnavailableLabel || !activeEnvironment) {
@@ -4956,7 +4954,8 @@ function ChatViewContent(props: ChatViewProps) {
 
   const panelToggleControls = (
     <PanelLayoutControls
-      terminalAvailable={projectHostControls.terminalDrawerToggleAvailable}
+      terminalToggleAvailable={projectHostControls.terminalDrawerToggleAvailable}
+      terminalToggleUnavailableReason={projectHostControls.terminalDrawerToggleUnavailableReason}
       terminalOpen={terminalUiState.terminalOpen}
       terminalShortcutLabel={shortcutLabelForCommand(keybindings, "terminal.toggle")}
       rightPanelAvailable={hasActiveProject}
@@ -5083,6 +5082,9 @@ function ChatViewContent(props: ChatViewProps) {
             openInCwd={gitCwd}
             activeProjectScripts={activeProject?.scripts}
             projectScriptsRunAvailable={projectHostControls.projectActionsRunAvailable}
+            projectScriptsRunUnavailableReason={
+              projectHostControls.projectActionsRunUnavailableReason
+            }
             preferredScriptId={
               activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
             }
@@ -5357,6 +5359,7 @@ function ChatViewContent(props: ChatViewProps) {
           onAddFiles={addFilesSurface}
           browserAvailable={isPreviewSupportedInRuntime()}
           terminalAvailable={projectHostControls.terminalControlsAvailable}
+          terminalUnavailableReason={projectHostControls.terminalControlsUnavailableReason}
           diffAvailable={isServerThread && isGitRepo}
           filesAvailable={hasActiveProject}
         >
@@ -5385,6 +5388,7 @@ function ChatViewContent(props: ChatViewProps) {
             onAddFiles={addFilesSurface}
             browserAvailable={isPreviewSupportedInRuntime()}
             terminalAvailable={projectHostControls.terminalControlsAvailable}
+            terminalUnavailableReason={projectHostControls.terminalControlsUnavailableReason}
             diffAvailable={isServerThread && isGitRepo}
             filesAvailable={hasActiveProject}
           >

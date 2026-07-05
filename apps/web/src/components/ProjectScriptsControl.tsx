@@ -32,7 +32,6 @@ import {
   primaryProjectScript,
 } from "~/projectScripts";
 import { shortcutLabelForCommand } from "~/keybindings";
-import { PROJECT_HOST_ACTION_UNAVAILABLE_REASON } from "~/projectHostControls";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -104,6 +103,7 @@ interface ProjectScriptsControlProps {
   keybindings: ResolvedKeybindingsConfig;
   preferredScriptId?: string | null;
   runAvailable?: boolean;
+  runUnavailableReason?: string | null;
   onRunScript: (script: ProjectScript) => void;
   onAddScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
   onUpdateScript: (
@@ -118,6 +118,7 @@ export default function ProjectScriptsControl({
   keybindings,
   preferredScriptId = null,
   runAvailable = true,
+  runUnavailableReason = null,
   onRunScript,
   onAddScript,
   onUpdateScript,
@@ -272,7 +273,9 @@ export default function ProjectScriptsControl({
               </span>
             </TooltipTrigger>
             <TooltipPopup side="top">
-              {runAvailable ? `Run ${primaryScript.name}` : PROJECT_HOST_ACTION_UNAVAILABLE_REASON}
+              {runAvailable
+                ? `Run ${primaryScript.name}`
+                : (runUnavailableReason ?? "Project actions are unavailable.")}
             </TooltipPopup>
           </Tooltip>
           <GroupSeparator className="hidden @3xl/header-actions:block" />

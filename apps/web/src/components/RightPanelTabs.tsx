@@ -19,7 +19,6 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { faviconUrlForOrigin } from "~/lib/favicon";
-import { PROJECT_HOST_TERMINAL_UNAVAILABLE_REASON } from "~/projectHostControls";
 import { useTheme } from "~/hooks/useTheme";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 
@@ -47,6 +46,7 @@ interface RightPanelTabsProps {
   onAddFiles: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
+  terminalUnavailableReason: string | null;
   diffAvailable: boolean;
   filesAvailable: boolean;
   children: ReactNode;
@@ -54,7 +54,6 @@ interface RightPanelTabsProps {
 
 const SURFACE_DISABLED_REASONS = {
   browser: "Browser previews are only available in the T3 Code desktop app.",
-  terminal: PROJECT_HOST_TERMINAL_UNAVAILABLE_REASON,
   files: "Files are only available when a project is open.",
   diff: "Diff is only available for server threads in Git repositories.",
 } as const;
@@ -96,9 +95,11 @@ function RightPanelEmptyState(props: {
   onAddFiles: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
+  terminalUnavailableReason: string | null;
   diffAvailable: boolean;
   filesAvailable: boolean;
 }) {
+  const terminalUnavailableReason = props.terminalUnavailableReason ?? "Terminals are unavailable.";
   const actions = [
     {
       label: "Browser",
@@ -113,7 +114,7 @@ function RightPanelEmptyState(props: {
       description: "Start a shell in this workspace.",
       icon: TerminalSquare,
       available: props.terminalAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.terminal,
+      disabledReason: terminalUnavailableReason,
       onClick: props.onAddTerminal,
     },
     {
@@ -456,7 +457,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                   </SurfaceMenuItem>
                   <SurfaceMenuItem
                     available={props.terminalAvailable}
-                    disabledReason={SURFACE_DISABLED_REASONS.terminal}
+                    disabledReason={props.terminalUnavailableReason ?? "Terminals are unavailable."}
                     onClick={props.onAddTerminal}
                   >
                     <TerminalSquare />
@@ -494,6 +495,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddFiles={props.onAddFiles}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}
+            terminalUnavailableReason={props.terminalUnavailableReason}
             diffAvailable={props.diffAvailable}
             filesAvailable={props.filesAvailable}
           />
