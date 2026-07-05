@@ -5,22 +5,20 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
+import { DpopPublicJwk as DpopPublicJwkSchema, normalizeDpopHtu } from "./dpopCommon.ts";
+import type { DpopPublicJwk as DpopPublicJwkType } from "./dpopCommon.ts";
 import { stableStringify } from "./relaySigning.ts";
 
 const DPOP_TYP = "dpop+jwt";
 const DPOP_ALG = "ES256";
 const DEFAULT_MAX_AGE_SECONDS = 300;
 
-export const DpopPublicJwk = Schema.Struct({
-  kty: Schema.Literal("EC"),
-  crv: Schema.Literal("P-256"),
-  x: Schema.String.check(Schema.isNonEmpty()),
-  y: Schema.String.check(Schema.isNonEmpty()),
-});
-export type DpopPublicJwk = typeof DpopPublicJwk.Type;
+export const DpopPublicJwk = DpopPublicJwkSchema;
+export type DpopPublicJwk = DpopPublicJwkType;
+export { normalizeDpopHtu };
 
 const DpopJwtHeaderPublicJwk = Schema.Struct({
-  ...DpopPublicJwk.fields,
+  ...DpopPublicJwkSchema.fields,
   d: Schema.optionalKey(Schema.Never),
 });
 
@@ -68,7 +66,7 @@ function decodeBase64UrlDpopJwtPayload(value: string) {
   return decodeDpopJwtPayloadJson(Result.getOrThrow(Encoding.decodeBase64UrlString(value)));
 }
 
-function dpopThumbprintInput(jwk: DpopPublicJwk): string {
+function dpopThumbprintInput(jwk: DpopPublicJwkType): string {
   return stableStringify({
     crv: jwk.crv,
     kty: jwk.kty,
@@ -77,18 +75,7 @@ function dpopThumbprintInput(jwk: DpopPublicJwk): string {
   });
 }
 
-export function normalizeDpopHtu(url: string): string | null {
-  try {
-    const parsed = new URL(url);
-    parsed.hash = "";
-    parsed.search = "";
-    return parsed.toString();
-  } catch {
-    return null;
-  }
-}
-
-export function computeDpopJwkThumbprint(jwk: DpopPublicJwk): string {
+export function computeDpopJwkThumbprint(jwk: DpopPublicJwkType): string {
   return Encoding.encodeBase64Url(sha256(new TextEncoder().encode(dpopThumbprintInput(jwk))));
 }
 
@@ -96,7 +83,7 @@ export function computeDpopAccessTokenHash(accessToken: string): string {
   return Encoding.encodeBase64Url(sha256(new TextEncoder().encode(accessToken)));
 }
 
-function publicKeyBytesFromJwk(jwk: DpopPublicJwk): Uint8Array {
+function publicKeyBytesFromJwk(jwk: DpopPublicJwkType): Uint8Array {
   const x = base64UrlToBytes(jwk.x);
   const y = base64UrlToBytes(jwk.y);
   if (x.length !== 32 || y.length !== 32) {

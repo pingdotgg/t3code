@@ -1,9 +1,18 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId } from "@t3tools/contracts";
+import {
+  ModelSelection as ModelSelectionSchema,
+  ProviderInteractionMode as ProviderInteractionModeSchema,
+  RuntimeMode as RuntimeModeSchema,
+  type EnvironmentId,
+  type ModelSelection,
+  type ProviderInteractionMode,
+  type RuntimeMode,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { useEffect } from "react";
 import { Atom } from "effect/unstable/reactivity";
 
+import { DraftComposerImageAttachmentSchema } from "../lib/composer-image-schema";
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import { appAtomRegistry } from "./atom-registry";
 
@@ -29,12 +38,48 @@ export class ComposerDraftPersistenceError extends Schema.TaggedErrorClass<Compo
 export interface ComposerDraft {
   readonly text: string;
   readonly attachments: ReadonlyArray<DraftComposerImageAttachment>;
+  readonly modelSelection?: ModelSelection;
+  readonly runtimeMode?: RuntimeMode;
+  readonly interactionMode?: ProviderInteractionMode;
+  readonly workspaceSelection?: ComposerDraftWorkspaceSelection;
 }
 
-interface PersistedComposerDrafts {
-  readonly schemaVersion: typeof COMPOSER_DRAFTS_SCHEMA_VERSION;
-  readonly drafts: Record<string, ComposerDraft>;
+export interface ComposerDraftWorkspaceSelection {
+  readonly mode: "local" | "worktree";
+  readonly branch: string | null;
+  readonly worktreePath: string | null;
+  readonly startFromOrigin?: boolean;
 }
+
+export type ComposerDraftSettingsUpdate = Pick<
+  ComposerDraft,
+  "modelSelection" | "runtimeMode" | "interactionMode" | "workspaceSelection"
+>;
+
+const ComposerDraftWorkspaceSelectionSchema = Schema.Struct({
+  mode: Schema.Literals(["local", "worktree"]),
+  branch: Schema.NullOr(Schema.String),
+  worktreePath: Schema.NullOr(Schema.String),
+  startFromOrigin: Schema.optional(Schema.Boolean),
+});
+
+const ComposerDraftSchema = Schema.Struct({
+  text: Schema.String,
+  attachments: Schema.Array(DraftComposerImageAttachmentSchema),
+  modelSelection: Schema.optional(ModelSelectionSchema),
+  runtimeMode: Schema.optional(RuntimeModeSchema),
+  interactionMode: Schema.optional(ProviderInteractionModeSchema),
+  workspaceSelection: Schema.optional(ComposerDraftWorkspaceSelectionSchema),
+});
+
+const PersistedComposerDraftsSchema = Schema.Struct({
+  schemaVersion: Schema.Literal(COMPOSER_DRAFTS_SCHEMA_VERSION),
+  drafts: Schema.Record(Schema.String, ComposerDraftSchema),
+});
+
+const decodePersistedComposerDraftsDocument = Schema.decodeUnknownSync(
+  PersistedComposerDraftsSchema,
+);
 
 const EMPTY_DRAFT: ComposerDraft = {
   text: "",
@@ -54,13 +99,36 @@ function normalizeDraft(draft: ComposerDraft | undefined): ComposerDraft {
     return EMPTY_DRAFT;
   }
   return {
+    ...draft,
     text: draft.text,
     attachments: draft.attachments,
   };
 }
 
+export function getComposerDraftSnapshot(draftKey: string): ComposerDraft {
+  return normalizeDraft(appAtomRegistry.get(composerDraftsAtom)[draftKey]);
+}
+
+export function isComposerDraftEmpty(draft: ComposerDraft): boolean {
+  return isEmptyDraft(draft);
+}
+
 function isEmptyDraft(draft: ComposerDraft): boolean {
-  return draft.text.length === 0 && draft.attachments.length === 0;
+  return (
+    draft.text.length === 0 &&
+    draft.attachments.length === 0 &&
+    draft.modelSelection === undefined &&
+    draft.runtimeMode === undefined &&
+    draft.interactionMode === undefined &&
+    draft.workspaceSelection === undefined
+  );
+}
+
+export function decodePersistedComposerDrafts(value: unknown): Record<string, ComposerDraft> {
+  const parsed = decodePersistedComposerDraftsDocument(value);
+  return Object.fromEntries(
+    Object.entries(parsed.drafts).filter(([, draft]) => !isEmptyDraft(draft)),
+  );
 }
 
 async function getComposerDraftsFile() {
@@ -80,20 +148,7 @@ async function loadPersistedComposerDrafts(): Promise<Record<string, ComposerDra
     operation = "read";
     const raw = await file.text();
     operation = "decode";
-    const parsed = JSON.parse(raw) as Partial<PersistedComposerDrafts>;
-    if (parsed.schemaVersion !== COMPOSER_DRAFTS_SCHEMA_VERSION || !parsed.drafts) {
-      return {};
-    }
-    return Object.fromEntries(
-      Object.entries(parsed.drafts).filter((entry): entry is [string, ComposerDraft] => {
-        const draft = entry[1];
-        return (
-          typeof draft?.text === "string" &&
-          Array.isArray(draft.attachments) &&
-          !isEmptyDraft(draft)
-        );
-      }),
-    );
+    return decodePersistedComposerDrafts(JSON.parse(raw) as unknown);
   } catch (cause) {
     console.warn(
       "[composer-drafts] ignored persisted draft failure",
@@ -116,10 +171,10 @@ async function writePersistedComposerDrafts(drafts: Record<string, ComposerDraft
     const nonEmptyDrafts = Object.fromEntries(
       Object.entries(drafts).filter(([, draft]) => !isEmptyDraft(draft)),
     );
-    const document: PersistedComposerDrafts = {
+    const document = {
       schemaVersion: COMPOSER_DRAFTS_SCHEMA_VERSION,
       drafts: nonEmptyDrafts,
-    };
+    } as const;
     const encoded = JSON.stringify(document);
     operation = "write";
     if (!file.exists) {
@@ -282,6 +337,55 @@ export function removeComposerDraftAttachment(draftKey: string, imageId: string)
   });
 }
 
+export function updateComposerDraftSettings(
+  draftKey: string,
+  settings: Partial<ComposerDraftSettingsUpdate>,
+): void {
+  updateComposerDrafts((current) => {
+    const draft = {
+      ...normalizeDraft(current[draftKey]),
+      ...settings,
+    };
+    if (isEmptyDraft(draft)) {
+      const next = { ...current };
+      delete next[draftKey];
+      return next;
+    }
+    return {
+      ...current,
+      [draftKey]: draft,
+    };
+  });
+}
+
+export function clearComposerDraftContentState(
+  current: Record<string, ComposerDraft>,
+  draftKey: string,
+): Record<string, ComposerDraft> {
+  const existing = current[draftKey];
+  if (!existing) {
+    return current;
+  }
+  const draft = {
+    ...existing,
+    text: "",
+    attachments: [],
+  };
+  if (isEmptyDraft(draft)) {
+    const next = { ...current };
+    delete next[draftKey];
+    return next;
+  }
+  return {
+    ...current,
+    [draftKey]: draft,
+  };
+}
+
+export function clearComposerDraftContent(draftKey: string): void {
+  updateComposerDrafts((current) => clearComposerDraftContentState(current, draftKey));
+}
+
 export function clearComposerDraft(draftKey: string): void {
   updateComposerDrafts((current) => {
     if (!current[draftKey]) {
@@ -298,8 +402,12 @@ export function removeComposerDraftsForEnvironment(
   environmentId: EnvironmentId,
 ): Record<string, ComposerDraft> {
   const environmentPrefix = `${environmentId}:`;
+  const newTaskPrefix = `new-task:${environmentId}:`;
   return Object.fromEntries(
-    Object.entries(drafts).filter(([draftKey]) => !draftKey.startsWith(environmentPrefix)),
+    Object.entries(drafts).filter(
+      ([draftKey]) =>
+        !draftKey.startsWith(environmentPrefix) && !draftKey.startsWith(newTaskPrefix),
+    ),
   );
 }
 

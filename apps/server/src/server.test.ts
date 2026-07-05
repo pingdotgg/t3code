@@ -653,6 +653,7 @@ const buildAppUnderTest = (options?: {
           Layer.mock(PreviewManager.PreviewManager)({
             open: () => Effect.die("PreviewManager not stubbed in this test"),
             navigate: () => Effect.die("PreviewManager not stubbed in this test"),
+            resize: () => Effect.die("PreviewManager not stubbed in this test"),
             reportStatus: () => Effect.void,
             refresh: () => Effect.void,
             close: () => Effect.void,
@@ -3233,6 +3234,32 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  for (const desktopOrigin of ["t3code://app", "t3code-dev://app"]) {
+    it.effect(`allows credentialed preflights from ${desktopOrigin} in development`, () =>
+      Effect.gen(function* () {
+        yield* buildAppUnderTest({
+          config: { devUrl: new URL(crossOriginClientOrigin) },
+        });
+
+        const sessionUrl = yield* getHttpServerUrl("/api/auth/session");
+        const response = yield* fetchEffect(sessionUrl, {
+          method: "OPTIONS",
+          headers: {
+            origin: desktopOrigin,
+            "access-control-request-method": "GET",
+            "access-control-request-headers": "content-type",
+          },
+        });
+
+        assert.equal(response.status, 204);
+        assertBrowserApiCorsPreflightHeaders(response.headers, {
+          origin: desktopOrigin,
+          credentials: true,
+        });
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+    );
+  }
+
   it.effect("includes CORS headers on remote websocket-ticket auth failures", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
@@ -3653,18 +3680,19 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("rejects reusing the same bootstrap credential after it has been exchanged", () =>
+  it.effect("allows reusing the desktop bootstrap credential", () =>
     Effect.gen(function* () {
+      // The desktop-bootstrap grant is delivered over trusted IPC at
+      // backend launch and needs to stay claimable after a renderer
+      // refresh, so it's intentionally reusable (unlike user-facing
+      // one-time pairing credentials).
       yield* buildAppUnderTest();
 
       const first = yield* bootstrapBrowserSession();
       const second = yield* bootstrapBrowserSession();
 
       assert.equal(first.response.status, 200);
-      assert.equal(second.response.status, 401);
-      assert.equal((second.body as { readonly _tag?: string })._tag, "EnvironmentAuthInvalidError");
-      assert.equal((second.body as { readonly code?: string }).code, "auth_invalid");
-      assert.equal((second.body as { readonly reason?: string }).reason, "invalid_credential");
+      assert.equal(second.response.status, 200);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -4097,6 +4125,46 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.deepEqual(response.issues, []);
       assert.deepEqual(response.keybindings, [resolved]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("shares one preview automation broker across websocket sessions", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* buildAppUnderTest();
+
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const firstConnected = yield* Deferred.make<string>();
+        const firstClosed = yield* Deferred.make<void>();
+        const host = {
+          clientId: "shared-preview-host",
+          environmentId: testEnvironmentDescriptor.environmentId,
+        } as const;
+
+        yield* withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.previewAutomationConnect](host).pipe(
+            Stream.tap((event) =>
+              event.type === "connected"
+                ? Deferred.succeed(firstConnected, event.connectionId)
+                : Effect.void,
+            ),
+            Stream.runDrain,
+            Effect.ensuring(Deferred.succeed(firstClosed, undefined)),
+          ),
+        ).pipe(Effect.forkScoped);
+
+        const firstConnectionId = yield* Deferred.await(firstConnected);
+        const replacementEvent = yield* withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.previewAutomationConnect](host).pipe(Stream.runHead),
+        ).pipe(Effect.map(Option.getOrThrow));
+        const firstStreamClosed = yield* Deferred.await(firstClosed).pipe(
+          Effect.timeoutOption("2 seconds"),
+        );
+
+        assert.equal(replacementEvent.type, "connected");
+        assert.notEqual(replacementEvent.connectionId, firstConnectionId);
+        assert.isTrue(Option.isSome(firstStreamClosed));
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("rejects websocket rpc handshake when session authentication is missing", () =>

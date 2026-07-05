@@ -8,6 +8,7 @@ import {
   linkPrimaryEnvironmentToCloud,
   type CloudLinkTarget,
   unlinkPrimaryEnvironmentFromCloud,
+  updatePrimaryCloudPreferences,
 } from "./linkEnvironment";
 
 const cloudLinkScheduler = createAtomCommandScheduler();
@@ -30,4 +31,12 @@ export const unlinkPrimaryEnvironment = createRuntimeCommand(connectionAtomRunti
   concurrency: cloudLinkConcurrency,
   execute: (input: { readonly target: CloudLinkTarget; readonly clerkToken: string | null }) =>
     unlinkPrimaryEnvironmentFromCloud(input),
+});
+
+export const updatePrimaryEnvironmentPreferences = createRuntimeCommand(connectionAtomRuntime, {
+  label: "web:cloud:update-primary-environment-preferences",
+  scheduler: cloudLinkScheduler,
+  concurrency: cloudLinkConcurrency,
+  execute: (input: { readonly target: CloudLinkTarget; readonly publishAgentActivity: boolean }) =>
+    updatePrimaryCloudPreferences(input),
 });

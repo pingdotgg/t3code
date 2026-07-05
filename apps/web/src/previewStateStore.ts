@@ -112,14 +112,26 @@ const dedupeRecentUrls = (existing: string[], url: string): string[] => {
   return next.slice(0, PREVIEW_RECENT_URL_LIMIT);
 };
 
+const rememberSnapshotUrl = (
+  recentlySeenUrls: string[],
+  snapshot: PreviewSessionSnapshot,
+): string[] =>
+  snapshot.navStatus._tag === "Idle"
+    ? recentlySeenUrls
+    : dedupeRecentUrls(recentlySeenUrls, snapshot.navStatus.url);
+
+const latestSnapshot = (
+  sessions: Record<string, PreviewSessionSnapshot>,
+): PreviewSessionSnapshot | null =>
+  Object.values(sessions)
+    .toSorted((a, b) => a.updatedAt.localeCompare(b.updatedAt))
+    .at(-1) ?? null;
+
 const removeSession = (current: ThreadPreviewState, tabId: string): ThreadPreviewState => {
   if (!current.sessions[tabId]) return current;
   const { [tabId]: _closed, ...sessions } = current.sessions;
   const { [tabId]: _desktop, ...desktopByTabId } = current.desktopByTabId;
-  const nextSnapshot =
-    Object.values(sessions)
-      .toSorted((a, b) => a.updatedAt.localeCompare(b.updatedAt))
-      .at(-1) ?? null;
+  const nextSnapshot = latestSnapshot(sessions);
   const activeTabId =
     current.activeTabId === tabId ? (nextSnapshot?.tabId ?? null) : current.activeTabId;
   const snapshot = activeTabId ? (sessions[activeTabId] ?? nextSnapshot) : nextSnapshot;
@@ -163,7 +175,8 @@ export function applyPreviewServerEvent(ref: ScopedThreadRef, event: PreviewEven
   updateThreadPreviewState(ref, (current) => {
     switch (event.type) {
       case "opened":
-      case "navigated": {
+      case "navigated":
+      case "resized": {
         const snapshot = event.snapshot;
         if (current.suppressedTabIds.has(snapshot.tabId)) return current;
         const recentlySeenUrls =
@@ -228,16 +241,83 @@ export function applyPreviewServerSnapshot(
     if (current.suppressedTabIds.has(snapshot.tabId)) return current;
     const existing = current.sessions[snapshot.tabId];
     if (existing && existing.updatedAt > snapshot.updatedAt) return current;
-    const recentlySeenUrls =
-      snapshot.navStatus._tag !== "Idle"
-        ? dedupeRecentUrls(current.recentlySeenUrls, snapshot.navStatus.url)
-        : current.recentlySeenUrls;
+    const recentlySeenUrls = rememberSnapshotUrl(current.recentlySeenUrls, snapshot);
     return {
       ...current,
       snapshot,
       sessions: { ...current.sessions, [snapshot.tabId]: snapshot },
       activeTabId: snapshot.tabId,
       desktopOverlay: current.desktopByTabId[snapshot.tabId] ?? null,
+      recentlySeenUrls,
+    };
+  });
+}
+
+/**
+ * Merge a server mutation without changing which tab the user is viewing.
+ *
+ * Commands such as resize can target background tabs. Their response is
+ * authoritative for that tab, but it is not a request to focus the tab.
+ */
+export function updatePreviewServerSnapshot(
+  ref: ScopedThreadRef,
+  snapshot: PreviewSessionSnapshot,
+): void {
+  updateThreadPreviewState(ref, (current) => {
+    if (current.suppressedTabIds.has(snapshot.tabId)) return current;
+    const existing = current.sessions[snapshot.tabId];
+    if (existing && existing.updatedAt > snapshot.updatedAt) return current;
+    const sessions = { ...current.sessions, [snapshot.tabId]: snapshot };
+    const activeTabId =
+      current.activeTabId && sessions[current.activeTabId] ? current.activeTabId : snapshot.tabId;
+    const activeSnapshot = sessions[activeTabId] ?? snapshot;
+    return {
+      ...current,
+      sessions,
+      activeTabId,
+      snapshot: activeSnapshot,
+      desktopOverlay: current.desktopByTabId[activeTabId] ?? null,
+      recentlySeenUrls: rememberSnapshotUrl(current.recentlySeenUrls, snapshot),
+    };
+  });
+}
+
+/**
+ * Replace the local session index from an authoritative preview.list result.
+ * Missing tabs are removed while the current active tab is preserved whenever
+ * it still exists in the server result.
+ */
+export function reconcilePreviewServerSessions(
+  ref: ScopedThreadRef,
+  snapshots: ReadonlyArray<PreviewSessionSnapshot>,
+): void {
+  updateThreadPreviewState(ref, (current) => {
+    const sessions: Record<string, PreviewSessionSnapshot> = {};
+    let recentlySeenUrls = current.recentlySeenUrls;
+    for (const snapshot of snapshots) {
+      if (current.suppressedTabIds.has(snapshot.tabId)) continue;
+      const existing = current.sessions[snapshot.tabId];
+      const next = existing && existing.updatedAt > snapshot.updatedAt ? existing : snapshot;
+      sessions[next.tabId] = next;
+      recentlySeenUrls = rememberSnapshotUrl(recentlySeenUrls, next);
+    }
+
+    const fallback = latestSnapshot(sessions);
+    const activeTabId =
+      current.activeTabId && sessions[current.activeTabId]
+        ? current.activeTabId
+        : (fallback?.tabId ?? null);
+    const snapshot = activeTabId ? (sessions[activeTabId] ?? null) : null;
+    const desktopByTabId = Object.fromEntries(
+      Object.entries(current.desktopByTabId).filter(([tabId]) => sessions[tabId] !== undefined),
+    );
+    return {
+      ...current,
+      sessions,
+      activeTabId,
+      snapshot,
+      desktopByTabId,
+      desktopOverlay: activeTabId ? (desktopByTabId[activeTabId] ?? null) : null,
       recentlySeenUrls,
     };
   });

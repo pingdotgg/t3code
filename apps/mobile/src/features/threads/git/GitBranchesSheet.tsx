@@ -1,5 +1,5 @@
 import { sanitizeFeatureBranchName } from "@t3tools/shared/git";
-import { useRouter } from "expo-router";
+import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -14,8 +14,13 @@ import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-wo
 import { vcsEnvironment } from "../../../state/vcs";
 import { SheetActionButton } from "./gitSheetComponents";
 
-export function GitBranchesSheet() {
-  const router = useRouter();
+type GitBranchesSheetProps = StaticScreenProps<{
+  readonly environmentId: string;
+  readonly threadId: string;
+}>;
+
+export function GitBranchesSheet(_props: GitBranchesSheetProps) {
+  const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { selectedThread } = useThreadSelection();
   const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
@@ -96,7 +101,7 @@ export function GitBranchesSheet() {
             if (branch.length === 0) return;
             void gitActions.onCreateSelectedThreadBranch(branch).then(() => {
               setNewBranchName("");
-              router.dismiss();
+              navigation.goBack();
             });
           }}
         />
@@ -146,7 +151,7 @@ export function GitBranchesSheet() {
             if (baseBranch.length === 0 || newBranch.length === 0) return;
             void gitActions.onCreateSelectedThreadWorktree({ baseBranch, newBranch }).then(() => {
               setWorktreeBranchName("");
-              router.dismiss();
+              navigation.goBack();
             });
           }}
         />
@@ -188,7 +193,7 @@ export function GitBranchesSheet() {
               }}
               onPress={() => {
                 void gitActions.onCheckoutSelectedThreadBranch(branch.name).then(() => {
-                  router.dismiss();
+                  navigation.goBack();
                 });
               }}
             >

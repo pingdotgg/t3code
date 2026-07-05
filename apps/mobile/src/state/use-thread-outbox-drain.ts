@@ -1,23 +1,44 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { type MessageId } from "@t3tools/contracts";
+import type {
+  EnvironmentProject,
+  EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/shell";
+import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import {
+  CommandId,
+  DEFAULT_PROVIDER_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
+  type MessageId,
+} from "@t3tools/contracts";
+import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { scopedThreadKey } from "../lib/scopedEntities";
+import { buildProjectThreadStartTurnInput } from "../lib/projectThreadStartTurn";
+import { randomHex } from "../lib/uuid";
 import { appAtomRegistry } from "./atom-registry";
-import { useThreadShells } from "./entities";
+import { useProjects, useThreadShells } from "./entities";
 import { ensureThreadOutboxLoaded, removeThreadOutboxMessage } from "./thread-outbox";
 import {
+  isQueuedThreadCreationSendable,
+  modelSelectionsEqual,
   resolveThreadOutboxDeliveryAction,
-  shouldRetryThreadOutboxDelivery,
+  resolveThreadOutboxFailureAction,
+  resolveQueuedThreadSettings,
   threadOutboxRetryDelayMs,
+  type QueuedThreadCreation,
   type QueuedThreadMessage,
+  type ThreadOutboxCommandStage,
 } from "./thread-outbox-model";
 import { threadEnvironment } from "./threads";
 import { useAtomCommand } from "./use-atom-command";
-import { useThreadOutboxMessages, useThreadOutboxShellStatuses } from "./use-thread-outbox";
+import {
+  editingQueuedMessageIdsAtom,
+  useThreadOutboxMessages,
+  useThreadOutboxShellStatuses,
+} from "./use-thread-outbox";
 import { useRemoteConnectionStatus } from "./use-remote-environment-registry";
 
 export const dispatchingQueuedMessageIdAtom = Atom.make<MessageId | null>(null).pipe(
@@ -44,12 +65,38 @@ function findThread(
   );
 }
 
+function findCreationProject(
+  projects: ReadonlyArray<EnvironmentProject>,
+  message: QueuedThreadMessage,
+): EnvironmentProject | undefined {
+  return projects.find(
+    (candidate) =>
+      candidate.environmentId === message.environmentId &&
+      candidate.id === message.creation?.projectId,
+  );
+}
+
+function settingsCommandId(message: QueuedThreadMessage, setting: string): CommandId {
+  return CommandId.make(`${message.commandId}:${setting}`);
+}
+
 export function useThreadOutboxDrain(): void {
   const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
+  const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
+    reportFailure: false,
+  });
+  const setThreadRuntimeMode = useAtomCommand(threadEnvironment.setRuntimeMode, {
+    reportFailure: false,
+  });
+  const setThreadInteractionMode = useAtomCommand(threadEnvironment.setInteractionMode, {
+    reportFailure: false,
+  });
   const dispatchingQueuedMessageId = useAtomValue(dispatchingQueuedMessageIdAtom);
+  const editingQueuedMessageIds = useAtomValue(editingQueuedMessageIdsAtom);
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
   const shellStatuses = useThreadOutboxShellStatuses();
   const threads = useThreadShells();
+  const projects = useProjects();
   const { connectedEnvironments } = useRemoteConnectionStatus();
   const [retryTick, setRetryTick] = useState(0);
   const retryAttemptRef = useRef(new Map<MessageId, number>());
@@ -66,38 +113,35 @@ export function useThreadOutboxDrain(): void {
     };
   }, []);
 
-  const sendQueuedMessage = useCallback(
-    async (queuedMessage: QueuedThreadMessage, thread: EnvironmentThreadShell) => {
-      const deliveryResult = await startTurn({
-        environmentId: queuedMessage.environmentId,
-        input: {
-          commandId: queuedMessage.commandId,
-          threadId: queuedMessage.threadId,
-          message: {
-            messageId: queuedMessage.messageId,
-            role: "user",
-            text: queuedMessage.text,
-            attachments: queuedMessage.attachments,
-          },
-          runtimeMode: thread.runtimeMode,
-          interactionMode: thread.interactionMode,
-          createdAt: queuedMessage.createdAt,
-        },
+  const makeDeliveryHelpers = useCallback((queuedMessage: QueuedThreadMessage) => {
+    const reportFailure = (
+      commandResult: AtomCommandResult<unknown, unknown>,
+      stage: ThreadOutboxCommandStage,
+    ): boolean => {
+      if (!AsyncResult.isFailure(commandResult)) {
+        return false;
+      }
+      const action = resolveThreadOutboxFailureAction({
+        stage,
+        error: Cause.squash(commandResult.cause),
+        interrupted: Cause.hasInterruptsOnly(commandResult.cause),
       });
-      if (AsyncResult.isFailure(deliveryResult)) {
-        const error = Cause.squash(deliveryResult.cause);
-        const retry =
-          Cause.hasInterruptsOnly(deliveryResult.cause) || shouldRetryThreadOutboxDelivery(error);
-        console.warn("[thread-outbox] queued message delivery failed", {
-          environmentId: queuedMessage.environmentId,
-          threadId: queuedMessage.threadId,
-          messageId: queuedMessage.messageId,
-          cause: deliveryResult.cause,
-          retry,
-        });
-        if (retry) {
-          return false;
-        }
+      const retry = action === "retry";
+      console.warn("[thread-outbox] queued message delivery failed", {
+        environmentId: queuedMessage.environmentId,
+        threadId: queuedMessage.threadId,
+        messageId: queuedMessage.messageId,
+        stage,
+        cause: commandResult.cause,
+        retry,
+      });
+      return retry;
+    };
+    const completeDelivery = async (
+      deliveryResult: AtomCommandResult<unknown, unknown>,
+    ): Promise<boolean> => {
+      if (reportFailure(deliveryResult, "start-turn")) {
+        return false;
       }
 
       try {
@@ -112,8 +156,125 @@ export function useThreadOutboxDrain(): void {
         });
         return false;
       }
+    };
+    return { reportFailure, completeDelivery };
+  }, []);
+
+  const sendQueuedMessage = useCallback(
+    async (queuedMessage: QueuedThreadMessage, thread: EnvironmentThreadShell) => {
+      const settings = resolveQueuedThreadSettings(queuedMessage, thread);
+      const { reportFailure, completeDelivery } = makeDeliveryHelpers(queuedMessage);
+
+      if (!modelSelectionsEqual(settings.modelSelection, thread.modelSelection)) {
+        const updateResult = await updateThreadMetadata({
+          environmentId: queuedMessage.environmentId,
+          input: {
+            commandId: settingsCommandId(queuedMessage, "model-selection"),
+            threadId: queuedMessage.threadId,
+            modelSelection: settings.modelSelection,
+          },
+        });
+        if (AsyncResult.isFailure(updateResult)) {
+          reportFailure(updateResult, "settings-sync");
+          return false;
+        }
+      }
+
+      if (settings.runtimeMode !== thread.runtimeMode) {
+        const runtimeResult = await setThreadRuntimeMode({
+          environmentId: queuedMessage.environmentId,
+          input: {
+            commandId: settingsCommandId(queuedMessage, "runtime-mode"),
+            threadId: queuedMessage.threadId,
+            runtimeMode: settings.runtimeMode,
+            createdAt: queuedMessage.createdAt,
+          },
+        });
+        if (AsyncResult.isFailure(runtimeResult)) {
+          reportFailure(runtimeResult, "settings-sync");
+          return false;
+        }
+      }
+
+      if (settings.interactionMode !== thread.interactionMode) {
+        const interactionResult = await setThreadInteractionMode({
+          environmentId: queuedMessage.environmentId,
+          input: {
+            commandId: settingsCommandId(queuedMessage, "interaction-mode"),
+            threadId: queuedMessage.threadId,
+            interactionMode: settings.interactionMode,
+            createdAt: queuedMessage.createdAt,
+          },
+        });
+        if (AsyncResult.isFailure(interactionResult)) {
+          reportFailure(interactionResult, "settings-sync");
+          return false;
+        }
+      }
+
+      const deliveryResult = await startTurn({
+        environmentId: queuedMessage.environmentId,
+        input: {
+          commandId: queuedMessage.commandId,
+          threadId: queuedMessage.threadId,
+          message: {
+            messageId: queuedMessage.messageId,
+            role: "user",
+            text: queuedMessage.text,
+            attachments: queuedMessage.attachments,
+          },
+          modelSelection: settings.modelSelection,
+          runtimeMode: settings.runtimeMode,
+          interactionMode: settings.interactionMode,
+          createdAt: queuedMessage.createdAt,
+        },
+      });
+      return completeDelivery(deliveryResult);
     },
-    [startTurn],
+    [
+      makeDeliveryHelpers,
+      setThreadInteractionMode,
+      setThreadRuntimeMode,
+      startTurn,
+      updateThreadMetadata,
+    ],
+  );
+
+  const sendQueuedCreation = useCallback(
+    async (
+      queuedMessage: QueuedThreadMessage,
+      creation: QueuedThreadCreation,
+      projectCwd: string,
+    ) => {
+      const modelSelection = queuedMessage.modelSelection;
+      if (modelSelection === undefined) {
+        return false;
+      }
+      const { completeDelivery } = makeDeliveryHelpers(queuedMessage);
+      const deliveryResult = await startTurn({
+        environmentId: queuedMessage.environmentId,
+        input: buildProjectThreadStartTurnInput({
+          projectId: creation.projectId,
+          projectCwd,
+          threadId: queuedMessage.threadId,
+          commandId: queuedMessage.commandId,
+          messageId: queuedMessage.messageId,
+          createdAt: queuedMessage.createdAt,
+          text: queuedMessage.text.trim(),
+          attachments: queuedMessage.attachments,
+          modelSelection,
+          runtimeMode: queuedMessage.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+          interactionMode: queuedMessage.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE,
+          workspaceMode: creation.workspaceMode,
+          branch: creation.branch,
+          worktreePath: creation.worktreePath,
+          startFromOrigin: creation.startFromOrigin ?? false,
+          worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
+        }),
+      });
+      return completeDelivery(deliveryResult);
+    },
+    [makeDeliveryHelpers, startTurn],
   );
 
   useEffect(() => {
@@ -126,6 +287,9 @@ export function useThreadOutboxDrain(): void {
       if (!nextQueuedMessage) {
         continue;
       }
+      if (editingQueuedMessageIds[nextQueuedMessage.messageId]) {
+        continue;
+      }
       if ((retryNotBeforeRef.current.get(nextQueuedMessage.messageId) ?? 0) > Date.now()) {
         continue;
       }
@@ -135,37 +299,65 @@ export function useThreadOutboxDrain(): void {
         continue;
       }
 
+      const creation = nextQueuedMessage.creation;
       const environment = connectedEnvironments.find(
         (candidate) => candidate.environmentId === nextQueuedMessage.environmentId,
       );
+      const shellStatus = shellStatuses.get(nextQueuedMessage.environmentId) ?? "empty";
       const deliveryAction = resolveThreadOutboxDeliveryAction({
+        isCreation: creation !== undefined,
         threadExists: thread !== undefined,
-        shellStatus: shellStatuses.get(nextQueuedMessage.environmentId) ?? "empty",
+        shellStatus,
         environmentConnected: environment?.connectionState === "connected",
         threadBusy: thread?.session?.status === "running" || thread?.session?.status === "starting",
       });
       if (deliveryAction === "wait") {
         continue;
       }
+      // The live project shell is preferred for the workspace path, with the
+      // snapshot taken at enqueue time as the fallback so a task never dies
+      // just because its project shell is not loaded.
+      const creationProjectCwd =
+        creation !== undefined
+          ? (findCreationProject(projects, nextQueuedMessage)?.workspaceRoot ??
+            creation.projectCwd ??
+            null)
+          : null;
+      // An incomplete pending task (e.g. worktree mode without a branch) stays
+      // queued until the user finishes it in the editor.
+      if (deliveryAction === "send" && creation !== undefined) {
+        if (!isQueuedThreadCreationSendable(nextQueuedMessage)) {
+          continue;
+        }
+        if (creationProjectCwd === null && shellStatus !== "live") {
+          continue;
+        }
+      }
 
       beginDispatchingQueuedMessage(nextQueuedMessage.messageId);
+      const removeQueuedMessage = (warning: string) =>
+        removeThreadOutboxMessage(nextQueuedMessage).then(
+          () => true,
+          (error) => {
+            console.warn(warning, {
+              environmentId: nextQueuedMessage.environmentId,
+              threadId: nextQueuedMessage.threadId,
+              messageId: nextQueuedMessage.messageId,
+              error,
+            });
+            return false;
+          },
+        );
       const delivery =
         deliveryAction === "remove"
-          ? removeThreadOutboxMessage(nextQueuedMessage).then(
-              () => true,
-              (error) => {
-                console.warn("[thread-outbox] failed to remove message for a missing thread", {
-                  environmentId: nextQueuedMessage.environmentId,
-                  threadId: nextQueuedMessage.threadId,
-                  messageId: nextQueuedMessage.messageId,
-                  error,
-                });
-                return false;
-              },
-            )
-          : thread !== undefined
-            ? sendQueuedMessage(nextQueuedMessage, thread)
-            : Promise.resolve(false);
+          ? removeQueuedMessage("[thread-outbox] failed to remove message for a missing thread")
+          : creation !== undefined
+            ? creationProjectCwd !== null
+              ? sendQueuedCreation(nextQueuedMessage, creation, creationProjectCwd)
+              : removeQueuedMessage("[thread-outbox] dropped pending task for a missing project")
+            : thread !== undefined
+              ? sendQueuedMessage(nextQueuedMessage, thread)
+              : Promise.resolve(false);
       void delivery
         .then((sent) => {
           if (sent) {
@@ -201,8 +393,11 @@ export function useThreadOutboxDrain(): void {
   }, [
     connectedEnvironments,
     dispatchingQueuedMessageId,
+    editingQueuedMessageIds,
+    projects,
     queuedMessagesByThreadKey,
     retryTick,
+    sendQueuedCreation,
     sendQueuedMessage,
     shellStatuses,
     threads,

@@ -158,12 +158,6 @@ const optionalIntegerConfig = (name: string): Config.Config<number | undefined> 
     Config.option,
     Config.map((value) => Option.getOrUndefined(value)),
   );
-const optionalUrlConfig = (name: string): Config.Config<URL | undefined> =>
-  Config.url(name).pipe(
-    Config.option,
-    Config.map((value) => Option.getOrUndefined(value)),
-  );
-
 const OffsetConfig = Config.all({
   portOffset: optionalIntegerConfig("T3CODE_PORT_OFFSET"),
   devInstance: optionalStringConfig("T3CODE_DEV_INSTANCE"),
@@ -621,8 +615,11 @@ const devRunnerCli = Command.make("dev-runner", {
   ),
   devUrl: Flag.string("dev-url").pipe(
     Flag.withSchema(Schema.URLFromString),
-    Flag.withDescription("Web dev URL override (forwards to VITE_DEV_SERVER_URL)."),
-    Flag.withFallbackConfig(optionalUrlConfig("VITE_DEV_SERVER_URL")),
+    Flag.withDescription(
+      "Explicit web dev URL override (forwards to VITE_DEV_SERVER_URL). Ambient VITE_DEV_SERVER_URL values are ignored so a parent dev app cannot redirect the child runner.",
+    ),
+    Flag.optional,
+    Flag.map(Option.getOrUndefined),
   ),
   dryRun: Flag.boolean("dry-run").pipe(
     Flag.withDescription("Resolve mode/ports/env and print, but do not spawn Vite+."),

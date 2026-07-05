@@ -1,7 +1,11 @@
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
+import { useKeyboardChatComposerInset, useKeyboardScrollToEnd } from "@legendapp/list/keyboard";
+import type { LegendListRef } from "@legendapp/list/react-native";
 import type {
   ApprovalRequestId,
   EnvironmentId,
+  MessageId,
   ModelSelection,
   OrchestrationThreadShell,
   ProviderApprovalDecision,
@@ -12,20 +16,17 @@ import type {
 } from "@t3tools/contracts";
 import { formatElapsed } from "@t3tools/shared/orchestrationTiming";
 import * as Haptics from "expo-haptics";
-import { useHeaderHeight } from "expo-router/build/react-navigation/elements";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { View, type GestureResponderEvent, type LayoutChangeEvent } from "react-native";
-import { Gesture, GestureDetector } from "react-native-gesture-handler";
-import { KeyboardStickyView } from "react-native-keyboard-controller";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { View, type GestureResponderEvent } from "react-native";
+import { KeyboardController, KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { runOnJS } from "react-native-reanimated";
 
 import { AppText as Text } from "../../components/AppText";
 import type { ComposerEditorHandle } from "../../components/ComposerEditor";
 import type { StatusTone } from "../../components/StatusPill";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
-import type { LayoutVariant } from "../../lib/layout";
-import { resolveThreadFeedBottomInset } from "../../lib/threadFeedLayout";
+import { CHAT_CONTENT_MAX_WIDTH, type LayoutVariant } from "../../lib/layout";
+import { scopedThreadKey } from "../../lib/scopedEntities";
 import type {
   PendingApproval,
   PendingUserInput,
@@ -59,6 +60,8 @@ export interface ThreadDetailScreenProps {
   readonly draftMessage: string;
   readonly draftAttachments: ReadonlyArray<DraftComposerImageAttachment>;
   readonly connectionStateLabel: EnvironmentConnectionPhase;
+  /** Message sync status for the selected thread (drives the composer status pill). */
+  readonly threadSyncStatus?: EnvironmentThreadStatus;
   readonly activeThreadBusy: boolean;
   readonly environmentId: EnvironmentId;
   readonly projectWorkspaceRoot: string | null;
@@ -66,14 +69,15 @@ export interface ThreadDetailScreenProps {
   readonly selectedThreadQueueCount: number;
   readonly serverConfig: T3ServerConfig | null;
   readonly layoutVariant?: LayoutVariant;
-  readonly onOpenDrawer: () => void;
+  readonly usesAutomaticContentInsets?: boolean;
+  readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
   readonly onOpenConnectionEditor: () => void;
   readonly onChangeDraftMessage: (value: string) => void;
   readonly onPickDraftImages: () => Promise<void>;
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
-  readonly onSendMessage: () => Promise<void>;
+  readonly onSendMessage: () => Promise<MessageId | null>;
   readonly onReconnectEnvironment: () => void;
   readonly onUpdateThreadModelSelection: (modelSelection: ModelSelection) => void;
   readonly onUpdateThreadRuntimeMode: (runtimeMode: RuntimeMode) => void;
@@ -201,30 +205,52 @@ const WorkingDurationPill = memo(function WorkingDurationPill(props: {
 });
 
 export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: ThreadDetailScreenProps) {
-  const { onOpenDrawer } = props;
-
   const insets = useSafeAreaInsets();
-  const headerHeight = useHeaderHeight();
   const agentLabel = `${props.selectedThread.modelSelection.instanceId} agent`;
-  const composerRef = useRef<ComposerEditorHandle>(null);
+  const selectedThreadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
+  const composerEditorRef = useRef<ComposerEditorHandle>(null);
+  const composerOverlayRef = useRef<View>(null);
+  const listRef = useRef<LegendListRef>(null);
   const feedTouchStartRef = useRef<{ pageX: number; pageY: number } | null>(null);
+  const selectedThreadKeyRef = useRef(selectedThreadKey);
+  const lastScrolledAnchorMessageIdRef = useRef<MessageId | null>(null);
   const [composerExpanded, setComposerExpanded] = useState(false);
+  const [anchorMessageId, setAnchorMessageId] = useState<MessageId | null>(null);
   const composerBottomInset = composerExpanded ? 0 : Math.max(insets.bottom, 12);
+  const contentPresentationKind = props.contentPresentation.kind;
+  // The raw sync status enters "synchronizing" on every full fetch, cached or
+  // not. Whether messages are already on screen decides the pill label: no
+  // data yet → "Loading messages", cached data reconciling → "Syncing".
+  const threadSyncPhase = (() => {
+    switch (props.threadSyncStatus) {
+      case "empty":
+      case "cached":
+      case "synchronizing":
+        if (contentPresentationKind === "ready") {
+          return "syncing" as const;
+        }
+        return contentPresentationKind === "loading" ? ("loading" as const) : null;
+      default:
+        return null;
+    }
+  })();
+  const selectedThreadFeed = props.selectedThreadFeed;
   const composerChrome = composerExpanded ? COMPOSER_EXPANDED_CHROME : COMPOSER_COLLAPSED_CHROME;
   const composerOverlapHeight = composerChrome + composerBottomInset;
   const activeWorkIndicatorHeight = props.activeWorkStartedAt ? WORKING_INDICATOR_HEIGHT : 0;
-  const estimatedOverlayHeight = composerOverlapHeight + activeWorkIndicatorHeight;
-  const [measuredOverlayHeight, setMeasuredOverlayHeight] = useState(0);
+  const estimatedOverlayHeight = composerOverlapHeight + activeWorkIndicatorHeight + 8;
+  const { contentInsetEndAdjustment, onComposerLayout } = useKeyboardChatComposerInset(
+    listRef,
+    composerOverlayRef,
+    estimatedOverlayHeight,
+  );
+  const { freeze, scrollMessageToEnd } = useKeyboardScrollToEnd({ listRef });
   const showContent = props.showContent ?? true;
   const layoutVariant = props.layoutVariant ?? "compact";
   const isSplitLayout = layoutVariant === "split";
+  const contentMaxWidth = isSplitLayout ? CHAT_CONTENT_MAX_WIDTH : undefined;
   const selectedInstanceId = props.selectedThread.modelSelection.instanceId;
   useStreamingHaptics(props.selectedThread.id, props.selectedThreadFeed);
-  const feedBottomInset = resolveThreadFeedBottomInset({
-    estimatedOverlayHeight,
-    measuredOverlayHeight,
-    gap: 8,
-  });
   const selectedProviderSkills = useMemo(
     () =>
       props.serverConfig?.providers.find((provider) => provider.instanceId === selectedInstanceId)
@@ -232,37 +258,82 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     [props.serverConfig, selectedInstanceId],
   );
 
-  const completeDrawerGesture = useCallback(() => {
-    void Haptics.selectionAsync();
-    onOpenDrawer();
-  }, [onOpenDrawer]);
+  useLayoutEffect(() => {
+    selectedThreadKeyRef.current = selectedThreadKey;
+  }, [selectedThreadKey]);
 
-  const drawerGestureThreshold = 80;
-  const headerDrawerGesture = useMemo(
-    () =>
-      Gesture.Pan()
-        .enabled(!isSplitLayout)
-        .hitSlop({ left: 0, width: 40 })
-        .activeOffsetX([10, 999])
-        .failOffsetY([-24, 24])
-        .onEnd((event) => {
-          const translationX = Math.max(event.translationX, 0);
-          if (event.y < drawerGestureThreshold && translationX > 56) {
-            runOnJS(completeDrawerGesture)();
+  useEffect(() => {
+    setAnchorMessageId(null);
+    lastScrolledAnchorMessageIdRef.current = null;
+    freeze.set(false);
+  }, [freeze, selectedThreadKey]);
+
+  useEffect(() => {
+    if (
+      anchorMessageId === null ||
+      lastScrolledAnchorMessageIdRef.current === anchorMessageId ||
+      contentPresentationKind !== "ready" ||
+      !selectedThreadFeed.some((entry) => entry.type === "message" && entry.id === anchorMessageId)
+    ) {
+      return;
+    }
+
+    const targetThreadKey = selectedThreadKey;
+    const frame = requestAnimationFrame(() => {
+      if (selectedThreadKeyRef.current !== targetThreadKey) {
+        return;
+      }
+      lastScrolledAnchorMessageIdRef.current = anchorMessageId;
+      // Wait for the keyboard dismissal (started by blur() on send) to finish
+      // before scrolling: scrollMessageToEnd freezes keyboard-driven inset
+      // updates while it runs, and a close event swallowed by that freeze
+      // leaves the keyboard padding permanently applied — overshooting the
+      // anchor and leaving a phantom bottom inset once the reply streams in.
+      void KeyboardController.dismiss()
+        .then(() => {
+          if (
+            selectedThreadKeyRef.current !== targetThreadKey ||
+            lastScrolledAnchorMessageIdRef.current !== anchorMessageId
+          ) {
+            return;
           }
-        }),
-    [completeDrawerGesture, isSplitLayout],
-  );
+          return scrollMessageToEnd({ animated: true, closeKeyboard: false });
+        })
+        .catch(() => {
+          if (
+            selectedThreadKeyRef.current !== targetThreadKey ||
+            lastScrolledAnchorMessageIdRef.current !== anchorMessageId
+          ) {
+            return;
+          }
+          lastScrolledAnchorMessageIdRef.current = null;
+          freeze.set(false);
+        });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [
+    anchorMessageId,
+    freeze,
+    contentPresentationKind,
+    selectedThreadFeed,
+    scrollMessageToEnd,
+    selectedThreadKey,
+  ]);
 
-  const handleOverlayLayout = useCallback((event: LayoutChangeEvent) => {
-    const nextHeight = Math.ceil(event.nativeEvent.layout.height);
-    setMeasuredOverlayHeight((current) =>
-      Math.abs(current - nextHeight) > 1 ? nextHeight : current,
-    );
-  }, []);
+  const handleSendMessage = useCallback(async () => {
+    const targetThreadKey = selectedThreadKey;
+    const messageId = await props.onSendMessage();
+    if (messageId === null || selectedThreadKeyRef.current !== targetThreadKey) {
+      return messageId;
+    }
+
+    setAnchorMessageId(messageId);
+    composerEditorRef.current?.blur();
+    return messageId;
+  }, [props.onSendMessage, selectedThreadKey]);
 
   const collapseComposer = useCallback(() => {
-    composerRef.current?.blur();
+    composerEditorRef.current?.blur();
   }, []);
 
   const handleFeedTouchStart = useCallback((event: GestureResponderEvent) => {
@@ -296,43 +367,53 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   }, []);
 
   return (
-    <GestureDetector gesture={headerDrawerGesture}>
-      <View className="flex-1">
-        {showContent ? (
-          <View
-            style={{ flex: 1 }}
-            onTouchStart={handleFeedTouchStart}
-            onTouchMove={handleFeedTouchMove}
-            onTouchEnd={handleFeedTouchEnd}
-            onTouchCancel={handleFeedTouchCancel}
-          >
-            <ThreadFeed
-              key={props.selectedThread.id}
-              environmentId={props.environmentId}
-              threadId={props.selectedThread.id}
-              workspaceRoot={props.threadCwd}
-              feed={props.selectedThreadFeed}
-              contentPresentation={props.contentPresentation}
-              agentLabel={agentLabel}
-              latestTurn={props.selectedThread.latestTurn}
-              contentTopInset={headerHeight}
-              contentBottomInset={feedBottomInset}
-              layoutVariant={layoutVariant}
-              composerExpanded={composerExpanded}
-              skills={selectedProviderSkills}
-            />
-          </View>
-        ) : (
-          <View style={{ flex: 1 }} />
-        )}
+    <View className="flex-1">
+      {showContent ? (
+        <View
+          style={{ flex: 1 }}
+          onTouchStart={handleFeedTouchStart}
+          onTouchMove={handleFeedTouchMove}
+          onTouchEnd={handleFeedTouchEnd}
+          onTouchCancel={handleFeedTouchCancel}
+        >
+          <ThreadFeed
+            key={props.selectedThread.id}
+            environmentId={props.environmentId}
+            threadId={props.selectedThread.id}
+            workspaceRoot={props.threadCwd}
+            feed={props.selectedThreadFeed}
+            contentPresentation={props.contentPresentation}
+            agentLabel={agentLabel}
+            latestTurn={props.selectedThread.latestTurn}
+            listRef={listRef}
+            freeze={freeze}
+            anchorMessageId={anchorMessageId}
+            contentInsetEndAdjustment={contentInsetEndAdjustment}
+            contentTopInset={0}
+            contentBottomInset={estimatedOverlayHeight}
+            contentMaxWidth={contentMaxWidth}
+            layoutVariant={layoutVariant}
+            usesAutomaticContentInsets={props.usesAutomaticContentInsets}
+            onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}
+            skills={selectedProviderSkills}
+          />
+        </View>
+      ) : (
+        <View style={{ flex: 1 }} />
+      )}
 
-        {/* Floating composer — sticks to keyboard via KeyboardStickyView */}
-        {showContent ? (
-          <KeyboardStickyView
-            style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
-            offset={{ closed: 0, opened: 0 }}
+      {/* Floating composer — sticks to keyboard via KeyboardStickyView */}
+      {showContent ? (
+        <KeyboardStickyView
+          style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
+          offset={{ closed: 0, opened: 0 }}
+        >
+          <View
+            ref={composerOverlayRef}
+            onLayout={onComposerLayout}
+            style={{ width: "100%", paddingTop: 8 }}
           >
-            <View onLayout={handleOverlayLayout}>
+            <View style={{ alignSelf: "center", maxWidth: contentMaxWidth, width: "100%" }}>
               {props.activeWorkStartedAt ? (
                 <WorkingDurationPill startedAt={props.activeWorkStartedAt} />
               ) : null}
@@ -359,38 +440,40 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   ) : null}
                 </View>
               ) : null}
-
-              <ThreadComposer
-                editorRef={composerRef}
-                draftMessage={props.draftMessage}
-                draftAttachments={props.draftAttachments}
-                placeholder="Ask the repo agent, or run a command…"
-                connectionState={props.connectionStateLabel}
-                connectionError={props.connectionError}
-                environmentLabel={props.environmentLabel}
-                selectedThread={props.selectedThread}
-                serverConfig={props.serverConfig}
-                queueCount={props.selectedThreadQueueCount}
-                activeThreadBusy={props.activeThreadBusy}
-                environmentId={props.environmentId}
-                projectCwd={props.projectWorkspaceRoot}
-                bottomInset={composerBottomInset}
-                onChangeDraftMessage={props.onChangeDraftMessage}
-                onPickDraftImages={props.onPickDraftImages}
-                onNativePasteImages={props.onNativePasteImages}
-                onRemoveDraftImage={props.onRemoveDraftImage}
-                onStopThread={props.onStopThread}
-                onSendMessage={props.onSendMessage}
-                onReconnectEnvironment={props.onReconnectEnvironment}
-                onUpdateModelSelection={props.onUpdateThreadModelSelection}
-                onUpdateRuntimeMode={props.onUpdateThreadRuntimeMode}
-                onUpdateInteractionMode={props.onUpdateThreadInteractionMode}
-                onExpandedChange={setComposerExpanded}
-              />
             </View>
-          </KeyboardStickyView>
-        ) : null}
-      </View>
-    </GestureDetector>
+
+            <ThreadComposer
+              editorRef={composerEditorRef}
+              draftMessage={props.draftMessage}
+              draftAttachments={props.draftAttachments}
+              placeholder="Ask the repo agent, or run a command…"
+              contentMaxWidth={contentMaxWidth}
+              connectionState={props.connectionStateLabel}
+              connectionError={props.connectionError}
+              environmentLabel={props.environmentLabel}
+              threadSyncPhase={threadSyncPhase}
+              selectedThread={props.selectedThread}
+              serverConfig={props.serverConfig}
+              queueCount={props.selectedThreadQueueCount}
+              activeThreadBusy={props.activeThreadBusy}
+              environmentId={props.environmentId}
+              projectCwd={props.projectWorkspaceRoot}
+              bottomInset={composerBottomInset}
+              onChangeDraftMessage={props.onChangeDraftMessage}
+              onPickDraftImages={props.onPickDraftImages}
+              onNativePasteImages={props.onNativePasteImages}
+              onRemoveDraftImage={props.onRemoveDraftImage}
+              onStopThread={props.onStopThread}
+              onSendMessage={handleSendMessage}
+              onReconnectEnvironment={props.onReconnectEnvironment}
+              onUpdateModelSelection={props.onUpdateThreadModelSelection}
+              onUpdateRuntimeMode={props.onUpdateThreadRuntimeMode}
+              onUpdateInteractionMode={props.onUpdateThreadInteractionMode}
+              onExpandedChange={setComposerExpanded}
+            />
+          </View>
+        </KeyboardStickyView>
+      ) : null}
+    </View>
   );
 });

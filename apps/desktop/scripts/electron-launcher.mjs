@@ -100,25 +100,41 @@ function shellSingleQuote(value) {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-function writeDevelopmentLauncherScript(targetBinaryPath, electronBinaryPath) {
-  const mainEntryPath = NodePath.join(desktopDir, "dist-electron", "main.cjs");
+export function makeDevelopmentLauncherScript({
+  electronBinaryPath,
+  mainEntryPath,
+  desktopRoot,
+  environment,
+}) {
   const envEntries = [
-    ["VITE_DEV_SERVER_URL", process.env.VITE_DEV_SERVER_URL],
-    ["T3CODE_PORT", process.env.T3CODE_PORT],
-    ["T3CODE_HOME", process.env.T3CODE_HOME],
-    ["T3CODE_COMMIT_HASH", process.env.T3CODE_COMMIT_HASH],
-    ["T3CODE_OTLP_TRACES_URL", process.env.T3CODE_OTLP_TRACES_URL],
-    ["T3CODE_OTLP_EXPORT_INTERVAL_MS", process.env.T3CODE_OTLP_EXPORT_INTERVAL_MS],
+    ["VITE_DEV_SERVER_URL", environment.VITE_DEV_SERVER_URL],
+    ["T3CODE_PORT", environment.T3CODE_PORT],
+    ["T3CODE_HOME", environment.T3CODE_HOME],
+    ["T3CODE_COMMIT_HASH", environment.T3CODE_COMMIT_HASH],
+    ["T3CODE_OTLP_TRACES_URL", environment.T3CODE_OTLP_TRACES_URL],
+    ["T3CODE_OTLP_EXPORT_INTERVAL_MS", environment.T3CODE_OTLP_EXPORT_INTERVAL_MS],
     ["T3CODE_DESKTOP_APP_USER_MODEL_ID", APP_BUNDLE_ID],
   ].filter((entry) => typeof entry[1] === "string" && entry[1].trim().length > 0);
+  return [
+    "#!/bin/sh",
+    ...envEntries.map(
+      ([name, value]) =>
+        `if [ -z "\${${name}:-}" ]; then export ${name}=${shellSingleQuote(value)}; fi`,
+    ),
+    `exec ${shellSingleQuote(electronBinaryPath)} --t3code-dev-root=${shellSingleQuote(desktopRoot)} ${shellSingleQuote(mainEntryPath)} "$@"`,
+    "",
+  ].join("\n");
+}
+
+function writeDevelopmentLauncherScript(targetBinaryPath, electronBinaryPath) {
   NodeFS.writeFileSync(
     targetBinaryPath,
-    [
-      "#!/bin/sh",
-      ...envEntries.map(([name, value]) => `export ${name}=${shellSingleQuote(value)}`),
-      `exec ${shellSingleQuote(electronBinaryPath)} --t3code-dev-root=${shellSingleQuote(desktopDir)} ${shellSingleQuote(mainEntryPath)} "$@"`,
-      "",
-    ].join("\n"),
+    makeDevelopmentLauncherScript({
+      electronBinaryPath,
+      mainEntryPath: NodePath.join(desktopDir, "dist-electron", "main.cjs"),
+      desktopRoot: desktopDir,
+      environment: process.env,
+    }),
   );
   NodeFS.chmodSync(targetBinaryPath, 0o755);
 }
@@ -286,6 +302,12 @@ function buildMacLauncher(electronBinaryPath) {
     currentMetadata &&
     JSON.stringify(currentMetadata) === JSON.stringify(expectedMetadata)
   ) {
+    if (isDevelopment) {
+      // The launcher also handles protocol activations outside the dev runner,
+      // so refresh its fallback environment on every launch. Never let a value
+      // captured by an older parent app override the live dev-runner environment.
+      writeDevelopmentLauncherScript(targetBinaryPath, electronBinaryPath);
+    }
     registerMacLauncherBundle(targetAppBundlePath);
     return targetBinaryPath;
   }
@@ -336,10 +358,7 @@ function resolveLinuxSandboxArgs(electronBinaryPath) {
 }
 
 export function resolveElectronPath() {
-  ensureElectronRuntime();
-
-  const require = NodeModule.createRequire(import.meta.url);
-  const electronBinaryPath = require("electron");
+  const electronBinaryPath = resolveElectronBinaryPath();
 
   if (hostPlatform !== "darwin") {
     return electronBinaryPath;
@@ -356,13 +375,23 @@ export function resolveElectronLaunchCommand(args = []) {
   };
 }
 
+export function resolveElectronBinaryPath({
+  ensureRuntime = ensureElectronRuntime,
+  createRequire = NodeModule.createRequire,
+  moduleUrl = import.meta.url,
+} = {}) {
+  ensureRuntime();
+
+  const require = createRequire(moduleUrl);
+  return require("electron");
+}
+
 export function resolveDevProtocolClient() {
   if (hostPlatform !== "darwin" || !isDevelopment) {
     return null;
   }
 
-  const require = NodeModule.createRequire(import.meta.url);
-  const electronBinaryPath = require("electron");
+  const electronBinaryPath = resolveElectronBinaryPath();
   const launcherBinaryPath = buildMacLauncher(electronBinaryPath);
   return {
     appBundlePath: NodePath.resolve(launcherBinaryPath, "..", "..", ".."),
