@@ -1864,6 +1864,18 @@ export function makeClaudeAdapterV2(
         });
         const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
         const activeTurn = yield* Ref.make<ActiveClaudeTurnContext | null>(null);
+        /**
+         * Async native tasks (Task tool with isAsync) usually complete after
+         * their parent turn has finalized and activeTurn is null. Their turn
+         * contexts are retained here, keyed by native task id, so the late
+         * task_notification can still resolve the subagent under the original
+         * run — which RunExecutionService keeps draining until every child
+         * subagent is terminal. Entries are removed when the notification
+         * arrives.
+         */
+        const pendingAsyncTaskContexts = yield* Ref.make(
+          new Map<string, ActiveClaudeTurnContext>(),
+        );
         const interruptedTurns = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
         const steeredTurns = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
         const queryContext = yield* Ref.make<ClaudeLiveQueryContext | null>(null);
@@ -2681,6 +2693,16 @@ export function makeClaudeAdapterV2(
             ],
             { concurrency: 1 },
           );
+          yield* Ref.update(pendingAsyncTaskContexts, (current) => {
+            let updated: Map<string, ActiveClaudeTurnContext> | null = null;
+            for (const [taskId, subagent] of input.context.subagentsByTaskId) {
+              if (subagent.task.status === "running") {
+                updated ??= new Map(current);
+                updated.set(taskId, input.context);
+              }
+            }
+            return updated ?? current;
+          });
           yield* Ref.update(activeTurn, (current) =>
             current?.providerTurnId === input.context.providerTurnId ? null : current,
           );
@@ -2784,6 +2806,42 @@ export function makeClaudeAdapterV2(
           }
 
           const message = input.message;
+          if (message.type === "system" && message.subtype === "task_notification") {
+            // Async task completions typically land after the parent turn has
+            // finalized (activeTurn is null) or while an unrelated turn is
+            // active; resolve them against the retained owning context so the
+            // subagent terminalizes under its original run.
+            const active = yield* Ref.get(activeTurn);
+            const retired = (yield* Ref.get(pendingAsyncTaskContexts)).get(message.task_id);
+            const taskContext =
+              active !== null && active.subagentsByTaskId.has(message.task_id)
+                ? active
+                : (retired ?? active);
+            if (taskContext !== null && !taskContext.ignoredTaskIds.has(message.task_id)) {
+              yield* updateClaudeSubagentNode({
+                context: taskContext,
+                taskId: message.task_id,
+                ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
+                result: message.summary,
+                status:
+                  message.status === "completed"
+                    ? "completed"
+                    : message.status === "stopped"
+                      ? "cancelled"
+                      : "failed",
+              });
+            }
+            yield* Ref.update(pendingAsyncTaskContexts, (current) => {
+              if (!current.has(message.task_id)) {
+                return current;
+              }
+              const updated = new Map(current);
+              updated.delete(message.task_id);
+              return updated;
+            });
+            return;
+          }
+
           const context = yield* Ref.get(activeTurn);
           if (context === null) {
             return;
@@ -2817,23 +2875,6 @@ export function makeClaudeAdapterV2(
                 ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
                 progress,
                 status: "running",
-              });
-            }
-          }
-
-          if (message.type === "system" && message.subtype === "task_notification") {
-            if (!context.ignoredTaskIds.has(message.task_id)) {
-              yield* updateClaudeSubagentNode({
-                context,
-                taskId: message.task_id,
-                ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
-                result: message.summary,
-                status:
-                  message.status === "completed"
-                    ? "completed"
-                    : message.status === "stopped"
-                      ? "cancelled"
-                      : "failed",
               });
             }
           }
