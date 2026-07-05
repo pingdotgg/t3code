@@ -4198,7 +4198,7 @@ function ChatViewContent(props: ChatViewProps) {
       value: string,
       nextCursor: number,
       expandedCursor: number,
-      _cursorAdjacentToMention: boolean,
+      cursorAdjacentToMention: boolean,
     ) => {
       if (!activePendingUserInput) {
         return;
