@@ -7,6 +7,7 @@ internal object GhosttyBridge {
   }
 
   @JvmStatic
+  @Suppress("LongParameterList")
   external fun nativeCreate(
     cols: Int,
     rows: Int,

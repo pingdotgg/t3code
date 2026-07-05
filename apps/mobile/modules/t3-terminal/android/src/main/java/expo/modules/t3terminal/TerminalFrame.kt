@@ -25,6 +25,7 @@ internal data class TerminalFrame(
     private const val HEADER_BYTES = 32
     private const val CELL_HEADER_BYTES = 12
 
+    @Suppress("ReturnCount")
     fun decode(bytes: ByteArray): TerminalFrame? {
       if (bytes.size < HEADER_BYTES) return null
       val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)

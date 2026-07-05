@@ -80,6 +80,7 @@ internal class TerminalCanvasView(context: Context) : View(context) {
   fun usableWidth(): Float = max(width - contentPadding * 2f, 1f)
   fun usableHeight(): Float = max(height - contentPadding * 2f, 1f)
 
+  @Suppress("NestedBlockDepth", "ComplexCondition")
   override fun onDraw(canvas: Canvas) {
     super.onDraw(canvas)
     val currentFrame = frame

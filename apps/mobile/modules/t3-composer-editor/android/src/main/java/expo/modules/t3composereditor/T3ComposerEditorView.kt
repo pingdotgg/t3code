@@ -105,6 +105,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     )
   }
 
+  @Suppress("ReturnCount")
   fun setControlledDocumentJson(documentJson: String) {
     val document = try {
       JSONObject(documentJson)

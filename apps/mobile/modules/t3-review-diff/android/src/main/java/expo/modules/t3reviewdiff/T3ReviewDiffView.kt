@@ -195,6 +195,7 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
     scrollToY(0, animated)
   }
 
+  @Suppress("NestedBlockDepth", "ReturnCount")
   override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
     when (event.actionMasked) {
       MotionEvent.ACTION_DOWN -> {
@@ -242,6 +243,7 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
     return handled
   }
 
+  @Suppress("NestedBlockDepth")
   override fun onTouchEvent(event: MotionEvent): Boolean {
     val axis = dragAxis ?: return false
     when (event.actionMasked) {
@@ -361,6 +363,7 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
     }
   }
 
+  @Suppress("ReturnCount")
   private fun emitVisibleFile(firstVisibleIndex: Int) {
     if (visibleRows.isEmpty()) return
     val start = firstVisibleIndex.coerceIn(0, visibleRows.lastIndex)
@@ -702,6 +705,7 @@ private class DiffCanvasView(context: Context) : View(context) {
     else -> style.rowHeightPx.toInt()
   }.coerceAtLeast(1)
 
+  @Suppress("ReturnCount")
   private fun rowIndexAt(y: Int): Int {
     if (rows.isEmpty()) return 0
     var low = 0
@@ -810,6 +814,7 @@ private class DiffCanvasView(context: Context) : View(context) {
     drawBottomBorder(canvas, bottom)
   }
 
+  @Suppress("CyclomaticComplexMethod")
   private fun drawLineRow(canvas: Canvas, row: DiffRow, top: Int, bottom: Int) {
     val background = when (row.change) {
       "add" -> theme.addBackground
@@ -898,6 +903,7 @@ private class DiffCanvasView(context: Context) : View(context) {
     drawFileRow(canvas, rows[sticky.index], sticky.top, sticky.bottom)
   }
 
+  @Suppress("ReturnCount")
   private fun stickyFileHeader(firstVisibleIndex: Int): StickyFileHeader? {
     if (rows.isEmpty()) return null
     val fileIndex = (firstVisibleIndex.coerceIn(0, rows.lastIndex) downTo 0)
@@ -928,6 +934,7 @@ private class DiffCanvasView(context: Context) : View(context) {
     )
   }
 
+  @Suppress("LongParameterList")
   private fun fill(
     canvas: Canvas,
     color: Int,

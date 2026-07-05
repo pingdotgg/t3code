@@ -221,6 +221,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     )
   }
 
+  @Suppress("ComplexCondition")
   private fun emitResize() {
     if (
       width <= 0 ||
@@ -258,6 +259,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     renderSnapshot()
   }
 
+  @Suppress("ComplexCondition")
   private fun createTerminal() {
     if (terminalHandle != 0L || cols <= 0 || rows <= 0 || isCleanedUp) return
     terminalHandle = GhosttyBridge.nativeCreate(
@@ -339,6 +341,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     }
   }
 
+  @Suppress("LoopWithTooManyJumpStatements")
   private fun parseThemeConfig(config: String) {
     val palette = sortedMapOf<Int, Int>()
     for (line in config.lineSequence()) {
