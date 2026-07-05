@@ -55,7 +55,13 @@ struct RootView: View {
             }
             ToolbarItem(placement: .primaryAction) {
                 Button {
-                    showInspector.toggle()
+                    // Deferred one runloop turn: flipping this synchronously
+                    // from a toolbar button can land while the window is mid
+                    // layout pass, and on macOS 26/27 a SwiftUI toolbar
+                    // re-vend during an in-layout render trips AppKit's
+                    // layout-feedback-loop guard (NSInternalInconsistency in
+                    // _postWindowNeedsUpdateConstraints → hard crash).
+                    DispatchQueue.main.async { showInspector.toggle() }
                 } label: {
                     Label("Inspector", systemImage: "sidebar.right")
                 }
