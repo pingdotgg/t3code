@@ -75,6 +75,13 @@ struct ChatTimelineScrollView: View {
                     proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
                 }
             }
+            // Thread switches reuse this ScrollView. A same-sized timeline
+            // changes neither items.count nor contentSize, so without this
+            // the new thread would inherit the old thread's scroll offset.
+            .onChange(of: model.selectedThreadID) { _, _ in
+                lastItemCount = items.count
+                proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+            }
             .onAppear {
                 lastItemCount = items.count
                 proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)

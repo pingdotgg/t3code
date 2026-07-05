@@ -155,6 +155,23 @@ public struct ComposerBar: View {
                             return .handled
                         }
 
+                    // While a draft claims the smart button for sending, stop
+                    // stays reachable as its own compact control — a running
+                    // turn must always be cancellable without discarding the
+                    // draft.
+                    if isThreadRunning && !showsStop {
+                        Button {
+                            Task { await model.cancelCurrentTurn() }
+                        } label: {
+                            Image(systemName: "stop.fill")
+                        }
+                        .buttonStyle(.glass)
+                        .tint(.red)
+                        .keyboardShortcut(".", modifiers: .command)
+                        .help("Stop the current turn")
+                        .transition(Motion.materialize)
+                    }
+
                     Button {
                         if showsStop {
                             Task { await model.cancelCurrentTurn() }
@@ -187,6 +204,7 @@ public struct ComposerBar: View {
         .animation(Motion.enter, value: mentionResults.map(\.id))
         .animation(Motion.enter, value: attachments.map(\.id))
         .animation(Motion.enter, value: attachmentError)
+        .animation(Motion.snap, value: isThreadRunning)
         .fileImporter(
             isPresented: $showFileImporter, allowedContentTypes: [.image],
             allowsMultipleSelection: true
