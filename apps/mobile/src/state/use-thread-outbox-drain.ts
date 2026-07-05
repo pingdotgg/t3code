@@ -270,6 +270,7 @@ export function useThreadOutboxDrain(): void {
           worktreePath: creation.worktreePath,
           startFromOrigin: creation.startFromOrigin ?? false,
           worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
+          sceneTitle: creation.sceneTitle ?? null,
         }),
       });
       return completeDelivery(deliveryResult);

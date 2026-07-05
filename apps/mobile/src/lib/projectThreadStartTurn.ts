@@ -38,6 +38,13 @@ export interface ProjectThreadStartTurnSpec {
   readonly startFromOrigin: boolean;
   /** Generated temp branch for worktree mode; unused for local mode. */
   readonly worktreeBranchName: string;
+  /**
+   * Dolomites scene name used as the thread title ("Seceda", "Tre Cime · 2").
+   * The titleSeed stays prompt-derived, so the server's provider-title pass
+   * (which only replaces titles equal to the seed or the default) leaves the
+   * scene name in place. Null/absent falls back to the prompt-derived title.
+   */
+  readonly sceneTitle?: string | null;
 }
 
 /**
@@ -46,7 +53,8 @@ export interface ProjectThreadStartTurnSpec {
  * offline outbox drain so both deliver identical commands.
  */
 export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpec) {
-  const title = deriveThreadTitleFromPrompt(spec.text);
+  const derivedTitle = deriveThreadTitleFromPrompt(spec.text);
+  const title = spec.sceneTitle ?? derivedTitle;
   const isWorktree = spec.workspaceMode === "worktree";
   return {
     commandId: CommandId.make(spec.commandId),
@@ -58,7 +66,7 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
       attachments: spec.attachments,
     },
     modelSelection: spec.modelSelection,
-    titleSeed: title,
+    titleSeed: derivedTitle,
     runtimeMode: spec.runtimeMode,
     interactionMode: spec.interactionMode,
     bootstrap: {

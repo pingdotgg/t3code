@@ -109,7 +109,7 @@ const styles = StyleSheet.create({
     width: StyleSheet.hairlineWidth,
   },
   activeLine: {
-    backgroundColor: Platform.OS === "ios" ? PlatformColor("systemBlueColor") : "#0a84ff",
+    backgroundColor: "#5c8c6e",
     opacity: 1,
     width: 2,
   },

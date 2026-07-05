@@ -26,7 +26,7 @@ export interface PendingUserInputCardProps {
 export function PendingUserInputCard(props: PendingUserInputCardProps) {
   return (
     <View className="gap-2.5 rounded-[20px] border border-neutral-200 bg-neutral-100/80 p-4 dark:border-white/6 dark:bg-neutral-900/80">
-      <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-sky-700 dark:text-sky-300">
+      <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-accent">
         User input needed
       </Text>
       <Text className="font-t3-bold text-lg text-neutral-950 dark:text-neutral-50">
@@ -52,7 +52,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                     className={cn(
                       "rounded-full border px-3 py-2.5 ",
                       selected
-                        ? "border-blue-300/50 bg-blue-50 dark:border-blue-400/28 dark:bg-blue-400/14"
+                        ? "border-accent bg-accent-soft"
                         : "border-neutral-200 bg-white dark:border-white/6 dark:bg-neutral-950/70",
                     )}
                     onPress={() =>
@@ -66,9 +66,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                     <Text
                       className={cn(
                         "font-t3-bold text-sm",
-                        selected
-                          ? "text-sky-700 dark:text-sky-300"
-                          : "text-neutral-600 dark:text-neutral-300",
+                        selected ? "text-accent" : "text-neutral-600 dark:text-neutral-300",
                       )}
                     >
                       {option.label}
@@ -91,14 +89,14 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
       <Pressable
         className={cn(
           "items-center justify-center rounded-2xl px-4 py-3.5",
-          props.answers ? "bg-blue-500" : "bg-neutral-200 dark:bg-neutral-700/60",
+          props.answers ? "bg-primary" : "bg-neutral-200 dark:bg-neutral-700/60",
         )}
         disabled={
           props.answers === null || props.respondingUserInputId === props.pendingUserInput.requestId
         }
         onPress={() => void props.onSubmit()}
       >
-        <Text className="font-t3-extrabold text-sm text-white">Submit answers</Text>
+        <Text className="font-t3-extrabold text-sm text-primary-foreground">Submit answers</Text>
       </Pressable>
     </View>
   );

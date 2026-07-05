@@ -448,7 +448,7 @@ export function ThreadSwipeActions(props: {
     >
       <SwipeActionButton
         accessibilityLabel={props.primaryAction.accessibilityLabel}
-        backgroundColor="#007aff"
+        backgroundColor="#4c755c"
         entryRange={[ACTION_ITEM_WIDTH * 0.55, THREAD_SWIPE_ACTIONS_WIDTH * 0.85]}
         fullSwipeThreshold={props.fullSwipeThreshold}
         icon={props.primaryAction.icon}

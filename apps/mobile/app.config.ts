@@ -102,7 +102,7 @@ const config: ExpoConfig = {
     icon: "./assets/icon.png",
     package: variant.androidPackage,
     adaptiveIcon: {
-      backgroundColor: "#E6F4FE",
+      backgroundColor: "#DCE9E0",
       foregroundImage: "./assets/android-icon-foreground.png",
       backgroundImage: "./assets/android-icon-background.png",
       monochromeImage: "./assets/android-icon-monochrome.png",
@@ -129,11 +129,11 @@ const config: ExpoConfig = {
       {
         image: "./assets/splash-icon.png",
         resizeMode: "contain",
-        backgroundColor: "#ffffff",
+        backgroundColor: "#f2f4f0",
         imageWidth: 220,
         dark: {
           image: "./assets/splash-icon.png",
-          backgroundColor: "#0a0a0a",
+          backgroundColor: "#0b0d0b",
         },
       },
     ],
@@ -178,6 +178,12 @@ const config: ExpoConfig = {
     clerk: {
       publishableKey: repoEnv.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ?? null,
       jwtTemplate: repoEnv.EXPO_PUBLIC_CLERK_JWT_TEMPLATE ?? null,
+    },
+    unsplash: {
+      // Public read-only access key for Dolomites scenery. Delivered at
+      // build time (root .env.local locally, EAS env in CI) — never
+      // committed. Absent key = gradient washes everywhere.
+      accessKey: repoEnv.EXPO_PUBLIC_UNSPLASH_ACCESS_KEY ?? null,
     },
     observability: {
       tracesUrl: repoEnv.EXPO_PUBLIC_OTLP_TRACES_URL ?? "https://api.axiom.co/v1/traces",

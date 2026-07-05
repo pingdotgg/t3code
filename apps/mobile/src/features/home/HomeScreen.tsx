@@ -14,11 +14,15 @@ import type {
 } from "@t3tools/contracts";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Platform, View } from "react-native";
+import Animated from "react-native-reanimated";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
 
 import { EmptyState } from "../../components/EmptyState";
+import { rise } from "../../lib/motion";
+import { SceneryHeroCard } from "../scenery/SceneryHeroCard";
+import { useDailyFeatured } from "../scenery/use-scenery";
 import type { WorkspaceState } from "../../state/workspaceModel";
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { scopedProjectKey } from "../../lib/scopedEntities";
@@ -157,6 +161,7 @@ export function HomeScreen(props: HomeScreenProps) {
   const listRef = useRef<LegendListRef | null>(null);
   const insets = useSafeAreaInsets();
   const accentColor = useThemeColor("--color-icon-muted");
+  const dailyFeatured = useDailyFeatured();
 
   const updateGroupDisplay = useCallback((key: string, action: HomeGroupDisplayAction) => {
     setGroupDisplayStates((previous) => {
@@ -351,6 +356,9 @@ export function HomeScreen(props: HomeScreenProps) {
         }}
       >
         <View className="w-full max-w-[430px]">
+          <Animated.View entering={rise()}>
+            <SceneryHeroCard photo={dailyFeatured} />
+          </Animated.View>
           <EmptyState
             title={emptyState.title}
             detail={emptyState.detail}

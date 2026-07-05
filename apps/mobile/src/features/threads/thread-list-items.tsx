@@ -12,8 +12,11 @@ import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSw
 import { AppText as Text } from "../../components/AppText";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
+import { scopedThreadKey } from "../../lib/scopedEntities";
 import { relativeTime } from "../../lib/time";
 import { useThemeColor } from "../../lib/useThemeColor";
+import { SceneryImage } from "../scenery/SceneryImage";
+import { useSceneryPhoto } from "../scenery/use-scenery";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useThreadPr } from "../../state/use-thread-pr";
 import type { HomeGroupDisplayAction } from "../home/homeListItems";
@@ -188,6 +191,14 @@ const PENDING_TASK_MENU_ACTIONS: MenuAction[] = [
 ];
 
 /**
+ * Wash seed for a queued task: the same scoped key its thread will get once
+ * delivered, so the pending row's gradient matches the eventual thread row.
+ */
+function pendingTaskSceneSeed(pendingTask: PendingNewTask): string {
+  return scopedThreadKey(pendingTask.message.environmentId, pendingTask.message.threadId);
+}
+
+/**
  * A queued new task waiting in the outbox for its environment to reconnect.
  * Tapping reopens the new-task composer with everything prefilled; the row
  * disappears once the task is delivered and the real thread arrives.
@@ -206,6 +217,7 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
   const foregroundColor = useThemeColor("--color-foreground");
   const mutedColor = useThemeColor("--color-foreground-muted");
   const pressedBackgroundColor = useThemeColor("--color-subtle");
+  const scenePhoto = useSceneryPhoto(pendingTaskSceneSeed(props.pendingTask));
 
   const { pendingTask, onSelectPendingTask, onDeletePendingTask } = props;
   const timestamp = relativeTime(pendingTask.message.createdAt);
@@ -266,33 +278,43 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
       >
         <View
           style={{
-            gap: 3,
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 12,
             borderBottomWidth: props.isLast ? 0 : 1,
             borderBottomColor: separatorColor,
             paddingBottom: 10,
           }}
         >
-          <View className="flex-row items-center justify-between gap-2">
-            <Text className="flex-1 text-lg font-t3-bold text-foreground" numberOfLines={1}>
-              {pendingTask.title}
-            </Text>
-            <View className="flex-row items-center gap-2">
-              {statusPill}
-              <Text
-                className="text-base text-foreground-tertiary"
-                style={{ fontVariant: ["tabular-nums"] }}
-              >
-                {timestamp}
+          <SceneryImage
+            fallbackSeed={pendingTaskSceneSeed(pendingTask)}
+            photo={scenePhoto}
+            style={{ width: 36, height: 36, borderRadius: 10 }}
+            variant="thumb"
+          />
+          <View style={{ flex: 1, gap: 3 }}>
+            <View className="flex-row items-center justify-between gap-2">
+              <Text className="flex-1 text-lg font-t3-bold text-foreground" numberOfLines={1}>
+                {pendingTask.title}
               </Text>
-              <SymbolView
-                name="chevron.right"
-                size={13}
-                tintColor={iconSubtleColor}
-                type="monochrome"
-              />
+              <View className="flex-row items-center gap-2">
+                {statusPill}
+                <Text
+                  className="text-base text-foreground-tertiary"
+                  style={{ fontVariant: ["tabular-nums"] }}
+                >
+                  {timestamp}
+                </Text>
+                <SymbolView
+                  name="chevron.right"
+                  size={13}
+                  tintColor={iconSubtleColor}
+                  type="monochrome"
+                />
+              </View>
             </View>
+            {subtitleRow}
           </View>
-          {subtitleRow}
         </View>
       </View>
     </Pressable>
@@ -312,27 +334,35 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
         paddingVertical: 10,
       })}
     >
-      <View style={{ gap: 3 }}>
-        <View className="flex-row items-center justify-between gap-2">
-          <Text
-            className="flex-1 text-base font-t3-medium"
-            numberOfLines={1}
-            style={{ color: foregroundColor }}
-          >
-            {pendingTask.title}
-          </Text>
-          <View className="flex-row items-center gap-2">
-            {statusPill}
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+        <SceneryImage
+          fallbackSeed={pendingTaskSceneSeed(pendingTask)}
+          photo={scenePhoto}
+          style={{ width: 36, height: 36, borderRadius: 10 }}
+          variant="thumb"
+        />
+        <View style={{ flex: 1, gap: 3 }}>
+          <View className="flex-row items-center justify-between gap-2">
             <Text
-              className="text-xs"
+              className="flex-1 text-base font-t3-medium"
               numberOfLines={1}
-              style={{ color: mutedColor, fontVariant: ["tabular-nums"] }}
+              style={{ color: foregroundColor }}
             >
-              {timestamp}
+              {pendingTask.title}
             </Text>
+            <View className="flex-row items-center gap-2">
+              {statusPill}
+              <Text
+                className="text-xs"
+                numberOfLines={1}
+                style={{ color: mutedColor, fontVariant: ["tabular-nums"] }}
+              >
+                {timestamp}
+              </Text>
+            </View>
           </View>
+          {subtitleRow}
         </View>
-        {subtitleRow}
       </View>
     </Pressable>
   );
@@ -393,6 +423,8 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   const selectedMutedColor = useThemeColor("--color-user-bubble-foreground-muted");
 
   const { thread, onSelectThread, onArchiveThread, onDeleteThread } = props;
+  const threadKey = scopedThreadKey(thread.environmentId, thread.id);
+  const scenePhoto = useSceneryPhoto(threadKey);
   const status = resolveThreadStatus(thread);
   const pr = useThreadPr(thread, props.projectCwd);
   const timestamp = relativeTime(
@@ -495,33 +527,43 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
         >
           <View
             style={{
-              gap: 3,
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 12,
               borderBottomWidth: props.isLast ? 0 : 1,
               borderBottomColor: separatorColor,
               paddingBottom: 10,
             }}
           >
-            <View className="flex-row items-center justify-between gap-2">
-              <Text className="flex-1 text-lg font-t3-bold text-foreground" numberOfLines={1}>
-                {thread.title}
-              </Text>
-              <View className="flex-row items-center gap-2">
-                {statusPill}
-                <Text
-                  className="text-base text-foreground-tertiary"
-                  style={{ fontVariant: ["tabular-nums"] }}
-                >
-                  {timestamp}
+            <SceneryImage
+              fallbackSeed={threadKey}
+              photo={scenePhoto}
+              style={{ width: 36, height: 36, borderRadius: 10 }}
+              variant="thumb"
+            />
+            <View style={{ flex: 1, gap: 3 }}>
+              <View className="flex-row items-center justify-between gap-2">
+                <Text className="flex-1 text-lg font-t3-bold text-foreground" numberOfLines={1}>
+                  {thread.title}
                 </Text>
-                <SymbolView
-                  name="chevron.right"
-                  size={13}
-                  tintColor={iconSubtleColor}
-                  type="monochrome"
-                />
+                <View className="flex-row items-center gap-2">
+                  {statusPill}
+                  <Text
+                    className="text-base text-foreground-tertiary"
+                    style={{ fontVariant: ["tabular-nums"] }}
+                  >
+                    {timestamp}
+                  </Text>
+                  <SymbolView
+                    name="chevron.right"
+                    size={13}
+                    tintColor={iconSubtleColor}
+                    type="monochrome"
+                  />
+                </View>
               </View>
+              {subtitleRow}
             </View>
-            {subtitleRow}
           </View>
         </View>
       </Pressable>
@@ -551,27 +593,35 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
           paddingVertical: 10,
         })}
       >
-        <View style={{ gap: 3 }}>
-          <View className="flex-row items-center justify-between gap-2">
-            <Text
-              className="flex-1 text-base font-t3-medium"
-              numberOfLines={1}
-              style={{ color: effectiveForeground }}
-            >
-              {thread.title}
-            </Text>
-            <View className="flex-row items-center gap-2">
-              {statusPill}
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+          <SceneryImage
+            fallbackSeed={threadKey}
+            photo={scenePhoto}
+            style={{ width: 36, height: 36, borderRadius: 10 }}
+            variant="thumb"
+          />
+          <View style={{ flex: 1, gap: 3 }}>
+            <View className="flex-row items-center justify-between gap-2">
               <Text
-                className="text-xs"
+                className="flex-1 text-base font-t3-medium"
                 numberOfLines={1}
-                style={{ color: effectiveMuted, fontVariant: ["tabular-nums"] }}
+                style={{ color: effectiveForeground }}
               >
-                {timestamp}
+                {thread.title}
               </Text>
+              <View className="flex-row items-center gap-2">
+                {statusPill}
+                <Text
+                  className="text-xs"
+                  numberOfLines={1}
+                  style={{ color: effectiveMuted, fontVariant: ["tabular-nums"] }}
+                >
+                  {timestamp}
+                </Text>
+              </View>
             </View>
+            {subtitleRow}
           </View>
-          {subtitleRow}
         </View>
       </Pressable>
     );

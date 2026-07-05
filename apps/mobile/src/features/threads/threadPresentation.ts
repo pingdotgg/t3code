@@ -77,10 +77,10 @@ export function resolveThreadStatus(
     return {
       kind: "working",
       label: "Working",
-      pillClassName: "bg-sky-500/12 dark:bg-sky-500/16",
-      textClassName: "text-sky-700 dark:text-sky-300",
-      iconColor: "#0a84ff",
-      iconBackground: "rgba(10,132,255,0.22)",
+      pillClassName: "bg-accent-soft",
+      textClassName: "text-accent",
+      iconColor: "#5c8c6e",
+      iconBackground: "rgba(92,140,110,0.22)",
       pulse: true,
     };
   }
@@ -89,10 +89,10 @@ export function resolveThreadStatus(
     return {
       kind: "connecting",
       label: "Connecting",
-      pillClassName: "bg-sky-500/12 dark:bg-sky-500/16",
-      textClassName: "text-sky-700 dark:text-sky-300",
-      iconColor: "#0a84ff",
-      iconBackground: "rgba(10,132,255,0.22)",
+      pillClassName: "bg-accent-soft",
+      textClassName: "text-accent",
+      iconColor: "#5c8c6e",
+      iconBackground: "rgba(92,140,110,0.22)",
       pulse: true,
     };
   }

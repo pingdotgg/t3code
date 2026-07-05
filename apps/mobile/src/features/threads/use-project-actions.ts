@@ -17,10 +17,18 @@ import { threadEnvironment } from "../../state/threads";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import { makeTurnCommandMetadata, type TurnCommandMetadata } from "../../lib/commandMetadata";
 import { buildProjectThreadStartTurnInput } from "../../lib/projectThreadStartTurn";
+import { scopedThreadKey } from "../../lib/scopedEntities";
 import { randomHex } from "../../lib/uuid";
+import { appSceneryStore } from "../scenery/scenery-store";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { setPendingConnectionError } from "../../state/use-remote-environment-registry";
 import { validateProjectThreadCreation } from "./projectThreadCreationValidation";
+
+/** A reserved Dolomites scene carried by a queued task being resent. */
+export interface ThreadSceneSelection {
+  readonly title: string;
+  readonly photoId: string | null;
+}
 
 export function useCreateProjectThread() {
   const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
@@ -39,10 +47,25 @@ export function useCreateProjectThread() {
       readonly initialAttachments: ReadonlyArray<DraftComposerImageAttachment>;
       /** Reuse identifiers from a queued pending task instead of minting new ones. */
       readonly turnMetadata?: TurnCommandMetadata;
+      /**
+       * Scene reserved when the task was queued. Undefined mints a fresh
+       * scene from the pool; null skips scene naming entirely.
+       */
+      readonly scene?: ThreadSceneSelection | null;
     }) => {
       const metadata = input.turnMetadata ?? makeTurnCommandMetadata();
       const threadId = ThreadId.make(metadata.threadId);
       const initialMessageText = input.initialMessageText.trim();
+
+      // Cached pool only: never let an Unsplash refresh delay startTurn. A
+      // fresh install with no cached pool just falls back to the
+      // prompt-derived title while the refresh finishes in the background.
+      let scene = input.scene ?? null;
+      if (input.scene === undefined) {
+        await appSceneryStore.whenCachedPoolLoaded();
+        const next = appSceneryStore.peekNextScene();
+        scene = next ? { title: appSceneryStore.threadTitle(next), photoId: next.id } : null;
+      }
 
       const validationError = validateProjectThreadCreation({
         environmentId: input.project.environmentId,
@@ -75,6 +98,7 @@ export function useCreateProjectThread() {
           worktreePath: input.worktreePath,
           startFromOrigin: input.startFromOrigin ?? false,
           worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
+          sceneTitle: scene?.title ?? null,
         }),
       });
       if (AsyncResult.isFailure(result)) {
@@ -85,6 +109,12 @@ export function useCreateProjectThread() {
         return AsyncResult.failure(result.cause);
       }
       setPendingConnectionError(null);
+      if (scene?.photoId) {
+        appSceneryStore.assign(
+          scene.photoId,
+          scopedThreadKey(input.project.environmentId, threadId),
+        );
+      }
 
       return mapAtomCommandResult(result, () =>
         scopeThreadRef(input.project.environmentId, threadId),

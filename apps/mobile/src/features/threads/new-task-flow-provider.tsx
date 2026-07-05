@@ -18,6 +18,7 @@ import {
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 
+import { appSceneryStore } from "../scenery/scenery-store";
 import { useEnvironmentServerConfig, useProjects, useThreadShells } from "../../state/entities";
 import type { TurnCommandMetadata } from "../../lib/commandMetadata";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
@@ -631,6 +632,16 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       const projectCwd = usingPendingSnapshot
         ? editingPendingTask?.creation?.projectCwd
         : selectedProject.workspaceRoot;
+      // Reserve a Dolomites scene at queue time so the pending row, the
+      // drained creation, and an online resend all keep the same title.
+      // Editing an existing task keeps its original scene.
+      const existingCreation = editingPendingTask?.creation;
+      const reservedScene = existingCreation?.sceneTitle
+        ? { title: existingCreation.sceneTitle, photoId: existingCreation.scenePhotoId ?? null }
+        : (() => {
+            const next = appSceneryStore.peekNextScene();
+            return next ? { title: appSceneryStore.threadTitle(next), photoId: next.id } : null;
+          })();
       return {
         environmentId: selectedProject.environmentId,
         threadId: ThreadId.make(metadata.threadId),
@@ -649,6 +660,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
           branch: workspaceSelection?.branch ?? null,
           worktreePath: mode === "worktree" ? null : (workspaceSelection?.worktreePath ?? null),
           ...(workspaceSelection?.startFromOrigin ? { startFromOrigin: true } : {}),
+          ...(reservedScene ? { sceneTitle: reservedScene.title } : {}),
+          ...(reservedScene?.photoId ? { scenePhotoId: reservedScene.photoId } : {}),
         },
         createdAt: metadata.createdAt,
       };

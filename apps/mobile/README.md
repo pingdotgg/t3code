@@ -63,6 +63,38 @@ node ../../scripts/mobile-native-static-check.ts
 
 The native lint task runs SwiftLint for Swift plus ktlint and detekt for Kotlin. Missing native tools are reported as warnings and skipped locally. CI installs the default toolset from `apps/mobile/Brewfile` before running the native checks.
 
+## Alpine scenery (Unsplash)
+
+The app's Dolomites scenery (thread thumbnails, chat wallpaper, daily hero) is
+fetched from Unsplash at runtime using a public read-only access key delivered
+at build time. Without a key everything degrades to the deterministic gradient
+washes — nothing breaks.
+
+- Local builds: set `EXPO_PUBLIC_UNSPLASH_ACCESS_KEY` in the repository-root
+  `.env.local` (never commit it; see `../../.env.example`).
+- EAS builds: `eas env:create --scope project --name EXPO_PUBLIC_UNSPLASH_ACCESS_KEY`
+  per environment.
+
+The key is embedded in the JS bundle (standard for `EXPO_PUBLIC_*` values), so
+only use a public Unsplash _access_ key — never the secret key. Attribution
+pills and the download-location ping required by the Unsplash guidelines are
+handled by `src/features/scenery/`.
+
+## Connecting from your phone (Tailscale / LAN)
+
+The gateway already supports remote clients. On the machine running SergeCode:
+
+```bash
+t3 serve --host "$(tailscale ip -4)"   # or: t3 serve --tailscale-serve
+```
+
+The server prints a pairing URL and QR code. In the app: **Connections → New →
+scan the QR** (or paste the pairing URL). The phone exchanges the one-time
+token for a scoped bearer credential and connects over `wss://…/ws`. See
+[`docs/user/remote-access.md`](../../docs/user/remote-access.md). Adding
+_projects_ remotely is not supported yet — create them on the host with
+`t3 project`; thread creation and management work from the phone.
+
 ## EAS Builds
 
 CI uses Expo fingerprinting with the `preview:dev` profile to reuse an existing compatible build when possible, or start a new internal EAS build when native runtime inputs change. Production and default local builds continue to use the `appVersion` runtime policy.

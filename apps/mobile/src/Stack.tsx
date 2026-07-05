@@ -44,6 +44,7 @@ import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnv
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
 import { SettingsWaitlistRouteScreen } from "./features/settings/SettingsWaitlistRouteScreen";
 import { nativeHeaderScrollEdgeEffects } from "./native/StackHeader";
+import { useSceneryBootstrap } from "./features/scenery/use-scenery";
 import { useThreadOutboxDrain } from "./state/use-thread-outbox-drain";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
@@ -52,7 +53,7 @@ const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Pl
 // background stay STATIC config while still adapting to appearance changes.
 const SHEET_BACKGROUND_COLOR =
   Platform.OS === "ios"
-    ? DynamicColorIOS({ light: "rgba(242, 242, 247, 0.98)", dark: "rgba(14, 14, 14, 0.98)" })
+    ? DynamicColorIOS({ light: "rgba(242, 244, 240, 0.98)", dark: "rgba(13, 15, 13, 0.98)" })
     : undefined;
 
 type AppScreenOptions = NativeStackNavigationOptions & {
@@ -251,6 +252,7 @@ function RootStackLayout(props: {
 }) {
   useAgentNotificationNavigation();
   useThreadOutboxDrain();
+  useSceneryBootstrap();
   // Full pathname (sheets included) for keyboard-command scoping; the
   // workspace layout only reacts to the underlying non-overlay route.
   const path = getPathFromState(props.state, navigationPathConfig);
