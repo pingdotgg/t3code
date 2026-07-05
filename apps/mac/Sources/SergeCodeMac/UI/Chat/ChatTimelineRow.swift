@@ -1,12 +1,22 @@
 import SwiftUI
 import T3Kit
 
-/// Dispatches a single `TimelineItem` to its row view.
+/// Dispatches a single `TimelineDisplayItem` to its row view.
 struct ChatTimelineRowView: View {
-    let item: TimelineItem
+    let item: TimelineDisplayItem
     let model: AppModel
 
     var body: some View {
+        switch item {
+        case .single(let item):
+            singleRow(item)
+        case .toolGroup(_, let items, let summary):
+            ToolGroupRow(items: items, summary: summary, threadStatus: model.selectedThread?.status)
+        }
+    }
+
+    @ViewBuilder
+    private func singleRow(_ item: TimelineItem) -> some View {
         switch item {
         case .userMessage(_, let text, _):
             UserMessageBubble(text: text)
@@ -51,6 +61,78 @@ private struct UserMessageBubble: View {
                 .padding(.vertical, 10)
                 .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 16))
                 .foregroundStyle(.white)
+        }
+    }
+}
+
+/// A finished burst of tool work, condensed to one disclosure row once the
+/// agent has moved on. Expanding reveals the original tool/reasoning rows.
+private struct ToolGroupRow: View {
+    let items: [TimelineItem]
+    let summary: ToolGroupSummary
+    let threadStatus: ThreadStatus?
+
+    @UIState private var isExpanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(Motion.snap) { isExpanded.toggle() }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: summary.failedCount > 0
+                        ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
+                        .foregroundStyle(summary.failedCount > 0 ? Color.orange : Color.green)
+                    Text(headline)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(items) { item in
+                        expandedRow(item)
+                    }
+                }
+                .transition(Motion.unfold)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var headline: String {
+        var parts = ["Ran \(summary.toolCount) tool\(summary.toolCount == 1 ? "" : "s")"]
+        if summary.editedFileCount > 0 {
+            parts.append("edited \(summary.editedFileCount) file\(summary.editedFileCount == 1 ? "" : "s")")
+        }
+        if summary.failedCount > 0 {
+            parts.append("\(summary.failedCount) failed")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    @ViewBuilder
+    private func expandedRow(_ item: TimelineItem) -> some View {
+        switch item {
+        case .toolEvent(_, let name, let detail, let kind, let status, _):
+            ToolEventRow(
+                name: name, detail: detail, kind: kind, status: status,
+                threadStatus: threadStatus)
+        case .reasoning(_, let text, _):
+            ReasoningRow(text: text)
+        default:
+            // Grouping only ever collects tool/reasoning rows.
+            EmptyView()
         }
     }
 }

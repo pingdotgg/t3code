@@ -21,11 +21,14 @@ struct ChatTimelineScrollView: View {
 
     var body: some View {
         let items = model.selectedTimeline()
+        // Finished tool bursts render condensed; grouping is pure render
+        // sugar over the untouched timeline array.
+        let displayItems = items.groupedForDisplay(threadIsSettled: threadIsSettled)
 
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
-                    ForEach(items) { item in
+                    ForEach(displayItems) { item in
                         ChatTimelineRowView(item: item, model: model)
                             .id(item.id)
                             .transition(Motion.rise)
@@ -96,6 +99,15 @@ struct ChatTimelineScrollView: View {
         switch scrollPhase {
         case .tracking, .interacting, .decelerating: true
         default: false
+        }
+    }
+
+    /// Mirrors ToolEventRow's settled rule: once the thread is no longer
+    /// working, tool rows stuck "running" count as finished for grouping.
+    private var threadIsSettled: Bool {
+        switch model.selectedThread?.status {
+        case .idle, .archived, .error: true
+        case .running, .waitingApproval, nil: false
         }
     }
 }

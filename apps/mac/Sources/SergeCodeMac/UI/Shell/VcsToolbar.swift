@@ -28,16 +28,18 @@ struct VcsToolbar: View {
                 statusChips(status)
                 Spacer()
                 if let prURL = status.prURL, let url = URL(string: prURL) {
+                    let isMerged = status.prState == .merged
                     Button {
                         NSWorkspace.shared.open(url)
                     } label: {
                         Label(
-                            status.prNumber.map { "PR #\($0)" } ?? "PR",
-                            systemImage: "arrow.triangle.pull")
+                            (status.prNumber.map { "PR #\($0)" } ?? "PR")
+                                + (isMerged ? " · Merged" : ""),
+                            systemImage: isMerged ? "checkmark.seal.fill" : "arrow.triangle.pull")
                         .font(.caption)
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(.tint)
+                    .foregroundStyle(isMerged ? AnyShapeStyle(.purple) : AnyShapeStyle(.tint))
                     .help(status.prTitle ?? "Open pull request")
                 }
                 actionMenu(status)

@@ -555,6 +555,12 @@ public struct OutgoingAttachment: Identifiable, Hashable, Sendable {
 
 // MARK: - Git / VCS
 
+/// Lifecycle of the branch's pull request, from the wire's
+/// `VcsStatusChangeRequest.state` literals.
+public enum PullRequestState: String, Sendable {
+    case open, closed, merged
+}
+
 /// Working-tree + branch + PR status for one project repo.
 public struct VcsStatus: Hashable, Sendable {
     public var isRepo: Bool
@@ -566,14 +572,23 @@ public struct VcsStatus: Hashable, Sendable {
     public var aheadCount: Int
     public var behindCount: Int
     public var hasUpstream: Bool
+    /// Whether the repo has a primary remote to push/PR against.
+    public var hasPrimaryRemote: Bool
+    /// Commits on this branch that are not on the default branch; nil when
+    /// the remote status hasn't resolved it. Distinct from `aheadCount`
+    /// (divergence from upstream), which is 0 for a fully pushed branch.
+    public var aheadOfDefaultCount: Int?
     public var prNumber: Int?
     public var prTitle: String?
     public var prURL: String?
+    public var prState: PullRequestState?
 
     public init(
         isRepo: Bool, branch: String?, isDefaultBranch: Bool, changedFileCount: Int,
         insertions: Int, deletions: Int, aheadCount: Int, behindCount: Int, hasUpstream: Bool,
-        prNumber: Int? = nil, prTitle: String? = nil, prURL: String? = nil
+        hasPrimaryRemote: Bool = false, aheadOfDefaultCount: Int? = nil,
+        prNumber: Int? = nil, prTitle: String? = nil, prURL: String? = nil,
+        prState: PullRequestState? = nil
     ) {
         self.isRepo = isRepo
         self.branch = branch
@@ -584,9 +599,12 @@ public struct VcsStatus: Hashable, Sendable {
         self.aheadCount = aheadCount
         self.behindCount = behindCount
         self.hasUpstream = hasUpstream
+        self.hasPrimaryRemote = hasPrimaryRemote
+        self.aheadOfDefaultCount = aheadOfDefaultCount
         self.prNumber = prNumber
         self.prTitle = prTitle
         self.prURL = prURL
+        self.prState = prState
     }
 }
 
