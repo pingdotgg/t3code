@@ -34,6 +34,22 @@ struct ActivityRowTests {
         #expect(row == nil)
     }
 
+    @Test func noContentRuntimeWarningIsSkipped() {
+        let row = ActivityRows.row(
+            for: activity(
+                tone: .info, kind: "runtime.warning",
+                summary: "Claude system message 'commands_changed' (no displayable text content)"))
+        #expect(row == nil)
+    }
+
+    @Test func runtimeWarningWithPreviewKeepsNoticeRow() {
+        let row = ActivityRows.row(
+            for: activity(
+                tone: .info, kind: "runtime.warning",
+                summary: "Claude system message 'mystery' — detail: something odd"))
+        #expect(row == .notice(id: "a1", text: "Claude system message 'mystery' — detail: something odd"))
+    }
+
     // MARK: Tool lifecycle
 
     @Test func toolUpdatedUsesSummaryAsTitleAndPayloadDetail() {
