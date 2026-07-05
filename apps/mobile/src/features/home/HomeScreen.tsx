@@ -19,6 +19,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
 
 import { EmptyState } from "../../components/EmptyState";
+import { SceneryHeroCard } from "../scenery/SceneryHeroCard";
+import { useDailyFeatured } from "../scenery/use-scenery";
 import type { WorkspaceState } from "../../state/workspaceModel";
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { scopedProjectKey } from "../../lib/scopedEntities";
@@ -157,6 +159,7 @@ export function HomeScreen(props: HomeScreenProps) {
   const listRef = useRef<LegendListRef | null>(null);
   const insets = useSafeAreaInsets();
   const accentColor = useThemeColor("--color-icon-muted");
+  const dailyFeatured = useDailyFeatured();
 
   const updateGroupDisplay = useCallback((key: string, action: HomeGroupDisplayAction) => {
     setGroupDisplayStates((previous) => {
@@ -351,6 +354,7 @@ export function HomeScreen(props: HomeScreenProps) {
         }}
       >
         <View className="w-full max-w-[430px]">
+          <SceneryHeroCard photo={dailyFeatured} />
           <EmptyState
             title={emptyState.title}
             detail={emptyState.detail}
