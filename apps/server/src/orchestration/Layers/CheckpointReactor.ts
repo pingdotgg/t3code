@@ -12,6 +12,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -37,6 +38,12 @@ import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+
+// The turn-completion status refresh runs on the reactor's serial worker, so
+// it must never stall the queue: the fetch-free git reads are fast, but the
+// PR lookup can hit a hosting provider whose transport has no timeout of its
+// own (e.g. Bitbucket).
+const TURN_COMPLETION_STATUS_REFRESH_TIMEOUT = Duration.seconds(10);
 
 type ReactorInput =
   | {
@@ -526,25 +533,29 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const refreshLocalGitStatusFromTurnCompletion = Effect.fn(
-    "refreshLocalGitStatusFromTurnCompletion",
-  )(function* (event: Extract<ProviderRuntimeEvent, { type: "turn.completed" }>) {
-    const sessionRuntime = yield* resolveSessionRuntimeForThread(event.threadId);
-    if (Option.isNone(sessionRuntime)) {
-      return;
-    }
+  // Fetch-free full refresh: divergence counts (which gate the clients'
+  // "Create PR" offer) update the moment the turn ends instead of waiting
+  // up to a whole periodic-poller interval for the next remote refresh.
+  const refreshGitStatusFromTurnCompletion = Effect.fn("refreshGitStatusFromTurnCompletion")(
+    function* (event: Extract<ProviderRuntimeEvent, { type: "turn.completed" }>) {
+      const sessionRuntime = yield* resolveSessionRuntimeForThread(event.threadId);
+      if (Option.isNone(sessionRuntime)) {
+        return;
+      }
 
-    yield* vcsStatusBroadcaster.refreshLocalStatus(sessionRuntime.value.cwd).pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("failed to refresh local git status after turn completion", {
-          threadId: event.threadId,
-          turnId: event.turnId ?? null,
-          cwd: sessionRuntime.value.cwd,
-          detail: error.message,
-        }),
-      ),
-    );
-  });
+      yield* vcsStatusBroadcaster.refreshStatusWithoutFetch(sessionRuntime.value.cwd).pipe(
+        Effect.timeout(TURN_COMPLETION_STATUS_REFRESH_TIMEOUT),
+        Effect.catch((error) =>
+          Effect.logWarning("failed to refresh git status after turn completion", {
+            threadId: event.threadId,
+            turnId: event.turnId ?? null,
+            cwd: sessionRuntime.value.cwd,
+            detail: error.message,
+          }),
+        ),
+      );
+    },
+  );
 
   const ensurePreTurnBaselineFromDomainTurnStart = Effect.fn(
     "ensurePreTurnBaselineFromDomainTurnStart",
@@ -790,7 +801,7 @@ const make = Effect.gen(function* () {
 
     if (event.type === "turn.completed") {
       const turnId = toTurnId(event.turnId);
-      yield* refreshLocalGitStatusFromTurnCompletion(event);
+      yield* refreshGitStatusFromTurnCompletion(event);
       yield* captureCheckpointFromTurnCompletion(event).pipe(
         Effect.catch((error) =>
           Effect.flatMap(nowIso, (createdAt) =>
