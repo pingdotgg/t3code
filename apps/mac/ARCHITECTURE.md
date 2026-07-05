@@ -46,7 +46,15 @@ no Electron, no web view. The existing Node server (`apps/server`, npm package
 - Readiness: poll `GET /.well-known/t3/environment` (100ms interval, 60s cap).
 - Auth: with mode=desktop + loopback bind, server policy is
   `desktop-managed-local` — exchange the bootstrap token for a session/bearer
-  token via the local HTTP auth API. No Clerk, no pairing, no DPoP in v1.
+  token via the local HTTP auth API. No Clerk, no DPoP in v1.
+- Mobile (Settings ▸ iPhone): when the user enables local-network access,
+  the sidecar binds `0.0.0.0` instead of loopback (policy flips to
+  `remote-reachable`, which keeps `desktop-bootstrap` valid alongside
+  `one-time-token`). The app mints one-time pairing credentials via
+  `POST /api/auth/pairing-token` and shows them as a QR
+  (`http://<lan-ip>:<port>/pair#token=<code>`, the exact shape the mobile
+  app's scanner parses — `apps/mobile` pairing.ts). Bind host is fixed per
+  process; toggling requires relaunch.
 - Shutdown: SIGTERM, 2s grace, then SIGKILL. Restart on crash with
   exponential backoff (500ms → 10s).
 - Data dir: pass explicit `--base-dir` under
@@ -83,8 +91,9 @@ PR links), workspace file browser + preview + open-in-external-editor.
 
 Out (excluded or later): embedded terminal (needs a SwiftTerm dependency —
 Package.swift change to coordinate), browser preview/automation, PR review
-dialogs, Clerk/T3 Connect cloud auth + relay + pairing (t3-service
-exclusive, permanently out for the fork), SSH/tailscale remotes,
+dialogs, Clerk/T3 Connect cloud auth + relay (t3-service exclusive,
+permanently out for the fork; local-network iPhone pairing is in — see
+"Sidecar contract"), SSH/tailscale remotes,
 keybindings editor, auto-update (Sparkle later), Windows/Linux (Electron
 app remains for those).
 

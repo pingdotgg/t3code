@@ -48,10 +48,28 @@ public struct WsTicket: Sendable {
     }
 }
 
+/// Result of `POST /api/auth/pairing-token` (`AuthPairingCredentialResult`,
+/// packages/contracts/src/auth.ts:202-207): a short-lived, single-use
+/// pairing credential another device (the mobile app) can exchange for its
+/// own access token via the same RFC 8693 token-exchange flow.
+public struct PairingCredential: Sendable {
+    public let id: String
+    public let credential: String
+    /// ISO-8601 UTC string (`Schema.DateTimeUtc` encodes to a string).
+    public let expiresAt: String
+
+    public init(id: String, credential: String, expiresAt: String) {
+        self.id = id
+        self.credential = credential
+        self.expiresAt = expiresAt
+    }
+}
+
 /// Exchanges the sidecar's one-shot bootstrap token for a bearer access
 /// token, then mints short-lived per-connection WebSocket tickets, over the
 /// sidecar's local HTTP auth API (desktop-managed-local policy, §1.2). No
-/// Clerk/pairing/DPoP in v1 (ARCHITECTURE.md).
+/// Clerk/DPoP in v1 (ARCHITECTURE.md); pairing credentials are minted only
+/// for the local-network mobile pairing flow.
 public actor AuthClient {
     private let config: AuthConfig
     private let urlSession: URLSession
@@ -131,6 +149,50 @@ public actor AuthClient {
             return WsTicket(ticket: decoded.ticket, expiresAt: decoded.expiresAt)
         } catch {
             throw T3Error.auth("Failed to decode /api/auth/websocket-ticket response: \(error)")
+        }
+    }
+
+    /// Mints a fresh one-time pairing credential via
+    /// `POST /api/auth/pairing-token` (requires the `access:write` scope,
+    /// which the desktop-bootstrap grant carries —
+    /// `AuthAdministrativeScopes`). The credential is what the mobile app
+    /// scans/enters and exchanges for its own bearer token; it is
+    /// single-use and expires server-side after ~5 minutes
+    /// (`PairingGrantStore.DEFAULT_ONE_TIME_TOKEN_TTL_MINUTES`).
+    public func mintPairingCredential(
+        accessToken: String, label: String? = nil
+    ) async throws -> PairingCredential {
+        let url = config.httpBaseURL.appendingPathComponent("api/auth/pairing-token")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        // AuthCreatePairingCredentialInput (packages/contracts/src/auth.ts:331):
+        // `scopes` omitted so the server applies AuthStandardClientScopes.
+        struct Payload: Encodable {
+            let label: String?
+        }
+        do {
+            request.httpBody = try JSONEncoder().encode(Payload(label: label))
+        } catch {
+            throw T3Error.auth("Failed to encode pairing-token payload: \(error)")
+        }
+
+        let data = try await perform(request)
+
+        struct CredentialResponse: Decodable {
+            let id: String
+            let credential: String
+            let expiresAt: String
+        }
+        do {
+            let decoded = try JSONDecoder().decode(CredentialResponse.self, from: data)
+            return PairingCredential(
+                id: decoded.id, credential: decoded.credential, expiresAt: decoded.expiresAt)
+        } catch {
+            throw T3Error.auth("Failed to decode /api/auth/pairing-token response: \(error)")
         }
     }
 

@@ -21,7 +21,10 @@ struct SergeCodeApp: App {
         {
             return MockBackend()
         }
-        return LiveBackend()
+        // The LAN-access preference is applied at spawn (the bind host is
+        // fixed per sidecar process); toggling it in Settings ▸ iPhone
+        // takes effect on the next launch.
+        return LiveBackend(allowLanAccess: MobileAccessPreference.isEnabled)
     }
 
     var body: some Scene {
