@@ -1466,7 +1466,8 @@ public actor LiveBackend: BackendService {
             insertions: local.workingTree.insertions, deletions: local.workingTree.deletions,
             aheadCount: remote?.aheadCount ?? 0, behindCount: remote?.behindCount ?? 0,
             hasUpstream: remote?.hasUpstream ?? false, prNumber: remote?.pr?.number,
-            prTitle: remote?.pr?.title, prURL: remote?.pr?.url)
+            prTitle: remote?.pr?.title, prURL: remote?.pr?.url,
+            prState: (remote?.pr?.state).flatMap(PullRequestState.init(rawValue:)))
     }
 
     /// The directory a thread's workspace/VCS calls operate on: its worktree

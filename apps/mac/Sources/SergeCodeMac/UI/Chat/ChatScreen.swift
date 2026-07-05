@@ -20,6 +20,7 @@ public struct ChatScreen: View {
                 Divider()
                 VcsToolbar(model: model)
                 ChatTimelineScrollView(model: model, isPinnedToBottom: $isPinnedToBottom)
+                ChatFollowUpBar(model: model)
                 ComposerBar(model: model)
             } else {
                 ChatEmptyStateView()

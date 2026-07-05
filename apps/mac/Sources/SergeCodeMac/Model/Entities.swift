@@ -515,6 +515,12 @@ public struct OutgoingAttachment: Identifiable, Hashable, Sendable {
 
 // MARK: - Git / VCS
 
+/// Lifecycle of the branch's pull request, from the wire's
+/// `VcsStatusChangeRequest.state` literals.
+public enum PullRequestState: String, Sendable {
+    case open, closed, merged
+}
+
 /// Working-tree + branch + PR status for one project repo.
 public struct VcsStatus: Hashable, Sendable {
     public var isRepo: Bool
@@ -529,11 +535,13 @@ public struct VcsStatus: Hashable, Sendable {
     public var prNumber: Int?
     public var prTitle: String?
     public var prURL: String?
+    public var prState: PullRequestState?
 
     public init(
         isRepo: Bool, branch: String?, isDefaultBranch: Bool, changedFileCount: Int,
         insertions: Int, deletions: Int, aheadCount: Int, behindCount: Int, hasUpstream: Bool,
-        prNumber: Int? = nil, prTitle: String? = nil, prURL: String? = nil
+        prNumber: Int? = nil, prTitle: String? = nil, prURL: String? = nil,
+        prState: PullRequestState? = nil
     ) {
         self.isRepo = isRepo
         self.branch = branch
@@ -547,6 +555,7 @@ public struct VcsStatus: Hashable, Sendable {
         self.prNumber = prNumber
         self.prTitle = prTitle
         self.prURL = prURL
+        self.prState = prState
     }
 }
 

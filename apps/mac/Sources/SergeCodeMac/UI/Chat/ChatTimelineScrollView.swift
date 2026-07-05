@@ -15,11 +15,14 @@ struct ChatTimelineScrollView: View {
 
     var body: some View {
         let items = model.selectedTimeline()
+        // Finished tool bursts render condensed; grouping is pure render
+        // sugar over the untouched timeline array.
+        let displayItems = items.groupedForDisplay()
 
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
-                    ForEach(items) { item in
+                    ForEach(displayItems) { item in
                         ChatTimelineRowView(item: item, model: model)
                             .id(item.id)
                             .transition(Motion.rise)
