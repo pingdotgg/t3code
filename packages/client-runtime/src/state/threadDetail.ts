@@ -13,7 +13,7 @@ import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
 import type { EnvironmentThread, EnvironmentThreadShell } from "./models.ts";
 import { scopeThread } from "./models.ts";
-import { EMPTY_ENVIRONMENT_THREAD_STATE, type EnvironmentThreadState } from "./threads.ts";
+import { EMPTY_ENVIRONMENT_THREAD_STATE, type EnvironmentThreadState } from "./threadState.ts";
 import { parseThreadKey, threadKey } from "./entities.ts";
 import { THREAD_STATE_IDLE_TTL_MS } from "./threadRetention.ts";
 

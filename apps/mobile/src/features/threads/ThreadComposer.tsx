@@ -26,6 +26,7 @@ import {
 } from "react-native";
 import ImageViewing from "react-native-image-viewing";
 import { useThemeColor } from "../../lib/useThemeColor";
+import { scopedThreadKey } from "../../lib/scopedEntities";
 
 import { AppText as Text } from "../../components/AppText";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
@@ -44,7 +45,7 @@ import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import { buildModelOptions, groupByProvider } from "../../lib/modelOptions";
-import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
+import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
 import {
   insertRankedSearchResult,
@@ -76,10 +77,17 @@ export interface ThreadComposerProps {
   readonly draftMessage: string;
   readonly draftAttachments: ReadonlyArray<DraftComposerImageAttachment>;
   readonly placeholder: string;
+  readonly contentMaxWidth?: number;
   readonly bottomInset?: number;
   readonly connectionState: RemoteClientConnectionState;
   readonly connectionError: string | null;
   readonly environmentLabel: string | null;
+  /**
+   * Message sync phase for the selected thread (drives the status pill):
+   * "loading" = first fetch, nothing to show yet; "syncing" = cached messages
+   * are on screen while they reconcile with the server.
+   */
+  readonly threadSyncPhase?: "loading" | "syncing" | null;
   readonly selectedThread: OrchestrationThreadShell;
   readonly serverConfig: T3ServerConfig | null;
   readonly queueCount: number;
@@ -109,41 +117,61 @@ function ComposerSurface(props: {
   readonly style: ViewStyle;
   readonly isDarkMode: boolean;
 }) {
+  // Drop shadow lives on a wrapper: `overflow: "hidden"` on the surface itself
+  // (needed to clip content to the pill shape) would clip the shadow on iOS.
+  const shadowStyle: ViewStyle = {
+    borderRadius: props.style.borderRadius,
+    shadowColor: "#000000",
+    shadowOpacity: props.isDarkMode ? 0.35 : 0.12,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 10,
+  };
+
   if (isLiquidGlassSupported) {
     return (
-      <LiquidGlassView
-        effect="clear"
-        interactive
-        tintColor={props.isDarkMode ? "rgba(44,44,46,0.5)" : "rgba(255,255,255,0.45)"}
-        colorScheme={props.isDarkMode ? "dark" : "light"}
-        style={props.style}
-      >
-        {props.children}
-      </LiquidGlassView>
+      <View style={shadowStyle}>
+        <LiquidGlassView
+          effect="regular"
+          interactive
+          colorScheme={props.isDarkMode ? "dark" : "light"}
+          style={props.style}
+        >
+          {props.children}
+        </LiquidGlassView>
+      </View>
     );
   }
 
   return (
-    <View
-      style={[
-        props.style,
-        {
-          backgroundColor: props.isDarkMode ? "rgba(44,44,46,0.96)" : "rgba(255,255,255,0.96)",
-          borderWidth: 1,
-          borderColor: props.isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)",
-        },
-      ]}
-    >
-      {props.children}
+    <View style={shadowStyle}>
+      <View
+        style={[
+          props.style,
+          {
+            backgroundColor: props.isDarkMode ? "rgba(44,44,46,0.96)" : "rgba(255,255,255,0.96)",
+            borderWidth: 1,
+            borderColor: props.isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)",
+          },
+        ]}
+      >
+        {props.children}
+      </View>
     </View>
   );
 }
+
+type ComposerStatusPillState = {
+  readonly kind: "unavailable" | "reconnecting" | "syncing";
+  readonly label: string;
+};
 
 function composerConnectionStatus(input: {
   readonly connectionError: string | null;
   readonly connectionState: RemoteClientConnectionState;
   readonly environmentLabel: string | null;
-}): { readonly kind: "unavailable" | "reconnecting"; readonly label: string } | null {
+  readonly threadSyncPhase?: "loading" | "syncing" | null;
+}): ComposerStatusPillState | null {
   const environmentLabel = input.environmentLabel ?? "Environment";
 
   switch (input.connectionState) {
@@ -168,15 +196,27 @@ function composerConnectionStatus(input: {
     case "available":
       return { kind: "unavailable", label: `${environmentLabel} is not connected` };
     case "connected":
+      break;
+  }
+
+  // Connected: the pill is the single loading/sync indicator. One stable
+  // label per open — "Loading" when starting from scratch, "Syncing" when
+  // cached messages are already visible.
+  switch (input.threadSyncPhase) {
+    case "loading":
+      return { kind: "syncing", label: "Loading messages..." };
+    case "syncing":
+      return { kind: "syncing", label: "Syncing messages..." };
+    default:
       return null;
   }
 }
 
 const ComposerConnectionStatusPill = memo(function ComposerConnectionStatusPill(props: {
   readonly onPress: () => void;
-  readonly status: { readonly kind: "unavailable" | "reconnecting"; readonly label: string };
+  readonly status: ComposerStatusPillState;
 }) {
-  const isReconnecting = props.status.kind === "reconnecting";
+  const isReconnecting = props.status.kind !== "unavailable";
 
   return (
     <View className="items-center pb-2">
@@ -191,7 +231,7 @@ const ComposerConnectionStatusPill = memo(function ComposerConnectionStatusPill(
           <View className="h-2 w-2 rounded-full bg-red-500" />
         )}
         <Text
-          className="max-w-[260px] text-sm font-t3-bold leading-[17px] text-foreground"
+          className="max-w-[260px] text-sm font-t3-bold leading-snug text-foreground"
           numberOfLines={1}
         >
           {props.status.label}
@@ -204,10 +244,12 @@ const ComposerConnectionStatusPill = memo(function ComposerConnectionStatusPill(
 export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposerProps) {
   const isDarkMode = useColorScheme() === "dark";
   const foregroundColor = useThemeColor("--color-foreground");
+  const bodyText = useScaledTextRole("body");
   const fallbackInputRef = useRef<ComposerEditorHandle>(null);
   const inputRef = props.editorRef ?? fallbackInputRef;
   const [isFocused, setIsFocused] = useState(false);
   const wasExpandedBeforePreviewRef = useRef(false);
+  const inFlightThreadIdsRef = useRef(new Set<string>());
   const { onExpandedChange } = props;
 
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
@@ -254,6 +296,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     connectionError: props.connectionError,
     connectionState: props.connectionState,
     environmentLabel: props.environmentLabel,
+    threadSyncPhase: props.threadSyncPhase,
   });
   const toolbarFadeOpaque = isDarkMode ? "rgba(0,0,0,0.95)" : "rgba(255,255,255,0.95)";
   const toolbarFadeTransparent = isDarkMode ? "rgba(0,0,0,0)" : "rgba(255,255,255,0)";
@@ -447,9 +490,16 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   // ── Handle command selection ──────────────────────────────
   const { onChangeDraftMessage, onUpdateInteractionMode, draftMessage, onSendMessage } = props;
 
-  const handleSend = useCallback(() => {
-    void onSendMessage();
-  }, [onSendMessage]);
+  const handleSend = useCallback(async () => {
+    const threadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
+    if (inFlightThreadIdsRef.current.has(threadKey)) return;
+    inFlightThreadIdsRef.current.add(threadKey);
+    try {
+      await onSendMessage();
+    } finally {
+      inFlightThreadIdsRef.current.delete(threadKey);
+    }
+  }, [onSendMessage, props.environmentId, props.selectedThread.id]);
   const handleCommandSelect = useCallback(
     (item: ComposerCommandItem) => {
       if (!composerTrigger) return;
@@ -625,11 +675,14 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         paddingTop: isExpanded ? 8 : 6,
         paddingBottom: (props.bottomInset ?? 0) + (isExpanded ? 8 : 6),
         experimental_backgroundImage: isDarkMode
-          ? "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.85) 40%, rgba(0,0,0,0.95) 100%)"
-          : "linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,0.85) 40%, rgba(255,255,255,0.95) 100%)",
+          ? "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.6) 55%, rgba(0,0,0,0.9) 100%)"
+          : "linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,0.6) 55%, rgba(255,255,255,0.9) 100%)",
       }}
     >
-      <View className="w-full" style={{ position: "relative" }}>
+      <View
+        className="w-full"
+        style={{ alignSelf: "center", maxWidth: props.contentMaxWidth, position: "relative" }}
+      >
         {composerTrigger && composerMenuItems.length > 0 ? (
           <View
             style={{
@@ -702,6 +755,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               placeholder={props.placeholder}
               onFocus={handleFocus}
               onBlur={handleBlur}
+              onSubmit={handleSend}
               scrollEnabled={isExpanded}
               contentInsetVertical={isExpanded ? 0 : 6}
               style={
@@ -717,7 +771,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     }
               }
               textStyle={{
-                ...MOBILE_TYPOGRAPHY.composer,
+                ...bodyText,
                 color: foregroundColor,
                 fontFamily: "DMSans_400Regular",
               }}
@@ -827,13 +881,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
 
         {/* Queue count */}
         {props.queueCount > 0 ? (
-          <Text
-            className="text-foreground-muted"
-            style={{
-              ...MOBILE_TYPOGRAPHY.label,
-              paddingTop: 8,
-            }}
-          >
+          <Text className="text-xs text-foreground-muted" style={{ paddingTop: 8 }}>
             {props.queueCount} queued message{props.queueCount === 1 ? "" : "s"} will send
             automatically.
           </Text>

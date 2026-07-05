@@ -75,7 +75,7 @@ export function ControlPill(props: {
 }
 
 export function ControlPillMenu(
-  props: Omit<ComponentProps<typeof MenuView>, "children" | "style" | "themeVariant"> & {
+  props: Omit<ComponentProps<typeof MenuView>, "children" | "themeVariant"> & {
     readonly children: ReactNode;
   },
 ) {

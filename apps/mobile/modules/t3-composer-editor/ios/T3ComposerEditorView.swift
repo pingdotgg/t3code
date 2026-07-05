@@ -15,6 +15,14 @@ private struct ComposerSelectionPayload: Decodable {
   let end: Int
 }
 
+private struct ComposerControlledDocumentPayload: Decodable {
+  let value: String
+  let selection: ComposerSelectionPayload?
+  let tokensJson: String
+  let mostRecentEventCount: Int
+  let isNativeEcho: Bool
+}
+
 private struct ComposerThemePayload: Decodable {
   let text: String
   let placeholder: String
@@ -55,6 +63,24 @@ private final class ComposerTextView: UITextView {
 
   var onPasteImages: (([String]) -> Void)?
   var onAttributedMutation: (() -> Void)?
+  var onSubmit: (() -> Void)?
+
+  override var keyCommands: [UIKeyCommand]? {
+    var commands = super.keyCommands ?? []
+    let submit = UIKeyCommand(
+      input: "\r",
+      modifierFlags: .command,
+      action: #selector(submitMessage(_:))
+    )
+    submit.discoverabilityTitle = "Send Message"
+    submit.wantsPriorityOverSystemBehavior = true
+    commands.append(submit)
+    return commands
+  }
+
+  @objc private func submitMessage(_ sender: UIKeyCommand) {
+    onSubmit?()
+  }
 
   override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
     if action == #selector(paste(_:)) {
@@ -281,6 +307,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate {
   private var shouldAutoFocus = false
   private var didAutoFocus = false
   private var isApplyingControlledValue = false
+  private var nativeEventCount = 0
   private var lastContentSize = CGSize.zero
   private var iconImages: [String: UIImage] = [:]
   private var pendingIconUris = Set<String>()
@@ -290,6 +317,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate {
   let onComposerSelectionChange = EventDispatcher()
   let onComposerFocus = EventDispatcher()
   let onComposerBlur = EventDispatcher()
+  let onComposerSubmit = EventDispatcher()
   let onComposerPasteImages = EventDispatcher()
   let onComposerContentSizeChange = EventDispatcher()
 
@@ -310,6 +338,9 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate {
     }
     textView.onAttributedMutation = { [weak self] in
       self?.emitTextChange()
+    }
+    textView.onSubmit = { [weak self] in
+      self?.onComposerSubmit([:])
     }
     addSubview(textView)
 
@@ -350,30 +381,26 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate {
     }
   }
 
-  func setValue(_ value: String) {
-    self.value = value
-    applyControlledDocument(force: tokensNeedRebuild)
-    if tokensMatchCurrentValue() {
-      tokensNeedRebuild = false
-    }
-  }
-
-  func setTokensJson(_ tokensJson: String) {
-    guard self.tokensJson != tokensJson else {
+  func setControlledDocumentJson(_ documentJson: String) {
+    guard let document = decode(ComposerControlledDocumentPayload.self, from: documentJson),
+          document.mostRecentEventCount >= nativeEventCount else {
       return
     }
-    self.tokensJson = tokensJson
-    tokens = decode([ComposerTokenPayload].self, from: tokensJson) ?? []
-    tokensNeedRebuild = true
-    applyControlledDocument(force: true)
+    if document.isNativeEcho && textView.serializedText() != document.value {
+      return
+    }
+    if tokensJson != document.tokensJson {
+      tokensJson = document.tokensJson
+      tokens = decode([ComposerTokenPayload].self, from: document.tokensJson) ?? []
+      tokensNeedRebuild = true
+    }
+    value = document.value
+    requestedSelection = document.selection
+    applyControlledDocument(force: tokensNeedRebuild)
+    applyRequestedSelection()
     if tokensMatchCurrentValue() {
       tokensNeedRebuild = false
     }
-  }
-
-  func setSelectionJson(_ selectionJson: String) {
-    requestedSelection = decode(ComposerSelectionPayload.self, from: selectionJson)
-    applyRequestedSelection()
   }
 
   func setThemeJson(_ themeJson: String) {
@@ -700,18 +727,23 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate {
     }
     value = textView.serializedText()
     let selection = sourceSelection()
+    nativeEventCount += 1
     onComposerChange([
       "value": value,
       "selection": ["start": selection.start, "end": selection.end],
+      "eventCount": nativeEventCount,
     ])
     updatePlaceholderVisibility()
     emitContentSizeIfNeeded()
   }
 
   private func emitSelection() {
+    let currentValue = textView.serializedText()
     let selection = sourceSelection()
     onComposerSelectionChange([
+      "value": currentValue,
       "selection": ["start": selection.start, "end": selection.end],
+      "eventCount": nativeEventCount,
     ])
   }
 
@@ -752,6 +784,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate {
     isApplyingControlledValue = true
     textView.selectedRange = nextRange
     isApplyingControlledValue = false
+    self.requestedSelection = nil
   }
 
   private func updatePlaceholderVisibility() {
