@@ -58,11 +58,14 @@ private struct UserMessageBubble: View {
     let model: AppModel
 
     @UIState private var isHovering = false
+    /// Local double-click guard: `canResend` flips only after the thread's
+    /// status round-trips to `.running`, which is async.
+    @UIState private var isResending = false
 
     /// Resending mid-turn would interleave with the running agent; the
     /// composer's send path has the same gate.
     private var canResend: Bool {
-        model.connection == .ready && model.selectedThread?.status != .running
+        model.connection == .ready && model.selectedThread?.status != .running && !isResending
     }
 
     var body: some View {
@@ -90,20 +93,31 @@ private struct UserMessageBubble: View {
                         systemImage: "arrow.clockwise", help: "Send this message again",
                         disabled: !canResend
                     ) {
-                        Task { await model.send(text: text) }
+                        resend()
                     }
                 }
                 .opacity(isHovering ? 1 : 0)
             }
+            // Hover and context menu live on the bubble stack, not the full
+            // row — the spacer's empty area shouldn't reveal actions.
+            .onHover { isHovering = $0 }
+            .animation(Motion.fade, value: isHovering)
+            .contextMenu {
+                Button("Copy") { Pasteboard.copy(text) }
+                Button("Edit in Composer") { model.stageComposerText(text) }
+                    .disabled(!canResend)
+                Button("Retry") { resend() }
+                    .disabled(!canResend)
+            }
         }
-        .onHover { isHovering = $0 }
-        .animation(Motion.fade, value: isHovering)
-        .contextMenu {
-            Button("Copy") { Pasteboard.copy(text) }
-            Button("Edit in Composer") { model.stageComposerText(text) }
-                .disabled(!canResend)
-            Button("Retry") { Task { await model.send(text: text) } }
-                .disabled(!canResend)
+    }
+
+    private func resend() {
+        guard canResend else { return }
+        isResending = true
+        Task {
+            await model.send(text: text)
+            isResending = false
         }
     }
 }
