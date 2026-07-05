@@ -35,6 +35,17 @@ public struct ComposerBar: View {
         (!trimmedDraft.isEmpty || !attachments.isEmpty) && model.connection == .ready
     }
 
+    private var isThreadRunning: Bool {
+        model.selectedThread?.status == .running
+    }
+
+    /// The trailing button is one smart control: a stop button while the
+    /// agent runs, a send button the moment there's something to send, and
+    /// a grayed-out send button otherwise.
+    private var showsStop: Bool {
+        isThreadRunning && trimmedDraft.isEmpty && attachments.isEmpty
+    }
+
     /// Provider slash commands + mode built-ins, filtered by the `/token`
     /// the draft currently starts with (nil when the draft isn't one).
     private var slashMatches: [SlashCommandItem]? {
@@ -145,17 +156,24 @@ public struct ComposerBar: View {
                         }
 
                     Button {
-                        send()
+                        if showsStop {
+                            Task { await model.cancelCurrentTurn() }
+                        } else {
+                            send()
+                        }
                     } label: {
-                        Image(systemName: "paperplane.fill")
-                            .scaleEffect(canSend ? 1.0 : 0.9)
-                            .opacity(canSend ? 1.0 : 0.55)
+                        Image(systemName: showsStop ? "stop.fill" : "paperplane.fill")
+                            .contentTransition(.symbolEffect(.replace))
+                            .scaleEffect(showsStop || canSend ? 1.0 : 0.9)
+                            .opacity(showsStop || canSend ? 1.0 : 0.55)
                     }
                     .buttonStyle(.glass)
-                    .tint(canSend ? Color.accentColor : nil)
-                    .disabled(!canSend)
+                    .tint(showsStop ? .red : (canSend ? Color.accentColor : nil))
+                    .disabled(!showsStop && !canSend)
                     .keyboardShortcut(.return, modifiers: .command)
+                    .help(showsStop ? "Stop the current turn" : "Send message")
                     .animation(Motion.snap, value: canSend)
+                    .animation(Motion.snap, value: showsStop)
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
