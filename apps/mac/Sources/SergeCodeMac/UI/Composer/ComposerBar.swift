@@ -126,7 +126,10 @@ public struct ComposerBar: View {
                         // list is open); Shift/Option+Enter fall through to
                         // the editor and insert a newline.
                         .onKeyPress(keys: [.return]) { press in
-                            guard press.modifiers.isEmpty else { return .ignored }
+                            // Caps Lock and keypad Enter report as modifiers
+                            // but don't change intent — plain Enter still sends.
+                            let semantic = press.modifiers.subtracting([.capsLock, .numericPad])
+                            guard semantic.isEmpty else { return .ignored }
                             if let first = slashMatches?.first {
                                 applySlashCommand(first)
                                 return .handled

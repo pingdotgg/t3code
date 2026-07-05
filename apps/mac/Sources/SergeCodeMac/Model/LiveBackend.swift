@@ -92,6 +92,12 @@ public actor LiveBackend: BackendService {
     /// (reasoning effort) can round-trip instanceId/model/other options
     /// without re-fetching the shell.
     private var modelSelectionsByThread: [String: ModelSelection] = [:]
+    /// Placeholder title a thread was created under by *this* client (scene
+    /// name or "New … thread"). Sent as `titleSeed` on sends so first-turn
+    /// title generation may replace it — never set for threads created
+    /// elsewhere or before this launch, so custom titles are never seeded
+    /// away.
+    private var titleSeedsByThread: [String: String] = [:]
     private var providersByInstanceId: [String: ServerProvider] = [:]
 
     /// Threads the UI has opened; re-subscribed on every reconnect.
@@ -389,6 +395,7 @@ public actor LiveBackend: BackendService {
             let snapshotThreadIDs = Set(snapshot.threads.map(\.id))
             for id in threadsByID.keys where !snapshotThreadIDs.contains(id) {
                 threadsByID[id] = nil
+                titleSeedsByThread[id] = nil
                 emit(.threadRemoved(id: id))
             }
             for shell in snapshot.threads {
@@ -413,6 +420,7 @@ public actor LiveBackend: BackendService {
             case .threadRemoved(_, let threadID):
                 threadsByID[threadID] = nil
                 modelSelectionsByThread[threadID] = nil
+                titleSeedsByThread[threadID] = nil
                 emit(.threadRemoved(id: threadID))
             }
         }
@@ -945,6 +953,7 @@ public actor LiveBackend: BackendService {
             updatedAt: Date())
         threadsByID[threadID] = thread
         modelSelectionsByThread[threadID] = selection
+        titleSeedsByThread[threadID] = title
         // Emit immediately: the shell subscription's authoritative upsert can
         // lag (or be missed across a reconnect), and the caller selects the
         // thread right away — without this the detail pane shows an empty
@@ -970,6 +979,7 @@ public actor LiveBackend: BackendService {
         // The shell subscription emits thread-removed; drop local caches now
         // so a re-created id never sees stale dedup state.
         threadsByID[id] = nil
+        titleSeedsByThread[id] = nil
         latestTimeline[id] = nil
         activeThreadIDs.remove(id)
         threadSubscriptions[id]?.cancel()
@@ -990,10 +1000,12 @@ public actor LiveBackend: BackendService {
         }
         _ = try await client.startTurn(
             threadId: threadID, text: text, attachments: uploads,
-            // Marks the current (scene-seeded) title as replaceable so the
+            // Marks the creation placeholder title as replaceable so the
             // server's first-turn generation can retitle the thread with an
-            // AI description; later turns no-op because the title changed.
-            titleSeed: thread?.title,
+            // AI description. Only set for threads this client created: the
+            // server compares seed to current title, so sending the live
+            // title would also mark manually-set titles as replaceable.
+            titleSeed: titleSeedsByThread[threadID],
             runtimeMode: thread.map { Self.wireRuntimeMode($0.runtimeMode) } ?? .wireDefault,
             interactionMode: thread.map { Self.wireInteractionMode($0.interactionMode) } ?? .wireDefault)
     }
@@ -1550,6 +1562,13 @@ public actor LiveBackend: BackendService {
     /// Expandable body for a tool row: the payload's `detail` string plus a
     /// pretty-printed `data` object when present (tool args/output). Empty
     /// when the payload carries neither, which hides the disclosure chevron.
+    ///
+    /// The `data` half is capped: providers put whole file reads and command
+    /// output in there, and the string is built for every timeline item —
+    /// megabytes per row would be allocated and diffed before the row is
+    /// ever expanded.
+    static let toolDetailDataCap = 16 * 1024
+
     static func toolDetail(_ payload: JSONValue) -> String {
         guard let object = payload.objectValue else { return "" }
         var parts: [String] = []
@@ -1564,7 +1583,12 @@ public actor LiveBackend: BackendService {
             if let encoded = try? encoder.encode(data),
                 let string = String(data: encoded, encoding: .utf8), string != "{}"
             {
-                parts.append(string)
+                if string.utf8.count > toolDetailDataCap {
+                    let prefix = String(string.prefix(toolDetailDataCap))
+                    parts.append(prefix + "\n… (truncated)")
+                } else {
+                    parts.append(string)
+                }
             }
         }
         return parts.joined(separator: "\n\n")

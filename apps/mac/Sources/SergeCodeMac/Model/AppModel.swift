@@ -72,7 +72,11 @@ public final class AppModel {
             if let index = threads.firstIndex(where: { $0.id == thread.id }) {
                 threads[index] = thread
             } else {
-                threads.insert(thread, at: 0)
+                // New rows still slot in by the sidebar's sort key: snapshot
+                // replays after a reconnect arrive as upserts, and blind
+                // insertion at 0 would show them in reverse snapshot order.
+                let index = threads.firstIndex { $0.updatedAt < thread.updatedAt } ?? threads.count
+                threads.insert(thread, at: index)
             }
         case .threadRemoved(let id):
             threads.removeAll { $0.id == id }
