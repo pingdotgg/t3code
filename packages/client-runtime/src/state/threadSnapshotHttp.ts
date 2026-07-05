@@ -144,14 +144,15 @@ export const threadSnapshotLoaderLayer: Layer.Layer<
           // subscription is the source of truth for thread existence and will
           // surface the deletion — so don't treat it as an error worth warning
           // about; just defer to the socket path.
-          Effect.catchTag("EnvironmentResourceNotFoundError", () =>
-            Effect.logDebug(
-              "Thread snapshot not found over HTTP; deferring to the socket subscription.",
-            ).pipe(
-              Effect.annotateLogs({ threadId }),
-              Effect.as(Option.none<OrchestrationThreadDetailSnapshot>()),
-            ),
-          ),
+          Effect.catchTags({
+            EnvironmentResourceNotFoundError: () =>
+              Effect.logDebug(
+                "Thread snapshot not found over HTTP; deferring to the socket subscription.",
+              ).pipe(
+                Effect.annotateLogs({ threadId }),
+                Effect.as(Option.none<OrchestrationThreadDetailSnapshot>()),
+              ),
+          }),
           Effect.catchCause((cause) =>
             Effect.logWarning(
               "Could not load the thread snapshot over HTTP; using the socket snapshot instead.",
