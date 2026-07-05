@@ -32,16 +32,6 @@ struct ChatHeaderView: View {
             if let photo = scenery.photo(for: thread.id) {
                 SceneryAttributionTag(photo: photo)
             }
-
-            if thread.status == .running {
-                Button(role: .destructive) {
-                    Task { await model.cancelCurrentTurn() }
-                } label: {
-                    Label("Stop", systemImage: "stop.fill")
-                }
-                .buttonStyle(.glass)
-                .transition(Motion.materialize)
-            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)

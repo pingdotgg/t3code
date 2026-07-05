@@ -30,8 +30,14 @@ struct FileBrowserView: View {
         .animation(Motion.settle, value: subpath)
         .animation(Motion.fade, value: isLoading)
         .task(id: threadID) {
+            // Reset synchronously before the await: this view is stable
+            // across session switches (the inspector is no longer keyed per
+            // thread), so the previous thread's listing must not stay
+            // clickable while the new one loads — a click would run file
+            // operations against the newly selected thread.
             subpath = ""
             preview = nil
+            entries = []
             await reload()
         }
     }
@@ -181,10 +187,11 @@ private struct FilePreviewPane: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 4)
             }
-            ScrollView([.vertical, .horizontal]) {
+            PanScrollView {
                 Text(preview.contents)
                     .font(.system(.caption, design: .monospaced))
                     .textSelection(.enabled)
+                    .fixedSize(horizontal: true, vertical: false)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(12)
             }

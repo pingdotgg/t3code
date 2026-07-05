@@ -86,7 +86,7 @@ private struct GeneralSettingsTab: View {
 
             Section {
                 LabeledContent("Appearance", value: "Follows System")
-                    .help("SergeCode does not offer a manual light/dark override; it follows macOS.")
+                    .help("SurgeCode does not offer a manual light/dark override; it follows macOS.")
                 LabeledContent("Version", value: appVersion)
             }
         }

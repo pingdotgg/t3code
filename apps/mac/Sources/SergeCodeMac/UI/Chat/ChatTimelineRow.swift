@@ -1,4 +1,5 @@
 import SwiftUI
+import T3Kit
 
 /// Dispatches a single `TimelineDisplayItem` to its row view.
 struct ChatTimelineRowView: View {
@@ -10,7 +11,7 @@ struct ChatTimelineRowView: View {
         case .single(let item):
             singleRow(item)
         case .toolGroup(_, let items, let summary):
-            ToolGroupRow(items: items, summary: summary)
+            ToolGroupRow(items: items, summary: summary, threadStatus: model.selectedThread?.status)
         }
     }
 
@@ -21,8 +22,10 @@ struct ChatTimelineRowView: View {
             UserMessageBubble(text: text)
         case .assistantMessage(_, let markdown, let isStreaming, _):
             AssistantMarkdownView(markdown: markdown, isStreaming: isStreaming)
-        case .toolEvent(_, let name, let detail, let status, _):
-            ToolEventRow(name: name, detail: detail, status: status)
+        case .toolEvent(_, let name, let detail, let kind, let status, _):
+            ToolEventRow(
+                name: name, detail: detail, kind: kind, status: status,
+                threadStatus: model.selectedThread?.status)
         case .approval(let request):
             ApprovalCard(request: request) { approve in
                 Task { await model.respond(to: request, approve: approve) }
@@ -67,6 +70,7 @@ private struct UserMessageBubble: View {
 private struct ToolGroupRow: View {
     let items: [TimelineItem]
     let summary: ToolGroupSummary
+    let threadStatus: ThreadStatus?
 
     @UIState private var isExpanded = false
 
@@ -120,8 +124,10 @@ private struct ToolGroupRow: View {
     @ViewBuilder
     private func expandedRow(_ item: TimelineItem) -> some View {
         switch item {
-        case .toolEvent(_, let name, let detail, let status, _):
-            ToolEventRow(name: name, detail: detail, status: status)
+        case .toolEvent(_, let name, let detail, let kind, let status, _):
+            ToolEventRow(
+                name: name, detail: detail, kind: kind, status: status,
+                threadStatus: threadStatus)
         case .reasoning(_, let text, _):
             ReasoningRow(text: text)
         default:
@@ -131,13 +137,63 @@ private struct ToolGroupRow: View {
     }
 }
 
-/// Compact, expandable row for a single tool invocation.
+/// Compact, expandable row for a single tool invocation: status + kind
+/// glyphs, tool title, an inline one-line preview of what ran (the command,
+/// the file path), and a structured disclosure body — a diff for file
+/// changes, a command line for shell runs, monospaced text otherwise.
 private struct ToolEventRow: View {
     let name: String
     let detail: String
+    let kind: ToolEventKind
     let status: ToolEventStatus
+    let threadStatus: ThreadStatus?
 
     @UIState private var isExpanded = false
+
+    /// Memoized: SwiftUI rebuilds every visible row's view value on each
+    /// timeline mutation, and re-running JSONSerialization per row per frame
+    /// would tax long streaming timelines.
+    private var parsed: ParsedToolDetail {
+        ToolDetailParseCache.parsed(detail: detail, itemType: kind.wireItemType)
+    }
+
+    private enum DisplayState {
+        case running, succeeded, failed
+        /// Thread stopped while the row was still "running": the tool is
+        /// finished by definition, but its outcome was never reported (the
+        /// turn may have completed, errored or been interrupted), so it gets
+        /// a neutral done mark rather than claiming success or failure.
+        case settled
+    }
+
+    /// Providers don't always close every tool's lifecycle (a completion can
+    /// arrive uncorrelated, or not at all). Once the thread has settled, a
+    /// row still marked running stops pulsing (mirrors the web client's
+    /// turn-settled indicator rule).
+    private var displayState: DisplayState {
+        switch status {
+        case .succeeded: return .succeeded
+        case .failed: return .failed
+        case .running:
+            switch threadStatus {
+            case .running, .waitingApproval, nil: return .running
+            case .idle, .archived, .error: return .settled
+            }
+        }
+    }
+
+    private var preview: String? {
+        let line: String? =
+            switch parsed {
+            case .command(let command): command
+            case .fileChange(let path, _): path
+            case .plain(let text): text
+            }
+        guard let first = line?.split(separator: "\n", omittingEmptySubsequences: true).first
+        else { return nil }
+        let trimmed = first.trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty ? nil : trimmed
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -146,9 +202,21 @@ private struct ToolEventRow: View {
             } label: {
                 HStack(spacing: 8) {
                     statusIcon
+                    Image(systemName: kind.symbolName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 14)
                     Text(name)
-                        .font(.callout)
-                    Spacer()
+                        .font(.callout.weight(.medium))
+                        .layoutPriority(1)
+                    if let preview {
+                        Text(preview)
+                            .font(.system(.caption, design: kind == .command ? .monospaced : .default))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    Spacer(minLength: 8)
                     if !detail.isEmpty {
                         Image(systemName: "chevron.right")
                             .font(.caption2)
@@ -164,44 +232,218 @@ private struct ToolEventRow: View {
             .disabled(detail.isEmpty)
 
             if isExpanded && !detail.isEmpty {
-                Text(detail)
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                    .padding(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+                expandedBody
                     .transition(Motion.unfold)
             }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
-        .animation(Motion.ambient, value: status)
+        .animation(Motion.ambient, value: displayState)
+    }
+
+    @ViewBuilder
+    private var expandedBody: some View {
+        switch parsed {
+        case .command(let command):
+            monospacedBody(command, foreground: .primary)
+        case .fileChange(let path, let edits):
+            FileChangeDiffView(path: path, edits: edits)
+        case .plain(let text):
+            monospacedBody(text, foreground: .secondary)
+        }
+    }
+
+    private func monospacedBody(_ text: String, foreground: Color) -> some View {
+        Text(text)
+            .font(.system(.caption, design: .monospaced))
+            .foregroundStyle(foreground)
+            .textSelection(.enabled)
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
     }
 
     /// One `Image` whose name/tint swap rides `.contentTransition` — the
     /// running → done flip morphs instead of hard-swapping glyphs.
     private var statusIcon: some View {
         Image(systemName: iconName)
-            .symbolEffect(.pulse, isActive: status == .running)
+            .symbolEffect(.pulse, isActive: displayState == .running)
             .foregroundStyle(iconTint)
             .contentTransition(.symbolEffect(.replace))
     }
 
     private var iconName: String {
-        switch status {
+        switch displayState {
         case .running: "circle.dotted"
         case .succeeded: "checkmark.circle.fill"
         case .failed: "xmark.circle.fill"
+        case .settled: "checkmark.circle"
         }
     }
 
     private var iconTint: Color {
-        switch status {
+        switch displayState {
         case .running: .secondary
         case .succeeded: .green
         case .failed: .red
+        case .settled: .secondary
+        }
+    }
+}
+
+/// Detail strings are immutable per lifecycle state, so parse results are
+/// cached across row rebuilds. Bounded: cleared wholesale past 512 entries
+/// (a timeline swap's worth) rather than tracking LRU order.
+@MainActor
+private enum ToolDetailParseCache {
+    private static var storage: [String: ParsedToolDetail] = [:]
+
+    static func parsed(detail: String, itemType: String?) -> ParsedToolDetail {
+        let key = (itemType ?? "") + "\u{1F}" + detail
+        if let hit = storage[key] { return hit }
+        let value = ParsedToolDetail.parse(detail: detail, itemType: itemType)
+        if storage.count >= 512 { storage.removeAll(keepingCapacity: true) }
+        storage[key] = value
+        return value
+    }
+}
+
+extension ToolEventKind {
+    fileprivate var symbolName: String {
+        switch self {
+        case .command: "terminal"
+        case .fileChange: "square.and.pencil"
+        case .fileRead: "eye"
+        case .webSearch: "globe"
+        case .mcpCall: "wrench.adjustable"
+        case .subagent: "person.2"
+        case .imageView: "photo"
+        case .other: "hammer"
+        }
+    }
+
+    /// Round-trip back to the wire item type for `ParsedToolDetail`'s hint.
+    fileprivate var wireItemType: String? {
+        switch self {
+        case .command: "command_execution"
+        case .fileChange: "file_change"
+        case .fileRead: "file_read"
+        case .webSearch: "web_search"
+        case .mcpCall: "mcp_tool_call"
+        case .subagent: "collab_agent_tool_call"
+        case .imageView: "image_view"
+        case .other: nil
+        }
+    }
+}
+
+/// Inline diff body for a file-change tool row: file path header with +/-
+/// counts, then the edit's old lines (red) and new lines (green). Long diffs
+/// are capped — the Diff inspector remains the full view.
+private struct FileChangeDiffView: View {
+    let path: String
+    let edits: [ToolFileEdit]
+
+    private static let maxLines = 60
+
+    private struct Line: Identifiable {
+        enum Kind { case removed, added, separator }
+        let id: Int
+        let kind: Kind
+        let text: String
+    }
+
+    private var lines: [Line] {
+        var result: [Line] = []
+        var id = 0
+        func push(_ kind: Line.Kind, _ text: String) {
+            result.append(Line(id: id, kind: kind, text: text))
+            id += 1
+        }
+        for (index, edit) in edits.enumerated() {
+            if index > 0 { push(.separator, "···") }
+            if !edit.oldText.isEmpty {
+                for line in edit.oldText.split(separator: "\n", omittingEmptySubsequences: false) {
+                    push(.removed, String(line))
+                }
+            }
+            if !edit.newText.isEmpty {
+                for line in edit.newText.split(separator: "\n", omittingEmptySubsequences: false) {
+                    push(.added, String(line))
+                }
+            }
+        }
+        return result
+    }
+
+    var body: some View {
+        let all = lines
+        let visible = Array(all.prefix(Self.maxLines))
+        let hidden = all.count - visible.count
+        let additions = all.filter { $0.kind == .added }.count
+        let deletions = all.filter { $0.kind == .removed }.count
+
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Text(path)
+                    .font(.system(.caption, design: .monospaced))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 4)
+                if additions > 0 {
+                    Text("+\(additions)")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.green)
+                }
+                if deletions > 0 {
+                    Text("-\(deletions)")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.red)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(Color.secondary.opacity(0.12))
+
+            ForEach(visible) { line in
+                diffLine(line)
+            }
+
+            if hidden > 0 {
+                Text("… \(hidden) more line\(hidden == 1 ? "" : "s")")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .textBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.separator, lineWidth: 1))
+    }
+
+    @ViewBuilder
+    private func diffLine(_ line: Line) -> some View {
+        switch line.kind {
+        case .separator:
+            Text(line.text)
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.tertiary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 1)
+        case .removed, .added:
+            Text((line.kind == .added ? "+ " : "- ") + line.text)
+                .font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    line.kind == .added ? Color.green.opacity(0.12) : Color.red.opacity(0.12))
         }
     }
 }

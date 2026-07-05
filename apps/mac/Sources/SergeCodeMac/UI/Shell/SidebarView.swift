@@ -61,7 +61,7 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
-        .navigationTitle("SergeCode")
+        .navigationTitle("SurgeCode")
         // New/archived/deleted threads and project changes slide the list
         // smoothly rather than snapping the rows into new positions.
         .animation(Motion.settle, value: model.threads.map(\.id))

@@ -23,7 +23,7 @@ struct EmptyStateView: View {
                 Image(systemName: "mountain.2.fill")
                     .font(.system(size: 44))
                     .foregroundStyle(.tint)
-                Text("SergeCode")
+                Text("SurgeCode")
                     .font(.largeTitle.bold())
                 Text("Select a session, or start a new one.")
                     .foregroundStyle(.secondary)

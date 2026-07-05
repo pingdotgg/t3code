@@ -104,26 +104,207 @@ struct AssistantMarkdownView: View {
     }
 }
 
+// MARK: - Prose blocks
+
+// SwiftUI `Text` renders inline markdown attributes but ignores
+// `PresentationIntent` entirely — feeding a whole prose section through
+// `AttributedString(markdown:, .full)` collapses paragraphs, headings and
+// lists into one run-on blob. So prose is split into block-level pieces here
+// and each block is laid out as its own view, with only the inline syntax
+// (bold/italic/code/links) handed to AttributedString.
+
+enum MarkdownBlock: Equatable {
+    case paragraph(String)
+    case heading(level: Int, text: String)
+    case bulletItem(indent: Int, text: String)
+    case orderedItem(number: String, text: String)
+    case quote(String)
+    case rule
+}
+
+/// Splits one prose segment (no code fences) into block-level pieces.
+func parseMarkdownBlocks(_ prose: String) -> [MarkdownBlock] {
+    var blocks: [MarkdownBlock] = []
+    var paragraphLines: [String] = []
+
+    func flushParagraph() {
+        guard !paragraphLines.isEmpty else { return }
+        blocks.append(.paragraph(paragraphLines.joined(separator: "\n")))
+        paragraphLines.removeAll()
+    }
+
+    for rawLine in prose.split(separator: "\n", omittingEmptySubsequences: false) {
+        let line = String(rawLine)
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+        if trimmed.isEmpty {
+            flushParagraph()
+            continue
+        }
+        if let heading = headingBlock(trimmed) {
+            flushParagraph()
+            blocks.append(heading)
+            continue
+        }
+        if isRule(trimmed) {
+            flushParagraph()
+            blocks.append(.rule)
+            continue
+        }
+        if let item = bulletBlock(line: line, trimmed: trimmed) {
+            flushParagraph()
+            blocks.append(item)
+            continue
+        }
+        if let item = orderedBlock(trimmed) {
+            flushParagraph()
+            blocks.append(item)
+            continue
+        }
+        if trimmed.hasPrefix(">") {
+            flushParagraph()
+            let text = trimmed.dropFirst().trimmingCharacters(in: .whitespaces)
+            // Merge consecutive quote lines into one block.
+            if case .quote(let existing)? = blocks.last {
+                blocks[blocks.count - 1] = .quote(existing + "\n" + text)
+            } else {
+                blocks.append(.quote(text))
+            }
+            continue
+        }
+        // Continuation of a list item (indented follow-up line) folds into it.
+        if line.first?.isWhitespace == true {
+            switch blocks.last {
+            case .bulletItem(let indent, let text)? where paragraphLines.isEmpty:
+                blocks[blocks.count - 1] = .bulletItem(indent: indent, text: text + "\n" + trimmed)
+                continue
+            case .orderedItem(let number, let text)? where paragraphLines.isEmpty:
+                blocks[blocks.count - 1] = .orderedItem(number: number, text: text + "\n" + trimmed)
+                continue
+            default:
+                break
+            }
+        }
+        paragraphLines.append(trimmed)
+    }
+    flushParagraph()
+    return blocks
+}
+
+private func headingBlock(_ trimmed: String) -> MarkdownBlock? {
+    guard trimmed.hasPrefix("#") else { return nil }
+    let hashes = trimmed.prefix(while: { $0 == "#" })
+    guard hashes.count <= 6 else { return nil }
+    let rest = trimmed.dropFirst(hashes.count)
+    guard rest.first == " " else { return nil }
+    return .heading(level: hashes.count, text: rest.trimmingCharacters(in: .whitespaces))
+}
+
+private func isRule(_ trimmed: String) -> Bool {
+    guard trimmed.count >= 3 else { return false }
+    return trimmed.allSatisfy { $0 == "-" } || trimmed.allSatisfy { $0 == "*" }
+        || trimmed.allSatisfy { $0 == "_" }
+}
+
+private func bulletBlock(line: String, trimmed: String) -> MarkdownBlock? {
+    for marker in ["- ", "* ", "+ "] where trimmed.hasPrefix(marker) {
+        let indent = line.prefix(while: \.isWhitespace).count >= 2 ? 1 : 0
+        return .bulletItem(
+            indent: indent, text: String(trimmed.dropFirst(marker.count)))
+    }
+    return nil
+}
+
+private func orderedBlock(_ trimmed: String) -> MarkdownBlock? {
+    let digits = trimmed.prefix(while: \.isNumber)
+    guard !digits.isEmpty, digits.count <= 3 else { return nil }
+    let rest = trimmed.dropFirst(digits.count)
+    guard rest.hasPrefix(". ") || rest.hasPrefix(") ") else { return nil }
+    return .orderedItem(number: String(digits), text: String(rest.dropFirst(2)))
+}
+
+/// Inline-only markdown (bold/italic/code/links), newlines preserved.
+private func inlineAttributed(_ text: String) -> AttributedString {
+    let options = AttributedString.MarkdownParsingOptions(
+        allowsExtendedAttributes: true,
+        interpretedSyntax: .inlineOnlyPreservingWhitespace,
+        failurePolicy: .returnPartiallyParsedIfPossible
+    )
+    return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+}
+
 private struct MarkdownProseText: View {
-    private let raw: String
+    // Parsed once per view value, not per body evaluation — body re-runs on
+    // every timeline mutation while this view's `raw` is unchanged.
+    private let blocks: [MarkdownBlock]
 
     init(_ raw: String) {
-        self.raw = raw
+        self.blocks = parseMarkdownBlocks(raw)
     }
 
     var body: some View {
-        Text(attributed)
-            .textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(alignment: .leading, spacing: 7) {
+            // Position-keyed ids: content-hash ids collide on repeated blocks
+            // (two rules, duplicate bullets), and positions are append-stable
+            // while a message streams.
+            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+                blockView(block)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var attributed: AttributedString {
-        let options = AttributedString.MarkdownParsingOptions(
-            allowsExtendedAttributes: true,
-            interpretedSyntax: .full,
-            failurePolicy: .returnPartiallyParsedIfPossible
-        )
-        return (try? AttributedString(markdown: raw, options: options)) ?? AttributedString(raw)
+    @ViewBuilder
+    private func blockView(_ block: MarkdownBlock) -> some View {
+        switch block {
+        case .paragraph(let text):
+            Text(inlineAttributed(text))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        case .heading(let level, let text):
+            Text(inlineAttributed(text))
+                .font(headingFont(level))
+                .textSelection(.enabled)
+                .padding(.top, 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        case .bulletItem(let indent, let text):
+            listRow(marker: "•", text: text, indent: indent)
+        case .orderedItem(let number, let text):
+            listRow(marker: "\(number).", text: text, indent: 0)
+        case .quote(let text):
+            HStack(alignment: .top, spacing: 8) {
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(.quaternary)
+                    .frame(width: 3)
+                Text(inlineAttributed(text))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        case .rule:
+            Divider()
+        }
+    }
+
+    private func listRow(marker: String, text: String, indent: Int) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 7) {
+            Text(marker)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+            Text(inlineAttributed(text))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.leading, CGFloat(indent) * 16 + 2)
+    }
+
+    private func headingFont(_ level: Int) -> Font {
+        switch level {
+        case 1: .title2.weight(.bold)
+        case 2: .title3.weight(.semibold)
+        case 3: .headline
+        default: .subheadline.weight(.semibold)
+        }
     }
 }
 

@@ -32,6 +32,9 @@ struct SergeCodeApp: App {
                 .onAppear {
                     model.start()
                     appDelegate.backend = SergeCodeApp.backend
+                    #if DEBUG
+                        UIProbe.runIfRequested(model: model)
+                    #endif
                 }
                 .task { await scenery.start() }
         }

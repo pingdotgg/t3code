@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // Diff panel: file list + unified diff for the selected file. Content layers
@@ -34,11 +35,14 @@ public struct DiffPanelView: View {
                 emptyState
                     .transition(Motion.paneSwap)
             } else {
-                HSplitView {
+                // Vertical split: the inspector column is 300–480pt wide, so
+                // a side-by-side HSplitView (220pt list + 360pt detail
+                // minimums) could never fit and clipped/overflowed instead.
+                VSplitView {
                     fileList
-                        .frame(minWidth: 220, idealWidth: 260, maxWidth: 340, maxHeight: .infinity)
+                        .frame(minHeight: 96, idealHeight: 160, maxHeight: 320)
                     diffDetail
-                        .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
+                        .frame(maxWidth: .infinity, minHeight: 160, maxHeight: .infinity)
                 }
                 .transition(Motion.paneSwap)
             }
@@ -151,24 +155,22 @@ public struct DiffPanelView: View {
     @ViewBuilder
     private var diffDetail: some View {
         if let file = selectedFile {
-            GeometryReader { proxy in
-                // One two-axis scroll surface: nested vertical/horizontal
-                // ScrollViews pinned the horizontal scroller to the very
-                // bottom of the diff and fought trackpad panning, making
-                // long lines effectively unreachable.
-                ScrollView([.horizontal, .vertical]) {
-                    VStack(alignment: .leading, spacing: 0) {
-                        ForEach(file.hunks) { hunk in
-                            hunkHeaderView(hunk.header)
-                            ForEach(hunk.lines) { line in
-                                DiffLineRowView(line: line)
-                            }
+            // NSScrollView, not SwiftUI's two-axis ScrollView: the SwiftUI
+            // one doesn't reliably engage horizontal panning on macOS (and a
+            // scroll wheel can never reach it), so long lines were
+            // unreachable. AppKit gives native both-axis trackpad panning
+            // plus a real horizontal scroller.
+            PanScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(file.hunks) { hunk in
+                        hunkHeaderView(hunk.header)
+                        ForEach(hunk.lines) { line in
+                            DiffLineRowView(line: line)
                         }
                     }
-                    .frame(minWidth: proxy.size.width, alignment: .leading)
                 }
-                .background(.background)
             }
+            .background(.background)
             // Identity per file so picking another file cross-fades the
             // detail pane.
             .id(file.path)
@@ -216,6 +218,9 @@ private struct DiffLineRowView: View {
             Spacer(minLength: 12)
         }
         .padding(.vertical, 1)
+        // Stretch to the widest row so add/remove stripes span the full
+        // scrollable width instead of stopping at each line's own text.
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(backgroundColor)
     }
 

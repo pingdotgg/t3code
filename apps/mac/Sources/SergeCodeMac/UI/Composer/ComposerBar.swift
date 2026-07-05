@@ -35,6 +35,17 @@ public struct ComposerBar: View {
         (!trimmedDraft.isEmpty || !attachments.isEmpty) && model.connection == .ready
     }
 
+    private var isThreadRunning: Bool {
+        model.selectedThread?.status == .running
+    }
+
+    /// The trailing button is one smart control: a stop button while the
+    /// agent runs, a send button the moment there's something to send, and
+    /// a grayed-out send button otherwise.
+    private var showsStop: Bool {
+        isThreadRunning && trimmedDraft.isEmpty && attachments.isEmpty
+    }
+
     /// Provider slash commands + mode built-ins, filtered by the `/token`
     /// the draft currently starts with (nil when the draft isn't one).
     private var slashMatches: [SlashCommandItem]? {
@@ -111,9 +122,13 @@ public struct ComposerBar: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .overlay(alignment: .topLeading) {
                             if draft.isEmpty {
+                                // Matches NSTextView's text origin (no top
+                                // inset, 5pt line-fragment padding) so the
+                                // placeholder sits exactly where typed text
+                                // appears.
                                 Text("Message…  (@ to mention files, / for commands)")
+                                    .font(.body)
                                     .foregroundStyle(.tertiary)
-                                    .padding(.top, 8)
                                     .padding(.leading, 5)
                                     .allowsHitTesting(false)
                                     .transition(.opacity)
@@ -144,18 +159,42 @@ public struct ComposerBar: View {
                             return .handled
                         }
 
+                    // While a draft claims the smart button for sending, stop
+                    // stays reachable as its own compact control — a running
+                    // turn must always be cancellable without discarding the
+                    // draft.
+                    if isThreadRunning && !showsStop {
+                        Button {
+                            Task { await model.cancelCurrentTurn() }
+                        } label: {
+                            Image(systemName: "stop.fill")
+                        }
+                        .buttonStyle(.glass)
+                        .tint(.red)
+                        .keyboardShortcut(".", modifiers: .command)
+                        .help("Stop the current turn")
+                        .transition(Motion.materialize)
+                    }
+
                     Button {
-                        send()
+                        if showsStop {
+                            Task { await model.cancelCurrentTurn() }
+                        } else {
+                            send()
+                        }
                     } label: {
-                        Image(systemName: "paperplane.fill")
-                            .scaleEffect(canSend ? 1.0 : 0.9)
-                            .opacity(canSend ? 1.0 : 0.55)
+                        Image(systemName: showsStop ? "stop.fill" : "paperplane.fill")
+                            .contentTransition(.symbolEffect(.replace))
+                            .scaleEffect(showsStop || canSend ? 1.0 : 0.9)
+                            .opacity(showsStop || canSend ? 1.0 : 0.55)
                     }
                     .buttonStyle(.glass)
-                    .tint(canSend ? Color.accentColor : nil)
-                    .disabled(!canSend)
+                    .tint(showsStop ? .red : (canSend ? Color.accentColor : nil))
+                    .disabled(!showsStop && !canSend)
                     .keyboardShortcut(.return, modifiers: .command)
+                    .help(showsStop ? "Stop the current turn" : "Send message")
                     .animation(Motion.snap, value: canSend)
+                    .animation(Motion.snap, value: showsStop)
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
@@ -169,6 +208,7 @@ public struct ComposerBar: View {
         .animation(Motion.enter, value: mentionResults.map(\.id))
         .animation(Motion.enter, value: attachments.map(\.id))
         .animation(Motion.enter, value: attachmentError)
+        .animation(Motion.snap, value: isThreadRunning)
         .fileImporter(
             isPresented: $showFileImporter, allowedContentTypes: [.image],
             allowsMultipleSelection: true
