@@ -217,6 +217,7 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
   const foregroundColor = useThemeColor("--color-foreground");
   const mutedColor = useThemeColor("--color-foreground-muted");
   const pressedBackgroundColor = useThemeColor("--color-subtle");
+  const scenePhoto = useSceneryPhoto(pendingTaskSceneSeed(props.pendingTask));
 
   const { pendingTask, onSelectPendingTask, onDeletePendingTask } = props;
   const timestamp = relativeTime(pendingTask.message.createdAt);
@@ -287,7 +288,7 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
         >
           <SceneryImage
             fallbackSeed={pendingTaskSceneSeed(pendingTask)}
-            photo={null}
+            photo={scenePhoto}
             style={{ width: 36, height: 36, borderRadius: 10 }}
             variant="thumb"
           />
@@ -336,7 +337,7 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
       <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
         <SceneryImage
           fallbackSeed={pendingTaskSceneSeed(pendingTask)}
-          photo={null}
+          photo={scenePhoto}
           style={{ width: 36, height: 36, borderRadius: 10 }}
           variant="thumb"
         />

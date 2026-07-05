@@ -36,6 +36,8 @@ import { getComposerDraftSnapshot } from "../../state/use-composer-drafts";
 import { useProjects } from "../../state/entities";
 import { enqueueThreadOutboxMessage, removeThreadOutboxMessage } from "../../state/thread-outbox";
 import { useRemoteConnectionStatus } from "../../state/use-remote-environment-registry";
+import { scopedThreadKey } from "../../lib/scopedEntities";
+import { appSceneryStore } from "../scenery/scenery-store";
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
 import { useCreateProjectThread } from "./use-project-actions";
 
@@ -503,6 +505,14 @@ export function NewTaskDraftScreen(props: {
       flow.setSubmitting(true);
       try {
         await enqueueThreadOutboxMessage(message);
+        // Commit the reserved scene so the pending row's wash and the
+        // eventual thread's photo agree.
+        if (message.creation?.scenePhotoId) {
+          appSceneryStore.assign(
+            message.creation.scenePhotoId,
+            scopedThreadKey(message.environmentId, message.threadId),
+          );
+        }
       } catch (error) {
         Alert.alert(
           "Could not queue task",
@@ -542,6 +552,16 @@ export function NewTaskDraftScreen(props: {
               messageId: editingPendingTask.messageId,
               createdAt: editingPendingTask.createdAt,
             },
+            // Keep the scene the queued task reserved; a task queued before
+            // scenery existed just mints a fresh one (undefined).
+            ...(editingPendingTask.creation?.sceneTitle
+              ? {
+                  scene: {
+                    title: editingPendingTask.creation.sceneTitle,
+                    photoId: editingPendingTask.creation.scenePhotoId ?? null,
+                  },
+                }
+              : {}),
           }
         : {}),
     });
