@@ -12,6 +12,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -37,6 +38,12 @@ import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+
+// The turn-completion status refresh runs on the reactor's serial worker, so
+// it must never stall the queue: the fetch-free git reads are fast, but the
+// PR lookup can hit a hosting provider whose transport has no timeout of its
+// own (e.g. Bitbucket).
+const TURN_COMPLETION_STATUS_REFRESH_TIMEOUT = Duration.seconds(10);
 
 type ReactorInput =
   | {
@@ -537,6 +544,7 @@ const make = Effect.gen(function* () {
       }
 
       yield* vcsStatusBroadcaster.refreshStatusWithoutFetch(sessionRuntime.value.cwd).pipe(
+        Effect.timeout(TURN_COMPLETION_STATUS_REFRESH_TIMEOUT),
         Effect.catch((error) =>
           Effect.logWarning("failed to refresh git status after turn completion", {
             threadId: event.threadId,
