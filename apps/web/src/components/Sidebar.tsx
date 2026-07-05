@@ -2,6 +2,7 @@ import {
   ArchiveIcon,
   ArrowLeftIcon,
   ArrowUpDownIcon,
+  BotIcon,
   BriefcaseBusinessIcon,
   ChartNoAxesCombinedIcon,
   ChevronRightIcon,
@@ -13,9 +14,10 @@ import {
   Globe2Icon,
   HomeIcon,
   ListTodoIcon,
-  MessageSquareIcon,
+  MailIcon,
   PinIcon,
   SearchIcon,
+  SlackIcon,
   SquarePenIcon,
   TerminalIcon,
   TimerIcon,
@@ -264,15 +266,36 @@ const SIDEBAR_ICON_ACTION_BUTTON_CLASS =
 const APP_NAV_ITEMS: readonly {
   readonly title: string;
   readonly icon: LucideIcon;
-  readonly to?: "/" | "/chat" | "/issues" | "/projects" | "/clients" | "/tracker" | "/analytics";
+  readonly to?:
+    | "/"
+    | "/email"
+    | "/chat"
+    | "/slack"
+    | "/issues"
+    | "/projects"
+    | "/clients"
+    | "/tracker"
+    | "/analytics";
   readonly isActive?: (pathname: string) => boolean;
 }[] = [
   { title: "Home", icon: HomeIcon, to: "/", isActive: (pathname) => pathname === "/" },
   {
+    title: "Email",
+    icon: MailIcon,
+    to: "/email",
+    isActive: (pathname) => pathname === "/email",
+  },
+  {
     title: "Chat",
-    icon: MessageSquareIcon,
+    icon: BotIcon,
     to: "/chat",
     isActive: isChatSurfacePathname,
+  },
+  {
+    title: "Slack",
+    icon: SlackIcon,
+    to: "/slack",
+    isActive: (pathname) => pathname === "/slack",
   },
   {
     title: "Issues",

@@ -21,13 +21,22 @@ import {
   CheckCircle2Icon,
   ChevronDownIcon,
   CloudIcon,
+  FileIcon,
+  FileTextIcon,
   FolderIcon,
+  ListChecksIcon,
   MailIcon,
+  MessageCircleIcon,
   MicIcon,
+  PaperclipIcon,
   PlusIcon,
+  PresentationIcon,
   SearchIcon,
   SparklesIcon,
+  TableIcon,
+  TargetIcon,
   XIcon,
+  ZapIcon,
 } from "lucide-react";
 
 import {
@@ -39,6 +48,7 @@ import { BranchToolbarBranchSelector } from "./BranchToolbarBranchSelector";
 import { BranchToolbarEnvModeSelector } from "./BranchToolbarEnvModeSelector";
 import type { EnvMode } from "./BranchToolbar.logic";
 import { ComposerFooterModeControls } from "./chat/ComposerFooterModeControls";
+import { PanelLayoutControls } from "./chat/PanelLayoutControls";
 import { usePrimarySettings } from "../hooks/useSettings";
 import { newDraftId, newThreadId } from "../lib/utils";
 import {
@@ -119,6 +129,70 @@ const fallbackEffortOptions = [
   { label: "Low", value: "low" },
   { label: "Medium", value: "medium" },
   { label: "High", value: "high" },
+] as const;
+
+const pendingComposerAddItems = [
+  {
+    section: "Add",
+    items: [
+      {
+        title: "Files and folders",
+        icon: PaperclipIcon,
+      },
+      {
+        title: "Attach Helium",
+        icon: SparklesIcon,
+      },
+      {
+        title: "Goal",
+        description: "Set a goal that Codex will keep working towards",
+        icon: TargetIcon,
+        muted: true,
+      },
+      {
+        title: "Plan mode",
+        description: "Turn plan mode on",
+        icon: ListChecksIcon,
+        muted: true,
+      },
+    ],
+  },
+  {
+    section: "Plugins",
+    items: [
+      {
+        title: "Documents",
+        description: "Create and edit document artifacts",
+        icon: FileTextIcon,
+        iconClassName: "text-blue-500",
+      },
+      {
+        title: "PDF",
+        description: "Read, create, and verify PDF files",
+        icon: FileIcon,
+        iconClassName: "text-red-500",
+      },
+      {
+        title: "Spreadsheets",
+        description: "Create and edit spreadsheet files",
+        icon: TableIcon,
+        iconClassName: "text-emerald-600",
+      },
+      {
+        title: "Presentations",
+        description: "Create and edit presentations",
+        icon: PresentationIcon,
+        iconClassName: "text-amber-500",
+      },
+      {
+        title: "Template Creator",
+        description: "Create or update personal artifact templates",
+        icon: SparklesIcon,
+        iconClassName: "text-pink-400",
+        muted: true,
+      },
+    ],
+  },
 ] as const;
 
 interface PendingDraftIds {
@@ -202,10 +276,12 @@ function PendingComposerModelControls() {
           <span className="font-medium text-foreground/80">
             {formatFallbackModelLabel(fallbackModel)}
           </span>
+          {fallbackFastMode ? (
+            <ZapIcon aria-hidden="true" className="size-3 shrink-0 text-amber-500" />
+          ) : null}
           <span>
             {fallbackEffortOptions.find((option) => option.value === fallbackEffort)?.label}
           </span>
-          {fallbackFastMode ? <span>Fast</span> : null}
           <ChevronDownIcon className="size-3.5" />
         </MenuTrigger>
         <MenuPopup align="end" className="w-[31rem] overflow-hidden p-0">
@@ -424,10 +500,65 @@ function PendingComposerAccessControl() {
   );
 }
 
+function PendingComposerAddContextMenu() {
+  return (
+    <Menu>
+      <MenuTrigger
+        render={
+          <button
+            type="button"
+            className="flex size-7 cursor-pointer items-center justify-center rounded-md text-muted-foreground/65 transition-colors hover:bg-accent hover:text-foreground data-[popup-open]:bg-accent data-[popup-open]:text-foreground"
+            aria-label="Add context"
+          />
+        }
+      >
+        <PlusIcon className="size-4" />
+      </MenuTrigger>
+      <MenuPopup align="start" className="w-[42rem] max-w-[calc(100vw-2rem)] rounded-[18px] p-0">
+        {pendingComposerAddItems.map((section, sectionIndex) => (
+          <MenuGroup key={section.section}>
+            {sectionIndex > 0 ? <MenuDivider className="my-1" /> : null}
+            <MenuGroupLabel className="px-3 pt-2 pb-1 font-normal text-muted-foreground/70 text-xs">
+              {section.section}
+            </MenuGroupLabel>
+            {section.items.map((item) => {
+              const Icon = item.icon;
+              const iconClassName = "iconClassName" in item ? item.iconClassName : undefined;
+              const description = "description" in item ? item.description : undefined;
+              const muted = "muted" in item && item.muted;
+
+              return (
+                <MenuItem
+                  key={item.title}
+                  className={[
+                    "grid min-h-8 cursor-pointer grid-cols-[1rem_minmax(0,max-content)_1fr] items-center gap-2 rounded-lg px-3 py-1.5 text-sm",
+                    muted ? "text-muted-foreground/55" : "",
+                  ].join(" ")}
+                >
+                  <Icon className={["size-4", iconClassName ?? ""].join(" ")} />
+                  <span className={muted ? "" : "text-foreground"}>{item.title}</span>
+                  {description ? (
+                    <span className="min-w-0 truncate text-muted-foreground/55 text-sm">
+                      {description}
+                    </span>
+                  ) : null}
+                </MenuItem>
+              );
+            })}
+          </MenuGroup>
+        ))}
+      </MenuPopup>
+    </Menu>
+  );
+}
+
 function PendingComposerWorkspaceControls() {
   const projects = useProjects();
   const openAddProject = useOpenAddProjectCommandPalette();
   const [activeProjectKey, setActiveProjectKey] = useState<string | null>(null);
+  const [workspaceMode, setWorkspaceMode] = useState<"choose-project" | "just-talk">(
+    "choose-project",
+  );
   const [projectSearchQuery, setProjectSearchQuery] = useState("");
   const [envMode, setEnvMode] = useState<EnvMode>("local");
   const [startFromOrigin, setStartFromOrigin] = useState(false);
@@ -473,6 +604,7 @@ function PendingComposerWorkspaceControls() {
       !projectOptions.some((option) => scopedProjectKey(option.ref) === activeProjectKey)
     ) {
       setActiveProjectKey(null);
+      setWorkspaceMode("choose-project");
     }
   }, [activeProjectKey, projectOptions]);
 
@@ -511,7 +643,10 @@ function PendingComposerWorkspaceControls() {
               type="button"
               className="relative flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-full outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
               aria-label="Clear selected project"
-              onClick={() => setActiveProjectKey(null)}
+              onClick={() => {
+                setActiveProjectKey(null);
+                setWorkspaceMode("choose-project");
+              }}
             >
               <ProjectFavicon
                 environmentId={activeProject.environmentId}
@@ -542,6 +677,22 @@ function PendingComposerWorkspaceControls() {
             }}
           />
         </>
+      ) : workspaceMode === "just-talk" ? (
+        <span className="group/project-clear flex h-7 min-w-0 cursor-pointer items-center gap-1.5 rounded-md px-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
+          <button
+            type="button"
+            className="relative flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-full outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label="Clear Just Talk"
+            onClick={() => {
+              setActiveProjectKey(null);
+              setWorkspaceMode("choose-project");
+            }}
+          >
+            <MessageCircleIcon className="size-4 group-hover/project-clear:opacity-0 group-focus-visible/project-clear:opacity-0" />
+            <XIcon className="pointer-events-none absolute size-3.5 opacity-0 transition-opacity group-hover/project-clear:opacity-100 group-focus-visible/project-clear:opacity-100" />
+          </button>
+          <span className="truncate">Just Talk</span>
+        </span>
       ) : (
         <Menu>
           <MenuTrigger
@@ -569,6 +720,18 @@ function PendingComposerWorkspaceControls() {
               />
             </div>
             <div className="py-1">
+              <MenuItem
+                className="cursor-pointer"
+                onClick={() => {
+                  setActiveProjectKey(null);
+                  setWorkspaceMode("just-talk");
+                  setProjectSearchQuery("");
+                }}
+              >
+                <MessageCircleIcon className="size-4" />
+                <span className="truncate">Just Talk</span>
+              </MenuItem>
+              <MenuDivider />
               {filteredProjectOptions.length > 0 ? (
                 filteredProjectOptions.map(({ project, ref }) => (
                   <MenuItem
@@ -576,6 +739,7 @@ function PendingComposerWorkspaceControls() {
                     className="cursor-pointer"
                     onClick={() => {
                       setActiveProjectKey(scopedProjectKey(ref));
+                      setWorkspaceMode("choose-project");
                       setProjectSearchQuery("");
                     }}
                   >
@@ -615,10 +779,28 @@ function PendingComposerWorkspaceControls() {
   );
 }
 
+function NoActiveThreadPanelControls() {
+  return (
+    <div className="workspace-titlebar-controls z-50 gap-1 [-webkit-app-region:no-drag]">
+      <PanelLayoutControls
+        terminalAvailable={false}
+        terminalOpen={false}
+        terminalShortcutLabel={null}
+        rightPanelAvailable={false}
+        rightPanelOpen={false}
+        rightPanelShortcutLabel={null}
+        onToggleTerminal={() => {}}
+        onToggleRightPanel={() => {}}
+      />
+    </div>
+  );
+}
+
 export function NoActiveThreadState() {
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
+        <NoActiveThreadPanelControls />
         <Empty className="flex-1 px-6">
           <div className="w-full max-w-[46rem]">
             <EmptyHeader className="max-w-none">
@@ -636,13 +818,7 @@ export function NoActiveThreadState() {
                   Do anything
                 </div>
                 <div className="flex items-center gap-2 px-3 pb-2.5">
-                  <button
-                    type="button"
-                    className="flex size-7 cursor-pointer items-center justify-center rounded-md text-muted-foreground/65 transition-colors hover:bg-accent hover:text-foreground"
-                    aria-label="Add context"
-                  >
-                    <PlusIcon className="size-4" />
-                  </button>
+                  <PendingComposerAddContextMenu />
 
                   <div className="flex items-center text-[#f25c2b] text-sm">
                     <PendingComposerAccessControl />
@@ -670,7 +846,7 @@ export function NoActiveThreadState() {
                 </div>
               </div>
 
-              <div className="flex min-w-0 items-center gap-4 px-4 pt-3 text-sm text-muted-foreground">
+              <div className="flex min-w-0 items-center gap-4 px-4 pt-1.5 text-sm text-muted-foreground">
                 <PendingComposerWorkspaceControls />
               </div>
             </div>

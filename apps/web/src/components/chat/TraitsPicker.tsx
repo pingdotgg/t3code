@@ -16,7 +16,7 @@ import {
 } from "@pathwayos/shared/model";
 import { memo, useCallback, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon, ZapIcon } from "lucide-react";
 import { Button, buttonVariants } from "../ui/button";
 import {
   Menu,
@@ -382,16 +382,17 @@ export const TraitsPicker = memo(function TraitsPicker({
   }
 
   const triggerLabels: Array<string> = [];
+  let isFastModeEnabled = false;
   for (const descriptor of descriptors) {
+    if (descriptor.type === "boolean" && descriptor.id === "fastMode") {
+      isFastModeEnabled = descriptor.currentValue === true;
+      continue;
+    }
     const label =
       ultrathinkPromptControlled && descriptor.id === primarySelectDescriptor?.id
         ? "Ultrathink"
         : descriptor.type === "boolean"
-          ? descriptor.id === "fastMode"
-            ? descriptor.currentValue === true
-              ? "Fast"
-              : "Normal"
-            : `${descriptor.label} ${descriptor.currentValue === true ? "On" : "Off"}`
+          ? `${descriptor.label} ${descriptor.currentValue === true ? "On" : "Off"}`
           : getProviderOptionCurrentLabel(descriptor);
     if (typeof label === "string" && label.length > 0) {
       triggerLabels.push(label);
@@ -424,11 +425,17 @@ export const TraitsPicker = memo(function TraitsPicker({
       >
         {isCodexStyle ? (
           <span className="flex min-w-0 w-full items-center gap-2 overflow-hidden">
+            {isFastModeEnabled ? (
+              <ZapIcon aria-hidden="true" className="size-3 shrink-0 text-amber-500" />
+            ) : null}
             {triggerLabel}
             <ChevronDownIcon aria-hidden="true" className="size-3 shrink-0 opacity-60" />
           </span>
         ) : (
           <>
+            {isFastModeEnabled ? (
+              <ZapIcon aria-hidden="true" className="size-3 text-amber-500" />
+            ) : null}
             <span>{triggerLabel}</span>
             <ChevronDownIcon aria-hidden="true" className="size-3 opacity-60" />
           </>

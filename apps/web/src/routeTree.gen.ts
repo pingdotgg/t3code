@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as TrackerRouteImport } from './routes/tracker'
+import { Route as SlackRouteImport } from './routes/slack'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as RegisterRouteImport } from './routes/register'
 import { Route as ProjectsRouteImport } from './routes/projects'
@@ -17,6 +18,7 @@ import { Route as PairRouteImport } from './routes/pair'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as IssuesRouteImport } from './routes/issues'
 import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
+import { Route as EmailRouteImport } from './routes/email'
 import { Route as ClientsRouteImport } from './routes/clients'
 import { Route as ChatRouteImport } from './routes/chat'
 import { Route as AnalyticsRouteImport } from './routes/analytics'
@@ -37,6 +39,11 @@ import { Route as WorkspaceChatEnvironmentIdThreadIdRouteImport } from './routes
 const TrackerRoute = TrackerRouteImport.update({
   id: '/tracker',
   path: '/tracker',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SlackRoute = SlackRouteImport.update({
+  id: '/slack',
+  path: '/slack',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsRoute = SettingsRouteImport.update({
@@ -72,6 +79,11 @@ const IssuesRoute = IssuesRouteImport.update({
 const ForgotPasswordRoute = ForgotPasswordRouteImport.update({
   id: '/forgot-password',
   path: '/forgot-password',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EmailRoute = EmailRouteImport.update({
+  id: '/email',
+  path: '/email',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ClientsRoute = ClientsRouteImport.update({
@@ -162,6 +174,7 @@ export interface FileRoutesByFullPath {
   '/analytics': typeof AnalyticsRoute
   '/chat': typeof ChatRoute
   '/clients': typeof ClientsRoute
+  '/email': typeof EmailRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/issues': typeof IssuesRoute
   '/login': typeof LoginRoute
@@ -169,6 +182,7 @@ export interface FileRoutesByFullPath {
   '/projects': typeof ProjectsRoute
   '/register': typeof RegisterRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/slack': typeof SlackRoute
   '/tracker': typeof TrackerRoute
   '/session-tasks/reset-password': typeof SessionTasksResetPasswordRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -186,6 +200,7 @@ export interface FileRoutesByTo {
   '/analytics': typeof AnalyticsRoute
   '/chat': typeof ChatRoute
   '/clients': typeof ClientsRoute
+  '/email': typeof EmailRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/issues': typeof IssuesRoute
   '/login': typeof LoginRoute
@@ -193,6 +208,7 @@ export interface FileRoutesByTo {
   '/projects': typeof ProjectsRoute
   '/register': typeof RegisterRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/slack': typeof SlackRoute
   '/tracker': typeof TrackerRoute
   '/session-tasks/reset-password': typeof SessionTasksResetPasswordRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -213,6 +229,7 @@ export interface FileRoutesById {
   '/analytics': typeof AnalyticsRoute
   '/chat': typeof ChatRoute
   '/clients': typeof ClientsRoute
+  '/email': typeof EmailRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/issues': typeof IssuesRoute
   '/login': typeof LoginRoute
@@ -220,6 +237,7 @@ export interface FileRoutesById {
   '/projects': typeof ProjectsRoute
   '/register': typeof RegisterRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/slack': typeof SlackRoute
   '/tracker': typeof TrackerRoute
   '/session-tasks/reset-password': typeof SessionTasksResetPasswordRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -241,6 +259,7 @@ export interface FileRouteTypes {
     | '/analytics'
     | '/chat'
     | '/clients'
+    | '/email'
     | '/forgot-password'
     | '/issues'
     | '/login'
@@ -248,6 +267,7 @@ export interface FileRouteTypes {
     | '/projects'
     | '/register'
     | '/settings'
+    | '/slack'
     | '/tracker'
     | '/session-tasks/reset-password'
     | '/settings/archived'
@@ -265,6 +285,7 @@ export interface FileRouteTypes {
     | '/analytics'
     | '/chat'
     | '/clients'
+    | '/email'
     | '/forgot-password'
     | '/issues'
     | '/login'
@@ -272,6 +293,7 @@ export interface FileRouteTypes {
     | '/projects'
     | '/register'
     | '/settings'
+    | '/slack'
     | '/tracker'
     | '/session-tasks/reset-password'
     | '/settings/archived'
@@ -291,6 +313,7 @@ export interface FileRouteTypes {
     | '/analytics'
     | '/chat'
     | '/clients'
+    | '/email'
     | '/forgot-password'
     | '/issues'
     | '/login'
@@ -298,6 +321,7 @@ export interface FileRouteTypes {
     | '/projects'
     | '/register'
     | '/settings'
+    | '/slack'
     | '/tracker'
     | '/session-tasks/reset-password'
     | '/settings/archived'
@@ -318,6 +342,7 @@ export interface RootRouteChildren {
   AnalyticsRoute: typeof AnalyticsRoute
   ChatRoute: typeof ChatRoute
   ClientsRoute: typeof ClientsRoute
+  EmailRoute: typeof EmailRoute
   ForgotPasswordRoute: typeof ForgotPasswordRoute
   IssuesRoute: typeof IssuesRoute
   LoginRoute: typeof LoginRoute
@@ -325,6 +350,7 @@ export interface RootRouteChildren {
   ProjectsRoute: typeof ProjectsRoute
   RegisterRoute: typeof RegisterRoute
   SettingsRoute: typeof SettingsRouteWithChildren
+  SlackRoute: typeof SlackRoute
   TrackerRoute: typeof TrackerRoute
   SessionTasksResetPasswordRoute: typeof SessionTasksResetPasswordRoute
 }
@@ -336,6 +362,13 @@ declare module '@tanstack/react-router' {
       path: '/tracker'
       fullPath: '/tracker'
       preLoaderRoute: typeof TrackerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/slack': {
+      id: '/slack'
+      path: '/slack'
+      fullPath: '/slack'
+      preLoaderRoute: typeof SlackRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings': {
@@ -385,6 +418,13 @@ declare module '@tanstack/react-router' {
       path: '/forgot-password'
       fullPath: '/forgot-password'
       preLoaderRoute: typeof ForgotPasswordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/email': {
+      id: '/email'
+      path: '/email'
+      fullPath: '/email'
+      preLoaderRoute: typeof EmailRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/clients': {
@@ -550,6 +590,7 @@ const rootRouteChildren: RootRouteChildren = {
   AnalyticsRoute: AnalyticsRoute,
   ChatRoute: ChatRoute,
   ClientsRoute: ClientsRoute,
+  EmailRoute: EmailRoute,
   ForgotPasswordRoute: ForgotPasswordRoute,
   IssuesRoute: IssuesRoute,
   LoginRoute: LoginRoute,
@@ -557,6 +598,7 @@ const rootRouteChildren: RootRouteChildren = {
   ProjectsRoute: ProjectsRoute,
   RegisterRoute: RegisterRoute,
   SettingsRoute: SettingsRouteWithChildren,
+  SlackRoute: SlackRoute,
   TrackerRoute: TrackerRoute,
   SessionTasksResetPasswordRoute: SessionTasksResetPasswordRoute,
 }
