@@ -152,18 +152,20 @@ public struct DiffPanelView: View {
     private var diffDetail: some View {
         if let file = selectedFile {
             GeometryReader { proxy in
-                ScrollView(.vertical) {
-                    ScrollView(.horizontal) {
-                        VStack(alignment: .leading, spacing: 0) {
-                            ForEach(file.hunks) { hunk in
-                                hunkHeaderView(hunk.header)
-                                ForEach(hunk.lines) { line in
-                                    DiffLineRowView(line: line)
-                                }
+                // One two-axis scroll surface: nested vertical/horizontal
+                // ScrollViews pinned the horizontal scroller to the very
+                // bottom of the diff and fought trackpad panning, making
+                // long lines effectively unreachable.
+                ScrollView([.horizontal, .vertical]) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(file.hunks) { hunk in
+                            hunkHeaderView(hunk.header)
+                            ForEach(hunk.lines) { line in
+                                DiffLineRowView(line: line)
                             }
                         }
-                        .frame(minWidth: proxy.size.width, alignment: .leading)
                     }
+                    .frame(minWidth: proxy.size.width, alignment: .leading)
                 }
                 .background(.background)
             }

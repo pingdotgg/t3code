@@ -165,9 +165,12 @@ private struct PlanModeToggle: View {
     }
 }
 
-/// Compact context-window usage meter (ring + percent).
+/// Compact context-window usage meter (ring + percent). Hovering opens a
+/// popover with the full numbers (used / limit / remaining).
 struct ContextMeterView: View {
     let status: ContextWindowStatus
+
+    @UIState private var showDetails = false
 
     var body: some View {
         if let fraction = status.usedFraction {
@@ -184,13 +187,17 @@ struct ContextMeterView: View {
                     .monospacedDigit()
                     .contentTransition(.numericText())
             }
-            .help(helpText)
+            .onHover { showDetails = $0 }
+            .popover(isPresented: $showDetails, arrowEdge: .top) {
+                ContextMeterDetails(status: status, fraction: fraction, tint: meterColor(fraction))
+            }
             // The ring sweeps and the percent ticks as usage grows.
             .animation(Motion.ambient, value: fraction)
         } else {
             Label("\(status.usedTokens.formatted()) tokens", systemImage: "gauge")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .help("\(status.usedTokens.formatted()) context tokens used; this model reports no window limit")
         }
     }
 
@@ -201,11 +208,47 @@ struct ContextMeterView: View {
         default: .red
         }
     }
+}
 
-    private var helpText: String {
-        if let maxTokens = status.maxTokens {
-            return "\(status.usedTokens.formatted()) of \(maxTokens.formatted()) context tokens used"
+/// Hover card behind the context meter: exact token numbers and a usage bar.
+private struct ContextMeterDetails: View {
+    let status: ContextWindowStatus
+    let fraction: Double
+    let tint: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Context window")
+                .font(.headline)
+            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 3) {
+                GridRow {
+                    Text("Used").foregroundStyle(.secondary)
+                    Text("\(status.usedTokens.formatted()) tokens (\(Int((fraction * 100).rounded()))%)")
+                        .monospacedDigit()
+                }
+                if let maxTokens = status.maxTokens {
+                    GridRow {
+                        Text("Limit").foregroundStyle(.secondary)
+                        Text("\(maxTokens.formatted()) tokens").monospacedDigit()
+                    }
+                    GridRow {
+                        Text("Remaining").foregroundStyle(.secondary)
+                        Text("\(max(0, maxTokens - status.usedTokens).formatted()) tokens")
+                            .monospacedDigit()
+                    }
+                }
+            }
+            .font(.caption)
+            ProgressView(value: fraction)
+                .tint(tint)
+                .controlSize(.small)
+            if fraction >= 0.9 {
+                Text("Nearly full — the provider may compact older history soon.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
         }
-        return "\(status.usedTokens.formatted()) context tokens used"
+        .padding(12)
+        .frame(width: 240, alignment: .leading)
     }
 }

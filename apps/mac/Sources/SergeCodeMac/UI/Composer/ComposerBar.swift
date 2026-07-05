@@ -122,6 +122,27 @@ public struct ComposerBar: View {
                         .onChange(of: draft) { _, newValue in
                             updateMentionSearch(for: newValue)
                         }
+                        // Enter sends (or accepts the top suggestion while a
+                        // list is open); Shift/Option+Enter fall through to
+                        // the editor and insert a newline.
+                        .onKeyPress(keys: [.return]) { press in
+                            // Caps Lock and keypad Enter report as modifiers
+                            // but don't change intent — plain Enter still sends.
+                            let semantic = press.modifiers.subtracting([.capsLock, .numericPad])
+                            guard semantic.isEmpty else { return .ignored }
+                            if let first = slashMatches?.first {
+                                applySlashCommand(first)
+                                return .handled
+                            }
+                            if let query = mentionQuery, let first = mentionResults.first {
+                                insertMention(first, replacing: query)
+                                return .handled
+                            }
+                            // Swallow Enter when there's nothing to send so an
+                            // empty draft doesn't collect stray newlines.
+                            if canSend { send() }
+                            return .handled
+                        }
 
                     Button {
                         send()

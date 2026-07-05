@@ -67,12 +67,18 @@ public final class AppModel {
         case .projectsChanged(let list):
             projects = list
         case .threadUpserted(let thread):
+            // Update in place: `updatedAt` bumps on every activity while a
+            // thread runs, so resorting here made sidebar rows jump around
+            // mid-conversation. Order is recomputed only on refreshAll.
             if let index = threads.firstIndex(where: { $0.id == thread.id }) {
                 threads[index] = thread
             } else {
-                threads.append(thread)
+                // New rows still slot in by the sidebar's sort key: snapshot
+                // replays after a reconnect arrive as upserts, and blind
+                // insertion at 0 would show them in reverse snapshot order.
+                let index = threads.firstIndex { $0.updatedAt < thread.updatedAt } ?? threads.count
+                threads.insert(thread, at: index)
             }
-            threads.sort { $0.updatedAt > $1.updatedAt }
         case .threadRemoved(let id):
             threads.removeAll { $0.id == id }
             vcsStatuses[id] = nil

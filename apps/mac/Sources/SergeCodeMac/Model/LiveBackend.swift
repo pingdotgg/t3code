@@ -93,6 +93,12 @@ public actor LiveBackend: BackendService {
     /// (reasoning effort) can round-trip instanceId/model/other options
     /// without re-fetching the shell.
     private var modelSelectionsByThread: [String: ModelSelection] = [:]
+    /// Placeholder title a thread was created under by *this* client (scene
+    /// name or "New … thread"). Sent as `titleSeed` on sends so first-turn
+    /// title generation may replace it — never set for threads created
+    /// elsewhere or before this launch, so custom titles are never seeded
+    /// away.
+    private var titleSeedsByThread: [String: String] = [:]
     private var providersByInstanceId: [String: ServerProvider] = [:]
 
     /// Where a thread runs, from its shell (`worktreePath`) plus whether it
@@ -400,6 +406,7 @@ public actor LiveBackend: BackendService {
             let snapshotThreadIDs = Set(snapshot.threads.map(\.id))
             for id in threadsByID.keys where !snapshotThreadIDs.contains(id) {
                 threadsByID[id] = nil
+                titleSeedsByThread[id] = nil
                 threadEnvByThread[id] = nil
                 emit(.threadRemoved(id: id))
             }
@@ -430,6 +437,7 @@ public actor LiveBackend: BackendService {
             case .threadRemoved(_, let threadID):
                 threadsByID[threadID] = nil
                 modelSelectionsByThread[threadID] = nil
+                titleSeedsByThread[threadID] = nil
                 threadEnvByThread[threadID] = nil
                 emit(.threadRemoved(id: threadID))
             }
@@ -985,6 +993,7 @@ public actor LiveBackend: BackendService {
             updatedAt: Date(), modelInstanceID: selection.instanceId, modelID: selection.model)
         threadsByID[threadID] = thread
         modelSelectionsByThread[threadID] = selection
+        titleSeedsByThread[threadID] = title
         threadEnvByThread[threadID] = ThreadEnvState(
             worktreePath: worktree?.path, hasTurns: false)
         // Emit immediately: the shell subscription's authoritative upsert can
@@ -1012,6 +1021,7 @@ public actor LiveBackend: BackendService {
         // The shell subscription emits thread-removed; drop local caches now
         // so a re-created id never sees stale dedup state.
         threadsByID[id] = nil
+        titleSeedsByThread[id] = nil
         threadEnvByThread[id] = nil
         latestTimeline[id] = nil
         activeThreadIDs.remove(id)
@@ -1038,6 +1048,12 @@ public actor LiveBackend: BackendService {
         let bootstrap = await worktreeBootstrapIfNeeded(threadID: threadID)
         _ = try await client.startTurn(
             threadId: threadID, text: text, attachments: uploads,
+            // Marks the creation placeholder title as replaceable so the
+            // server's first-turn generation can retitle the thread with an
+            // AI description. Only set for threads this client created: the
+            // server compares seed to current title, so sending the live
+            // title would also mark manually-set titles as replaceable.
+            titleSeed: titleSeedsByThread[threadID],
             runtimeMode: thread.map { Self.wireRuntimeMode($0.runtimeMode) } ?? .wireDefault,
             interactionMode: thread.map { Self.wireInteractionMode($0.interactionMode) } ?? .wireDefault,
             bootstrap: bootstrap)
