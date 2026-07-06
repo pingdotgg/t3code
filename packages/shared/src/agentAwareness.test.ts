@@ -135,23 +135,101 @@ describe("projectThreadAwareness", () => {
     // Quick threads without code changes never get a checkpoint, so the SQL
     // shell has no latestTurn row and latest_turn_id is cleared when the
     // session settles; the ready session is the only completion signal left.
+
+  it("keeps running threads in running phase even when updates are delayed", () => {
     const state = projectThreadAwareness({
       environmentId: "env-1" as EnvironmentId,
       project,
       thread: thread({
+        updatedAt: "2026-05-22T12:00:00.000Z",
         session: {
           threadId: "thread-1" as ThreadId,
-          status: "ready",
+          status: "running",
           providerName: "Codex",
           runtimeMode: "full-access",
-          activeTurnId: null,
+          activeTurnId: "turn-1" as TurnId,
           lastError: null,
-          updatedAt: NOW,
+          updatedAt: "2026-05-22T12:00:00.000Z",
+        },
+        latestTurn: {
+          state: "running",
+          requestedAt: "2026-05-22T12:00:00.000Z",
+          startedAt: "2026-05-22T12:00:00.000Z",
+          completedAt: null,
+>>>>>>> 0a10280c8 (refine copilot lifecycle and remove stale awareness fallback)
+    expect(state).toMatchObject({
+      phase: "running",
+      headline: "Agent is working",
+      detail: "Codex is active.",
+    });
+  });
+
+  it("keeps recently updated running threads in running phase", () => {
+    const state = projectThreadAwareness({
+      environmentId: "env-1" as EnvironmentId,
+      project,
+      thread: thread({
+        updatedAt: "2026-05-22T12:00:00.000Z",
+        session: {
+          threadId: "thread-1" as ThreadId,
+          status: "running",
+          providerName: "Codex",
+          runtimeMode: "full-access",
+          activeTurnId: "turn-1" as TurnId,
+          lastError: null,
+          updatedAt: "2026-05-22T12:00:00.000Z",
+        },
+        latestTurn: {
+          turnId: "turn-1" as TurnId,
+          state: "running",
+          requestedAt: "2026-05-22T12:00:00.000Z",
+          startedAt: "2026-05-22T12:00:00.000Z",
+          completedAt: null,
+          assistantMessageId: null,
         },
       }),
     });
 
+      }),
+
+<<<<<<< HEAD
     expect(state?.phase).toBe("completed");
+=======
+    expect(state).toMatchObject({
+      phase: "running",
+      headline: "Agent is working",
+      detail: "Codex is active.",
+    });
+  });
+
+  it("keeps recently updated running threads in running phase", () => {
+    const state = projectThreadAwareness({
+      environmentId: "env-1" as EnvironmentId,
+      project,
+      thread: thread({
+        updatedAt: "2026-05-22T12:00:00.000Z",
+        session: {
+          threadId: "thread-1" as ThreadId,
+          status: "running",
+          providerName: "Codex",
+          runtimeMode: "full-access",
+          activeTurnId: "turn-1" as TurnId,
+          lastError: null,
+          updatedAt: "2026-05-22T12:00:00.000Z",
+        },
+        latestTurn: {
+          turnId: "turn-1" as TurnId,
+          state: "running",
+          requestedAt: "2026-05-22T12:00:00.000Z",
+          startedAt: "2026-05-22T12:00:00.000Z",
+          completedAt: null,
+          assistantMessageId: null,
+        },
+      }),
+    });
+
+    expect(state?.phase).toBe("running");
+>>>>>>> 0a10280c8 (refine copilot lifecycle and remove stale awareness fallback)
   });
 
   it("projects failures with the session error detail", () => {

@@ -27,7 +27,9 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
+import * as Logger from "effect/Logger";
 import * as PubSub from "effect/PubSub";
+import * as References from "effect/References";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { afterEach, describe, expect, it } from "vite-plus/test";
@@ -170,6 +172,10 @@ type ProviderRuntimeTestMessage = ProviderRuntimeTestThread["messages"][number];
 type ProviderRuntimeTestProposedPlan = ProviderRuntimeTestThread["proposedPlans"][number];
 type ProviderRuntimeTestActivity = ProviderRuntimeTestThread["activities"][number];
 type ProviderRuntimeTestCheckpoint = ProviderRuntimeTestThread["checkpoints"][number];
+type ProviderRuntimeCapturedLog = {
+  readonly message: unknown;
+  readonly annotations: Record<string, unknown>;
+};
 
 async function waitForThread(
   readModel: () => Promise<ProviderRuntimeTestReadModel>,
@@ -225,6 +231,13 @@ describe("ProviderRuntimeIngestion", () => {
     const workspaceRoot = makeTempDir("t3-provider-project-");
     NodeFS.mkdirSync(NodePath.join(workspaceRoot, ".git"));
     const provider = createProviderServiceHarness();
+    const logs: ProviderRuntimeCapturedLog[] = [];
+    const logger = Logger.make(({ fiber, message }) => {
+      logs.push({
+        message,
+        annotations: { ...fiber.getRef(References.CurrentLogAnnotations) },
+      });
+    });
     const orchestrationLayer = OrchestrationEngineLive.pipe(
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
       Layer.provide(OrchestrationProjectionPipelineLive),
@@ -244,6 +257,7 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(makeTestServerSettingsLayer(options?.serverSettings)),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(Logger.layer([logger])),
       Layer.provideMerge(NodeServices.layer),
     );
     runtime = ManagedRuntime.make(layer);
@@ -320,6 +334,7 @@ describe("ProviderRuntimeIngestion", () => {
       setProviderSession: provider.setSession,
       clearProviderSessions: provider.clearSessions,
       drain,
+      logs,
     };
   }
 
@@ -803,6 +818,45 @@ describe("ProviderRuntimeIngestion", () => {
       harness.readModel,
       (thread) => thread.session?.status === "ready" && thread.session?.activeTurnId === null,
     );
+  });
+
+  it("emits warning telemetry when strict lifecycle guard rejects a conflicting turn.started", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-telemetry-active"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-telemetry-active"),
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.session?.status === "running" &&
+        thread.session?.activeTurnId === "turn-telemetry-active",
+    );
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-telemetry-stale"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-telemetry-stale"),
+    });
+
+    await harness.drain();
+
+    const rejectionLog = harness.logs.find(
+      (entry) =>
+        JSON.stringify(entry).includes("provider runtime lifecycle event rejected") &&
+        JSON.stringify(entry).includes("conflicting turn.started does not match active turn"),
+    );
+    expect(rejectionLog).toBeDefined();
   });
 
   it("maps canonical content delta/item completed into finalized assistant messages", async () => {

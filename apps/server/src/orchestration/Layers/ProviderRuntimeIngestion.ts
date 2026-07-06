@@ -1358,6 +1358,53 @@ const make = Effect.gen(function* () {
             return true;
         }
       })();
+
+      const lifecycleGuardRejectionReason = (() => {
+        if (shouldApplyThreadLifecycle) {
+          return null;
+        }
+        if (!STRICT_PROVIDER_LIFECYCLE_GUARD) {
+          return null;
+        }
+        if (event.type === "turn.started") {
+          return conflictsWithActiveTurn
+            ? "conflicting turn.started does not match active turn"
+            : "turn.started rejected by strict lifecycle guard";
+        }
+        if (event.type === "turn.completed") {
+          if (conflictsWithActiveTurn) {
+            return "conflicting turn.completed does not match active turn";
+          }
+          if (activeTurnId !== null && lifecycleEventTurnId === undefined) {
+            if (unscopedCompletionHasNoProviderSession) {
+              return "unscoped turn.completed rejected: provider session missing";
+            }
+            if (providerActiveTurnId !== undefined && !sameId(activeTurnId, providerActiveTurnId)) {
+              return "unscoped turn.completed rejected: provider active turn differs";
+            }
+          }
+          return "turn.completed rejected by strict lifecycle guard";
+        }
+        return "lifecycle event rejected by strict lifecycle guard";
+      })();
+
+      if (
+        lifecycleGuardRejectionReason !== null &&
+        (event.type === "turn.started" || event.type === "turn.completed")
+      ) {
+        yield* Effect.logWarning("provider runtime lifecycle event rejected", {
+          eventId: event.eventId,
+          eventType: event.type,
+          provider: event.provider,
+          threadId: thread.id,
+          reason: lifecycleGuardRejectionReason,
+          activeTurnId,
+          eventTurnId: lifecycleEventTurnId,
+          providerActiveTurnId: providerActiveTurnId ?? null,
+          strictLifecycleGuard: STRICT_PROVIDER_LIFECYCLE_GUARD,
+        });
+      }
+
       const acceptedTurnStartedSourcePlan =
         event.type === "turn.started" && shouldApplyThreadLifecycle
           ? yield* getSourceProposedPlanReferenceForAcceptedTurnStart(thread.id, eventTurnId)
