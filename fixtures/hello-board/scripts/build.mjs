@@ -1,31 +1,36 @@
-import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import { gzipSync } from "node:zlib";
-import { spawnSync } from "node:child_process";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
+import * as NodeZlib from "node:zlib";
 
-const fixtureRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const repoRoot = resolve(fixtureRoot, "../..");
+const fixtureRoot = NodePath.resolve(
+  NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
+  "..",
+);
+const repoRoot = NodePath.resolve(fixtureRoot, "../..");
 
 function outDirFromArgs(argv) {
   const direct = argv.find((arg) => arg.startsWith("--out-dir="));
-  if (direct) return resolve(fixtureRoot, direct.slice("--out-dir=".length));
+  if (direct) return NodePath.resolve(fixtureRoot, direct.slice("--out-dir=".length));
   const index = argv.indexOf("--out-dir");
-  if (index >= 0 && argv[index + 1]) return resolve(fixtureRoot, argv[index + 1]);
-  return join(fixtureRoot, "dist");
+  if (index >= 0 && argv[index + 1]) return NodePath.resolve(fixtureRoot, argv[index + 1]);
+  return NodePath.join(fixtureRoot, "dist");
 }
 
 const outDir = outDirFromArgs(process.argv.slice(2));
-const packageDir = join(outDir, "package");
-const manifest = JSON.parse(readFileSync(join(fixtureRoot, "manifest.json"), "utf8"));
+const packageDir = NodePath.join(outDir, "package");
+const manifest = JSON.parse(
+  NodeFS.readFileSync(NodePath.join(fixtureRoot, "manifest.json"), "utf8"),
+);
 const tarballName = `${manifest.id}-${manifest.version}.tgz`;
-const tarballPath = join(outDir, tarballName);
+const tarballPath = NodePath.join(outDir, tarballName);
 const shaPath = `${tarballPath}.sha256`;
-const marketplacePath = join(outDir, "marketplace.json");
+const marketplacePath = NodePath.join(outDir, "marketplace.json");
 
 function run(command, args) {
-  const result = spawnSync(command, args, {
+  const result = NodeChildProcess.spawnSync(command, args, {
     cwd: repoRoot,
     stdio: "inherit",
     env: process.env,
@@ -91,40 +96,55 @@ function tar(entries) {
   ]);
 }
 
-rmSync(outDir, { recursive: true, force: true });
-mkdirSync(join(packageDir, "server"), { recursive: true });
-mkdirSync(join(packageDir, "web"), { recursive: true });
+NodeFS.rmSync(outDir, { recursive: true, force: true });
+NodeFS.mkdirSync(NodePath.join(packageDir, "server"), { recursive: true });
+NodeFS.mkdirSync(NodePath.join(packageDir, "web"), { recursive: true });
 
-writeFileSync(join(packageDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+NodeFS.writeFileSync(
+  NodePath.join(packageDir, "manifest.json"),
+  `${JSON.stringify(manifest, null, 2)}\n`,
+);
 
-bundle(join(fixtureRoot, "server/index.ts"), join(packageDir, "server/index.js"), "node", [
-  "@t3tools/plugin-sdk",
-  "effect",
-  "effect/*",
-]);
-bundle(join(fixtureRoot, "web/index.tsx"), join(packageDir, "web/index.js"), "browser", [
-  "@effect/atom-react",
-  "@t3tools/plugin-sdk-web",
-  "effect",
-  "react",
-  "react/*",
-  "react-dom",
-  "react-dom/*",
-]);
+bundle(
+  NodePath.join(fixtureRoot, "server/index.ts"),
+  NodePath.join(packageDir, "server/index.js"),
+  "node",
+  ["@t3tools/plugin-sdk", "effect", "effect/*"],
+);
+bundle(
+  NodePath.join(fixtureRoot, "web/index.tsx"),
+  NodePath.join(packageDir, "web/index.js"),
+  "browser",
+  [
+    "@effect/atom-react",
+    "@t3tools/plugin-sdk-web",
+    "effect",
+    "react",
+    "react/*",
+    "react-dom",
+    "react-dom/*",
+  ],
+);
 
-const archive = gzipSync(
+const archive = NodeZlib.gzipSync(
   tar([
-    { name: "manifest.json", body: readFileSync(join(packageDir, "manifest.json")) },
-    { name: "server/index.js", body: readFileSync(join(packageDir, "server/index.js")) },
-    { name: "web/index.js", body: readFileSync(join(packageDir, "web/index.js")) },
+    {
+      name: "manifest.json",
+      body: NodeFS.readFileSync(NodePath.join(packageDir, "manifest.json")),
+    },
+    {
+      name: "server/index.js",
+      body: NodeFS.readFileSync(NodePath.join(packageDir, "server/index.js")),
+    },
+    { name: "web/index.js", body: NodeFS.readFileSync(NodePath.join(packageDir, "web/index.js")) },
   ]),
   { mtime: 0 },
 );
-writeFileSync(tarballPath, archive);
+NodeFS.writeFileSync(tarballPath, archive);
 
-const sha256 = createHash("sha256").update(archive).digest("hex");
-writeFileSync(shaPath, `${sha256}  ${tarballName}\n`);
-writeFileSync(
+const sha256 = NodeCrypto.createHash("sha256").update(archive).digest("hex");
+NodeFS.writeFileSync(shaPath, `${sha256}  ${tarballName}\n`);
+NodeFS.writeFileSync(
   marketplacePath,
   `${JSON.stringify(
     {
@@ -138,7 +158,7 @@ writeFileSync(
           versions: [
             {
               version: manifest.version,
-              tarball: pathToFileURL(tarballPath).href,
+              tarball: NodeURL.pathToFileURL(tarballPath).href,
               sha256,
               hostApi: manifest.hostApi,
               publishedAt: "2026-07-03T00:00:00.000Z",

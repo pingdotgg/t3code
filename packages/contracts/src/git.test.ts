@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 
 import {
   VcsCreateWorktreeInput,
+  GitCommandError,
   GitPreparePullRequestThreadInput,
   GitRunStackedActionResult,
   GitRunStackedActionInput,
@@ -83,6 +84,36 @@ describe("GitRunStackedActionInput", () => {
 
     expect(parsed.actionId).toBe("action-1");
     expect(parsed.action).toBe("create_pr");
+  });
+});
+
+describe("GitCommandError", () => {
+  it("keeps raw stderr readable in-process but off the wire", () => {
+    const secret = "https://user:hunter2-token@github.com/o/r.git";
+    const error = GitCommandError.withStderr(
+      {
+        operation: "GitVcsDriver.push",
+        command: "git",
+        cwd: "/repo",
+        argumentCount: 2,
+        exitCode: 128,
+        detail: "Git command exited with a non-zero status.",
+      },
+      `fatal: could not read from '${secret}'`,
+    );
+
+    // In-process consumers (failure classification) can read the raw text.
+    expect(error.stderr).toContain("hunter2-token");
+    expect(error.stderrLength).toBeGreaterThan(0);
+    expect(error.stderrTruncated).toBe(false);
+
+    // The wire-encoded payload and naive JSON serialization both drop it:
+    // only stderrLength/stderrTruncated cross the boundary.
+    const encoded = Schema.encodeSync(GitCommandError)(error);
+    expect(encoded).not.toHaveProperty("stderr");
+    expect(JSON.stringify(encoded)).not.toContain("hunter2-token");
+    expect(JSON.stringify(error)).not.toContain("hunter2-token");
+    expect(error.message).not.toContain("hunter2-token");
   });
 });
 

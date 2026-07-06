@@ -7,7 +7,9 @@ import {
   PluginInstallStaged,
   PluginLockfile,
   PluginManifest,
+  compareSemver,
   hostApiSatisfies,
+  isPrereleaseVersion,
 } from "./plugin.ts";
 
 const decodeManifest = Schema.decodeUnknownSync(PluginManifest);
@@ -40,11 +42,11 @@ describe("PluginManifest", () => {
       homepage: "https://example.test/plugin",
       license: "MIT",
       minAppVersion: "1.0.0",
-      capabilities: ["agents", "database"],
+      capabilities: ["agents", "database", "filesystem", "httpClient"],
       entries: { server: "dist/server.js", web: "dist/web.js" },
     });
     expect(decoded.name).toBe("Test Plugin");
-    expect(decoded.capabilities).toEqual(["agents", "database"]);
+    expect(decoded.capabilities).toEqual(["agents", "database", "filesystem", "httpClient"]);
   });
 
   it.each(["x", "1test-plugin", "test_plugin", "Test-Plugin", "a".repeat(42)])(
@@ -93,6 +95,60 @@ describe("PluginManifest", () => {
 
   it("rejects bad hostApi ranges", () => {
     expect(() => decodeManifest({ ...minimalManifest, hostApi: ">=1.0.0" })).toThrow();
+  });
+
+  it.each([
+    "javascript:alert(1)",
+    "data:text/html,<script>alert(1)</script>",
+    "file:///etc/passwd",
+    "not a url",
+  ])("rejects non-http(s) author and homepage URLs: %s", (url) => {
+    expect(() =>
+      decodeManifest({ ...minimalManifest, author: { name: "Mallory", url } }),
+    ).toThrow();
+    expect(() => decodeManifest({ ...minimalManifest, homepage: url })).toThrow();
+  });
+
+  it("accepts http(s) author and homepage URLs", () => {
+    const decoded = decodeManifest({
+      ...minimalManifest,
+      author: { name: "T3", url: "https://example.test/team" },
+      homepage: "http://example.test/plugin",
+    });
+    expect(decoded.author?.url).toBe("https://example.test/team");
+    expect(decoded.homepage).toBe("http://example.test/plugin");
+  });
+});
+
+describe("MarketplaceEntry author url", () => {
+  it("rejects javascript: author URLs in marketplace entries", () => {
+    expect(() =>
+      decodeMarketplaceEntry({
+        id: "test-plugin",
+        name: "Test Plugin",
+        description: "Adds test plugin behavior.",
+        author: { name: "Mallory", url: "javascript:alert(1)" },
+        capabilities: [],
+        versions: [],
+      }),
+    ).toThrow();
+  });
+});
+
+describe("compareSemver", () => {
+  it("orders by semver precedence with prerelease support", () => {
+    expect(compareSemver("1.0.0", "0.9.9")).toBeGreaterThan(0);
+    expect(compareSemver("1.0.0-rc.1", "1.0.0")).toBeLessThan(0);
+    expect(compareSemver("1.0.0-rc.2", "1.0.0-rc.10")).toBeLessThan(0);
+    expect(compareSemver("1.0.0+build1", "1.0.0+build2")).toBe(0);
+  });
+});
+
+describe("isPrereleaseVersion", () => {
+  it("detects prerelease components and ignores build metadata", () => {
+    expect(isPrereleaseVersion("1.1.0-rc.1")).toBe(true);
+    expect(isPrereleaseVersion("1.1.0")).toBe(false);
+    expect(isPrereleaseVersion("1.1.0+build5")).toBe(false);
   });
 });
 
@@ -167,9 +223,14 @@ describe("PluginInstallStaged", () => {
       },
       capabilityDescriptions: {
         agents: "Run AI agents",
+        filesystem:
+          "Read and write files in your project workspace and in worktrees this plugin creates",
+        httpClient: "Make requests to public external HTTPS services",
       },
     });
 
     expect(decoded.capabilityDescriptions.agents).toBe("Run AI agents");
+    expect(decoded.capabilityDescriptions.filesystem).toContain("Read and write files");
+    expect(decoded.capabilityDescriptions.httpClient).toContain("HTTPS services");
   });
 });

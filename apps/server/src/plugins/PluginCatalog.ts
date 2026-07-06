@@ -40,6 +40,7 @@ const pluginInfoFromRuntime = (
     state: entry?.state ?? "active",
     capabilities: Array.from(runtime.manifest.capabilities),
     hasWeb: runtime.manifest.entries.web !== undefined,
+    hasStyles: runtime.manifest.entries.styles !== undefined,
     lastError: entry?.lastError ?? null,
   };
 };
@@ -51,6 +52,7 @@ const fallbackPluginInfo = (pluginId: string, entry: PluginLockfilePlugin): Plug
   state: entry.state,
   capabilities: [],
   hasWeb: false,
+  hasStyles: false,
   lastError: entry.lastError,
 });
 
@@ -81,6 +83,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* () {
           state: entry.state,
           capabilities: Array.from(manifest.capabilities),
           hasWeb: manifest.entries.web !== undefined,
+          hasStyles: manifest.entries.styles !== undefined,
           lastError: entry.lastError,
         }),
       ),

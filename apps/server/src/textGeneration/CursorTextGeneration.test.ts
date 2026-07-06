@@ -273,4 +273,31 @@ it.layer(CursorTextGenerationTestLayer)("CursorTextGeneration", (it) => {
         }),
     );
   });
+
+  // ── No-tool guarantee: Cursor's "ask" mode still exposes tools behind
+  // permission prompts, so board proposals must be REFUSED, not run. ──────────
+  it.effect(
+    "generateBoardProposal is unsupported (no provable no-tool mode) and fails with TextGenerationError",
+    () =>
+      withFakeAcpAgent(
+        {
+          // The op fails before spawning the binary; no response is consumed.
+          T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({ ignored: "no binary call expected" }),
+        },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const error = yield* Effect.flip(
+              textGeneration.generateBoardProposal({
+                prompt: "Metrics show WIP is too high. Propose an improved board definition.",
+                modelSelection: createModelSelection(
+                  ProviderInstanceId.make("cursor"),
+                  "composer-2",
+                ),
+              }),
+            );
+            expect(error._tag).toBe("TextGenerationError");
+            expect(error.detail).toMatch(/not supported for board proposals/i);
+          }),
+      ),
+  );
 });

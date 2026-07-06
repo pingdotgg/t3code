@@ -7,7 +7,7 @@
     "name": "T3 Tools"
   },
   "hostApi": "^1.0.0",
-  "capabilities": ["database"],
+  "capabilities": ["database", "filesystem", "httpClient"],
   "entries": {
     "server": "server/index.js",
     "web": "web/index.js"

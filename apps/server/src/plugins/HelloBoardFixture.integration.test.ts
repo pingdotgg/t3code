@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { AuthStandardClientScopes, PluginId, type AuthScope } from "@t3tools/contracts";
+import { AuthStandardClientScopes, PluginId, ProjectId, type AuthScope } from "@t3tools/contracts";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -8,7 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
@@ -30,6 +30,8 @@ import * as TerminalManager from "../terminal/Manager.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ServerLifecycleEvents from "../serverLifecycleEvents.ts";
+import { PluginHttpClientTransportService } from "./capabilities/HttpClientCapability.ts";
+import { OutboundUrlError, OutboundUrlLookup } from "./OutboundUrlValidator.ts";
 import * as PluginCatalogModule from "./PluginCatalog.ts";
 import * as PluginHostModule from "./PluginHost.ts";
 import * as PluginHttpRegistry from "./PluginHttpRegistry.ts";
@@ -43,6 +45,7 @@ import * as PluginRpcDispatcherModule from "./PluginRpcDispatcher.ts";
 import * as PluginRuntimeRegistryLayer from "./PluginRuntimeRegistry.ts";
 
 const pluginId = PluginId.make("hello-board");
+const WORKSPACE_ROOT_ENV = "T3_HELLO_BOARD_WORKSPACE_ROOT";
 const fixtureRoot = decodeURIComponent(
   new URL("../../../../fixtures/hello-board", import.meta.url).pathname,
 );
@@ -60,6 +63,21 @@ const TestHttpClientLive = Layer.succeed(
   HttpClient.make((request) =>
     Effect.succeed(HttpClientResponse.fromWeb(request, new Response("{}", { status: 404 }))),
   ),
+);
+const TestOutboundLookupLive = Layer.succeed(OutboundUrlLookup, (host: string) =>
+  host === "fixture.test"
+    ? Effect.succeed([{ address: "140.82.112.3", family: 4 as const }])
+    : Effect.fail(new OutboundUrlError({ reason: `unexpected lookup ${host}` })),
+);
+const TestPluginHttpClientTransportLive = Layer.succeed(
+  PluginHttpClientTransportService,
+  (request) =>
+    Effect.succeed(
+      HttpClientResponse.fromWeb(
+        HttpClientRequest.make(request.method as "GET")(request.url.toString()),
+        new Response("hello http", { status: 200 }),
+      ),
+    ),
 );
 
 const PluginRuntimeRegistryLayerLive = PluginRuntimeRegistryLayer.layer;
@@ -85,7 +103,24 @@ const PluginHostCapabilityDepsLayerLive = Layer.mergeAll(
   Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
     getCommandReadModel: unexpectedCapabilityUse,
     getSnapshot: unexpectedCapabilityUse,
-    getShellSnapshot: unexpectedCapabilityUse,
+    getShellSnapshot: () =>
+      Effect.sync(() => ({
+        snapshotSequence: 1,
+        updatedAt: "2026-07-03T00:00:00.000Z",
+        projects: [
+          {
+            id: ProjectId.make("hello-board-project"),
+            title: "Hello Board Project",
+            workspaceRoot: process.env[WORKSPACE_ROOT_ENV] ?? process.cwd(),
+            repositoryIdentity: null,
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: "2026-07-03T00:00:00.000Z",
+            updatedAt: "2026-07-03T00:00:00.000Z",
+          },
+        ],
+        threads: [],
+      })),
     getArchivedShellSnapshot: unexpectedCapabilityUse,
     getSnapshotSequence: unexpectedCapabilityUse,
     getCounts: unexpectedCapabilityUse,
@@ -183,6 +218,11 @@ const PluginHostCapabilityDepsLayerLive = Layer.mergeAll(
     getRepositoryCloneUrls: unexpectedCapabilityUse,
     createRepository: unexpectedCapabilityUse,
     createPullRequest: unexpectedCapabilityUse,
+    mergePullRequest: unexpectedCapabilityUse,
+    getPullRequestDetail: unexpectedCapabilityUse,
+    listPullRequestChecks: unexpectedCapabilityUse,
+    listPullRequestReviews: unexpectedCapabilityUse,
+    listPullRequestReviewComments: unexpectedCapabilityUse,
     getDefaultBranch: unexpectedCapabilityUse,
     checkoutPullRequest: unexpectedCapabilityUse,
   }),
@@ -197,6 +237,8 @@ const PluginHostCapabilityDepsLayerLive = Layer.mergeAll(
     subscribe: unexpectedCapabilityUse,
     subscribeMetadata: unexpectedCapabilityUse,
   }),
+  TestOutboundLookupLive,
+  TestPluginHttpClientTransportLive,
 );
 
 const PluginHostLayerLive = PluginHostModule.layer.pipe(
@@ -215,7 +257,11 @@ const PluginCatalogLayerLive = PluginCatalogModule.layer.pipe(
   Layer.provideMerge(PluginLockfileStoreLayerLive),
   Layer.provideMerge(PluginRuntimeRegistryLayerLive),
 );
-const PluginMarketplaceLayerLive = PluginMarketplaceModule.layer;
+// The marketplace fetches untrusted URLs through the SSRF guard, so it
+// needs the same lookup + pinned-transport test stubs as the capability.
+const PluginMarketplaceLayerLive = PluginMarketplaceModule.layer.pipe(
+  Layer.provide(Layer.mergeAll(TestOutboundLookupLive, TestPluginHttpClientTransportLive)),
+);
 const PluginInstallerLayerLive = PluginInstallerModule.layer.pipe(
   Layer.provideMerge(PluginLockfileStoreLayerLive),
   Layer.provideMerge(PluginMarketplaceLayerLive),
@@ -309,6 +355,7 @@ const withPluginDev = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     Effect.sync(() => ({
       pluginDev: process.env.T3_PLUGIN_DEV,
       healthyDelay: process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS,
+      workspaceRoot: process.env[WORKSPACE_ROOT_ENV],
     })),
     () =>
       Effect.sync(() => {
@@ -327,6 +374,11 @@ const withPluginDev = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
         } else {
           process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS = previous.healthyDelay;
         }
+        if (previous.workspaceRoot === undefined) {
+          delete process.env[WORKSPACE_ROOT_ENV];
+        } else {
+          process.env[WORKSPACE_ROOT_ENV] = previous.workspaceRoot;
+        }
       }),
   );
 
@@ -342,7 +394,11 @@ layer("hello-board fixture plugin", (it) => {
           const catalog = yield* PluginCatalogModule.PluginCatalog;
           const dispatcher = yield* PluginRpcDispatcherModule.PluginRpcDispatcher;
           const outDir = yield* fs.makeTempDirectoryScoped({ prefix: "hello-board-fixture-" });
+          const workspaceRoot = yield* fs.makeTempDirectoryScoped({
+            prefix: "hello-board-workspace-",
+          });
           const config = yield* ServerConfig.ServerConfig;
+          process.env[WORKSPACE_ROOT_ENV] = workspaceRoot;
 
           yield* buildFixture(outDir);
           yield* linkHostPluginExternals(config.pluginsDir);
@@ -360,6 +416,8 @@ layer("hello-board fixture plugin", (it) => {
           });
           assert.equal(staged.manifest.id, pluginId);
           assert.property(staged.capabilityDescriptions, "database");
+          assert.property(staged.capabilityDescriptions, "filesystem");
+          assert.property(staged.capabilityDescriptions, "httpClient");
 
           const confirmed = yield* handlers.confirmInstall(staged.stageToken);
           assert.equal(confirmed.plugin.id, pluginId);
@@ -370,6 +428,7 @@ layer("hello-board fixture plugin", (it) => {
               id: plugin.id,
               state: plugin.state,
               hasWeb: plugin.hasWeb,
+              hasStyles: plugin.hasStyles,
               capabilities: plugin.capabilities,
               lastError: plugin.lastError,
             })),
@@ -377,7 +436,8 @@ layer("hello-board fixture plugin", (it) => {
               id: pluginId,
               state: "active",
               hasWeb: true,
-              capabilities: ["database"],
+              hasStyles: false,
+              capabilities: ["database", "filesystem", "httpClient"],
               lastError: null,
             },
           );
@@ -397,6 +457,26 @@ layer("hello-board fixture plugin", (it) => {
             session(AuthStandardClientScopes),
           )) as ReadonlyArray<{ readonly body?: unknown }>;
           assert.equal(notes[0]?.body, "hello from fixture");
+
+          const capabilityResult = (yield* dispatcher.call(
+            pluginId,
+            "exerciseCapabilities",
+            {},
+            session(AuthStandardClientScopes),
+          )) as {
+            readonly file?: unknown;
+            readonly status?: unknown;
+            readonly body?: unknown;
+          };
+          assert.deepEqual(capabilityResult, {
+            file: "hello filesystem",
+            status: 200,
+            body: "hello http",
+          });
+          assert.equal(
+            yield* fs.readFileString(path.join(workspaceRoot, ".hello-board", "capability.txt")),
+            "hello filesystem",
+          );
 
           const tables = yield* sql<{ readonly name: string }>`
             SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'p_hello_board_notes'

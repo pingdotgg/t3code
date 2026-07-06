@@ -12,11 +12,13 @@ import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import * as NodeCrypto from "node:crypto";
 import * as NodeZlib from "node:zlib";
 
 import * as ServerConfig from "../config.ts";
+import { PluginHttpClientTransportService } from "./capabilities/HttpClientCapability.ts";
+import { OutboundUrlError, OutboundUrlLookup } from "./OutboundUrlValidator.ts";
 import { PluginCatalog } from "./PluginCatalog.ts";
 import { PluginHost } from "./PluginHost.ts";
 import { PluginInstaller } from "./PluginInstaller.ts";
@@ -117,55 +119,72 @@ const tarballForManifestJson = (
     ...extraEntries,
   ]);
 
-const marketplaceJson = (sha: string, version = "1.0.0") => ({
+const marketplaceJson = (sha: string, versions: ReadonlyArray<string> = ["1.0.0"]) => ({
   plugins: [
     {
       id: pluginId,
       name: "Test Plugin",
       description: "Adds tests.",
       capabilities: ["agents" as const],
-      versions: [
-        {
-          version,
-          tarball: tarballUrl,
-          sha256: sha,
-          hostApi: "^1.0.0",
-          publishedAt: "2026-07-03T00:00:00.000Z",
-        },
-      ],
+      versions: versions.map((version) => ({
+        version,
+        tarball: tarballUrl,
+        sha256: sha,
+        hostApi: "^1.0.0",
+        publishedAt: "2026-07-03T00:00:00.000Z",
+      })),
     },
   ],
 });
 
-function installerLayer(input: {
+interface InstallerLayerInput {
   readonly tarball: Uint8Array;
   readonly marketplaceSha?: string;
+  readonly marketplaceVersions?: ReadonlyArray<string>;
   readonly activated?: Array<string>;
-}) {
+  readonly deactivated?: Array<string>;
+  /** Host → pinned address returned by the stub DNS lookup. */
+  readonly hosts?: Record<string, string>;
+  /** URL → response override, checked before the default marketplace/tarball routes. */
+  readonly responses?: Record<string, () => Response>;
+  /** Receives every URL the stub transport is asked to fetch. */
+  readonly transportLog?: Array<string>;
+}
+
+function installerDeps(input: InstallerLayerInput) {
   const platform = NodeServices.layer;
   const config = ServerConfig.layerTest(process.cwd(), { prefix: "t3-installer-" }).pipe(
     Layer.provide(platform),
   );
-  const marketplace = marketplaceJson(input.marketplaceSha ?? sha256(input.tarball));
-  const marketplaceBody = encodeMarketplaceJson(marketplace);
-  const http = Layer.succeed(
-    HttpClient.HttpClient,
-    HttpClient.make((request) => {
-      const url = request.url.toString();
-      if (url === "https://market.test/marketplace.json") {
-        return Effect.succeed(
-          HttpClientResponse.fromWeb(
-            request,
-            new Response(marketplaceBody, { headers: { "content-type": "application/json" } }),
-          ),
-        );
-      }
-      if (url === tarballUrl) {
-        return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(input.tarball)));
-      }
-      return Effect.succeed(HttpClientResponse.fromWeb(request, new Response("", { status: 404 })));
-    }),
+  const marketplace = marketplaceJson(
+    input.marketplaceSha ?? sha256(input.tarball),
+    input.marketplaceVersions,
   );
+  const marketplaceBody = encodeMarketplaceJson(marketplace);
+  const hosts = input.hosts ?? { "market.test": "93.184.216.34" };
+  const lookup = Layer.succeed(OutboundUrlLookup, (host: string) => {
+    const address = hosts[host];
+    return address === undefined
+      ? Effect.fail(new OutboundUrlError({ reason: `unexpected lookup ${host}` }))
+      : Effect.succeed([{ address, family: 4 as const }]);
+  });
+  const transport = Layer.succeed(PluginHttpClientTransportService, (request) => {
+    const url = request.url.toString();
+    input.transportLog?.push(url);
+    const respond = (response: Response) =>
+      Effect.succeed(HttpClientResponse.fromWeb(HttpClientRequest.get(url), response));
+    const override = input.responses?.[url];
+    if (override) return respond(override());
+    if (url === "https://market.test/marketplace.json") {
+      return respond(
+        new Response(marketplaceBody, { headers: { "content-type": "application/json" } }),
+      );
+    }
+    if (url === tarballUrl) {
+      return respond(new Response(input.tarball));
+    }
+    return respond(new Response("", { status: 404 }));
+  });
   const host = Layer.succeed(
     PluginHost,
     PluginHost.of({
@@ -174,7 +193,10 @@ function installerLayer(input: {
         Effect.sync(() => {
           input.activated?.push(id);
         }),
-      deactivatePlugin: () => Effect.void,
+      deactivatePlugin: (id) =>
+        Effect.sync(() => {
+          input.deactivated?.push(id);
+        }),
     }),
   );
   const catalog = Layer.succeed(
@@ -188,21 +210,26 @@ function installerLayer(input: {
           state: "active" as const,
           capabilities: ["agents" as const],
           hasWeb: false,
+          hasStyles: false,
           lastError: null,
         },
       ]),
     }),
   );
-  return PluginInstallerModule.layer.pipe(
-    Layer.provideMerge(PluginMarketplaceModule.layer),
+  return PluginMarketplaceModule.layer.pipe(
     Layer.provideMerge(PluginLockfileStoreLayer.layer),
     Layer.provideMerge(host),
     Layer.provideMerge(catalog),
-    Layer.provideMerge(http),
+    Layer.provideMerge(lookup),
+    Layer.provideMerge(transport),
     Layer.provideMerge(TestClock.layer()),
     Layer.provideMerge(config),
-    Layer.provide(platform),
+    Layer.provideMerge(platform),
   );
+}
+
+function installerLayer(input: InstallerLayerInput) {
+  return PluginInstallerModule.layer.pipe(Layer.provideMerge(installerDeps(input)));
 }
 
 const seedSource = Effect.gen(function* () {
@@ -465,6 +492,44 @@ it.effect("PluginInstaller rejects invalid manifests before staging can be confi
   ),
 );
 
+it("compareSemver orders versions by semver precedence and ignores build metadata", () => {
+  const cmp = PluginInstallerModule.compareSemver;
+  // A release outranks its prereleases.
+  assert.isAbove(cmp("1.0.0", "1.0.0-rc.1"), 0);
+  assert.isBelow(cmp("1.0.0-rc.1", "1.0.0"), 0);
+  // Numeric prerelease identifiers compare numerically, not lexically.
+  assert.isBelow(cmp("1.0.0-rc.2", "1.0.0-rc.10"), 0);
+  // The full precedence chain from semver.org §11.
+  const ordered = [
+    "1.0.0-alpha",
+    "1.0.0-alpha.1",
+    "1.0.0-alpha.beta",
+    "1.0.0-beta",
+    "1.0.0-beta.2",
+    "1.0.0-beta.11",
+    "1.0.0-rc.1",
+    "1.0.0",
+  ];
+  for (let index = 0; index < ordered.length - 1; index++) {
+    assert.isBelow(cmp(ordered[index]!, ordered[index + 1]!), 0);
+    assert.isAbove(cmp(ordered[index + 1]!, ordered[index]!), 0);
+  }
+  // Build metadata does not affect precedence.
+  assert.equal(cmp("1.0.0+build1", "1.0.0+build2"), 0);
+  // Plain x.y.z core comparison (as the minAppVersion checks rely on) is intact.
+  assert.isAbove(cmp("1.2.0", "1.0.0"), 0);
+  assert.isAbove(cmp("2.0.0", "1.9.9"), 0);
+  // A descending sort (as checkUpdates uses) picks the true latest of a
+  // prerelease set.
+  const latest = [
+    { version: "1.0.0-rc.2" },
+    { version: "1.0.0" },
+    { version: "1.0.0-rc.10" },
+    { version: "0.9.9" },
+  ].toSorted((left, right) => cmp(right.version, left.version))[0];
+  assert.equal(latest?.version, "1.0.0");
+});
+
 it("plugin id collision follows the DB table prefix, not the raw id", () => {
   // Same prefix / one a prefix of the other → collide.
   assert.isTrue(PluginInstallerModule.pluginTablePrefixesCollide("test", "test"));
@@ -496,6 +561,32 @@ it.effect("PluginInstaller begin-confirm updates the lockfile and hot-activates"
   );
 });
 
+it.effect("PluginInstaller describes filesystem and httpClient consent", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const installer = yield* PluginInstaller;
+      yield* seedSource;
+
+      const staged = yield* installer.beginInstall({ sourceId, pluginId, version: "1.0.0" });
+
+      assert.equal(
+        staged.capabilityDescriptions.filesystem,
+        "Read and write files in your project workspace and in worktrees this plugin creates",
+      );
+      assert.equal(
+        staged.capabilityDescriptions.httpClient,
+        "Make requests to public external HTTPS services",
+      );
+    }).pipe(
+      Effect.provide(
+        installerLayer({
+          tarball: tarballForManifest(manifest({ capabilities: ["filesystem", "httpClient"] })),
+        }),
+      ),
+    ),
+  ),
+);
+
 it.effect("PluginInstaller abort and expired tokens clean staging", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -525,8 +616,9 @@ it.effect("PluginInstaller abort and expired tokens clean staging", () =>
   ),
 );
 
-it.effect("PluginInstaller stages upgrades and uninstall marks pending remove", () =>
-  Effect.scoped(
+it.effect("PluginInstaller stages upgrades and uninstall marks pending remove", () => {
+  const deactivated: Array<string> = [];
+  return Effect.scoped(
     Effect.gen(function* () {
       const installer = yield* PluginInstaller;
       const store = yield* PluginLockfileStore;
@@ -553,6 +645,303 @@ it.effect("PluginInstaller stages upgrades and uninstall marks pending remove", 
       yield* installer.uninstall({ pluginId, removeData: false });
       lockfile = yield* store.readLockfile;
       assert.equal(lockfile.plugins[pluginId]?.state, "pending-remove");
+      // uninstall must tear down the live runtime immediately, not wait for a
+      // server restart to apply pending-remove.
+      assert.deepEqual(deactivated, [pluginId]);
+    }).pipe(Effect.provide(installerLayer({ tarball: tarballForManifest(), deactivated }))),
+  );
+});
+
+it.effect("PluginInstaller rejects upgrading to the already-installed version", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const installer = yield* PluginInstaller;
+      const store = yield* PluginLockfileStore;
+      yield* seedSource;
+      yield* store.updatePlugin(pluginId, () =>
+        Effect.succeed({
+          version: "1.0.0",
+          sha256: "existing",
+          sourceId,
+          enabled: true,
+          state: "active",
+          activation: { activatingSince: null, crashCount: 0 },
+          installedAt: "2026-07-03T00:00:00.000Z",
+          lastError: null,
+        }),
+      );
+
+      // A same-version upgrade must be rejected in beginUpgrade, before any
+      // staging, so moveStagingToVersionDir can never remove the live version
+      // dir out from under the running plugin.
+      const result = yield* Effect.result(installer.beginUpgrade({ pluginId, version: "1.0.0" }));
+
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) assert.equal(result.failure.code, "manifest-invalid");
     }).pipe(Effect.provide(installerLayer({ tarball: tarballForManifest() }))),
+  ),
+);
+
+it.effect(
+  "PluginInstaller rejects tarball redirects to blocked hosts without following them",
+  () => {
+    const transportLog: Array<string> = [];
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const installer = yield* PluginInstaller;
+        yield* seedSource;
+
+        const result = yield* Effect.result(
+          installer.beginInstall({ sourceId, pluginId, version: "1.0.0" }),
+        );
+
+        assert.isTrue(Result.isFailure(result));
+        if (Result.isFailure(result)) {
+          assert.equal(result.failure.code, "download-failed");
+          assert.include(result.failure.message, "not allowed");
+        }
+        // The redirect target must never be fetched: the guard validates the
+        // Location (and its resolved addresses) before issuing any request.
+        assert.deepEqual(
+          transportLog.filter((url) => url.startsWith("https://internal.market.test")),
+          [],
+        );
+      }).pipe(
+        Effect.provide(
+          installerLayer({
+            tarball: tarballForManifest(),
+            hosts: {
+              "market.test": "93.184.216.34",
+              "internal.market.test": "10.0.0.5",
+            },
+            responses: {
+              [tarballUrl]: () =>
+                new Response(null, {
+                  status: 302,
+                  headers: { location: "https://internal.market.test/latest/meta-data" },
+                }),
+            },
+            transportLog,
+          }),
+        ),
+      ),
+    );
+  },
+);
+
+it.effect("PluginInstaller follows tarball redirects to allowed hosts", () => {
+  const tarball = tarballForManifest();
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const installer = yield* PluginInstaller;
+      yield* seedSource;
+
+      const staged = yield* installer.beginInstall({ sourceId, pluginId, version: "1.0.0" });
+
+      assert.equal(staged.manifest.id, pluginId);
+    }).pipe(
+      Effect.provide(
+        installerLayer({
+          tarball,
+          hosts: {
+            "market.test": "93.184.216.34",
+            "cdn.market.test": "203.0.114.7",
+          },
+          responses: {
+            [tarballUrl]: () =>
+              new Response(null, {
+                status: 302,
+                headers: { location: "https://cdn.market.test/test-plugin-1.0.0.tgz" },
+              }),
+            "https://cdn.market.test/test-plugin-1.0.0.tgz": () => new Response(tarball),
+          },
+        }),
+      ),
+    ),
+  );
+});
+
+it.effect("PluginInstaller confirmInstall re-checks id collisions under the lockfile writer", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const installer = yield* PluginInstaller;
+      const store = yield* PluginLockfileStore;
+      yield* seedSource;
+
+      const staged = yield* installer.beginInstall({ sourceId, pluginId, version: "1.0.0" });
+      // Simulate a concurrent install committing an entry between this flow's
+      // begin (which validated against a lockfile snapshot) and its confirm.
+      yield* store.updatePlugin(pluginId, () =>
+        Effect.succeed({
+          version: "2.0.0",
+          sha256: "concurrent",
+          sourceId,
+          enabled: true,
+          state: "active" as const,
+          activation: { activatingSince: null, crashCount: 0 },
+          installedAt: "2026-07-03T00:00:00.000Z",
+          lastError: null,
+        }),
+      );
+
+      const result = yield* Effect.result(installer.confirmInstall(staged.stageToken));
+
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) assert.equal(result.failure.code, "manifest-invalid");
+      // The concurrently-committed entry must be left untouched.
+      const lockfile = yield* store.readLockfile;
+      assert.equal(lockfile.plugins[pluginId]?.version, "2.0.0");
+      assert.equal(lockfile.plugins[pluginId]?.sha256, "concurrent");
+    }).pipe(Effect.provide(installerLayer({ tarball: tarballForManifest() }))),
+  ),
+);
+
+it.effect("PluginInstaller checkUpdates does not offer prereleases to stable installs", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const installer = yield* PluginInstaller;
+      const store = yield* PluginLockfileStore;
+      yield* seedSource;
+      yield* store.updatePlugin(pluginId, () =>
+        Effect.succeed({
+          version: "1.0.0",
+          sha256: "installed",
+          sourceId,
+          enabled: true,
+          state: "active" as const,
+          activation: { activatingSince: null, crashCount: 0 },
+          installedAt: "2026-07-03T00:00:00.000Z",
+          lastError: null,
+        }),
+      );
+
+      const { updates } = yield* installer.checkUpdates;
+
+      assert.deepEqual(updates, []);
+    }).pipe(
+      Effect.provide(
+        installerLayer({
+          tarball: tarballForManifest(),
+          marketplaceVersions: ["1.0.0", "1.1.0-rc.1"],
+        }),
+      ),
+    ),
+  ),
+);
+
+it.effect("PluginInstaller checkUpdates offers prereleases to prerelease installs", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const installer = yield* PluginInstaller;
+      const store = yield* PluginLockfileStore;
+      yield* seedSource;
+      yield* store.updatePlugin(pluginId, () =>
+        Effect.succeed({
+          version: "1.1.0-rc.1",
+          sha256: "installed",
+          sourceId,
+          enabled: true,
+          state: "active" as const,
+          activation: { activatingSince: null, crashCount: 0 },
+          installedAt: "2026-07-03T00:00:00.000Z",
+          lastError: null,
+        }),
+      );
+
+      const { updates } = yield* installer.checkUpdates;
+
+      assert.equal(updates.length, 1);
+      assert.equal(updates[0]?.latestVersion, "1.1.0-rc.2");
+    }).pipe(
+      Effect.provide(
+        installerLayer({
+          tarball: tarballForManifest(),
+          marketplaceVersions: ["1.0.0", "1.1.0-rc.1", "1.1.0-rc.2"],
+        }),
+      ),
+    ),
+  ),
+);
+
+it.effect("PluginInstaller cleanup tolerates staging directories that cannot be removed", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const installer = yield* PluginInstaller;
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* seedSource;
+
+      const staged = yield* installer.beginInstall({ sourceId, pluginId, version: "1.0.0" });
+      const stagingDir = path.join(config.pluginsDir, ".staging", staged.stageToken);
+      // Strip write permission so the expired dir's entries cannot be
+      // unlinked, then trigger cleanupExpired via a fresh beginInstall: the
+      // stuck dir must not fail the new staging operation.
+      yield* fs.chmod(stagingDir, 0o500);
+      yield* TestClock.adjust("16 minutes");
+      const result = yield* Effect.result(
+        installer.beginInstall({ sourceId, pluginId, version: "1.0.0" }),
+      );
+      yield* fs.chmod(stagingDir, 0o700).pipe(Effect.ignore);
+
+      assert.isTrue(Result.isSuccess(result));
+    }).pipe(Effect.provide(installerLayer({ tarball: tarballForManifest() }))),
+  ),
+);
+
+it.effect("PluginInstaller startup sweep reaps orphaned staging directories", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      // An orphan left by an interrupt between mkdir and the StageRecord being
+      // recorded (or by a failed cleanup removal) is unreachable by design —
+      // stage records are in-memory only — so construction must reap it.
+      const orphan = path.join(config.pluginsDir, ".staging", "orphan");
+      yield* fs.makeDirectory(orphan, { recursive: true });
+
+      yield* PluginInstallerModule.make();
+
+      assert.isFalse(yield* fs.exists(orphan));
+    }).pipe(Effect.provide(installerDeps({ tarball: tarballForManifest() }))),
+  ),
+);
+
+it.effect("PluginInstaller cleans staging when decompression fails", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const installer = yield* PluginInstaller;
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* seedSource;
+
+      const result = yield* Effect.result(
+        installer.beginInstall({ sourceId, pluginId, version: "1.0.0" }),
+      );
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) assert.equal(result.failure.code, "extract-failed");
+
+      // The staging dir is created before decompression; a decompress failure
+      // (gzip-bomb cap) must clean it up rather than orphan it under .staging.
+      const stagingRoot = path.join(config.pluginsDir, ".staging");
+      const exists = yield* fs.exists(stagingRoot).pipe(Effect.orElseSucceed(() => false));
+      const entries = exists ? yield* fs.readDirectory(stagingRoot) : [];
+      assert.deepEqual(entries, []);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          installerLayer({
+            tarball: NodeZlib.gzipSync(
+              tarballForManifestJson(encodeManifestJson(manifest()), [
+                { name: "assets/repeated.bin", body: new Uint8Array(1024 * 1024) },
+              ]),
+            ),
+          }),
+          NodeServices.layer,
+        ),
+      ),
+    ),
   ),
 );

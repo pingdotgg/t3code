@@ -35,6 +35,7 @@ import {
   FolderPlusIcon,
   LinkIcon,
   MessageSquareIcon,
+  PlugIcon,
   SettingsIcon,
   SquarePenIcon,
 } from "lucide-react";
@@ -97,6 +98,7 @@ import {
   buildRootGroups,
   buildThreadActionItems,
   enumerateCommandPaletteItems,
+  executeCommandPaletteActionItem,
   type CommandPaletteActionItem,
   type CommandPaletteSubmenuItem,
   type CommandPaletteView,
@@ -135,6 +137,7 @@ import {
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
 } from "../sidebarProjectGrouping";
+import { pluginUiRegistryAtom } from "../plugins/PluginUiHost";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 
@@ -508,6 +511,7 @@ function OpenCommandPaletteDialog(props: {
   const threads = useThreadShells();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const providers = useAtomValue(primaryServerProvidersAtom);
+  const pluginUiRegistry = useAtomValue(pluginUiRegistryAtom);
   const [viewStack, setViewStack] = useState<CommandPaletteView[]>([]);
   const currentView = viewStack.at(-1) ?? null;
   const [browseGeneration, setBrowseGeneration] = useState(0);
@@ -926,6 +930,21 @@ function OpenCommandPaletteDialog(props: {
     [activeThreadId, clientSettings.sidebarThreadSortOrder, navigate, projectTitleById, threads],
   );
   const recentThreadItems = allThreadItems.slice(0, RECENT_THREAD_LIMIT);
+  const pluginCommandItems = useMemo<CommandPaletteActionItem[]>(
+    () =>
+      pluginUiRegistry.commands.map((command) => ({
+        kind: "action",
+        value: `plugin:${command.pluginId}:${command.id}`,
+        searchTerms: [command.title, command.description ?? "", command.pluginId, command.id],
+        title: command.title,
+        ...(command.description ? { description: command.description } : {}),
+        icon: <PlugIcon className={ITEM_ICON_CLASS} />,
+        run: async () => {
+          await command.run(command.context);
+        },
+      })),
+    [pluginUiRegistry.commands],
+  );
 
   const pushPaletteView = useCallback(
     (view: CommandPaletteView): void => {
@@ -1357,7 +1376,7 @@ function OpenCommandPaletteDialog(props: {
     },
   });
 
-  const rootGroups = buildRootGroups({ actionItems, recentThreadItems });
+  const rootGroups = buildRootGroups({ actionItems, pluginCommandItems, recentThreadItems });
   const sourceSelectionViewValue =
     addProjectEnvironmentId === null ? null : `sources:${addProjectEnvironmentId}`;
   const activeGroups =
@@ -1895,7 +1914,7 @@ function OpenCommandPaletteDialog(props: {
       setOpen(false);
     }
 
-    void item.run().catch((error: unknown) => {
+    executeCommandPaletteActionItem(item, (error: unknown) => {
       toastManager.add(
         stackedThreadToast({
           type: "error",

@@ -1,4 +1,5 @@
 import * as atomReact from "@effect/atom-react";
+import * as contracts from "@t3tools/contracts";
 import * as pluginSdkWeb from "@t3tools/plugin-sdk-web";
 import * as effect from "effect";
 import * as React from "react";
@@ -6,6 +7,14 @@ import * as ReactDOM from "react-dom";
 import * as ReactDOMClient from "react-dom/client";
 import * as jsxDevRuntime from "react/jsx-dev-runtime";
 import * as jsxRuntime from "react/jsx-runtime";
+
+import { publishPluginHostSingletons, whenPluginHostReady } from "./hostSingletonsReady";
+
+// Heavy half of the plugin host singletons: importing this module pulls the
+// full `effect` barrel, the whole `@t3tools/contracts` surface, and the SDK's
+// host re-exports. It is only imported dynamically (PluginUiHost, when the
+// first active web plugin needs the host), so all of that stays out of the
+// main web bundle. The readiness promise lives in ./hostSingletonsReady.
 
 export interface PluginHostSingletons {
   readonly react: typeof React;
@@ -15,32 +24,8 @@ export interface PluginHostSingletons {
   readonly "react/jsx-dev-runtime": typeof jsxDevRuntime;
   readonly "@effect/atom-react": typeof atomReact;
   readonly effect: typeof effect;
+  readonly "@t3tools/contracts": typeof contracts;
   readonly "@t3tools/plugin-sdk-web": typeof pluginSdkWeb;
-}
-
-declare global {
-  // Host ESM shims read this object synchronously after the SPA boot module publishes it.
-  // eslint-disable-next-line no-var
-  var __T3_PLUGIN_HOST__: PluginHostSingletons | undefined;
-  // eslint-disable-next-line no-var
-  var __T3_PLUGIN_HOST_READY__: Promise<PluginHostSingletons> | undefined;
-  // eslint-disable-next-line no-var
-  var __T3_PLUGIN_HOST_READY_RESOLVE__: ((host: PluginHostSingletons) => void) | undefined;
-}
-
-let resolvePluginHostReady: (host: PluginHostSingletons) => void;
-
-export const whenPluginHostReady =
-  globalThis.__T3_PLUGIN_HOST_READY__ ??
-  new Promise<PluginHostSingletons>((resolve) => {
-    resolvePluginHostReady = resolve;
-    globalThis.__T3_PLUGIN_HOST_READY_RESOLVE__ = resolve;
-  });
-
-if (!globalThis.__T3_PLUGIN_HOST_READY__) {
-  globalThis.__T3_PLUGIN_HOST_READY__ = whenPluginHostReady;
-} else {
-  resolvePluginHostReady = globalThis.__T3_PLUGIN_HOST_READY_RESOLVE__ ?? (() => {});
 }
 
 const pluginHost: PluginHostSingletons = {
@@ -51,12 +36,13 @@ const pluginHost: PluginHostSingletons = {
   "react/jsx-dev-runtime": jsxDevRuntime,
   "@effect/atom-react": atomReact,
   effect,
+  "@t3tools/contracts": contracts,
   "@t3tools/plugin-sdk-web": pluginSdkWeb,
 };
 
-globalThis.__T3_PLUGIN_HOST__ = pluginHost;
-globalThis.__T3_PLUGIN_HOST_READY_RESOLVE__?.(pluginHost);
-resolvePluginHostReady!(pluginHost);
+publishPluginHostSingletons(pluginHost);
+
+export { whenPluginHostReady };
 
 export function getPluginHost(): PluginHostSingletons {
   if (!globalThis.__T3_PLUGIN_HOST__) {

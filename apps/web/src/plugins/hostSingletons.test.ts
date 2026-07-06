@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
-import { getPluginHostShimSource, pluginHostShimExportNames } from "@t3tools/shared/pluginHostWeb";
+import {
+  getPluginHostShimSource,
+  pluginHostModuleSpecifiers,
+  pluginHostShimExportNames,
+} from "@t3tools/shared/pluginHostWeb";
+import { isPluginSdkWebExternal } from "@t3tools/plugin-sdk-web";
+import reactPackageJson from "react/package.json";
 
 import { getPluginHost, whenPluginHostReady } from "./hostSingletons";
 
@@ -10,6 +16,7 @@ describe("hostSingletons", () => {
 
     expect(Object.keys(host).sort()).toEqual([
       "@effect/atom-react",
+      "@t3tools/contracts",
       "@t3tools/plugin-sdk-web",
       "effect",
       "react",
@@ -18,8 +25,17 @@ describe("hostSingletons", () => {
       "react/jsx-dev-runtime",
       "react/jsx-runtime",
     ]);
-    expect(host.react.version).toBe("19.2.6");
+    expect(host.react.version).toBe(reactPackageJson.version);
     expect(typeof host["@t3tools/plugin-sdk-web"].hostCompat).toBe("object");
+  });
+
+  // Every module the runtime import map serves as a host singleton must also be
+  // externalized by plugin builds — otherwise a plugin bundles its own copy and
+  // forks state the host expects to share.
+  it("marks every import-map module external for plugin builds", () => {
+    for (const specifier of pluginHostModuleSpecifiers) {
+      expect(isPluginSdkWebExternal(specifier), specifier).toBe(true);
+    }
   });
 
   it("react shim modules re-export the host singleton identities", async () => {

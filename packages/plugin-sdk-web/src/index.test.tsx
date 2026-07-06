@@ -23,7 +23,14 @@ describe("plugin-sdk-web", () => {
 
   it("keeps host singleton dependencies external for plugin builds", () => {
     expect(pluginSdkWebExternalDependencies).toEqual(
-      expect.arrayContaining(["@effect/atom-react", "effect", "react", "react-dom"]),
+      expect.arrayContaining([
+        "@effect/atom-react",
+        "@t3tools/contracts",
+        "@t3tools/plugin-sdk-web",
+        "effect",
+        "react",
+        "react-dom",
+      ]),
     );
   });
 

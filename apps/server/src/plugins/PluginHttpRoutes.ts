@@ -1,8 +1,9 @@
 import { pluginOperateScope, satisfiesScope } from "@t3tools/contracts";
-import type { PluginId } from "@t3tools/contracts/plugin";
-import type { PluginHttpResponse } from "@t3tools/plugin-sdk";
+import { PLUGIN_ID_PATTERN_SOURCE, type PluginId } from "@t3tools/contracts/plugin";
+import type { PluginHttpResponse, PluginLogger } from "@t3tools/plugin-sdk";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -25,7 +26,10 @@ import { makePluginLogger } from "./PluginLogger.ts";
 const ROUTE_PREFIX = "/hooks/plugins";
 const DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
 const MAX_BODY_BYTES = 8 * 1024 * 1024;
-const PLUGIN_ID_PATTERN = /^[a-z][a-z0-9-]{1,40}$/u;
+// Derive the inbound-route id gate from the same source the `PluginId` schema
+// checks against, so the two can never drift: if they did, `HttpCapability`
+// would hand a plugin a `basePath` this router rejects, 404-ing every webhook.
+const PLUGIN_ID_PATTERN = new RegExp(`^${PLUGIN_ID_PATTERN_SOURCE}$`, "u");
 
 function bodyLimit(value: number | undefined): number {
   if (value === undefined || !Number.isFinite(value)) return DEFAULT_MAX_BODY_BYTES;
@@ -138,6 +142,36 @@ function toHttpResponse(response: PluginHttpResponse): HttpServerResponse.HttpSe
   return HttpServerResponse.jsonUnsafe(body, options);
 }
 
+// Re-raise an interrupt-only cause without widening the typed error channel:
+// `Cause.hasInterruptsOnly` guarantees the cause carries no failures/defects, so
+// narrowing to `Cause<never>` is sound.
+const propagateInterrupt = (cause: Cause.Cause<unknown>): Effect.Effect<never> =>
+  Effect.failCause(cause as Cause.Cause<never>);
+
+// A handler — or the surrounding route — that is interrupted (client disconnect,
+// server/plugin-scope shutdown) must PROPAGATE cancellation, not get logged as a
+// failure and answered with a 500 to a dead socket. Convert only genuine
+// failures/defects into a 500; re-raise interrupt-only causes.
+export const respondToPluginHandlerExit = (
+  exit: Exit.Exit<PluginHttpResponse, Error>,
+  logger: PluginLogger,
+  context: { readonly method: string; readonly path: string },
+): Effect.Effect<HttpServerResponse.HttpServerResponse> => {
+  if (Exit.isSuccess(exit)) {
+    return Effect.succeed(toHttpResponse(exit.value));
+  }
+  if (Cause.hasInterruptsOnly(exit.cause)) {
+    return propagateInterrupt(exit.cause);
+  }
+  return logger
+    .error("plugin http handler failed", {
+      method: context.method,
+      path: context.path,
+      cause: Cause.pretty(exit.cause),
+    })
+    .pipe(Effect.as(HttpServerResponse.text("Internal Server Error", { status: 500 })));
+};
+
 export const pluginHttpRouteLayer = HttpRouter.add(
   "*",
   `${ROUTE_PREFIX}/*`,
@@ -205,16 +239,10 @@ export const pluginHttpRouteLayer = HttpRouter.add(
       )
       .pipe(Effect.exit);
 
-    if (exit._tag === "Failure") {
-      yield* logger.error("plugin http handler failed", {
-        method: request.method,
-        path: parsed.routePath,
-        cause: Cause.pretty(exit.cause),
-      });
-      return HttpServerResponse.text("Internal Server Error", { status: 500 });
-    }
-
-    return toHttpResponse(exit.value);
+    return yield* respondToPluginHandlerExit(exit, logger, {
+      method: request.method,
+      path: parsed.routePath,
+    });
   }).pipe(
     Effect.catchTags({
       EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
@@ -222,9 +250,13 @@ export const pluginHttpRouteLayer = HttpRouter.add(
       EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
     }),
     Effect.catchCause((cause) =>
-      Effect.logWarning("plugin http route failed", { cause: Cause.pretty(cause) }).pipe(
-        Effect.as(HttpServerResponse.text("Internal Server Error", { status: 500 })),
-      ),
+      // A cancelled request (client disconnect / scope shutdown) interrupts the
+      // whole route: propagate it rather than logging + 500-ing a dead socket.
+      Cause.hasInterruptsOnly(cause)
+        ? propagateInterrupt(cause)
+        : Effect.logWarning("plugin http route failed", { cause: Cause.pretty(cause) }).pipe(
+            Effect.as(HttpServerResponse.text("Internal Server Error", { status: 500 })),
+          ),
     ),
   ),
 );

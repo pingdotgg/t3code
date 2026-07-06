@@ -10,6 +10,7 @@ import type {
   PluginSourcesRemoveInput,
   PluginState,
 } from "@t3tools/contracts";
+import { compareSemver, isPrereleaseVersion } from "@t3tools/contracts";
 import {
   squashAtomCommandFailure,
   type AtomCommandResult,
@@ -66,7 +67,13 @@ export function pluginStateBadgeVariant(
 export function latestMarketplaceVersion(
   versions: ReadonlyArray<MarketplaceVersion>,
 ): MarketplaceVersion | null {
-  return versions[0] ?? null;
+  // The index order is publisher-controlled, so pick the true semver-max
+  // (matching the server's checkUpdates) instead of trusting versions[0].
+  // Stable releases are preferred; a prerelease is only offered when the
+  // source publishes nothing else.
+  const stable = versions.filter((candidate) => !isPrereleaseVersion(candidate.version));
+  const pool = stable.length > 0 ? stable : versions;
+  return pool.toSorted((left, right) => compareSemver(right.version, left.version))[0] ?? null;
 }
 
 export function effectiveInstallSourceId(

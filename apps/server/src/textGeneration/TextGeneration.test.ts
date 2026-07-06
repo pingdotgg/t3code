@@ -21,6 +21,8 @@ const makeStubTextGeneration = (
     generatePrContent: () => Effect.die("generatePrContent stub not configured for this test"),
     generateBranchName: () => Effect.die("generateBranchName stub not configured for this test"),
     generateThreadTitle: () => Effect.die("generateThreadTitle stub not configured for this test"),
+    generateBoardProposal: () =>
+      Effect.die("generateBoardProposal stub not configured for this test"),
     ...overrides,
   });
 
@@ -92,6 +94,36 @@ describe("makeTextGenerationFromRegistry", () => {
 
       expect(result.branch).toBe("personal-branch");
       expect(personalCalls).toEqual(["Refactor the routing layer"]);
+    }),
+  );
+
+  it.effect("delegates generateBoardProposal and returns the parsed proposal", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("claudeAgent");
+      const recorded: Array<{ prompt: string; model: string }> = [];
+      const instance = makeStubInstance(
+        instanceId,
+        makeStubTextGeneration({
+          generateBoardProposal: (input) => {
+            recorded.push({ prompt: input.prompt, model: input.modelSelection.model });
+            return Effect.succeed({
+              proposedDefinition: { lanes: ["a", "b"] },
+              rationale: "because",
+            });
+          },
+        }),
+      );
+
+      const tg = TextGeneration.makeTextGenerationFromRegistry(makeStubRegistry([instance]));
+
+      const result = yield* tg.generateBoardProposal({
+        prompt: "assembled metrics + def",
+        modelSelection: createModelSelection(instanceId, "claude-sonnet-4-6"),
+      });
+
+      expect(result.proposedDefinition).toEqual({ lanes: ["a", "b"] });
+      expect(result.rationale).toBe("because");
+      expect(recorded).toEqual([{ prompt: "assembled metrics + def", model: "claude-sonnet-4-6" }]);
     }),
   );
 

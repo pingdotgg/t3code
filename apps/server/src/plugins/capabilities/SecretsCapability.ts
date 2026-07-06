@@ -9,11 +9,17 @@ import type * as Path from "effect/Path";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 
-const keyPrefix = (pluginId: PluginId) => `plugin:${pluginId}:`;
+// The backing store maps keys to filenames verbatim (`<key>.bin`), and the
+// server targets Windows where ':' is illegal in filenames. Delimit with '~',
+// which is absent from both the plugin id charset ([a-z][a-z0-9-]{1,40}) and the
+// secret name charset (SECRET_NAME_PATTERN below), so keys stay Windows-safe and
+// list() can still split the prefix from the name unambiguously. Round-trips:
+// set/get/delete build `plugin~<id>~<name>`; list() strips `plugin~<id>~` back.
+const keyPrefix = (pluginId: PluginId) => `plugin~${pluginId}~`;
 
 // The backing store maps keys to file paths verbatim, so secret names must
-// be a safe path segment: no separators, no dots-only tricks, no colons
-// (colons delimit the plugin prefix and break list() parsing).
+// be a safe path segment: no separators, no dots-only tricks, no '~'
+// (the delimiter of the plugin prefix, which would break list() parsing).
 const SECRET_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 export class PluginSecretNameError extends Schema.TaggedErrorClass<PluginSecretNameError>()(
@@ -61,7 +67,10 @@ export function makeSecretsCapability(input: {
           .sort(),
       ),
       Effect.catch((cause) =>
-        cause.reason._tag === "NotFound" ? Effect.succeed([]) : Effect.fail(cause),
+        // Guard `.reason`: a non-SystemError-shaped failure has no `reason`, and
+        // `undefined._tag` would throw a TypeError (an unhandled defect) inside
+        // the catch instead of surfacing the original recoverable failure.
+        cause.reason?._tag === "NotFound" ? Effect.succeed([]) : Effect.fail(cause),
       ),
     ),
   };
