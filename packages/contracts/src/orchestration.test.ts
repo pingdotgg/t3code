@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
+  ClientOrchestrationCommand,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   ModelSelection,
@@ -50,6 +51,7 @@ function getOptionValue(
   return options?.find((option) => option.id === id)?.value;
 }
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
+const decodeClientOrchestrationCommand = Schema.decodeUnknownEffect(ClientOrchestrationCommand);
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
@@ -415,7 +417,28 @@ it.effect("decodes thread ownership with legacy user defaults and plugin-owned i
     if (command.type !== "thread.create") {
       assert.fail(`Expected thread.create command, received ${command.type}.`);
     }
-    assert.strictEqual(command.owner, "plugin:test");
+    assert.strictEqual("owner" in command, true);
+    assert.strictEqual((command as { owner?: unknown }).owner, "plugin:test");
+
+    const clientCommand = yield* decodeClientOrchestrationCommand({
+      type: "thread.create",
+      commandId: "cmd-client-thread-create",
+      threadId: "thread-client",
+      projectId: "project-1",
+      title: "Client thread",
+      owner: "plugin:test",
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5.4",
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(clientCommand.type, "thread.create");
+    assert.strictEqual("owner" in clientCommand, false);
   }),
 );
 
