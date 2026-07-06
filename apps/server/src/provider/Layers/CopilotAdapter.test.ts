@@ -147,7 +147,6 @@ const CopilotAdapterTestLayer = Layer.effect(
   CopilotAdapter,
   makeCopilotAdapter(decodeCopilotSettings({}), {
     nativeEventLogger,
-    turnEndIdleFallbackDelayMs: 25,
   }),
 ).pipe(
   Layer.provideMerge(
@@ -1132,7 +1131,15 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           turnId: "sdk-turn-second",
         },
       } as SessionEvent);
-      yield* TestClock.adjust("25 millis");
+      emit({
+        id: "evt-copilot-second-session-idle",
+        timestamp,
+        parentId: null,
+        type: "session.idle",
+        data: {
+          aborted: false,
+        },
+      } as SessionEvent);
 
       for (
         let attempt = 0;
@@ -3418,7 +3425,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     }),
   );
 
-  it.effect("completes a final assistant turn when Copilot omits session idle", () =>
+  it.effect("completes a final assistant turn on session.idle", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
       const threadId = asThreadId("copilot-final-turn-end-without-idle");
@@ -3477,7 +3484,15 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           turnId: "sdk-turn-final-turn-end",
         },
       } as SessionEvent);
-      yield* TestClock.adjust("25 millis");
+      emit({
+        id: "evt-copilot-final-turn-end-session-idle",
+        timestamp,
+        parentId: null,
+        type: "session.idle",
+        data: {
+          aborted: false,
+        },
+      } as SessionEvent);
 
       for (
         let attempt = 0;
@@ -3956,6 +3971,116 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     }),
   );
 
+  it.effect("completes the active turn on session.idle", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-session-idle-completion");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "finish on assistant idle",
+        attachments: [],
+      });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* waitForSdkEventQueue();
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      NodeAssert.ok(config?.onEvent);
+      const emit = (event: SessionEvent) => config.onEvent?.(event);
+      const timestamp = yield* nowIso;
+
+      emit({
+        id: "evt-copilot-transient-idle-start",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_start",
+        data: {
+          turnId: "sdk-turn-transient-idle",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-transient-idle-turn-end",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_end",
+        data: {
+          turnId: "sdk-turn-transient-idle",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-session-idle",
+        timestamp,
+        parentId: null,
+        type: "session.idle",
+        data: {
+          aborted: false,
+        },
+      } as SessionEvent);
+
+      for (
+        let attempt = 0;
+        attempt < 20 &&
+        !runtimeEvents.some(
+          (event) =>
+            event.type === "turn.completed" && String(event.turnId) === String(turn.turnId),
+        );
+        attempt += 1
+      ) {
+        yield* waitForSdkEventQueue();
+      }
+
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+
+      const completions = runtimeEvents.filter(
+        (event) => event.type === "turn.completed" && String(event.turnId) === String(turn.turnId),
+      );
+      NodeAssert.equal(completions.length, 1);
+      const idleStateChanged = runtimeEvents.find(
+        (event) => event.type === "session.state.changed" && event.payload.state === "ready",
+      );
+      NodeAssert.ok(idleStateChanged);
+
+      emit({
+        id: "evt-copilot-session-idle-duplicate",
+        timestamp,
+        parentId: null,
+        type: "session.idle",
+        data: {
+          aborted: false,
+        },
+      } as SessionEvent);
+      for (
+        let attempt = 0;
+        attempt < 20 &&
+        !runtimeEvents.some(
+          (event) => event.type === "session.state.changed" && event.payload.state === "ready",
+        );
+        attempt += 1
+      ) {
+        yield* waitForSdkEventQueue();
+      }
+
+      const completionsAfterDuplicateIdle = runtimeEvents.filter(
+        (event) => event.type === "turn.completed" && String(event.turnId) === String(turn.turnId),
+      );
+      NodeAssert.equal(completionsAfterDuplicateIdle.length, 1);
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("does not let stale sdk turn_start steal the next queued turn id", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
@@ -4191,128 +4316,137 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     }),
   );
 
-  it.effect(
-    "maps the next turn correctly after idle-only completion clears stale sdk turn state",
-    () =>
-      Effect.gen(function* () {
-        const adapter = yield* CopilotAdapter;
-        const threadId = asThreadId("copilot-idle-only-next-turn-mapping");
+  it.effect("maps the next turn correctly after first completion clears stale sdk turn state", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-idle-only-next-turn-mapping");
 
-        yield* adapter.startSession({
-          provider: COPILOT_DRIVER,
-          threadId,
-          cwd: process.cwd(),
-          runtimeMode: "approval-required",
-        });
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
 
-        const runtimeEvents: ProviderRuntimeEvent[] = [];
-        const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
-          Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
-          Effect.forkChild,
-        );
-        yield* waitForSdkEventQueue();
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* waitForSdkEventQueue();
 
-        const config = runtimeMock.state.createSessionConfigs.at(-1);
-        NodeAssert.ok(config?.onEvent);
-        const emit = (event: SessionEvent) => config.onEvent?.(event);
-        const timestamp = yield* nowIso;
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      NodeAssert.ok(config?.onEvent);
+      const emit = (event: SessionEvent) => config.onEvent?.(event);
+      const timestamp = yield* nowIso;
 
-        const firstTurn = yield* adapter.sendTurn({
-          threadId,
-          input: "first prompt",
-          attachments: [],
-        });
-        emit({
-          id: "evt-copilot-idle-only-first-start",
-          timestamp,
-          parentId: null,
-          type: "assistant.turn_start",
-          data: {
-            turnId: "sdk-turn-idle-only-first",
-          },
-        } as SessionEvent);
-        emit({
-          id: "evt-copilot-idle-only-first-idle",
-          timestamp,
-          parentId: null,
-          type: "session.idle",
-          data: {
-            aborted: false,
-          },
-        } as SessionEvent);
+      const firstTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "first prompt",
+        attachments: [],
+      });
+      emit({
+        id: "evt-copilot-idle-only-first-start",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_start",
+        data: {
+          turnId: "sdk-turn-idle-only-first",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-idle-only-first-end",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_end",
+        data: {
+          turnId: "sdk-turn-idle-only-first",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-idle-only-first-idle",
+        timestamp,
+        parentId: null,
+        type: "session.idle",
+        data: {
+          aborted: false,
+        },
+      } as SessionEvent);
+      yield* TestClock.adjust("25 millis");
 
-        for (
-          let attempt = 0;
-          attempt < 20 &&
-          !runtimeEvents.some(
-            (event) =>
-              event.type === "turn.completed" && String(event.turnId) === String(firstTurn.turnId),
-          );
-          attempt += 1
-        ) {
-          yield* waitForSdkEventQueue();
-        }
-
-        const secondTurn = yield* adapter.sendTurn({
-          threadId,
-          input: "second prompt",
-          attachments: [],
-        });
-        emit({
-          id: "evt-copilot-idle-only-second-start",
-          timestamp,
-          parentId: null,
-          type: "assistant.turn_start",
-          data: {
-            turnId: "sdk-turn-idle-only-second",
-          },
-        } as SessionEvent);
-        emit({
-          id: "evt-copilot-idle-only-second-end",
-          timestamp,
-          parentId: null,
-          type: "assistant.turn_end",
-          data: {
-            turnId: "sdk-turn-idle-only-second",
-          },
-        } as SessionEvent);
-        emit({
-          id: "evt-copilot-idle-only-second-idle",
-          timestamp,
-          parentId: null,
-          type: "session.idle",
-          data: {
-            aborted: false,
-          },
-        } as SessionEvent);
-
-        for (
-          let attempt = 0;
-          attempt < 20 &&
-          !runtimeEvents.some(
-            (event) =>
-              event.type === "turn.completed" && String(event.turnId) === String(secondTurn.turnId),
-          );
-          attempt += 1
-        ) {
-          yield* waitForSdkEventQueue();
-        }
-
-        yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
-
-        const firstTurnCompletions = runtimeEvents.filter(
+      for (
+        let attempt = 0;
+        attempt < 20 &&
+        !runtimeEvents.some(
           (event) =>
             event.type === "turn.completed" && String(event.turnId) === String(firstTurn.turnId),
         );
-        const secondTurnCompletions = runtimeEvents.filter(
+        attempt += 1
+      ) {
+        yield* waitForSdkEventQueue();
+      }
+
+      const secondTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "second prompt",
+        attachments: [],
+      });
+      emit({
+        id: "evt-copilot-idle-only-second-start",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_start",
+        data: {
+          turnId: "sdk-turn-idle-only-second",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-idle-only-second-end",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_end",
+        data: {
+          turnId: "sdk-turn-idle-only-second",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-idle-only-second-idle",
+        timestamp,
+        parentId: null,
+        type: "session.idle",
+        data: {
+          aborted: false,
+        },
+      } as SessionEvent);
+      yield* TestClock.adjust("25 millis");
+
+      for (
+        let attempt = 0;
+        attempt < 20 &&
+        !runtimeEvents.some(
           (event) =>
             event.type === "turn.completed" && String(event.turnId) === String(secondTurn.turnId),
         );
-        NodeAssert.equal(firstTurnCompletions.length, 1);
-        NodeAssert.equal(secondTurnCompletions.length, 1);
+        attempt += 1
+      ) {
+        yield* waitForSdkEventQueue();
+      }
 
-        yield* adapter.stopSession(threadId);
-      }),
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+
+      const firstTurnCompletions = runtimeEvents.filter(
+        (event) =>
+          event.type === "turn.completed" && String(event.turnId) === String(firstTurn.turnId),
+      );
+      const secondTurnCompletions = runtimeEvents.filter(
+        (event) =>
+          event.type === "turn.completed" && String(event.turnId) === String(secondTurn.turnId),
+      );
+      NodeAssert.equal(firstTurnCompletions.length, 1);
+      NodeAssert.equal(secondTurnCompletions.length, 1);
+
+      yield* adapter.stopSession(threadId);
+    }),
   );
 
   it.effect("drains queued SDK events before disconnecting on stop", () =>
@@ -4380,6 +4514,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
 
       const disconnectsBeforeDrain = runtimeMock.state.lastSession.disconnect.mock.calls.length;
       releaseNativeWrite();
+      yield* TestClock.adjust("25 millis");
       yield* Fiber.join(stopFiber);
 
       for (
