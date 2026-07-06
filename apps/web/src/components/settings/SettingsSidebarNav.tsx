@@ -8,9 +8,11 @@ import {
   KeyboardIcon,
   Link2Icon,
   PaletteIcon,
+  PuzzleIcon,
   Settings2Icon,
 } from "lucide-react";
 import { useCanGoBack, useNavigate } from "@tanstack/react-router";
+import { useAtomValue } from "@effect/atom-react";
 
 import {
   SidebarContent,
@@ -22,8 +24,9 @@ import {
   useSidebar,
 } from "../ui/sidebar";
 import { T3ConnectSidebarAvatar, T3ConnectSidebarSignIn } from "../clerk/T3ConnectSidebarSignIn";
+import { pluginUiRegistryAtom, type PluginUiRegistrySnapshot } from "../../plugins/PluginUiHost";
 
-export type SettingsSectionPath =
+export type CoreSettingsSectionPath =
   | "/settings/general"
   | "/settings/appearance"
   | "/settings/keybindings"
@@ -32,10 +35,11 @@ export type SettingsSectionPath =
   | "/settings/connections"
   | "/settings/beta"
   | "/settings/archived";
+export type SettingsSectionPath = CoreSettingsSectionPath | `/settings/${string}`;
 
 export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   label: string;
-  to: SettingsSectionPath;
+  to: CoreSettingsSectionPath;
   icon: ComponentType<{ className?: string }>;
 }> = [
   { label: "General", to: "/settings/general", icon: Settings2Icon },
@@ -48,16 +52,33 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   { label: "Archive", to: "/settings/archived", icon: ArchiveIcon },
 ];
 
+export function getSettingsNavItems(snapshot: PluginUiRegistrySnapshot): ReadonlyArray<{
+  readonly label: string;
+  readonly to: SettingsSectionPath;
+  readonly icon: ComponentType<{ className?: string }>;
+}> {
+  return [
+    ...SETTINGS_NAV_ITEMS,
+    ...snapshot.settingsPages.map((page) => ({
+      label: page.title,
+      to: `/settings/${page.pluginId}/${page.id}` as const,
+      icon: PuzzleIcon,
+    })),
+  ];
+}
+
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
   const canGoBack = useCanGoBack();
   const { isMobile, setOpenMobile } = useSidebar();
+  const pluginRegistry = useAtomValue(pluginUiRegistryAtom);
+  const navItems = getSettingsNavItems(pluginRegistry);
   const handleSectionClick = useCallback(
     (to: SettingsSectionPath) => {
       if (isMobile) {
         setOpenMobile(false);
       }
-      void navigate({ to, replace: true });
+      void navigate({ to: to as never, replace: true });
     },
     [isMobile, navigate, setOpenMobile],
   );
@@ -77,7 +98,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
       <SidebarContent className="overflow-x-hidden">
         <SidebarGroup className="p-2">
           <SidebarMenu>
-            {SETTINGS_NAV_ITEMS.map((item) => {
+            {navItems.map((item) => {
               const Icon = item.icon;
               const isActive = pathname === item.to;
               return (

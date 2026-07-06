@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts/plugin";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -19,6 +20,7 @@ import * as NodeURL from "node:url";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ServerConfig from "../config.ts";
+import * as ServerLifecycleEvents from "../serverLifecycleEvents.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
@@ -52,6 +54,7 @@ const testLayerBase = PluginHostModule.layer.pipe(
   Layer.provideMerge(PluginMigrator.layer),
   Layer.provideMerge(PluginRuntimeRegistryLayer.layer),
   Layer.provideMerge(PluginHttpRegistry.layer),
+  Layer.provideMerge(ServerLifecycleEvents.layer),
   Layer.provideMerge(
     Layer.mock(ServerSecretStore.ServerSecretStore)({
       get: unexpectedCapabilityUse,
@@ -429,6 +432,31 @@ layer("PluginHost", (it) => {
       }
       assert.equal(lockfile.plugins[pluginId]?.activation.activatingSince, null);
       assert.equal(lockfile.plugins[pluginId]?.activation.crashCount, 0);
+    }),
+  );
+
+  it.effect("publishes plugin state changes on the server lifecycle stream", () =>
+    Effect.gen(function* () {
+      const pluginId = PluginId.make("lifecycle-plugin");
+      const host = yield* PluginHostModule.PluginHost;
+      const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
+
+      const eventFiber = yield* lifecycleEvents.stream.pipe(
+        Stream.filter((event) => event.type === "plugins" && event.payload.pluginId === pluginId),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* installPlugin({ pluginId, entrySource: "throw new Error('lifecycle boom');" });
+      yield* host.start;
+
+      const events = Array.from(yield* Fiber.join(eventFiber));
+      assert.deepEqual(events[0]?.payload, {
+        kind: "plugin-state-changed",
+        pluginId,
+        state: "failed",
+      });
     }),
   );
 

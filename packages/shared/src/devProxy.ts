@@ -8,7 +8,14 @@
  * prefix only Vite knows gets answered with index.html; a prefix only the
  * server knows redirect-loops through the proxy.
  */
-export const DEV_PROXIED_PATH_PREFIXES = ["/api", "/oauth", "/.well-known", "/ws"] as const;
+export const DEV_PROXIED_PATH_PREFIXES = [
+  "/api",
+  "/oauth",
+  "/.well-known",
+  "/ws",
+  "/plugin-host",
+  "/plugins",
+] as const;
 
 export function isDevProxiedPath(pathname: string): boolean {
   return DEV_PROXIED_PATH_PREFIXES.some(

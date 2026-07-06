@@ -206,6 +206,10 @@
     "./devProxy": {
       "types": "./src/devProxy.ts",
       "import": "./src/devProxy.ts"
+    },
+    "./pluginHostWeb": {
+      "types": "./src/pluginHostWeb.ts",
+      "import": "./src/pluginHostWeb.ts"
     }
   },
   "scripts": {

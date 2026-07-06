@@ -1,6 +1,7 @@
 import tailwindcss from "@tailwindcss/vite";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import babel from "@rolldown/plugin-babel";
+import { injectPluginHostHeadHtml } from "@t3tools/shared/pluginHostWeb";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import { defineProject, type TestProjectInlineConfiguration } from "vite-plus/test/config";
 import "vite-plus/test/config";
@@ -124,9 +125,19 @@ const configuredAllowedHosts = (process.env.T3CODE_DEV_ALLOWED_HOSTS ?? "")
   .filter((entry) => entry.length > 0);
 const allowedHosts = [".ts.net", ...configuredAllowedHosts];
 
+function pluginHostIndexHtmlPlugin() {
+  return {
+    name: "t3-plugin-host-index-html",
+    transformIndexHtml(html: string) {
+      return injectPluginHostHeadHtml(html);
+    },
+  };
+}
+
 export default defineConfig(() => {
   return {
     plugins: [
+      pluginHostIndexHtmlPlugin(),
       tanstackRouter(),
       react(),
       babel({

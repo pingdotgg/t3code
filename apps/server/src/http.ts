@@ -5,6 +5,7 @@ import {
   EnvironmentHttpApi,
 } from "@t3tools/contracts";
 import { isDevProxiedPath } from "@t3tools/shared/devProxy";
+import { injectPluginHostHeadHtml } from "@t3tools/shared/pluginHostWeb";
 import { decodeOtlpTraceRecords } from "@t3tools/shared/observability";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -45,6 +46,8 @@ const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 const DESKTOP_RENDERER_ORIGINS = ["t3code://app", "t3code-dev://app"];
 const GZIP_MIN_BYTES = 1024;
+const textDecoder = new TextDecoder();
+const textEncoder = new TextEncoder();
 
 function acceptsGzip(value: string | undefined): boolean {
   if (!value) return false;
@@ -315,6 +318,20 @@ export const staticAndDevRouteLayer = HttpRouter.add(
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const staticRoot = path.resolve(staticDir);
+    const serveIndexHtml = (indexPath: string) =>
+      Effect.gen(function* () {
+        const indexData = yield* fileSystem
+          .readFile(indexPath)
+          .pipe(Effect.orElseSucceed(() => null));
+        if (!indexData) {
+          return HttpServerResponse.text("Not Found", { status: 404 });
+        }
+        const html = textDecoder.decode(indexData);
+        return HttpServerResponse.uint8Array(textEncoder.encode(injectPluginHostHeadHtml(html)), {
+          status: 200,
+          contentType: "text/html; charset=utf-8",
+        });
+      });
     const staticRequestPath = url.value.pathname === "/" ? "/index.html" : url.value.pathname;
     const rawStaticRelativePath = staticRequestPath.replace(/^[/\\]+/, "");
     const hasRawLeadingParentSegment = rawStaticRelativePath.startsWith("..");
@@ -349,16 +366,11 @@ export const staticAndDevRouteLayer = HttpRouter.add(
     const fileInfo = yield* fileSystem.stat(filePath).pipe(Effect.orElseSucceed(() => null));
     if (!fileInfo || fileInfo.type !== "File") {
       const indexPath = path.resolve(staticRoot, "index.html");
-      const indexData = yield* fileSystem
-        .readFile(indexPath)
-        .pipe(Effect.orElseSucceed(() => null));
-      if (!indexData) {
-        return HttpServerResponse.text("Not Found", { status: 404 });
-      }
-      return HttpServerResponse.uint8Array(indexData, {
-        status: 200,
-        contentType: "text/html; charset=utf-8",
-      });
+      return yield* serveIndexHtml(indexPath);
+    }
+
+    if (path.basename(filePath).toLowerCase() === "index.html") {
+      return yield* serveIndexHtml(filePath);
     }
 
     const contentType = Mime.getType(filePath) ?? "application/octet-stream";

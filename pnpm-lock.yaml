@@ -564,6 +564,9 @@ importers:
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@t3tools/plugin-sdk-web':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk-web
       '@t3tools/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -826,6 +829,30 @@ importers:
       effect:
         specifier: 4.0.0-beta.102
         version: 4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488)
+
+  packages/plugin-sdk-web:
+    dependencies:
+      '@effect/atom-react':
+        specifier: 4.0.0-beta.102
+        version: 4.0.0-beta.102(effect@4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488))(react@19.2.6)(scheduler@0.27.0)
+      '@t3tools/client-runtime':
+        specifier: workspace:*
+        version: link:../client-runtime
+      '@t3tools/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@t3tools/shared':
+        specifier: workspace:*
+        version: link:../shared
+      effect:
+        specifier: 4.0.0-beta.102
+        version: 4.0.0-beta.102(patch_hash=71215759e1ac0a7f65d7b75d816986687ae6c3a6cba02d928d184ca71790d488)
+      react:
+        specifier: 19.2.6
+        version: 19.2.6
+      react-dom:
+        specifier: 19.2.6
+        version: 19.2.6(react@19.2.6)
 
   packages/shared:
     dependencies:
