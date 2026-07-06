@@ -31,6 +31,7 @@ export type CoreSettingsSectionPath =
   | "/settings/appearance"
   | "/settings/keybindings"
   | "/settings/providers"
+  | "/settings/plugins"
   | "/settings/source-control"
   | "/settings/connections"
   | "/settings/beta"
@@ -46,6 +47,7 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   { label: "Appearance", to: "/settings/appearance", icon: PaletteIcon },
   { label: "Keybindings", to: "/settings/keybindings", icon: KeyboardIcon },
   { label: "Providers", to: "/settings/providers", icon: BotIcon },
+  { label: "Plugins", to: "/settings/plugins", icon: PuzzleIcon },
   { label: "Source Control", to: "/settings/source-control", icon: GitBranchIcon },
   { label: "Connections", to: "/settings/connections", icon: Link2Icon },
   { label: "Beta", to: "/settings/beta", icon: FlaskConicalIcon },

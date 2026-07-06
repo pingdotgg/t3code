@@ -2,6 +2,7 @@ import {
   AuthAccessReadScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthPluginsManageScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
   AuthReviewWriteScope,
@@ -103,6 +104,18 @@ export const RPC_REQUIRED_SCOPES = {
   // performs the real per-plugin plugin:<id>:read|operate authorization.
   [PLUGINS_WS_METHODS.call]: AuthOrchestrationReadScope,
   [PLUGINS_WS_METHODS.subscribe]: AuthOrchestrationReadScope,
+  [PLUGINS_WS_METHODS.sourcesList]: AuthPluginsManageScope,
+  [PLUGINS_WS_METHODS.sourcesAdd]: AuthPluginsManageScope,
+  [PLUGINS_WS_METHODS.sourcesRemove]: AuthPluginsManageScope,
+  [PLUGINS_WS_METHODS.catalog]: AuthPluginsManageScope,
+  [PLUGINS_WS_METHODS.installBegin]: AuthPluginsManageScope,
+  [PLUGINS_WS_METHODS.installConfirm]: AuthPluginsManageScope,
+  [PLUGINS_WS_METHODS.installAbort]: AuthPluginsManageScope,
+  [PLUGINS_WS_METHODS.setEnabled]: AuthPluginsManageScope,
+  [PLUGINS_WS_METHODS.uninstall]: AuthPluginsManageScope,
+  [PLUGINS_WS_METHODS.upgradeBegin]: AuthPluginsManageScope,
+  [PLUGINS_WS_METHODS.upgradeConfirm]: AuthPluginsManageScope,
+  [PLUGINS_WS_METHODS.checkUpdates]: AuthPluginsManageScope,
 } as const satisfies Readonly<Record<WsRpcMethod, AuthEnvironmentScope>>;
 
 export function requiredScopeForRpcMethod(method: string): AuthEnvironmentScope {

@@ -24,6 +24,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -66,6 +67,7 @@ import { pluginDataDir, pluginManifestPath, pluginVersionDir } from "./PluginPat
 import { PluginRuntimeRegistry } from "./PluginRuntimeRegistry.ts";
 
 const APP_VERSION = packageJson.version;
+const PRESERVE_DATA_MARKER = ".preserve-data-on-remove";
 const decodeManifest = Schema.decodeUnknownEffect(Schema.fromJsonString(PluginManifest));
 
 const healthyActivationDelay = () => {
@@ -97,6 +99,8 @@ export class PluginHost extends Context.Service<
   PluginHost,
   {
     readonly start: Effect.Effect<void>;
+    readonly activatePlugin: (pluginId: PluginId) => Effect.Effect<void>;
+    readonly deactivatePlugin: (pluginId: PluginId) => Effect.Effect<void>;
   }
 >()("t3/plugins/PluginHost") {}
 
@@ -509,10 +513,72 @@ export const make = Effect.fn("PluginHost.make")(function* () {
       }
     });
 
+  const activatePlugin: PluginHost["Service"]["activatePlugin"] = (pluginId) =>
+    Effect.gen(function* () {
+      if (process.env.T3_NO_PLUGINS === "1") {
+        yield* Effect.logInfo("Plugin host disabled by T3_NO_PLUGINS", { pluginId });
+        return;
+      }
+      const active = yield* registry.get(pluginId);
+      if (Option.isSome(active)) return;
+      const lockfile = yield* store.readLockfile.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Plugin hot activation could not read lockfile", {
+            pluginId,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as({ plugins: {}, sources: [] })),
+        ),
+      );
+      const entry = getLockfilePlugin(lockfile, pluginId);
+      if (!entry?.enabled || entry.state !== "active") return;
+      yield* loader.ensureHostSingletonResolution;
+      yield* loadPlugin(pluginId, entry).pipe(
+        Effect.catchCause((cause) =>
+          markFailure(pluginId, Cause.pretty(cause)).pipe(
+            Effect.andThen(
+              Effect.logWarning("Plugin hot activation failed", {
+                pluginId,
+                cause: Cause.pretty(cause),
+              }),
+            ),
+            Effect.ignore,
+          ),
+        ),
+      );
+    });
+
+  const deactivatePlugin: PluginHost["Service"]["deactivatePlugin"] = (pluginId) =>
+    Effect.gen(function* () {
+      const runtime = yield* registry.get(pluginId);
+      if (Option.isNone(runtime)) return;
+      yield* Scope.close(runtime.value.scope, Exit.void).pipe(Effect.ignore);
+      yield* registry.remove(pluginId);
+      yield* httpRegistry.remove(pluginId).pipe(Effect.ignore);
+      yield* publishPluginStateChanged(pluginId, "disabled");
+    });
+
   const reconcilePendingState = (pluginId: PluginId, entry: PluginLockfilePlugin) =>
     Effect.gen(function* () {
       if (entry.state === "pending-remove") {
-        yield* fs.remove(path.join(config.pluginsDir, pluginId), { recursive: true, force: true });
+        const pluginRoot = path.join(config.pluginsDir, pluginId);
+        const dataDir = pluginDataDir(config.pluginsDir, pluginId, path.join);
+        const markerPath = path.join(pluginRoot, PRESERVE_DATA_MARKER);
+        const preserveData = yield* fs.exists(markerPath).pipe(Effect.orElseSucceed(() => false));
+        const preservedDataDir = path.join(
+          config.pluginsDir,
+          `.preserved-${pluginId}-${yield* clock.currentTimeMillis}`,
+        );
+        if (preserveData && (yield* fs.exists(dataDir).pipe(Effect.orElseSucceed(() => false)))) {
+          yield* fs.rename(dataDir, preservedDataDir);
+        }
+        yield* fs.remove(pluginRoot, { recursive: true, force: true });
+        if (
+          preserveData &&
+          (yield* fs.exists(preservedDataDir).pipe(Effect.orElseSucceed(() => false)))
+        ) {
+          yield* fs.makeDirectory(pluginRoot, { recursive: true });
+          yield* fs.rename(preservedDataDir, dataDir);
+        }
         yield* store.removePlugin(pluginId);
         return false;
       }
@@ -610,7 +676,7 @@ export const make = Effect.fn("PluginHost.make")(function* () {
     }
   }).pipe(Effect.ignoreCause({ log: true }));
 
-  return PluginHost.of({ start });
+  return PluginHost.of({ start, activatePlugin, deactivatePlugin });
 });
 
 export const layer = Layer.effect(PluginHost, make());

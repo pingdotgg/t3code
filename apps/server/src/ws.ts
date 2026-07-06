@@ -11,9 +11,11 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
+  DEFAULT_THREAD_OWNER,
   AuthAccessStreamError,
   type AuthAccessStreamEvent,
   type AuthEnvironmentScope,
+  type AuthScope,
   AuthSessionId,
   CommandId,
   type DiscoveredLocalServerList,
@@ -54,6 +56,7 @@ import {
   type TerminalMetadataStreamEvent,
   WS_METHODS,
   WsRpcGroup,
+  isPluginScope,
   satisfiesScope,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
@@ -118,6 +121,7 @@ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import { PluginCatalog } from "./plugins/PluginCatalog.ts";
+import { PluginManagementRpcHandlers } from "./plugins/PluginManagementRpcHandlers.ts";
 import { PluginRpcDispatcher } from "./plugins/PluginRpcDispatcher.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
@@ -131,6 +135,45 @@ export const resolveAvailableEditorsForConfig = <A, E, R>(
   discovery.pipe(
     Effect.timeoutOption(EDITOR_DISCOVERY_TIMEOUT),
     Effect.map(Option.getOrElse(() => [])),
+  );
+
+/**
+ * Maps a thread-aggregate change into a shell-stream `thread-upserted` event,
+ * enforcing the owner visibility guard.
+ *
+ * The initial `subscribeShell` snapshot is owner-filtered, but the live stream
+ * maps every subsequent thread event through the (intentionally unfiltered)
+ * `getThreadShellById`. Without this guard a plugin's `agents.createThread` /
+ * `startTurn` would push the plugin thread's shell to every connected client
+ * (surfacing a hidden thread in the user's sidebar in real time). Non-user
+ * (plugin-owned) threads are hidden from user-facing views, so drop the event
+ * for them here — mirroring `AgentAwarenessRelay.publishThread`'s skip-check.
+ *
+ * A missing owner row (None) proceeds and emits: deleted/unknown threads keep
+ * the same downstream not-found handling as before this guard existed. Any
+ * lookup error fails closed (emits nothing), matching the prior
+ * `getThreadShellById` error handling.
+ */
+export const toThreadUpsertedShellStreamEvent = (
+  projectionSnapshotQuery: ProjectionSnapshotQuery.ProjectionSnapshotQueryShape,
+  threadId: ThreadId,
+  sequence: number,
+): Effect.Effect<Option.Option<OrchestrationShellStreamEvent>, never, never> =>
+  projectionSnapshotQuery.getThreadOwnerById(threadId).pipe(
+    Effect.flatMap((owner) =>
+      Option.isSome(owner) && owner.value !== DEFAULT_THREAD_OWNER
+        ? Effect.succeed(Option.none<OrchestrationShellStreamEvent>())
+        : projectionSnapshotQuery.getThreadShellById(threadId).pipe(
+            Effect.map((thread) =>
+              Option.map(thread, (nextThread) => ({
+                kind: "thread-upserted" as const,
+                sequence,
+                thread: nextThread,
+              })),
+            ),
+          ),
+    ),
+    Effect.orElseSucceed(() => Option.none()),
   );
 
 function unexpectedCompatibilityError(error: never): never {
@@ -298,6 +341,37 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 // Matches the event store's default page size (DEFAULT_READ_FROM_SEQUENCE_LIMIT).
 const SHELL_RESUME_MAX_GAP = 1_000;
 
+// Plugin method invocation (call/subscribe) carries the orchestration-read
+// baseline above, but a least-privilege plugin-scoped token (e.g. one holding
+// only `plugin:<id>:read`) legitimately does not satisfy that baseline. For
+// these two methods, holding ANY plugin scope also satisfies the transport
+// gate; the dispatcher then enforces the real per-plugin `plugin:<id>:read|
+// operate` authorization. This preserves per-plugin least privilege without
+// requiring read access to the whole orchestration surface.
+const PLUGIN_INVOCATION_METHODS = new Set<string>([
+  PLUGINS_WS_METHODS.call,
+  PLUGINS_WS_METHODS.subscribe,
+]);
+
+/**
+ * Transport-level authorization predicate for a WS RPC method. Exported for unit
+ * testing. A session may invoke `method` when it satisfies the method's declared
+ * baseline `requiredScope`, OR — for plugin call/subscribe only — when it holds
+ * any plugin scope. The latter lets a least-privilege plugin-scoped token reach
+ * the dispatcher, which then enforces the real per-plugin
+ * `plugin:<id>:read|operate` authorization. It does not broaden any other method.
+ */
+export function isMethodAuthorized(
+  method: string,
+  requiredScope: AuthEnvironmentScope,
+  scopes: ReadonlyArray<AuthScope>,
+): boolean {
+  return (
+    satisfiesScope(requiredScope, scopes) ||
+    (PLUGIN_INVOCATION_METHODS.has(method) && scopes.some(isPluginScope))
+  );
+}
+
 function toAuthAccessStreamEvent(
   change: PairingGrantStore.BootstrapCredentialChange | SessionStore.SessionCredentialChange,
   revision: number,
@@ -407,45 +481,42 @@ const makeWsRpcLayer = (
       const relayClient = yield* RelayClient.RelayClient;
       const pluginCatalog = yield* PluginCatalog;
       const pluginRpcDispatcher = yield* PluginRpcDispatcher;
+      const pluginManagement = yield* PluginManagementRpcHandlers;
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
         new EnvironmentAuthorizationError({
           message: `The authenticated token is missing required scope: ${requiredScope}.`,
           requiredScope,
         });
+      const methodAuthorized = (method: string, requiredScope: AuthEnvironmentScope): boolean =>
+        isMethodAuthorized(method, requiredScope, currentSession.scopes);
       const authorizeEffect = <A, E, R>(
-        requiredScope: AuthEnvironmentScope,
+        method: string,
         effect: Effect.Effect<A, E, R>,
-      ): Effect.Effect<A, E | EnvironmentAuthorizationError, R> =>
-        satisfiesScope(requiredScope, currentSession.scopes)
+      ): Effect.Effect<A, E | EnvironmentAuthorizationError, R> => {
+        const requiredScope = requiredScopeForRpcMethod(method);
+        return methodAuthorized(method, requiredScope)
           ? effect
           : Effect.fail(authorizationError(requiredScope));
+      };
       const authorizeStream = <A, E, R>(
-        requiredScope: AuthEnvironmentScope,
+        method: string,
         stream: Stream.Stream<A, E, R>,
-      ): Stream.Stream<A, E | EnvironmentAuthorizationError, R> =>
-        satisfiesScope(requiredScope, currentSession.scopes)
+      ): Stream.Stream<A, E | EnvironmentAuthorizationError, R> => {
+        const requiredScope = requiredScopeForRpcMethod(method);
+        return methodAuthorized(method, requiredScope)
           ? stream
           : Stream.fail(authorizationError(requiredScope));
+      };
       const observeRpcEffect = <A, E, R>(
         method: string,
         effect: Effect.Effect<A, E, R>,
         traceAttributes?: Readonly<Record<string, unknown>>,
-      ) =>
-        instrumentRpcEffect(
-          method,
-          authorizeEffect(requiredScopeForRpcMethod(method), effect),
-          traceAttributes,
-        );
+      ) => instrumentRpcEffect(method, authorizeEffect(method, effect), traceAttributes);
       const observeRpcStream = <A, E, R>(
         method: string,
         stream: Stream.Stream<A, E, R>,
         traceAttributes?: Readonly<Record<string, unknown>>,
-      ) =>
-        instrumentRpcStream(
-          method,
-          authorizeStream(requiredScopeForRpcMethod(method), stream),
-          traceAttributes,
-        );
+      ) => instrumentRpcStream(method, authorizeStream(method, stream), traceAttributes);
       const observeRpcStreamEffect = <A, StreamError, StreamContext, EffectError, EffectContext>(
         method: string,
         effect: Effect.Effect<
@@ -454,12 +525,7 @@ const makeWsRpcLayer = (
           EffectContext
         >,
         traceAttributes?: Readonly<Record<string, unknown>>,
-      ) =>
-        instrumentRpcStreamEffect(
-          method,
-          authorizeEffect(requiredScopeForRpcMethod(method), effect),
-          traceAttributes,
-        );
+      ) => instrumentRpcStreamEffect(method, authorizeEffect(method, effect), traceAttributes);
       const toDispatchCommandError = (cause: unknown, fallbackMessage: string) =>
         isOrchestrationDispatchCommandError(cause)
           ? cause
@@ -631,29 +697,36 @@ const makeWsRpcLayer = (
         threadId: ThreadId,
         sequence: number,
       ): Effect.Effect<Option.Option<OrchestrationShellStreamEvent>, never, never> =>
-        retryShellProjectionRead(
-          "thread",
-          threadId,
-          projectionSnapshotQuery.getThreadShellById(threadId),
-        ).pipe(
-          Effect.map(
-            Option.flatMap((thread) =>
-              Option.match(thread, {
-                onNone: () =>
-                  Option.some<OrchestrationShellStreamEvent>({
-                    kind: "thread-removed" as const,
-                    sequence,
-                    threadId,
-                  }),
-                onSome: (nextThread) =>
-                  Option.some<OrchestrationShellStreamEvent>({
-                    kind: "thread-upserted" as const,
-                    sequence,
-                    thread: nextThread,
-                  }),
-              }),
-            ),
+        projectionSnapshotQuery.getThreadOwnerById(threadId).pipe(
+          Effect.flatMap((owner) =>
+            Option.isSome(owner) && owner.value !== DEFAULT_THREAD_OWNER
+              ? Effect.succeed(Option.none<OrchestrationShellStreamEvent>())
+              : retryShellProjectionRead(
+                  "thread",
+                  threadId,
+                  projectionSnapshotQuery.getThreadShellById(threadId),
+                ).pipe(
+                  Effect.map(
+                    Option.flatMap((thread) =>
+                      Option.match(thread, {
+                        onNone: () =>
+                          Option.some<OrchestrationShellStreamEvent>({
+                            kind: "thread-removed" as const,
+                            sequence,
+                            threadId,
+                          }),
+                        onSome: (nextThread) =>
+                          Option.some<OrchestrationShellStreamEvent>({
+                            kind: "thread-upserted" as const,
+                            sequence,
+                            thread: nextThread,
+                          }),
+                      }),
+                    ),
+                  ),
+                ),
           ),
+          Effect.orElseSucceed(() => Option.none()),
         );
 
       // Turn a batch of domain events into shell stream items, coalescing by
@@ -1380,6 +1453,76 @@ const makeWsRpcLayer = (
               "plugin.method": input.method,
             },
           ),
+        [PLUGINS_WS_METHODS.sourcesList]: (_input) =>
+          observeRpcEffect(PLUGINS_WS_METHODS.sourcesList, pluginManagement.listSources, {
+            "rpc.aggregate": "plugins",
+          }),
+        [PLUGINS_WS_METHODS.sourcesAdd]: (input) =>
+          observeRpcEffect(PLUGINS_WS_METHODS.sourcesAdd, pluginManagement.addSource(input), {
+            "rpc.aggregate": "plugins",
+          }),
+        [PLUGINS_WS_METHODS.sourcesRemove]: (input) =>
+          observeRpcEffect(
+            PLUGINS_WS_METHODS.sourcesRemove,
+            pluginManagement.removeSource(input).pipe(Effect.as({})),
+            {
+              "rpc.aggregate": "plugins",
+            },
+          ),
+        [PLUGINS_WS_METHODS.catalog]: (input) =>
+          observeRpcEffect(PLUGINS_WS_METHODS.catalog, pluginManagement.catalog(input), {
+            "rpc.aggregate": "plugins",
+          }),
+        [PLUGINS_WS_METHODS.installBegin]: (input) =>
+          observeRpcEffect(PLUGINS_WS_METHODS.installBegin, pluginManagement.beginInstall(input), {
+            "rpc.aggregate": "plugins",
+            "plugin.id": input.pluginId,
+          }),
+        [PLUGINS_WS_METHODS.installConfirm]: (input) =>
+          observeRpcEffect(
+            PLUGINS_WS_METHODS.installConfirm,
+            pluginManagement.confirmInstall(input.stageToken),
+            { "rpc.aggregate": "plugins" },
+          ),
+        [PLUGINS_WS_METHODS.installAbort]: (input) =>
+          observeRpcEffect(
+            PLUGINS_WS_METHODS.installAbort,
+            pluginManagement.abortInstall(input.stageToken).pipe(Effect.as({})),
+            { "rpc.aggregate": "plugins" },
+          ),
+        [PLUGINS_WS_METHODS.setEnabled]: (input) =>
+          observeRpcEffect(
+            PLUGINS_WS_METHODS.setEnabled,
+            pluginManagement.setEnabled(input).pipe(Effect.as({})),
+            {
+              "rpc.aggregate": "plugins",
+              "plugin.id": input.pluginId,
+            },
+          ),
+        [PLUGINS_WS_METHODS.uninstall]: (input) =>
+          observeRpcEffect(
+            PLUGINS_WS_METHODS.uninstall,
+            pluginManagement.uninstall(input).pipe(Effect.as({})),
+            {
+              "rpc.aggregate": "plugins",
+              "plugin.id": input.pluginId,
+            },
+          ),
+        [PLUGINS_WS_METHODS.upgradeBegin]: (input) =>
+          observeRpcEffect(PLUGINS_WS_METHODS.upgradeBegin, pluginManagement.beginUpgrade(input), {
+            "rpc.aggregate": "plugins",
+            "plugin.id": input.pluginId,
+          }),
+        [PLUGINS_WS_METHODS.upgradeConfirm]: (input) =>
+          observeRpcEffect(
+            PLUGINS_WS_METHODS.upgradeConfirm,
+            pluginManagement.confirmUpgrade(input.stageToken),
+            { "rpc.aggregate": "plugins" },
+          ),
+        [PLUGINS_WS_METHODS.checkUpdates]: (_input) =>
+          observeRpcEffect(PLUGINS_WS_METHODS.checkUpdates, pluginManagement.checkUpdates, {
+            "rpc.aggregate": "plugins",
+          }),
         [WS_METHODS.serverRefreshProviders]: (input) =>
           observeRpcEffect(
             WS_METHODS.serverRefreshProviders,
