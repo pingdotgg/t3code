@@ -1,0 +1,922 @@
+diff --git a/keyboard.d.ts b/keyboard.d.ts
+index 5a115ea..2c65d31 100644
+--- a/keyboard.d.ts
++++ b/keyboard.d.ts
+@@ -269,7 +269,7 @@ type KeyboardChatComposerInsetListRef = {
+ type KeyboardChatComposerRef = {
+     current: Pick<View, "measure"> | null;
+ };
+-declare function useKeyboardChatComposerInset(listRef: KeyboardChatComposerInsetListRef, composerRef: KeyboardChatComposerRef, initialHeight?: number): {
++declare function useKeyboardChatComposerInset(listRef: KeyboardChatComposerInsetListRef, composerRef: KeyboardChatComposerRef, initialHeight?: number, heightAdjustment?: number): {
+     contentInsetEndAdjustment: SharedValue<number>;
+     onComposerLayout: (event: LayoutChangeEvent) => void;
+ };
+@@ -278,8 +278,10 @@ declare function useKeyboardScrollToEnd({ freeze: freezeProp, listRef }: UseKeyb
+     scrollMessageToEnd: ({ animated, closeKeyboard }: ScrollMessageToEndOptions) => Promise<void>;
+ };
+ declare const KeyboardAwareLegendList: <ItemT>(props: Omit<AnimatedLegendListProps<ItemT>, "anchoredEndSpace" | "contentInsetEndAdjustment" | "renderScrollComponent"> & KeyboardChatScrollViewPropsUnique & {
++    adjustedInsetCompensation?: number;
+     anchoredEndSpace?: AnchoredEndSpaceConfig;
+     contentInsetEndAdjustment?: SharedValue<number>;
++    contentInsetEndStaticAdjustment?: number;
+     keyboardOffset?: number;
+ } & React.RefAttributes<LegendListRef>) => React.ReactElement | null;
+ 
+diff --git a/keyboard.js b/keyboard.js
+index 736286a..8218172 100644
+--- a/keyboard.js
++++ b/keyboard.js
+@@ -33,19 +33,19 @@ if (typeof __DEV__ !== "undefined" && __DEV__ && !reactNativeKeyboardController.
+     "[legend-list] KeyboardAwareLegendList requires a recent react-native-keyboard-controller with KeyboardChatScrollView. Please upgrade react-native-keyboard-controller to at least 1.21.7."
+   );
+ }
+-function useKeyboardChatComposerInset(listRef, composerRef, initialHeight = 0) {
++function useKeyboardChatComposerInset(listRef, composerRef, initialHeight = 0, heightAdjustment = 0) {
+   const contentInsetEndAdjustment = reactNativeReanimated.useSharedValue(initialHeight);
+   const lastHeightRef = React.useRef(void 0);
+   const reportHeight = React.useCallback(
+-    (height) => {
++    (rawHeight) => {
++      const height = Math.max(0, rawHeight + heightAdjustment);
+       var _a;
+       if (Number.isFinite(height) && height !== lastHeightRef.current) {
+         lastHeightRef.current = height;
+         contentInsetEndAdjustment.value = height;
+-        (_a = listRef.current) == null ? void 0 : _a.reportContentInset({ bottom: height });
+       }
+     },
+-    [contentInsetEndAdjustment, listRef]
++    [contentInsetEndAdjustment, heightAdjustment, listRef]
+   );
+   React.useLayoutEffect(() => {
+     var _a;
+@@ -84,9 +84,11 @@ function useKeyboardScrollToEnd({ freeze: freezeProp, listRef }) {
+ }
+ var KeyboardAwareLegendList = typedForwardRef(function KeyboardAwareLegendList2(props, forwardedRef) {
+   const {
++    adjustedInsetCompensation,
+     anchoredEndSpace,
+     applyWorkaroundForContentInsetHitTestBug,
+     contentInsetEndAdjustment,
++    contentInsetEndStaticAdjustment,
+     freeze,
+     keyboardLiftBehavior,
+     keyboardOffset,
+@@ -109,11 +111,15 @@ var KeyboardAwareLegendList = typedForwardRef(function KeyboardAwareLegendList2(
+       includeInEndInset: true,
+       onSizeChanged: (size) => {
+         var _a;
+-        blankSpace.value = size;
++        // The anchored blank is sized against the ADJUSTED viewport, but the
++        // scroll component writes it as a raw contentInset that UIKit tops up
++        // with the safe-area bottom — write it net of that or the end rest
++        // (and the anchored message) sinks one safe-area under the header.
++        blankSpace.value = size > 0 ? Math.max(0, size - (adjustedInsetCompensation || 0)) : 0;
+         (_a = anchoredEndSpace.onSizeChanged) == null ? void 0 : _a.call(anchoredEndSpace, size);
+       }
+     };
+-  }, [anchoredEndSpace, blankSpace]);
++  }, [adjustedInsetCompensation, anchoredEndSpace, blankSpace]);
+   const onContentInsetChange = React.useCallback((insets) => {
+     var _a;
+     (_a = refLegendList.current) == null ? void 0 : _a.reportContentInset(insets);
+@@ -124,6 +130,7 @@ var KeyboardAwareLegendList = typedForwardRef(function KeyboardAwareLegendList2(
+         reactNativeKeyboardController.KeyboardChatScrollView,
+         {
+           ...scrollProps,
++          adjustedInsetCompensation,
+           applyWorkaroundForContentInsetHitTestBug,
+           blankSpace,
+           extraContentPadding: contentInsetEndAdjustment,
+@@ -135,6 +142,7 @@ var KeyboardAwareLegendList = typedForwardRef(function KeyboardAwareLegendList2(
+       );
+     },
+     [
++      adjustedInsetCompensation,
+       applyWorkaroundForContentInsetHitTestBug,
+       blankSpace,
+       contentInsetEndAdjustment,
+@@ -149,6 +157,7 @@ var KeyboardAwareLegendList = typedForwardRef(function KeyboardAwareLegendList2(
+     AnimatedLegendListInternal,
+     {
+       anchoredEndSpace: anchoredEndSpaceWithBlankSpace,
++      contentInsetEndAdjustment: contentInsetEndStaticAdjustment,
+       ref: combinedRef,
+       renderScrollComponent: memoList,
+       ...rest
+diff --git a/keyboard.mjs b/keyboard.mjs
+index c1dd270..cb0d142 100644
+--- a/keyboard.mjs
++++ b/keyboard.mjs
+@@ -12,19 +12,19 @@ if (typeof __DEV__ !== "undefined" && __DEV__ && !KeyboardChatScrollView) {
+     "[legend-list] KeyboardAwareLegendList requires a recent react-native-keyboard-controller with KeyboardChatScrollView. Please upgrade react-native-keyboard-controller to at least 1.21.7."
+   );
+ }
+-function useKeyboardChatComposerInset(listRef, composerRef, initialHeight = 0) {
++function useKeyboardChatComposerInset(listRef, composerRef, initialHeight = 0, heightAdjustment = 0) {
+   const contentInsetEndAdjustment = useSharedValue(initialHeight);
+   const lastHeightRef = useRef(void 0);
+   const reportHeight = useCallback(
+-    (height) => {
++    (rawHeight) => {
++      const height = Math.max(0, rawHeight + heightAdjustment);
+       var _a;
+       if (Number.isFinite(height) && height !== lastHeightRef.current) {
+         lastHeightRef.current = height;
+         contentInsetEndAdjustment.value = height;
+-        (_a = listRef.current) == null ? void 0 : _a.reportContentInset({ bottom: height });
+       }
+     },
+-    [contentInsetEndAdjustment, listRef]
++    [contentInsetEndAdjustment, heightAdjustment, listRef]
+   );
+   useLayoutEffect(() => {
+     var _a;
+@@ -63,9 +63,11 @@ function useKeyboardScrollToEnd({ freeze: freezeProp, listRef }) {
+ }
+ var KeyboardAwareLegendList = typedForwardRef(function KeyboardAwareLegendList2(props, forwardedRef) {
+   const {
++    adjustedInsetCompensation,
+     anchoredEndSpace,
+     applyWorkaroundForContentInsetHitTestBug,
+     contentInsetEndAdjustment,
++    contentInsetEndStaticAdjustment,
+     freeze,
+     keyboardLiftBehavior,
+     keyboardOffset,
+@@ -88,11 +90,15 @@ var KeyboardAwareLegendList = typedForwardRef(function KeyboardAwareLegendList2(
+       includeInEndInset: true,
+       onSizeChanged: (size) => {
+         var _a;
+-        blankSpace.value = size;
++        // The anchored blank is sized against the ADJUSTED viewport, but the
++        // scroll component writes it as a raw contentInset that UIKit tops up
++        // with the safe-area bottom — write it net of that or the end rest
++        // (and the anchored message) sinks one safe-area under the header.
++        blankSpace.value = size > 0 ? Math.max(0, size - (adjustedInsetCompensation || 0)) : 0;
+         (_a = anchoredEndSpace.onSizeChanged) == null ? void 0 : _a.call(anchoredEndSpace, size);
+       }
+     };
+-  }, [anchoredEndSpace, blankSpace]);
++  }, [adjustedInsetCompensation, anchoredEndSpace, blankSpace]);
+   const onContentInsetChange = useCallback((insets) => {
+     var _a;
+     (_a = refLegendList.current) == null ? void 0 : _a.reportContentInset(insets);
+@@ -103,6 +109,7 @@ var KeyboardAwareLegendList = typedForwardRef(function KeyboardAwareLegendList2(
+         KeyboardChatScrollView,
+         {
+           ...scrollProps,
++          adjustedInsetCompensation,
+           applyWorkaroundForContentInsetHitTestBug,
+           blankSpace,
+           extraContentPadding: contentInsetEndAdjustment,
+@@ -114,6 +121,7 @@ var KeyboardAwareLegendList = typedForwardRef(function KeyboardAwareLegendList2(
+       );
+     },
+     [
++      adjustedInsetCompensation,
+       applyWorkaroundForContentInsetHitTestBug,
+       blankSpace,
+       contentInsetEndAdjustment,
+@@ -128,6 +136,7 @@ var KeyboardAwareLegendList = typedForwardRef(function KeyboardAwareLegendList2(
+     AnimatedLegendListInternal,
+     {
+       anchoredEndSpace: anchoredEndSpaceWithBlankSpace,
++      contentInsetEndAdjustment: contentInsetEndStaticAdjustment,
+       ref: combinedRef,
+       renderScrollComponent: memoList,
+       ...rest
+diff --git a/react-native.d.ts b/react-native.d.ts
+index 72d3f59..435a5fc 100644
+--- a/react-native.d.ts
++++ b/react-native.d.ts
+@@ -284,6 +284,12 @@ interface LegendListSpecificProps<ItemT, TItemType extends string | undefined> {
+      * The adjustment is also rendered as real content padding so the browser scroll range includes it.
+      */
+     contentInsetEndAdjustment?: number;
++    /**
++     * Width/height of a leading content inset applied natively outside the list's knowledge
++     * (e.g. iOS contentInsetAdjustmentBehavior="automatic" under a transparent header).
++     * Programmatic scrolls clamp to -adjustment instead of 0 so content can rest below the header.
++     */
++    contentInsetStartAdjustment?: number;
+     /**
+      * Number of columns to render items in.
+      * @default 1
+diff --git a/react-native.js b/react-native.js
+index 8d4ff89..18f0d62 100644
+--- a/react-native.js
++++ b/react-native.js
+@@ -1195,7 +1195,7 @@ function setInitialRenderState(ctx, {
+   if (didInitialScroll) {
+     state.didFinishInitialScroll = true;
+   }
+-  const isReadyToRender = Boolean(state.didContainersLayout && state.didFinishInitialScroll);
++  const isReadyToRender = Boolean(state.didContainersLayout && state.didFinishInitialScroll && !state.insetEndRevealHold);
+   if (isReadyToRender && !peek$(ctx, "readyToRender")) {
+     set$(ctx, "readyToRender", true);
+     setAdaptiveRender(ctx, "normal");
+@@ -1480,18 +1480,23 @@ function calculateOffsetWithOffsetPosition(ctx, offsetParam, params) {
+ }
+ 
+ // src/core/clampScrollOffset.ts
++function getContentInsetStartAdjustment(ctx) {
++  const adjustment = ctx.state.props.contentInsetStartAdjustment;
++  return typeof adjustment === "number" && Number.isFinite(adjustment) ? Math.max(0, adjustment) : 0;
++}
+ function clampScrollOffset(ctx, offset, scrollTarget) {
+   const state = ctx.state;
+   const contentSize = getContentSize(ctx);
++  const minOffset = -getContentInsetStartAdjustment(ctx);
+   let clampedOffset = offset;
+   if (Number.isFinite(contentSize) && Number.isFinite(state.scrollLength) && (Platform.OS !== "android" || state.lastLayout)) {
+-    const baseMaxOffset = Math.max(0, contentSize - state.scrollLength);
++    const baseMaxOffset = Math.max(minOffset, contentSize - state.scrollLength);
+     const viewOffset = scrollTarget == null ? void 0 : scrollTarget.viewOffset;
+     const extraEndOffset = typeof viewOffset === "number" && viewOffset < 0 ? -viewOffset : 0;
+     const maxOffset = baseMaxOffset + extraEndOffset;
+     clampedOffset = Math.min(offset, maxOffset);
+   }
+-  clampedOffset = Math.max(0, clampedOffset);
++  clampedOffset = Math.max(minOffset, clampedOffset);
+   return clampedOffset;
+ }
+ 
+@@ -1626,10 +1631,10 @@ function checkFinishedScrollFrame(ctx) {
+     finishScrollTo(ctx);
+   }
+ }
+-function scrollToFallbackOffset(ctx, offset) {
++function scrollToFallbackOffset(ctx, offset, animated) {
+   var _a3;
+   (_a3 = ctx.state.refScroller.current) == null ? void 0 : _a3.scrollTo({
+-    animated: false,
++    animated: !!animated,
+     x: ctx.state.props.horizontal ? offset : 0,
+     y: ctx.state.props.horizontal ? 0 : offset
+   });
+@@ -1676,7 +1681,10 @@ function checkFinishedScrollFallback(ctx) {
+           });
+           scheduleFallbackCheck(SILENT_INITIAL_SCROLL_RETRY_DELAY_MS);
+         } else if (shouldRetryUnalignedEndScroll) {
+-          scrollToFallbackOffset(ctx, completionState.clampedTargetOffset);
++          const isActivelyAnimatingToEnd = !!isStillScrollingTo.animated && Date.now() - state.scrollTime < 100;
++          if (!isActivelyAnimatingToEnd) {
++            scrollToFallbackOffset(ctx, completionState.clampedTargetOffset, !!isStillScrollingTo.animated);
++          }
+           scheduleFallbackCheck(100);
+         } else if (shouldFinishZeroTarget || shouldFinishAfterObservedScroll || canFinishInitialScrollWithoutNativeProgress || canFinishAfterSilentNativeDispatch || numChecks > maxChecks) {
+           finishScrollTo(ctx);
+@@ -1737,9 +1745,18 @@ function doMaintainScrollAtEnd(ctx) {
+   }
+   state.pendingMaintainScrollAtEnd = false;
+   if (shouldMaintainScrollAtEnd) {
++    const maintainAnchoredEndSpace = state.props.anchoredEndSpace;
++    const maintainAnchorIndex = maintainAnchoredEndSpace == null ? void 0 : maintainAnchoredEndSpace.anchorIndex;
++    if (maintainAnchorIndex !== void 0 && maintainAnchorIndex >= 0 && maintainAnchorIndex < state.props.data.length && !areKnownOrFixedItemSizesAvailable(ctx, maintainAnchorIndex, state.props.data.length - 1)) {
++      return false;
++    }
+     const contentSize = getContentSize(ctx);
++    const maintainInsetStartAdjustment = getContentInsetStartAdjustment(ctx);
+     if (contentSize < state.scrollLength) {
+-      state.scroll = 0;
++      state.scroll = -maintainInsetStartAdjustment;
++      if (maintainInsetStartAdjustment > 0) {
++        return true;
++      }
+     }
+     if (!state.maintainingScrollAtEnd) {
+       const pendingState = maintainScrollAtEnd.animated ? "pending-animated" : "pending-instant";
+@@ -1759,9 +1776,18 @@ function doMaintainScrollAtEnd(ctx) {
+               y: 0
+             });
+           } else {
+-            scroller == null ? void 0 : scroller.scrollToEnd({
+-              animated: maintainScrollAtEnd.animated
+-            });
++            const insetStartAdjustment = getContentInsetStartAdjustment(ctx);
++            if (insetStartAdjustment > 0) {
++              scroller == null ? void 0 : scroller.scrollTo({
++                animated: maintainScrollAtEnd.animated,
++                x: 0,
++                y: Math.max(-insetStartAdjustment, getContentSize(ctx) - state.scrollLength)
++              });
++            } else {
++              scroller == null ? void 0 : scroller.scrollToEnd({
++                animated: maintainScrollAtEnd.animated
++              });
++            }
+           }
+           setTimeout(
+             () => {
+@@ -1888,7 +1914,9 @@ function getPredictedNativeClamp(state, unresolvedAmount, totalSize) {
+   if (Math.abs(unresolvedAmount) <= MVCP_POSITION_EPSILON) {
+     return 0;
+   }
+-  const maxScroll = Math.max(0, totalSize - state.scrollLength);
++  const insetStartAdjustment = state.props.contentInsetStartAdjustment;
++  const minScroll = typeof insetStartAdjustment === "number" && Number.isFinite(insetStartAdjustment) ? -Math.max(0, insetStartAdjustment) : 0;
++  const maxScroll = Math.max(minScroll, totalSize - state.scrollLength);
+   const clampDelta = maxScroll - state.scroll;
+   if (unresolvedAmount < 0) {
+     return Math.max(unresolvedAmount, Math.min(0, clampDelta));
+@@ -1950,7 +1978,7 @@ function resolvePendingNativeMVCPAdjust(ctx, newScroll) {
+     settlePendingNativeMVCPAdjust(ctx, remainingAfterManual, nativeDelta);
+     return true;
+   }
+-  const expectedNativeClampScroll = Math.max(0, getContentSize(ctx) - state.scrollLength);
++  const expectedNativeClampScroll = Math.max(-getContentInsetStartAdjustment(ctx), getContentSize(ctx) - state.scrollLength);
+   const distanceToClamp = Math.abs(newScroll - expectedNativeClampScroll);
+   const isAtExpectedNativeClamp = distanceToClamp <= NATIVE_END_CLAMP_EPSILON;
+   if (isAtExpectedNativeClamp) {
+@@ -2083,7 +2111,7 @@ function prepareMVCP(ctx, dataChanged) {
+             if (diff > 0) {
+               diff = Math.max(0, totalSize - state.scroll - state.scrollLength);
+             } else {
+-              const maxScroll = Math.max(0, totalSize - state.scrollLength);
++              const maxScroll = Math.max(-getContentInsetStartAdjustment(ctx), totalSize - state.scrollLength);
+               state.scroll = maxScroll;
+               state.scrollPending = maxScroll;
+               diff = 0;
+@@ -2374,8 +2402,121 @@ function scrollToIndex(ctx, {
+ }
+ 
+ // src/core/initialScroll.ts
++var INSET_END_SETTLE_WATCHDOG_FRAMES = 150;
++var INSET_END_SETTLE_WATCHDOG_STABLE_FRAMES = 20;
++var INSET_END_REVEAL_STABLE_FRAMES = 3;
++var INSET_END_REVEAL_MAX_HOLD_FRAMES = 40;
++function startInsetEndSettleWatchdog(ctx) {
++  const state = ctx.state;
++  if (state.insetEndSettleWatchdogActive) {
++    return;
++  }
++  state.insetEndSettleWatchdogActive = true;
++  state.didUserDrag = false;
++  // Hold the readyToRender opacity gate until the end landing is stable, so
++  // the estimated-to-measured settle chase happens before first VISIBLE
++  // paint instead of in front of the user. Capped so slow measurement can
++  // never hide content for long.
++  state.insetEndRevealHold = true;
++  let frames = 0;
++  let settledFrames = 0;
++  let revealStableFrames = 0;
++  const releaseRevealHold = () => {
++    if (state.insetEndRevealHold) {
++      state.insetEndRevealHold = false;
++      setInitialRenderState(ctx, {});
++    }
++  };
++  // Revealing flips adaptive rendering to "normal", which re-renders rows and
++  // can move the end target one more time — do that upgrade while still
++  // hidden (phase 1), then require stability again before revealing (phase 2)
++  // so the first visible frame is the settled one.
++  let revealPhase = 1;
++  const onRevealStability = () => {
++    var _a3;
++    if (!state.insetEndRevealHold) {
++      return;
++    }
++    if (revealPhase === 1) {
++      revealPhase = 2;
++      revealStableFrames = 0;
++      setAdaptiveRender(ctx, "normal");
++      (_a3 = state.triggerCalculateItemsInView) == null ? void 0 : _a3.call(state);
++      return;
++    }
++    releaseRevealHold();
++  };
++  const tick = () => {
++    // The user owns the scroll from their first drag — a re-pin here would
++    // pin the list under their finger.
++    if (frames++ >= INSET_END_SETTLE_WATCHDOG_FRAMES || settledFrames >= INSET_END_SETTLE_WATCHDOG_STABLE_FRAMES || state.didUserDrag || !ctx.state || ctx.state !== state) {
++      state.insetEndSettleWatchdogActive = false;
++      releaseRevealHold();
++      return;
++    }
++    if (frames >= INSET_END_REVEAL_MAX_HOLD_FRAMES) {
++      releaseRevealHold();
++    }
++    const insetStartAdjustment = getContentInsetStartAdjustment(ctx);
++    const contentSize = getContentSize(ctx);
++    const scrollLength = state.scrollLength;
++    if (insetStartAdjustment > 0 && scrollLength > 0 && Number.isFinite(contentSize) && contentSize > scrollLength && !state.scrollingTo && !state.maintainingScrollAtEnd) {
++      const endOffset = Math.max(-insetStartAdjustment, contentSize - scrollLength);
++      const distance = endOffset - state.scroll;
++      // Estimated row sizes converging to measured ones can strand the initial
++      // end landing when the library's own end-anchor bookkeeping gives up.
++      // While still near the end (never fighting a user who scrolled away),
++      // re-pin to the current true end until sizes stop changing.
++      if (Math.abs(distance) > 2 && Math.abs(distance) <= scrollLength * 0.5) {
++        settledFrames = 0;
++        revealStableFrames = 0;
++        const scroller = state.refScroller.current;
++        if (scroller) {
++          scroller.scrollTo({ animated: false, x: 0, y: endOffset });
++        }
++      } else {
++        settledFrames++;
++        revealStableFrames++;
++        if (revealStableFrames >= INSET_END_REVEAL_STABLE_FRAMES) {
++          onRevealStability();
++        }
++      }
++    } else {
++      // Conditions that make re-pinning unnecessary (underflow, in-flight
++      // programmatic scroll) count toward stability for the reveal.
++      revealStableFrames++;
++      if (revealStableFrames >= INSET_END_REVEAL_STABLE_FRAMES) {
++        onRevealStability();
++      }
++    }
++    requestAnimationFrame(tick);
++  };
++  requestAnimationFrame(tick);
++}
+ function dispatchInitialScroll(ctx, params) {
+   const { forceScroll, resolvedOffset, target, waitForCompletionFrame } = params;
++  const insetStartAdjustment = getContentInsetStartAdjustment(ctx);
++  if (insetStartAdjustment > 0 && ctx.state.props.data.length > 0) {
++    if (ctx.state.scrollLength <= 0) {
++      // The scroll length is unknown, so the resolved target is meaningless;
++      // the initial-scroll machinery re-advances after layout.
++      return;
++    }
++    if (resolvedOffset <= -insetStartAdjustment + 1 && !ctx.state.didDispatchInsetInitialScroll) {
++      // Content underflows the viewport and nothing has scrolled yet: the
++      // untouched native rest position (UIKit's adjustedContentInset) IS the
++      // end position. Dispatching a negative scroll here would race UIKit's
++      // inset application during screen attach, so just finish the session.
++      finishInitialScroll(ctx, {
++        resolvedOffset
++      });
++      return;
++    }
++    ctx.state.didDispatchInsetInitialScroll = true;
++    if (target.viewPosition === 1) {
++      startInsetEndSettleWatchdog(ctx);
++    }
++  }
+   const requestedIndex = target.index;
+   const index = requestedIndex !== void 0 ? clampScrollIndex(requestedIndex, ctx.state.props.data.length) : void 0;
+   const itemSize = getItemSizeAtIndex(ctx, index);
+@@ -2804,7 +2945,9 @@ function clearFinishedBootstrapInitialScrollTargetIfMovedAway(ctx) {
+     return;
+   }
+   if (didFinishedInitialScrollMoveAwayFromTarget(ctx, initialScroll)) {
+-    const shouldKeepEndTargetAlive = isRetargetableBottomAlignedInitialScrollTarget(initialScroll) && peek$(ctx, "isAtEnd");
++    const endTargetDistanceFromEnd = getContentSize(ctx) - state.scroll - state.scrollLength - getContentInsetEnd(ctx);
++    const isNearEndForInsetList = getContentInsetStartAdjustment(ctx) > 0 && Number.isFinite(endTargetDistanceFromEnd) && endTargetDistanceFromEnd <= state.scrollLength * 0.5;
++    const shouldKeepEndTargetAlive = isRetargetableBottomAlignedInitialScrollTarget(initialScroll) && (peek$(ctx, "isAtEnd") || isNearEndForInsetList);
+     if (!shouldKeepEndTargetAlive) {
+       if (shouldPreserveInitialScrollForFooterLayout(initialScroll)) {
+         clearPendingInitialScrollFooterLayout(ctx, {
+@@ -4646,7 +4789,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
+       }
+       contentBelowAnchor += footerSize + stylePaddingBottom;
+       isReady = !hasUnknownTailSize;
+-      nextSize = hasUnknownTailSize ? previousSize || 0 : Math.max(0, state.scrollLength - contentBelowAnchor - anchorOffset);
++      const knownSizeBound = Math.max(0, state.scrollLength - contentBelowAnchor - anchorOffset);
++      nextSize = hasUnknownTailSize ? Math.min(previousSize || 0, knownSizeBound) : knownSizeBound;
+     } else if (anchorIndex >= 0) {
+       isReady = false;
+     }
+@@ -4664,6 +4808,12 @@ function maybeUpdateAnchoredEndSpace(ctx) {
+       updateScroll(ctx, state.scroll, true);
+     }
+     (_b = anchoredEndSpace == null ? void 0 : anchoredEndSpace.onReady) == null ? void 0 : _b.call(anchoredEndSpace, { anchorIndex: nextAnchorIndex, anchorKey: nextAnchorKey, size: nextSize });
++  } else if (!isReady && didSizeChange && nextSize < (previousSize || 0)) {
++    set$(ctx, "anchoredEndSpaceSize", nextSize);
++    (_a3 = anchoredEndSpace == null ? void 0 : anchoredEndSpace.onSizeChanged) == null ? void 0 : _a3.call(anchoredEndSpace, nextSize);
++    if (anchoredEndSpace == null ? void 0 : anchoredEndSpace.includeInEndInset) {
++      updateScroll(ctx, state.scroll, true);
++    }
+   }
+   return nextSize;
+ }
+@@ -6462,6 +6612,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     dataVersion,
+     drawDistance = 250,
+     contentInsetEndAdjustment,
++    contentInsetStartAdjustment,
+     estimatedItemSize = 100,
+     estimatedListSize,
+     extraData,
+@@ -6492,6 +6643,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     onLayout: onLayoutProp,
+     onLoad,
+     onMomentumScrollEnd,
++    onScrollBeginDrag,
+     onRefresh,
+     onScroll: onScrollProp,
+     onStartReached,
+@@ -6710,6 +6862,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     contentContainerAlignItems: contentContainerStyle.alignItems,
+     contentInset,
+     contentInsetEndAdjustment: contentInsetEndAdjustmentResolved,
++    contentInsetStartAdjustment,
+     data: dataProp,
+     dataVersion,
+     drawDistance,
+@@ -6789,6 +6942,13 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+       return void 0;
+     }
+     const resolvedOffset = (_a4 = initialScroll.contentOffset) != null ? _a4 : resolveInitialScrollOffset(ctx, initialScroll);
++    if (getContentInsetStartAdjustment(ctx) > 0) {
++      // With a native leading inset (transparent header + automatic insets),
++      // any mount-time contentOffset races UIKit's adjustedContentInset
++      // application. The gated initial-scroll dispatch positions the list once
++      // real sizes are known instead.
++      return void 0;
++    }
+     return usesBootstrapInitialScroll && ((_b2 = state.initialScrollSession) == null ? void 0 : _b2.kind) === "bootstrap" && Platform.OS === "web" ? void 0 : resolvedOffset;
+   }, [usesBootstrapInitialScroll]);
+   React2.useLayoutEffect(() => {
+@@ -6995,6 +7155,12 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+           onMomentumScrollEnd(event);
+         }
+       },
++      onScrollBeginDrag: (event) => {
++        ctx.state.didUserDrag = true;
++        if (onScrollBeginDrag) {
++          onScrollBeginDrag(event);
++        }
++      },
+       onScroll: (event) => onScroll(ctx, event)
+     }),
+     []
+@@ -7019,6 +7185,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+       onLayout,
+       onLayoutFooter,
+       onMomentumScrollEnd: fns.onMomentumScrollEnd,
++      onScrollBeginDrag: fns.onScrollBeginDrag,
+       onScroll: onScrollHandler,
+       recycleItems,
+       refreshControl: refreshControlElement ? stylePaddingTopState > 0 ? React2__namespace.cloneElement(refreshControlElement, {
+diff --git a/react-native.mjs b/react-native.mjs
+index 2e96ca7..6e8913e 100644
+--- a/react-native.mjs
++++ b/react-native.mjs
+@@ -1174,7 +1174,7 @@ function setInitialRenderState(ctx, {
+   if (didInitialScroll) {
+     state.didFinishInitialScroll = true;
+   }
+-  const isReadyToRender = Boolean(state.didContainersLayout && state.didFinishInitialScroll);
++  const isReadyToRender = Boolean(state.didContainersLayout && state.didFinishInitialScroll && !state.insetEndRevealHold);
+   if (isReadyToRender && !peek$(ctx, "readyToRender")) {
+     set$(ctx, "readyToRender", true);
+     setAdaptiveRender(ctx, "normal");
+@@ -1459,18 +1459,23 @@ function calculateOffsetWithOffsetPosition(ctx, offsetParam, params) {
+ }
+ 
+ // src/core/clampScrollOffset.ts
++function getContentInsetStartAdjustment(ctx) {
++  const adjustment = ctx.state.props.contentInsetStartAdjustment;
++  return typeof adjustment === "number" && Number.isFinite(adjustment) ? Math.max(0, adjustment) : 0;
++}
+ function clampScrollOffset(ctx, offset, scrollTarget) {
+   const state = ctx.state;
+   const contentSize = getContentSize(ctx);
++  const minOffset = -getContentInsetStartAdjustment(ctx);
+   let clampedOffset = offset;
+   if (Number.isFinite(contentSize) && Number.isFinite(state.scrollLength) && (Platform.OS !== "android" || state.lastLayout)) {
+-    const baseMaxOffset = Math.max(0, contentSize - state.scrollLength);
++    const baseMaxOffset = Math.max(minOffset, contentSize - state.scrollLength);
+     const viewOffset = scrollTarget == null ? void 0 : scrollTarget.viewOffset;
+     const extraEndOffset = typeof viewOffset === "number" && viewOffset < 0 ? -viewOffset : 0;
+     const maxOffset = baseMaxOffset + extraEndOffset;
+     clampedOffset = Math.min(offset, maxOffset);
+   }
+-  clampedOffset = Math.max(0, clampedOffset);
++  clampedOffset = Math.max(minOffset, clampedOffset);
+   return clampedOffset;
+ }
+ 
+@@ -1605,10 +1610,10 @@ function checkFinishedScrollFrame(ctx) {
+     finishScrollTo(ctx);
+   }
+ }
+-function scrollToFallbackOffset(ctx, offset) {
++function scrollToFallbackOffset(ctx, offset, animated) {
+   var _a3;
+   (_a3 = ctx.state.refScroller.current) == null ? void 0 : _a3.scrollTo({
+-    animated: false,
++    animated: !!animated,
+     x: ctx.state.props.horizontal ? offset : 0,
+     y: ctx.state.props.horizontal ? 0 : offset
+   });
+@@ -1655,7 +1660,10 @@ function checkFinishedScrollFallback(ctx) {
+           });
+           scheduleFallbackCheck(SILENT_INITIAL_SCROLL_RETRY_DELAY_MS);
+         } else if (shouldRetryUnalignedEndScroll) {
+-          scrollToFallbackOffset(ctx, completionState.clampedTargetOffset);
++          const isActivelyAnimatingToEnd = !!isStillScrollingTo.animated && Date.now() - state.scrollTime < 100;
++          if (!isActivelyAnimatingToEnd) {
++            scrollToFallbackOffset(ctx, completionState.clampedTargetOffset, !!isStillScrollingTo.animated);
++          }
+           scheduleFallbackCheck(100);
+         } else if (shouldFinishZeroTarget || shouldFinishAfterObservedScroll || canFinishInitialScrollWithoutNativeProgress || canFinishAfterSilentNativeDispatch || numChecks > maxChecks) {
+           finishScrollTo(ctx);
+@@ -1716,9 +1724,18 @@ function doMaintainScrollAtEnd(ctx) {
+   }
+   state.pendingMaintainScrollAtEnd = false;
+   if (shouldMaintainScrollAtEnd) {
++    const maintainAnchoredEndSpace = state.props.anchoredEndSpace;
++    const maintainAnchorIndex = maintainAnchoredEndSpace == null ? void 0 : maintainAnchoredEndSpace.anchorIndex;
++    if (maintainAnchorIndex !== void 0 && maintainAnchorIndex >= 0 && maintainAnchorIndex < state.props.data.length && !areKnownOrFixedItemSizesAvailable(ctx, maintainAnchorIndex, state.props.data.length - 1)) {
++      return false;
++    }
+     const contentSize = getContentSize(ctx);
++    const maintainInsetStartAdjustment = getContentInsetStartAdjustment(ctx);
+     if (contentSize < state.scrollLength) {
+-      state.scroll = 0;
++      state.scroll = -maintainInsetStartAdjustment;
++      if (maintainInsetStartAdjustment > 0) {
++        return true;
++      }
+     }
+     if (!state.maintainingScrollAtEnd) {
+       const pendingState = maintainScrollAtEnd.animated ? "pending-animated" : "pending-instant";
+@@ -1738,9 +1755,18 @@ function doMaintainScrollAtEnd(ctx) {
+               y: 0
+             });
+           } else {
+-            scroller == null ? void 0 : scroller.scrollToEnd({
+-              animated: maintainScrollAtEnd.animated
+-            });
++            const insetStartAdjustment = getContentInsetStartAdjustment(ctx);
++            if (insetStartAdjustment > 0) {
++              scroller == null ? void 0 : scroller.scrollTo({
++                animated: maintainScrollAtEnd.animated,
++                x: 0,
++                y: Math.max(-insetStartAdjustment, getContentSize(ctx) - state.scrollLength)
++              });
++            } else {
++              scroller == null ? void 0 : scroller.scrollToEnd({
++                animated: maintainScrollAtEnd.animated
++              });
++            }
+           }
+           setTimeout(
+             () => {
+@@ -1867,7 +1893,9 @@ function getPredictedNativeClamp(state, unresolvedAmount, totalSize) {
+   if (Math.abs(unresolvedAmount) <= MVCP_POSITION_EPSILON) {
+     return 0;
+   }
+-  const maxScroll = Math.max(0, totalSize - state.scrollLength);
++  const insetStartAdjustment = state.props.contentInsetStartAdjustment;
++  const minScroll = typeof insetStartAdjustment === "number" && Number.isFinite(insetStartAdjustment) ? -Math.max(0, insetStartAdjustment) : 0;
++  const maxScroll = Math.max(minScroll, totalSize - state.scrollLength);
+   const clampDelta = maxScroll - state.scroll;
+   if (unresolvedAmount < 0) {
+     return Math.max(unresolvedAmount, Math.min(0, clampDelta));
+@@ -1929,7 +1957,7 @@ function resolvePendingNativeMVCPAdjust(ctx, newScroll) {
+     settlePendingNativeMVCPAdjust(ctx, remainingAfterManual, nativeDelta);
+     return true;
+   }
+-  const expectedNativeClampScroll = Math.max(0, getContentSize(ctx) - state.scrollLength);
++  const expectedNativeClampScroll = Math.max(-getContentInsetStartAdjustment(ctx), getContentSize(ctx) - state.scrollLength);
+   const distanceToClamp = Math.abs(newScroll - expectedNativeClampScroll);
+   const isAtExpectedNativeClamp = distanceToClamp <= NATIVE_END_CLAMP_EPSILON;
+   if (isAtExpectedNativeClamp) {
+@@ -2062,7 +2090,7 @@ function prepareMVCP(ctx, dataChanged) {
+             if (diff > 0) {
+               diff = Math.max(0, totalSize - state.scroll - state.scrollLength);
+             } else {
+-              const maxScroll = Math.max(0, totalSize - state.scrollLength);
++              const maxScroll = Math.max(-getContentInsetStartAdjustment(ctx), totalSize - state.scrollLength);
+               state.scroll = maxScroll;
+               state.scrollPending = maxScroll;
+               diff = 0;
+@@ -2353,8 +2381,121 @@ function scrollToIndex(ctx, {
+ }
+ 
+ // src/core/initialScroll.ts
++var INSET_END_SETTLE_WATCHDOG_FRAMES = 150;
++var INSET_END_SETTLE_WATCHDOG_STABLE_FRAMES = 20;
++var INSET_END_REVEAL_STABLE_FRAMES = 3;
++var INSET_END_REVEAL_MAX_HOLD_FRAMES = 40;
++function startInsetEndSettleWatchdog(ctx) {
++  const state = ctx.state;
++  if (state.insetEndSettleWatchdogActive) {
++    return;
++  }
++  state.insetEndSettleWatchdogActive = true;
++  state.didUserDrag = false;
++  // Hold the readyToRender opacity gate until the end landing is stable, so
++  // the estimated-to-measured settle chase happens before first VISIBLE
++  // paint instead of in front of the user. Capped so slow measurement can
++  // never hide content for long.
++  state.insetEndRevealHold = true;
++  let frames = 0;
++  let settledFrames = 0;
++  let revealStableFrames = 0;
++  const releaseRevealHold = () => {
++    if (state.insetEndRevealHold) {
++      state.insetEndRevealHold = false;
++      setInitialRenderState(ctx, {});
++    }
++  };
++  // Revealing flips adaptive rendering to "normal", which re-renders rows and
++  // can move the end target one more time — do that upgrade while still
++  // hidden (phase 1), then require stability again before revealing (phase 2)
++  // so the first visible frame is the settled one.
++  let revealPhase = 1;
++  const onRevealStability = () => {
++    var _a3;
++    if (!state.insetEndRevealHold) {
++      return;
++    }
++    if (revealPhase === 1) {
++      revealPhase = 2;
++      revealStableFrames = 0;
++      setAdaptiveRender(ctx, "normal");
++      (_a3 = state.triggerCalculateItemsInView) == null ? void 0 : _a3.call(state);
++      return;
++    }
++    releaseRevealHold();
++  };
++  const tick = () => {
++    // The user owns the scroll from their first drag — a re-pin here would
++    // pin the list under their finger.
++    if (frames++ >= INSET_END_SETTLE_WATCHDOG_FRAMES || settledFrames >= INSET_END_SETTLE_WATCHDOG_STABLE_FRAMES || state.didUserDrag || !ctx.state || ctx.state !== state) {
++      state.insetEndSettleWatchdogActive = false;
++      releaseRevealHold();
++      return;
++    }
++    if (frames >= INSET_END_REVEAL_MAX_HOLD_FRAMES) {
++      releaseRevealHold();
++    }
++    const insetStartAdjustment = getContentInsetStartAdjustment(ctx);
++    const contentSize = getContentSize(ctx);
++    const scrollLength = state.scrollLength;
++    if (insetStartAdjustment > 0 && scrollLength > 0 && Number.isFinite(contentSize) && contentSize > scrollLength && !state.scrollingTo && !state.maintainingScrollAtEnd) {
++      const endOffset = Math.max(-insetStartAdjustment, contentSize - scrollLength);
++      const distance = endOffset - state.scroll;
++      // Estimated row sizes converging to measured ones can strand the initial
++      // end landing when the library's own end-anchor bookkeeping gives up.
++      // While still near the end (never fighting a user who scrolled away),
++      // re-pin to the current true end until sizes stop changing.
++      if (Math.abs(distance) > 2 && Math.abs(distance) <= scrollLength * 0.5) {
++        settledFrames = 0;
++        revealStableFrames = 0;
++        const scroller = state.refScroller.current;
++        if (scroller) {
++          scroller.scrollTo({ animated: false, x: 0, y: endOffset });
++        }
++      } else {
++        settledFrames++;
++        revealStableFrames++;
++        if (revealStableFrames >= INSET_END_REVEAL_STABLE_FRAMES) {
++          onRevealStability();
++        }
++      }
++    } else {
++      // Conditions that make re-pinning unnecessary (underflow, in-flight
++      // programmatic scroll) count toward stability for the reveal.
++      revealStableFrames++;
++      if (revealStableFrames >= INSET_END_REVEAL_STABLE_FRAMES) {
++        onRevealStability();
++      }
++    }
++    requestAnimationFrame(tick);
++  };
++  requestAnimationFrame(tick);
++}
+ function dispatchInitialScroll(ctx, params) {
+   const { forceScroll, resolvedOffset, target, waitForCompletionFrame } = params;
++  const insetStartAdjustment = getContentInsetStartAdjustment(ctx);
++  if (insetStartAdjustment > 0 && ctx.state.props.data.length > 0) {
++    if (ctx.state.scrollLength <= 0) {
++      // The scroll length is unknown, so the resolved target is meaningless;
++      // the initial-scroll machinery re-advances after layout.
++      return;
++    }
++    if (resolvedOffset <= -insetStartAdjustment + 1 && !ctx.state.didDispatchInsetInitialScroll) {
++      // Content underflows the viewport and nothing has scrolled yet: the
++      // untouched native rest position (UIKit's adjustedContentInset) IS the
++      // end position. Dispatching a negative scroll here would race UIKit's
++      // inset application during screen attach, so just finish the session.
++      finishInitialScroll(ctx, {
++        resolvedOffset
++      });
++      return;
++    }
++    ctx.state.didDispatchInsetInitialScroll = true;
++    if (target.viewPosition === 1) {
++      startInsetEndSettleWatchdog(ctx);
++    }
++  }
+   const requestedIndex = target.index;
+   const index = requestedIndex !== void 0 ? clampScrollIndex(requestedIndex, ctx.state.props.data.length) : void 0;
+   const itemSize = getItemSizeAtIndex(ctx, index);
+@@ -2783,7 +2924,9 @@ function clearFinishedBootstrapInitialScrollTargetIfMovedAway(ctx) {
+     return;
+   }
+   if (didFinishedInitialScrollMoveAwayFromTarget(ctx, initialScroll)) {
+-    const shouldKeepEndTargetAlive = isRetargetableBottomAlignedInitialScrollTarget(initialScroll) && peek$(ctx, "isAtEnd");
++    const endTargetDistanceFromEnd = getContentSize(ctx) - state.scroll - state.scrollLength - getContentInsetEnd(ctx);
++    const isNearEndForInsetList = getContentInsetStartAdjustment(ctx) > 0 && Number.isFinite(endTargetDistanceFromEnd) && endTargetDistanceFromEnd <= state.scrollLength * 0.5;
++    const shouldKeepEndTargetAlive = isRetargetableBottomAlignedInitialScrollTarget(initialScroll) && (peek$(ctx, "isAtEnd") || isNearEndForInsetList);
+     if (!shouldKeepEndTargetAlive) {
+       if (shouldPreserveInitialScrollForFooterLayout(initialScroll)) {
+         clearPendingInitialScrollFooterLayout(ctx, {
+@@ -4625,7 +4768,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
+       }
+       contentBelowAnchor += footerSize + stylePaddingBottom;
+       isReady = !hasUnknownTailSize;
+-      nextSize = hasUnknownTailSize ? previousSize || 0 : Math.max(0, state.scrollLength - contentBelowAnchor - anchorOffset);
++      const knownSizeBound = Math.max(0, state.scrollLength - contentBelowAnchor - anchorOffset);
++      nextSize = hasUnknownTailSize ? Math.min(previousSize || 0, knownSizeBound) : knownSizeBound;
+     } else if (anchorIndex >= 0) {
+       isReady = false;
+     }
+@@ -4643,6 +4787,12 @@ function maybeUpdateAnchoredEndSpace(ctx) {
+       updateScroll(ctx, state.scroll, true);
+     }
+     (_b = anchoredEndSpace == null ? void 0 : anchoredEndSpace.onReady) == null ? void 0 : _b.call(anchoredEndSpace, { anchorIndex: nextAnchorIndex, anchorKey: nextAnchorKey, size: nextSize });
++  } else if (!isReady && didSizeChange && nextSize < (previousSize || 0)) {
++    set$(ctx, "anchoredEndSpaceSize", nextSize);
++    (_a3 = anchoredEndSpace == null ? void 0 : anchoredEndSpace.onSizeChanged) == null ? void 0 : _a3.call(anchoredEndSpace, nextSize);
++    if (anchoredEndSpace == null ? void 0 : anchoredEndSpace.includeInEndInset) {
++      updateScroll(ctx, state.scroll, true);
++    }
+   }
+   return nextSize;
+ }
+@@ -6441,6 +6591,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     dataVersion,
+     drawDistance = 250,
+     contentInsetEndAdjustment,
++    contentInsetStartAdjustment,
+     estimatedItemSize = 100,
+     estimatedListSize,
+     extraData,
+@@ -6471,6 +6622,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     onLayout: onLayoutProp,
+     onLoad,
+     onMomentumScrollEnd,
++    onScrollBeginDrag,
+     onRefresh,
+     onScroll: onScrollProp,
+     onStartReached,
+@@ -6689,6 +6841,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     contentContainerAlignItems: contentContainerStyle.alignItems,
+     contentInset,
+     contentInsetEndAdjustment: contentInsetEndAdjustmentResolved,
++    contentInsetStartAdjustment,
+     data: dataProp,
+     dataVersion,
+     drawDistance,
+@@ -6768,6 +6921,13 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+       return void 0;
+     }
+     const resolvedOffset = (_a4 = initialScroll.contentOffset) != null ? _a4 : resolveInitialScrollOffset(ctx, initialScroll);
++    if (getContentInsetStartAdjustment(ctx) > 0) {
++      // With a native leading inset (transparent header + automatic insets),
++      // any mount-time contentOffset races UIKit's adjustedContentInset
++      // application. The gated initial-scroll dispatch positions the list once
++      // real sizes are known instead.
++      return void 0;
++    }
+     return usesBootstrapInitialScroll && ((_b2 = state.initialScrollSession) == null ? void 0 : _b2.kind) === "bootstrap" && Platform.OS === "web" ? void 0 : resolvedOffset;
+   }, [usesBootstrapInitialScroll]);
+   useLayoutEffect(() => {
+@@ -6974,6 +7134,12 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+           onMomentumScrollEnd(event);
+         }
+       },
++      onScrollBeginDrag: (event) => {
++        ctx.state.didUserDrag = true;
++        if (onScrollBeginDrag) {
++          onScrollBeginDrag(event);
++        }
++      },
+       onScroll: (event) => onScroll(ctx, event)
+     }),
+     []
+@@ -6998,6 +7164,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+       onLayout,
+       onLayoutFooter,
+       onMomentumScrollEnd: fns.onMomentumScrollEnd,
++      onScrollBeginDrag: fns.onScrollBeginDrag,
+       onScroll: onScrollHandler,
+       recycleItems,
+       refreshControl: refreshControlElement ? stylePaddingTopState > 0 ? React2.cloneElement(refreshControlElement, {
+diff --git a/reanimated.d.ts b/reanimated.d.ts
+index 7e2d11f..d5b0d66 100644
+--- a/reanimated.d.ts
++++ b/reanimated.d.ts
+@@ -285,6 +285,12 @@ interface LegendListSpecificProps<ItemT, TItemType extends string | undefined> {
+      * The adjustment is also rendered as real content padding so the browser scroll range includes it.
+      */
+     contentInsetEndAdjustment?: number;
++    /**
++     * Width/height of a leading content inset applied natively outside the list's knowledge
++     * (e.g. iOS contentInsetAdjustmentBehavior="automatic" under a transparent header).
++     * Programmatic scrolls clamp to -adjustment instead of 0 so content can rest below the header.
++     */
++    contentInsetStartAdjustment?: number;
+     /**
+      * Number of columns to render items in.
+      * @default 1
