@@ -425,7 +425,9 @@ function AppSettingsSection() {
   const icon = useThemeColor("--color-icon");
 
   const version = Constants.expoConfig?.version ?? "0.0.0";
-  const variant = (Constants.expoConfig?.extra?.appVariant as string | undefined) ?? "development";
+  // Fall back to "production" to match resolveAppVariant in app.config.ts, so a
+  // missing variant never mislabels a production build as development.
+  const variant = (Constants.expoConfig?.extra?.appVariant as string | undefined) ?? "production";
   const variantLabel = variant === "production" ? "" : capitalize(variant);
   const versionLabel = variantLabel ? `${version} · ${variantLabel}` : version;
   // Which JS is actually running: the bundle shipped in the binary, or an OTA
