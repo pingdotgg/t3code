@@ -1295,7 +1295,6 @@ const make = Effect.gen(function* () {
       const eventTurnId = toTurnId(event.turnId);
       const activeTurnId = thread.session?.activeTurnId ?? null;
       const lifecycleEventTurnId = eventTurnId;
-      let providerSessionLookupFailed = false;
       const providerSessionForUnscopedCompletion =
         event.type === "turn.completed" && eventTurnId === undefined
           ? yield* getProviderSessionForThread(thread.id).pipe(
@@ -1306,14 +1305,7 @@ const make = Effect.gen(function* () {
                     threadId: thread.id,
                     cause: Cause.pretty(cause),
                   },
-                ).pipe(
-                  Effect.tap(() =>
-                    Effect.sync(() => {
-                      providerSessionLookupFailed = true;
-                    }),
-                  ),
-                  Effect.as(undefined),
-                ),
+                ).pipe(Effect.as(undefined)),
               ),
             )
           : undefined;
@@ -1321,7 +1313,6 @@ const make = Effect.gen(function* () {
       const unscopedCompletionHasNoProviderSession =
         event.type === "turn.completed" &&
         eventTurnId === undefined &&
-        !providerSessionLookupFailed &&
         providerSessionForUnscopedCompletion === undefined;
 
       const conflictsWithActiveTurn =

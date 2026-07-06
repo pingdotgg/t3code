@@ -3494,6 +3494,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           aborted: false,
         },
       } as SessionEvent);
+      yield* TestClock.adjust("300 millis");
 
       for (
         let attempt = 0;
@@ -3648,12 +3649,32 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         },
       } as SessionEvent);
       emit({
+        id: "evt-copilot-multi-loop-first-message",
+        timestamp,
+        parentId: null,
+        type: "assistant.message",
+        data: {
+          messageId: "message-multi-loop-first",
+          content: "First loop partial output.",
+          turnId: "sdk-turn-multi-loop-first",
+        },
+      } as SessionEvent);
+      emit({
         id: "evt-copilot-multi-loop-first-end",
         timestamp,
         parentId: null,
         type: "assistant.turn_end",
         data: {
           turnId: "sdk-turn-multi-loop-first",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-multi-loop-idle-between-loops",
+        timestamp,
+        parentId: null,
+        type: "session.idle",
+        data: {
+          aborted: false,
         },
       } as SessionEvent);
 
