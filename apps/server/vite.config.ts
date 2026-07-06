@@ -30,7 +30,11 @@ export default mergeConfig(
       },
     },
     pack: {
-      entry: ["src/bin.ts"],
+      // The ESM plugin-host resolution hook must ship as its OWN module file:
+      // it is loaded by URL in a loader-hook worker via `module.register` (see
+      // PluginModuleLoader), so it cannot be inlined into bin.mjs. Emitting it as
+      // a second entry produces dist/pluginResolveHooks.mjs alongside bin.mjs.
+      entry: ["src/bin.ts", "src/plugins/pluginResolveHooks.ts"],
       outDir: "dist",
       sourcemap: true,
       clean: true,

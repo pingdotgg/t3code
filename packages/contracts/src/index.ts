@@ -26,3 +26,4 @@ export * from "./review.ts";
 export * from "./preview.ts";
 export * from "./previewAutomation.ts";
 export * from "./rpc.ts";
+export * from "./plugin.ts";
