@@ -6,6 +6,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   type OrchestrationThread,
+  type OrchestrationThreadDetailSnapshot,
   type OrchestrationThreadStreamItem,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -30,6 +31,7 @@ import * as RpcSession from "../rpc/session.ts";
 import {
   EMPTY_ENVIRONMENT_THREAD_STATE,
   makeEnvironmentThreadState,
+  ThreadSnapshotLoader,
   type EnvironmentThreadState,
 } from "./threads.ts";
 
@@ -40,6 +42,15 @@ const TARGET = new PrimaryConnectionTarget({
   wsBaseUrl: "wss://environment.example.test",
 });
 const THREAD_ID = ThreadId.make("thread-1");
+const CACHED_SNAPSHOT_SEQUENCE = 7;
+const PREPARED: PreparedConnection = {
+  environmentId: TARGET.environmentId,
+  label: TARGET.label,
+  httpBaseUrl: TARGET.httpBaseUrl,
+  socketUrl: TARGET.wsBaseUrl,
+  httpAuthorization: null,
+  target: TARGET,
+};
 const BASE_THREAD: OrchestrationThread = {
   id: THREAD_ID,
   projectId: ProjectId.make("project-1"),
@@ -89,13 +100,16 @@ function awaitThreadState(
 
 const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (options?: {
   readonly cached?: OrchestrationThread;
+  readonly httpSnapshot?: Option.Option<OrchestrationThreadDetailSnapshot>;
 }) {
   const inputs = yield* Queue.unbounded<TestThreadInput>();
   const observed = yield* Queue.unbounded<EnvironmentThreadState>();
   const latest = yield* Ref.make<EnvironmentThreadState>(EMPTY_ENVIRONMENT_THREAD_STATE);
   const retryCount = yield* Ref.make(0);
   const subscriptionCount = yield* Ref.make(0);
-  const savedThreads = yield* Ref.make<ReadonlyArray<OrchestrationThread>>([]);
+  const loaderCalls = yield* Ref.make(0);
+  const lastSubscribeAfterSequence = yield* Ref.make<number | undefined>(undefined);
+  const savedThreads = yield* Ref.make<ReadonlyArray<OrchestrationThreadDetailSnapshot>>([]);
   const removedThreads = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
   const supervisorState = yield* SubscriptionRef.make<SupervisorConnectionState>(
     AVAILABLE_CONNECTION_STATE,
@@ -107,17 +121,30 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
       ),
     );
   const client = {
-    [ORCHESTRATION_WS_METHODS.subscribeThread]: () =>
+    [ORCHESTRATION_WS_METHODS.subscribeThread]: (input: { readonly afterSequence?: number }) =>
       Stream.unwrap(
         Ref.updateAndGet(subscriptionCount, (count) => count + 1).pipe(
-          Effect.map(() => streamFrom(inputs)),
+          Effect.andThen(Ref.set(lastSubscribeAfterSequence, input.afterSequence)),
+          Effect.as(streamFrom(inputs)),
         ),
       ),
   } as unknown as WsRpcProtocolClient;
   const supervisorSession = yield* SubscriptionRef.make<Option.Option<RpcSession.RpcSession>>(
     Option.some(testSession(client)),
   );
-  const prepared = yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(Option.none());
+  const prepared = yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(
+    Option.some(PREPARED),
+  );
+  const snapshotLoader = ThreadSnapshotLoader.of({
+    load: (_prepared, threadId) =>
+      Ref.update(loaderCalls, (count) => count + 1).pipe(
+        Effect.as(
+          threadId === THREAD_ID
+            ? (options?.httpSnapshot ?? Option.none<OrchestrationThreadDetailSnapshot>())
+            : Option.none<OrchestrationThreadDetailSnapshot>(),
+        ),
+      ),
+  });
   const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
     target: TARGET,
     state: supervisorState,
@@ -133,7 +160,10 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     loadThread: (_environmentId, threadId) =>
       Effect.succeed(
         threadId === THREAD_ID && options?.cached !== undefined
-          ? Option.some(options.cached)
+          ? Option.some({
+              snapshotSequence: CACHED_SNAPSHOT_SEQUENCE,
+              thread: options.cached,
+            })
           : Option.none(),
       ),
     saveThread: (_environmentId, thread) =>
@@ -145,6 +175,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const threadState = yield* makeEnvironmentThreadState(THREAD_ID).pipe(
     Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
     Effect.provideService(Persistence.EnvironmentCacheStore, cache),
+    Effect.provideService(ThreadSnapshotLoader, snapshotLoader),
   );
   yield* SubscriptionRef.changes(threadState).pipe(
     Stream.runForEach((state) =>
@@ -159,6 +190,8 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     latest,
     retryCount,
     subscriptionCount,
+    loaderCalls,
+    lastSubscribeAfterSequence,
     supervisorState,
     supervisorSession,
     savedThreads,
@@ -217,16 +250,35 @@ const deleted = (): OrchestrationThreadStreamItem => ({
 });
 
 describe("EnvironmentThreads", () => {
-  it.effect("publishes cached data before a live snapshot arrives", () =>
+  it.effect("publishes cached data immediately from a warm cache", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ cached: BASE_THREAD });
-      const state = yield* awaitThreadState(
-        harness.observed,
-        (value) => value.status === "cached" && Option.isSome(value.data),
-      );
+      const state = yield* awaitThreadState(harness.observed, (value) => Option.isSome(value.data));
 
       expect(Option.getOrThrow(state.data)).toEqual(BASE_THREAD);
       expect(Option.isNone(state.error)).toBe(true);
+    }),
+  );
+
+  it.effect("resumes a warm cache via afterSequence without an HTTP fetch", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_THREAD });
+
+      // The warm cache reaches live from the cached data, and a live event
+      // applies on top of it.
+      yield* Queue.offer(harness.inputs, titleUpdated("Live title", CACHED_SNAPSHOT_SEQUENCE + 1));
+      yield* awaitThreadState(
+        harness.observed,
+        (value) =>
+          value.status === "live" &&
+          Option.isSome(value.data) &&
+          value.data.value.title === "Live title",
+      );
+
+      // The subscription resumed from the cached sequence and never fetched the
+      // full snapshot over HTTP.
+      expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(CACHED_SNAPSHOT_SEQUENCE);
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
     }),
   );
 
@@ -247,7 +299,34 @@ describe("EnvironmentThreads", () => {
       yield* Effect.yieldNow;
 
       expect(Option.getOrThrow(state.data).title).toBe("Live title");
-      expect((yield* Ref.get(harness.savedThreads)).at(-1)?.title).toBe("Live title");
+      expect((yield* Ref.get(harness.savedThreads)).at(-1)?.thread.title).toBe("Live title");
+      expect((yield* Ref.get(harness.savedThreads)).at(-1)?.snapshotSequence).toBe(2);
+    }),
+  );
+
+  it.effect("seeds the thread from the HTTP snapshot and resumes live events", () =>
+    Effect.gen(function* () {
+      const httpThread: OrchestrationThread = { ...BASE_THREAD, title: "HTTP title" };
+      const harness = yield* makeHarness({
+        httpSnapshot: Option.some({ snapshotSequence: 1, thread: httpThread }),
+      });
+      // No socket snapshot is pushed; only a live event arrives over the socket.
+      // It can only be applied if the HTTP snapshot already seeded the thread.
+      yield* Queue.offer(harness.inputs, titleUpdated("Live title", 2));
+
+      const state = yield* awaitThreadState(
+        harness.observed,
+        (value) =>
+          value.status === "live" &&
+          Option.isSome(value.data) &&
+          value.data.value.title === "Live title",
+      );
+
+      expect(Option.getOrThrow(state.data).title).toBe("Live title");
+      // Cold cache: the full snapshot was loaded over HTTP and the socket
+      // resumed from that snapshot's sequence.
+      expect(yield* Ref.get(harness.loaderCalls)).toBeGreaterThanOrEqual(1);
+      expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(1);
     }),
   );
 
