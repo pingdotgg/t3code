@@ -26,6 +26,7 @@ const baseThread: OrchestrationThread = {
   projectId: ProjectId.make("project-1"),
   title: "Test Thread",
   modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+  owner: "user",
   runtimeMode: "full-access",
   interactionMode: "default",
   branch: null,
@@ -82,6 +83,7 @@ describe("applyThreadDetailEvent", () => {
           projectId: ProjectId.make("project-1"),
           title: "New Thread",
           modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          owner: "plugin:test",
           runtimeMode: "full-access",
           interactionMode: "default",
           branch: "main",
@@ -95,6 +97,7 @@ describe("applyThreadDetailEvent", () => {
       if (result.kind === "updated") {
         expect(result.thread.id).toBe("thread-2");
         expect(result.thread.title).toBe("New Thread");
+        expect(result.thread.owner).toBe("plugin:test");
         expect(result.thread.branch).toBe("main");
         expect(result.thread.messages).toEqual([]);
         expect(result.thread.session).toBeNull();

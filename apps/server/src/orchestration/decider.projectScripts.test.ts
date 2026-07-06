@@ -94,6 +94,58 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
     }),
   );
 
+  it.effect("carries thread.create owner into thread.created", () =>
+    Effect.gen(function* () {
+      const now = "2026-01-01T00:00:00.000Z";
+      const readModel = yield* projectEvent(createEmptyReadModel(now), {
+        sequence: 1,
+        eventId: asEventId("evt-project-create-owner"),
+        aggregateKind: "project",
+        aggregateId: asProjectId("project-owner"),
+        type: "project.created",
+        occurredAt: now,
+        commandId: CommandId.make("cmd-project-create-owner"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-project-create-owner"),
+        metadata: {},
+        payload: {
+          projectId: asProjectId("project-owner"),
+          title: "Project",
+          workspaceRoot: "/tmp/project-owner",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.create",
+          commandId: CommandId.make("cmd-thread-create-owner"),
+          threadId: ThreadId.make("thread-plugin"),
+          projectId: asProjectId("project-owner"),
+          title: "Plugin thread",
+          owner: "plugin:test",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+        } as never,
+        readModel,
+      });
+
+      const event = Array.isArray(result) ? result[0] : result;
+      expect(event.type).toBe("thread.created");
+      expect((event.payload as { owner?: unknown }).owner).toBe("plugin:test");
+    }),
+  );
+
   it.effect("emits user message and turn-start-requested events for thread.turn.start", () =>
     Effect.gen(function* () {
       const now = "2026-01-01T00:00:00.000Z";

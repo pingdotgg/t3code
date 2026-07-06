@@ -124,6 +124,16 @@ export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 export const ProviderInteractionMode = Schema.Literals(["default", "plan"]);
 export type ProviderInteractionMode = typeof ProviderInteractionMode.Type;
 export const DEFAULT_PROVIDER_INTERACTION_MODE: ProviderInteractionMode = "default";
+const THREAD_PLUGIN_OWNER_PATTERN = /^plugin:[a-z][a-z0-9-]{1,40}$/;
+export const ThreadOwner = Schema.Union([
+  Schema.Literal("user"),
+  TrimmedNonEmptyString.check(
+    Schema.isMaxLength(128),
+    Schema.isPattern(THREAD_PLUGIN_OWNER_PATTERN),
+  ),
+]);
+export type ThreadOwner = typeof ThreadOwner.Type;
+export const DEFAULT_THREAD_OWNER: ThreadOwner = "user";
 export const ProviderRequestKind = Schema.Literals(["command", "file-read", "file-change"]);
 export type ProviderRequestKind = typeof ProviderRequestKind.Type;
 export const AssistantDeliveryMode = Schema.Literals(["buffered", "streaming"]);
@@ -345,6 +355,9 @@ export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
+  owner: Schema.optionalKey(
+    ThreadOwner.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_THREAD_OWNER))),
+  ),
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode.pipe(
@@ -517,6 +530,7 @@ const ThreadCreateCommand = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
+  owner: Schema.optional(ThreadOwner),
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode.pipe(
@@ -862,6 +876,9 @@ export const ThreadCreatedPayload = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
+  owner: Schema.optionalKey(
+    ThreadOwner.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_THREAD_OWNER))),
+  ),
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
   interactionMode: ProviderInteractionMode.pipe(

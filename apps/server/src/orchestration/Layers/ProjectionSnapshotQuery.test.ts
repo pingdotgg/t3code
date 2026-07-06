@@ -285,6 +285,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           id: ThreadId.make("thread-1"),
           projectId: asProjectId("project-1"),
           title: "Thread 1",
+          owner: "user",
           modelSelection: {
             instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
@@ -693,6 +694,242 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         if (firstThreadId._tag === "Some") {
           assert.equal(firstThreadId.value, ThreadId.make("thread-first"));
         }
+      }),
+  );
+
+  it.effect(
+    "excludes plugin-owned threads from user-facing lists and startup selection while keeping by-id lookups",
+    () =>
+      Effect.gen(function* () {
+        const snapshotQuery = yield* ProjectionSnapshotQuery;
+        const sql = yield* SqlClient.SqlClient;
+
+        yield* sql`DELETE FROM projection_projects`;
+        yield* sql`DELETE FROM projection_threads`;
+        yield* sql`DELETE FROM projection_turns`;
+        yield* sql`DELETE FROM projection_state`;
+
+        yield* sql`
+          INSERT INTO projection_projects (
+            project_id,
+            title,
+            workspace_root,
+            default_model_selection_json,
+            scripts_json,
+            created_at,
+            updated_at,
+            deleted_at
+          )
+          VALUES (
+            'project-owner-filter',
+            'Owner Filter',
+            '/tmp/owner-filter',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            '[]',
+            '2026-04-07T00:00:00.000Z',
+            '2026-04-07T00:00:01.000Z',
+            NULL
+          )
+        `;
+
+        yield* sql`
+          INSERT INTO projection_threads (
+            thread_id,
+            project_id,
+            title,
+            owner,
+            model_selection_json,
+            runtime_mode,
+            interaction_mode,
+            branch,
+            worktree_path,
+            latest_turn_id,
+            latest_user_message_at,
+            pending_approval_count,
+            pending_user_input_count,
+            has_actionable_proposed_plan,
+            created_at,
+            updated_at,
+            archived_at,
+            deleted_at
+          )
+          VALUES
+            (
+              'thread-plugin-active',
+              'project-owner-filter',
+              'Plugin Active',
+              'plugin:test',
+              '{"provider":"codex","model":"gpt-5-codex"}',
+              'full-access',
+              'default',
+              NULL,
+              '/tmp/plugin-worktree',
+              NULL,
+              NULL,
+              0,
+              0,
+              0,
+              '2026-04-07T00:00:02.000Z',
+              '2026-04-07T00:00:03.000Z',
+              NULL,
+              NULL
+            ),
+            (
+              'thread-user-active',
+              'project-owner-filter',
+              'User Active',
+              'user',
+              '{"provider":"codex","model":"gpt-5-codex"}',
+              'full-access',
+              'default',
+              NULL,
+              NULL,
+              NULL,
+              NULL,
+              0,
+              0,
+              0,
+              '2026-04-07T00:00:04.000Z',
+              '2026-04-07T00:00:05.000Z',
+              NULL,
+              NULL
+            ),
+            (
+              'thread-plugin-archived',
+              'project-owner-filter',
+              'Plugin Archived',
+              'plugin:test',
+              '{"provider":"codex","model":"gpt-5-codex"}',
+              'full-access',
+              'default',
+              NULL,
+              NULL,
+              NULL,
+              NULL,
+              0,
+              0,
+              0,
+              '2026-04-07T00:00:06.000Z',
+              '2026-04-07T00:00:07.000Z',
+              '2026-04-07T00:00:08.000Z',
+              NULL
+            )
+        `;
+
+        yield* sql`
+          INSERT INTO projection_turns (
+            thread_id,
+            turn_id,
+            pending_message_id,
+            source_proposed_plan_thread_id,
+            source_proposed_plan_id,
+            assistant_message_id,
+            state,
+            requested_at,
+            started_at,
+            completed_at,
+            checkpoint_turn_count,
+            checkpoint_ref,
+            checkpoint_status,
+            checkpoint_files_json
+          )
+          VALUES (
+            'thread-plugin-active',
+            'turn-plugin-1',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            'completed',
+            '2026-04-07T00:00:09.000Z',
+            '2026-04-07T00:00:09.000Z',
+            '2026-04-07T00:00:09.000Z',
+            1,
+            'checkpoint-plugin-1',
+            'ready',
+            '[]'
+          )
+        `;
+
+        yield* sql`
+          INSERT INTO projection_state (projector, last_applied_sequence, updated_at)
+          VALUES
+            (${ORCHESTRATION_PROJECTOR_NAMES.projects}, 6, '2026-04-07T00:00:10.000Z'),
+            (${ORCHESTRATION_PROJECTOR_NAMES.threads}, 6, '2026-04-07T00:00:10.000Z'),
+            (${ORCHESTRATION_PROJECTOR_NAMES.threadMessages}, 6, '2026-04-07T00:00:10.000Z'),
+            (${ORCHESTRATION_PROJECTOR_NAMES.threadProposedPlans}, 6, '2026-04-07T00:00:10.000Z'),
+            (${ORCHESTRATION_PROJECTOR_NAMES.threadActivities}, 6, '2026-04-07T00:00:10.000Z'),
+            (${ORCHESTRATION_PROJECTOR_NAMES.threadSessions}, 6, '2026-04-07T00:00:10.000Z'),
+            (${ORCHESTRATION_PROJECTOR_NAMES.checkpoints}, 6, '2026-04-07T00:00:10.000Z')
+        `;
+
+        const counts = yield* snapshotQuery.getCounts();
+        assert.deepEqual(counts, {
+          projectCount: 1,
+          threadCount: 1,
+        });
+
+        // The decider's read model keeps plugin-owned threads: commands and
+        // events on them must still validate after a restart.
+        const commandReadModel = yield* snapshotQuery.getCommandReadModel();
+        assert.deepEqual(
+          commandReadModel.threads.map((thread) => thread.id),
+          [
+            ThreadId.make("thread-plugin-active"),
+            ThreadId.make("thread-user-active"),
+            ThreadId.make("thread-plugin-archived"),
+          ],
+        );
+
+        const fullSnapshot = yield* snapshotQuery.getSnapshot();
+        assert.deepEqual(
+          fullSnapshot.threads.map((thread) => thread.id),
+          [ThreadId.make("thread-user-active")],
+        );
+
+        const shellSnapshot = yield* snapshotQuery.getShellSnapshot();
+        assert.deepEqual(
+          shellSnapshot.threads.map((thread) => thread.id),
+          [ThreadId.make("thread-user-active")],
+        );
+
+        const archivedShellSnapshot = yield* snapshotQuery.getArchivedShellSnapshot();
+        assert.deepEqual(
+          archivedShellSnapshot.threads.map((thread) => thread.id),
+          [],
+        );
+
+        const firstThreadId = yield* snapshotQuery.getFirstActiveThreadIdByProjectId(
+          asProjectId("project-owner-filter"),
+        );
+        assert.equal(firstThreadId._tag, "Some");
+        if (firstThreadId._tag === "Some") {
+          assert.equal(firstThreadId.value, ThreadId.make("thread-user-active"));
+        }
+
+        const pluginShell = yield* snapshotQuery.getThreadShellById(
+          ThreadId.make("thread-plugin-active"),
+        );
+        assert.equal(pluginShell._tag, "Some");
+
+        const pluginDetail = yield* snapshotQuery.getThreadDetailById(
+          ThreadId.make("thread-plugin-active"),
+        );
+        assert.equal(pluginDetail._tag, "Some");
+        if (pluginDetail._tag === "Some") {
+          assert.equal(pluginDetail.value.owner, "plugin:test");
+        }
+
+        const checkpointContext = yield* snapshotQuery.getThreadCheckpointContext(
+          ThreadId.make("thread-plugin-active"),
+        );
+        assert.equal(checkpointContext._tag, "Some");
+
+        const fullDiffContext = yield* snapshotQuery.getFullThreadDiffContext(
+          ThreadId.make("thread-plugin-active"),
+          1,
+        );
+        assert.equal(fullDiffContext._tag, "Some");
       }),
   );
 

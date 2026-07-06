@@ -473,6 +473,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
         } satisfies OrchestrationEngineShape;
 
         const snapshotQuery = {
+          getThreadOwnerById: () => Effect.succeed(Option.some("user")),
           getShellSnapshot: () =>
             Effect.succeed({
               snapshotSequence: 1,
@@ -535,6 +536,125 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           } as unknown as OrchestrationEvent);
 
           yield* Deferred.await(threadShellRequested).pipe(Effect.timeout("2 seconds"));
+        }).pipe(
+          Effect.provide(
+            AgentAwarenessRelay.layer.pipe(
+              Layer.provide(layer),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ),
+        );
+      }),
+    ),
+  );
+
+  it.effect("skips publishing plugin-owned threads to the relay", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const originalFetch = globalThis.fetch;
+        const events = yield* Queue.unbounded<OrchestrationEvent>();
+        let fetchCalls = 0;
+        const secrets = makeMemorySecretStore();
+        const now = "2026-05-25T00:00:00.000Z";
+        const projectId = "project-1" as ProjectId;
+        const threadId = "thread-plugin" as ThreadId;
+        const environmentId = "env-1" as EnvironmentId;
+
+        const project = {
+          id: projectId,
+          title: "T3 Code",
+          workspaceRoot: "/workspace",
+          repositoryIdentity: null,
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        } satisfies OrchestrationProjectShell;
+
+        const thread = {
+          id: threadId,
+          projectId,
+          title: "Plugin worker",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          latestTurn: {
+            turnId: "turn-1" as TurnId,
+            state: "running",
+            requestedAt: now,
+            startedAt: now,
+            completedAt: null,
+            assistantMessageId: null,
+          },
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          session: null,
+          latestUserMessageAt: now,
+          hasPendingApprovals: false,
+          hasPendingUserInput: false,
+          hasActionableProposedPlan: false,
+        } satisfies OrchestrationThreadShell;
+
+        globalThis.fetch = (() => {
+          fetchCalls += 1;
+          return Promise.resolve(Response.json({ ok: true, deliveries: [] }));
+        }) as unknown as typeof fetch;
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            globalThis.fetch = originalFetch;
+          }),
+        );
+
+        const descriptor = {
+          environmentId,
+          label: "Test Desktop",
+          platform: {
+            os: "darwin",
+            arch: "arm64",
+          },
+          serverVersion: "0.0.0-test",
+          capabilities: {
+            repositoryIdentity: true,
+          },
+        } satisfies ExecutionEnvironmentDescriptor;
+
+        const layer = Layer.mergeAll(
+          Layer.succeed(ServerSecretStore.ServerSecretStore, secrets.store),
+          Layer.succeed(ServerEnvironment.ServerEnvironment, {
+            getEnvironmentId: Effect.succeed(environmentId),
+            getDescriptor: Effect.succeed(descriptor),
+          }),
+          Layer.succeed(OrchestrationEngineService, {
+            readEvents: () => Stream.empty,
+            dispatch: () => Effect.succeed({ sequence: 1 }),
+            streamDomainEvents: Stream.fromQueue(events),
+          } satisfies OrchestrationEngineShape),
+          Layer.succeed(ProjectionSnapshotQuery, {
+            getThreadOwnerById: () => Effect.succeed(Option.some("plugin:test")),
+            getShellSnapshot: () =>
+              Effect.succeed({
+                snapshotSequence: 1,
+                projects: [project],
+                threads: [thread],
+                updatedAt: now,
+              } satisfies OrchestrationShellSnapshot),
+            getThreadShellById: () => Effect.succeed(Option.some(thread)),
+            getProjectShellById: () => Effect.succeed(Option.some(project)),
+          } as unknown as ProjectionSnapshotQueryShape),
+        );
+
+        yield* Effect.gen(function* () {
+          const relay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
+          yield* secrets.setString(RELAY_URL_SECRET, "https://transport.example.test");
+          yield* secrets.setString(RELAY_ISSUER_SECRET, "https://issuer.example.test");
+          yield* secrets.setString(RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "relay-credential");
+          yield* secrets.setString(PUBLISH_AGENT_ACTIVITY_SECRET, "true");
+          yield* relay.publishThread(threadId);
+
+          expect(fetchCalls).toBe(0);
         }).pipe(
           Effect.provide(
             AgentAwarenessRelay.layer.pipe(
@@ -661,6 +781,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
             streamDomainEvents: Stream.fromQueue(events),
           } satisfies OrchestrationEngineShape),
           Layer.succeed(ProjectionSnapshotQuery, {
+            getThreadOwnerById: () => Effect.succeed(Option.some("user")),
             getShellSnapshot: () =>
               Effect.succeed({
                 snapshotSequence: 1,
