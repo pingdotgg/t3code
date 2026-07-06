@@ -1295,14 +1295,33 @@ const make = Effect.gen(function* () {
       const eventTurnId = toTurnId(event.turnId);
       const activeTurnId = thread.session?.activeTurnId ?? null;
       const lifecycleEventTurnId = eventTurnId;
+      let providerSessionLookupFailed = false;
       const providerSessionForUnscopedCompletion =
         event.type === "turn.completed" && eventTurnId === undefined
-          ? yield* getProviderSessionForThread(thread.id)
+          ? yield* getProviderSessionForThread(thread.id).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning(
+                  "provider runtime ingestion could not load provider session for unscoped turn completion",
+                  {
+                    threadId: thread.id,
+                    cause: Cause.pretty(cause),
+                  },
+                ).pipe(
+                  Effect.tap(() =>
+                    Effect.sync(() => {
+                      providerSessionLookupFailed = true;
+                    }),
+                  ),
+                  Effect.as(undefined),
+                ),
+              ),
+            )
           : undefined;
       const providerActiveTurnId = providerSessionForUnscopedCompletion?.activeTurnId;
       const unscopedCompletionHasNoProviderSession =
         event.type === "turn.completed" &&
         eventTurnId === undefined &&
+        !providerSessionLookupFailed &&
         providerSessionForUnscopedCompletion === undefined;
 
       const conflictsWithActiveTurn =
@@ -1680,7 +1699,9 @@ const make = Effect.gen(function* () {
         const detailedThread = yield* getLoadedThreadDetail();
         const messages = detailedThread?.messages ?? [];
         const proposedPlans = detailedThread?.proposedPlans ?? [];
-        const turnId = toTurnId(event.turnId) ?? (shouldApplyThreadLifecycle ? activeTurnId : null);
+        const turnId =
+          toTurnId(event.turnId) ??
+          (shouldApplyThreadLifecycle ? (activeTurnId ?? providerActiveTurnId ?? null) : null);
         if (turnId) {
           const assistantMessageIds = yield* getAssistantMessageIdsForTurn(thread.id, turnId);
           yield* Effect.forEach(

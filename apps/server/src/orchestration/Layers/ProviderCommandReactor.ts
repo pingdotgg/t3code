@@ -104,7 +104,15 @@ export function providerErrorLabelFromInstanceHint(input: {
   );
 }
 
-function canReplaceThreadTitle(currentTitle: string, titleSeed?: string): boolean {
+function normalizeTitleSeedCandidate(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function canReplaceThreadTitle(
+  currentTitle: string,
+  titleSeed?: string,
+  sourceMessageText?: string,
+): boolean {
   const trimmedCurrentTitle = currentTitle.trim();
   if (trimmedCurrentTitle === DEFAULT_THREAD_TITLE) {
     return true;
@@ -115,12 +123,31 @@ function canReplaceThreadTitle(currentTitle: string, titleSeed?: string): boolea
     return false;
   }
 
+  if (trimmedCurrentTitle === trimmedTitleSeed) {
+    return true;
+  }
+
+  // Truncated seed expansion matching is only valid for client titles that
+  // explicitly use an ellipsis marker.
+  if (!trimmedTitleSeed.endsWith("...")) {
+    return false;
+  }
+
+  const normalizedCurrentTitle = normalizeTitleSeedCandidate(trimmedCurrentTitle);
+  const normalizedSourceMessage = sourceMessageText
+    ? normalizeTitleSeedCandidate(sourceMessageText)
+    : undefined;
+  const seededFromExpandedPrompt =
+    normalizedSourceMessage !== undefined && normalizedCurrentTitle === normalizedSourceMessage;
+  if (!seededFromExpandedPrompt) {
+    return false;
+  }
+
   const currentLooksUserEditedFromTruncatedSeed =
     trimmedTitleSeed.endsWith("...") && trimmedCurrentTitle.includes("...");
   return (
-    trimmedCurrentTitle === trimmedTitleSeed ||
-    (!currentLooksUserEditedFromTruncatedSeed &&
-      truncate(trimmedCurrentTitle, Math.max(0, trimmedTitleSeed.length - 3)) === trimmedTitleSeed)
+    !currentLooksUserEditedFromTruncatedSeed &&
+    truncate(trimmedCurrentTitle, Math.max(0, trimmedTitleSeed.length - 3)) === trimmedTitleSeed
   );
 }
 
@@ -731,7 +758,7 @@ const make = Effect.gen(function* () {
 
         const thread = yield* resolveThread(input.threadId);
         if (!thread) return;
-        if (!canReplaceThreadTitle(thread.title, input.titleSeed)) {
+        if (!canReplaceThreadTitle(thread.title, input.titleSeed, input.messageText)) {
           return;
         }
 
@@ -794,7 +821,7 @@ const make = Effect.gen(function* () {
         ...(event.payload.titleSeed !== undefined ? { titleSeed: event.payload.titleSeed } : {}),
       };
 
-      if (canReplaceThreadTitle(thread.title, event.payload.titleSeed)) {
+      if (canReplaceThreadTitle(thread.title, event.payload.titleSeed, message.text)) {
         yield* firstTurnAuxiliaryWorker.enqueue(
           maybeGenerateThreadTitleForFirstTurn({
             threadId: event.payload.threadId,

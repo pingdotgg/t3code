@@ -147,6 +147,7 @@ const CopilotAdapterTestLayer = Layer.effect(
   CopilotAdapter,
   makeCopilotAdapter(decodeCopilotSettings({}), {
     nativeEventLogger,
+    turnEndIdleFallbackDelayMs: 25,
   }),
 ).pipe(
   Layer.provideMerge(
@@ -3520,6 +3521,93 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     }),
   );
 
+  it.effect("completes a final assistant turn when session.idle is missing", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-final-turn-end-missing-idle");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "complete after final message without idle",
+        attachments: [],
+      });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* waitForSdkEventQueue();
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      NodeAssert.ok(config?.onEvent);
+      const emit = (event: SessionEvent) => config.onEvent?.(event);
+      const timestamp = yield* nowIso;
+
+      emit({
+        id: "evt-copilot-final-turn-end-missing-idle-start",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_start",
+        data: {
+          turnId: "sdk-turn-final-turn-end-missing-idle",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-final-turn-end-missing-idle-message",
+        timestamp,
+        parentId: null,
+        type: "assistant.message",
+        data: {
+          messageId: "message-final-turn-end-missing-idle",
+          content: "Finished without a session idle event.",
+          turnId: "sdk-turn-final-turn-end-missing-idle",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-final-turn-end-missing-idle-end",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_end",
+        data: {
+          turnId: "sdk-turn-final-turn-end-missing-idle",
+        },
+      } as SessionEvent);
+      yield* TestClock.adjust("25 millis");
+
+      for (
+        let attempt = 0;
+        attempt < 20 &&
+        !runtimeEvents.some(
+          (event) =>
+            event.type === "turn.completed" && String(event.turnId) === String(turn.turnId),
+        );
+        attempt += 1
+      ) {
+        yield* waitForSdkEventQueue();
+      }
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+
+      const completions = runtimeEvents.filter(
+        (event) => event.type === "turn.completed" && String(event.turnId) === String(turn.turnId),
+      );
+      NodeAssert.equal(completions.length, 1);
+      NodeAssert.equal(completions[0]?.type, "turn.completed");
+      if (completions[0]?.type === "turn.completed") {
+        NodeAssert.equal(completions[0].payload.state, "completed");
+      }
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("keeps one T3 turn active across Copilot SDK loops until final output", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
@@ -4535,7 +4623,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       NodeAssert.equal(completed?.type, "turn.completed");
       if (completed?.type === "turn.completed") {
         NodeAssert.equal(String(completed.turnId), String(turn.turnId));
-        NodeAssert.equal(completed.payload.state, "completed");
+        NodeAssert.equal(completed.payload.state, "interrupted");
       }
     }),
   );

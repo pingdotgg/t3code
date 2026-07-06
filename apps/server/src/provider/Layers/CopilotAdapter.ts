@@ -36,6 +36,7 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import * as PubSub from "effect/PubSub";
@@ -70,6 +71,7 @@ import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogg
 const PROVIDER = ProviderDriverKind.make("copilot");
 const COPILOT_RESUME_SCHEMA_VERSION = 1 as const;
 const SDK_TURN_REPLAY_THRESHOLD_MS = 1_000;
+const TURN_END_IDLE_FALLBACK_DELAY_MS = 10_000;
 
 type CopilotMode = "interactive" | "plan" | "autopilot";
 type CopilotReasoningEffort = NonNullable<SessionConfig["reasoningEffort"]>;
@@ -124,6 +126,7 @@ export interface CopilotAdapterLiveOptions {
   readonly baseDirectory?: string;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  readonly turnEndIdleFallbackDelayMs?: number;
 }
 
 interface CopilotTurnSnapshot {
@@ -214,6 +217,7 @@ interface CopilotSessionContext {
   readonly turnIdsWithAssistantText: Set<TurnId>;
   readonly startedItemIds: Set<string>;
   readonly turnEndEventsByTurnId: Map<TurnId, SessionEvent>;
+  readonly turnEndFallbackTimers: Map<TurnId, Fiber.Fiber<void, never>>;
   activeTurnId: TurnId | undefined;
   activeSdkTurnId: string | undefined;
   activeSdkTurnKey: string | undefined;
@@ -1228,6 +1232,11 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
   const path = yield* Path.Path;
   const runtimeContext = yield* Effect.context();
   const runWithContext = Effect.runPromiseWith(runtimeContext);
+  const runFork = Effect.runForkWith(runtimeContext);
+  const turnEndIdleFallbackDelayMs = Math.max(
+    0,
+    options?.turnEndIdleFallbackDelayMs ?? TURN_END_IDLE_FALLBACK_DELAY_MS,
+  );
 
   const emit = (event: ProviderRuntimeEvent) =>
     PubSub.publish(runtimeEventPubSub, event).pipe(Effect.asVoid);
@@ -1425,6 +1434,22 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       });
   };
 
+  function cancelTurnEndFallback(context: CopilotSessionContext, turnId?: TurnId): void {
+    if (turnId === undefined) {
+      for (const fiber of context.turnEndFallbackTimers.values()) {
+        void runWithContext(Fiber.interrupt(fiber).pipe(Effect.ignore));
+      }
+      context.turnEndFallbackTimers.clear();
+      return;
+    }
+
+    const fiber = context.turnEndFallbackTimers.get(turnId);
+    if (fiber !== undefined) {
+      void runWithContext(Fiber.interrupt(fiber).pipe(Effect.ignore));
+      context.turnEndFallbackTimers.delete(turnId);
+    }
+  }
+
   const emitTurnCompleted = async (
     context: CopilotSessionContext,
     turnId: TurnId,
@@ -1435,6 +1460,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       readonly raw?: SessionEvent | undefined;
     },
   ) => {
+    cancelTurnEndFallback(context, turnId);
     // Copilot can report duplicate idle/error signals around the same user turn;
     // keep the public runtime lifecycle canonical and idempotent.
     if (context.completedTurnIds.has(turnId)) {
@@ -1483,6 +1509,14 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     context.turnIdsWithAssistantText.has(turnId) ||
     context.pendingTaskCompletionTextByTurnId.has(turnId);
 
+  const shouldCompleteOnAssistantTurnEnd = (
+    context: CopilotSessionContext,
+    turnId: TurnId,
+  ): boolean =>
+    context.activeTurnId === turnId &&
+    (context.turnIdsWithAssistantText.has(turnId) ||
+      context.pendingTaskCompletionTextByTurnId.has(turnId));
+
   const shouldCompleteOnIdleSignal = (context: CopilotSessionContext, turnId: TurnId): boolean =>
     hasTurnCompletionSignal(context, turnId);
 
@@ -1502,6 +1536,35 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       raw,
       stopReason: null,
     });
+  };
+
+  const scheduleTurnEndFallback = (
+    context: CopilotSessionContext,
+    turnId: TurnId,
+    raw: SessionEvent,
+  ): void => {
+    cancelTurnEndFallback(context, turnId);
+    const fiber = runFork(
+      Effect.sleep(`${turnEndIdleFallbackDelayMs} millis`).pipe(
+        Effect.andThen(
+          Effect.promise(async () => {
+            context.turnEndFallbackTimers.delete(turnId);
+            context.eventChain = context.eventChain.then(async () => {
+              if (!shouldCompleteOnAssistantTurnEnd(context, turnId) || context.stopped) {
+                return;
+              }
+              await emitPendingTaskCompletionAsAssistantMessage(context, turnId, raw);
+              await emitTurnCompleted(context, turnId, "completed", {
+                raw,
+                stopReason: null,
+              });
+            });
+            await context.eventChain;
+          }),
+        ),
+      ),
+    );
+    context.turnEndFallbackTimers.set(turnId, fiber);
   };
 
   const emitSessionIdleStateChanged = async (
@@ -1618,7 +1681,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
   const emitPendingTaskCompletionAsAssistantMessage = async (
     context: CopilotSessionContext,
     turnId: TurnId,
-    raw: SessionEvent,
+    raw?: SessionEvent,
   ) => {
     const content = context.pendingTaskCompletionTextByTurnId.get(turnId);
     if (!content || context.turnIdsWithAssistantText.has(turnId)) {
@@ -2277,6 +2340,9 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       }
       case "assistant.turn_start": {
         await completePendingActiveTurnEnd(context);
+        if (context.activeTurnId) {
+          cancelTurnEndFallback(context, context.activeTurnId);
+        }
         const turnId = resolveTurnIdForSdkTurn(context, event.data.turnId, {
           timestamp: event.timestamp,
           agentId: event.agentId,
@@ -2466,9 +2532,13 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           return;
         }
         context.turnEndEventsByTurnId.set(turnId, event);
+        const shouldComplete = shouldCompleteOnAssistantTurnEnd(context, turnId);
         if (context.activeSdkTurnKey === sdkTurnKey) {
           context.activeSdkTurnId = undefined;
           context.activeSdkTurnKey = undefined;
+        }
+        if (shouldComplete) {
+          scheduleTurnEndFallback(context, turnId, event);
         }
         return;
       }
@@ -2999,6 +3069,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         turnIdsWithAssistantText: new Set(),
         startedItemIds: new Set(),
         turnEndEventsByTurnId: new Map(),
+        turnEndFallbackTimers: new Map(),
         activeTurnId: undefined,
         activeSdkTurnId: undefined,
         activeSdkTurnKey: undefined,
@@ -3304,11 +3375,15 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       const activeTurnId = context.activeTurnId;
       if (activeTurnId && !context.completedTurnIds.has(activeTurnId)) {
         yield* Effect.promise(() =>
-          emitTurnCompleted(context, activeTurnId, "completed", {
+          emitPendingTaskCompletionAsAssistantMessage(context, activeTurnId),
+        ).pipe(Effect.ignore);
+        yield* Effect.promise(() =>
+          emitTurnCompleted(context, activeTurnId, "interrupted", {
             stopReason: null,
           }),
         ).pipe(Effect.ignore);
       }
+      cancelTurnEndFallback(context);
       yield* settlePendingPermissionHandlers(context, (binding) =>
         emitPermissionRequestResolved(context, binding, "reject", DENIED_PERMISSION_RESULT),
       );
