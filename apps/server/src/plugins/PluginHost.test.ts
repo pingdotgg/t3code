@@ -8,7 +8,7 @@ import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { pathToFileURL } from "node:url";
+import * as NodeURL from "node:url";
 
 import * as ServerConfig from "../config.ts";
 import { runMigrations } from "../persistence/Migrations.ts";
@@ -52,7 +52,7 @@ const makeLockEntry = (overrides: Partial<PluginLockfilePlugin> = {}): PluginLoc
 
 const pluginEntrySource = () => `
 import { createRequire } from "node:module";
-const require = createRequire(${JSON.stringify(pathToFileURL(import.meta.url).href)});
+const require = createRequire(${JSON.stringify(NodeURL.pathToFileURL(import.meta.url).href)});
 const Effect = require("effect/Effect");
 const SqlClient = require("effect/unstable/sql/SqlClient");
 const NodeFs = require("node:fs");

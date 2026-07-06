@@ -1,7 +1,7 @@
 import {
   AuthAdministrativeScopes,
   AuthStandardClientScopes,
-  type AuthEnvironmentScope,
+  type AuthScope,
   type AuthPairingLink,
   type ServerAuthBootstrapMethod,
 } from "@t3tools/contracts";
@@ -22,7 +22,7 @@ import * as AuthPairingLinks from "../persistence/AuthPairingLinks.ts";
 
 export interface BootstrapGrant {
   readonly method: ServerAuthBootstrapMethod;
-  readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+  readonly scopes: ReadonlyArray<AuthScope>;
   readonly subject: string;
   readonly label?: string;
   readonly proofKeyThumbprint?: string;
@@ -198,7 +198,7 @@ export class PairingGrantStore extends Context.Service<
   {
     readonly issueOneTimeToken: (input?: {
       readonly ttl?: Duration.Duration;
-      readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
+      readonly scopes?: ReadonlyArray<AuthScope>;
       readonly subject?: string;
       readonly label?: string;
       readonly proofKeyThumbprint?: string;
@@ -327,6 +327,8 @@ export const make = Effect.gen(function* () {
           ? ({
               id: row.id,
               credential: row.credential,
+              // Full persisted scopes (including plugin scopes) so granted
+              // capabilities are visible in the active-link list.
               scopes: row.scopes,
               subject: row.subject,
               label: row.label,
@@ -408,6 +410,8 @@ export const make = Effect.gen(function* () {
     yield* emitUpsert({
       id,
       credential,
+      // Emit the full granted scope set (including plugin scopes) on the
+      // `pairingLinkUpserted` change event.
       scopes: input?.scopes ?? AuthStandardClientScopes,
       subject: input?.subject ?? "one-time-token",
       ...(input?.label ? { label: input.label } : {}),

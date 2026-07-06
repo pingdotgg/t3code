@@ -46,6 +46,7 @@ import {
   RelayClientInstallFailedError,
   type RelayClientInstallProgressEvent,
   OrchestrationReplayEventsError,
+  PLUGINS_WS_METHODS,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
   AssetWorkspaceContextNotFoundError,
@@ -58,6 +59,7 @@ import {
   type TerminalMetadataStreamEvent,
   WS_METHODS,
   WsRpcGroup,
+  satisfiesScope,
 } from "@t3tools/contracts";
 import { clamp } from "effect/Number";
 import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
@@ -113,6 +115,8 @@ import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
+import { PluginCatalog } from "./plugins/PluginCatalog.ts";
+import { PluginRpcDispatcher } from "./plugins/PluginRpcDispatcher.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 
@@ -345,6 +349,11 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.subscribeServerConfig, AuthOrchestrationReadScope],
   [WS_METHODS.subscribeServerLifecycle, AuthOrchestrationReadScope],
   [WS_METHODS.subscribeAuthAccess, AuthAccessReadScope],
+  [PLUGINS_WS_METHODS.list, AuthOrchestrationReadScope],
+  // Plugin method RPCs have this static environment-read baseline; the dispatcher
+  // performs the real per-plugin plugin:<id>:read|operate authorization.
+  [PLUGINS_WS_METHODS.call, AuthOrchestrationReadScope],
+  [PLUGINS_WS_METHODS.subscribe, AuthOrchestrationReadScope],
 ]);
 
 function toAuthAccessStreamEvent(
@@ -436,6 +445,8 @@ const makeWsRpcLayer = (
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const relayClient = yield* RelayClient.RelayClient;
+      const pluginCatalog = yield* PluginCatalog;
+      const pluginRpcDispatcher = yield* PluginRpcDispatcher;
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
         new EnvironmentAuthorizationError({
           message: `The authenticated token is missing required scope: ${requiredScope}.`,
@@ -445,14 +456,14 @@ const makeWsRpcLayer = (
         requiredScope: AuthEnvironmentScope,
         effect: Effect.Effect<A, E, R>,
       ): Effect.Effect<A, E | EnvironmentAuthorizationError, R> =>
-        currentSession.scopes.includes(requiredScope)
+        satisfiesScope(requiredScope, currentSession.scopes)
           ? effect
           : Effect.fail(authorizationError(requiredScope));
       const authorizeStream = <A, E, R>(
         requiredScope: AuthEnvironmentScope,
         stream: Stream.Stream<A, E, R>,
       ): Stream.Stream<A, E | EnvironmentAuthorizationError, R> =>
-        currentSession.scopes.includes(requiredScope)
+        satisfiesScope(requiredScope, currentSession.scopes)
           ? stream
           : Stream.fail(authorizationError(requiredScope));
       const requiredScopeForMethod = (method: string): AuthEnvironmentScope => {
@@ -1242,6 +1253,37 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.serverGetConfig, loadServerConfig, {
             "rpc.aggregate": "server",
           }),
+        [PLUGINS_WS_METHODS.list]: (_input) =>
+          observeRpcEffect(
+            PLUGINS_WS_METHODS.list,
+            pluginCatalog.list.pipe(Effect.map((plugins) => ({ plugins }))),
+            { "rpc.aggregate": "plugins" },
+          ),
+        [PLUGINS_WS_METHODS.call]: (input) =>
+          observeRpcEffect(
+            PLUGINS_WS_METHODS.call,
+            pluginRpcDispatcher.call(input.pluginId, input.method, input.payload, currentSession),
+            {
+              "rpc.aggregate": "plugins",
+              "plugin.id": input.pluginId,
+              "plugin.method": input.method,
+            },
+          ),
+        [PLUGINS_WS_METHODS.subscribe]: (input) =>
+          observeRpcStream(
+            PLUGINS_WS_METHODS.subscribe,
+            pluginRpcDispatcher.subscribe(
+              input.pluginId,
+              input.method,
+              input.payload,
+              currentSession,
+            ),
+            {
+              "rpc.aggregate": "plugins",
+              "plugin.id": input.pluginId,
+              "plugin.method": input.method,
+            },
+          ),
         [WS_METHODS.serverRefreshProviders]: (input) =>
           observeRpcEffect(
             WS_METHODS.serverRefreshProviders,

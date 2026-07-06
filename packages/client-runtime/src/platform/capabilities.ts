@@ -1,6 +1,6 @@
 import {
   type AuthClientPresentationMetadata,
-  type AuthEnvironmentScope,
+  type AuthScope,
   type DesktopSshEnvironmentBootstrap,
   type DesktopSshEnvironmentTarget,
   EnvironmentId,
@@ -39,7 +39,7 @@ export class ClientPresentation extends Context.Service<
   ClientPresentation,
   {
     readonly metadata: AuthClientPresentationMetadata;
-    readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+    readonly scopes: ReadonlyArray<AuthScope>;
   }
 >()("@t3tools/client-runtime/platform/capabilities/ClientPresentation") {}
 

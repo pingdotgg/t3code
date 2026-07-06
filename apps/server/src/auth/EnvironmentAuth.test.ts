@@ -1,5 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { AuthAdministrativeScopes } from "@t3tools/contracts";
+import {
+  AuthAdministrativeScopes,
+  AuthStandardClientScopes,
+  pluginReadScope,
+} from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -89,13 +93,7 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
       );
 
       expect(verified.sessionId.length).toBeGreaterThan(0);
-      expect(verified.scopes).toEqual([
-        "orchestration:read",
-        "orchestration:operate",
-        "terminal:operate",
-        "review:write",
-        "relay:read",
-      ]);
+      expect(verified.scopes).toEqual(AuthStandardClientScopes);
       expect(verified.subject).toBe("one-time-token");
     }).pipe(Effect.provide(makeEnvironmentAuthLayer())),
   );
@@ -109,6 +107,45 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
         .exchangeBootstrapCredentialForAccessToken(
           pairingCredential.credential,
           ["orchestration:read", "access:write"],
+          requestMetadata,
+        )
+        .pipe(Effect.flip);
+
+      expect(error._tag).toBe("ServerAuthScopeNotGrantedError");
+    }).pipe(Effect.provide(makeEnvironmentAuthLayer())),
+  );
+
+  it.effect("exchanges a standard-client grant for an implicitly-held plugin scope", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      // A default pairing credential holds the standard-client marker, which
+      // implicitly satisfies every plugin scope even though `plugin:...:read`
+      // is not listed verbatim in the grant.
+      const pairingCredential = yield* serverAuth.issuePairingCredential();
+
+      const token = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+        pairingCredential.credential,
+        [pluginReadScope("test-plugin")],
+        requestMetadata,
+      );
+
+      expect(token.scope).toBe("plugin:test-plugin:read");
+    }).pipe(Effect.provide(makeEnvironmentAuthLayer())),
+  );
+
+  it.effect("rejects a plugin-scope exchange when the grant is not a full standard client", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      // A constrained grant that lacks the standard-client marker must NOT get
+      // implicit plugin access.
+      const pairingCredential = yield* serverAuth.issuePairingCredential({
+        scopes: ["orchestration:read"],
+      });
+
+      const error = yield* serverAuth
+        .exchangeBootstrapCredentialForAccessToken(
+          pairingCredential.credential,
+          [pluginReadScope("test-plugin")],
           requestMetadata,
         )
         .pipe(Effect.flip);
@@ -167,16 +204,7 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
         makeCookieRequest(exchanged.sessionToken),
       );
 
-      expect(verified.scopes).toEqual([
-        "orchestration:read",
-        "orchestration:operate",
-        "terminal:operate",
-        "review:write",
-        "relay:read",
-        "access:read",
-        "access:write",
-        "relay:write",
-      ]);
+      expect(verified.scopes).toEqual(AuthAdministrativeScopes);
       expect(verified.subject).toBe("administrative-bootstrap");
     }).pipe(Effect.provide(makeEnvironmentAuthLayer())),
   );

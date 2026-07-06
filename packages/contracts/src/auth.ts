@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
 
 import { AuthSessionId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { PLUGIN_ID_PATTERN_SOURCE } from "./plugin.ts";
 
 /**
  * Declares the server's overall authentication posture.
@@ -81,6 +82,7 @@ export const AuthAccessReadScope = "access:read" as const;
 export const AuthAccessWriteScope = "access:write" as const;
 export const AuthRelayReadScope = "relay:read" as const;
 export const AuthRelayWriteScope = "relay:write" as const;
+export const AuthPluginsManageScope = "plugins:manage" as const;
 export const AuthEnvironmentScope = Schema.Literals([
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
@@ -90,10 +92,29 @@ export const AuthEnvironmentScope = Schema.Literals([
   AuthAccessWriteScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
+  AuthPluginsManageScope,
 ]);
 export type AuthEnvironmentScope = typeof AuthEnvironmentScope.Type;
 export const AuthEnvironmentScopes = Schema.Array(AuthEnvironmentScope);
 export type AuthEnvironmentScopes = typeof AuthEnvironmentScopes.Type;
+export const isAuthEnvironmentScope = Schema.is(AuthEnvironmentScope);
+
+const PLUGIN_SCOPE_PATTERN = new RegExp(`^plugin:${PLUGIN_ID_PATTERN_SOURCE}:(read|operate)$`);
+export const PluginScope = TrimmedNonEmptyString.check(Schema.isPattern(PLUGIN_SCOPE_PATTERN)).pipe(
+  Schema.brand("PluginScope"),
+);
+export type PluginScope = typeof PluginScope.Type;
+export const isPluginScope = Schema.is(PluginScope);
+const decodePluginScope = Schema.decodeUnknownSync(PluginScope);
+
+export const pluginReadScope = (id: string): PluginScope => decodePluginScope(`plugin:${id}:read`);
+export const pluginOperateScope = (id: string): PluginScope =>
+  decodePluginScope(`plugin:${id}:operate`);
+
+export const AuthScope = Schema.Union([AuthEnvironmentScope, PluginScope]);
+export type AuthScope = typeof AuthScope.Type;
+export const AuthScopes = Schema.Array(AuthScope);
+export type AuthScopes = typeof AuthScopes.Type;
 
 export const AuthStandardClientScopes = [
   AuthOrchestrationReadScope,
@@ -101,6 +122,7 @@ export const AuthStandardClientScopes = [
   AuthTerminalOperateScope,
   AuthReviewWriteScope,
   AuthRelayReadScope,
+  AuthPluginsManageScope,
 ] as const;
 export const AuthAdministrativeScopes = [
   ...AuthStandardClientScopes,
@@ -108,6 +130,44 @@ export const AuthAdministrativeScopes = [
   AuthAccessWriteScope,
   AuthRelayWriteScope,
 ] as const;
+
+/**
+ * The original standard-client scope bundle, used as the durable MARKER for
+ * the implicit grant rules below. Sessions persisted before newer scopes
+ * (e.g. `plugins:manage`) joined `AuthStandardClientScopes` still hold
+ * exactly these five — they must keep behaving as full standard clients
+ * after an upgrade, without re-pairing or a data migration.
+ *
+ * Do NOT add new scopes here: this list is frozen by definition.
+ */
+export const AuthStandardClientMarkerScopes = [
+  AuthOrchestrationReadScope,
+  AuthOrchestrationOperateScope,
+  AuthTerminalOperateScope,
+  AuthReviewWriteScope,
+  AuthRelayReadScope,
+] as const;
+
+const holdsStandardClientMarker = (granted: ReadonlyArray<AuthScope>): boolean =>
+  AuthStandardClientMarkerScopes.every((markerScope) => granted.includes(markerScope));
+
+export function satisfiesScope(required: AuthScope, granted: ReadonlyArray<AuthScope>): boolean {
+  if (isPluginScope(required)) {
+    // A full standard (local, full-trust) client implicitly satisfies every
+    // plugin scope; restricted/managed tokens must carry them explicitly.
+    return granted.includes(required) || holdsStandardClientMarker(granted);
+  }
+  if (required === AuthPluginsManageScope) {
+    // plugins:manage joined the standard bundle after sessions began being
+    // persisted; the marker keeps pre-upgrade standard sessions whole.
+    return granted.includes(required) || holdsStandardClientMarker(granted);
+  }
+  return granted.includes(required);
+}
+
+export const authEnvironmentScopes = (
+  scopes: ReadonlyArray<AuthScope>,
+): ReadonlyArray<AuthEnvironmentScope> => scopes.filter(isAuthEnvironmentScope);
 
 export const AuthTokenExchangeGrantType =
   "urn:ietf:params:oauth:grant-type:token-exchange" as const;
@@ -150,7 +210,7 @@ export type AuthBrowserSessionRequest = typeof AuthBrowserSessionRequest.Type;
 
 export const AuthBrowserSessionResult = Schema.Struct({
   authenticated: Schema.Literal(true),
-  scopes: AuthEnvironmentScopes,
+  scopes: AuthScopes,
   sessionMethod: ServerAuthSessionMethod,
   expiresAt: Schema.DateTimeUtc,
 });
@@ -210,7 +270,11 @@ export type AuthPairingCredentialResult = typeof AuthPairingCredentialResult.Typ
 export const AuthPairingLink = Schema.Struct({
   id: TrimmedNonEmptyString,
   credential: TrimmedNonEmptyString,
-  scopes: AuthEnvironmentScopes,
+  // Full AuthScopes (not just environment scopes) so that plugin scopes
+  // granted on a pairing link surface in the active-link list and the
+  // `pairingLinkUpserted` change event (whose payload is this struct).
+  // The persisted store row already holds full AuthScopes.
+  scopes: AuthScopes,
   subject: TrimmedNonEmptyString,
   label: Schema.optionalKey(TrimmedNonEmptyString),
   createdAt: Schema.DateTimeUtc,
@@ -231,7 +295,11 @@ export type AuthClientMetadata = typeof AuthClientMetadata.Type;
 export const AuthClientSession = Schema.Struct({
   sessionId: AuthSessionId,
   subject: TrimmedNonEmptyString,
-  scopes: AuthEnvironmentScopes,
+  // Full AuthScopes (not just environment scopes) so plugin scopes carried by a
+  // session (e.g. `plugin:<id>:operate` on a downscoped exchange token) surface
+  // faithfully in the Clients panel and `clientUpserted` change events, matching
+  // the fidelity `AuthPairingLink.scopes` already provides.
+  scopes: AuthScopes,
   method: ServerAuthSessionMethod,
   client: AuthClientMetadata,
   issuedAt: Schema.DateTimeUtc,
@@ -330,14 +398,14 @@ export type AuthRevokeClientSessionInput = typeof AuthRevokeClientSessionInput.T
 
 export const AuthCreatePairingCredentialInput = Schema.Struct({
   label: Schema.optionalKey(TrimmedNonEmptyString),
-  scopes: Schema.optionalKey(AuthEnvironmentScopes),
+  scopes: Schema.optionalKey(AuthScopes),
 });
 export type AuthCreatePairingCredentialInput = typeof AuthCreatePairingCredentialInput.Type;
 
 export const AuthSessionState = Schema.Struct({
   authenticated: Schema.Boolean,
   auth: ServerAuthDescriptor,
-  scopes: Schema.optionalKey(AuthEnvironmentScopes),
+  scopes: Schema.optionalKey(AuthScopes),
   sessionMethod: Schema.optionalKey(ServerAuthSessionMethod),
   expiresAt: Schema.optionalKey(Schema.DateTimeUtc),
 });

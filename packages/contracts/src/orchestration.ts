@@ -6,6 +6,7 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Struct from "effect/Struct";
 import { ProviderOptionSelections } from "./model.ts";
 import { RepositoryIdentity } from "./environment.ts";
+import { PLUGIN_ID_PATTERN_SOURCE } from "./plugin.ts";
 import {
   ApprovalRequestId,
   CheckpointRef,
@@ -124,13 +125,14 @@ export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 export const ProviderInteractionMode = Schema.Literals(["default", "plan"]);
 export type ProviderInteractionMode = typeof ProviderInteractionMode.Type;
 export const DEFAULT_PROVIDER_INTERACTION_MODE: ProviderInteractionMode = "default";
-const THREAD_PLUGIN_OWNER_PATTERN = /^plugin:[a-z][a-z0-9-]{1,40}$/;
+// A plugin owner is `plugin:<manifest-id>`; the id grammar is shared with the
+// canonical plugin manifest id so widening it there cannot desync this decode
+// boundary. The pattern also bounds length, so no separate max-length check is
+// needed.
+const THREAD_PLUGIN_OWNER_PATTERN = new RegExp(`^plugin:${PLUGIN_ID_PATTERN_SOURCE}$`);
 export const ThreadOwner = Schema.Union([
   Schema.Literal("user"),
-  TrimmedNonEmptyString.check(
-    Schema.isMaxLength(128),
-    Schema.isPattern(THREAD_PLUGIN_OWNER_PATTERN),
-  ),
+  TrimmedNonEmptyString.check(Schema.isPattern(THREAD_PLUGIN_OWNER_PATTERN)),
 ]);
 export type ThreadOwner = typeof ThreadOwner.Type;
 export const DEFAULT_THREAD_OWNER: ThreadOwner = "user";
@@ -541,6 +543,12 @@ const ThreadCreateCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+// Client-facing variant of thread.create: clients must NOT set `owner`. Thread
+// ownership is server-injected by the agents capability (`plugin:<id>`) so that
+// plugin-created threads are hidden from user-facing views. Omitting the field
+// from the client dispatch surface prevents a normal client (even one holding
+// orchestration:operate) from forging a plugin-owned, hidden thread. Decoded
+// commands carry no owner and the decider defaults them to "user".
 const ClientThreadCreateCommand = Schema.Struct({
   type: Schema.Literal("thread.create"),
   commandId: CommandId,
@@ -713,7 +721,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
-  ClientThreadCreateCommand,
+  ThreadCreateCommand,
   ThreadDeleteCommand,
   ThreadArchiveCommand,
   ThreadUnarchiveCommand,
@@ -827,7 +835,6 @@ const InternalOrchestrationCommand = Schema.Union([
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
 export const OrchestrationCommand = Schema.Union([
-  ThreadCreateCommand,
   DispatchableClientOrchestrationCommand,
   InternalOrchestrationCommand,
 ]);

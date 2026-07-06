@@ -33,6 +33,7 @@ import * as ServerConfig from "../config.ts";
 import { PluginLockfileStore } from "./PluginLockfileStore.ts";
 import { PluginMigrator } from "./PluginMigrator.ts";
 import { PluginModuleLoader } from "./PluginModuleLoader.ts";
+import { makePluginLogger } from "./PluginLogger.ts";
 import { pluginDataDir, pluginManifestPath, pluginVersionDir } from "./PluginPaths.ts";
 import { PluginRuntimeRegistry } from "./PluginRuntimeRegistry.ts";
 
@@ -116,13 +117,6 @@ function validateRegistration(
   }
   return Effect.void;
 }
-
-const makeLogger = (pluginId: PluginId): PluginLogger => ({
-  debug: (message, attributes) => Effect.logDebug(message, { ...attributes, pluginId }),
-  info: (message, attributes) => Effect.logInfo(message, { ...attributes, pluginId }),
-  warn: (message, attributes) => Effect.logWarning(message, { ...attributes, pluginId }),
-  error: (message, attributes) => Effect.logError(message, { ...attributes, pluginId }),
-});
 
 const unavailable = (capability: string) =>
   Effect.die(new PluginCapabilityUnavailable({ capability }));
@@ -273,7 +267,7 @@ export const make = Effect.fn("PluginHost.make")(function* () {
 
       const scope = yield* Scope.make("sequential");
       const readiness = yield* Deferred.make<void>();
-      const logger = makeLogger(pluginId);
+      const logger = makePluginLogger(pluginId);
       const dataDir = pluginDataDir(config.pluginsDir, pluginId, path.join);
       const hostApi = makeHostApi({ pluginId, dataDir, logger });
 

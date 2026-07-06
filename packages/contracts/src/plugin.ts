@@ -5,7 +5,8 @@ import { IsoDateTime, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas
 
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 const HOST_API_RANGE_PATTERN = /^[~^]?\d+\.\d+\.\d+$/;
-const PLUGIN_ID_PATTERN = /^[a-z][a-z0-9-]{1,40}$/;
+export const PLUGIN_ID_PATTERN_SOURCE = "[a-z][a-z0-9-]{1,40}";
+const PLUGIN_ID_PATTERN = new RegExp(`^${PLUGIN_ID_PATTERN_SOURCE}$`);
 
 export const HOST_API_VERSION = "1.0.0";
 
@@ -118,6 +119,42 @@ export const PluginState = Schema.Literals([
   "disabled-by-host",
 ]);
 export type PluginState = typeof PluginState.Type;
+
+export class PluginRpcError extends Schema.TaggedErrorClass<PluginRpcError>()("PluginRpcError", {
+  pluginId: PluginId,
+  code: Schema.Literals(["not-found", "not-ready", "unauthorized", "invalid-method", "internal"]),
+  message: Schema.String,
+  data: Schema.optional(Schema.Unknown),
+}) {}
+
+export const PluginInfo = Schema.Struct({
+  id: PluginId,
+  name: TrimmedNonEmptyString,
+  version: SemverString,
+  state: PluginState,
+  capabilities: Schema.Array(PluginCapability),
+  hasWeb: Schema.Boolean,
+  lastError: Schema.NullOr(Schema.String),
+});
+export type PluginInfo = typeof PluginInfo.Type;
+
+export const PluginListResult = Schema.Struct({
+  plugins: Schema.Array(PluginInfo),
+});
+export type PluginListResult = typeof PluginListResult.Type;
+
+export const PluginMethodInput = Schema.Struct({
+  pluginId: PluginId,
+  method: TrimmedNonEmptyString,
+  payload: Schema.optionalKey(Schema.Unknown),
+});
+export type PluginMethodInput = typeof PluginMethodInput.Type;
+
+export const PLUGINS_WS_METHODS = {
+  list: "plugins.list",
+  call: "plugins.call",
+  subscribe: "plugins.subscribe",
+} as const;
 
 const LockfileSource = Schema.Struct({
   id: TrimmedNonEmptyString,

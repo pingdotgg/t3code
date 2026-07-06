@@ -33,9 +33,11 @@ import * as GitHubCli from "./sourceControl/GitHubCli.ts";
 import * as GitLabCli from "./sourceControl/GitLabCli.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as PluginHost from "./plugins/PluginHost.ts";
+import * as PluginCatalog from "./plugins/PluginCatalog.ts";
 import * as PluginLockfileStore from "./plugins/PluginLockfileStore.ts";
 import * as PluginMigrator from "./plugins/PluginMigrator.ts";
 import * as PluginModuleLoader from "./plugins/PluginModuleLoader.ts";
+import * as PluginRpcDispatcher from "./plugins/PluginRpcDispatcher.ts";
 import * as PluginRuntimeRegistry from "./plugins/PluginRuntimeRegistry.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
@@ -188,11 +190,25 @@ const ProviderLayerLive = ProviderServiceLive.pipe(
 
 const PersistenceLayerLive = Layer.empty.pipe(Layer.provideMerge(SqlitePersistenceLayerLive));
 
-const PluginLayerLive = PluginHost.layer.pipe(
-  Layer.provideMerge(PluginLockfileStore.layer),
+const PluginRuntimeRegistryLayerLive = PluginRuntimeRegistry.layer;
+const PluginLockfileStoreLayerLive = PluginLockfileStore.layer;
+const PluginHostLayerLive = PluginHost.layer.pipe(
+  Layer.provideMerge(PluginLockfileStoreLayerLive),
   Layer.provideMerge(PluginModuleLoader.layer),
   Layer.provideMerge(PluginMigrator.layer),
-  Layer.provideMerge(PluginRuntimeRegistry.layer),
+  Layer.provideMerge(PluginRuntimeRegistryLayerLive),
+);
+const PluginRpcDispatcherLayerLive = PluginRpcDispatcher.layer.pipe(
+  Layer.provideMerge(PluginRuntimeRegistryLayerLive),
+);
+const PluginCatalogLayerLive = PluginCatalog.layer.pipe(
+  Layer.provideMerge(PluginLockfileStoreLayerLive),
+  Layer.provideMerge(PluginRuntimeRegistryLayerLive),
+);
+const PluginLayerLive = Layer.mergeAll(
+  PluginHostLayerLive,
+  PluginRpcDispatcherLayerLive,
+  PluginCatalogLayerLive,
 );
 
 const VcsDriverRegistryLayerLive = VcsDriverRegistry.layer.pipe(

@@ -15,6 +15,7 @@ import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import * as NodeCrypto from "node:crypto";
 
 import * as ServerConfig from "../config.ts";
 import { pluginAdvisoryLockPath, pluginLockfilePath } from "./PluginPaths.ts";
@@ -35,10 +36,13 @@ export class PluginLockfileReadError extends Schema.TaggedErrorClass<PluginLockf
 
 export class PluginLockfileCorruptError extends Schema.TaggedErrorClass<PluginLockfileCorruptError>()(
   "PluginLockfileCorruptError",
-  { path: Schema.String, detail: Schema.String, cause: Schema.Defect() },
+  { path: Schema.String, cause: Schema.Defect() },
 ) {
+  // Derive the message from the stable `path` only — never from the stringified
+  // decode error — so the wrapper cannot leak corrupt lockfile contents. The
+  // underlying failure is preserved on `cause` (Schema.Defect) for diagnostics.
   override get message(): string {
-    return `Plugin lockfile at ${this.path} is corrupt: ${this.detail}`;
+    return `Plugin lockfile at ${this.path} is corrupt.`;
   }
 }
 
@@ -95,12 +99,21 @@ export class PluginLockfileStore extends Context.Service<
       PluginLockfile,
       PluginLockfileReadError | PluginLockfileCorruptError
     >;
-    readonly updatePlugin: (
+    readonly updateSources: (
+      fn: (
+        sources: ReadonlyArray<PluginLockfile["sources"][number]>,
+        lockfile: PluginLockfile,
+      ) => Effect.Effect<
+        ReadonlyArray<PluginLockfile["sources"][number]>,
+        PluginLockfileStoreError
+      >,
+    ) => Effect.Effect<PluginLockfile, PluginLockfileStoreError>;
+    readonly updatePlugin: <E = never>(
       id: PluginId,
       fn: (
         context: PluginLockfileMutationContext,
-      ) => Effect.Effect<PluginLockfilePlugin | undefined, PluginLockfileStoreError>,
-    ) => Effect.Effect<PluginLockfile, PluginLockfileStoreError>;
+      ) => Effect.Effect<PluginLockfilePlugin | undefined, PluginLockfileStoreError | E>,
+    ) => Effect.Effect<PluginLockfile, PluginLockfileStoreError | E>;
     readonly removePlugin: (
       id: PluginId,
     ) => Effect.Effect<PluginLockfile, PluginLockfileStoreError>;
@@ -133,7 +146,6 @@ const readLockfileFromPath = (lockfilePath: string) =>
         (cause) =>
           new PluginLockfileCorruptError({
             path: lockfilePath,
-            detail: String(cause),
             cause,
           }),
       ),
@@ -178,6 +190,11 @@ const acquireAdvisoryLock = (input: {
   Effect.acquireRelease(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
+      // Owner token written into the lock file on acquire and re-checked in the
+      // finalizer: a random nonce makes it unique to THIS holder even across
+      // stale-lock reclamation, so a slow/paused prior holder's finalizer cannot
+      // delete a different process's now-valid lock and break single-writer.
+      const ownerToken = `${process.pid}:${NodeCrypto.randomUUID()}`;
       yield* fs
         .makeDirectory(input.pluginsDir, { recursive: true })
         .pipe(
@@ -189,26 +206,74 @@ const acquireAdvisoryLock = (input: {
       const openLock = Effect.scoped(
         Effect.gen(function* () {
           const file = yield* fs.open(input.advisoryLockPath, { flag: "wx", mode: 0o600 });
-          yield* file.writeAll(
-            new TextEncoder().encode(`${process.pid}:${yield* Clock.currentTimeMillis}\n`),
+          // `wx` created the file; only the write/sync can now fail. If it does
+          // (ENOSPC/IO) or is interrupted mid-write, remove the file we just
+          // created — acquire has not succeeded, so acquireRelease's release is
+          // not registered, and an orphaned lock would block all lockfile
+          // mutations until STALE_LOCK_MS elapses.
+          yield* file.writeAll(new TextEncoder().encode(`${ownerToken}\n`)).pipe(
+            Effect.andThen(file.sync),
+            Effect.onError(() =>
+              fs.remove(input.advisoryLockPath, { force: true }).pipe(Effect.ignore),
+            ),
           );
-          yield* file.sync;
         }),
       );
 
       const opened = yield* openLock.pipe(Effect.result);
-      if (Result.isSuccess(opened)) return input.advisoryLockPath;
+      if (Result.isSuccess(opened)) return { path: input.advisoryLockPath, token: ownerToken };
 
-      const stat = yield* fs
-        .stat(input.advisoryLockPath)
-        .pipe(
+      const statOption = yield* fs.stat(input.advisoryLockPath).pipe(
+        Effect.map((info) => Option.some(info)),
+        // The lock was released between openLock failing and this stat — it is
+        // free now, so retry acquisition instead of reporting spurious
+        // contention as a lock error.
+        Effect.catchIf(isNotFound, () => Effect.succeed(Option.none())),
+        Effect.mapError(
+          (cause) => new PluginLockfileLockError({ path: input.advisoryLockPath, cause }),
+        ),
+      );
+      if (Option.isNone(statOption)) {
+        yield* openLock.pipe(
           Effect.mapError(
             (cause) => new PluginLockfileLockError({ path: input.advisoryLockPath, cause }),
           ),
         );
+        return { path: input.advisoryLockPath, token: ownerToken };
+      }
+      const stat = statOption.value;
       const mtime = Option.getOrUndefined(stat.mtime);
       const ageMs = mtime ? (yield* Clock.currentTimeMillis) - mtime.getTime() : 0;
       if (ageMs <= STALE_LOCK_MS) {
+        return yield* new PluginLockfileLockError({
+          path: input.advisoryLockPath,
+          cause: opened.failure,
+        });
+      }
+
+      // Re-check the lock's mtime immediately before removing it. Between the
+      // first stat above and now, another process may have released this stale
+      // lock and a third re-acquired it. Removing a lock that was refreshed in
+      // the meantime would delete a fresh, valid lock and break the
+      // single-writer guarantee. Only reclaim when the file is unchanged (same
+      // stale mtime) or already gone; if it was refreshed, treat it as live
+      // contention and fail rather than clobber it.
+      const stillStale = yield* fs.stat(input.advisoryLockPath).pipe(
+        Effect.map((current) => {
+          const currentMtime = Option.getOrUndefined(current.mtime);
+          return (
+            currentMtime !== undefined &&
+            mtime !== undefined &&
+            currentMtime.getTime() === mtime.getTime()
+          );
+        }),
+        // Already released between our checks — safe to (re)acquire.
+        Effect.catchIf(isNotFound, () => Effect.succeed(true)),
+        Effect.mapError(
+          (cause) => new PluginLockfileLockError({ path: input.advisoryLockPath, cause }),
+        ),
+      );
+      if (!stillStale) {
         return yield* new PluginLockfileLockError({
           path: input.advisoryLockPath,
           cause: opened.failure,
@@ -219,8 +284,31 @@ const acquireAdvisoryLock = (input: {
         path: input.advisoryLockPath,
         ageMs,
       });
+      // Claim the stale lock ATOMICALLY by renaming it to a token-unique path
+      // before removing it. `remove` is not exclusive: two reclaimers that both
+      // pass the stillStale mtime check would both `remove` and then one could
+      // clobber the other's freshly-created lock (P2's remove landing between P1's
+      // create and P1's use), leaving BOTH believing they hold the lock and losing
+      // a lockfile mutation. Only ONE racer can rename a given source path — the
+      // loser sees the source already gone (NotFound) and reports contention.
+      const reclaimPath = `${input.advisoryLockPath}.reclaim-${ownerToken.replaceAll(/[^a-zA-Z0-9._-]/g, "_")}`;
+      const claimed = yield* fs.rename(input.advisoryLockPath, reclaimPath).pipe(
+        Effect.as(true),
+        // Another reclaimer won (renamed/removed it first) — treat as live
+        // contention rather than clobbering their now-valid lock.
+        Effect.catchIf(isNotFound, () => Effect.succeed(false)),
+        Effect.mapError(
+          (cause) => new PluginLockfileLockError({ path: input.advisoryLockPath, cause }),
+        ),
+      );
+      if (!claimed) {
+        return yield* new PluginLockfileLockError({
+          path: input.advisoryLockPath,
+          cause: opened.failure,
+        });
+      }
       yield* fs
-        .remove(input.advisoryLockPath, { force: true })
+        .remove(reclaimPath, { force: true })
         .pipe(
           Effect.mapError(
             (cause) => new PluginLockfileLockError({ path: input.advisoryLockPath, cause }),
@@ -231,11 +319,22 @@ const acquireAdvisoryLock = (input: {
           (cause) => new PluginLockfileLockError({ path: input.advisoryLockPath, cause }),
         ),
       );
-      return input.advisoryLockPath;
+      return { path: input.advisoryLockPath, token: ownerToken };
     }),
-    (lockPath) =>
+    ({ path: lockPath, token }) =>
       FileSystem.FileSystem.pipe(
-        Effect.flatMap((fs) => fs.remove(lockPath, { force: true })),
+        Effect.flatMap((fs) =>
+          // Only remove the lock if it still carries OUR token. If a stale-lock
+          // reclaimer overwrote it with its own token, leave that valid lock in
+          // place instead of clobbering it.
+          fs
+            .readFileString(lockPath)
+            .pipe(
+              Effect.flatMap((content) =>
+                content.trim() === token ? fs.remove(lockPath, { force: true }) : Effect.void,
+              ),
+            ),
+        ),
         Effect.ignore,
       ),
   );
@@ -257,17 +356,37 @@ export const make = Effect.fn("PluginLockfileStore.make")(function* () {
 
   const readLockfile = provideLocalServices(readLockfileFromPath(lockfilePath));
 
-  const mutate = (
-    update: (lockfile: PluginLockfile) => Effect.Effect<PluginLockfile, PluginLockfileStoreError>,
+  const mutate = <E = never>(
+    update: (
+      lockfile: PluginLockfile,
+    ) => Effect.Effect<PluginLockfile, PluginLockfileStoreError | E>,
   ) =>
     provideLocalServices(
       semaphore.withPermits(1)(
         Effect.scoped(
           acquireAdvisoryLock({ pluginsDir: config.pluginsDir, advisoryLockPath }).pipe(
-            Effect.flatMap(() =>
+            Effect.flatMap((lock) =>
               Effect.gen(function* () {
                 const current = yield* readLockfile;
                 const next = yield* update(current);
+                // Re-verify we still own the advisory lock immediately before
+                // writing. If this fiber/process was paused past STALE_LOCK_MS
+                // (GC/CPU starvation) another process may have reclaimed the lock
+                // and become the writer; writing now would race it and lose an
+                // update. The owner token is unique per acquisition, so a mismatch
+                // means we were reclaimed.
+                const owner = yield* fs.readFileString(lock.path).pipe(
+                  Effect.map((content) => content.trim()),
+                  Effect.orElseSucceed(() => ""),
+                );
+                if (owner !== lock.token) {
+                  return yield* new PluginLockfileLockError({
+                    path: lock.path,
+                    cause: new Error(
+                      "advisory lock ownership lost before write (reclaimed by another writer)",
+                    ),
+                  });
+                }
                 yield* writeLockfileToPath({
                   pluginsDir: config.pluginsDir,
                   lockfilePath,
@@ -281,8 +400,13 @@ export const make = Effect.fn("PluginLockfileStore.make")(function* () {
       ),
     );
 
-  const updatePlugin: PluginLockfileStore["Service"]["updatePlugin"] = (id, fn) =>
-    mutate((lockfile) =>
+  const updatePlugin = <E = never>(
+    id: PluginId,
+    fn: (
+      context: PluginLockfileMutationContext,
+    ) => Effect.Effect<PluginLockfilePlugin | undefined, PluginLockfileStoreError | E>,
+  ): Effect.Effect<PluginLockfile, PluginLockfileStoreError | E> =>
+    mutate<E>((lockfile) =>
       Effect.gen(function* () {
         const current = lockfile.plugins[id];
         const nextPlugin = yield* fn({ lockfile, current });
@@ -293,6 +417,14 @@ export const make = Effect.fn("PluginLockfileStore.make")(function* () {
           plugins[id] = nextPlugin;
         }
         return { ...lockfile, plugins };
+      }),
+    );
+
+  const updateSources: PluginLockfileStore["Service"]["updateSources"] = (fn) =>
+    mutate((lockfile) =>
+      Effect.gen(function* () {
+        const sources = yield* fn(lockfile.sources, lockfile);
+        return { ...lockfile, sources: Array.from(sources) };
       }),
     );
 
@@ -318,6 +450,7 @@ export const make = Effect.fn("PluginLockfileStore.make")(function* () {
     lockfilePath,
     advisoryLockPath,
     readLockfile,
+    updateSources,
     updatePlugin,
     removePlugin,
     transition,

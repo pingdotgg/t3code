@@ -1,5 +1,7 @@
 import {
   EnvironmentId,
+  PLUGINS_WS_METHODS,
+  PluginId,
   type RelayClientInstallProgressEvent,
   WS_METHODS,
 } from "@t3tools/contracts";
@@ -25,7 +27,15 @@ import {
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
-import { EnvironmentRpcRequestObserver, request, runStream, subscribe } from "./client.ts";
+import {
+  EnvironmentRpcRequestObserver,
+  callPlugin,
+  listPlugins,
+  request,
+  runStream,
+  subscribe,
+  subscribePlugin,
+} from "./client.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -108,6 +118,68 @@ describe("environment RPC", () => {
         `start:${TARGET.environmentId}:${WS_METHODS.cloudGetRelayClientStatus}`,
         `finish:${TARGET.environmentId}:${WS_METHODS.cloudGetRelayClientStatus}`,
       ]);
+    }),
+  );
+
+  it.effect("lists plugins through the active session RPC client", () =>
+    Effect.gen(function* () {
+      const client = {
+        [PLUGINS_WS_METHODS.list]: () => Effect.succeed({ plugins: [] }),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+
+      const result = yield* listPlugins().pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      );
+
+      expect(result).toEqual({ plugins: [] });
+    }),
+  );
+
+  it.effect("calls plugin methods with optional payloads", () =>
+    Effect.gen(function* () {
+      const pluginId = PluginId.make("test-plugin");
+      const observedInputs: Array<unknown> = [];
+      const client = {
+        [PLUGINS_WS_METHODS.call]: (input: unknown) => {
+          observedInputs.push(input);
+          return Effect.succeed({ ok: true });
+        },
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+
+      const result = yield* callPlugin(pluginId, "echo", { value: 1 }).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      );
+
+      expect(result).toEqual({ ok: true });
+      expect(observedInputs).toEqual([{ pluginId, method: "echo", payload: { value: 1 } }]);
+    }),
+  );
+
+  it.effect("subscribes to plugin streams through durable subscription handling", () =>
+    Effect.gen(function* () {
+      const pluginId = PluginId.make("test-plugin");
+      const observedInputs: Array<unknown> = [];
+      const client = {
+        [PLUGINS_WS_METHODS.subscribe]: (input: unknown) => {
+          observedInputs.push(input);
+          return Stream.make("first", "second");
+        },
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+
+      const result = yield* subscribePlugin(pluginId, "events").pipe(
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      );
+
+      expect(result).toEqual(["first", "second"]);
+      expect(observedInputs).toEqual([{ pluginId, method: "events" }]);
     }),
   );
 

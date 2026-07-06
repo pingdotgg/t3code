@@ -1,4 +1,9 @@
-import { ORCHESTRATION_WS_METHODS, WS_METHODS } from "@t3tools/contracts";
+import {
+  ORCHESTRATION_WS_METHODS,
+  PLUGINS_WS_METHODS,
+  WS_METHODS,
+  type PluginId,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import type * as Duration from "effect/Duration";
@@ -50,6 +55,7 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.subscribeDiscoveredLocalServers
   | typeof WS_METHODS.previewAutomationConnect
   | typeof WS_METHODS.subscribeVcsStatus
+  | typeof PLUGINS_WS_METHODS.subscribe
   | typeof WS_METHODS.terminalAttach;
 
 export type EnvironmentStreamCommandRpcTag =
@@ -240,3 +246,35 @@ export const config = Effect.gen(function* () {
   const session = yield* currentSession();
   return yield* session.initialConfig;
 }).pipe(Effect.withSpan("EnvironmentRpc.config"));
+
+export const listPlugins = Effect.fn("EnvironmentRpc.listPlugins")(function* () {
+  return yield* request(PLUGINS_WS_METHODS.list, {});
+});
+
+export const callPlugin = Effect.fn("EnvironmentRpc.callPlugin")(function* (
+  pluginId: PluginId,
+  method: string,
+  payload?: unknown,
+) {
+  return yield* request(PLUGINS_WS_METHODS.call, {
+    pluginId,
+    method,
+    ...(payload === undefined ? {} : { payload }),
+  });
+});
+
+export function subscribePlugin(
+  pluginId: PluginId,
+  method: string,
+  payload?: unknown,
+): Stream.Stream<
+  EnvironmentRpcStreamValue<typeof PLUGINS_WS_METHODS.subscribe>,
+  EnvironmentRpcStreamFailure<typeof PLUGINS_WS_METHODS.subscribe>,
+  EnvironmentSupervisor
+> {
+  return subscribe(PLUGINS_WS_METHODS.subscribe, {
+    pluginId,
+    method,
+    ...(payload === undefined ? {} : { payload }),
+  });
+}
