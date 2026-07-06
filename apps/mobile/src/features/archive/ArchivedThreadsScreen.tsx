@@ -70,6 +70,7 @@ type ArchivedThreadListItem =
 
 function ArchivedThreadsHeader(props: {
   readonly environments: ReadonlyArray<ArchivedThreadsHeaderEnvironment>;
+  readonly searchQuery: string;
   readonly selectedEnvironmentId: EnvironmentId | null;
   readonly sortOrder: ArchivedThreadSortOrder;
   readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
@@ -199,6 +200,7 @@ function ArchivedThreadsHeader(props: {
                 accessibilityLabel="Search archived threads"
                 autoCapitalize="none"
                 onChangeText={props.onSearchQueryChange}
+                value={props.searchQuery}
                 placeholder="Search archived threads"
                 placeholderTextColor={String(searchPlaceholderColor)}
                 style={{
@@ -680,6 +682,7 @@ export function ArchivedThreadsScreen(props: {
     <View className="flex-1 bg-sheet">
       <ArchivedThreadsHeader
         environments={props.environments}
+        searchQuery={props.searchQuery}
         onEnvironmentChange={props.onEnvironmentChange}
         onRefresh={props.onRefresh}
         onSearchQueryChange={props.onSearchQueryChange}

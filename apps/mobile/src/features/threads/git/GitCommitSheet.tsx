@@ -1,8 +1,6 @@
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useCallback, useState } from "react";
-import { Platform, Pressable, ScrollView, View, useColorScheme } from "react-native";
-
-import { AndroidScreenHeader } from "../../../components/AndroidScreenHeader";
+import { Pressable, ScrollView, View, useColorScheme } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../../lib/useThemeColor";
 
@@ -74,185 +72,180 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
   );
 
   return (
-    <View collapsable={false} className="flex-1 bg-sheet">
-      {Platform.OS === "android" ? (
-        <AndroidScreenHeader title="Commit" onBack={() => navigation.goBack()} />
-      ) : null}
-      <ScrollView
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-        contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
-        contentContainerStyle={{
-          paddingHorizontal: 20,
-          paddingTop: 8,
-          gap: 16,
-        }}
-      >
-        <View className="gap-3 rounded-[22px] border border-border bg-card px-4 py-4">
-          <View className="flex-row items-center justify-between gap-3">
-            <Text className="text-foreground-muted text-sm font-medium">Branch</Text>
-            <Text className="text-foreground text-base font-t3-bold">
-              {gitStatus.data?.refName ?? "(detached HEAD)"}
+    <ScrollView
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+      contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
+      contentContainerStyle={{
+        paddingHorizontal: 20,
+        paddingTop: 8,
+        gap: 16,
+      }}
+    >
+      <View className="gap-3 rounded-[22px] border border-border bg-card px-4 py-4">
+        <View className="flex-row items-center justify-between gap-3">
+          <Text className="text-foreground-muted text-sm font-medium">Branch</Text>
+          <Text className="text-foreground text-base font-t3-bold">
+            {gitStatus.data?.refName ?? "(detached HEAD)"}
+          </Text>
+        </View>
+        {isDefaultRef ? (
+          <Text
+            className="text-xs leading-normal"
+            style={{ color: isDarkMode ? "#fbbf24" : "#b45309" }}
+          >
+            Warning: this is the default branch.
+          </Text>
+        ) : null}
+      </View>
+
+      <View className="gap-3 rounded-[22px] border border-border bg-card px-4 py-4">
+        <View className="flex-row items-center justify-between gap-3">
+          <View className="gap-1">
+            <Text className="text-foreground text-base font-t3-bold">Files</Text>
+            <Text className="text-foreground-muted text-xs leading-normal">
+              {selectedFiles.length} selected · +{selectedInsertions} / -{selectedDeletions}
             </Text>
           </View>
-          {isDefaultRef ? (
-            <Text
-              className="text-xs leading-normal"
-              style={{ color: isDarkMode ? "#fbbf24" : "#b45309" }}
-            >
-              Warning: this is the default branch.
-            </Text>
-          ) : null}
-        </View>
-
-        <View className="gap-3 rounded-[22px] border border-border bg-card px-4 py-4">
-          <View className="flex-row items-center justify-between gap-3">
-            <View className="gap-1">
-              <Text className="text-foreground text-base font-t3-bold">Files</Text>
-              <Text className="text-foreground-muted text-xs leading-normal">
-                {selectedFiles.length} selected · +{selectedInsertions} / -{selectedDeletions}
-              </Text>
-            </View>
-            <View className="flex-row items-center gap-2">
-              {!allSelected && isEditingFiles ? (
-                <Pressable
-                  className="bg-subtle rounded-full px-3 py-2"
-                  onPress={() => setExcludedFiles(new Set())}
-                >
-                  <Text className="text-foreground text-2xs font-t3-bold uppercase">Reset</Text>
-                </Pressable>
-              ) : null}
+          <View className="flex-row items-center gap-2">
+            {!allSelected && isEditingFiles ? (
               <Pressable
                 className="bg-subtle rounded-full px-3 py-2"
-                onPress={() => setIsEditingFiles((current) => !current)}
+                onPress={() => setExcludedFiles(new Set())}
               >
-                <Text className="text-foreground text-2xs font-t3-bold uppercase">
-                  {isEditingFiles ? "Done" : "Edit"}
-                </Text>
+                <Text className="text-foreground text-2xs font-t3-bold uppercase">Reset</Text>
               </Pressable>
-            </View>
+            ) : null}
+            <Pressable
+              className="bg-subtle rounded-full px-3 py-2"
+              onPress={() => setIsEditingFiles((current) => !current)}
+            >
+              <Text className="text-foreground text-2xs font-t3-bold uppercase">
+                {isEditingFiles ? "Done" : "Edit"}
+              </Text>
+            </Pressable>
           </View>
-
-          {allFiles.length === 0 ? (
-            <Text className="text-foreground-secondary text-sm leading-normal">
-              No changed files are available to commit.
-            </Text>
-          ) : !isEditingFiles ? (
-            <View className="gap-2">
-              {selectedFilePreview.map((file) => (
-                <View key={file.path} className="flex-row items-center justify-between gap-3">
-                  <Text className="text-foreground flex-1 text-sm font-medium" numberOfLines={1}>
-                    {file.path}
-                  </Text>
-                  <Text className="text-xs font-t3-bold" style={{ color: "#10b981" }}>
-                    +{file.insertions}
-                  </Text>
-                  <Text className="text-xs font-t3-bold" style={{ color: "#f43f5e" }}>
-                    -{file.deletions}
-                  </Text>
-                </View>
-              ))}
-              {selectedFiles.length > selectedFilePreview.length ? (
-                <Text className="text-foreground-muted text-xs leading-snug">
-                  +{selectedFiles.length - selectedFilePreview.length} more files
-                </Text>
-              ) : null}
-            </View>
-          ) : (
-            <View className="gap-2">
-              {allFiles.map((file) => {
-                const included = !excludedFiles.has(file.path);
-                return (
-                  <Pressable
-                    key={file.path}
-                    className="rounded-[18px] border px-4 py-3"
-                    style={{
-                      borderColor: included ? borderColor : borderSubtleColor,
-                    }}
-                    onPress={() => {
-                      setExcludedFiles((current) => {
-                        const next = new Set(current);
-                        if (next.has(file.path)) {
-                          next.delete(file.path);
-                        } else {
-                          next.add(file.path);
-                        }
-                        return next;
-                      });
-                    }}
-                  >
-                    <View
-                      className={`absolute inset-0 rounded-[18px] ${included ? "bg-card" : "bg-subtle"}`}
-                    />
-                    <View className="flex-row items-start justify-between gap-3">
-                      <View className="flex-1 gap-1">
-                        <Text
-                          selectable
-                          className={`text-sm font-t3-bold ${included ? "text-foreground" : "text-foreground-muted"}`}
-                        >
-                          {file.path}
-                        </Text>
-                        {!included ? (
-                          <Text className="text-foreground-muted text-2xs leading-normal">
-                            Excluded from this commit
-                          </Text>
-                        ) : null}
-                      </View>
-                      <View className="items-end gap-1">
-                        <Text className="text-xs font-t3-bold" style={{ color: "#10b981" }}>
-                          +{file.insertions}
-                        </Text>
-                        <Text className="text-xs font-t3-bold" style={{ color: "#f43f5e" }}>
-                          -{file.deletions}
-                        </Text>
-                      </View>
-                    </View>
-                  </Pressable>
-                );
-              })}
-            </View>
-          )}
         </View>
 
-        <View className="gap-2">
-          <Text className="text-foreground text-sm font-t3-bold">Commit message</Text>
-          <TextInput
-            multiline
-            value={dialogCommitMessage}
-            onChangeText={setDialogCommitMessage}
-            placeholder="Leave empty to auto-generate"
-            textAlignVertical="top"
-            className="min-h-[128px] rounded-[20px] px-4 py-3.5 font-sans text-base"
-            style={{
-              minHeight: 128,
-              borderWidth: 1,
-              borderColor: inputBorderColor,
-              backgroundColor: inputBg,
-              color: foregroundColor,
-            }}
+        {allFiles.length === 0 ? (
+          <Text className="text-foreground-secondary text-sm leading-normal">
+            No changed files are available to commit.
+          </Text>
+        ) : !isEditingFiles ? (
+          <View className="gap-2">
+            {selectedFilePreview.map((file) => (
+              <View key={file.path} className="flex-row items-center justify-between gap-3">
+                <Text className="text-foreground flex-1 text-sm font-medium" numberOfLines={1}>
+                  {file.path}
+                </Text>
+                <Text className="text-xs font-t3-bold" style={{ color: "#10b981" }}>
+                  +{file.insertions}
+                </Text>
+                <Text className="text-xs font-t3-bold" style={{ color: "#f43f5e" }}>
+                  -{file.deletions}
+                </Text>
+              </View>
+            ))}
+            {selectedFiles.length > selectedFilePreview.length ? (
+              <Text className="text-foreground-muted text-xs leading-snug">
+                +{selectedFiles.length - selectedFilePreview.length} more files
+              </Text>
+            ) : null}
+          </View>
+        ) : (
+          <View className="gap-2">
+            {allFiles.map((file) => {
+              const included = !excludedFiles.has(file.path);
+              return (
+                <Pressable
+                  key={file.path}
+                  className="rounded-[18px] border px-4 py-3"
+                  style={{
+                    borderColor: included ? borderColor : borderSubtleColor,
+                  }}
+                  onPress={() => {
+                    setExcludedFiles((current) => {
+                      const next = new Set(current);
+                      if (next.has(file.path)) {
+                        next.delete(file.path);
+                      } else {
+                        next.add(file.path);
+                      }
+                      return next;
+                    });
+                  }}
+                >
+                  <View
+                    className={`absolute inset-0 rounded-[18px] ${included ? "bg-card" : "bg-subtle"}`}
+                  />
+                  <View className="flex-row items-start justify-between gap-3">
+                    <View className="flex-1 gap-1">
+                      <Text
+                        selectable
+                        className={`text-sm font-t3-bold ${included ? "text-foreground" : "text-foreground-muted"}`}
+                      >
+                        {file.path}
+                      </Text>
+                      {!included ? (
+                        <Text className="text-foreground-muted text-2xs leading-normal">
+                          Excluded from this commit
+                        </Text>
+                      ) : null}
+                    </View>
+                    <View className="items-end gap-1">
+                      <Text className="text-xs font-t3-bold" style={{ color: "#10b981" }}>
+                        +{file.insertions}
+                      </Text>
+                      <Text className="text-xs font-t3-bold" style={{ color: "#f43f5e" }}>
+                        -{file.deletions}
+                      </Text>
+                    </View>
+                  </View>
+                </Pressable>
+              );
+            })}
+          </View>
+        )}
+      </View>
+
+      <View className="gap-2">
+        <Text className="text-foreground text-sm font-t3-bold">Commit message</Text>
+        <TextInput
+          multiline
+          value={dialogCommitMessage}
+          onChangeText={setDialogCommitMessage}
+          placeholder="Leave empty to auto-generate"
+          textAlignVertical="top"
+          className="min-h-[128px] rounded-[20px] px-4 py-3.5 font-sans text-base"
+          style={{
+            minHeight: 128,
+            borderWidth: 1,
+            borderColor: inputBorderColor,
+            backgroundColor: inputBg,
+            color: foregroundColor,
+          }}
+        />
+      </View>
+
+      <View className="flex-row gap-3">
+        <View className="flex-1">
+          <SheetActionButton
+            icon="arrow.branch"
+            label="Commit on new branch"
+            disabled={noneSelected || busy}
+            onPress={() => void runCommitAction(true)}
           />
         </View>
-
-        <View className="flex-row gap-3">
-          <View className="flex-1">
-            <SheetActionButton
-              icon="arrow.branch"
-              label="Commit on new branch"
-              disabled={noneSelected || busy}
-              onPress={() => void runCommitAction(true)}
-            />
-          </View>
-          <View className="flex-1">
-            <SheetActionButton
-              icon="checkmark.circle"
-              label="Commit"
-              tone="primary"
-              disabled={noneSelected || busy}
-              onPress={() => void runCommitAction(false)}
-            />
-          </View>
+        <View className="flex-1">
+          <SheetActionButton
+            icon="checkmark.circle"
+            label="Commit"
+            tone="primary"
+            disabled={noneSelected || busy}
+            onPress={() => void runCommitAction(false)}
+          />
         </View>
-      </ScrollView>
-    </View>
+      </View>
+    </ScrollView>
   );
 }

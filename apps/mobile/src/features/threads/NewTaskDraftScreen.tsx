@@ -447,9 +447,14 @@ export function NewTaskDraftScreen(props: {
   if (!selectedProject) {
     return (
       <View className="flex-1 bg-sheet">
-        <NativeStackScreenOptions
-          options={Platform.OS === "android" ? { headerShown: false } : { title: "Loading task" }}
-        />
+        {Platform.OS === "android" ? (
+          <>
+            <NativeStackScreenOptions options={{ headerShown: false }} />
+            <AndroidScreenHeader title="New Thread" onBack={() => navigation.goBack()} />
+          </>
+        ) : (
+          <NativeStackScreenOptions options={{ title: "Loading task" }} />
+        )}
       </View>
     );
   }
