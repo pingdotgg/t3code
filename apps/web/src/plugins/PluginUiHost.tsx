@@ -1,9 +1,11 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import type {
   PluginCommandRegistration,
-  PluginRouteRegistration,
-  PluginSettingsPageRegistration,
+  PluginComponent,
+  PluginRouteComponentProps,
+  PluginSettingsComponentProps,
   PluginSidebarSectionRegistration,
+  PluginSidebarSectionRenderProps,
   PluginUiContext,
   PluginWebDefinition,
   PluginWebRpc,
@@ -15,16 +17,24 @@ import { Component, useEffect, useRef, type ErrorInfo, type ReactNode } from "re
 import { pluginListAtom, pluginRpc } from "../state/plugins";
 import { whenPluginHostReady } from "./hostSingletons";
 
-export interface RegisteredPluginRoute extends PluginRouteRegistration {
+export interface RegisteredPluginRoute {
   readonly pluginId: PluginId;
+  readonly path: string;
+  readonly component: PluginComponent<PluginRouteComponentProps>;
 }
 
-export interface RegisteredPluginSidebarSection extends PluginSidebarSectionRegistration {
+export interface RegisteredPluginSidebarSection {
   readonly pluginId: PluginId;
+  readonly id: string;
+  readonly title: string;
+  readonly render: (props: PluginSidebarSectionRenderProps) => unknown;
 }
 
-export interface RegisteredPluginSettingsPage extends PluginSettingsPageRegistration {
+export interface RegisteredPluginSettingsPage {
   readonly pluginId: PluginId;
+  readonly id: string;
+  readonly title: string;
+  readonly component: PluginComponent<PluginSettingsComponentProps>;
 }
 
 export interface RegisteredPluginCommand extends PluginCommandRegistration {

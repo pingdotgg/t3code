@@ -1,0 +1,15 @@
+{
+  "id": "hello-board",
+  "name": "Hello Board",
+  "version": "1.0.0",
+  "description": "Fixture plugin that stores and displays local notes.",
+  "author": {
+    "name": "T3 Tools"
+  },
+  "hostApi": "^1.0.0",
+  "capabilities": ["database"],
+  "entries": {
+    "server": "server/index.js",
+    "web": "web/index.js"
+  }
+}

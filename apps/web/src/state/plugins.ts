@@ -1,11 +1,37 @@
 import {
+  type PluginCatalogInput,
   type PluginId,
   type PluginInfo,
+  type PluginInstallBeginInput,
+  type PluginInstallConfirmInput,
+  type PluginSetEnabledInput,
+  type PluginSourcesAddInput,
+  type PluginSourcesRemoveInput,
+  type PluginUninstallInput,
+  type PluginUpgradeBeginInput,
+  type PluginUpgradeConfirmInput,
   type ServerLifecycleStreamEvent,
   WS_METHODS,
 } from "@t3tools/contracts";
-import { callPlugin, listPlugins, subscribePlugin } from "@t3tools/client-runtime/rpc";
 import {
+  abortPluginInstall,
+  addPluginSource,
+  beginPluginInstall,
+  beginPluginUpgrade,
+  callPlugin,
+  checkPluginUpdates,
+  confirmPluginInstall,
+  confirmPluginUpgrade,
+  getPluginCatalog,
+  listPluginSources,
+  listPlugins,
+  removePluginSource,
+  setPluginEnabled,
+  subscribePlugin,
+  uninstallPlugin,
+} from "@t3tools/client-runtime/rpc";
+import {
+  createRuntimeCommand,
   createEnvironmentRpcSubscriptionAtomFamily,
   executeAtomQuery,
   runInEnvironment,
@@ -16,7 +42,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as Cause from "effect/Cause";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -24,6 +50,27 @@ import { isPluginStateChangedLifecycleEvent } from "@t3tools/client-runtime/stat
 import { primaryEnvironmentIdAtom } from "./primaryEnvironment";
 
 const EMPTY_PLUGIN_LIST: ReadonlyArray<PluginInfo> = Object.freeze([]);
+
+export class PluginManagementConnectionError extends Error {
+  override readonly name = "PluginManagementConnectionError";
+
+  constructor() {
+    super("Plugin management is unavailable before the primary environment is connected.");
+  }
+}
+
+function runPrimaryPluginManagement<A, E, R>(
+  registry: AtomRegistry.AtomRegistry,
+  effect: Effect.Effect<A, E, R>,
+) {
+  return Effect.gen(function* () {
+    const environmentId = registry.get(primaryEnvironmentIdAtom);
+    if (environmentId === null) {
+      return yield* Effect.fail(new PluginManagementConnectionError());
+    }
+    return yield* runInEnvironment(environmentId as never, effect);
+  });
+}
 
 export function makePluginListStream<E, R>(
   lifecycleEvents: Stream.Stream<ServerLifecycleStreamEvent, E, R>,
@@ -134,5 +181,75 @@ export function pluginRpc(pluginId: PluginId, dependencies: PluginRpcDependencie
     subscribe: (method: string, payload?: unknown) => subscribe(pluginId, method, payload),
   };
 }
+
+export const listPluginSourcesCommand = createRuntimeCommand(connectionAtomRuntime, {
+  label: "web-plugins:sources:list",
+  execute: (_input: void, registry) => runPrimaryPluginManagement(registry, listPluginSources()),
+});
+
+export const addPluginSourceCommand = createRuntimeCommand(connectionAtomRuntime, {
+  label: "web-plugins:sources:add",
+  execute: (input: PluginSourcesAddInput, registry) =>
+    runPrimaryPluginManagement(registry, addPluginSource(input)),
+});
+
+export const removePluginSourceCommand = createRuntimeCommand(connectionAtomRuntime, {
+  label: "web-plugins:sources:remove",
+  execute: (input: PluginSourcesRemoveInput, registry) =>
+    runPrimaryPluginManagement(registry, removePluginSource(input)),
+});
+
+export const getPluginCatalogCommand = createRuntimeCommand(connectionAtomRuntime, {
+  label: "web-plugins:catalog",
+  execute: (input: PluginCatalogInput | void, registry) =>
+    runPrimaryPluginManagement(registry, getPluginCatalog(input ?? {})),
+});
+
+export const beginPluginInstallCommand = createRuntimeCommand(connectionAtomRuntime, {
+  label: "web-plugins:install:begin",
+  execute: (input: PluginInstallBeginInput, registry) =>
+    runPrimaryPluginManagement(registry, beginPluginInstall(input)),
+});
+
+export const confirmPluginInstallCommand = createRuntimeCommand(connectionAtomRuntime, {
+  label: "web-plugins:install:confirm",
+  execute: (input: PluginInstallConfirmInput, registry) =>
+    runPrimaryPluginManagement(registry, confirmPluginInstall(input)),
+});
+
+export const abortPluginInstallCommand = createRuntimeCommand(connectionAtomRuntime, {
+  label: "web-plugins:install:abort",
+  execute: (input: PluginInstallConfirmInput, registry) =>
+    runPrimaryPluginManagement(registry, abortPluginInstall(input)),
+});
+
+export const setPluginEnabledCommand = createRuntimeCommand(connectionAtomRuntime, {
+  label: "web-plugins:set-enabled",
+  execute: (input: PluginSetEnabledInput, registry) =>
+    runPrimaryPluginManagement(registry, setPluginEnabled(input)),
+});
+
+export const uninstallPluginCommand = createRuntimeCommand(connectionAtomRuntime, {
+  label: "web-plugins:uninstall",
+  execute: (input: PluginUninstallInput, registry) =>
+    runPrimaryPluginManagement(registry, uninstallPlugin(input)),
+});
+
+export const beginPluginUpgradeCommand = createRuntimeCommand(connectionAtomRuntime, {
+  label: "web-plugins:upgrade:begin",
+  execute: (input: PluginUpgradeBeginInput, registry) =>
+    runPrimaryPluginManagement(registry, beginPluginUpgrade(input)),
+});
+
+export const confirmPluginUpgradeCommand = createRuntimeCommand(connectionAtomRuntime, {
+  label: "web-plugins:upgrade:confirm",
+  execute: (input: PluginUpgradeConfirmInput, registry) =>
+    runPrimaryPluginManagement(registry, confirmPluginUpgrade(input)),
+});
+
+export const checkPluginUpdatesCommand = createRuntimeCommand(connectionAtomRuntime, {
+  label: "web-plugins:updates:check",
+  execute: (_input: void, registry) => runPrimaryPluginManagement(registry, checkPluginUpdates()),
+});
 
 export { WS_METHODS };

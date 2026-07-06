@@ -1,11 +1,20 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
-import { HOST_API_VERSION, PluginLockfile, PluginManifest, hostApiSatisfies } from "./plugin.ts";
+import {
+  HOST_API_VERSION,
+  MarketplaceEntry,
+  PluginInstallStaged,
+  PluginLockfile,
+  PluginManifest,
+  hostApiSatisfies,
+} from "./plugin.ts";
 
 const decodeManifest = Schema.decodeUnknownSync(PluginManifest);
 const decodeLockfile = Schema.decodeUnknownSync(PluginLockfile);
 const encodeLockfile = Schema.encodeSync(PluginLockfile);
+const decodeMarketplaceEntry = Schema.decodeUnknownSync(MarketplaceEntry);
+const decodeInstallStaged = Schema.decodeUnknownSync(PluginInstallStaged);
 
 const minimalManifest = {
   id: "test-plugin",
@@ -121,5 +130,46 @@ describe("PluginLockfile", () => {
     });
 
     expect(encodeLockfile(decoded)).toEqual(decoded);
+  });
+});
+
+describe("MarketplaceEntry", () => {
+  it("decodes marketplace plugin versions", () => {
+    const decoded = decodeMarketplaceEntry({
+      id: "test-plugin",
+      name: "Test Plugin",
+      description: "Adds test plugin behavior.",
+      capabilities: ["agents"],
+      versions: [
+        {
+          version: "1.0.0",
+          tarball: "https://example.test/plugin.tgz",
+          sha256: "a".repeat(64),
+          hostApi: "^1.0.0",
+          minAppVersion: "0.0.1",
+          publishedAt: "2026-07-03T00:00:00.000Z",
+        },
+      ],
+    });
+
+    expect(decoded.id).toBe("test-plugin");
+    expect(decoded.versions[0]?.sha256).toBe("a".repeat(64));
+  });
+});
+
+describe("PluginInstallStaged", () => {
+  it("decodes staged install metadata with capability descriptions", () => {
+    const decoded = decodeInstallStaged({
+      stageToken: "token",
+      manifest: {
+        ...minimalManifest,
+        capabilities: ["agents"],
+      },
+      capabilityDescriptions: {
+        agents: "Run AI agents",
+      },
+    });
+
+    expect(decoded.capabilityDescriptions.agents).toBe("Run AI agents");
   });
 });
