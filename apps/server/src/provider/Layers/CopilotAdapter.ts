@@ -72,6 +72,7 @@ const PROVIDER = ProviderDriverKind.make("copilot");
 const COPILOT_RESUME_SCHEMA_VERSION = 1 as const;
 const SDK_TURN_REPLAY_THRESHOLD_MS = 1_000;
 const TURN_END_IDLE_FALLBACK_DELAY_MS = 10_000;
+const IDLE_TURN_COMPLETION_DEBOUNCE_MS = 250;
 
 type CopilotMode = "interactive" | "plan" | "autopilot";
 type CopilotReasoningEffort = NonNullable<SessionConfig["reasoningEffort"]>;
@@ -1542,10 +1543,11 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     context: CopilotSessionContext,
     turnId: TurnId,
     raw: SessionEvent,
+    delayMs = turnEndIdleFallbackDelayMs,
   ): void => {
     cancelTurnEndFallback(context, turnId);
     const fiber = runFork(
-      Effect.sleep(`${turnEndIdleFallbackDelayMs} millis`).pipe(
+      Effect.sleep(`${delayMs} millis`).pipe(
         Effect.andThen(
           Effect.promise(async () => {
             context.turnEndFallbackTimers.delete(turnId);
@@ -2232,6 +2234,12 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
             return;
           }
           if (shouldCompleteOnIdleSignal(context, turnId)) {
+            if (context.turnEndFallbackTimers.has(turnId)) {
+              // Copilot may emit an idle pulse between SDK loops; debounce
+              // completion so the next assistant.turn_start can cancel it.
+              scheduleTurnEndFallback(context, turnId, event, IDLE_TURN_COMPLETION_DEBOUNCE_MS);
+              return;
+            }
             await emitPendingTaskCompletionAsAssistantMessage(context, turnId, event);
             await emitTurnCompleted(context, turnId, "completed", {
               raw: event,
