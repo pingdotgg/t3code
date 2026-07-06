@@ -1,9 +1,15 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { PluginId, PluginManifest, type PluginLockfilePlugin } from "@t3tools/contracts/plugin";
+import {
+  PluginId,
+  PluginManifest,
+  type PluginCapability,
+  type PluginLockfilePlugin,
+} from "@t3tools/contracts/plugin";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -11,9 +17,20 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as NodeURL from "node:url";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { runMigrations } from "../persistence/Migrations.ts";
 import * as NodeSqliteClient from "../persistence/NodeSqliteClient.ts";
+import * as ProjectionThreadActivities from "../persistence/Services/ProjectionThreadActivities.ts";
+import * as ProjectionThreadMessages from "../persistence/Services/ProjectionThreadMessages.ts";
+import * as ProjectionTurns from "../persistence/Services/ProjectionTurns.ts";
+import * as GitHubCli from "../sourceControl/GitHubCli.ts";
+import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
+import * as TerminalManager from "../terminal/Manager.ts";
+import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as PluginHostModule from "./PluginHost.ts";
+import * as PluginHttpRegistry from "./PluginHttpRegistry.ts";
 import * as PluginLockfileStoreLayer from "./PluginLockfileStore.ts";
 import * as PluginMigrator from "./PluginMigrator.ts";
 import * as PluginModuleLoaderLayer from "./PluginModuleLoader.ts";
@@ -21,12 +38,116 @@ import { pluginDataDir, pluginVersionDir } from "./PluginPaths.ts";
 import * as PluginRuntimeRegistryLayer from "./PluginRuntimeRegistry.ts";
 
 const encodeManifestJson = Schema.encodeEffect(Schema.fromJsonString(PluginManifest));
+const unexpectedCapabilityUse = () =>
+  Effect.die(new Error("unexpected capability use in host test"));
 
 const testLayer = PluginHostModule.layer.pipe(
   Layer.provideMerge(PluginLockfileStoreLayer.layer),
   Layer.provideMerge(PluginModuleLoaderLayer.layer),
   Layer.provideMerge(PluginMigrator.layer),
   Layer.provideMerge(PluginRuntimeRegistryLayer.layer),
+  Layer.provideMerge(PluginHttpRegistry.layer),
+  Layer.provideMerge(
+    Layer.mock(ServerSecretStore.ServerSecretStore)({
+      get: unexpectedCapabilityUse,
+      set: unexpectedCapabilityUse,
+      create: unexpectedCapabilityUse,
+      getOrCreateRandom: unexpectedCapabilityUse,
+      remove: unexpectedCapabilityUse,
+    }),
+  ),
+  Layer.provideMerge(
+    Layer.mock(ServerEnvironment.ServerEnvironment)({
+      getEnvironmentId: unexpectedCapabilityUse(),
+      getDescriptor: unexpectedCapabilityUse(),
+    }),
+  ),
+  Layer.provideMerge(
+    Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+      getCommandReadModel: unexpectedCapabilityUse,
+      getSnapshot: unexpectedCapabilityUse,
+      getShellSnapshot: unexpectedCapabilityUse,
+      getArchivedShellSnapshot: unexpectedCapabilityUse,
+      getSnapshotSequence: unexpectedCapabilityUse,
+      getCounts: unexpectedCapabilityUse,
+      getActiveProjectByWorkspaceRoot: unexpectedCapabilityUse,
+      getProjectShellById: unexpectedCapabilityUse,
+      getFirstActiveThreadIdByProjectId: unexpectedCapabilityUse,
+      getThreadOwnerById: unexpectedCapabilityUse,
+      getThreadCheckpointContext: unexpectedCapabilityUse,
+      getFullThreadDiffContext: unexpectedCapabilityUse,
+      getThreadShellById: unexpectedCapabilityUse,
+      getThreadDetailById: unexpectedCapabilityUse,
+    }),
+  ),
+  Layer.provideMerge(
+    Layer.mock(ProjectionTurns.ProjectionTurnRepository)({
+      upsertByTurnId: unexpectedCapabilityUse,
+      replacePendingTurnStart: unexpectedCapabilityUse,
+      getPendingTurnStartByThreadId: unexpectedCapabilityUse,
+      deletePendingTurnStartByThreadId: unexpectedCapabilityUse,
+      listByThreadId: unexpectedCapabilityUse,
+      getByTurnId: unexpectedCapabilityUse,
+      clearCheckpointTurnConflict: unexpectedCapabilityUse,
+      deleteByThreadId: unexpectedCapabilityUse,
+    }),
+  ),
+  Layer.provideMerge(
+    Layer.mock(ProjectionThreadMessages.ProjectionThreadMessageRepository)({
+      upsert: unexpectedCapabilityUse,
+      getByMessageId: unexpectedCapabilityUse,
+      listByThreadId: unexpectedCapabilityUse,
+      deleteByThreadId: unexpectedCapabilityUse,
+    }),
+  ),
+  Layer.provideMerge(
+    Layer.mock(ProjectionThreadActivities.ProjectionThreadActivityRepository)({
+      upsert: unexpectedCapabilityUse,
+      listByThreadId: unexpectedCapabilityUse,
+      deleteByThreadId: unexpectedCapabilityUse,
+    }),
+  ),
+  Layer.provideMerge(
+    Layer.mock(TextGeneration.TextGeneration)({
+      generateCommitMessage: unexpectedCapabilityUse,
+      generatePrContent: unexpectedCapabilityUse,
+      generateBranchName: unexpectedCapabilityUse,
+      generateThreadTitle: unexpectedCapabilityUse,
+    }),
+  ),
+  Layer.provideMerge(
+    Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+      get: unexpectedCapabilityUse,
+      resolveHandle: unexpectedCapabilityUse,
+      resolve: unexpectedCapabilityUse,
+      discover: unexpectedCapabilityUse(),
+    }),
+  ),
+  Layer.provideMerge(
+    Layer.mock(GitHubCli.GitHubCli)({
+      execute: unexpectedCapabilityUse,
+      listOpenPullRequests: unexpectedCapabilityUse,
+      getPullRequest: unexpectedCapabilityUse,
+      getRepositoryCloneUrls: unexpectedCapabilityUse,
+      createRepository: unexpectedCapabilityUse,
+      createPullRequest: unexpectedCapabilityUse,
+      getDefaultBranch: unexpectedCapabilityUse,
+      checkoutPullRequest: unexpectedCapabilityUse,
+    }),
+  ),
+  Layer.provideMerge(
+    Layer.mock(TerminalManager.TerminalManager)({
+      open: unexpectedCapabilityUse,
+      attachStream: unexpectedCapabilityUse,
+      write: unexpectedCapabilityUse,
+      resize: unexpectedCapabilityUse,
+      clear: unexpectedCapabilityUse,
+      restart: unexpectedCapabilityUse,
+      close: unexpectedCapabilityUse,
+      subscribe: unexpectedCapabilityUse,
+      subscribeMetadata: unexpectedCapabilityUse,
+    }),
+  ),
   Layer.provideMerge(NodeSqliteClient.layerMemory()),
   Layer.provideMerge(
     Layer.fresh(ServerConfig.layerTest(process.cwd(), { prefix: "t3-plugin-host-" })),
@@ -37,6 +158,14 @@ const testLayer = PluginHostModule.layer.pipe(
 const layer = it.layer(testLayer);
 
 const now = "2026-07-03T00:00:00.000Z";
+const decodeCapabilityMarker = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      httpBasePath: Schema.String,
+      terminalsUnavailable: Schema.Boolean,
+    }),
+  ),
+);
 
 const makeLockEntry = (overrides: Partial<PluginLockfilePlugin> = {}): PluginLockfilePlugin => ({
   version: "1.0.0",
@@ -87,6 +216,7 @@ export default {
 const installPlugin = (input: {
   readonly pluginId: PluginId;
   readonly manifestHostApi?: string;
+  readonly capabilities?: ReadonlyArray<PluginCapability>;
   readonly entrySource?: string;
   readonly lockEntry?: Partial<PluginLockfilePlugin>;
 }) =>
@@ -104,7 +234,7 @@ const installPlugin = (input: {
       name: "Test Plugin",
       version: entry.version,
       hostApi: input.manifestHostApi ?? "^1.0.0",
-      capabilities: [],
+      capabilities: input.capabilities ?? [],
       entries: { server: "server.js" },
     });
     yield* fs.writeFileString(path.join(pluginDir, "manifest.json"), encodedManifest);
@@ -115,6 +245,43 @@ const installPlugin = (input: {
     yield* store.updatePlugin(input.pluginId, () => Effect.succeed(entry));
     return { pluginDir, entry };
   });
+
+const capabilityGateEntrySource = () => `
+import { createRequire } from "node:module";
+const require = createRequire(${JSON.stringify(NodeURL.pathToFileURL(import.meta.url).href)});
+const Effect = require("effect/Effect");
+const NodeFs = require("node:fs");
+
+export default {
+  register(hostApi) {
+    return Effect.gen(function* () {
+      const http = yield* hostApi.http;
+      let terminalsUnavailable = false;
+      const terminalsExit = yield* Effect.exit(hostApi.terminals);
+      terminalsUnavailable = terminalsExit._tag === "Failure";
+      NodeFs.mkdirSync(hostApi.config.dataDir, { recursive: true });
+      NodeFs.writeFileSync(
+        hostApi.config.dataDir + "/capabilities.json",
+        JSON.stringify({ httpBasePath: http.basePath, terminalsUnavailable }),
+      );
+      return {
+        http: [
+          {
+            method: "POST",
+            path: "/ping/:name",
+            auth: "public",
+            handler: (request) =>
+              Effect.succeed({
+                status: 200,
+                body: { name: request.params.name },
+              }),
+          },
+        ],
+      };
+    });
+  },
+};
+`;
 
 layer("PluginModuleLoader", (it) => {
   it.effect("loads a definePlugin-shaped default export from inside the plugin dir", () =>
@@ -236,6 +403,43 @@ layer("PluginHost", (it) => {
       const lockfile = yield* store.readLockfile;
       assert.equal(lockfile.plugins[pluginId]?.state, "failed");
       assert.equal(lockfile.plugins[pluginId]?.lastError, "disabled after repeated crashes");
+    }),
+  );
+
+  it.effect("passes only declared capabilities and registers http routes on activation", () =>
+    Effect.gen(function* () {
+      const pluginId = PluginId.make("capability-plugin");
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const host = yield* PluginHostModule.PluginHost;
+      const httpRegistry = yield* PluginHttpRegistry.PluginHttpRegistry;
+
+      yield* installPlugin({
+        pluginId,
+        capabilities: ["http"],
+        entrySource: capabilityGateEntrySource(),
+      });
+
+      yield* host.start;
+      yield* Effect.yieldNow;
+
+      const dataDir = pluginDataDir(config.pluginsDir, pluginId, path.join);
+      const capabilityFile = yield* fs.readFileString(path.join(dataDir, "capabilities.json"));
+      assert.deepEqual(yield* decodeCapabilityMarker(capabilityFile), {
+        httpBasePath: "/hooks/plugins/capability-plugin",
+        terminalsUnavailable: true,
+      });
+
+      const match = yield* httpRegistry.match({
+        pluginId,
+        method: "POST",
+        path: "/ping/chris",
+      });
+      assert.isTrue(Option.isSome(match));
+      if (Option.isSome(match)) {
+        assert.deepEqual(match.value.params, { name: "chris" });
+      }
     }),
   );
 

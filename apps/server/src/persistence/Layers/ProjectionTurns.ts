@@ -172,7 +172,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
   const listProjectionTurnsByThread = SqlSchema.findAll({
     Request: ListProjectionTurnsByThreadInput,
     Result: ProjectionTurnDbRowSchema,
-    execute: ({ threadId }) =>
+    execute: ({ threadId, limit }) =>
       sql`
         SELECT
           thread_id AS "threadId",
@@ -199,6 +199,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           checkpoint_turn_count ASC,
           requested_at ASC,
           turn_id ASC
+        ${limit === undefined ? sql.literal("") : sql`LIMIT ${limit}`}
       `,
   });
 

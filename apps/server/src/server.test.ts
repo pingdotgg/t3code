@@ -115,6 +115,7 @@ import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as PluginCatalog from "./plugins/PluginCatalog.ts";
+import * as PluginHttpRegistry from "./plugins/PluginHttpRegistry.ts";
 import * as PluginRpcDispatcher from "./plugins/PluginRpcDispatcher.ts";
 import * as Data from "effect/Data";
 
@@ -754,6 +755,7 @@ const buildAppUnderTest = (options?: {
           }),
         ),
       ),
+      Layer.provideMerge(PluginHttpRegistry.layer),
       Layer.provide(
         Layer.mock(BrowserTraceCollector.BrowserTraceCollector)({
           record: () => Effect.void,

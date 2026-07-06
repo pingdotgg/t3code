@@ -33,6 +33,8 @@ import * as GitHubCli from "./sourceControl/GitHubCli.ts";
 import * as GitLabCli from "./sourceControl/GitLabCli.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as PluginHost from "./plugins/PluginHost.ts";
+import * as PluginHttpRegistry from "./plugins/PluginHttpRegistry.ts";
+import { pluginHttpRouteLayer } from "./plugins/PluginHttpRoutes.ts";
 import * as PluginCatalog from "./plugins/PluginCatalog.ts";
 import * as PluginLockfileStore from "./plugins/PluginLockfileStore.ts";
 import * as PluginMigrator from "./plugins/PluginMigrator.ts";
@@ -51,6 +53,7 @@ import * as GitManager from "./git/GitManager.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import { OrchestrationReactorLive } from "./orchestration/Layers/OrchestrationReactor.ts";
+import { OrchestrationProjectionSnapshotQueryLive } from "./orchestration/Layers/ProjectionSnapshotQuery.ts";
 import { RuntimeReceiptBusLive } from "./orchestration/Layers/RuntimeReceiptBus.ts";
 import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion.ts";
 import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor.ts";
@@ -90,6 +93,9 @@ import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
+import { ProjectionThreadActivityRepositoryLive } from "./persistence/Layers/ProjectionThreadActivities.ts";
+import { ProjectionThreadMessageRepositoryLive } from "./persistence/Layers/ProjectionThreadMessages.ts";
+import { ProjectionTurnRepositoryLive } from "./persistence/Layers/ProjectionTurns.ts";
 import {
   clearPersistedServerRuntimeState,
   makePersistedServerRuntimeState,
@@ -190,27 +196,6 @@ const ProviderLayerLive = ProviderServiceLive.pipe(
 
 const PersistenceLayerLive = Layer.empty.pipe(Layer.provideMerge(SqlitePersistenceLayerLive));
 
-const PluginRuntimeRegistryLayerLive = PluginRuntimeRegistry.layer;
-const PluginLockfileStoreLayerLive = PluginLockfileStore.layer;
-const PluginHostLayerLive = PluginHost.layer.pipe(
-  Layer.provideMerge(PluginLockfileStoreLayerLive),
-  Layer.provideMerge(PluginModuleLoader.layer),
-  Layer.provideMerge(PluginMigrator.layer),
-  Layer.provideMerge(PluginRuntimeRegistryLayerLive),
-);
-const PluginRpcDispatcherLayerLive = PluginRpcDispatcher.layer.pipe(
-  Layer.provideMerge(PluginRuntimeRegistryLayerLive),
-);
-const PluginCatalogLayerLive = PluginCatalog.layer.pipe(
-  Layer.provideMerge(PluginLockfileStoreLayerLive),
-  Layer.provideMerge(PluginRuntimeRegistryLayerLive),
-);
-const PluginLayerLive = Layer.mergeAll(
-  PluginHostLayerLive,
-  PluginRpcDispatcherLayerLive,
-  PluginCatalogLayerLive,
-);
-
 const VcsDriverRegistryLayerLive = VcsDriverRegistry.layer.pipe(
   Layer.provide(VcsProjectConfig.layer),
 );
@@ -265,6 +250,13 @@ const CheckpointingLayerLive = Layer.empty.pipe(
   Layer.provideMerge(CheckpointStore.layer.pipe(Layer.provide(VcsDriverRegistryLayerLive))),
 );
 
+const PluginProjectionReadLayerLive = Layer.mergeAll(
+  OrchestrationProjectionSnapshotQueryLive,
+  ProjectionTurnRepositoryLive,
+  ProjectionThreadMessageRepositoryLive,
+  ProjectionThreadActivityRepositoryLive,
+).pipe(Layer.provide(RepositoryIdentityResolver.layer));
+
 const PortScannerLayerLive = PortScanner.layer.pipe(Layer.provide(ProcessRunner.layer));
 
 const TerminalLayerLive = TerminalManager.layer.pipe(
@@ -310,6 +302,40 @@ const CloudManagedEndpointRuntimeLive = Layer.mergeAll(
 const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
   Layer.provideMerge(ProviderLayerLive),
   Layer.provideMerge(OrchestrationLayerLive),
+);
+
+const PluginRuntimeRegistryLayerLive = PluginRuntimeRegistry.layer;
+const PluginHttpRegistryLayerLive = PluginHttpRegistry.layer;
+const PluginLockfileStoreLayerLive = PluginLockfileStore.layer;
+const PluginHostCapabilityDepsLayerLive = Layer.mergeAll(
+  PluginProjectionReadLayerLive,
+  SourceControlProviderRegistryLayerLive,
+  GitHubCli.layer,
+  TextGeneration.layer,
+  TerminalLayerLive,
+  ServerSecretStore.layer,
+  ServerEnvironment.layer,
+);
+const PluginHostLayerLive = PluginHost.layer.pipe(
+  Layer.provideMerge(PluginLockfileStoreLayerLive),
+  Layer.provideMerge(PluginModuleLoader.layer),
+  Layer.provideMerge(PluginMigrator.layer),
+  Layer.provideMerge(PluginRuntimeRegistryLayerLive),
+  Layer.provideMerge(PluginHttpRegistryLayerLive),
+  Layer.provideMerge(PluginHostCapabilityDepsLayerLive),
+);
+const PluginRpcDispatcherLayerLive = PluginRpcDispatcher.layer.pipe(
+  Layer.provideMerge(PluginRuntimeRegistryLayerLive),
+);
+const PluginCatalogLayerLive = PluginCatalog.layer.pipe(
+  Layer.provideMerge(PluginLockfileStoreLayerLive),
+  Layer.provideMerge(PluginRuntimeRegistryLayerLive),
+);
+const PluginLayerLive = Layer.mergeAll(
+  PluginHostLayerLive,
+  PluginRpcDispatcherLayerLive,
+  PluginCatalogLayerLive,
+  PluginHttpRegistryLayerLive,
 );
 
 const RuntimeCoreBaseDependenciesLive = ReactorLayerLive.pipe(
@@ -386,6 +412,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     ),
     otlpTracesProxyRouteLayer,
     assetRouteLayer,
+    pluginHttpRouteLayer,
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
   ),
