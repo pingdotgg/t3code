@@ -61,7 +61,7 @@ export class CopilotProbePromiseError extends Schema.TaggedErrorClass<CopilotPro
   },
 ) {
   override get message(): string {
-    return this.cause instanceof Error ? this.cause.message : String(this.cause);
+    return "Copilot probe promise failed.";
   }
 }
 

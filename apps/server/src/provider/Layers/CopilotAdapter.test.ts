@@ -1141,6 +1141,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           aborted: false,
         },
       } as SessionEvent);
+      yield* TestClock.adjust("300 millis");
 
       for (
         let attempt = 0;
