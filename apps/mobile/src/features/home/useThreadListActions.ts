@@ -4,6 +4,7 @@ import * as Haptics from "expo-haptics";
 import { useCallback, useRef } from "react";
 import { Alert } from "react-native";
 
+import { showConfirmDialog } from "../../components/ConfirmDialogHost";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -80,10 +81,10 @@ function useConfirmDeleteThread(
 ) {
   return useCallback(
     (thread: EnvironmentThreadShell) => {
-      Alert.alert(
-        "Delete thread?",
-        `“${thread.title}” will be permanently deleted, including its terminal history.`,
-        [
+      const title = "Delete thread?";
+      const message = `“${thread.title}” will be permanently deleted, including its terminal history.`;
+      if (process.env.EXPO_OS === "ios") {
+        Alert.alert(title, message, [
           { text: "Cancel", style: "cancel" },
           {
             text: "Delete",
@@ -92,8 +93,18 @@ function useConfirmDeleteThread(
               void executeAction("delete", thread);
             },
           },
-        ],
-      );
+        ]);
+        return;
+      }
+      showConfirmDialog({
+        title,
+        message,
+        confirmText: "Delete",
+        destructive: true,
+        onConfirm: () => {
+          void executeAction("delete", thread);
+        },
+      });
     },
     [executeAction],
   );

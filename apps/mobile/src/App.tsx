@@ -8,6 +8,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { createStaticNavigation, DarkTheme, DefaultTheme } from "@react-navigation/native";
 
 import { RegistryContext } from "@effect/atom-react";
+import { ConfirmDialogHost } from "./components/ConfirmDialogHost";
 import { CloudAuthProvider } from "./features/cloud/CloudAuthProvider";
 import { AppearancePreferencesProvider } from "./features/settings/appearance/AppearancePreferencesProvider";
 import { RootStack } from "./Stack";
@@ -56,6 +57,7 @@ export default function App() {
                   linking={appLinking}
                   theme={colorScheme === "dark" ? DarkTheme : DefaultTheme}
                 />
+                <ConfirmDialogHost />
               </SafeAreaProvider>
             </KeyboardProvider>
           </GestureHandlerRootView>
