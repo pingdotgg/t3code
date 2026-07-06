@@ -5,6 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -183,7 +184,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("does not retain git arguments or stderr in command failures", () =>
+    it.effect("keeps capped stderr available without exposing args or stderr in messages", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const driver = yield* GitVcsDriver.GitVcsDriver;
@@ -207,10 +208,20 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         });
         assert.isNumber(error.exitCode);
         assert.isAbove(error.stderrLength ?? 0, 0);
+        // Raw stderr stays readable in-process for classification...
+        assert.isString(error.stderr);
+        assert.include(error.stderr ?? "", secret);
         assert.notInclude(error.detail, secret);
         assert.notInclude(error.message, secret);
         assert.notProperty(error, "args");
-        assert.notProperty(error, "stderr");
+        // ...but must NOT reach the wire: the schema-encoded RPC payload and
+        // naive JSON serialization both drop the raw stderr.
+        const encoded = yield* Schema.encodeEffect(GitCommandError)(error);
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        assert.notInclude(JSON.stringify(encoded), secret);
+        assert.notProperty(encoded, "stderr");
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        assert.notInclude(JSON.stringify(error), secret);
       }),
     );
 

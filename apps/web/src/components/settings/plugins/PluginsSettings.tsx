@@ -535,7 +535,9 @@ function CatalogEntryRow({
             <p>
               By{" "}
               {entry.author.url ? (
-                <a href={entry.author.url}>{entry.author.name}</a>
+                <a href={entry.author.url} rel="noreferrer">
+                  {entry.author.name}
+                </a>
               ) : (
                 entry.author.name
               )}

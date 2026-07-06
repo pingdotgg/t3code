@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import {
   PluginId,
+  type MarketplaceVersion,
   type PluginInstallStaged,
   type PluginInfo,
   type PluginSourcesAddResult,
@@ -18,6 +19,7 @@ import {
   beginPluginInstallConsentFlow,
   confirmPluginInstallConsentFlow,
   effectiveInstallSourceId,
+  latestMarketplaceVersion,
   pluginRequiresRelaunch,
   removePluginSourceFlow,
 } from "./PluginsSettings.logic";
@@ -31,6 +33,7 @@ const plugin = (overrides: Partial<PluginInfo> = {}): PluginInfo => ({
   state: "active",
   capabilities: ["database"],
   hasWeb: true,
+  hasStyles: false,
   lastError: null,
   ...overrides,
 });
@@ -38,6 +41,42 @@ const plugin = (overrides: Partial<PluginInfo> = {}): PluginInfo => ({
 function commandFailure<A>(message: string): AtomCommandResult<A, unknown> {
   return AsyncResult.failure(Cause.fail(new Error(message)));
 }
+
+const marketplaceVersion = (version: string): MarketplaceVersion => ({
+  version,
+  tarball: `https://example.test/plugin-${version}.tgz`,
+  sha256: "a".repeat(64),
+  hostApi: "^1.0.0",
+  publishedAt: "2026-07-03T00:00:00.000Z",
+});
+
+describe("latestMarketplaceVersion", () => {
+  it("picks the semver-max instead of trusting the publisher-controlled order", () => {
+    const versions = [marketplaceVersion("0.9.0"), marketplaceVersion("1.0.0")];
+    expect(latestMarketplaceVersion(versions)?.version).toBe("1.0.0");
+    expect(latestMarketplaceVersion(versions.toReversed())?.version).toBe("1.0.0");
+  });
+
+  it("excludes prereleases when a stable release exists", () => {
+    expect(
+      latestMarketplaceVersion([marketplaceVersion("1.0.0"), marketplaceVersion("1.1.0-rc.1")])
+        ?.version,
+    ).toBe("1.0.0");
+  });
+
+  it("falls back to the newest prerelease when nothing stable is published", () => {
+    expect(
+      latestMarketplaceVersion([
+        marketplaceVersion("1.0.0-rc.2"),
+        marketplaceVersion("1.0.0-rc.10"),
+      ])?.version,
+    ).toBe("1.0.0-rc.10");
+  });
+
+  it("returns null for empty version lists", () => {
+    expect(latestMarketplaceVersion([])).toBeNull();
+  });
+});
 
 describe("Plugins settings logic", () => {
   it("detects relaunch states and selected install source", () => {

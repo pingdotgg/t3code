@@ -126,6 +126,7 @@ import {
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
+import { PluginProjectActions } from "../plugins/PluginProjectActions";
 import { PluginSidebarSections } from "../plugins/PluginSidebarSections";
 import { Kbd } from "./ui/kbd";
 import {
@@ -2286,6 +2287,19 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             </TooltipPopup>
           </Tooltip>
         )}
+        {/* Per-project actions contributed by web plugins (e.g. "New workflow
+            board"), revealed on hover to the left of the built-in new-thread
+            button. Targets the group's primary member — the same project the
+            new-thread button seeds from. */}
+        {project.memberProjects[0] ? (
+          <div className="pointer-events-none absolute top-[calc(50%+1px)] right-[1.625rem] -translate-y-1/2 flex items-center gap-0.5 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100">
+            <PluginProjectActions
+              environmentId={project.memberProjects[0].environmentId}
+              projectId={project.memberProjects[0].id}
+              projectName={project.memberProjects[0].title}
+            />
+          </div>
+        ) : null}
         <Tooltip>
           <TooltipTrigger
             render={

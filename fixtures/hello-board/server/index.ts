@@ -42,7 +42,9 @@ function noteBodyFromPayload(payload: unknown): Effect.Effect<string, Error> {
 export default definePlugin({
   register: (hostApi) =>
     Effect.gen(function* () {
-      const database = yield* Effect.mapError(hostApi.database, toPluginError);
+      const database = yield* hostApi.database;
+      const filesystem = yield* hostApi.filesystem;
+      const httpClient = yield* hostApi.httpClient;
 
       return {
         migrations: [
@@ -76,7 +78,7 @@ export default definePlugin({
           {
             method: "addNote",
             scope: "operate" as const,
-            handler: (payload) =>
+            handler: (payload: unknown) =>
               Effect.gen(function* () {
                 const body = yield* noteBodyFromPayload(payload);
                 const rows = yield* database.execute(
@@ -90,7 +92,39 @@ export default definePlugin({
                 return rows[0] ?? { body };
               }),
           },
+          {
+            method: "exerciseCapabilities",
+            scope: "operate" as const,
+            handler: () =>
+              Effect.gen(function* () {
+                const roots = yield* filesystem.listRoots();
+                const root = roots[0];
+                if (!root) {
+                  return yield* Effect.fail(
+                    new HelloBoardPluginError("expected at least one filesystem root"),
+                  );
+                }
+                yield* filesystem.writeFileString({
+                  root,
+                  relativePath: ".hello-board/capability.txt",
+                  contents: "hello filesystem",
+                });
+                const file = yield* filesystem.readFileString({
+                  root,
+                  relativePath: ".hello-board/capability.txt",
+                });
+                const response = yield* httpClient.request({
+                  method: "GET",
+                  url: "https://fixture.test/ping",
+                });
+                return {
+                  file,
+                  status: response.status,
+                  body: new TextDecoder().decode(response.body),
+                };
+              }),
+          },
         ],
       };
-    }),
+    }).pipe(Effect.mapError(toPluginError)),
 });

@@ -13,13 +13,17 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import { HttpClientResponse } from "effect/unstable/http";
 import * as NodeCrypto from "node:crypto";
 import * as NodeURL from "node:url";
 
+import { PluginHttpClientTransportService } from "./capabilities/HttpClientCapability.ts";
+import { guardedOutboundHttpGet } from "./guardedOutboundHttpGet.ts";
+import { OutboundUrlLookup } from "./OutboundUrlValidator.ts";
 import { readHttpResponseBytesCapped } from "./readHttpResponseBytesCapped.ts";
 
 const MARKETPLACE_RESPONSE_MAX_BYTES = 2 * 1024 * 1024;
+const MARKETPLACE_FETCH_TIMEOUT_MS = 30_000;
 const CATALOG_CACHE_TTL_MS = 30_000;
 const OWNER_REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 
@@ -49,10 +53,29 @@ function canonicalHttpsUrl(input: string): string | null {
     const url = new URL(input);
     if (url.protocol !== "https:") return null;
     url.hash = "";
+    // Strip any embedded credentials: this URL is persisted in the lockfile and
+    // echoed back via listSources / error payloads, so `https://user:pw@host`
+    // would leak the secret. Credentialed marketplace URLs are not supported.
+    url.username = "";
+    url.password = "";
     return url.toString();
   } catch {
     return null;
   }
+}
+
+/**
+ * True when a stored source URL refers to the same marketplace as
+ * `canonicalUrl` (an already-normalized value from {@link resolveMarketplaceUrl}).
+ * Stored URLs are normally already canonical, but a row persisted before
+ * credentials were stripped may still embed them; compare on the canonical
+ * (credential-stripped) form so such a row still dedupes against a freshly
+ * normalized add instead of registering the same marketplace twice.
+ */
+export function isSameMarketplaceSource(storedUrl: string, canonicalUrl: string): boolean {
+  if (storedUrl === canonicalUrl) return true;
+  const canonicalStored = canonicalHttpsUrl(storedUrl);
+  return canonicalStored !== null && canonicalStored === canonicalUrl;
 }
 
 export function resolveMarketplaceUrl(input: string): string {
@@ -126,9 +149,10 @@ interface CachedIndex {
 }
 
 export const make = Effect.fn("PluginMarketplace.make")(function* () {
-  const httpClient = yield* HttpClient.HttpClient;
   const clock = yield* Clock.Clock;
   const fs = yield* FileSystem.FileSystem;
+  const lookup = yield* OutboundUrlLookup;
+  const transport = yield* PluginHttpClientTransportService;
   const cache = yield* Ref.make(new Map<string, CachedIndex>());
 
   const normalizeSourceUrl = (url: string) =>
@@ -150,20 +174,42 @@ export const make = Effect.fn("PluginMarketplace.make")(function* () {
       ),
     );
 
+  // Marketplace URLs are untrusted input: fetch them through the SSRF guard
+  // (per-hop URL validation + DNS-pinned transport, redirects re-validated)
+  // instead of the raw host HttpClient, which would happily follow a 30x into
+  // loopback/private/metadata addresses.
   const readHttpUrl = (url: string) =>
-    httpClient.execute(HttpClientRequest.get(url).pipe(HttpClientRequest.acceptJson)).pipe(
+    guardedOutboundHttpGet({
+      url,
+      lookup,
+      transport,
+      headers: { accept: "application/json" },
+      timeoutMs: MARKETPLACE_FETCH_TIMEOUT_MS,
+    }).pipe(
       Effect.mapError((cause) =>
-        managementError("catalog-fetch-failed", "Failed to fetch plugin marketplace.", {
-          url,
-          cause,
-        }),
+        cause._tag === "OutboundUrlError"
+          ? managementError(
+              "catalog-fetch-failed",
+              `Plugin marketplace URL is not allowed: ${cause.reason}.`,
+              { url },
+            )
+          : managementError("catalog-fetch-failed", "Failed to fetch plugin marketplace.", {
+              url,
+              cause,
+            }),
       ),
       Effect.flatMap(HttpClientResponse.filterStatusOk),
       Effect.mapError((cause) =>
-        managementError("catalog-fetch-failed", "Plugin marketplace returned a non-OK response.", {
-          url,
-          cause,
-        }),
+        isPluginManagementError(cause)
+          ? cause
+          : managementError(
+              "catalog-fetch-failed",
+              "Plugin marketplace returned a non-OK response.",
+              {
+                url,
+                cause,
+              },
+            ),
       ),
       Effect.flatMap((response) =>
         readHttpResponseBytesCapped({
@@ -286,11 +332,21 @@ export const make = Effect.fn("PluginMarketplace.make")(function* () {
           sourceId: input.source.id,
         });
       }
+      // resolveTarballUrl throws synchronously (PluginManagementError for a
+      // non-HTTPS URL, or a TypeError for a malformed one). Wrap it so a bad
+      // marketplace entry surfaces as a typed failure instead of a defect.
+      const tarballUrl = yield* Effect.try({
+        try: () => resolveTarballUrl({ tarball: version.tarball, marketplaceUrl }),
+        catch: (cause) =>
+          isPluginManagementError(cause)
+            ? cause
+            : managementError("invalid-source", "Plugin tarball URL is invalid.", { cause }),
+      });
       return {
         entry,
         version,
         marketplaceUrl,
-        tarballUrl: resolveTarballUrl({ tarball: version.tarball, marketplaceUrl }),
+        tarballUrl,
       };
     });
 

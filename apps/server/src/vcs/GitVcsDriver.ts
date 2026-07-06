@@ -110,6 +110,7 @@ export interface GitCommitProgress {
 
 export interface GitCommitOptions {
   readonly timeoutMs?: number;
+  readonly noVerify?: boolean;
   readonly progress?: GitCommitProgress;
 }
 

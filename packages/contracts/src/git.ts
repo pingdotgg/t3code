@@ -1,5 +1,6 @@
 import * as Schema from "effect/Schema";
 import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { capErrorStderr, ERROR_STDERR_MAX_CHARS } from "./internal/errorStderr.ts";
 import { SourceControlProviderError, SourceControlProviderInfo } from "./sourceControl.ts";
 import { VcsDriverKind } from "./vcs.ts";
 
@@ -320,6 +321,7 @@ export const VcsPullResult = Schema.Struct({
 export type VcsPullResult = typeof VcsPullResult.Type;
 
 // RPC / domain errors
+
 export class GitCommandError extends Schema.TaggedErrorClass<GitCommandError>()("GitCommandError", {
   operation: Schema.String,
   command: Schema.String,
@@ -328,12 +330,52 @@ export class GitCommandError extends Schema.TaggedErrorClass<GitCommandError>()(
   exitCode: Schema.optional(Schema.Number),
   stdoutLength: Schema.optional(Schema.Number),
   stderrLength: Schema.optional(Schema.Number),
+  stderrTruncated: Schema.optional(Schema.Boolean),
   outputLength: Schema.optional(Schema.Number),
   detail: Schema.String,
   cause: Schema.optional(Schema.Defect()),
 }) {
+  /**
+   * Raw (length-capped) stderr for in-process consumers such as failure
+   * classification. Deliberately NOT a schema field: git stderr can carry
+   * credentialed remote URLs or token-echoing auth failures, and this class
+   * is part of wire-serialized RPC error unions (e.g.
+   * `ReviewDiffPreviewError`). The private-field-plus-getter shape keeps it
+   * out of the schema-encoded payload, `JSON.stringify`, and
+   * `Schema.Defect()` cause encoding, while `error.stderr` stays readable on
+   * the server before serialization. Only `stderrLength`/`stderrTruncated`
+   * cross the wire. See `VcsProcessExitError.stderr` for the same pattern.
+   */
+  #stderr: string | undefined;
+
+  get stderr(): string | undefined {
+    return this.#stderr;
+  }
+
   override get message(): string {
     return `Git command failed in ${this.operation} (${this.cwd}): ${this.detail}`;
+  }
+
+  /**
+   * Construct a `GitCommandError` carrying raw capped stderr as a
+   * server-side-only, non-serialized property (see `stderr`). Also derives
+   * the wire-visible `stderrLength`/`stderrTruncated` fields from the raw
+   * value.
+   */
+  static withStderr(
+    props: Omit<
+      ConstructorParameters<typeof GitCommandError>[0],
+      "stderrLength" | "stderrTruncated"
+    >,
+    stderr: string,
+  ): GitCommandError {
+    const error = new GitCommandError({
+      ...props,
+      stderrLength: stderr.length,
+      stderrTruncated: stderr.length > ERROR_STDERR_MAX_CHARS,
+    });
+    error.#stderr = capErrorStderr(stderr);
+    return error;
   }
 }
 

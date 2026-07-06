@@ -1,4 +1,4 @@
-import { assert, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   PluginId,
@@ -6,7 +6,9 @@ import {
   type PluginCapability,
   type PluginLockfilePlugin,
 } from "@t3tools/contracts/plugin";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -36,6 +38,8 @@ import * as SourceControlProviderRegistry from "../sourceControl/SourceControlPr
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { PluginHttpClientTransportService } from "./capabilities/HttpClientCapability.ts";
+import { OutboundUrlLookup } from "./OutboundUrlValidator.ts";
 import * as PluginHostModule from "./PluginHost.ts";
 import * as PluginHttpRegistry from "./PluginHttpRegistry.ts";
 import * as PluginLockfileStoreLayer from "./PluginLockfileStore.ts";
@@ -197,22 +201,35 @@ const testLayerBase = PluginHostModule.layer.pipe(
       getRepositoryCloneUrls: unexpectedCapabilityUse,
       createRepository: unexpectedCapabilityUse,
       createPullRequest: unexpectedCapabilityUse,
+      mergePullRequest: unexpectedCapabilityUse,
+      getPullRequestDetail: unexpectedCapabilityUse,
+      listPullRequestChecks: unexpectedCapabilityUse,
+      listPullRequestReviews: unexpectedCapabilityUse,
+      listPullRequestReviewComments: unexpectedCapabilityUse,
       getDefaultBranch: unexpectedCapabilityUse,
       checkoutPullRequest: unexpectedCapabilityUse,
     }),
   ),
   Layer.provideMerge(
-    Layer.mock(TerminalManager.TerminalManager)({
-      open: unexpectedCapabilityUse,
-      attachStream: unexpectedCapabilityUse,
-      write: unexpectedCapabilityUse,
-      resize: unexpectedCapabilityUse,
-      clear: unexpectedCapabilityUse,
-      restart: unexpectedCapabilityUse,
-      close: unexpectedCapabilityUse,
-      subscribe: unexpectedCapabilityUse,
-      subscribeMetadata: unexpectedCapabilityUse,
-    }),
+    Layer.mergeAll(
+      Layer.mock(TerminalManager.TerminalManager)({
+        open: unexpectedCapabilityUse,
+        attachStream: unexpectedCapabilityUse,
+        write: unexpectedCapabilityUse,
+        resize: unexpectedCapabilityUse,
+        clear: unexpectedCapabilityUse,
+        restart: unexpectedCapabilityUse,
+        close: unexpectedCapabilityUse,
+        subscribe: unexpectedCapabilityUse,
+        subscribeMetadata: unexpectedCapabilityUse,
+      }),
+      Layer.succeed(OutboundUrlLookup, () =>
+        Effect.die(new Error("unexpected outbound lookup in host test")),
+      ),
+      Layer.succeed(PluginHttpClientTransportService, () =>
+        Effect.die(new Error("unexpected http client transport in host test")),
+      ),
+    ),
   ),
 );
 
@@ -234,6 +251,19 @@ const decodeCapabilityMarker = Schema.decodeEffect(
       terminalsUnavailable: Schema.Boolean,
     }),
   ),
+);
+const decodeNewCapabilityMarker = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      filesystemAvailable: Schema.Boolean,
+      filesystemUnavailable: Schema.Boolean,
+      httpClientAvailable: Schema.Boolean,
+      httpClientUnavailable: Schema.Boolean,
+    }),
+  ),
+);
+const decodeCaughtMarker = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Struct({ caught: Schema.String })),
 );
 
 const makeLockEntry = (overrides: Partial<PluginLockfilePlugin> = {}): PluginLockfilePlugin => ({
@@ -352,6 +382,115 @@ export default {
 };
 `;
 
+const newCapabilityGateEntrySource = () => `
+import { createRequire } from "node:module";
+const require = createRequire(${JSON.stringify(NodeURL.pathToFileURL(import.meta.url).href)});
+const Effect = require("effect/Effect");
+const NodeFs = require("node:fs");
+
+const available = (effect) => Effect.exit(effect).pipe(Effect.map((exit) => exit._tag === "Success"));
+const unavailable = (effect) =>
+  Effect.exit(effect).pipe(
+    Effect.map((exit) => exit._tag === "Failure" && String(exit.cause).includes("PluginCapabilityUnavailable")),
+  );
+
+export default {
+  register(hostApi) {
+    return Effect.gen(function* () {
+      const marker = {
+        filesystemAvailable: yield* available(hostApi.filesystem),
+        filesystemUnavailable: yield* unavailable(hostApi.filesystem),
+        httpClientAvailable: yield* available(hostApi.httpClient),
+        httpClientUnavailable: yield* unavailable(hostApi.httpClient),
+      };
+      NodeFs.mkdirSync(hostApi.config.dataDir, { recursive: true });
+      NodeFs.writeFileSync(hostApi.config.dataDir + "/new-capabilities.json", JSON.stringify(marker));
+      return {};
+    });
+  },
+};
+`;
+
+const interruptEntrySource = () => `
+import { createRequire } from "node:module";
+const require = createRequire(${JSON.stringify(NodeURL.pathToFileURL(import.meta.url).href)});
+const Effect = require("effect/Effect");
+
+export default {
+  register() {
+    // Genuinely interrupt activation for THIS plugin. In start's per-plugin loop
+    // an interrupt-only cause now RE-RAISES (host-shutdown semantics), stopping
+    // the loop promptly rather than plodding through the remaining plugins.
+    return Effect.interrupt;
+  },
+};
+`;
+
+const cancelDuringActivationEntrySource = () => `
+import { createRequire } from "node:module";
+const require = createRequire(${JSON.stringify(NodeURL.pathToFileURL(import.meta.url).href)});
+const NodeFs = require("node:fs");
+const NodePath = require("node:path");
+
+export default {
+  register(hostApi) {
+    // Simulate a concurrent disable/uninstall landing DURING activation: flip
+    // this plugin's persisted lifecycle state to "disabled" BEFORE the host's
+    // pre-put re-check reads it, so the host aborts activation via the typed
+    // PluginActivationCanceled sentinel (not a fiber interrupt). dataDir is
+    // <pluginsDir>/<id>/data, so the lockfile is two levels up.
+    const dataDir = hostApi.config.dataDir;
+    const pluginRoot = NodePath.dirname(dataDir);
+    const pluginId = NodePath.basename(pluginRoot);
+    const lockfilePath = NodePath.join(NodePath.dirname(pluginRoot), "plugins.json");
+    const lockfile = JSON.parse(NodeFs.readFileSync(lockfilePath, "utf8"));
+    lockfile.plugins[pluginId].state = "disabled";
+    NodeFs.writeFileSync(lockfilePath, JSON.stringify(lockfile));
+    return {};
+  },
+};
+`;
+
+const registerCountEntrySource = () => `
+import { createRequire } from "node:module";
+const require = createRequire(${JSON.stringify(NodeURL.pathToFileURL(import.meta.url).href)});
+const NodeFs = require("node:fs");
+
+export default {
+  register(hostApi) {
+    // Append one marker per register() call so the test can assert loadPlugin ran
+    // exactly once under concurrent activation.
+    NodeFs.mkdirSync(hostApi.config.dataDir, { recursive: true });
+    NodeFs.appendFileSync(hostApi.config.dataDir + "/register-count", "x");
+    return {};
+  },
+};
+`;
+
+const catchUnavailableEntrySource = () => `
+import { createRequire } from "node:module";
+const require = createRequire(${JSON.stringify(NodeURL.pathToFileURL(import.meta.url).href)});
+const Effect = require("effect/Effect");
+const NodeFs = require("node:fs");
+
+export default {
+  register(hostApi) {
+    return Effect.gen(function* () {
+      // hostApi.agents is undeclared for this plugin. A typed Effect.fail is
+      // recoverable via Effect.catch; a defect (Effect.die) would NOT be caught
+      // and would crash register instead of degrading gracefully.
+      const caught = yield* hostApi.agents.pipe(
+        Effect.as("unexpected-success"),
+        Effect.catch((error) => Effect.succeed(error && error._tag ? error._tag : "unknown")),
+      );
+      NodeFs.mkdirSync(hostApi.config.dataDir, { recursive: true });
+      NodeFs.writeFileSync(hostApi.config.dataDir + "/caught.json", JSON.stringify({ caught }));
+      return {};
+    });
+  },
+};
+`;
+
 layer("PluginModuleLoader", (it) => {
   it.effect("loads a definePlugin-shaped default export from inside the plugin dir", () =>
     Effect.gen(function* () {
@@ -433,6 +572,51 @@ layer("PluginHost", (it) => {
       assert.equal(lockfile.plugins[pluginId]?.activation.activatingSince, null);
       assert.equal(lockfile.plugins[pluginId]?.activation.crashCount, 0);
     }),
+  );
+
+  it.effect(
+    "clears activatingSince immediately on success, before the healthy window elapses",
+    () =>
+      Effect.gen(function* () {
+        const pluginId = PluginId.make("test-plugin");
+        const registry = yield* PluginRuntimeRegistryLayer.PluginRuntimeRegistry;
+        const store = yield* PluginLockfileStoreLayer.PluginLockfileStore;
+        const host = yield* PluginHostModule.PluginHost;
+        const previousHealthyDelay = process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS;
+
+        yield* runMigrations({ toMigrationInclusive: 34 });
+        // Seed a prior crashCount so we can prove it is NOT reset yet (the delayed
+        // reset is gated behind a long stability window that never elapses here).
+        yield* installPlugin({
+          pluginId,
+          lockEntry: { activation: { activatingSince: null, crashCount: 1 } },
+        });
+
+        // A long window means the delayed crashCount reset never fires during the
+        // test; only the immediate on-success clear of activatingSince can run.
+        process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS = "600000";
+        try {
+          yield* host.start;
+          for (let attempt = 0; attempt < 10; attempt++) {
+            if ((yield* registry.list).length === 1) break;
+            yield* Effect.yieldNow;
+          }
+        } finally {
+          if (previousHealthyDelay === undefined) {
+            delete process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS;
+          } else {
+            process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS = previousHealthyDelay;
+          }
+        }
+
+        assert.equal((yield* registry.list).length, 1);
+        const lockfile = yield* store.readLockfile;
+        // activatingSince cleared on successful activation (a quick restart now
+        // would NOT be mistaken for an interrupted activation)...
+        assert.equal(lockfile.plugins[pluginId]?.activation.activatingSince, null);
+        // ...while crashCount is still preserved until the stability window ends.
+        assert.equal(lockfile.plugins[pluginId]?.activation.crashCount, 1);
+      }),
   );
 
   it.effect("publishes plugin state changes on the server lifecycle stream", () =>
@@ -537,6 +721,65 @@ layer("PluginHost", (it) => {
     }),
   );
 
+  it.effect("gates filesystem and httpClient independently by manifest declaration", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const host = yield* PluginHostModule.PluginHost;
+
+      const cases = [
+        {
+          pluginId: PluginId.make("filesystem-only"),
+          capabilities: ["filesystem"] as const,
+          expected: {
+            filesystemAvailable: true,
+            filesystemUnavailable: false,
+            httpClientAvailable: false,
+            httpClientUnavailable: true,
+          },
+        },
+        {
+          pluginId: PluginId.make("http-client-only"),
+          capabilities: ["httpClient"] as const,
+          expected: {
+            filesystemAvailable: false,
+            filesystemUnavailable: true,
+            httpClientAvailable: true,
+            httpClientUnavailable: false,
+          },
+        },
+        {
+          pluginId: PluginId.make("neither-new-cap"),
+          capabilities: [] as const,
+          expected: {
+            filesystemAvailable: false,
+            filesystemUnavailable: true,
+            httpClientAvailable: false,
+            httpClientUnavailable: true,
+          },
+        },
+      ];
+
+      for (const testCase of cases) {
+        yield* installPlugin({
+          pluginId: testCase.pluginId,
+          capabilities: testCase.capabilities,
+          entrySource: newCapabilityGateEntrySource(),
+        });
+      }
+
+      yield* host.start;
+      yield* Effect.yieldNow;
+
+      for (const testCase of cases) {
+        const dataDir = pluginDataDir(config.pluginsDir, testCase.pluginId, path.join);
+        const marker = yield* fs.readFileString(path.join(dataDir, "new-capabilities.json"));
+        assert.deepEqual(yield* decodeNewCapabilityMarker(marker), testCase.expected);
+      }
+    }),
+  );
+
   it.effect("does not load anything when T3_NO_PLUGINS is set", () =>
     Effect.gen(function* () {
       const pluginId = PluginId.make("disabled-env");
@@ -594,4 +837,471 @@ layer("PluginHost", (it) => {
       assert.isFalse(yield* fs.exists(pluginDir));
     }),
   );
+
+  it.effect("resets crash health when promoting a staged upgrade", () =>
+    Effect.gen(function* () {
+      const pluginId = PluginId.make("upgrade-plugin");
+      const host = yield* PluginHostModule.PluginHost;
+      const store = yield* PluginLockfileStoreLayer.PluginLockfileStore;
+      const registry = yield* PluginRuntimeRegistryLayer.PluginRuntimeRegistry;
+      const previousHealthyDelay = process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS;
+      const emptyEntry = "export default { register() { return {}; } };";
+
+      yield* runMigrations({ toMigrationInclusive: 34 });
+      // Both the current (1.0.0) and staged (2.0.0) version dirs must exist so
+      // the post-promotion load of 2.0.0 succeeds.
+      yield* installPlugin({ pluginId, entrySource: emptyEntry, lockEntry: { version: "1.0.0" } });
+      yield* installPlugin({ pluginId, entrySource: emptyEntry, lockEntry: { version: "2.0.0" } });
+      // Stage a pending upgrade carrying a prior crashCount + error that must NOT
+      // carry over to the new build.
+      yield* store.updatePlugin(pluginId, () =>
+        Effect.succeed(
+          makeLockEntry({
+            version: "1.0.0",
+            state: "pending-upgrade",
+            staged: { version: "2.0.0", sha256: "sha2", stagedAt: now },
+            activation: { activatingSince: null, crashCount: 1 },
+            lastError: "old failure",
+          }),
+        ),
+      );
+
+      process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS = "0";
+      try {
+        yield* host.start;
+        for (let attempt = 0; attempt < 10; attempt++) {
+          if ((yield* registry.list).some((runtime) => runtime.manifest.id === pluginId)) break;
+          yield* Effect.yieldNow;
+        }
+      } finally {
+        if (previousHealthyDelay === undefined) {
+          delete process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS;
+        } else {
+          process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS = previousHealthyDelay;
+        }
+      }
+
+      const lockfile = yield* store.readLockfile;
+      const entry = lockfile.plugins[pluginId];
+      assert.equal(entry?.version, "2.0.0");
+      assert.equal(entry?.state, "active");
+      assert.equal(entry?.activation.crashCount, 0);
+      assert.equal(entry?.lastError, null);
+    }),
+  );
+
+  it.effect("deactivatePlugin publishes the persisted state, not a hardcoded disabled", () =>
+    Effect.gen(function* () {
+      const pluginId = PluginId.make("deactivate-state-plugin");
+      const host = yield* PluginHostModule.PluginHost;
+      const store = yield* PluginLockfileStoreLayer.PluginLockfileStore;
+      const registry = yield* PluginRuntimeRegistryLayer.PluginRuntimeRegistry;
+      const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
+      const previousHealthyDelay = process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS;
+
+      // Subscribe before start (like the lifecycle test above) to deterministically
+      // observe both the activation "active" publish and the later deactivation
+      // publish.
+      const eventFiber = yield* lifecycleEvents.stream.pipe(
+        Stream.filter((event) => event.type === "plugins" && event.payload.pluginId === pluginId),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      // A migration-free entry so activation succeeds regardless of sibling tests
+      // (still enters the runtime registry, so deactivate finds a live runtime).
+      yield* installPlugin({
+        pluginId,
+        entrySource: "export default { register() { return {}; } };",
+      });
+
+      process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS = "0";
+      try {
+        yield* host.start;
+        for (let attempt = 0; attempt < 10; attempt++) {
+          if ((yield* registry.list).some((runtime) => runtime.manifest.id === pluginId)) break;
+          yield* Effect.yieldNow;
+        }
+      } finally {
+        if (previousHealthyDelay === undefined) {
+          delete process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS;
+        } else {
+          process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS = previousHealthyDelay;
+        }
+      }
+
+      // Persist "pending-remove" (as uninstall does) before tearing down.
+      yield* store.updatePlugin(pluginId, ({ current }) =>
+        Effect.succeed(
+          current ? { ...current, state: "pending-remove", enabled: false } : undefined,
+        ),
+      );
+      yield* host.deactivatePlugin(pluginId);
+
+      const events = Array.from(yield* Fiber.join(eventFiber));
+      assert.deepEqual(events[0]?.payload, {
+        kind: "plugin-state-changed",
+        pluginId,
+        state: "active",
+      });
+      // The deactivation publish reflects the ACTUAL persisted state
+      // ("pending-remove"), not a hardcoded "disabled".
+      assert.deepEqual(events[1]?.payload, {
+        kind: "plugin-state-changed",
+        pluginId,
+        state: "pending-remove",
+      });
+    }),
+  );
+
+  it.effect("an undeclared capability fails with a catchable typed error, not a defect", () =>
+    Effect.gen(function* () {
+      const pluginId = PluginId.make("catch-capability");
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const host = yield* PluginHostModule.PluginHost;
+      const registry = yield* PluginRuntimeRegistryLayer.PluginRuntimeRegistry;
+
+      yield* installPlugin({
+        pluginId,
+        capabilities: [],
+        entrySource: catchUnavailableEntrySource(),
+      });
+
+      yield* host.start;
+      yield* Effect.yieldNow;
+
+      // register completed (a defect would have crashed it) and the plugin is
+      // active, having recovered from the undeclared-capability failure.
+      const runtimes = yield* registry.list;
+      assert.isTrue(runtimes.some((runtime) => runtime.manifest.id === pluginId));
+
+      const dataDir = pluginDataDir(config.pluginsDir, pluginId, path.join);
+      const caughtFile = yield* fs.readFileString(path.join(dataDir, "caught.json"));
+      assert.deepEqual(yield* decodeCaughtMarker(caughtFile), {
+        caught: "PluginCapabilityUnavailable",
+      });
+    }),
+  );
+
+  it.effect(
+    "a cancelled activation clears activatingSince and is not counted as a crash (R5-1)",
+    () =>
+      Effect.gen(function* () {
+        const pluginId = PluginId.make("cancel-clears-marker-plugin");
+        const host = yield* PluginHostModule.PluginHost;
+        const registry = yield* PluginRuntimeRegistryLayer.PluginRuntimeRegistry;
+        const store = yield* PluginLockfileStoreLayer.PluginLockfileStore;
+        const previousHealthyDelay = process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS;
+
+        // The plugin flips its own lockfile state to "disabled" mid-register, so
+        // the host's pre-put re-check aborts activation via the typed cancel
+        // sentinel (a concurrent disable/uninstall arriving during activation).
+        yield* installPlugin({
+          pluginId,
+          entrySource: cancelDuringActivationEntrySource(),
+        });
+
+        process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS = "0";
+        try {
+          yield* host.start;
+        } finally {
+          if (previousHealthyDelay === undefined) {
+            delete process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS;
+          } else {
+            process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS = previousHealthyDelay;
+          }
+        }
+
+        // The plugin did not go live.
+        const runtimes = yield* registry.list;
+        assert.isFalse(runtimes.some((runtime) => runtime.manifest.id === pluginId));
+
+        const entry = (yield* store.readLockfile).plugins[pluginId];
+        // Core R5-1 regression: the activating marker is cleared on the clean
+        // cancel teardown (the OLD interrupt branch skipped this, leaving it
+        // set)...
+        assert.equal(entry?.activation.activatingSince, null);
+        // ...the intentional cancellation is NOT counted as a crash...
+        assert.equal(entry?.activation.crashCount, 0);
+        // ...and it is NOT marked "failed"; the requested state is preserved.
+        assert.notEqual(entry?.state, "failed");
+        assert.equal(entry?.state, "disabled");
+      }),
+  );
+
+  it.effect("start skips a plugin whose activation is cancelled and still activates the rest", () =>
+    Effect.gen(function* () {
+      const cancelledId = PluginId.make("cancel-during-start-plugin");
+      const survivorId = PluginId.make("after-cancel-plugin");
+      const host = yield* PluginHostModule.PluginHost;
+      const registry = yield* PluginRuntimeRegistryLayer.PluginRuntimeRegistry;
+      const store = yield* PluginLockfileStoreLayer.PluginLockfileStore;
+      const previousHealthyDelay = process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS;
+
+      // Insertion order: the cancelling plugin is processed first, so if its
+      // cancel aborted the loop the survivor would never activate. The typed
+      // sentinel keeps the loop going (unlike a genuine interrupt).
+      yield* installPlugin({
+        pluginId: cancelledId,
+        entrySource: cancelDuringActivationEntrySource(),
+      });
+      yield* installPlugin({
+        pluginId: survivorId,
+        entrySource: "export default { register() { return {}; } };",
+      });
+
+      process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS = "0";
+      try {
+        yield* host.start;
+        for (let attempt = 0; attempt < 10; attempt++) {
+          if ((yield* registry.list).some((runtime) => runtime.manifest.id === survivorId)) break;
+          yield* Effect.yieldNow;
+        }
+      } finally {
+        if (previousHealthyDelay === undefined) {
+          delete process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS;
+        } else {
+          process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS = previousHealthyDelay;
+        }
+      }
+
+      const runtimes = yield* registry.list;
+      // The cancelled plugin did not activate...
+      assert.isFalse(runtimes.some((runtime) => runtime.manifest.id === cancelledId));
+      // ...but the loop continued and activated the next plugin.
+      assert.isTrue(runtimes.some((runtime) => runtime.manifest.id === survivorId));
+      // The cancel left the marker cleared and the requested state intact.
+      const entry = (yield* store.readLockfile).plugins[cancelledId];
+      assert.equal(entry?.activation.activatingSince, null);
+      assert.equal(entry?.state, "disabled");
+    }),
+  );
+
+  it.effect("start stops the loop when a plugin's activation is genuinely interrupted (R5-2)", () =>
+    Effect.gen(function* () {
+      const interruptedId = PluginId.make("shutdown-interrupt-plugin");
+      const survivorId = PluginId.make("after-shutdown-interrupt-plugin");
+      const host = yield* PluginHostModule.PluginHost;
+      const registry = yield* PluginRuntimeRegistryLayer.PluginRuntimeRegistry;
+      const store = yield* PluginLockfileStoreLayer.PluginLockfileStore;
+      const previousHealthyDelay = process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS;
+
+      // Insertion order: the interrupting plugin is processed first. A GENUINE
+      // interrupt-only cause (host-shutdown semantics) now re-raises out of the
+      // loop, so the survivor that follows must NOT be reached.
+      yield* installPlugin({ pluginId: interruptedId, entrySource: interruptEntrySource() });
+      yield* installPlugin({
+        pluginId: survivorId,
+        entrySource: "export default { register() { return {}; } };",
+      });
+
+      process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS = "0";
+      try {
+        // host.start completes (the trailing ignoreCause swallows the re-raised
+        // interrupt) but the loop terminated early at the interrupted plugin.
+        yield* host.start;
+      } finally {
+        if (previousHealthyDelay === undefined) {
+          delete process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS;
+        } else {
+          process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS = previousHealthyDelay;
+        }
+      }
+
+      const runtimes = yield* registry.list;
+      // The interrupted plugin did not activate...
+      assert.isFalse(runtimes.some((runtime) => runtime.manifest.id === interruptedId));
+      // ...and the loop STOPPED, so the following plugin was never reached.
+      assert.isFalse(runtimes.some((runtime) => runtime.manifest.id === survivorId));
+      const entry = (yield* store.readLockfile).plugins[interruptedId];
+      // The interrupt teardown clears the activating marker (so a later start
+      // does not miscount it as a crash) and leaves the persisted state intact.
+      assert.equal(entry?.activation.activatingSince, null);
+      assert.equal(entry?.state, "active");
+
+      // Neutralize the genuinely-interrupting plugin so it cannot stop the loop
+      // of any host.start run by a later test in this shared-lockfile block.
+      yield* store.updatePlugin(interruptedId, ({ current }) =>
+        Effect.succeed(current ? { ...current, enabled: false, state: "disabled" } : undefined),
+      );
+    }),
+  );
+
+  it.effect(
+    "activatePlugin fails instead of silently no-opping when the lockfile is unreadable",
+    () =>
+      Effect.gen(function* () {
+        const pluginId = PluginId.make("read-failure-plugin");
+        const fs = yield* FileSystem.FileSystem;
+        const host = yield* PluginHostModule.PluginHost;
+        const store = yield* PluginLockfileStoreLayer.PluginLockfileStore;
+
+        // Install so a valid lockfile exists, then corrupt it so readLockfile fails
+        // with a parse error (NOT NotFound, which readLockfile treats as an empty
+        // lockfile). Restore it afterwards so the shared lockfile stays valid for
+        // sibling tests.
+        yield* installPlugin({ pluginId });
+        const original = yield* fs.readFileString(store.lockfilePath);
+        yield* fs.writeFileString(store.lockfilePath, "{ not valid json");
+
+        const exit = yield* Effect.exit(host.activatePlugin(pluginId));
+
+        yield* fs.writeFileString(store.lockfilePath, original);
+        // Previously the read failure was swallowed and replaced with an empty
+        // lockfile, so activatePlugin SUCCEEDED without loading anything. It must now
+        // propagate the failure.
+        assert.isTrue(Exit.isFailure(exit));
+      }),
+  );
+
+  it.effect(
+    "concurrent activatePlugin for the same plugin loads it once (single-flight, no leaked runtime)",
+    () =>
+      Effect.gen(function* () {
+        const pluginId = PluginId.make("single-flight-plugin");
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const host = yield* PluginHostModule.PluginHost;
+        const registry = yield* PluginRuntimeRegistryLayer.PluginRuntimeRegistry;
+        const previousHealthyDelay = process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS;
+
+        yield* installPlugin({ pluginId, entrySource: registerCountEntrySource() });
+
+        process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS = "0";
+        try {
+          // Two concurrent activations. Without single-flight both pass the empty-
+          // registry check and both run loadPlugin (→ two register() calls; the
+          // first runtime's scope is leaked when the second registry.put overwrites
+          // it). The per-plugin lock serializes them so the second's registry.get
+          // double-check short-circuits.
+          yield* Effect.all([host.activatePlugin(pluginId), host.activatePlugin(pluginId)], {
+            concurrency: "unbounded",
+          });
+        } finally {
+          if (previousHealthyDelay === undefined) {
+            delete process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS;
+          } else {
+            process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS = previousHealthyDelay;
+          }
+        }
+
+        // register() ran exactly once → loadPlugin ran exactly once.
+        const dataDir = pluginDataDir(config.pluginsDir, pluginId, path.join);
+        const registerCount = yield* fs.readFileString(path.join(dataDir, "register-count"));
+        assert.equal(registerCount, "x");
+        // Exactly one live runtime is registered for the plugin.
+        const runtimes = yield* registry.list;
+        assert.equal(runtimes.filter((runtime) => runtime.manifest.id === pluginId).length, 1);
+      }),
+  );
+
+  it.effect("concurrent host.start and activatePlugin for the same plugin load it once", () =>
+    Effect.gen(function* () {
+      const pluginId = PluginId.make("start-vs-activate-plugin");
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const host = yield* PluginHostModule.PluginHost;
+      const registry = yield* PluginRuntimeRegistryLayer.PluginRuntimeRegistry;
+      const previousHealthyDelay = process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS;
+
+      yield* installPlugin({ pluginId, entrySource: registerCountEntrySource() });
+
+      process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS = "0";
+      try {
+        // The start loop and an enable/install RPC's activatePlugin race for the
+        // SAME plugin. Before the fix the start loop called loadPlugin directly,
+        // bypassing the per-plugin single-flight lock, so both could run
+        // loadPlugin: register() twice, migrator twice (the second
+        // plugin_migrations INSERT PK-conflicts → spurious "failed"), and the
+        // second registry.put orphaned the first runtime's scope. Routing the
+        // start loop through the shared lock + a registry.get double-check makes
+        // it load exactly once regardless of who wins the race.
+        yield* Effect.all([host.start, host.activatePlugin(pluginId)], {
+          concurrency: "unbounded",
+        });
+      } finally {
+        if (previousHealthyDelay === undefined) {
+          delete process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS;
+        } else {
+          process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS = previousHealthyDelay;
+        }
+      }
+
+      // register() ran exactly once → loadPlugin ran exactly once.
+      const dataDir = pluginDataDir(config.pluginsDir, pluginId, path.join);
+      const registerCount = yield* fs.readFileString(path.join(dataDir, "register-count"));
+      assert.equal(registerCount, "x");
+      const runtimes = yield* registry.list;
+      assert.equal(runtimes.filter((runtime) => runtime.manifest.id === pluginId).length, 1);
+    }),
+  );
+
+  // NOTE: the EXTERNAL-interrupt teardown fix in loadPlugin (the uninterruptibleMask
+  // ladder that lets Scope.close + registry.remove + clearActivatingMarker run when
+  // effect@4.0.0-beta.78's `Effect.exit` cannot capture an external fiber interrupt)
+  // is exercised by standalone runtime probes rather than an integration test here:
+  // externally interrupting a REAL forked/raced activation makes the plugin's
+  // dynamic import never settle under vite-plus/vitest, hanging the run before the
+  // interrupt path is even reached. The internal-interrupt path is covered by the
+  // "start stops the loop when a plugin's activation is genuinely interrupted"
+  // (R5-2) test above.
+});
+
+describe("PluginHost cause predicates", () => {
+  const sentinel = (reason: string) =>
+    new PluginHostModule.PluginActivationCanceled({ pluginId: "p", reason });
+
+  it("causeIsActivationCanceledOnly is true ONLY when every reason is the cancel sentinel", () => {
+    // A single sentinel fail, and several sentinel fails, are pure cancels.
+    assert.isTrue(PluginHostModule.causeIsActivationCanceledOnly(Cause.fail(sentinel("disabled"))));
+    assert.isTrue(
+      PluginHostModule.causeIsActivationCanceledOnly(
+        Cause.combine(Cause.fail(sentinel("a")), Cause.fail(sentinel("b"))),
+      ),
+    );
+
+    // A MIXED cause (sentinel + teardown defect, or sentinel + interrupt) must
+    // NOT count as a clean cancel — otherwise a real teardown failure would be
+    // silently dropped and a shutdown interrupt swallowed.
+    assert.isFalse(
+      PluginHostModule.causeIsActivationCanceledOnly(
+        Cause.combine(Cause.fail(sentinel("x")), Cause.die(new Error("teardown"))),
+      ),
+    );
+    assert.isFalse(
+      PluginHostModule.causeIsActivationCanceledOnly(
+        Cause.combine(Cause.fail(sentinel("x")), Cause.interrupt()),
+      ),
+    );
+
+    // A pure interrupt and a pure non-sentinel error are not cancels; neither is
+    // the empty cause (no reasons).
+    assert.isFalse(PluginHostModule.causeIsActivationCanceledOnly(Cause.interrupt()));
+    assert.isFalse(PluginHostModule.causeIsActivationCanceledOnly(Cause.fail(new Error("boom"))));
+    assert.isFalse(PluginHostModule.causeIsActivationCanceledOnly(Cause.empty));
+  });
+
+  it("causeContainsInterrupt is true whenever the cause carries ANY interrupt reason", () => {
+    // A pure interrupt and a sentinel+interrupt mix both contain an interrupt.
+    assert.isTrue(PluginHostModule.causeContainsInterrupt(Cause.interrupt()));
+    assert.isTrue(
+      PluginHostModule.causeContainsInterrupt(
+        Cause.combine(Cause.fail(sentinel("x")), Cause.interrupt()),
+      ),
+    );
+
+    // A pure sentinel, a pure error, and sentinel+defect carry no interrupt.
+    assert.isFalse(PluginHostModule.causeContainsInterrupt(Cause.fail(sentinel("x"))));
+    assert.isFalse(PluginHostModule.causeContainsInterrupt(Cause.fail(new Error("boom"))));
+    assert.isFalse(
+      PluginHostModule.causeContainsInterrupt(
+        Cause.combine(Cause.fail(sentinel("x")), Cause.die(new Error("teardown"))),
+      ),
+    );
+  });
 });

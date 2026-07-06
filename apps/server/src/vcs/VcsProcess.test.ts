@@ -4,6 +4,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import { TestClock } from "effect/testing";
 
 import {
@@ -13,6 +14,8 @@ import {
 } from "@t3tools/contracts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as VcsProcess from "./VcsProcess.ts";
+
+const isVcsProcessExitError = Schema.is(VcsProcessExitError);
 
 const run = (input: VcsProcess.VcsProcessInput) =>
   Effect.gen(function* () {
@@ -100,6 +103,7 @@ describe("VcsProcess.run", () => {
       }).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(VcsProcessExitError);
+      if (!isVcsProcessExitError(error)) return;
       expect(error).toMatchObject({
         operation: "test.exit",
         command: "node",
@@ -110,12 +114,22 @@ describe("VcsProcess.run", () => {
         stderrLength: secretStderr.length,
         stderrTruncated: false,
       });
+      // Raw stderr stays readable in-process for classification...
+      expect(error.stderr).toBe(secretStderr);
       expect(error.message).not.toContain(secretArgument);
       expect(error.message).not.toContain(secretStderr);
+      // ...but must NOT reach the wire: neither the schema-encoded RPC
+      // payload nor a naive JSON serialization may carry the secret.
+      const encoded = yield* Schema.encodeEffect(VcsProcessExitError)(error);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      expect(JSON.stringify(encoded)).not.toContain("super-secret-token");
+      expect(encoded).not.toHaveProperty("stderr");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      expect(JSON.stringify(error)).not.toContain("super-secret-token");
     }).pipe(provideLive),
   );
 
-  it.effect("classifies authentication failures without retaining stderr", () =>
+  it.effect("classifies authentication failures with capped stderr off the message", () =>
     Effect.gen(function* () {
       const secretStderr = "authentication failed for token super-secret-token";
       const error = yield* run({
@@ -126,6 +140,7 @@ describe("VcsProcess.run", () => {
       }).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(VcsProcessExitError);
+      if (!isVcsProcessExitError(error)) return;
       expect(error).toMatchObject({
         operation: "test.authentication",
         command: "node",
@@ -135,8 +150,14 @@ describe("VcsProcess.run", () => {
         stderrLength: secretStderr.length,
         stderrTruncated: false,
       });
+      // In-process classification keeps the raw stderr; the wire does not.
+      expect(error.stderr).toBe(secretStderr);
       expect(error.message).not.toContain(secretStderr);
       expect(error.message).not.toContain("super-secret-token");
+      const encoded = yield* Schema.encodeEffect(VcsProcessExitError)(error);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      expect(JSON.stringify(encoded)).not.toContain("super-secret-token");
+      expect(encoded).not.toHaveProperty("stderr");
     }).pipe(provideLive),
   );
 

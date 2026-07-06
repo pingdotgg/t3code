@@ -3,10 +3,11 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { CheckpointRef, type VcsError } from "@t3tools/contracts";
+import { CheckpointRef, GitCommandError, type VcsError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Scope from "effect/Scope";
 import { describe, expect } from "vite-plus/test";
@@ -16,7 +17,8 @@ import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import * as ServerConfig from "../../config.ts";
-import { makeVcsCapability, PluginVcsPathError } from "./VcsCapability.ts";
+import { makePluginWorkspaceGrants, type PluginWorkspaceGrants } from "../PluginWorkspaceGrants.ts";
+import { makeVcsCapability, PluginVcsPathError, PluginVcsRefError } from "./VcsCapability.ts";
 
 const ServerConfigLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "plugin-vcs-capability-test-",
@@ -84,6 +86,46 @@ function initRepoWithCommit(
   });
 }
 
+// Construct the capability with real FileSystem/Path, an empty projects shell
+// (granted roots come from `grantedRoots` via the grants service), and a
+// worktrees dir that defaults to nowhere (individual tests opt in).
+function makeVcs(input: {
+  readonly git: GitVcsDriver.GitVcsDriver["Service"];
+  readonly checkpoints: CheckpointStore.CheckpointStore["Service"];
+  readonly grantedRoots?: ReadonlyArray<string>;
+  readonly grants?: PluginWorkspaceGrants;
+  readonly worktreesDir?: string;
+}) {
+  return Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const grants = input.grants ?? (yield* makePluginWorkspaceGrants);
+    for (const root of input.grantedRoots ?? []) {
+      yield* grants.grant(root);
+    }
+    return makeVcsCapability({
+      git: input.git,
+      checkpoints: input.checkpoints,
+      snapshots: {
+        getShellSnapshot: () => Effect.succeed({ projects: [], threads: [] }),
+      } as any,
+      grants,
+      fileSystem,
+      path,
+      worktreesDir: input.worktreesDir ?? "/plugin-vcs-test-no-worktrees-dir",
+    });
+  });
+}
+
+const expectFailureContaining = <A, E>(effect: Effect.Effect<A, E>, marker: string) =>
+  Effect.gen(function* () {
+    const exit = yield* Effect.exit(effect);
+    expect(exit._tag).toBe("Failure");
+    if (exit._tag === "Failure") {
+      expect(String(exit.cause)).toContain(marker);
+    }
+  });
+
 it.layer(TestLayer)("VcsCapability", (it) => {
   describe("git operations", () => {
     it.effect("creates, lists, and removes worktrees with absolute path validation", () =>
@@ -95,7 +137,15 @@ it.layer(TestLayer)("VcsCapability", (it) => {
           yield* initRepoWithCommit(repo);
           const gitDriver = yield* GitVcsDriver.GitVcsDriver;
           const checkpointStore = yield* CheckpointStore.CheckpointStore;
-          const vcs = makeVcsCapability({ git: gitDriver, checkpoints: checkpointStore });
+          const grants = yield* makePluginWorkspaceGrants;
+          const vcs = yield* makeVcs({
+            git: gitDriver,
+            checkpoints: checkpointStore,
+            grants,
+            grantedRoots: [repo],
+            // The new worktree lands under the server-managed worktrees dir.
+            worktreesDir: worktreeParent,
+          });
 
           const rejected = yield* Effect.exit(vcs.status({ worktreePath: "relative/path" }));
           expect(rejected._tag).toBe("Failure");
@@ -110,6 +160,7 @@ it.layer(TestLayer)("VcsCapability", (it) => {
             newBranch: "feature/worktree",
           });
           expect(created.worktree.path).toBe(worktreePath);
+          expect([...(yield* grants.snapshot())]).toContain(worktreePath);
 
           const listed = yield* vcs.listWorktrees({ repoRoot: repo });
           const fileSystem = yield* FileSystem.FileSystem;
@@ -120,6 +171,7 @@ it.layer(TestLayer)("VcsCapability", (it) => {
           expect(canonicalListedPaths.includes(canonicalWorktreePath)).toBe(true);
 
           yield* vcs.removeWorktree({ repoRoot: repo, path: worktreePath, force: true });
+          expect([...(yield* grants.snapshot())]).not.toContain(worktreePath);
           const afterRemove = yield* vcs.listWorktrees({ repoRoot: repo });
           const canonicalAfterRemovePaths = yield* Effect.forEach(
             afterRemove.worktrees,
@@ -140,7 +192,11 @@ it.layer(TestLayer)("VcsCapability", (it) => {
           yield* git(repo, ["remote", "add", "origin", remote]);
           const gitDriver = yield* GitVcsDriver.GitVcsDriver;
           const checkpointStore = yield* CheckpointStore.CheckpointStore;
-          const vcs = makeVcsCapability({ git: gitDriver, checkpoints: checkpointStore });
+          const vcs = yield* makeVcs({
+            git: gitDriver,
+            checkpoints: checkpointStore,
+            grantedRoots: [repo],
+          });
 
           yield* vcs.createBranch({ worktreePath: repo, branch: "feature/commit", switch: true });
           yield* writeTextFile(NodePath.join(repo, "README.md"), "# changed\n");
@@ -167,6 +223,118 @@ it.layer(TestLayer)("VcsCapability", (it) => {
       ),
     );
 
+    it.effect("removes, cleans, reads refs, current branch, and arbitrary ahead counts", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const repo = yield* makeTmpDir();
+          yield* initRepoWithCommit(repo);
+          const gitDriver = yield* GitVcsDriver.GitVcsDriver;
+          const checkpointStore = yield* CheckpointStore.CheckpointStore;
+          const vcs = yield* makeVcs({
+            git: gitDriver,
+            checkpoints: checkpointStore,
+            grantedRoots: [repo],
+          });
+          const fileSystem = yield* FileSystem.FileSystem;
+
+          yield* writeTextFile(NodePath.join(repo, "tracked.txt"), "tracked\n");
+          yield* git(repo, ["add", "tracked.txt"]);
+          yield* git(repo, ["commit", "-m", "add tracked"]);
+          yield* vcs.removePath({ worktreePath: repo, path: "tracked.txt" });
+          expect(yield* fileSystem.exists(NodePath.join(repo, "tracked.txt"))).toBe(false);
+          expect(yield* git(repo, ["status", "--porcelain"])).toContain("D  tracked.txt");
+          yield* git(repo, ["reset", "--hard", "HEAD"]);
+
+          yield* fileSystem.makeDirectory(NodePath.join(repo, "scratch"), { recursive: true });
+          yield* writeTextFile(NodePath.join(repo, "scratch", "untracked.txt"), "scratch\n");
+          yield* vcs.clean({ worktreePath: repo, path: "scratch" });
+          expect(yield* fileSystem.exists(NodePath.join(repo, "scratch"))).toBe(false);
+
+          expect(yield* vcs.currentBranch({ worktreePath: repo })).toBe("main");
+          yield* vcs.createBranch({ worktreePath: repo, branch: "feature/ahead", switch: true });
+          yield* writeTextFile(NodePath.join(repo, "ahead.txt"), "ahead\n");
+          yield* vcs.commit({ worktreePath: repo, subject: "ahead", body: "" });
+          expect(
+            yield* vcs.aheadCount({
+              worktreePath: repo,
+              base: "main",
+              head: "feature/ahead",
+            }),
+          ).toBe(1);
+
+          const refs = yield* vcs.listRefs({ repoRoot: repo });
+          const canonicalRepo = yield* fileSystem.realPath(repo);
+          expect(refs).toContainEqual({
+            name: "feature/ahead",
+            isRemote: false,
+            worktreePath: canonicalRepo,
+          });
+          expect(refs).toContainEqual({
+            name: "main",
+            isRemote: false,
+            worktreePath: null,
+          });
+        }),
+      ),
+    );
+
+    it.effect("surfaces remove and clean git failures", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const nonRepo = yield* makeTmpDir();
+          const gitDriver = yield* GitVcsDriver.GitVcsDriver;
+          const checkpointStore = yield* CheckpointStore.CheckpointStore;
+          // Granted, so the failure comes from git (not a repo), not the guard.
+          const vcs = yield* makeVcs({
+            git: gitDriver,
+            checkpoints: checkpointStore,
+            grantedRoots: [nonRepo],
+          });
+
+          const removeExit = yield* Effect.exit(
+            vcs.removePath({ worktreePath: nonRepo, path: "missing.txt" }),
+          );
+          expect(removeExit._tag).toBe("Failure");
+
+          const cleanExit = yield* Effect.exit(
+            vcs.clean({ worktreePath: nonRepo, path: "missing-dir" }),
+          );
+          expect(cleanExit._tag).toBe("Failure");
+        }),
+      ),
+    );
+
+    it.effect("merges with message and no-ff/no-verify options", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const repo = yield* makeTmpDir();
+          yield* initRepoWithCommit(repo);
+          const gitDriver = yield* GitVcsDriver.GitVcsDriver;
+          const checkpointStore = yield* CheckpointStore.CheckpointStore;
+          const vcs = yield* makeVcs({
+            git: gitDriver,
+            checkpoints: checkpointStore,
+            grantedRoots: [repo],
+          });
+
+          yield* vcs.createBranch({ worktreePath: repo, branch: "feature/merge", switch: true });
+          yield* writeTextFile(NodePath.join(repo, "merge.txt"), "merge\n");
+          yield* vcs.commit({ worktreePath: repo, subject: "source", body: "" });
+          yield* git(repo, ["checkout", "main"]);
+
+          const result = yield* vcs.merge({
+            worktreePath: repo,
+            ref: "feature/merge",
+            message: "Merge feature branch",
+            noFf: true,
+            noVerify: true,
+          });
+          expect(result.status).toBe("merged");
+          expect(yield* git(repo, ["log", "-1", "--pretty=%s"])).toBe("Merge feature branch");
+        }),
+      ),
+    );
+
     it.effect("surfaces merge conflicts as a value", () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -174,7 +342,11 @@ it.layer(TestLayer)("VcsCapability", (it) => {
           yield* initRepoWithCommit(repo);
           const gitDriver = yield* GitVcsDriver.GitVcsDriver;
           const checkpointStore = yield* CheckpointStore.CheckpointStore;
-          const vcs = makeVcsCapability({ git: gitDriver, checkpoints: checkpointStore });
+          const vcs = yield* makeVcs({
+            git: gitDriver,
+            checkpoints: checkpointStore,
+            grantedRoots: [repo],
+          });
 
           yield* vcs.createBranch({ worktreePath: repo, branch: "left", switch: true });
           yield* writeTextFile(NodePath.join(repo, "README.md"), "left\n");
@@ -193,6 +365,158 @@ it.layer(TestLayer)("VcsCapability", (it) => {
       ),
     );
 
+    it.effect("aborts merge conflicts back to a clean tree when requested", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const repo = yield* makeTmpDir();
+          yield* initRepoWithCommit(repo);
+          const gitDriver = yield* GitVcsDriver.GitVcsDriver;
+          const checkpointStore = yield* CheckpointStore.CheckpointStore;
+          const vcs = yield* makeVcs({
+            git: gitDriver,
+            checkpoints: checkpointStore,
+            grantedRoots: [repo],
+          });
+
+          yield* vcs.createBranch({ worktreePath: repo, branch: "left", switch: true });
+          yield* writeTextFile(NodePath.join(repo, "README.md"), "left\n");
+          yield* vcs.commit({ worktreePath: repo, subject: "left", body: "" });
+          yield* git(repo, ["checkout", "main"]);
+          yield* vcs.createBranch({ worktreePath: repo, branch: "right", switch: true });
+          yield* writeTextFile(NodePath.join(repo, "README.md"), "right\n");
+          yield* vcs.commit({ worktreePath: repo, subject: "right", body: "" });
+
+          const result = yield* vcs.merge({
+            worktreePath: repo,
+            ref: "left",
+            message: "Merge left",
+            noFf: true,
+            noVerify: true,
+            abortOnConflict: true,
+          });
+          expect(result.status).toBe("conflict");
+          if (result.status === "conflict") {
+            expect(result.conflictedFiles).toEqual(["README.md"]);
+          }
+          expect(yield* git(repo, ["status", "--porcelain"])).toBe("");
+        }),
+      ),
+    );
+
+    it.effect("returns the conflict value even when the conflict-path abort fails", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const repo = yield* makeTmpDir();
+          yield* initRepoWithCommit(repo);
+          const gitDriver = yield* GitVcsDriver.GitVcsDriver;
+          const checkpointStore = yield* CheckpointStore.CheckpointStore;
+          // Wrap the driver so the conflict-detection diff succeeds but the
+          // subsequent `merge --abort` exits nonzero: the facade must .ignore
+          // the abort failure and still return the conflict VALUE (previously
+          // it re-threw as GitCommandError, losing conflictedFiles).
+          const failingAbortGit = {
+            ...gitDriver,
+            execute: (executeInput: GitVcsDriver.ExecuteGitInput) =>
+              executeInput.operation === "PluginVcsCapability.merge.abort"
+                ? Effect.fail(
+                    new GitCommandError({
+                      operation: executeInput.operation,
+                      command: "git",
+                      cwd: executeInput.cwd,
+                      argumentCount: executeInput.args.length,
+                      exitCode: 128,
+                      detail: "simulated merge --abort failure",
+                    }),
+                  )
+                : gitDriver.execute(executeInput),
+          };
+          const vcs = yield* makeVcs({
+            git: failingAbortGit,
+            checkpoints: checkpointStore,
+            grantedRoots: [repo],
+          });
+
+          yield* vcs.createBranch({ worktreePath: repo, branch: "left", switch: true });
+          yield* writeTextFile(NodePath.join(repo, "README.md"), "left\n");
+          yield* vcs.commit({ worktreePath: repo, subject: "left", body: "" });
+          yield* git(repo, ["checkout", "main"]);
+          yield* vcs.createBranch({ worktreePath: repo, branch: "right", switch: true });
+          yield* writeTextFile(NodePath.join(repo, "README.md"), "right\n");
+          yield* vcs.commit({ worktreePath: repo, subject: "right", body: "" });
+
+          const result = yield* vcs.merge({
+            worktreePath: repo,
+            ref: "left",
+            abortOnConflict: true,
+          });
+          expect(result.status).toBe("conflict");
+          if (result.status === "conflict") {
+            expect(result.conflictedFiles).toEqual(["README.md"]);
+          }
+        }),
+      ),
+    );
+
+    it.effect("surfaces a real merge failure as an error, not a conflict", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const repo = yield* makeTmpDir();
+          yield* initRepoWithCommit(repo);
+          const gitDriver = yield* GitVcsDriver.GitVcsDriver;
+          const checkpointStore = yield* CheckpointStore.CheckpointStore;
+          const vcs = yield* makeVcs({
+            git: gitDriver,
+            checkpoints: checkpointStore,
+            grantedRoots: [repo],
+          });
+
+          // A nonexistent ref makes `git merge` exit nonzero with NO unmerged
+          // files. This is a genuine error and must NOT be masked as a conflict.
+          const error = yield* vcs
+            .merge({ worktreePath: repo, ref: "does-not-exist-ref", abortOnConflict: true })
+            .pipe(Effect.flip);
+          expect(error).toBeInstanceOf(GitCommandError);
+          expect((error as GitCommandError).stderr).toContain("does-not-exist-ref");
+          // Best-effort abort keeps the tree clean even on a genuine failure.
+          expect(yield* git(repo, ["status", "--porcelain"])).toBe("");
+        }),
+      ),
+    );
+
+    it.effect("commits with --no-verify when requested", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const repo = yield* makeTmpDir();
+          yield* initRepoWithCommit(repo);
+          const gitDriver = yield* GitVcsDriver.GitVcsDriver;
+          const checkpointStore = yield* CheckpointStore.CheckpointStore;
+          const vcs = yield* makeVcs({
+            git: gitDriver,
+            checkpoints: checkpointStore,
+            grantedRoots: [repo],
+          });
+          const fileSystem = yield* FileSystem.FileSystem;
+
+          const hooksDir = NodePath.join(repo, "hooks");
+          yield* fileSystem.makeDirectory(hooksDir, { recursive: true });
+          const hookPath = NodePath.join(hooksDir, "pre-commit");
+          yield* writeTextFile(hookPath, "#!/bin/sh\nexit 1\n");
+          yield* fileSystem.chmod(hookPath, 0o755);
+          yield* git(repo, ["config", "core.hooksPath", "hooks"]);
+
+          yield* writeTextFile(NodePath.join(repo, "skip-hook.txt"), "skip\n");
+          const result = yield* vcs.commit({
+            worktreePath: repo,
+            subject: "Bypass hook",
+            body: "",
+            noVerify: true,
+          });
+          expect(result.status).toBe("created");
+          expect(yield* git(repo, ["log", "-1", "--pretty=%s"])).toBe("Bypass hook");
+        }),
+      ),
+    );
+
     it.effect("round-trips checkpoints through the existing CheckpointStore surface", () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -200,7 +524,11 @@ it.layer(TestLayer)("VcsCapability", (it) => {
           yield* initRepoWithCommit(repo);
           const gitDriver = yield* GitVcsDriver.GitVcsDriver;
           const checkpointStore = yield* CheckpointStore.CheckpointStore;
-          const vcs = makeVcsCapability({ git: gitDriver, checkpoints: checkpointStore });
+          const vcs = yield* makeVcs({
+            git: gitDriver,
+            checkpoints: checkpointStore,
+            grantedRoots: [repo],
+          });
           const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/plugin-vcs-test/turn/1");
 
           yield* writeTextFile(NodePath.join(repo, "README.md"), "# changed\n");
@@ -217,6 +545,222 @@ it.layer(TestLayer)("VcsCapability", (it) => {
 
           yield* vcs.deleteCheckpoints({ worktreePath: repo, checkpointRefs: [checkpointRef] });
           expect(yield* vcs.hasCheckpoint({ worktreePath: repo, checkpointRef })).toBe(false);
+        }),
+      ),
+    );
+  });
+
+  describe("untrusted-input hardening", () => {
+    it.effect("scopes every root to the plugin's granted workspace", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const repo = yield* makeTmpDir();
+          const foreignRepo = yield* makeTmpDir("plugin-vcs-foreign-");
+          yield* initRepoWithCommit(repo);
+          yield* initRepoWithCommit(foreignRepo);
+          const gitDriver = yield* GitVcsDriver.GitVcsDriver;
+          const checkpointStore = yield* CheckpointStore.CheckpointStore;
+          const vcs = yield* makeVcs({
+            git: gitDriver,
+            checkpoints: checkpointStore,
+            grantedRoots: [repo],
+          });
+
+          // A real repo the server can read is still rejected when ungranted —
+          // for every operation family, not just status.
+          yield* expectFailureContaining(
+            vcs.status({ worktreePath: foreignRepo }),
+            PluginVcsPathError.name,
+          );
+          yield* expectFailureContaining(
+            vcs.commit({ worktreePath: foreignRepo, subject: "nope", body: "" }),
+            PluginVcsPathError.name,
+          );
+          yield* expectFailureContaining(
+            vcs.clean({ worktreePath: foreignRepo, path: "anything" }),
+            PluginVcsPathError.name,
+          );
+          yield* expectFailureContaining(
+            vcs.listRefs({ repoRoot: foreignRepo }),
+            PluginVcsPathError.name,
+          );
+          yield* expectFailureContaining(
+            vcs.createWorktree({
+              repoRoot: foreignRepo,
+              ref: "HEAD",
+              path: NodePath.join(foreignRepo, "worktree"),
+            }),
+            PluginVcsPathError.name,
+          );
+
+          // The granted root keeps working.
+          const status = yield* vcs.status({ worktreePath: repo });
+          expect(status).toBeDefined();
+        }),
+      ),
+    );
+
+    it.effect("rejects a new worktree path outside granted roots and the worktrees dir", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const repo = yield* makeTmpDir();
+          const elsewhere = yield* makeTmpDir("plugin-vcs-elsewhere-");
+          yield* initRepoWithCommit(repo);
+          const gitDriver = yield* GitVcsDriver.GitVcsDriver;
+          const checkpointStore = yield* CheckpointStore.CheckpointStore;
+          const vcs = yield* makeVcs({
+            git: gitDriver,
+            checkpoints: checkpointStore,
+            grantedRoots: [repo],
+          });
+
+          yield* expectFailureContaining(
+            vcs.createWorktree({
+              repoRoot: repo,
+              ref: "HEAD",
+              path: NodePath.join(elsewhere, "escape-worktree"),
+              newBranch: "feature/escape",
+            }),
+            PluginVcsPathError.name,
+          );
+          const fileSystem = yield* FileSystem.FileSystem;
+          expect(yield* fileSystem.exists(NodePath.join(elsewhere, "escape-worktree"))).toBe(false);
+        }),
+      ),
+    );
+
+    it.effect("rejects option injection in user-supplied refs before git runs", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const repo = yield* makeTmpDir();
+          yield* initRepoWithCommit(repo);
+          const gitDriver = yield* GitVcsDriver.GitVcsDriver;
+          const checkpointStore = yield* CheckpointStore.CheckpointStore;
+          const vcs = yield* makeVcs({
+            git: gitDriver,
+            checkpoints: checkpointStore,
+            grantedRoots: [repo],
+          });
+          const injected = `--output=${NodePath.join(repo, "pwned")}`;
+
+          // Refs land in git OPTION position; a leading-dash "ref" like
+          // --output=<file> would otherwise be honored as an option (an
+          // arbitrary-write primitive — `--` does not help, options parse
+          // before it). Every ref-accepting operation must reject it typed.
+          yield* expectFailureContaining(
+            vcs.merge({ worktreePath: repo, ref: injected }),
+            PluginVcsRefError.name,
+          );
+          yield* expectFailureContaining(
+            vcs.diffRefs({ worktreePath: repo, fromRef: injected, toRef: "HEAD" }),
+            PluginVcsRefError.name,
+          );
+          yield* expectFailureContaining(
+            vcs.diffRefs({ worktreePath: repo, fromRef: "HEAD", toRef: injected }),
+            PluginVcsRefError.name,
+          );
+          yield* expectFailureContaining(
+            vcs.diffRefToWorkingTree({ worktreePath: repo, baseRef: injected }),
+            PluginVcsRefError.name,
+          );
+          yield* expectFailureContaining(
+            vcs.aheadCount({ worktreePath: repo, base: injected, head: "HEAD" }),
+            PluginVcsRefError.name,
+          );
+          yield* expectFailureContaining(
+            vcs.createBranch({ worktreePath: repo, branch: "--force" }),
+            PluginVcsRefError.name,
+          );
+          yield* expectFailureContaining(
+            vcs.switchRef({ worktreePath: repo, ref: "--detach" }),
+            PluginVcsRefError.name,
+          );
+          yield* expectFailureContaining(
+            vcs.createWorktree({
+              repoRoot: repo,
+              ref: injected,
+              path: NodePath.join(repo, "wt"),
+            }),
+            PluginVcsRefError.name,
+          );
+          yield* expectFailureContaining(
+            vcs.push({ worktreePath: repo, remoteName: "--force" }),
+            PluginVcsRefError.name,
+          );
+          yield* expectFailureContaining(
+            vcs.createCheckpoint({
+              worktreePath: repo,
+              checkpointRef: CheckpointRef.make("-d"),
+            }),
+            PluginVcsRefError.name,
+          );
+          yield* expectFailureContaining(
+            vcs.deleteCheckpoints({
+              worktreePath: repo,
+              checkpointRefs: [CheckpointRef.make("--stdin")],
+            }),
+            PluginVcsRefError.name,
+          );
+
+          // Nothing was written through the injected "ref".
+          const fileSystem = yield* FileSystem.FileSystem;
+          expect(yield* fileSystem.exists(NodePath.join(repo, "pwned"))).toBe(false);
+        }),
+      ),
+    );
+
+    it.effect("rejects sub-paths and filePaths that escape the worktree", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const parent = yield* makeTmpDir("plugin-vcs-escape-parent-");
+          const repo = NodePath.join(parent, "repo");
+          const fileSystem = yield* FileSystem.FileSystem;
+          yield* fileSystem.makeDirectory(repo, { recursive: true });
+          yield* initRepoWithCommit(repo);
+          const outsideFile = NodePath.join(parent, "outside.txt");
+          yield* writeTextFile(outsideFile, "outside\n");
+          const gitDriver = yield* GitVcsDriver.GitVcsDriver;
+          const checkpointStore = yield* CheckpointStore.CheckpointStore;
+          const vcs = yield* makeVcs({
+            git: gitDriver,
+            checkpoints: checkpointStore,
+            grantedRoots: [repo],
+          });
+
+          // `..`, absolute, and NUL-containing pathspecs are rejected typed
+          // before git runs; the sibling file outside the worktree survives.
+          yield* expectFailureContaining(
+            vcs.removePath({ worktreePath: repo, path: "../outside.txt" }),
+            PluginVcsPathError.name,
+          );
+          yield* expectFailureContaining(
+            vcs.removePath({ worktreePath: repo, path: outsideFile }),
+            PluginVcsPathError.name,
+          );
+          yield* expectFailureContaining(
+            vcs.clean({ worktreePath: repo, path: ".." }),
+            PluginVcsPathError.name,
+          );
+          yield* expectFailureContaining(
+            vcs.clean({ worktreePath: repo, path: "nested/../../escape" }),
+            PluginVcsPathError.name,
+          );
+          yield* expectFailureContaining(
+            vcs.commit({
+              worktreePath: repo,
+              subject: "escape",
+              body: "",
+              filePaths: ["README.md", "../../outside.txt"],
+            }),
+            PluginVcsPathError.name,
+          );
+          yield* expectFailureContaining(
+            vcs.removePath({ worktreePath: repo, path: "with\0nul" }),
+            PluginVcsPathError.name,
+          );
+
+          expect(yield* fileSystem.exists(outsideFile)).toBe(true);
+          expect(yield* fileSystem.readFileString(outsideFile)).toBe("outside\n");
         }),
       ),
     );

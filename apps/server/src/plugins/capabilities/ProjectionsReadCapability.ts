@@ -68,16 +68,23 @@ export function makeProjectionsReadCapability(input: {
         ),
       ),
     listTurnsByThreadId: ({ threadId, limit }) =>
-      input.turns
-        .listByThreadId({ threadId })
-        .pipe(Effect.map((rows) => rows.slice(0, boundedLimit(limit)))),
+      input.turns.listByThreadId({ threadId, limit: boundedLimit(limit) }),
     listMessagesByThreadId: ({ threadId, limit }) =>
       input.messages
-        .listByThreadId({ threadId })
-        .pipe(Effect.map((rows) => rows.slice(0, boundedLimit(limit)).map(toMessage))),
+        .listByThreadId({ threadId, limit: boundedLimit(limit) })
+        .pipe(Effect.map((rows) => rows.map(toMessage))),
+    getMessageById: (messageId) =>
+      input.messages.getByMessageId({ messageId }).pipe(
+        Effect.map(
+          Option.match({
+            onNone: () => null,
+            onSome: toMessage,
+          }),
+        ),
+      ),
     listActivitiesByThreadId: ({ threadId, limit }) =>
       input.activities
-        .listByThreadId({ threadId })
-        .pipe(Effect.map((rows) => rows.slice(0, boundedLimit(limit)).map(toActivity))),
+        .listByThreadId({ threadId, limit: boundedLimit(limit) })
+        .pipe(Effect.map((rows) => rows.map(toActivity))),
   };
 }

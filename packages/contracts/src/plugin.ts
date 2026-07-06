@@ -24,6 +24,8 @@ export const PluginCapability = Schema.Literals([
   "environments.read",
   "secrets",
   "http",
+  "filesystem",
+  "httpClient",
   "sourceControl",
   "textGeneration",
 ]);
@@ -31,7 +33,26 @@ export type PluginCapability = typeof PluginCapability.Type;
 
 const SemverString = TrimmedNonEmptyString.check(Schema.isPattern(SEMVER_PATTERN));
 const HostApiRange = TrimmedNonEmptyString.check(Schema.isPattern(HOST_API_RANGE_PATTERN));
-const OptionalUrl = Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(2048)));
+// author.url / homepage are rendered as <a href> in the marketplace UI, so the
+// scheme is gated to http(s) at decode: a marketplace entry or manifest must
+// not be able to smuggle a `javascript:`/`data:`/`file:` URI into a clickable
+// link.
+const OptionalUrl = Schema.optionalKey(
+  TrimmedNonEmptyString.check(
+    Schema.isMaxLength(2048),
+    Schema.makeFilter<string>((value) => {
+      let parsed: URL;
+      try {
+        parsed = new URL(value);
+      } catch {
+        return "must be an absolute http(s) URL";
+      }
+      return parsed.protocol === "http:" || parsed.protocol === "https:"
+        ? true
+        : "must use the http or https scheme";
+    }),
+  ),
+);
 const Sha256Hex = TrimmedNonEmptyString.check(Schema.isPattern(/^[a-f0-9]{64}$/i));
 
 const RelativeEntryPath = TrimmedNonEmptyString.check(
@@ -49,9 +70,14 @@ const RelativeEntryPath = TrimmedNonEmptyString.check(
 const ManifestEntries = Schema.Struct({
   server: Schema.optionalKey(RelativeEntryPath),
   web: Schema.optionalKey(RelativeEntryPath),
+  // Optional compiled stylesheet shipped alongside the web bundle. The host
+  // injects it (as a <link>) when the plugin's web surface loads, so a plugin can
+  // ship its own CSS instead of relying on the host build to emit its classes.
+  styles: Schema.optionalKey(RelativeEntryPath),
 }).check(
-  Schema.makeFilter<{ readonly server?: string; readonly web?: string }>((entries) =>
-    entries.server || entries.web ? true : "manifest entries must include server or web",
+  Schema.makeFilter<{ readonly server?: string; readonly web?: string; readonly styles?: string }>(
+    (entries) =>
+      entries.server || entries.web ? true : "manifest entries must include server or web",
   ),
 );
 export type PluginManifestEntries = typeof ManifestEntries.Type;
@@ -135,6 +161,9 @@ export const PluginInfo = Schema.Struct({
   state: PluginState,
   capabilities: Schema.Array(PluginCapability),
   hasWeb: Schema.Boolean,
+  // Whether the plugin ships a compiled stylesheet (manifest entries.styles) the
+  // host should inject when the web surface loads.
+  hasStyles: Schema.Boolean,
   lastError: Schema.NullOr(Schema.String),
 });
 export type PluginInfo = typeof PluginInfo.Type;
@@ -378,11 +407,76 @@ function parseStrictSemver(value: string): ParsedSemver | null {
   };
 }
 
-function compareSemver(left: ParsedSemver, right: ParsedSemver): number {
+function compareStrictSemver(left: ParsedSemver, right: ParsedSemver): number {
   if (left.major !== right.major) return left.major - right.major;
   if (left.minor !== right.minor) return left.minor - right.minor;
   return left.patch - right.patch;
 }
+
+// Parse a version into its numeric core and prerelease identifiers, ignoring
+// build metadata (after `+`), which does not affect precedence (semver.org
+// §10). Missing/short numeric core fields are treated as 0, matching the plain
+// `x.y.z` inputs the minAppVersion comparisons still pass in.
+const parseSemverPrecedence = (value: string) => {
+  const withoutBuild = value.split("+")[0] ?? "";
+  const dashIndex = withoutBuild.indexOf("-");
+  const core = dashIndex === -1 ? withoutBuild : withoutBuild.slice(0, dashIndex);
+  const prerelease = dashIndex === -1 ? "" : withoutBuild.slice(dashIndex + 1);
+  const coreParts = core.split(".");
+  const numericAt = (index: number) => {
+    const parsed = Number.parseInt(coreParts[index] ?? "", 10);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  return {
+    major: numericAt(0),
+    minor: numericAt(1),
+    patch: numericAt(2),
+    prerelease: prerelease.length === 0 ? [] : prerelease.split("."),
+  };
+};
+
+// Compare two prerelease identifiers per semver.org §11: numeric identifiers
+// compare numerically and always rank BELOW non-numeric ones; two non-numeric
+// identifiers compare by ASCII.
+const compareIdentifier = (left: string, right: string) => {
+  const leftNumeric = /^\d+$/u.test(left);
+  const rightNumeric = /^\d+$/u.test(right);
+  if (leftNumeric && rightNumeric) {
+    return Number.parseInt(left, 10) - Number.parseInt(right, 10);
+  }
+  if (leftNumeric) return -1;
+  if (rightNumeric) return 1;
+  return left < right ? -1 : left > right ? 1 : 0;
+};
+
+// Semver-precedence-correct comparator (semver.org §11). Returns
+// negative/zero/positive. Callers rely on sign only.
+export const compareSemver = (left: string, right: string): number => {
+  const leftVersion = parseSemverPrecedence(left);
+  const rightVersion = parseSemverPrecedence(right);
+  if (leftVersion.major !== rightVersion.major) return leftVersion.major - rightVersion.major;
+  if (leftVersion.minor !== rightVersion.minor) return leftVersion.minor - rightVersion.minor;
+  if (leftVersion.patch !== rightVersion.patch) return leftVersion.patch - rightVersion.patch;
+  const leftPre = leftVersion.prerelease;
+  const rightPre = rightVersion.prerelease;
+  // Equal core: a version WITH a prerelease has LOWER precedence than one
+  // WITHOUT.
+  if (leftPre.length === 0 && rightPre.length === 0) return 0;
+  if (leftPre.length === 0) return 1;
+  if (rightPre.length === 0) return -1;
+  // Compare dot-separated identifiers left-to-right; when all preceding
+  // identifiers are equal, the larger set of fields has higher precedence.
+  const shared = Math.min(leftPre.length, rightPre.length);
+  for (let index = 0; index < shared; index++) {
+    const diff = compareIdentifier(leftPre[index] ?? "", rightPre[index] ?? "");
+    if (diff !== 0) return diff;
+  }
+  return leftPre.length - rightPre.length;
+};
+
+/** True when a version carries a prerelease component (e.g. `1.1.0-rc.1`). */
+export const isPrereleaseVersion = (version: string): boolean =>
+  parseSemverPrecedence(version).prerelease.length > 0;
 
 export function hostApiSatisfies(range: string, version: string): boolean {
   const trimmedRange = range.trim();
@@ -392,7 +486,7 @@ export function hostApiSatisfies(range: string, version: string): boolean {
   const actual = parseStrictSemver(version);
   if (!target || !actual) return false;
 
-  const compared = compareSemver(actual, target);
+  const compared = compareStrictSemver(actual, target);
   if (operator === "") return compared === 0;
   if (compared < 0) return false;
 

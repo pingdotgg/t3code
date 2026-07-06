@@ -2,8 +2,10 @@ import { assert, describe, it } from "@effect/vitest";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { pluginOperateScope } from "@t3tools/contracts";
 import { PluginId } from "@t3tools/contracts/plugin";
-import type { PluginHttpDescriptor } from "@t3tools/plugin-sdk";
+import type { PluginHttpDescriptor, PluginHttpResponse } from "@t3tools/plugin-sdk";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import {
@@ -17,7 +19,8 @@ import {
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import { PluginHttpRegistry } from "./PluginHttpRegistry.ts";
 import * as PluginHttpRegistryLayer from "./PluginHttpRegistry.ts";
-import { pluginHttpRouteLayer } from "./PluginHttpRoutes.ts";
+import { pluginHttpRouteLayer, respondToPluginHandlerExit } from "./PluginHttpRoutes.ts";
+import { makePluginLogger } from "./PluginLogger.ts";
 
 const pluginId = PluginId.make("http-plugin");
 
@@ -179,6 +182,50 @@ it.layer(PluginHttpRegistryLayer.layer)("PluginHttpRegistry", (it) => {
   );
 });
 
+describe("respondToPluginHandlerExit", () => {
+  const logger = makePluginLogger(pluginId);
+  const context = { method: "POST", path: "/hook" };
+
+  it.effect("maps a successful handler exit to its HTTP response", () =>
+    Effect.gen(function* () {
+      const response = yield* respondToPluginHandlerExit(
+        Exit.succeed({ status: 201, body: "ok" } satisfies PluginHttpResponse),
+        logger,
+        context,
+      );
+      assert.equal(response.status, 201);
+    }),
+  );
+
+  it.effect("converts a genuine handler failure into a 500", () =>
+    Effect.gen(function* () {
+      const exit = (yield* Effect.exit(Effect.die(new Error("boom")))) as Exit.Exit<
+        PluginHttpResponse,
+        Error
+      >;
+      const response = yield* respondToPluginHandlerExit(exit, logger, context);
+      assert.equal(response.status, 500);
+    }),
+  );
+
+  it.effect("re-raises an interrupt instead of answering a 500 to a dead socket", () =>
+    Effect.gen(function* () {
+      const interruptedExit = (yield* Effect.exit(Effect.interrupt)) as Exit.Exit<
+        PluginHttpResponse,
+        Error
+      >;
+      const outcome = yield* Effect.exit(
+        respondToPluginHandlerExit(interruptedExit, logger, context),
+      );
+      assert.isTrue(Exit.isFailure(outcome));
+      if (Exit.isFailure(outcome)) {
+        // Propagated as an interrupt — not swallowed into a 500 response value.
+        assert.isTrue(Cause.hasInterruptsOnly(outcome.cause));
+      }
+    }),
+  );
+});
+
 if (loopbackAvailable) {
   it.layer(makeRouteLayer())("plugin http route layer", (it) => {
     it.effect("round-trips a public route through the router", () =>
@@ -208,6 +255,28 @@ if (loopbackAvailable) {
         assert.equal(response.status, 201);
         assert.equal(response.headers["x-plugin-test"], "ok");
         assert.deepEqual(body, { name: "chris", query: "1", body: "hello" });
+      }),
+    );
+
+    it.effect("reaches a root '/' route with and without a trailing slash", () =>
+      Effect.gen(function* () {
+        const registry = yield* PluginHttpRegistry;
+        yield* registry.put(pluginId, [
+          {
+            method: "POST",
+            path: "/",
+            auth: "public",
+            handler: () => Effect.succeed({ status: 200, body: "root" }),
+          },
+        ]);
+
+        const withoutSlash = yield* postText("/hooks/plugins/http-plugin", "");
+        assert.equal(withoutSlash.status, 200);
+        assert.equal(yield* withoutSlash.text, "root");
+
+        const withSlash = yield* postText("/hooks/plugins/http-plugin/", "");
+        assert.equal(withSlash.status, 200);
+        assert.equal(yield* withSlash.text, "root");
       }),
     );
 

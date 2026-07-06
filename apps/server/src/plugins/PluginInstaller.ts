@@ -4,7 +4,9 @@ import {
   PluginId,
   PluginManagementError,
   PluginManifest,
+  compareSemver,
   hostApiSatisfies,
+  isPrereleaseVersion,
   type MarketplaceVersion,
   type PluginId as PluginIdType,
   type PluginInfo,
@@ -20,13 +22,16 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import { HttpClientResponse } from "effect/unstable/http";
 import * as NodeCrypto from "node:crypto";
 import * as NodeURL from "node:url";
 import * as NodeZlib from "node:zlib";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
+import { PluginHttpClientTransportService } from "./capabilities/HttpClientCapability.ts";
+import { guardedOutboundHttpGet } from "./guardedOutboundHttpGet.ts";
+import { OutboundUrlLookup } from "./OutboundUrlValidator.ts";
 import { PluginCatalog } from "./PluginCatalog.ts";
 import { PluginHost } from "./PluginHost.ts";
 import { pluginSqlPrefix } from "./PluginMigrator.ts";
@@ -36,6 +41,7 @@ import { pluginManifestPath, pluginVersionDir } from "./PluginPaths.ts";
 import { readHttpResponseBytesCapped } from "./readHttpResponseBytesCapped.ts";
 
 const DOWNLOAD_MAX_BYTES = 64 * 1024 * 1024;
+const DOWNLOAD_TIMEOUT_MS = 120_000;
 const EXTRACT_TOTAL_MAX_BYTES = 128 * 1024 * 1024;
 const EXTRACT_FILE_MAX_BYTES = 16 * 1024 * 1024;
 const DECOMPRESSION_RATIO_MAX = 100;
@@ -80,6 +86,8 @@ export const PLUGIN_CAPABILITY_DESCRIPTIONS = {
   "environments.read": "Read environment metadata",
   secrets: "Store plugin secrets",
   http: "Serve plugin HTTP routes",
+  filesystem: "Read and write files in your project workspace and in worktrees this plugin creates",
+  httpClient: "Make requests to public external HTTPS services",
   sourceControl: "Use source control integrations",
   textGeneration: "Request text generation",
 } satisfies Record<PluginCapability, string>;
@@ -190,17 +198,10 @@ const validateRelativeArchivePath = (entryPath: string) => {
   return null;
 };
 
-const ensureSemver = (value: string) => value.split(/[+-]/u)[0]?.split(".").map(Number) ?? [];
-
-const compareSemver = (left: string, right: string) => {
-  const leftParts = ensureSemver(left);
-  const rightParts = ensureSemver(right);
-  for (let index = 0; index < 3; index++) {
-    const diff = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
-    if (diff !== 0) return diff;
-  }
-  return left.localeCompare(right);
-};
+// The semver-precedence comparator lives in @t3tools/contracts/plugin so the
+// web catalog UI ranks versions identically; re-exported here for existing
+// server-side importers.
+export { compareSemver };
 
 const installedEntry = (entry: PluginLockfilePlugin | undefined): PluginLockfilePlugin => {
   if (!entry) {
@@ -394,16 +395,23 @@ const extractTar = (input: {
 
 export const make = Effect.fn("PluginInstaller.make")(function* () {
   const config = yield* ServerConfig.ServerConfig;
-  const httpClient = yield* HttpClient.HttpClient;
   const clock = yield* Clock.Clock;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const lookup = yield* OutboundUrlLookup;
+  const transport = yield* PluginHttpClientTransportService;
   const store = yield* PluginLockfileStore;
   const marketplace = yield* PluginMarketplace;
   const host = yield* PluginHost;
   const catalog = yield* PluginCatalog;
   const stages = yield* Ref.make(new Map<string, StageRecord>());
   const stagingRoot = path.join(config.pluginsDir, ".staging");
+
+  // Stage records live only in this process's memory, so anything under
+  // .staging at startup is unreachable by design (an interrupt/crash between
+  // mkdir and record, or a removal that failed during cleanup). Reap it all
+  // best-effort so orphans cannot accumulate across runs.
+  yield* fs.remove(stagingRoot, { recursive: true, force: true }).pipe(Effect.ignore);
 
   const removePath = (target: string) =>
     fs
@@ -427,7 +435,10 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
       }
       return [removed, next];
     });
-    yield* Effect.forEach(expired, (stage) => removePath(stage.stagingDir), {
+    // Removal is best-effort per directory: one stuck dir (EACCES, locked
+    // file) must not fail the caller (getStage/beginInstall/confirm*) that
+    // merely triggered cleanup. Leftovers are reaped by the startup sweep.
+    yield* Effect.forEach(expired, (stage) => removePath(stage.stagingDir).pipe(Effect.ignore), {
       concurrency: 4,
       discard: true,
     });
@@ -480,16 +491,33 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
         ),
       );
     }
-    return httpClient.execute(HttpClientRequest.get(url)).pipe(
+    // Tarball URLs come from untrusted marketplace.json data: fetch them
+    // through the SSRF guard (per-hop URL validation + DNS-pinned transport,
+    // redirects re-validated) instead of the raw host HttpClient, which would
+    // happily follow a 30x into loopback/private/metadata addresses.
+    return guardedOutboundHttpGet({ url, lookup, transport, timeoutMs: DOWNLOAD_TIMEOUT_MS }).pipe(
       Effect.mapError((cause) =>
-        managementError("download-failed", "Failed to download plugin tarball.", { url, cause }),
+        cause._tag === "OutboundUrlError"
+          ? managementError(
+              "download-failed",
+              `Plugin tarball URL is not allowed: ${cause.reason}.`,
+              {
+                url,
+              },
+            )
+          : managementError("download-failed", "Failed to download plugin tarball.", {
+              url,
+              cause,
+            }),
       ),
       Effect.flatMap(HttpClientResponse.filterStatusOk),
       Effect.mapError((cause) =>
-        managementError("download-failed", "Plugin tarball returned a non-OK response.", {
-          url,
-          cause,
-        }),
+        isPluginManagementError(cause)
+          ? cause
+          : managementError("download-failed", "Plugin tarball returned a non-OK response.", {
+              url,
+              cause,
+            }),
       ),
       Effect.flatMap((response) =>
         readHttpResponseBytesCapped({
@@ -619,7 +647,12 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
         ),
       );
 
-      const tarBytes = yield* decompressTarball(downloaded);
+      const tarBytes = yield* decompressTarball(downloaded).pipe(
+        // Clean up the just-created staging dir if decompression fails (corrupt
+        // archive / gzip-bomb cap). Without this the dir orphans on disk with no
+        // StageRecord, so cleanupExpired can never reap it.
+        Effect.catch((error) => removePath(stagingDir).pipe(Effect.andThen(Effect.fail(error)))),
+      );
       yield* extractTar({ fs, path, tarBytes, outputDir: stagingDir }).pipe(
         Effect.catch((error) => removePath(stagingDir).pipe(Effect.andThen(Effect.fail(error)))),
       );
@@ -731,33 +764,80 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
 
   const confirmInstall: PluginInstaller["Service"]["confirmInstall"] = (stageToken) =>
     Effect.gen(function* () {
-      const stage = yield* getStage(stageToken, "install");
-      yield* moveStagingToVersionDir(stage);
-      const installedAt = DateTime.formatIso(yield* DateTime.now);
-      yield* store
-        .updatePlugin(stage.pluginId, () =>
-          Effect.succeed({
-            version: stage.version,
-            sha256: stage.sha256,
-            sourceId: stage.sourceId,
-            enabled: true,
-            state: "active",
-            activation: { activatingSince: null, crashCount: 0 },
-            installedAt,
-            lastError: null,
-          }),
-        )
-        .pipe(Effect.mapError(lockfileError));
-      yield* dropStage(stageToken);
-      yield* host
-        .activatePlugin(stage.pluginId)
-        .pipe(
-          Effect.mapError((cause) =>
-            managementError("activation-failed", "Plugin activation failed.", { cause }),
-          ),
+      // Armed only for the window between "files moved into the version dir" and
+      // "lockfile entry written". If the commit fails there, the moved files
+      // would otherwise orphan on disk with no lockfile entry. Once the entry is
+      // written it owns the files, so we disarm (a later activation failure must
+      // NOT delete files a committed entry points at). Never remove a dir that
+      // pre-existed the move.
+      let orphanedVersionDir: string | null = null;
+      return yield* Effect.gen(function* () {
+        const stage = yield* getStage(stageToken, "install");
+        const destination = pluginVersionDir(
+          config.pluginsDir,
+          stage.pluginId,
+          stage.version,
+          path.join,
         );
-      return { plugin: yield* pluginInfo(stage.pluginId) };
-    }).pipe(Effect.tapError(() => cleanupStage(stageToken)));
+        const preexisted = yield* fs.exists(destination).pipe(Effect.orElseSucceed(() => false));
+        yield* moveStagingToVersionDir(stage);
+        if (!preexisted) orphanedVersionDir = destination;
+        const installedAt = DateTime.formatIso(yield* DateTime.now);
+        yield* store
+          .updatePlugin(stage.pluginId, ({ lockfile }) =>
+            // Re-run the id-collision check INSIDE the lockfile single-writer:
+            // beginInstall validated against a snapshot, and a concurrent
+            // install may have committed a colliding entry since then —
+            // blindly writing here would silently overwrite it.
+            Effect.try({
+              try: () =>
+                assertNoPluginIdCollision(stage.pluginId, Object.keys(lockfile.plugins), false),
+              catch: (cause) =>
+                isPluginManagementError(cause)
+                  ? cause
+                  : managementError("manifest-invalid", "Plugin id collision check failed.", {
+                      cause,
+                    }),
+            }).pipe(
+              Effect.as({
+                version: stage.version,
+                sha256: stage.sha256,
+                sourceId: stage.sourceId,
+                enabled: true,
+                state: "active" as const,
+                activation: { activatingSince: null, crashCount: 0 },
+                installedAt,
+                lastError: null,
+              }),
+            ),
+          )
+          .pipe(
+            Effect.mapError((cause) =>
+              isPluginManagementError(cause) ? cause : lockfileError(cause),
+            ),
+          );
+        orphanedVersionDir = null;
+        yield* dropStage(stageToken);
+        yield* host
+          .activatePlugin(stage.pluginId)
+          .pipe(
+            Effect.mapError((cause) =>
+              managementError("activation-failed", "Plugin activation failed.", { cause }),
+            ),
+          );
+        return { plugin: yield* pluginInfo(stage.pluginId) };
+      }).pipe(
+        Effect.tapError(() =>
+          cleanupStage(stageToken).pipe(
+            Effect.andThen(
+              orphanedVersionDir === null
+                ? Effect.void
+                : removePath(orphanedVersionDir).pipe(Effect.ignore),
+            ),
+          ),
+        ),
+      );
+    });
 
   const abortInstall: PluginInstaller["Service"]["abortInstall"] = (stageToken) =>
     Effect.gen(function* () {
@@ -783,7 +863,13 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
         )
         .pipe(Effect.mapError(lockfileError));
       if (input.enabled) {
-        yield* host.activatePlugin(input.pluginId);
+        yield* host
+          .activatePlugin(input.pluginId)
+          .pipe(
+            Effect.mapError((cause) =>
+              managementError("activation-failed", "Plugin activation failed.", { cause }),
+            ),
+          );
       } else {
         yield* host.deactivatePlugin(input.pluginId);
       }
@@ -812,12 +898,26 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
           }),
         )
         .pipe(Effect.mapError(lockfileError));
+      // Tear down the live runtime (scope, HTTP routes) now instead of leaving it
+      // running until the next server restart applies pending-remove.
+      yield* host.deactivatePlugin(input.pluginId);
     });
 
   const beginUpgrade: PluginInstaller["Service"]["beginUpgrade"] = (input) =>
     Effect.gen(function* () {
       const lockfile = yield* store.readLockfile.pipe(Effect.mapError(lockfileError));
       const current = installedEntry(lockfile.plugins[input.pluginId]);
+      // Reject upgrading to the already-installed version. Staging + confirming a
+      // same-version upgrade would move the new files onto the LIVE version dir
+      // (moveStagingToVersionDir removes the destination first), destroying the
+      // running plugin's files with no safe rollback. Reject before any staging.
+      if (input.version === current.version) {
+        return yield* managementError(
+          "manifest-invalid",
+          "Plugin is already installed at this version.",
+          { pluginId: input.pluginId, version: input.version },
+        );
+      }
       const source = lockfile.sources.find((candidate) => candidate.id === current.sourceId);
       if (!source) {
         return yield* managementError(
@@ -845,25 +945,50 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
 
   const confirmUpgrade: PluginInstaller["Service"]["confirmUpgrade"] = (stageToken) =>
     Effect.gen(function* () {
-      const stage = yield* getStage(stageToken, "upgrade");
-      yield* moveStagingToVersionDir(stage);
-      const stagedAt = DateTime.formatIso(yield* DateTime.now);
-      yield* store
-        .updatePlugin(stage.pluginId, ({ current }) =>
-          Effect.succeed({
-            ...installedEntry(current),
-            state: "pending-upgrade",
-            staged: {
-              version: stage.version,
-              sha256: stage.sha256,
-              stagedAt,
-            },
-          }),
-        )
-        .pipe(Effect.mapError(lockfileError));
-      yield* dropStage(stageToken);
-      return { plugin: yield* pluginInfo(stage.pluginId) };
-    }).pipe(Effect.tapError(() => cleanupStage(stageToken)));
+      // See confirmInstall: only the moved-but-not-yet-recorded window can orphan
+      // the new version dir. The staged version dir is distinct from the running
+      // version, so removing it on failure never touches the live plugin.
+      let orphanedVersionDir: string | null = null;
+      return yield* Effect.gen(function* () {
+        const stage = yield* getStage(stageToken, "upgrade");
+        const destination = pluginVersionDir(
+          config.pluginsDir,
+          stage.pluginId,
+          stage.version,
+          path.join,
+        );
+        const preexisted = yield* fs.exists(destination).pipe(Effect.orElseSucceed(() => false));
+        yield* moveStagingToVersionDir(stage);
+        if (!preexisted) orphanedVersionDir = destination;
+        const stagedAt = DateTime.formatIso(yield* DateTime.now);
+        yield* store
+          .updatePlugin(stage.pluginId, ({ current }) =>
+            Effect.succeed({
+              ...installedEntry(current),
+              state: "pending-upgrade",
+              staged: {
+                version: stage.version,
+                sha256: stage.sha256,
+                stagedAt,
+              },
+            }),
+          )
+          .pipe(Effect.mapError(lockfileError));
+        orphanedVersionDir = null;
+        yield* dropStage(stageToken);
+        return { plugin: yield* pluginInfo(stage.pluginId) };
+      }).pipe(
+        Effect.tapError(() =>
+          cleanupStage(stageToken).pipe(
+            Effect.andThen(
+              orphanedVersionDir === null
+                ? Effect.void
+                : removePath(orphanedVersionDir).pipe(Effect.ignore),
+            ),
+          ),
+        ),
+      );
+    });
 
   const checkUpdates = Effect.gen(function* () {
     const lockfile = yield* store.readLockfile.pipe(Effect.mapError(lockfileError));
@@ -880,9 +1005,13 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
           if (index === null) return null;
           const marketplaceEntry = index.plugins.find((candidate) => candidate.id === pluginId);
           if (!marketplaceEntry) return null;
-          const latest = marketplaceEntry.versions.toSorted((left, right) =>
-            compareSemver(right.version, left.version),
-          )[0];
+          // Prereleases are only offered as updates when the installed version
+          // is itself a prerelease; a stable install must not be prompted onto
+          // an rc/beta channel.
+          const includePrereleases = isPrereleaseVersion(entry.version);
+          const latest = marketplaceEntry.versions
+            .filter((candidate) => includePrereleases || !isPrereleaseVersion(candidate.version))
+            .toSorted((left, right) => compareSemver(right.version, left.version))[0];
           if (!latest || compareSemver(latest.version, entry.version) <= 0) return null;
           return {
             pluginId,

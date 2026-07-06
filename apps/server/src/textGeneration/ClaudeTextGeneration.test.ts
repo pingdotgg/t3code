@@ -318,6 +318,42 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
     }),
   );
 
+  it.effect("generates board proposals NO-TOOL (no built-ins, no MCP, no skip-permissions)", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            // proposedDefinition is now a JSON STRING on the wire (the provider
+            // schema types it as a string); the op decodes it back to an object.
+            proposedDefinition: JSON.stringify({ lanes: ["todo", "doing", "done"] }),
+            rationale: "  Adds a doing lane to reduce WIP.  ",
+          },
+        }),
+        // SAFETY ASSERTION: the meta-agent must load ZERO tools — built-ins
+        // disabled (`--tools ""`) AND all MCP suppressed (`--strict-mcp-config
+        // --mcp-config {}`), ordered so --tools is last — and MUST NOT pass the
+        // tool-granting skip-permissions flag. (`$*` joins args with spaces;
+        // the empty `--tools` value is the trailing element.)
+        argsMustContain: "--strict-mcp-config --mcp-config {} --tools",
+        argsMustNotContain: "--dangerously-skip-permissions",
+        stdinMustContain: "propose an improved board definition",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateBoardProposal({
+            prompt: "Metrics: tickets stuck in todo. Current def: {lanes:[todo,done]}.",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: "claude-sonnet-4-6",
+            },
+          });
+
+          expect(generated.proposedDefinition).toEqual({ lanes: ["todo", "doing", "done"] });
+          expect(generated.rationale).toBe("Adds a doing lane to reduce WIP.");
+        }),
+    ),
+  );
+
   it.effect("falls back when Claude thread title normalization becomes whitespace-only", () =>
     withFakeClaudeEnv(
       {

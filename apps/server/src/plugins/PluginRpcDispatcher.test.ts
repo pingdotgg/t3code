@@ -215,6 +215,39 @@ dispatcherTest("PluginRpcDispatcher", (it) => {
     }),
   );
 
+  it.effect("fails closed when a descriptor declares an unrecognized scope", () =>
+    Effect.gen(function* () {
+      // Plugin modules are untrusted, dynamically loaded JS, so a descriptor can
+      // carry a scope outside the SDK's `"read" | "operate"` type (here a casing
+      // typo). Such a descriptor must be REJECTED, not silently downgraded to the
+      // weaker plugin read requirement.
+      const badRegistration = {
+        rpc: [{ method: "mystery", scope: "Operate", handler: () => Effect.succeed("nope") }],
+        streams: [
+          { method: "mystery-stream", scope: "Operate", handler: () => Stream.make("nope") },
+        ],
+      } as unknown as PluginRegistration;
+      yield* putRuntime({ ready: true, registration: badRegistration });
+      const dispatcher = yield* PluginRpcDispatcher;
+
+      // Even a full standard client (which implicitly holds every plugin scope)
+      // is denied — proving the rejection is on the descriptor, not the session.
+      const call = yield* Effect.result(
+        dispatcher.call(pluginId, "mystery", null, session(AuthStandardClientScopes)),
+      );
+      const stream = yield* Effect.result(
+        dispatcher
+          .subscribe(pluginId, "mystery-stream", null, session(AuthStandardClientScopes))
+          .pipe(Stream.runCollect),
+      );
+
+      assert.isTrue(Result.isFailure(call));
+      if (Result.isFailure(call)) assert.equal(call.failure.code, "unauthorized");
+      assert.isTrue(Result.isFailure(stream));
+      if (Result.isFailure(stream)) assert.equal(stream.failure.code, "unauthorized");
+    }),
+  );
+
   it.effect("maps handler defects to internal errors and continues serving calls", () =>
     Effect.gen(function* () {
       yield* putRuntime({ ready: true });
@@ -292,6 +325,7 @@ catalogTest("PluginCatalog", (it) => {
           id: plugin.id,
           state: plugin.state,
           hasWeb: plugin.hasWeb,
+          hasStyles: plugin.hasStyles,
           lastError: plugin.lastError,
         })),
         [
@@ -299,12 +333,14 @@ catalogTest("PluginCatalog", (it) => {
             id: failedPluginId,
             state: "failed",
             hasWeb: true,
+            hasStyles: false,
             lastError: "activation failed",
           },
           {
             id: pluginId,
             state: "active",
             hasWeb: true,
+            hasStyles: false,
             lastError: null,
           },
         ],

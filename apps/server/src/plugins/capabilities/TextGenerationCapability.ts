@@ -10,5 +10,6 @@ export function makeTextGenerationCapability(
     generatePrContent: (input) => textGeneration.generatePrContent(input),
     generateBranchName: (input) => textGeneration.generateBranchName(input),
     generateThreadTitle: (input) => textGeneration.generateThreadTitle(input),
+    generateBoardProposal: (input) => textGeneration.generateBoardProposal(input),
   };
 }

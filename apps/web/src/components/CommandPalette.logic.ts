@@ -333,11 +333,15 @@ export function getCommandPaletteMode(input: {
 
 export function buildRootGroups(input: {
   actionItems: ReadonlyArray<CommandPaletteActionItem | CommandPaletteSubmenuItem>;
+  pluginCommandItems?: ReadonlyArray<CommandPaletteActionItem> | undefined;
   recentThreadItems: ReadonlyArray<CommandPaletteActionItem>;
 }): CommandPaletteGroup[] {
   const groups: CommandPaletteGroup[] = [];
   if (input.actionItems.length > 0) {
     groups.push({ value: "actions", label: "Actions", items: input.actionItems });
+  }
+  if ((input.pluginCommandItems?.length ?? 0) > 0) {
+    groups.push({ value: "plugins", label: "Plugins", items: input.pluginCommandItems ?? [] });
   }
   if (input.recentThreadItems.length > 0) {
     groups.push({
@@ -347,6 +351,13 @@ export function buildRootGroups(input: {
     });
   }
   return groups;
+}
+
+export function executeCommandPaletteActionItem(
+  item: CommandPaletteActionItem,
+  onError: (error: unknown) => void,
+): void {
+  void item.run().catch(onError);
 }
 
 export function getCommandPaletteInputPlaceholder(mode: CommandPaletteMode): string {

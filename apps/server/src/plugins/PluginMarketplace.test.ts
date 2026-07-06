@@ -8,9 +8,11 @@ import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import * as NodeURL from "node:url";
 
+import { PluginHttpClientTransportService } from "./capabilities/HttpClientCapability.ts";
+import { OutboundUrlError, OutboundUrlLookup } from "./OutboundUrlValidator.ts";
 import {
   MarketplaceIndex,
   PluginMarketplace,
@@ -41,18 +43,35 @@ const validMarketplace = {
   ],
 };
 
-const TestHttpClientLive = Layer.succeed(
-  HttpClient.HttpClient,
-  HttpClient.make((request) =>
-    Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(validMarketplace))),
-  ),
+// example.test resolves publicly; internal.test resolves into RFC1918 space so
+// the SSRF guard must refuse to fetch it.
+const TestOutboundLookupLive = Layer.succeed(OutboundUrlLookup, (host: string) => {
+  if (host === "example.test") {
+    return Effect.succeed([{ address: "93.184.216.34", family: 4 as const }]);
+  }
+  if (host === "internal.test") {
+    return Effect.succeed([{ address: "192.168.1.10", family: 4 as const }]);
+  }
+  return Effect.fail(new OutboundUrlError({ reason: `unexpected lookup ${host}` }));
+});
+
+const TestPluginHttpClientTransportLive = Layer.succeed(
+  PluginHttpClientTransportService,
+  (request) =>
+    Effect.succeed(
+      HttpClientResponse.fromWeb(
+        HttpClientRequest.get(request.url.toString()),
+        Response.json(validMarketplace),
+      ),
+    ),
 );
 
 const marketplaceTest = it.layer(
   PluginMarketplaceLayer.pipe(
     Layer.provideMerge(NodeServices.layer),
     Layer.provideMerge(TestClock.layer()),
-    Layer.provideMerge(TestHttpClientLive),
+    Layer.provideMerge(TestOutboundLookupLive),
+    Layer.provideMerge(TestPluginHttpClientTransportLive),
   ),
 );
 
@@ -78,6 +97,12 @@ marketplaceTest("PluginMarketplace", (it) => {
     Effect.sync(() => {
       assert.equal(
         resolveMarketplaceUrl("https://example.test/marketplace.json#ignored"),
+        "https://example.test/marketplace.json",
+      );
+      // Embedded credentials must be stripped so they are never persisted in
+      // the lockfile or echoed back through listSources / error payloads.
+      assert.equal(
+        resolveMarketplaceUrl("https://user:secret@example.test/marketplace.json"),
         "https://example.test/marketplace.json",
       );
       assert.equal(
@@ -147,6 +172,85 @@ marketplaceTest("PluginMarketplace", (it) => {
         assert.equal(result.errors[0]?.sourceId, "bad");
       }),
     ),
+  );
+
+  it.effect("surfaces a non-HTTPS tarball as a typed failure, not a defect", () =>
+    withPluginDev(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const marketplace = yield* PluginMarketplace;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-marketplace-" });
+        const filePath = path.join(dir, "marketplace.json");
+        yield* fs.writeFileString(
+          filePath,
+          encodeMarketplaceJson({
+            plugins: [
+              {
+                ...validMarketplace.plugins[0]!,
+                versions: [
+                  {
+                    ...validMarketplace.plugins[0]!.versions[0]!,
+                    tarball: "http://insecure.test/test-plugin-1.0.0.tgz",
+                  },
+                ],
+              },
+            ],
+          }),
+        );
+        const url = NodeURL.pathToFileURL(filePath).toString();
+        const source: PluginSource = {
+          id: sourceIdForUrl(url),
+          url,
+          addedAt: "2026-07-03T00:00:00.000Z",
+        };
+
+        const result = yield* Effect.result(
+          marketplace.findVersion({
+            source,
+            pluginId: PluginId.make("test-plugin"),
+            version: "1.0.0",
+          }),
+        );
+
+        assert.isTrue(Result.isFailure(result));
+        if (Result.isFailure(result)) assert.equal(result.failure.code, "invalid-source");
+      }),
+    ),
+  );
+
+  it.effect("refuses to fetch marketplace hosts that resolve to private addresses", () =>
+    Effect.gen(function* () {
+      const marketplace = yield* PluginMarketplace;
+
+      const result = yield* Effect.result(
+        marketplace.fetchSource({
+          id: "internal",
+          url: "https://internal.test/marketplace.json",
+          addedAt: "2026-07-03T00:00:00.000Z",
+        }),
+      );
+
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) {
+        assert.equal(result.failure.code, "catalog-fetch-failed");
+        assert.include(result.failure.message, "not allowed");
+      }
+    }),
+  );
+
+  it.effect("fetches marketplace json over the guarded HTTP path", () =>
+    Effect.gen(function* () {
+      const marketplace = yield* PluginMarketplace;
+
+      const index = yield* marketplace.fetchSource({
+        id: "https",
+        url: "https://example.test/marketplace.json",
+        addedAt: "2026-07-03T00:00:00.000Z",
+      });
+
+      assert.equal(index.plugins[0]?.id, PluginId.make("test-plugin"));
+    }),
   );
 
   it.effect("rejects marketplace responses over the byte cap", () =>

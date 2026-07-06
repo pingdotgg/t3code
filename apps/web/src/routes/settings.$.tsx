@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { PluginId } from "@t3tools/contracts";
+import type { PluginId } from "@t3tools/contracts";
 import { createFileRoute } from "@tanstack/react-router";
 import { createElement, type FunctionComponent } from "react";
 import type { PluginSettingsComponentProps } from "@t3tools/plugin-sdk-web";
@@ -7,6 +7,7 @@ import type { PluginSettingsComponentProps } from "@t3tools/plugin-sdk-web";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
 import { SettingsPageContainer } from "../components/settings/settingsLayout";
 import {
+  parsePluginIdParam,
   PluginSurfaceErrorBoundary,
   pluginUiRegistryAtom,
   resolvePluginSettingsPageRegistration,
@@ -31,13 +32,13 @@ function parseSettingsSplat(splat: string): {
     .slice(pluginIdIndex + 1)
     .filter((part) => part.length > 0)
     .join("/");
-  if (!rawPluginId || pageId.length === 0) {
+  // Non-throwing parse: the splat is a raw user-typed URL, and an invalid
+  // plugin id must land on the not-found view, not crash the route tree.
+  const pluginId = rawPluginId === undefined ? null : parsePluginIdParam(rawPluginId);
+  if (pluginId === null || pageId.length === 0) {
     return null;
   }
-  return {
-    pluginId: PluginId.make(rawPluginId),
-    pageId,
-  };
+  return { pluginId, pageId };
 }
 
 function PluginSettingsNotFound() {
@@ -65,11 +66,15 @@ function PluginSettingsRouteView() {
     return <PluginSettingsNotFound />;
   }
 
+  const surfaceLabel = `settings:${page.pluginId}:${page.id}`;
+
   // Render as an element (its own fiber) so plugin hooks work — see the note
-  // in the plugin route splat.
+  // in the plugin route splat. The boundary is keyed per surface (the router
+  // reuses this component across param-only changes) and resets when a
+  // registry re-sync reloads the plugin's component.
   return (
     <SettingsPageContainer>
-      <PluginSurfaceErrorBoundary label={`settings:${page.pluginId}:${page.id}`}>
+      <PluginSurfaceErrorBoundary key={surfaceLabel} label={surfaceLabel} resetKey={page.component}>
         {createElement(page.component as FunctionComponent<PluginSettingsComponentProps>, {
           pluginId: page.pluginId,
           pageId: page.id,

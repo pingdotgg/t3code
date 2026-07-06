@@ -233,4 +233,31 @@ it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
         }),
     ),
   );
+
+  // ── No-tool guarantee: Grok has no provable no-tool mode, so board proposals
+  // must be REFUSED rather than run through a tool-capable meta-agent. ──────────
+  it.effect(
+    "generateBoardProposal is unsupported (no provable no-tool mode) and fails with TextGenerationError",
+    () =>
+      withFakeAcpGrok(
+        {
+          // The op fails before spawning the binary; no response is consumed.
+          T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({ ignored: "no binary call expected" }),
+        },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const error = yield* Effect.flip(
+              textGeneration.generateBoardProposal({
+                prompt: "Metrics show WIP is too high. Propose an improved board definition.",
+                modelSelection: createModelSelection(
+                  ProviderInstanceId.make("grok"),
+                  "grok-build",
+                ),
+              }),
+            );
+            expect(error._tag).toBe("TextGenerationError");
+            expect(error.detail).toMatch(/not supported for board proposals/i);
+          }),
+      ),
+  );
 });

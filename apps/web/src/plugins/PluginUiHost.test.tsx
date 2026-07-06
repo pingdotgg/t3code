@@ -6,9 +6,12 @@ import * as Stream from "effect/Stream";
 import {
   createPluginUiHostState,
   getPluginWebEntryUrl,
+  parsePluginIdParam,
+  PluginSurfaceErrorBoundary,
   resolvePluginRouteRegistration,
   resolvePluginSettingsPageRegistration,
   syncPluginUiHostRegistrations,
+  type PluginSurfaceErrorBoundaryProps,
 } from "./PluginUiHost";
 
 const fixturePluginId = PluginId.make("fixture-plugin");
@@ -22,6 +25,7 @@ function pluginInfo(overrides: Partial<PluginInfo> = {}): PluginInfo {
     state: "active",
     capabilities: [],
     hasWeb: true,
+    hasStyles: false,
     lastError: null,
     ...overrides,
   };
@@ -58,6 +62,15 @@ describe("PluginUiHost", () => {
                 title: "General",
                 component: () => null,
               });
+              ctx.registerCommand({
+                id: "refresh",
+                title: "Refresh",
+                run: () => undefined,
+              });
+              ctx.registerProjectAction({
+                id: "new-board",
+                render: () => null,
+              });
               void ctx.rpc.call("ping");
             },
           }),
@@ -77,6 +90,12 @@ describe("PluginUiHost", () => {
     expect(snapshot.routes).toHaveLength(1);
     expect(snapshot.sidebarSections).toHaveLength(1);
     expect(snapshot.settingsPages).toHaveLength(1);
+    expect(snapshot.commands).toHaveLength(1);
+    expect(snapshot.commands[0]?.pluginId).toBe(fixturePluginId);
+    expect(snapshot.commands[0]?.context.pluginId).toBe(fixturePluginId);
+    expect(snapshot.projectActions).toHaveLength(1);
+    expect(snapshot.projectActions[0]?.pluginId).toBe(fixturePluginId);
+    expect(snapshot.projectActions[0]?.id).toBe("new-board");
     expect(snapshot.failures).toEqual({});
   });
 
@@ -106,6 +125,7 @@ describe("PluginUiHost", () => {
       },
     });
     expect(failedSnapshot.routes).toHaveLength(0);
+    expect(failedSnapshot.commands).toHaveLength(0);
     expect(failedSnapshot.failures[failingPluginId]).toContain("boom");
 
     const emptySnapshot = await syncPluginUiHostRegistrations({
@@ -152,5 +172,102 @@ describe("PluginUiHost", () => {
 
   it("uses the conventional same-origin web entry URL", () => {
     expect(getPluginWebEntryUrl(pluginInfo())).toBe("/plugins/fixture-plugin/1.2.3/web/index.js");
+  });
+
+  it("retries a failed web plugin import on the next sync, then keeps the loaded plugin", async () => {
+    const state = createPluginUiHostState();
+    let attempts = 0;
+    const importWebPlugin = async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        throw new Error("transient 404");
+      }
+      return {
+        default: defineWebPlugin({
+          register(ctx) {
+            ctx.registerRoute({ path: "overview", component: () => null });
+          },
+        }),
+      };
+    };
+    const sync = () =>
+      syncPluginUiHostRegistrations({
+        state,
+        plugins: [pluginInfo()],
+        waitForHost: async () => undefined,
+        importWebPlugin,
+      });
+
+    const failed = await sync();
+    expect(failed.routes).toHaveLength(0);
+    expect(failed.failures[fixturePluginId]).toContain("transient 404");
+
+    const recovered = await sync();
+    expect(recovered.routes).toHaveLength(1);
+    expect(recovered.failures).toEqual({});
+    expect(attempts).toBe(2);
+
+    // A successfully loaded plugin is NOT re-imported by later syncs.
+    await sync();
+    expect(attempts).toBe(2);
+  });
+
+  it("parses valid plugin id route params and rejects invalid ones without throwing", () => {
+    expect(parsePluginIdParam("fixture-plugin")).toBe("fixture-plugin");
+    expect(parsePluginIdParam("NOT_VALID!!")).toBeNull();
+    expect(parsePluginIdParam("!!")).toBeNull();
+    expect(parsePluginIdParam("")).toBeNull();
+    expect(parsePluginIdParam("Fixture-Plugin")).toBeNull();
+    expect(parsePluginIdParam("a")).toBeNull();
+  });
+});
+
+describe("PluginSurfaceErrorBoundary", () => {
+  const makeErroredBoundary = (props: Omit<PluginSurfaceErrorBoundaryProps, "children">) => {
+    const boundary = new PluginSurfaceErrorBoundary({ children: null, ...props });
+    boundary.state = { error: new Error("boom") };
+    const resets: Array<unknown> = [];
+    boundary.setState = ((next: unknown) => {
+      resets.push(next);
+    }) as typeof boundary.setState;
+    return { boundary, resets };
+  };
+
+  it("captures render errors via getDerivedStateFromError", () => {
+    const error = new Error("boom");
+    expect(PluginSurfaceErrorBoundary.getDerivedStateFromError(error)).toEqual({ error });
+  });
+
+  it("keeps the error while the same surface re-renders", () => {
+    const resetKey = () => null;
+    const { boundary, resets } = makeErroredBoundary({ label: "route:a:overview", resetKey });
+    boundary.componentDidUpdate({ children: null, label: "route:a:overview", resetKey });
+    expect(resets).toEqual([]);
+  });
+
+  it("resets when the boundary is reused for a different surface", () => {
+    const { boundary, resets } = makeErroredBoundary({ label: "route:b:overview" });
+    boundary.componentDidUpdate({ children: null, label: "route:a:overview" });
+    expect(resets).toEqual([{ error: null }]);
+  });
+
+  it("resets when a registry re-sync reloads the plugin surface", () => {
+    const { boundary, resets } = makeErroredBoundary({
+      label: "route:a:overview",
+      resetKey: () => null,
+    });
+    boundary.componentDidUpdate({
+      children: null,
+      label: "route:a:overview",
+      resetKey: () => null,
+    });
+    expect(resets).toEqual([{ error: null }]);
+  });
+
+  it("does not reset while no error is stored", () => {
+    const { boundary, resets } = makeErroredBoundary({ label: "route:b:overview" });
+    boundary.state = { error: null };
+    boundary.componentDidUpdate({ children: null, label: "route:a:overview" });
+    expect(resets).toEqual([]);
   });
 });

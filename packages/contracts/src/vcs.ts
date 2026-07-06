@@ -1,5 +1,6 @@
 import * as Schema from "effect/Schema";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { capErrorStderr } from "./internal/errorStderr.ts";
 
 export const VcsDriverKind = Schema.Literals(["git", "jj", "unknown"]);
 export type VcsDriverKind = typeof VcsDriverKind.Type;
@@ -122,6 +123,26 @@ export class VcsProcessExitError extends Schema.TaggedErrorClass<VcsProcessExitE
     stderrTruncated: Schema.optional(Schema.Boolean),
   },
 ) {
+  /**
+   * Raw (length-capped) stderr for in-process consumers such as failure
+   * classification (branch-protection / non-fast-forward matching).
+   *
+   * Deliberately NOT a schema field: git/gh stderr can carry credentialed
+   * remote URLs or token-echoing auth failures, and this class is part of
+   * wire-serialized RPC error unions (e.g. `ReviewDiffPreviewError`). Backing
+   * the value with a private field behind a prototype getter keeps it out of
+   * the schema-encoded payload, out of `JSON.stringify`/structured logs, and
+   * out of `Schema.Defect()` cause encoding (which keeps only
+   * name/message/cause) — while `error.stderr` stays readable on the server
+   * before serialization. Only `stderrLength`/`stderrTruncated` cross the
+   * wire.
+   */
+  #stderr: string | undefined;
+
+  get stderr(): string | undefined {
+    return this.#stderr;
+  }
+
   override get message(): string {
     return `VCS process failed in ${this.operation}: ${this.command} (${this.cwd}) exited with ${this.exitCode} - ${this.detail}`;
   }
@@ -142,7 +163,7 @@ export class VcsProcessExitError extends Schema.TaggedErrorClass<VcsProcessExitE
               : "VCS resource not found."
           : "Process exited with a non-zero status.";
 
-    return new VcsProcessExitError({
+    const exitError = new VcsProcessExitError({
       ...context,
       exitCode: error.exitCode,
       detail,
@@ -150,6 +171,8 @@ export class VcsProcessExitError extends Schema.TaggedErrorClass<VcsProcessExitE
       stderrLength: error.stderr.length,
       stderrTruncated: error.stderrTruncated,
     });
+    exitError.#stderr = capErrorStderr(error.stderr);
+    return exitError;
   }
 }
 

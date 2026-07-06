@@ -17,6 +17,7 @@ import { expandHomePath } from "../pathExpansion.ts";
 import { TextGenerationError } from "@t3tools/contracts";
 import * as TextGeneration from "./TextGeneration.ts";
 import {
+  buildBoardProposalPrompt,
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
@@ -35,6 +36,71 @@ import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
 const CODEX_GIT_TEXT_GENERATION_REASONING_EFFORT = "low";
 const CODEX_TIMEOUT_MS = 180_000;
 const encodeJsonString = Schema.encodeEffect(Schema.UnknownFromJsonString);
+
+/**
+ * Build the `codex exec` argv for a structured-output text-generation run.
+ *
+ * `noToolPosture` is the board-proposal hardening (the analog of the Claude
+ * path's `--strict-mcp-config --mcp-config "{}" --tools ""` suppression).
+ * Empirically verified against codex-cli 0.142.2:
+ *
+ * - `--ignore-user-config`: don't load `$CODEX_HOME/config.toml` (configured
+ *   MCP servers, `developer_instructions`, ...). Auth still uses
+ *   `CODEX_HOME`, and model/reasoning-effort/service-tier are passed
+ *   explicitly so they survive the dropped config. NOTE: skills and
+ *   `hooks.json` load from `$CODEX_HOME` independently of `config.toml`, so
+ *   this flag does NOT suppress them — both are user-authored local config
+ *   (full-trust), not reachable from ticket-authored prompt text.
+ * - `--disable shell_tool`: removes the command-execution tool entirely.
+ *   `-s read-only` alone is NOT sufficient: its sandbox still lets commands
+ *   run and READ the whole disk (verified: `cat /etc/hosts` succeeds from an
+ *   unrelated cwd; writes and network are what it blocks). Since the prompt
+ *   embeds ticket-authored text, a prompt-injected model could read a host
+ *   secret and surface it in the returned `rationale`. No shell tool closes
+ *   that read-to-rationale exfil channel.
+ * - `tools.web_search=false`: removes the provider-side `web.run` tool — the
+ *   one remaining direct network egress (the read-only sandbox blocks
+ *   network for sandboxed commands, not provider-side browsing).
+ *
+ * Residual (accepted under full-trust): `view_image` can load a local image
+ * file into model context and `apply_patch` stays listed (its writes are
+ * rejected by the read-only sandbox); neither provides general text reads.
+ * The empty temp cwd (see `generateBoardProposal`) and `-s read-only` remain
+ * as second layers. Git ops keep the user config and shell tool (they are
+ * not no-tool).
+ */
+export function buildCodexExecArgs(input: {
+  readonly model: string;
+  readonly reasoningEffort: string;
+  readonly serviceTier?: string | undefined;
+  readonly schemaPath: string;
+  readonly outputPath: string;
+  readonly imagePaths?: ReadonlyArray<string>;
+  readonly noToolPosture?: boolean;
+}): Array<string> {
+  return [
+    "exec",
+    "--ephemeral",
+    "--skip-git-repo-check",
+    ...(input.noToolPosture
+      ? ["--ignore-user-config", "--disable", "shell_tool", "--config", "tools.web_search=false"]
+      : []),
+    "-s",
+    "read-only",
+    "--model",
+    input.model,
+    "--config",
+    `model_reasoning_effort="${input.reasoningEffort}"`,
+    ...(input.serviceTier ? ["--config", `service_tier="${input.serviceTier}"`] : []),
+    "--output-schema",
+    input.schemaPath,
+    "--output-last-message",
+    input.outputPath,
+    ...(input.imagePaths ?? []).flatMap((imagePath) => ["--image", imagePath]),
+    "-",
+  ];
+}
+
 /**
  * Build a Codex text-generation closure bound to a specific `CodexSettings`
  * payload. See `makeCodexAdapter` for the overall per-instance rationale.
@@ -97,7 +163,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle",
+      | "generateThreadTitle"
+      | "generateBoardProposal",
     value: unknown,
   ): Effect.Effect<string, TextGenerationError> =>
     encodeJsonString(value).pipe(
@@ -116,7 +183,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle",
+      | "generateThreadTitle"
+      | "generateBoardProposal",
     attachments: TextGeneration.BranchNameGenerationInput["attachments"],
   ): Effect.fn.Return<MaterializedImageAttachments, TextGenerationError> {
     if (!attachments || attachments.length === 0) {
@@ -153,18 +221,24 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     imagePaths = [],
     cleanupPaths = [],
     modelSelection,
+    noToolPosture = false,
   }: {
     operation:
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateBoardProposal";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
     imagePaths?: ReadonlyArray<string>;
     cleanupPaths?: ReadonlyArray<string>;
     modelSelection: ModelSelection;
+    // No-tool posture: drop $CODEX_HOME/config.toml, disable the shell tool,
+    // and disable provider-side web search (see buildCodexExecArgs). Only the
+    // board-proposal op sets this; git ops keep the user config and tools.
+    noToolPosture?: boolean;
   }): Effect.fn.Return<S["Type"], TextGenerationError, S["DecodingServices"]> {
     const schemaJson = yield* encodeJsonForOperation(
       operation,
@@ -180,24 +254,15 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       const serviceTier = getCodexServiceTierOptionValue(modelSelection);
       const spawnCommand = yield* resolveSpawnCommand(
         codexConfig.binaryPath || "codex",
-        [
-          "exec",
-          "--ephemeral",
-          "--skip-git-repo-check",
-          "-s",
-          "read-only",
-          "--model",
-          modelSelection.model,
-          "--config",
-          `model_reasoning_effort="${reasoningEffort}"`,
-          ...(serviceTier ? ["--config", `service_tier="${serviceTier}"`] : []),
-          "--output-schema",
+        buildCodexExecArgs({
+          model: modelSelection.model,
+          reasoningEffort,
+          serviceTier,
           schemaPath,
-          "--output-last-message",
           outputPath,
-          ...imagePaths.flatMap((imagePath) => ["--image", imagePath]),
-          "-",
-        ],
+          imagePaths,
+          noToolPosture,
+        }),
         { env: resolvedEnvironment },
       );
       const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
@@ -395,10 +460,56 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 
+  const generateBoardProposal: TextGeneration.TextGeneration["Service"]["generateBoardProposal"] =
+    Effect.fn("CodexTextGeneration.generateBoardProposal")(function* (input) {
+      const { prompt, outputSchema } = buildBoardProposalPrompt({ prompt: input.prompt });
+
+      // SAFETY (defense-in-depth): run the board-proposal op from an empty
+      // throwaway temp dir rather than the repo root. Even with the shell tool
+      // disabled (see buildCodexExecArgs), residual tools like `view_image`
+      // resolve relative paths against process.cwd(); an empty temp dir keeps
+      // the repo out of reach entirely, making this prompt-only egress (only
+      // the assembled prompt leaves the machine). The scoped temp dir is
+      // removed when the effect completes.
+      // NOTE: this is ONLY for generateBoardProposal — git ops (generateCommitMessage
+      // etc.) must keep the repo cwd they receive via input.cwd.
+      const generated = yield* fileSystem
+        .makeTempDirectoryScoped({ prefix: "t3code-board-proposal-" })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new TextGenerationError({
+                operation: "generateBoardProposal",
+                detail: "Failed to create sandbox working directory for board proposal.",
+                cause,
+              }),
+          ),
+          Effect.flatMap((sandboxCwd) =>
+            runCodexJson({
+              operation: "generateBoardProposal",
+              cwd: sandboxCwd,
+              prompt,
+              outputSchemaJson: outputSchema,
+              modelSelection: input.modelSelection,
+              // No-tool clean room: no user config (MCP servers,
+              // developer_instructions), no shell tool, no web search.
+              noToolPosture: true,
+            }),
+          ),
+          Effect.scoped,
+        );
+
+      return {
+        proposedDefinition: generated.proposedDefinition,
+        rationale: generated.rationale.trim(),
+      };
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateBoardProposal,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

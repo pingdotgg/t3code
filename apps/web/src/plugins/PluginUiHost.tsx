@@ -2,20 +2,20 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import type {
   PluginCommandRegistration,
   PluginComponent,
+  PluginProjectActionRenderProps,
   PluginRouteComponentProps,
   PluginSettingsComponentProps,
-  PluginSidebarSectionRegistration,
   PluginSidebarSectionRenderProps,
   PluginUiContext,
   PluginWebDefinition,
   PluginWebRpc,
 } from "@t3tools/plugin-sdk-web";
-import type { PluginId, PluginInfo } from "@t3tools/contracts";
+import { PLUGIN_ID_PATTERN_SOURCE, type PluginId, type PluginInfo } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 import { Component, useEffect, useRef, type ErrorInfo, type ReactNode } from "react";
 
 import { pluginListAtom, pluginRpc } from "../state/plugins";
-import { whenPluginHostReady } from "./hostSingletons";
+import { whenPluginHostReady } from "./hostSingletonsReady";
 
 export interface RegisteredPluginRoute {
   readonly pluginId: PluginId;
@@ -37,8 +37,15 @@ export interface RegisteredPluginSettingsPage {
   readonly component: PluginComponent<PluginSettingsComponentProps>;
 }
 
+export interface RegisteredPluginProjectAction {
+  readonly pluginId: PluginId;
+  readonly id: string;
+  readonly render: (props: PluginProjectActionRenderProps) => unknown;
+}
+
 export interface RegisteredPluginCommand extends PluginCommandRegistration {
   readonly pluginId: PluginId;
+  readonly context: PluginUiContext;
 }
 
 export interface PluginUiRegistrySnapshot {
@@ -46,6 +53,7 @@ export interface PluginUiRegistrySnapshot {
   readonly sidebarSections: ReadonlyArray<RegisteredPluginSidebarSection>;
   readonly settingsPages: ReadonlyArray<RegisteredPluginSettingsPage>;
   readonly commands: ReadonlyArray<RegisteredPluginCommand>;
+  readonly projectActions: ReadonlyArray<RegisteredPluginProjectAction>;
   readonly failures: Readonly<Record<string, string>>;
 }
 
@@ -56,6 +64,7 @@ interface LoadedPlugin {
   readonly sidebarSections: ReadonlyArray<RegisteredPluginSidebarSection>;
   readonly settingsPages: ReadonlyArray<RegisteredPluginSettingsPage>;
   readonly commands: ReadonlyArray<RegisteredPluginCommand>;
+  readonly projectActions: ReadonlyArray<RegisteredPluginProjectAction>;
   readonly failure: string | null;
 }
 
@@ -68,6 +77,7 @@ export const EMPTY_PLUGIN_UI_REGISTRY_SNAPSHOT: PluginUiRegistrySnapshot = Objec
   sidebarSections: Object.freeze([]),
   settingsPages: Object.freeze([]),
   commands: Object.freeze([]),
+  projectActions: Object.freeze([]),
   failures: Object.freeze({}),
 });
 
@@ -77,6 +87,19 @@ export const pluginUiRegistryAtom = Atom.make<PluginUiRegistrySnapshot>(
 
 export function createPluginUiHostState(): PluginUiHostState {
   return { loaded: new Map() };
+}
+
+const PLUGIN_ID_PARAM_PATTERN = new RegExp(`^${PLUGIN_ID_PATTERN_SOURCE}$`);
+
+/**
+ * Non-throwing PluginId parse for user-typed route params. URL segments are
+ * attacker-controlled and `PluginId.make` THROWS during render on a pattern
+ * mismatch — past the plugin surface boundary, into the root errorComponent —
+ * so routes must resolve invalid ids to null and fall through to their
+ * not-found views instead.
+ */
+export function parsePluginIdParam(raw: string): PluginId | null {
+  return PLUGIN_ID_PARAM_PATTERN.test(raw) ? (raw as PluginId) : null;
 }
 
 function normalizePluginPath(path: string): string {
@@ -95,6 +118,7 @@ function snapshotFromState(state: PluginUiHostState): PluginUiRegistrySnapshot {
   const sidebarSections: Array<RegisteredPluginSidebarSection> = [];
   const settingsPages: Array<RegisteredPluginSettingsPage> = [];
   const commands: Array<RegisteredPluginCommand> = [];
+  const projectActions: Array<RegisteredPluginProjectAction> = [];
   const failures: Record<string, string> = {};
 
   for (const loaded of state.loaded.values()) {
@@ -106,14 +130,65 @@ function snapshotFromState(state: PluginUiHostState): PluginUiRegistrySnapshot {
     sidebarSections.push(...loaded.sidebarSections);
     settingsPages.push(...loaded.settingsPages);
     commands.push(...loaded.commands);
+    projectActions.push(...loaded.projectActions);
   }
 
-  return { routes, sidebarSections, settingsPages, commands, failures };
+  return { routes, sidebarSections, settingsPages, commands, projectActions, failures };
 }
 
 export function getPluginWebEntryUrl(plugin: Pick<PluginInfo, "id" | "version">): string {
   // Slice 2b-2 uses the bundle convention served by PluginWebRoutes.
   return `/plugins/${encodeURIComponent(plugin.id)}/${encodeURIComponent(plugin.version)}/web/index.js`;
+}
+
+export function getPluginStylesUrl(
+  plugin: Pick<PluginInfo, "id" | "version" | "hasStyles">,
+): string | null {
+  // A plugin that declares `entries.styles` ships a compiled stylesheet next to
+  // its web bundle. The host build only scans host source, so a plugin must ship
+  // its own CSS for any classes it uses that the host doesn't.
+  return plugin.hasStyles
+    ? `/plugins/${encodeURIComponent(plugin.id)}/${encodeURIComponent(plugin.version)}/web/index.css`
+    : null;
+}
+
+const PLUGIN_STYLE_LINK_ATTR = "data-t3-plugin-styles";
+
+/**
+ * Reconcile the `<link rel="stylesheet">` elements for active web plugins that
+ * ship styles: inject one per plugin (keyed by id), drop links for plugins that
+ * are no longer active or whose version (href) changed. Idempotent.
+ */
+function reconcilePluginStyleLinks(activeWebPlugins: ReadonlyArray<PluginInfo>): void {
+  if (typeof document === "undefined") {
+    return;
+  }
+  const desired = new Map<string, string>();
+  for (const plugin of activeWebPlugins) {
+    const url = getPluginStylesUrl(plugin);
+    if (url !== null) {
+      desired.set(plugin.id, url);
+    }
+  }
+  for (const element of Array.from(
+    document.head.querySelectorAll(`link[${PLUGIN_STYLE_LINK_ATTR}]`),
+  )) {
+    const id = element.getAttribute(PLUGIN_STYLE_LINK_ATTR);
+    if (id === null || desired.get(id) !== element.getAttribute("href")) {
+      element.remove();
+    }
+  }
+  for (const [id, url] of desired) {
+    if (
+      document.head.querySelector(`link[${PLUGIN_STYLE_LINK_ATTR}="${CSS.escape(id)}"]`) === null
+    ) {
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.setAttribute("href", url);
+      link.setAttribute(PLUGIN_STYLE_LINK_ATTR, id);
+      document.head.appendChild(link);
+    }
+  }
 }
 
 function makePluginLogger(pluginId: PluginId): PluginUiContext["logger"] {
@@ -164,13 +239,24 @@ export async function syncPluginUiHostRegistrations({
   const activeWebPlugins = plugins.filter((plugin) => plugin.state === "active" && plugin.hasWeb);
   const activeKeys = new Set(activeWebPlugins.map((plugin) => `${plugin.id}@${plugin.version}`));
 
+  // Inject/remove each active web plugin's stylesheet <link> alongside its JS.
+  reconcilePluginStyleLinks(activeWebPlugins);
+
   for (const [pluginId, loaded] of state.loaded.entries()) {
     if (!activeKeys.has(`${pluginId}@${loaded.version}`)) {
       state.loaded.delete(pluginId);
     }
   }
 
-  const pluginsToLoad = activeWebPlugins.filter((plugin) => !state.loaded.has(plugin.id));
+  // Reload plugins whose previous load FAILED as well as never-loaded ones: an
+  // import failure can be transient (server restart 404ing the bundle, network
+  // blip), and lifecycle-driven resyncs are the self-healing signal. A retry is
+  // cheap — the browser caches the module once it succeeds — and a
+  // deterministic failure just re-records itself.
+  const pluginsToLoad = activeWebPlugins.filter((plugin) => {
+    const loaded = state.loaded.get(plugin.id);
+    return loaded === undefined || loaded.failure !== null;
+  });
   if (pluginsToLoad.length > 0) {
     await waitForHost();
   }
@@ -180,6 +266,7 @@ export async function syncPluginUiHostRegistrations({
     const sidebarSections: Array<RegisteredPluginSidebarSection> = [];
     const settingsPages: Array<RegisteredPluginSettingsPage> = [];
     const commands: Array<RegisteredPluginCommand> = [];
+    const projectActions: Array<RegisteredPluginProjectAction> = [];
 
     try {
       const module = await importWebPlugin(getPluginWebEntryUrl(plugin));
@@ -202,7 +289,10 @@ export async function syncPluginUiHostRegistrations({
           settingsPages.push({ ...registration, pluginId: plugin.id });
         },
         registerCommand: (registration) => {
-          commands.push({ ...registration, pluginId: plugin.id });
+          commands.push({ ...registration, pluginId: plugin.id, context: ctx });
+        },
+        registerProjectAction: (registration) => {
+          projectActions.push({ ...registration, pluginId: plugin.id });
         },
       };
       await maybeAwait(definition.register(ctx));
@@ -213,6 +303,7 @@ export async function syncPluginUiHostRegistrations({
         sidebarSections,
         settingsPages,
         commands,
+        projectActions,
         failure: null,
       });
     } catch (error) {
@@ -225,6 +316,7 @@ export async function syncPluginUiHostRegistrations({
         sidebarSections: [],
         settingsPages: [],
         commands: [],
+        projectActions: [],
         failure: message,
       });
     }
@@ -274,7 +366,13 @@ export function PluginUiHost() {
       syncPluginUiHostRegistrations({
         state: stateRef.current,
         plugins,
-        waitForHost: () => whenPluginHostReady,
+        // Publish the host singletons on demand: hostSingletons pulls the full
+        // `effect` barrel + `@t3tools/contracts` + the SDK surface, so it is
+        // code-split out of the main bundle and only loaded once a web plugin
+        // actually needs it. `whenPluginHostReady` resolves when it publishes;
+        // a failed chunk load rejects the sync, which the chain logs and the
+        // next lifecycle-driven sync retries.
+        waitForHost: () => import("./hostSingletons").then(() => whenPluginHostReady),
         importWebPlugin: (url) => import(/* @vite-ignore */ url),
       }).then((snapshot) => {
         if (!cancelled) {
@@ -294,11 +392,21 @@ export function PluginUiHost() {
   return null;
 }
 
+export interface PluginSurfaceErrorBoundaryProps {
+  readonly children: ReactNode;
+  readonly label: string;
+  // Identity of the rendered plugin surface (e.g. the registered component
+  // function). Registry re-syncs re-import a plugin's module, so a changed
+  // resetKey means new plugin code — retry rendering instead of staying stuck
+  // on the fallback.
+  readonly resetKey?: unknown;
+}
+
 export class PluginSurfaceErrorBoundary extends Component<
-  { readonly children: ReactNode; readonly label: string },
+  PluginSurfaceErrorBoundaryProps,
   { readonly error: Error | null }
 > {
-  override state = { error: null };
+  override state: { readonly error: Error | null } = { error: null };
 
   static getDerivedStateFromError(error: Error) {
     return { error };
@@ -306,6 +414,22 @@ export class PluginSurfaceErrorBoundary extends Component<
 
   override componentDidCatch(error: Error, info: ErrorInfo) {
     console.error(`[plugin-ui] ${this.props.label} crashed`, error, info);
+  }
+
+  // React error boundaries keep their error state until they remount, but this
+  // boundary instance can be REUSED for a different surface (TanStack Router
+  // does not remount a route component on param-only changes) or for reloaded
+  // plugin code (registry re-sync). Reset the error whenever the surface
+  // identity changes so one crash doesn't permanently stick the fallback.
+  override componentDidUpdate(prevProps: PluginSurfaceErrorBoundaryProps) {
+    if (
+      this.state.error !== null &&
+      (prevProps.label !== this.props.label || prevProps.resetKey !== this.props.resetKey)
+    ) {
+      // Guarded error-boundary reset: only fires on a surface-identity change, so it cannot loop.
+      // eslint-disable-next-line react/no-did-update-set-state
+      this.setState({ error: null });
+    }
   }
 
   override render() {

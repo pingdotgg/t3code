@@ -1,7 +1,11 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { PluginId, type PluginLockfilePlugin } from "@t3tools/contracts/plugin";
+import {
+  EMPTY_PLUGIN_LOCKFILE,
+  PluginId,
+  type PluginLockfilePlugin,
+} from "@t3tools/contracts/plugin";
 import {
   PLUGIN_WEB_BUNDLE_CACHE_CONTROL,
   PLUGIN_WEB_SHIM_CACHE_CONTROL,
@@ -10,13 +14,14 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as TestClock from "effect/testing/TestClock";
 import { FetchHttpClient, HttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
 
 import * as ServerConfig from "../config.ts";
 import { PluginLockfileStore } from "./PluginLockfileStore.ts";
 import * as PluginLockfileStoreLayer from "./PluginLockfileStore.ts";
 import { pluginVersionDir } from "./PluginPaths.ts";
-import { pluginWebRouteLayer } from "./PluginWebRoutes.ts";
+import { pluginWebRouteLayer, readLockfileCached } from "./PluginWebRoutes.ts";
 
 const pluginId = PluginId.make("web-plugin");
 
@@ -189,3 +194,50 @@ if (loopbackAvailable) {
     it("skips live router assertions when local TCP bind is unavailable", () => {});
   });
 }
+
+describe("readLockfileCached", () => {
+  it.effect("serves cached reads within the TTL and re-reads after it expires", () =>
+    Effect.gen(function* () {
+      const cacheKey = {};
+      let reads = 0;
+      const read = Effect.sync(() => {
+        reads += 1;
+        return EMPTY_PLUGIN_LOCKFILE;
+      });
+
+      const first = yield* readLockfileCached(cacheKey, read);
+      const second = yield* readLockfileCached(cacheKey, read);
+      assert.strictEqual(first, EMPTY_PLUGIN_LOCKFILE);
+      assert.strictEqual(second, EMPTY_PLUGIN_LOCKFILE);
+      assert.strictEqual(reads, 1);
+
+      yield* TestClock.adjust(2_000);
+      yield* readLockfileCached(cacheKey, read);
+      assert.strictEqual(reads, 2);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("keeps caches for distinct stores isolated and does not cache failures", () =>
+    Effect.gen(function* () {
+      const cacheKey = {};
+      const otherKey = {};
+      let reads = 0;
+      const read = Effect.sync(() => {
+        reads += 1;
+        return EMPTY_PLUGIN_LOCKFILE;
+      });
+
+      const failure = yield* readLockfileCached(cacheKey, Effect.fail("boom" as const)).pipe(
+        Effect.flip,
+      );
+      assert.strictEqual(failure, "boom");
+
+      // The failed read left nothing behind for this key…
+      yield* readLockfileCached(cacheKey, read);
+      assert.strictEqual(reads, 1);
+      // …and a different store gets its own fresh read.
+      yield* readLockfileCached(otherKey, read);
+      assert.strictEqual(reads, 2);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+});
