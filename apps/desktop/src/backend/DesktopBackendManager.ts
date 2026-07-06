@@ -660,7 +660,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
                     const shouldRestart = yield* (
                       spec.onPreflightFailed?.({
                         reason: `WSL backend exited before becoming ready ${attempt} times in a row. ${reason}`,
-                        fatal: true,
+                        fatal: false,
                       }) ?? Effect.succeed(false)
                     );
                     if (!shouldRestart) {
