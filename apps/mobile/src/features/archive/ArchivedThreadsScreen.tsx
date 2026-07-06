@@ -7,8 +7,10 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { SymbolView } from "../../components/AppSymbol";
+import { useNavigation } from "@react-navigation/native";
 import { useCallback, useMemo, useRef, type ComponentProps } from "react";
 import {
+  TextInput,
   ActivityIndicator,
   Platform,
   Pressable,
@@ -23,6 +25,8 @@ import { AppText as Text } from "../../components/AppText";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { EmptyState } from "../../components/EmptyState";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { relativeTime } from "../../lib/time";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
@@ -74,13 +78,172 @@ function ArchivedThreadsHeader(props: {
   readonly onSortOrderChange: (sortOrder: ArchivedThreadSortOrder) => void;
 }) {
   const { width } = useWindowDimensions();
+  const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
   const hasCustomFilter = props.selectedEnvironmentId !== null || props.sortOrder !== "newest";
   const searchBackgroundColor = useThemeColor("--color-input");
   const searchIconColor = useThemeColor("--color-icon");
   const searchPlaceholderColor = useThemeColor("--color-placeholder");
   const searchTextColor = useThemeColor("--color-foreground");
+  const headerColor = useThemeColor("--color-header");
+  const headerBorderColor = useThemeColor("--color-header-border");
+  const subtleColor = useThemeColor("--color-subtle");
   const usesNativeChrome = Platform.OS === "ios";
   const usesCompactMailToolbar = Platform.OS === "ios" && width < 700;
+  const androidFilterActions = useMemo<MenuAction[]>(
+    () => [
+      {
+        id: "environment",
+        title: "Environment",
+        subactions: [
+          {
+            id: "environment:all",
+            title: "All environments",
+            state: props.selectedEnvironmentId === null ? ("on" as const) : undefined,
+          },
+          ...props.environments.map((environment) => ({
+            id: `environment:${environment.environmentId}`,
+            title: environment.label,
+            state:
+              props.selectedEnvironmentId === environment.environmentId
+                ? ("on" as const)
+                : undefined,
+          })),
+        ],
+      },
+      {
+        id: "sort",
+        title: "Sort by archived date",
+        subactions: [
+          {
+            id: "sort:newest",
+            title: "Newest first",
+            state: props.sortOrder === "newest" ? ("on" as const) : undefined,
+          },
+          {
+            id: "sort:oldest",
+            title: "Oldest first",
+            state: props.sortOrder === "oldest" ? ("on" as const) : undefined,
+          },
+        ],
+      },
+    ],
+    [props.environments, props.selectedEnvironmentId, props.sortOrder],
+  );
+  const handleAndroidFilterAction = useCallback(
+    (event: { nativeEvent: { event: string } }) => {
+      const action = event.nativeEvent.event;
+      if (action === "environment:all") {
+        props.onEnvironmentChange(null);
+      } else if (action.startsWith("environment:")) {
+        props.onEnvironmentChange(action.slice("environment:".length) as EnvironmentId);
+      } else if (action === "sort:newest") {
+        props.onSortOrderChange("newest");
+      } else if (action === "sort:oldest") {
+        props.onSortOrderChange("oldest");
+      }
+    },
+    [props.onEnvironmentChange, props.onSortOrderChange],
+  );
+
+  if (Platform.OS === "android") {
+    // Single header row matching the app's Android chrome (AndroidScreenHeader
+    // palette): back chevron, inline search, filter menu.
+    return (
+      <>
+        <NativeStackScreenOptions options={{ headerShown: false }} />
+        <View
+          style={{
+            backgroundColor: headerColor,
+            borderBottomColor: headerBorderColor,
+            borderBottomWidth: 1,
+            paddingBottom: 10,
+            paddingHorizontal: 12,
+            paddingTop: Math.max(insets.top, 12),
+          }}
+        >
+          <View style={{ alignItems: "center", flexDirection: "row", gap: 8, minHeight: 48 }}>
+            <Pressable
+              accessibilityLabel="Navigate up"
+              accessibilityRole="button"
+              hitSlop={8}
+              onPress={() => navigation.goBack()}
+              style={{ alignItems: "center", height: 44, justifyContent: "center", width: 44 }}
+            >
+              <SymbolView
+                name="chevron.left"
+                size={24}
+                tintColor={searchTextColor}
+                type="monochrome"
+              />
+            </Pressable>
+            <View
+              style={{
+                alignItems: "center",
+                backgroundColor: searchBackgroundColor,
+                borderRadius: 16,
+                flex: 1,
+                flexDirection: "row",
+                gap: 10,
+                minHeight: 44,
+                paddingHorizontal: 14,
+              }}
+            >
+              <SymbolView
+                name="magnifyingglass"
+                size={17}
+                tintColor={searchIconColor}
+                type="monochrome"
+              />
+              <TextInput
+                accessibilityLabel="Search archived threads"
+                autoCapitalize="none"
+                onChangeText={props.onSearchQueryChange}
+                placeholder="Search archived threads"
+                placeholderTextColor={String(searchPlaceholderColor)}
+                style={{
+                  color: String(searchTextColor),
+                  flex: 1,
+                  fontFamily: "DMSans_400Regular",
+                  fontSize: MOBILE_TYPOGRAPHY.body.fontSize,
+                  paddingVertical: 8,
+                }}
+              />
+            </View>
+            <ControlPillMenu
+              actions={androidFilterActions}
+              isAnchoredToRight
+              onPressAction={handleAndroidFilterAction}
+            >
+              <Pressable
+                accessibilityLabel="Filter and sort archived threads"
+                accessibilityRole="button"
+                style={{
+                  alignItems: "center",
+                  backgroundColor: subtleColor,
+                  borderRadius: 99,
+                  height: 44,
+                  justifyContent: "center",
+                  width: 44,
+                }}
+              >
+                <SymbolView
+                  name={
+                    hasCustomFilter
+                      ? "line.3.horizontal.decrease.circle.fill"
+                      : "line.3.horizontal.decrease.circle"
+                  }
+                  size={16}
+                  tintColor={searchIconColor}
+                  type="monochrome"
+                />
+              </Pressable>
+            </ControlPillMenu>
+          </View>
+        </View>
+      </>
+    );
+  }
   const archiveFilterMenu = {
     title: "Archived thread options",
     items: [
@@ -160,14 +323,6 @@ function ArchivedThreadsHeader(props: {
                   : {
                       placement: "stacked" as const,
                     }),
-                ...(Platform.OS === "android"
-                  ? {
-                      barTintColor: searchBackgroundColor,
-                      headerIconColor: searchIconColor,
-                      hintTextColor: searchPlaceholderColor,
-                      textColor: searchTextColor,
-                    }
-                  : {}),
                 autoCapitalize: "none",
                 hideNavigationBar: false,
                 obscureBackground: false,
@@ -306,6 +461,15 @@ function ArchivedThreadRow(props: {
   return (
     <ThreadSwipeable
       backgroundColor={cardColor}
+      // Round + clip the swipeable container so the group's corners stay
+      // rounded while rows swipe; the row itself stays square inside.
+      containerStyle={{
+        borderTopLeftRadius: props.isFirst ? 20 : 0,
+        borderTopRightRadius: props.isFirst ? 20 : 0,
+        borderBottomLeftRadius: props.isLast ? 20 : 0,
+        borderBottomRightRadius: props.isLast ? 20 : 0,
+        overflow: "hidden",
+      }}
       fullSwipeWidth={windowWidth - 32}
       onDelete={props.onDelete}
       onSwipeableClose={props.onSwipeableClose}
@@ -325,10 +489,6 @@ function ArchivedThreadRow(props: {
           style={{
             borderBottomColor: separatorColor,
             borderBottomWidth: props.isLast ? 0 : 1,
-            borderTopLeftRadius: props.isFirst ? 20 : 0,
-            borderTopRightRadius: props.isFirst ? 20 : 0,
-            borderBottomLeftRadius: props.isLast ? 20 : 0,
-            borderBottomRightRadius: props.isLast ? 20 : 0,
           }}
         >
           <View className="h-[34px] w-[34px] items-center justify-center rounded-[11px] bg-subtle">
