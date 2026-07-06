@@ -308,8 +308,11 @@ const PluginRuntimeRegistryLayerLive = PluginRuntimeRegistry.layer;
 const PluginHttpRegistryLayerLive = PluginHttpRegistry.layer;
 const PluginLockfileStoreLayerLive = PluginLockfileStore.layer;
 const PluginHostCapabilityDepsLayerLive = Layer.mergeAll(
+  OrchestrationLayerLive,
   PluginProjectionReadLayerLive,
   SourceControlProviderRegistryLayerLive,
+  GitVcsDriver.layer,
+  CheckpointStore.layer.pipe(Layer.provide(VcsDriverRegistryLayerLive)),
   GitHubCli.layer,
   TextGeneration.layer,
   TerminalLayerLive,

@@ -1,6 +1,7 @@
 import type {
   ChangeRequestState,
   ChatAttachment,
+  CheckpointRef,
   EnvironmentId,
   ExecutionEnvironmentDescriptor,
   MessageId,
@@ -12,14 +13,24 @@ import type {
   OrchestrationProjectShell,
   OrchestrationThread,
   OrchestrationThreadActivity,
+  OrchestrationThreadStreamItem,
   OrchestrationThreadShell,
+  ProviderApprovalDecision,
+  ProviderInteractionMode,
+  ProviderUserInputAnswers,
   ProjectId,
+  RuntimeMode,
+  ServerProvider,
   SourceControlProviderDiscoveryItem,
   SourceControlProviderInfo,
   TerminalAttachStreamEvent,
   TerminalSessionSnapshot,
   ThreadId,
   TurnId,
+  VcsCreateRefResult,
+  VcsCreateWorktreeResult,
+  VcsStatusResult,
+  VcsSwitchRefResult,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -61,11 +72,176 @@ export interface PluginCapabilityUnavailable {
 }
 
 export interface AgentsCapability {
-  readonly list: Effect.Effect<ReadonlyArray<unknown>>;
+  /**
+   * List configured provider instances visible to orchestration. Available
+   * instances are returned as their public provider snapshots; unavailable
+   * entries describe settings that this host cannot materialize.
+   */
+  readonly listInstances: () => Effect.Effect<AgentsListInstancesResult, Error>;
+
+  /**
+   * Create a plugin-owned orchestration thread. The host injects
+   * `owner: "plugin:<id>"`; plugin input cannot choose or override owner.
+   */
+  readonly createThread: (
+    input: AgentsCreateThreadInput,
+  ) => Effect.Effect<AgentsCreateThreadResult, Error>;
+
+  /**
+   * Start a turn on a plugin-owned thread through the orchestration command
+   * plane. `bootstrap.createThread`, when present, is owner-injected by the
+   * host before dispatch.
+   *
+   * NOTE: the returned `turnId` is a SESSION-LOCAL handle for `awaitTurn`
+   * within this server process's lifetime — it is not the durable projection
+   * turn id and does not survive a server restart. Persist your own
+   * correlation (the returned `messageId`, or observe the thread) if you need
+   * to resolve a turn's outcome across restarts.
+   */
+  readonly startTurn: (input: AgentsStartTurnInput) => Effect.Effect<AgentsStartTurnResult, Error>;
+
+  /**
+   * Observe a plugin-owned thread using the same snapshot + thread-detail
+   * event stream shape as `orchestration.subscribeThread`.
+   */
+  readonly observeThread: (
+    threadId: ThreadId,
+  ) => Stream.Stream<OrchestrationThreadStreamItem, Error>;
+
+  /**
+   * Wait for a projected turn row to reach `completed`, `error`, or
+   * `interrupted`, then return the final assistant text if one was projected.
+   * Timeout only fails this wait; it does not interrupt the provider turn.
+   *
+   * Accepts only a `turnId` returned by `startTurn` in the SAME server
+   * lifetime (see the session-local note there). A `turnId` from a prior
+   * process will not resolve and will time out.
+   */
+  readonly awaitTurn: (input: AgentsAwaitTurnInput) => Effect.Effect<AgentsAwaitTurnResult, Error>;
+
+  /**
+   * Convenience read for pending approval and user-input requests in
+   * `thread.activities[]`. The same requests are also visible via
+   * `observeThread` snapshots and events.
+   */
+  readonly listPendingRequests: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<AgentsPendingRequest>, Error>;
+
+  /**
+   * Respond to a provider approval request on a plugin-owned thread.
+   */
+  readonly respondToApproval: (input: AgentsRespondToApprovalInput) => Effect.Effect<void, Error>;
+
+  /**
+   * Respond to a provider user-input request on a plugin-owned thread.
+   */
+  readonly respondToUserInput: (input: AgentsRespondToUserInputInput) => Effect.Effect<void, Error>;
+
+  /**
+   * Request interruption of the active turn for a plugin-owned thread.
+   */
+  readonly interruptTurn: (input: AgentsInterruptTurnInput) => Effect.Effect<void, Error>;
+
+  /**
+   * Stop the provider session for a plugin-owned thread.
+   */
+  readonly stopSession: (input: AgentsThreadInput) => Effect.Effect<void, Error>;
+
+  /**
+   * Delete a plugin-owned thread.
+   */
+  readonly deleteThread: (input: AgentsThreadInput) => Effect.Effect<void, Error>;
 }
 
 export interface VcsCapability {
-  readonly status: (input: { readonly cwd: string }) => Effect.Effect<unknown>;
+  /**
+   * Read Git status for an absolute repository or worktree path.
+   *
+   * VCS is a full-trust capability: the host validates paths are absolute, but
+   * does not scope them to plugin data. Plugins should operate in their own
+   * worktrees.
+   */
+  readonly status: (input: VcsWorktreeInput) => Effect.Effect<VcsStatusResult, Error>;
+
+  /**
+   * List Git worktrees for an absolute repository root.
+   */
+  readonly listWorktrees: (input: VcsRepoInput) => Effect.Effect<VcsListWorktreesResult, Error>;
+
+  /**
+   * Create a Git worktree for a ref. No lease concept is exposed because the
+   * backing VCS layer does not implement leases.
+   */
+  readonly createWorktree: (
+    input: VcsCreateWorktreeFacadeInput,
+  ) => Effect.Effect<VcsCreateWorktreeResult, Error>;
+
+  /**
+   * Remove a Git worktree by absolute path.
+   */
+  readonly removeWorktree: (input: VcsRemoveWorktreeFacadeInput) => Effect.Effect<void, Error>;
+
+  /**
+   * Create a local branch and optionally switch to it.
+   */
+  readonly createBranch: (input: VcsCreateBranchInput) => Effect.Effect<VcsCreateRefResult, Error>;
+
+  /**
+   * Switch the current worktree to a local or remote ref.
+   */
+  readonly switchRef: (input: VcsSwitchRefFacadeInput) => Effect.Effect<VcsSwitchRefResult, Error>;
+
+  /**
+   * Stage selected paths, or all changes when `filePaths` is omitted, then
+   * create a commit. No-change commits are surfaced as a skipped value.
+   */
+  readonly commit: (input: VcsCommitInput) => Effect.Effect<VcsCommitResult, Error>;
+
+  /**
+   * Merge a ref into the current worktree. Merge conflicts are returned as
+   * `{ status: "conflict" }` instead of being thrown.
+   */
+  readonly merge: (input: VcsMergeInput) => Effect.Effect<VcsMergeResult, Error>;
+
+  /**
+   * Push the current branch when the Git driver can resolve a remote.
+   */
+  readonly push: (input: VcsPushInput) => Effect.Effect<VcsPushResult, Error>;
+
+  /**
+   * Read the working-tree patch for an absolute worktree path.
+   */
+  readonly workingTreeDiff: (input: VcsWorkingTreeDiffInput) => Effect.Effect<VcsDiffResult, Error>;
+
+  /**
+   * Read a patch between two refs.
+   */
+  readonly diffRefs: (input: VcsDiffRefsInput) => Effect.Effect<VcsDiffResult, Error>;
+
+  /**
+   * Capture a filesystem checkpoint at a caller-provided Git ref.
+   */
+  readonly createCheckpoint: (input: VcsCheckpointInput) => Effect.Effect<void, Error>;
+
+  /**
+   * Check whether a checkpoint ref exists. The backing CheckpointStore has no
+   * list operation, so the SDK intentionally exposes existence checks instead
+   * of inventing checkpoint listing.
+   */
+  readonly hasCheckpoint: (input: VcsCheckpointInput) => Effect.Effect<boolean, Error>;
+
+  /**
+   * Restore workspace and staging state from a checkpoint ref.
+   */
+  readonly restoreCheckpoint: (
+    input: VcsRestoreCheckpointInput,
+  ) => Effect.Effect<VcsRestoreCheckpointResult, Error>;
+
+  /**
+   * Delete checkpoint refs. Missing refs are tolerated by the backing store.
+   */
+  readonly deleteCheckpoints: (input: VcsDeleteCheckpointsInput) => Effect.Effect<void, Error>;
 }
 
 export interface TerminalsCapability {
@@ -360,6 +536,209 @@ export interface ProjectionTurnRecord {
   readonly checkpointRef: string | null;
   readonly checkpointStatus: OrchestrationCheckpointStatus | null;
   readonly checkpointFiles: ReadonlyArray<OrchestrationCheckpointFile>;
+}
+
+export interface AgentsListInstancesResult {
+  readonly available: ReadonlyArray<ServerProvider>;
+  readonly unavailable: ReadonlyArray<ServerProvider>;
+}
+
+export interface AgentsCreateThreadInput {
+  readonly projectId: ProjectId;
+  readonly title: string;
+  readonly modelSelection: ModelSelection;
+  readonly runtimeMode?: RuntimeMode | undefined;
+  readonly interactionMode?: ProviderInteractionMode | undefined;
+  readonly branch?: string | null | undefined;
+  readonly worktreePath?: string | null | undefined;
+}
+
+export interface AgentsCreateThreadResult {
+  readonly threadId: ThreadId;
+}
+
+export interface AgentsBootstrapCreateThreadInput extends AgentsCreateThreadInput {
+  readonly createdAt?: string | undefined;
+}
+
+export interface AgentsStartTurnBootstrapInput {
+  readonly createThread?: AgentsBootstrapCreateThreadInput | undefined;
+  readonly prepareWorktree?:
+    | {
+        readonly projectCwd: string;
+        readonly baseBranch: string;
+        readonly branch?: string | undefined;
+        readonly startFromOrigin?: boolean | undefined;
+      }
+    | undefined;
+  readonly runSetupScript?: boolean | undefined;
+}
+
+export interface AgentsStartTurnInput {
+  readonly threadId: ThreadId;
+  readonly text: string;
+  readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
+  readonly modelSelection?: ModelSelection | undefined;
+  readonly bootstrap?: AgentsStartTurnBootstrapInput | undefined;
+}
+
+export interface AgentsStartTurnResult {
+  readonly turnId: TurnId;
+  readonly messageId: MessageId;
+}
+
+export interface AgentsAwaitTurnInput {
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId;
+  readonly timeout?: string | number | undefined;
+}
+
+export interface AgentsAwaitTurnResult {
+  readonly state: "completed" | "error" | "interrupted";
+  readonly assistantText: string | null;
+  readonly stopReason?: string | undefined;
+  readonly errorMessage?: string | undefined;
+}
+
+export interface AgentsPendingRequest {
+  readonly kind: "approval.requested" | "user-input.requested";
+  readonly requestId: string;
+  readonly activity: OrchestrationThreadActivity;
+}
+
+export interface AgentsThreadInput {
+  readonly threadId: ThreadId;
+}
+
+export interface AgentsInterruptTurnInput extends AgentsThreadInput {
+  readonly turnId?: TurnId | undefined;
+}
+
+export interface AgentsRespondToApprovalInput extends AgentsThreadInput {
+  readonly requestId: string;
+  readonly decision: ProviderApprovalDecision;
+}
+
+export interface AgentsRespondToUserInputInput extends AgentsThreadInput {
+  readonly requestId: string;
+  readonly answers: ProviderUserInputAnswers;
+}
+
+export interface VcsRepoInput {
+  readonly repoRoot: string;
+}
+
+export interface VcsWorktreeInput {
+  readonly worktreePath: string;
+}
+
+export interface VcsWorktreeSummary {
+  readonly path: string;
+  readonly branch: string | null;
+  readonly head: string | null;
+  readonly detached: boolean;
+  readonly bare: boolean;
+}
+
+export interface VcsListWorktreesResult {
+  readonly worktrees: ReadonlyArray<VcsWorktreeSummary>;
+}
+
+export interface VcsCreateWorktreeFacadeInput extends VcsRepoInput {
+  readonly ref: string;
+  readonly path: string;
+  readonly newBranch?: string | undefined;
+  readonly baseRef?: string | undefined;
+}
+
+export interface VcsRemoveWorktreeFacadeInput extends VcsRepoInput {
+  readonly path: string;
+  readonly force?: boolean | undefined;
+}
+
+export interface VcsCreateBranchInput extends VcsWorktreeInput {
+  readonly branch: string;
+  readonly switch?: boolean | undefined;
+}
+
+export interface VcsSwitchRefFacadeInput extends VcsWorktreeInput {
+  readonly ref: string;
+}
+
+export interface VcsCommitInput extends VcsWorktreeInput {
+  readonly subject: string;
+  readonly body?: string | undefined;
+  readonly filePaths?: ReadonlyArray<string> | undefined;
+}
+
+export type VcsCommitResult =
+  | {
+      readonly status: "created";
+      readonly commitSha: string;
+    }
+  | {
+      readonly status: "skipped_no_changes";
+    };
+
+export interface VcsMergeInput extends VcsWorktreeInput {
+  readonly ref: string;
+}
+
+export type VcsMergeResult =
+  | {
+      readonly status: "merged";
+      readonly commitSha: string;
+      readonly stdout: string;
+      readonly stderr: string;
+    }
+  | {
+      readonly status: "conflict";
+      readonly conflictedFiles: ReadonlyArray<string>;
+      readonly stdout: string;
+      readonly stderr: string;
+    };
+
+export interface VcsPushInput extends VcsWorktreeInput {
+  readonly fallbackBranch?: string | null | undefined;
+  readonly remoteName?: string | null | undefined;
+}
+
+export interface VcsPushResult {
+  readonly status: "pushed" | "skipped_up_to_date";
+  readonly branch: string;
+  readonly upstreamBranch?: string | undefined;
+  readonly setUpstream?: boolean | undefined;
+}
+
+export interface VcsWorkingTreeDiffInput extends VcsWorktreeInput {
+  readonly staged?: boolean | undefined;
+  readonly ignoreWhitespace?: boolean | undefined;
+}
+
+export interface VcsDiffRefsInput extends VcsWorktreeInput {
+  readonly fromRef: string;
+  readonly toRef: string;
+  readonly ignoreWhitespace?: boolean | undefined;
+}
+
+export interface VcsDiffResult {
+  readonly diff: string;
+}
+
+export interface VcsCheckpointInput extends VcsWorktreeInput {
+  readonly checkpointRef: CheckpointRef;
+}
+
+export interface VcsRestoreCheckpointInput extends VcsCheckpointInput {
+  readonly fallbackToHead?: boolean | undefined;
+}
+
+export interface VcsRestoreCheckpointResult {
+  readonly restored: boolean;
+}
+
+export interface VcsDeleteCheckpointsInput extends VcsWorktreeInput {
+  readonly checkpointRefs: ReadonlyArray<CheckpointRef>;
 }
 
 export interface SourceControlProviderDetectionResult {

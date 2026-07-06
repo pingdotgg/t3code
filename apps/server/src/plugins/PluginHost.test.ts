@@ -13,22 +13,27 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as NodeURL from "node:url";
 
+import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { runMigrations } from "../persistence/Migrations.ts";
 import * as NodeSqliteClient from "../persistence/NodeSqliteClient.ts";
 import * as ProjectionThreadActivities from "../persistence/Services/ProjectionThreadActivities.ts";
 import * as ProjectionThreadMessages from "../persistence/Services/ProjectionThreadMessages.ts";
 import * as ProjectionTurns from "../persistence/Services/ProjectionTurns.ts";
+import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as PluginHostModule from "./PluginHost.ts";
 import * as PluginHttpRegistry from "./PluginHttpRegistry.ts";
 import * as PluginLockfileStoreLayer from "./PluginLockfileStore.ts";
@@ -41,7 +46,7 @@ const encodeManifestJson = Schema.encodeEffect(Schema.fromJsonString(PluginManif
 const unexpectedCapabilityUse = () =>
   Effect.die(new Error("unexpected capability use in host test"));
 
-const testLayer = PluginHostModule.layer.pipe(
+const testLayerBase = PluginHostModule.layer.pipe(
   Layer.provideMerge(PluginLockfileStoreLayer.layer),
   Layer.provideMerge(PluginModuleLoaderLayer.layer),
   Layer.provideMerge(PluginMigrator.layer),
@@ -60,6 +65,13 @@ const testLayer = PluginHostModule.layer.pipe(
     Layer.mock(ServerEnvironment.ServerEnvironment)({
       getEnvironmentId: unexpectedCapabilityUse(),
       getDescriptor: unexpectedCapabilityUse(),
+    }),
+  ),
+  Layer.provideMerge(
+    Layer.mock(OrchestrationEngine.OrchestrationEngineService)({
+      readEvents: () => Stream.empty,
+      dispatch: unexpectedCapabilityUse,
+      streamDomainEvents: Stream.empty,
     }),
   ),
   Layer.provideMerge(
@@ -108,6 +120,57 @@ const testLayer = PluginHostModule.layer.pipe(
     }),
   ),
   Layer.provideMerge(
+    Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+      getInstance: unexpectedCapabilityUse,
+      listInstances: unexpectedCapabilityUse(),
+      listUnavailable: unexpectedCapabilityUse(),
+      streamChanges: Stream.empty,
+      subscribeChanges: unexpectedCapabilityUse(),
+    }),
+  ),
+  Layer.provideMerge(
+    Layer.mock(GitVcsDriver.GitVcsDriver)({
+      execute: unexpectedCapabilityUse,
+      status: unexpectedCapabilityUse,
+      statusDetails: unexpectedCapabilityUse,
+      statusDetailsLocal: unexpectedCapabilityUse,
+      statusDetailsRemote: unexpectedCapabilityUse,
+      prepareCommitContext: unexpectedCapabilityUse,
+      commit: unexpectedCapabilityUse,
+      pushCurrentBranch: unexpectedCapabilityUse,
+      readRangeContext: unexpectedCapabilityUse,
+      getReviewDiffPreview: unexpectedCapabilityUse,
+      readConfigValue: unexpectedCapabilityUse,
+      listRefs: unexpectedCapabilityUse,
+      pullCurrentBranch: unexpectedCapabilityUse,
+      createWorktree: unexpectedCapabilityUse,
+      fetchPullRequestBranch: unexpectedCapabilityUse,
+      ensureRemote: unexpectedCapabilityUse,
+      resolvePrimaryRemoteName: unexpectedCapabilityUse,
+      fetchRemote: unexpectedCapabilityUse,
+      resolveRemoteTrackingCommit: unexpectedCapabilityUse,
+      fetchRemoteBranch: unexpectedCapabilityUse,
+      fetchRemoteTrackingBranch: unexpectedCapabilityUse,
+      setBranchUpstream: unexpectedCapabilityUse,
+      removeWorktree: unexpectedCapabilityUse,
+      renameBranch: unexpectedCapabilityUse,
+      createRef: unexpectedCapabilityUse,
+      switchRef: unexpectedCapabilityUse,
+      initRepo: unexpectedCapabilityUse,
+      listLocalBranchNames: unexpectedCapabilityUse,
+    }),
+  ),
+  Layer.provideMerge(
+    Layer.mock(CheckpointStore.CheckpointStore)({
+      isGitRepository: unexpectedCapabilityUse,
+      captureCheckpoint: unexpectedCapabilityUse,
+      hasCheckpointRef: unexpectedCapabilityUse,
+      restoreCheckpoint: unexpectedCapabilityUse,
+      diffCheckpoints: unexpectedCapabilityUse,
+      deleteCheckpointRefs: unexpectedCapabilityUse,
+    }),
+  ),
+  Layer.provideMerge(
     Layer.mock(TextGeneration.TextGeneration)({
       generateCommitMessage: unexpectedCapabilityUse,
       generatePrContent: unexpectedCapabilityUse,
@@ -148,6 +211,9 @@ const testLayer = PluginHostModule.layer.pipe(
       subscribeMetadata: unexpectedCapabilityUse,
     }),
   ),
+);
+
+const testLayer = testLayerBase.pipe(
   Layer.provideMerge(NodeSqliteClient.layerMemory()),
   Layer.provideMerge(
     Layer.fresh(ServerConfig.layerTest(process.cwd(), { prefix: "t3-plugin-host-" })),
