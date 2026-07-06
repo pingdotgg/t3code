@@ -52,6 +52,12 @@ import {
 import * as Option from "effect/Option";
 
 const PROVIDER = ProviderDriverKind.make("opencode");
+const OPENCODE_RESUME_CURSOR_SCHEMA_VERSION = 1;
+
+interface OpenCodeResumeCursor {
+  readonly schemaVersion: typeof OPENCODE_RESUME_CURSOR_SCHEMA_VERSION;
+  readonly sessionId: string;
+}
 
 interface OpenCodeTurnSnapshot {
   readonly id: TurnId;
@@ -106,6 +112,30 @@ export interface OpenCodeAdapterLiveOptions {
 }
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+
+function parseOpenCodeResumeCursor(input: unknown): OpenCodeResumeCursor | undefined {
+  if (!input || typeof input !== "object") {
+    return undefined;
+  }
+
+  const cursor = input as {
+    readonly schemaVersion?: unknown;
+    readonly sessionId?: unknown;
+  };
+
+  if (
+    cursor.schemaVersion !== OPENCODE_RESUME_CURSOR_SCHEMA_VERSION ||
+    typeof cursor.sessionId !== "string" ||
+    cursor.sessionId.trim().length === 0
+  ) {
+    return undefined;
+  }
+
+  return {
+    schemaVersion: OPENCODE_RESUME_CURSOR_SCHEMA_VERSION,
+    sessionId: cursor.sessionId,
+  };
+}
 
 /**
  * Map a tagged OpenCodeRuntimeError produced by {@link runOpenCodeSdk} into
@@ -1070,16 +1100,23 @@ export function makeOpenCodeAdapter(
                   }),
                 );
               }
-              const openCodeSession = yield* runOpenCodeSdk("session.create", () =>
-                client.session.create({
-                  title: `T3 Code ${input.threadId}`,
-                  permission: buildOpenCodePermissionRules(input.runtimeMode),
-                }),
-              );
+              const resumeCursor = parseOpenCodeResumeCursor(input.resumeCursor);
+              const openCodeSession = resumeCursor
+                ? yield* runOpenCodeSdk("session.get", () =>
+                    client.session.get({ sessionID: resumeCursor.sessionId }),
+                  )
+                : yield* runOpenCodeSdk("session.create", () =>
+                    client.session.create({
+                      title: `T3 Code ${input.threadId}`,
+                      permission: buildOpenCodePermissionRules(input.runtimeMode),
+                    }),
+                  );
               if (!openCodeSession.data) {
                 return yield* new OpenCodeRuntimeError({
-                  operation: "session.create",
-                  detail: "OpenCode session.create returned no session payload.",
+                  operation: resumeCursor ? "session.get" : "session.create",
+                  detail: resumeCursor
+                    ? "OpenCode session.get returned no session payload."
+                    : "OpenCode session.create returned no session payload.",
                 });
               }
               return {
@@ -1087,6 +1124,7 @@ export function makeOpenCodeAdapter(
                 server,
                 client,
                 openCodeSession: openCodeSession.data,
+                createdRemoteSession: resumeCursor === undefined,
               };
             }).pipe(Effect.provideService(Scope.Scope, sessionScope)),
           );
@@ -1101,13 +1139,15 @@ export function makeOpenCodeAdapter(
         // and already inserted a session while we were awaiting async work.
         const raceWinner = sessions.get(input.threadId);
         if (raceWinner) {
-          // Another call won the race – clean up the session we just created
-          // (including the remote SDK session) and return the existing one.
-          yield* runOpenCodeSdk("session.abort", () =>
-            started.client.session.abort({
-              sessionID: started.openCodeSession.id,
-            }),
-          ).pipe(Effect.ignore);
+          // Another call won the race; clean up local resources and abort only
+          // remote sessions created by this losing start attempt.
+          if (started.createdRemoteSession) {
+            yield* runOpenCodeSdk("session.abort", () =>
+              started.client.session.abort({
+                sessionID: started.openCodeSession.id,
+              }),
+            ).pipe(Effect.ignore);
+          }
           yield* Scope.close(started.sessionScope, Exit.void).pipe(Effect.ignore);
           return raceWinner.session;
         }
@@ -1121,6 +1161,10 @@ export function makeOpenCodeAdapter(
           cwd: directory,
           ...(input.modelSelection ? { model: input.modelSelection.model } : {}),
           threadId: input.threadId,
+          resumeCursor: {
+            schemaVersion: OPENCODE_RESUME_CURSOR_SCHEMA_VERSION,
+            sessionId: started.openCodeSession.id,
+          },
           createdAt,
           updatedAt: createdAt,
         };
