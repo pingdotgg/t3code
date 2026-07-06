@@ -20,6 +20,7 @@ import {
   parseCursorAboutOutput,
   parseCursorCliConfigChannel,
   parseCursorVersionDate,
+  probeCursorProjectSlashCommands,
   resolveCursorAcpBaseModelId,
   resolveCursorAcpConfigUpdates,
 } from "./CursorProvider.ts";
@@ -510,6 +511,24 @@ describe("discoverCursorModelsViaAcp", () => {
 
     const exitLog = await runNode(waitForFileContent(exitLogPath));
     expect(exitLog).toContain("SIGTERM");
+  });
+});
+
+describe("probeCursorProjectSlashCommands", () => {
+  it("fails immediately when ACP startup fails", async () => {
+    await expect(
+      runNode(
+        probeCursorProjectSlashCommands(
+          {
+            enabled: true,
+            binaryPath: "/definitely-missing-cursor-agent",
+            apiEndpoint: "",
+            customModels: [],
+          },
+          process.cwd(),
+        ),
+      ),
+    ).rejects.toThrow();
   });
 });
 

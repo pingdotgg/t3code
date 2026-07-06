@@ -83,6 +83,10 @@
       "types": "./src/state/projects.ts",
       "default": "./src/state/projects.ts"
     },
+    "./state/provider-capabilities": {
+      "types": "./src/state/providerCapabilities.ts",
+      "default": "./src/state/providerCapabilities.ts"
+    },
     "./state/project-grouping": {
       "types": "./src/state/projectGrouping.ts",
       "default": "./src/state/projectGrouping.ts"

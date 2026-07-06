@@ -3,6 +3,7 @@ import {
   type ModelCapabilities,
   type OpenCodeSettings,
   type ServerProviderModel,
+  type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
@@ -21,9 +22,10 @@ import {
 import {
   OpenCodeRuntime,
   openCodeRuntimeErrorDetail,
+  runOpenCodeSdk,
   type OpenCodeInventory,
 } from "../opencodeRuntime.ts";
-import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";
+import type { Agent, Command, ProviderListResponse } from "@opencode-ai/sdk/v2";
 
 const PROVIDER = ProviderDriverKind.make("opencode");
 const OPENCODE_PRESENTATION = {
@@ -251,6 +253,73 @@ function flattenOpenCodeModels(input: OpenCodeInventory): ReadonlyArray<ServerPr
 
   return models.toSorted((left, right) => left.name.localeCompare(right.name));
 }
+
+function openCodeSlashCommandsFromCommands(
+  commands: ReadonlyArray<Command>,
+): ReadonlyArray<ServerProviderSlashCommand> {
+  const byName = new Map<string, ServerProviderSlashCommand>();
+  for (const command of commands) {
+    const name = command.name.trim().replace(/^\/+/, "");
+    if (!name) {
+      continue;
+    }
+    const description = command.description?.trim();
+    const hint = command.hints
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .join(" ");
+    byName.set(name.toLowerCase(), {
+      name,
+      ...(description ? { description } : {}),
+      ...(hint ? { input: { hint } } : {}),
+    });
+  }
+  return [...byName.values()];
+}
+
+export const listOpenCodeProjectSlashCommands = Effect.fn("listOpenCodeProjectSlashCommands")(
+  function* (
+    openCodeSettings: OpenCodeSettings,
+    cwd: string,
+    environment?: NodeJS.ProcessEnv,
+  ): Effect.fn.Return<
+    ReadonlyArray<ServerProviderSlashCommand>,
+    OpenCodeProbeError,
+    OpenCodeRuntime
+  > {
+    if (!openCodeSettings.enabled) {
+      return [];
+    }
+    const openCodeRuntime = yield* OpenCodeRuntime;
+    const resolvedEnvironment = environment ?? process.env;
+    const isExternalServer = openCodeSettings.serverUrl.trim().length > 0;
+
+    return yield* Effect.scoped(
+      Effect.gen(function* () {
+        const server = yield* openCodeRuntime.connectToOpenCodeServer({
+          binaryPath: openCodeSettings.binaryPath,
+          serverUrl: openCodeSettings.serverUrl,
+          environment: resolvedEnvironment,
+        });
+        const client = openCodeRuntime.createOpenCodeSdkClient({
+          baseUrl: server.url,
+          directory: cwd,
+          ...(isExternalServer && openCodeSettings.serverPassword
+            ? { serverPassword: openCodeSettings.serverPassword }
+            : {}),
+        });
+        const response = yield* runOpenCodeSdk("command.list", () =>
+          client.command.list({ directory: cwd }),
+        );
+        return openCodeSlashCommandsFromCommands(response.data ?? []);
+      }).pipe(
+        Effect.mapError(
+          (cause) => new OpenCodeProbeError({ cause, detail: openCodeRuntimeErrorDetail(cause) }),
+        ),
+      ),
+    );
+  },
+);
 
 export const makePendingOpenCodeProvider = (
   openCodeSettings: OpenCodeSettings,

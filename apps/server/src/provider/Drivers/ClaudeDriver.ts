@@ -32,9 +32,11 @@ import {
   checkClaudeProviderStatus,
   makePendingClaudeProvider,
   probeClaudeCapabilities,
+  probeClaudeProjectCapabilities,
 } from "../Layers/ClaudeProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
+import { makeProviderProjectCapabilitiesError } from "../projectCapabilities.ts";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
@@ -59,6 +61,7 @@ const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
 const CAPABILITIES_PROBE_TTL = Duration.minutes(5);
+const PROJECT_CAPABILITIES_TTL = Duration.seconds(30);
 
 function isClaudeNativeCommandPath(commandPath: string): boolean {
   const normalized = normalizeCommandPath(commandPath);
@@ -159,6 +162,16 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
           ),
       });
       const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(effectiveConfig);
+      const projectCapabilitiesCache = yield* Cache.makeWith(
+        (cwd: string) =>
+          probeClaudeProjectCapabilities(effectiveConfig, processEnv, cwd).pipe(
+            Effect.provideService(Path.Path, path),
+          ),
+        {
+          capacity: 64,
+          timeToLive: () => PROJECT_CAPABILITIES_TTL,
+        },
+      );
 
       const checkProvider = checkClaudeProviderStatus(
         effectiveConfig,
@@ -212,6 +225,33 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         snapshot,
         adapter,
         textGeneration,
+        composerCapabilities: {
+          list: (input) =>
+            Effect.gen(function* () {
+              const capabilities = input.forceReload
+                ? yield* probeClaudeProjectCapabilities(
+                    effectiveConfig,
+                    processEnv,
+                    input.cwd,
+                  ).pipe(Effect.provideService(Path.Path, path))
+                : yield* Cache.get(projectCapabilitiesCache, input.cwd);
+              return {
+                providerInstanceId: instanceId,
+                cwd: input.cwd,
+                slashCommands: capabilities?.slashCommands ?? [],
+                skills: capabilities?.skills ?? [],
+              };
+            }).pipe(
+              Effect.mapError((cause) =>
+                makeProviderProjectCapabilitiesError({
+                  provider: DRIVER_KIND,
+                  instanceId,
+                  cwd: input.cwd,
+                  cause,
+                }),
+              ),
+            ),
+        },
       } satisfies ProviderInstance;
     }),
 };

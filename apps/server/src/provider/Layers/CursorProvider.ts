@@ -6,12 +6,15 @@ import type {
   ServerProvider,
   ServerProviderAuth,
   ServerProviderModel,
+  ServerProviderSlashCommand,
   ServerProviderState,
 } from "@t3tools/contracts";
 import { ProviderDriverKind } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -61,6 +64,7 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
 });
 
 const CURSOR_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
+const CURSOR_ACP_COMMAND_DISCOVERY_TIMEOUT_MS = 3_000;
 const CURSOR_PARAMETERIZED_MODEL_PICKER_MIN_VERSION_DATE = 2026_04_08;
 const CURSOR_CLI_INSTALLATION_DOCS_URL = "https://cursor.com/docs/cli/installation";
 const CURSOR_ACP_MODEL_DISCOVERY_FAILED_MESSAGE = [
@@ -438,6 +442,54 @@ const withCursorAcpProbeRuntime = <A, E, R>(
     Effect.flatMap(useRuntime),
     Effect.scoped,
   );
+
+function parseCursorAvailableCommands(
+  commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
+): ReadonlyArray<ServerProviderSlashCommand> {
+  const byName = new Map<string, ServerProviderSlashCommand>();
+  for (const command of commands) {
+    const name = command.name.trim();
+    if (!name) {
+      continue;
+    }
+    const description = command.description.trim();
+    const hint = command.input?.hint?.trim();
+    byName.set(name.toLowerCase(), {
+      name,
+      ...(description ? { description } : {}),
+      ...(hint ? { input: { hint } } : {}),
+    });
+  }
+  return [...byName.values()];
+}
+
+export const probeCursorProjectSlashCommands = Effect.fn("probeCursorProjectSlashCommands")(
+  function* (cursorSettings: CursorSettings, _cwd: string, environment?: NodeJS.ProcessEnv) {
+    return yield* withCursorAcpProbeRuntime(
+      cursorSettings,
+      (acp) =>
+        Effect.gen(function* () {
+          const commands = yield* Deferred.make<ReadonlyArray<ServerProviderSlashCommand>>();
+          yield* acp.handleSessionUpdate((notification) => {
+            const update = notification.update;
+            if (update.sessionUpdate !== "available_commands_update") {
+              return Effect.void;
+            }
+            return Deferred.succeed(
+              commands,
+              parseCursorAvailableCommands(update.availableCommands),
+            ).pipe(Effect.asVoid);
+          });
+          yield* acp.start();
+          return yield* Deferred.await(commands).pipe(
+            Effect.timeoutOption(Duration.millis(CURSOR_ACP_COMMAND_DISCOVERY_TIMEOUT_MS)),
+            Effect.map(Option.getOrElse(() => [])),
+          );
+        }),
+      environment,
+    );
+  },
+);
 
 function normalizeCursorConfigOptionToken(value: string | null | undefined): string {
   return (

@@ -4,8 +4,10 @@ import {
   type ModelSelection,
   ProviderDriverKind,
   type ServerProviderModel,
+  type ServerProviderSkill,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
+import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -51,6 +53,16 @@ const CLAUDE_PRESENTATION = {
 const MINIMUM_CLAUDE_FABLE_5_VERSION = "2.1.169";
 const MINIMUM_CLAUDE_OPUS_4_8_VERSION = "2.1.154";
 const MINIMUM_CLAUDE_OPUS_4_7_VERSION = "2.1.111";
+
+class ClaudeCapabilitiesProbeTimeoutError extends Data.TaggedError(
+  "ClaudeCapabilitiesProbeTimeoutError",
+)<{
+  readonly timeoutMs: number;
+}> {
+  override get message(): string {
+    return `Claude capability probe timed out after ${this.timeoutMs}ms.`;
+  }
+}
 
 const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
@@ -493,6 +505,7 @@ type ClaudeCapabilitiesProbe = {
   readonly subscriptionType: string | undefined;
   readonly tokenSource: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  readonly skills: ReadonlyArray<ServerProviderSkill>;
 };
 
 function parseClaudeInitializationCommands(
@@ -558,6 +571,57 @@ function dedupeSlashCommands(
   return [...commandsByName.values()];
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readProbeString(value: unknown): string | undefined {
+  return typeof value === "string" ? nonEmptyProbeString(value) : undefined;
+}
+
+function parseClaudeInitializationSkills(input: unknown): ReadonlyArray<ServerProviderSkill> {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  const skillsByName = new Map<string, ServerProviderSkill>();
+  for (const item of input) {
+    if (!isRecord(item)) {
+      continue;
+    }
+    const name = readProbeString(item.name);
+    const path = readProbeString(item.path);
+    if (!name || !path) {
+      continue;
+    }
+
+    const description = readProbeString(item.description);
+    const shortDescription =
+      readProbeString(item.shortDescription) ??
+      readProbeString(item.short_description) ??
+      readProbeString(item.summary);
+    const displayName =
+      readProbeString(item.displayName) ??
+      readProbeString(item.display_name) ??
+      readProbeString(item.title);
+    const scope =
+      readProbeString(item.scope) ?? readProbeString(item.source) ?? readProbeString(item.type);
+    const enabled = typeof item.enabled === "boolean" ? item.enabled : true;
+
+    skillsByName.set(name.toLowerCase(), {
+      name,
+      path,
+      enabled,
+      ...(description ? { description } : {}),
+      ...(shortDescription ? { shortDescription } : {}),
+      ...(displayName ? { displayName } : {}),
+      ...(scope ? { scope } : {}),
+    });
+  }
+
+  return [...skillsByName.values()];
+}
+
 function waitForAbortSignal(signal: AbortSignal): Promise<void> {
   if (signal.aborted) {
     return Promise.resolve();
@@ -580,9 +644,10 @@ function waitForAbortSignal(signal: AbortSignal): Promise<void> {
  * This is used as a fallback when `claude auth status` does not include
  * subscription type information.
  */
-const probeClaudeCapabilities = (
+const runClaudeCapabilitiesProbe = (
   claudeSettings: ClaudeSettings,
   environment?: NodeJS.ProcessEnv,
+  cwd?: string,
 ) => {
   const abort = new AbortController();
   return Effect.gen(function* () {
@@ -596,6 +661,7 @@ const probeClaudeCapabilities = (
           await waitForAbortSignal(abort.signal);
         })(),
         options: {
+          ...(cwd ? { cwd, additionalDirectories: [cwd] } : {}),
           persistSession: false,
           pathToClaudeCodeExecutable: claudeSettings.binaryPath,
           abortController: abort,
@@ -618,6 +684,7 @@ const probeClaudeCapabilities = (
         subscriptionType: account?.subscriptionType,
         tokenSource: account?.tokenSource,
         slashCommands: parseClaudeInitializationCommands(init.commands),
+        skills: parseClaudeInitializationSkills((init as { readonly skills?: unknown }).skills),
       } satisfies ClaudeCapabilitiesProbe;
     });
   }).pipe(
@@ -626,14 +693,41 @@ const probeClaudeCapabilities = (
         if (!abort.signal.aborted) abort.abort();
       }),
     ),
+  );
+};
+
+const probeClaudeProjectCapabilities = (
+  claudeSettings: ClaudeSettings,
+  environment?: NodeJS.ProcessEnv,
+  cwd?: string,
+) =>
+  runClaudeCapabilitiesProbe(claudeSettings, environment, cwd).pipe(
     Effect.timeoutOption(CAPABILITIES_PROBE_TIMEOUT_MS),
+    Effect.flatMap(
+      Option.match({
+        onNone: () =>
+          Effect.fail(
+            new ClaudeCapabilitiesProbeTimeoutError({
+              timeoutMs: CAPABILITIES_PROBE_TIMEOUT_MS,
+            }),
+          ),
+        onSome: Effect.succeed,
+      }),
+    ),
+  );
+
+const probeClaudeCapabilities = (
+  claudeSettings: ClaudeSettings,
+  environment?: NodeJS.ProcessEnv,
+  cwd?: string,
+) =>
+  probeClaudeProjectCapabilities(claudeSettings, environment, cwd).pipe(
     Effect.result,
     Effect.map((result) => {
       if (Result.isFailure(result)) return undefined;
-      return Option.isSome(result.success) ? result.success.value : undefined;
+      return result.success;
     }),
   );
-};
 
 const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
   claudeSettings: ClaudeSettings,
@@ -861,4 +955,4 @@ export const makePendingClaudeProvider = (
     });
   });
 
-export { probeClaudeCapabilities };
+export { probeClaudeCapabilities, probeClaudeProjectCapabilities };

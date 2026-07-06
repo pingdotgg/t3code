@@ -1,4 +1,13 @@
-import type { EnvironmentId, OrchestrationThread, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  OrchestrationThread,
+  ProviderInstanceId,
+  ServerProvider,
+  ServerProviderSlashCommand,
+  ServerProviderSkill,
+  ThreadId,
+} from "@t3tools/contracts";
+import { buildProviderProjectCapabilitiesQueryTarget } from "@t3tools/client-runtime/state/provider-capabilities";
 import * as Option from "effect/Option";
 import { useEffect, useMemo, useState } from "react";
 
@@ -16,6 +25,8 @@ import {
 const COMPOSER_PATH_SEARCH_DEBOUNCE_MS = 200;
 const COMPOSER_PATH_SEARCH_LIMIT = 20;
 const VCS_REF_LIST_LIMIT = 100;
+const EMPTY_PROVIDER_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
+const EMPTY_PROVIDER_SLASH_COMMANDS: ReadonlyArray<ServerProviderSlashCommand> = [];
 
 export interface ThreadDetailView {
   readonly data: OrchestrationThread | null;
@@ -107,6 +118,29 @@ export function useComposerPathSearch(target: ComposerPathSearchTarget) {
     entries: result.data?.entries ?? [],
     error: result.error,
     isPending: normalizedTarget.query !== debouncedTarget.query || result.isPending,
+    refresh: result.refresh,
+  };
+}
+
+export function useProviderProjectCapabilities(target: {
+  readonly environmentId: EnvironmentId | null;
+  readonly providerInstanceId: ProviderInstanceId | null | undefined;
+  readonly cwd: string | null | undefined;
+  readonly providers?: ReadonlyArray<ServerProvider> | null;
+}) {
+  const queryTarget = useMemo(
+    () => buildProviderProjectCapabilitiesQueryTarget(target),
+    [target.cwd, target.environmentId, target.providerInstanceId, target.providers],
+  );
+  const result = useEnvironmentQuery(
+    queryTarget === null ? null : projectEnvironment.projectCapabilities(queryTarget),
+  );
+
+  return {
+    skills: result.data?.skills ?? EMPTY_PROVIDER_SKILLS,
+    slashCommands: result.data?.slashCommands ?? EMPTY_PROVIDER_SLASH_COMMANDS,
+    error: result.error,
+    isPending: result.isPending,
     refresh: result.refresh,
   };
 }

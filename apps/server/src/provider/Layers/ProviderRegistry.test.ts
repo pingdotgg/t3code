@@ -20,6 +20,7 @@ import {
   ProviderInstanceId,
   ServerSettings,
   type ServerProvider,
+  type ServerProviderSkill,
   type ServerProviderSlashCommand,
   type ServerSettings as ContractServerSettings,
 } from "@t3tools/contracts";
@@ -45,6 +46,7 @@ import {
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettingsModule from "../../serverSettings.ts";
 import { readProviderStatusCache, resolveProviderStatusCachePath } from "../providerStatusCache.ts";
+import { ProviderProjectCapabilitiesError } from "../Errors.ts";
 import type { ProviderInstance } from "../ProviderDriver.ts";
 import * as ProviderInstanceRegistry from "../Services/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../Services/ProviderRegistry.ts";
@@ -101,6 +103,7 @@ type TestClaudeCapabilities = {
   readonly subscriptionType: string | undefined;
   readonly tokenSource: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  readonly skills: ReadonlyArray<ServerProviderSkill>;
 };
 
 function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
@@ -110,6 +113,7 @@ function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
       subscriptionType: undefined,
       tokenSource: undefined,
       slashCommands: [],
+      skills: [],
       ...overrides,
     });
 }
@@ -664,6 +668,139 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             const registry = yield* ProviderRegistry.ProviderRegistry;
             assert.deepStrictEqual(yield* registry.getProviders, [initialProvider]);
             assert.strictEqual(yield* Ref.get(refreshCalls), 0);
+          }).pipe(Effect.provide(runtimeServices));
+        }),
+      );
+
+      it.effect("only returns empty project capabilities for unavailable instances", () =>
+        Effect.gen(function* () {
+          const codexDriver = ProviderDriverKind.make("codex");
+          const enabledInstanceId = ProviderInstanceId.make("codex");
+          const disabledInstanceId = ProviderInstanceId.make("codex_disabled");
+          const unsupportedInstanceId = ProviderInstanceId.make("codex_unsupported");
+          const provider = (instanceId: ProviderInstanceId, enabled: boolean): ServerProvider => ({
+            instanceId,
+            driver: codexDriver,
+            status: enabled ? "ready" : "warning",
+            enabled,
+            installed: enabled,
+            auth: { status: enabled ? "authenticated" : "unknown" },
+            checkedAt: "2026-06-10T00:00:00.000Z",
+            version: enabled ? "1.0.0" : null,
+            models: [],
+            slashCommands: [],
+            skills: [],
+          });
+          const makeInstance = (
+            instanceId: ProviderInstanceId,
+            enabled: boolean,
+            composerCapabilities?: ProviderInstance["composerCapabilities"],
+          ): ProviderInstance => {
+            const snapshot = provider(instanceId, enabled);
+            return {
+              instanceId,
+              driverKind: codexDriver,
+              continuationIdentity: {
+                driverKind: codexDriver,
+                continuationKey: `codex:instance:${instanceId}`,
+              },
+              displayName: undefined,
+              enabled,
+              snapshot: {
+                maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
+                  provider: codexDriver,
+                  packageName: null,
+                }),
+                getSnapshot: Effect.succeed(snapshot),
+                refresh: Effect.succeed(snapshot),
+                streamChanges: Stream.empty,
+              },
+              adapter: {} as ProviderInstance["adapter"],
+              textGeneration: {} as ProviderInstance["textGeneration"],
+              ...(composerCapabilities ? { composerCapabilities } : {}),
+            };
+          };
+          const instances = [
+            makeInstance(enabledInstanceId, true, {
+              list: (input) =>
+                Effect.fail(
+                  new ProviderProjectCapabilitiesError({
+                    provider: codexDriver,
+                    instanceId: enabledInstanceId,
+                    cwd: input.cwd,
+                    detail: "capability probe failed",
+                  }),
+                ),
+            }),
+            makeInstance(disabledInstanceId, false, {
+              list: (input) =>
+                Effect.fail(
+                  new ProviderProjectCapabilitiesError({
+                    provider: codexDriver,
+                    instanceId: disabledInstanceId,
+                    cwd: input.cwd,
+                    detail: "disabled probe should not run",
+                  }),
+                ),
+            }),
+            makeInstance(unsupportedInstanceId, true),
+          ];
+          const instanceRegistryLayer = Layer.succeed(
+            ProviderInstanceRegistry.ProviderInstanceRegistry,
+            {
+              getInstance: (instanceId) =>
+                Effect.succeed(instances.find((instance) => instance.instanceId === instanceId)),
+              listInstances: Effect.succeed(instances),
+              listUnavailable: Effect.succeed([]),
+              streamChanges: Stream.empty,
+              subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+            },
+          );
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const runtimeServices = yield* Layer.build(
+            ProviderRegistryLive.pipe(
+              Layer.provideMerge(instanceRegistryLayer),
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), {
+                  prefix: "t3-provider-registry-project-capabilities-",
+                }),
+              ),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ).pipe(Scope.provide(scope));
+
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry.ProviderRegistry;
+            const enabledExit = yield* Effect.exit(
+              registry.listProjectCapabilities({
+                providerInstanceId: enabledInstanceId,
+                cwd: "/repo",
+              }),
+            );
+            assert.strictEqual(Exit.isFailure(enabledExit), true);
+
+            const disabled = yield* registry.listProjectCapabilities({
+              providerInstanceId: disabledInstanceId,
+              cwd: "/repo",
+            });
+            assert.deepStrictEqual(disabled, {
+              providerInstanceId: disabledInstanceId,
+              cwd: "/repo",
+              slashCommands: [],
+              skills: [],
+            });
+
+            const unsupported = yield* registry.listProjectCapabilities({
+              providerInstanceId: unsupportedInstanceId,
+              cwd: "/repo",
+            });
+            assert.deepStrictEqual(unsupported, {
+              providerInstanceId: unsupportedInstanceId,
+              cwd: "/repo",
+              slashCommands: [],
+              skills: [],
+            });
           }).pipe(Effect.provide(runtimeServices));
         }),
       );

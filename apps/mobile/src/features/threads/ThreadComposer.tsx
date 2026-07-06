@@ -60,6 +60,7 @@ import {
   resolveProviderOptionDescriptors,
 } from "../../lib/providerOptions";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
+import { useProviderProjectCapabilities } from "../../state/queries";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
 
 /**
@@ -305,15 +306,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   });
   const toolbarFadeOpaque = isDarkMode ? "rgba(0,0,0,0.95)" : "rgba(255,255,255,0.95)";
   const toolbarFadeTransparent = isDarkMode ? "rgba(0,0,0,0)" : "rgba(255,255,255,0)";
-  const selectedProviderStatus = useMemo(() => {
-    if (!props.serverConfig) return null;
-    return (
-      props.serverConfig.providers.find(
-        (p) => p.instanceId === props.selectedThread.modelSelection.instanceId,
-      ) ?? null
-    );
-  }, [props.serverConfig, props.selectedThread.modelSelection.instanceId]);
-
   // ── Trigger detection ────────────────────────────────────
   const [composerSelection, setComposerSelection] = useState(() => ({
     start: props.draftMessage.length,
@@ -345,6 +337,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     environmentId: props.environmentId,
     cwd: composerTrigger?.kind === "path" ? props.projectCwd : null,
     query: composerTrigger?.kind === "path" ? composerTrigger.query : null,
+  });
+  const providerProjectCapabilities = useProviderProjectCapabilities({
+    environmentId: props.environmentId,
+    providerInstanceId: props.selectedThread.modelSelection.instanceId,
+    cwd: props.projectCwd,
+    providers: props.serverConfig?.providers ?? null,
   });
 
   const composerMenuItems: ComposerCommandItem[] = useMemo(() => {
@@ -378,7 +376,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       const builtIn = allBuiltIn.filter((item) => item.command.includes(q));
 
       const providerCommands: ComposerCommandItem[] = [];
-      for (const cmd of selectedProviderStatus?.slashCommands ?? []) {
+      for (const cmd of providerProjectCapabilities.slashCommands) {
         if (!cmd.name.toLowerCase().includes(q)) continue;
         providerCommands.push({
           id: `pcmd:${cmd.name}`,
@@ -393,7 +391,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }
 
     if (composerTrigger.kind === "skill") {
-      const enabledSkills = (selectedProviderStatus?.skills ?? []).filter((s) => s.enabled);
+      const enabledSkills = providerProjectCapabilities.skills.filter((s) => s.enabled);
       const normalizedQuery = normalizeSearchQuery(composerTrigger.query, {
         trimLeadingPattern: /^\$+/,
       });
@@ -490,7 +488,20 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }
 
     return [];
-  }, [composerTrigger, pathSearch.entries, selectedProviderStatus]);
+  }, [
+    composerTrigger,
+    pathSearch.entries,
+    providerProjectCapabilities.skills,
+    providerProjectCapabilities.slashCommands,
+  ]);
+  const isComposerCommandPopoverLoading =
+    composerTrigger?.kind === "path"
+      ? pathSearch.isPending
+      : composerTrigger?.kind === "skill" || composerTrigger?.kind === "slash-command"
+        ? providerProjectCapabilities.isPending
+        : false;
+  const composerCommandPopoverError =
+    composerTrigger?.kind === "path" ? pathSearch.error : providerProjectCapabilities.error;
 
   // ── Handle command selection ──────────────────────────────
   const { onChangeDraftMessage, onUpdateInteractionMode, draftMessage, onSendMessage } = props;
@@ -690,7 +701,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         layout={COMPOSER_LAYOUT_TRANSITION}
         style={{ alignSelf: "center", maxWidth: props.contentMaxWidth, position: "relative" }}
       >
-        {composerTrigger && composerMenuItems.length > 0 ? (
+        {composerTrigger ? (
           <View
             style={{
               position: "absolute",
@@ -704,7 +715,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
             <ComposerCommandPopover
               items={composerMenuItems}
               triggerKind={composerTrigger.kind}
-              isLoading={pathSearch.isPending}
+              isLoading={isComposerCommandPopoverLoading}
+              errorText={composerCommandPopoverError}
               onSelect={handleCommandSelect}
             />
           </View>
@@ -758,7 +770,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               ref={inputRef}
               multiline
               value={props.draftMessage}
-              skills={selectedProviderStatus?.skills ?? []}
+              skills={providerProjectCapabilities.skills}
               selection={composerSelection}
               onChangeText={props.onChangeDraftMessage}
               onSelectionChange={handleSelectionChange}

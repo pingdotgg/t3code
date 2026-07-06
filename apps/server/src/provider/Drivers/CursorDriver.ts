@@ -12,6 +12,7 @@
  * @module provider/Drivers/CursorDriver
  */
 import { CursorSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -30,9 +31,11 @@ import {
   buildInitialCursorProviderSnapshot,
   checkCursorProviderStatus,
   enrichCursorSnapshot,
+  probeCursorProjectSlashCommands,
 } from "../Layers/CursorProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
+import { makeProviderProjectCapabilitiesError } from "../projectCapabilities.ts";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
@@ -54,6 +57,7 @@ const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("cursor");
 const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
+const PROJECT_CAPABILITIES_TTL = Duration.seconds(30);
 const UPDATE = makeStaticProviderMaintenanceResolver(
   makeProviderMaintenanceCapabilities({
     provider: DRIVER_KIND,
@@ -129,6 +133,16 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         instanceId,
       });
       const textGeneration = yield* makeCursorTextGeneration(effectiveConfig, processEnv);
+      const projectSlashCommandCache = yield* Cache.makeWith(
+        (cwd: string) =>
+          probeCursorProjectSlashCommands(effectiveConfig, cwd, processEnv).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          ),
+        {
+          capacity: 64,
+          timeToLive: () => PROJECT_CAPABILITIES_TTL,
+        },
+      );
 
       const checkProvider = checkCursorProviderStatus(effectiveConfig, processEnv).pipe(
         Effect.map(stampIdentity),
@@ -181,6 +195,33 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         snapshot,
         adapter,
         textGeneration,
+        composerCapabilities: {
+          list: (input) =>
+            Effect.gen(function* () {
+              const slashCommands = input.forceReload
+                ? yield* probeCursorProjectSlashCommands(
+                    effectiveConfig,
+                    input.cwd,
+                    processEnv,
+                  ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner))
+                : yield* Cache.get(projectSlashCommandCache, input.cwd);
+              return {
+                providerInstanceId: instanceId,
+                cwd: input.cwd,
+                slashCommands,
+                skills: [],
+              };
+            }).pipe(
+              Effect.mapError((cause) =>
+                makeProviderProjectCapabilitiesError({
+                  provider: DRIVER_KIND,
+                  instanceId,
+                  cwd: input.cwd,
+                  cause,
+                }),
+              ),
+            ),
+        },
       } satisfies ProviderInstance;
     }),
 };

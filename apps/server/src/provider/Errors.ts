@@ -157,6 +157,25 @@ export class ProviderDriverError extends Schema.TaggedErrorClass<ProviderDriverE
 }
 
 /**
+ * ProviderProjectCapabilitiesError - A live provider failed while probing
+ * project-scoped composer skills or slash commands.
+ */
+export class ProviderProjectCapabilitiesError extends Schema.TaggedErrorClass<ProviderProjectCapabilitiesError>()(
+  "ProviderProjectCapabilitiesError",
+  {
+    provider: Schema.String,
+    instanceId: Schema.String,
+    cwd: Schema.String,
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Provider '${this.provider}' failed to list project capabilities for instance '${this.instanceId}' in '${this.cwd}': ${this.detail}`;
+  }
+}
+
+/**
  * ProviderSessionNotFoundError - Provider-facing session not found.
  */
 export class ProviderSessionNotFoundError extends Schema.TaggedErrorClass<ProviderSessionNotFoundError>()(

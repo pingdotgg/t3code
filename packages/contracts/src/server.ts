@@ -21,6 +21,8 @@ import { ModelCapabilities } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ServerSettings } from "./settings.ts";
 
+const ExactNonBlankString = Schema.String.check(Schema.isPattern(/\S/u));
+
 const KeybindingsMalformedConfigIssue = Schema.Struct({
   kind: Schema.Literal("keybindings.malformed-config"),
   message: TrimmedNonEmptyString,
@@ -90,6 +92,52 @@ export const ServerProviderSkill = Schema.Struct({
   shortDescription: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
+
+export const ServerProviderProjectCapabilitiesInput = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  cwd: ExactNonBlankString,
+  forceReload: Schema.optionalKey(Schema.Boolean),
+});
+export type ServerProviderProjectCapabilitiesInput =
+  typeof ServerProviderProjectCapabilitiesInput.Type;
+
+export const ServerProviderProjectCapabilitiesResult = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  cwd: ExactNonBlankString,
+  slashCommands: Schema.Array(ServerProviderSlashCommand).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+});
+export type ServerProviderProjectCapabilitiesResult =
+  typeof ServerProviderProjectCapabilitiesResult.Type;
+
+export class ServerProviderProjectCapabilitiesError extends Schema.TaggedErrorClass<ServerProviderProjectCapabilitiesError>()(
+  "ServerProviderProjectCapabilitiesError",
+  {
+    providerInstanceId: ProviderInstanceId,
+    cwd: ExactNonBlankString,
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  // @effect-diagnostics-next-line overriddenSchemaConstructor:off
+  constructor(props: {
+    readonly providerInstanceId: ProviderInstanceId;
+    readonly cwd: string;
+    readonly cause?: unknown;
+    readonly detail?: string;
+  }) {
+    super({
+      providerInstanceId: props.providerInstanceId,
+      cwd: props.cwd,
+      cause: props.cause,
+      message:
+        props.detail?.trim() ||
+        `Failed to load project capabilities for provider '${props.providerInstanceId}'.`,
+    } as any);
+  }
+}
 
 /**
  * Availability of a configured provider instance from the runtime's POV.

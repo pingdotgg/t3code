@@ -486,6 +486,35 @@ export const ProviderRegistryLive = Layer.effect(
       );
     });
 
+    const listProjectCapabilities: ProviderRegistryShape["listProjectCapabilities"] = (input) =>
+      Effect.gen(function* () {
+        const empty = {
+          providerInstanceId: input.providerInstanceId,
+          cwd: input.cwd,
+          slashCommands: [],
+          skills: [],
+        };
+        const instance = (yield* Ref.get(liveSubsRef)).get(input.providerInstanceId);
+        const providerSnapshot = (yield* Ref.get(providersRef)).find(
+          (provider) => provider.instanceId === input.providerInstanceId,
+        );
+        if (
+          !instance ||
+          !instance.enabled ||
+          providerSnapshot?.enabled === false ||
+          providerSnapshot?.installed === false ||
+          providerSnapshot?.availability === "unavailable" ||
+          !instance.composerCapabilities
+        ) {
+          return empty;
+        }
+        const request =
+          input.forceReload === undefined
+            ? { cwd: input.cwd }
+            : { cwd: input.cwd, forceReload: input.forceReload };
+        return yield* instance.composerCapabilities.list(request);
+      });
+
     /**
      * Diff the aggregator's live-source set against the current
      * `ProviderInstanceRegistry` and:
@@ -688,6 +717,7 @@ export const ProviderRegistryLive = Layer.effect(
         refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshInstance: (instanceId: ProviderInstanceId) =>
         refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
+      listProjectCapabilities,
       getProviderMaintenanceCapabilitiesForInstance,
       setProviderMaintenanceActionState,
       get streamChanges() {

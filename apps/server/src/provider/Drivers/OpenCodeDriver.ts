@@ -13,6 +13,7 @@
  * @module provider/Drivers/OpenCodeDriver
  */
 import { OpenCodeSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -29,11 +30,13 @@ import { ProviderDriverError } from "../Errors.ts";
 import { makeOpenCodeAdapter } from "../Layers/OpenCodeAdapter.ts";
 import {
   checkOpenCodeProviderStatus,
+  listOpenCodeProjectSlashCommands,
   makePendingOpenCodeProvider,
 } from "../Layers/OpenCodeProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import { OpenCodeRuntime } from "../opencodeRuntime.ts";
+import { makeProviderProjectCapabilitiesError } from "../projectCapabilities.ts";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
@@ -56,6 +59,7 @@ const decodeOpenCodeSettings = Schema.decodeSync(OpenCodeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("opencode");
 const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
+const PROJECT_CAPABILITIES_TTL = Duration.seconds(30);
 
 function isOpenCodeNativeCommandPath(commandPath: string): boolean {
   const normalized = normalizeCommandPath(commandPath);
@@ -142,6 +146,16 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       });
       const textGeneration = yield* makeOpenCodeTextGeneration(effectiveConfig, processEnv);
+      const projectSlashCommandCache = yield* Cache.makeWith(
+        (cwd: string) =>
+          listOpenCodeProjectSlashCommands(effectiveConfig, cwd, processEnv).pipe(
+            Effect.provideService(OpenCodeRuntime, openCodeRuntime),
+          ),
+        {
+          capacity: 64,
+          timeToLive: () => PROJECT_CAPABILITIES_TTL,
+        },
+      );
 
       const checkProvider = checkOpenCodeProviderStatus(
         effectiveConfig,
@@ -190,6 +204,33 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         snapshot,
         adapter,
         textGeneration,
+        composerCapabilities: {
+          list: (input) =>
+            Effect.gen(function* () {
+              const slashCommands = input.forceReload
+                ? yield* listOpenCodeProjectSlashCommands(
+                    effectiveConfig,
+                    input.cwd,
+                    processEnv,
+                  ).pipe(Effect.provideService(OpenCodeRuntime, openCodeRuntime))
+                : yield* Cache.get(projectSlashCommandCache, input.cwd);
+              return {
+                providerInstanceId: instanceId,
+                cwd: input.cwd,
+                slashCommands,
+                skills: [],
+              };
+            }).pipe(
+              Effect.mapError((cause) =>
+                makeProviderProjectCapabilitiesError({
+                  provider: DRIVER_KIND,
+                  instanceId,
+                  cwd: input.cwd,
+                  cause,
+                }),
+              ),
+            ),
+        },
       } satisfies ProviderInstance;
     }),
 };

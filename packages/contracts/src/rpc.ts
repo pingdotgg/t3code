@@ -126,6 +126,9 @@ import {
   ServerProcessDiagnosticsResult,
   ServerProcessResourceHistoryInput,
   ServerProcessResourceHistoryResult,
+  ServerProviderProjectCapabilitiesError,
+  ServerProviderProjectCapabilitiesInput,
+  ServerProviderProjectCapabilitiesResult,
   ServerSignalProcessInput,
   ServerSignalProcessResult,
   ServerUpsertKeybindingInput,
@@ -153,6 +156,9 @@ export const WS_METHODS = {
   projectsReadFile: "projects.readFile",
   projectsSearchEntries: "projects.searchEntries",
   projectsWriteFile: "projects.writeFile",
+
+  // Provider project-scoped capability methods
+  providersProjectCapabilities: "providers.projectCapabilities",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -376,6 +382,12 @@ export const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
   payload: ProjectWriteFileInput,
   success: ProjectWriteFileResult,
   error: Schema.Union([ProjectWriteFileError, EnvironmentAuthorizationError]),
+});
+
+export const WsProvidersProjectCapabilitiesRpc = Rpc.make(WS_METHODS.providersProjectCapabilities, {
+  payload: ServerProviderProjectCapabilitiesInput,
+  success: ServerProviderProjectCapabilitiesResult,
+  error: Schema.Union([ServerProviderProjectCapabilitiesError, EnvironmentAuthorizationError]),
 });
 
 export const WsShellOpenInEditorRpc = Rpc.make(WS_METHODS.shellOpenInEditor, {
@@ -703,6 +715,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsReadFileRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsWriteFileRpc,
+  WsProvidersProjectCapabilitiesRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsAssetsCreateUrlRpc,

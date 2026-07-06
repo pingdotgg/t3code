@@ -42,6 +42,7 @@ interface ComposerCommandPopoverProps {
   readonly items: ReadonlyArray<ComposerCommandItem>;
   readonly triggerKind: ComposerTriggerKind | null;
   readonly isLoading: boolean;
+  readonly errorText?: string | null;
   readonly onSelect: (item: ComposerCommandItem) => void;
 }
 
@@ -111,7 +112,14 @@ function groupLabel(triggerKind: ComposerTriggerKind | null): string | null {
   }
 }
 
-function emptyText(triggerKind: ComposerTriggerKind | null, isLoading: boolean): string {
+function emptyText(
+  triggerKind: ComposerTriggerKind | null,
+  isLoading: boolean,
+  errorText: string | null | undefined,
+): string {
+  if (errorText) {
+    return errorText;
+  }
   if (isLoading) {
     return triggerKind === "path" ? "Searching files…" : "Loading…";
   }
@@ -214,7 +222,7 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
       ) : (
         <View style={{ paddingHorizontal: 14, paddingVertical: 10 }}>
           <Text className="text-xs text-foreground-tertiary">
-            {emptyText(props.triggerKind, props.isLoading)}
+            {emptyText(props.triggerKind, props.isLoading, props.errorText)}
           </Text>
         </View>
       )}

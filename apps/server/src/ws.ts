@@ -56,6 +56,7 @@ import {
   type TerminalError,
   type TerminalEvent,
   type TerminalMetadataStreamEvent,
+  ServerProviderProjectCapabilitiesError,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -305,6 +306,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.projectsReadFile, AuthOrchestrationReadScope],
   [WS_METHODS.projectsSearchEntries, AuthOrchestrationReadScope],
   [WS_METHODS.projectsWriteFile, AuthOrchestrationOperateScope],
+  [WS_METHODS.providersProjectCapabilities, AuthOrchestrationReadScope],
   [WS_METHODS.shellOpenInEditor, AuthOrchestrationOperateScope],
   [WS_METHODS.filesystemBrowse, AuthOrchestrationReadScope],
   [WS_METHODS.assetsCreateUrl, AuthOrchestrationReadScope],
@@ -1453,6 +1455,22 @@ const makeWsRpcLayer = (
               ),
             ),
             { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.providersProjectCapabilities]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.providersProjectCapabilities,
+            providerRegistry.listProjectCapabilities(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ServerProviderProjectCapabilitiesError({
+                    providerInstanceId: input.providerInstanceId,
+                    cwd: input.cwd,
+                    cause,
+                    detail: "Provider project capability probe failed.",
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.shellOpenInEditor]: (input) =>
           observeRpcEffect(WS_METHODS.shellOpenInEditor, externalLauncher.launchEditor(input), {

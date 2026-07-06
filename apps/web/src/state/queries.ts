@@ -3,10 +3,15 @@ import {
   type CheckpointDiffTarget,
   type ComposerPathSearchTarget,
 } from "@t3tools/client-runtime/state/threads";
+import { buildProviderProjectCapabilitiesQueryTarget } from "@t3tools/client-runtime/state/provider-capabilities";
 import { type VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
 import type {
   EnvironmentId,
   OrchestrationThread,
+  ProviderInstanceId,
+  ServerProvider,
+  ServerProviderSlashCommand,
+  ServerProviderSkill,
   ThreadId,
   VcsListRefsResult,
   VcsRef,
@@ -27,6 +32,8 @@ const COMPOSER_PATH_SEARCH_DEBOUNCE_MS = 120;
 const COMPOSER_PATH_SEARCH_LIMIT = 80;
 const VCS_REF_LIST_LIMIT = 100;
 const EMPTY_REFS: ReadonlyArray<VcsRef> = [];
+const EMPTY_PROVIDER_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
+const EMPTY_PROVIDER_SLASH_COMMANDS: ReadonlyArray<ServerProviderSlashCommand> = [];
 const INITIAL_BRANCH_CURSORS = [undefined] as const;
 
 export interface ThreadDetailView {
@@ -210,6 +217,29 @@ export function useComposerPathSearch(target: ComposerPathSearchTarget) {
     entries: result.data?.entries ?? [],
     error: result.error,
     isPending: normalizedTarget.query !== debouncedTarget.query || result.isPending,
+    refresh: result.refresh,
+  };
+}
+
+export function useProviderProjectCapabilities(target: {
+  readonly environmentId: EnvironmentId | null;
+  readonly providerInstanceId: ProviderInstanceId | null | undefined;
+  readonly cwd: string | null | undefined;
+  readonly providers?: ReadonlyArray<ServerProvider> | null;
+}) {
+  const queryTarget = useMemo(
+    () => buildProviderProjectCapabilitiesQueryTarget(target),
+    [target.cwd, target.environmentId, target.providerInstanceId, target.providers],
+  );
+  const result = useEnvironmentQuery(
+    queryTarget === null ? null : projectEnvironment.projectCapabilities(queryTarget),
+  );
+
+  return {
+    skills: result.data?.skills ?? EMPTY_PROVIDER_SKILLS,
+    slashCommands: result.data?.slashCommands ?? EMPTY_PROVIDER_SLASH_COMMANDS,
+    error: result.error,
+    isPending: result.isPending,
     refresh: result.refresh,
   };
 }

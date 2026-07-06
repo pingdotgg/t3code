@@ -22,6 +22,7 @@
  * @module provider/Drivers/CodexDriver
  */
 import { CodexSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -36,9 +37,14 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeCodexAdapter } from "../Layers/CodexAdapter.ts";
-import { checkCodexProviderStatus, makePendingCodexProvider } from "../Layers/CodexProvider.ts";
+import {
+  checkCodexProviderStatus,
+  listCodexProjectSkills,
+  makePendingCodexProvider,
+} from "../Layers/CodexProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
+import { makeProviderProjectCapabilitiesError } from "../projectCapabilities.ts";
 import type { ProviderDriver, ProviderInstance } from "../ProviderDriver.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
@@ -61,6 +67,7 @@ const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("codex");
 const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
+const PROJECT_CAPABILITIES_TTL = Duration.seconds(30);
 const UPDATE = makePackageManagedProviderMaintenanceResolver({
   provider: DRIVER_KIND,
   npmPackageName: "@openai/codex",
@@ -161,6 +168,22 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       });
       const textGeneration = yield* makeCodexTextGeneration(effectiveConfig, processEnv);
+      const projectSkillsCache = yield* Cache.makeWith(
+        (cwd: string) =>
+          listCodexProjectSkills({
+            binaryPath: effectiveConfig.binaryPath,
+            homePath: effectiveConfig.homePath,
+            cwd,
+            environment: processEnv,
+          }).pipe(
+            Effect.scoped,
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          ),
+        {
+          capacity: 64,
+          timeToLive: () => PROJECT_CAPABILITIES_TTL,
+        },
+      );
 
       // Build a managed snapshot whose settings never change — mutations come
       // in as instance rebuilds from the registry rather than in-place
@@ -209,6 +232,38 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         snapshot,
         adapter,
         textGeneration,
+        composerCapabilities: {
+          list: (input) =>
+            Effect.gen(function* () {
+              const skills = input.forceReload
+                ? yield* listCodexProjectSkills({
+                    binaryPath: effectiveConfig.binaryPath,
+                    homePath: effectiveConfig.homePath,
+                    cwd: input.cwd,
+                    forceReload: true,
+                    environment: processEnv,
+                  }).pipe(
+                    Effect.scoped,
+                    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+                  )
+                : yield* Cache.get(projectSkillsCache, input.cwd);
+              return {
+                providerInstanceId: instanceId,
+                cwd: input.cwd,
+                slashCommands: [],
+                skills,
+              };
+            }).pipe(
+              Effect.mapError((cause) =>
+                makeProviderProjectCapabilitiesError({
+                  provider: DRIVER_KIND,
+                  instanceId,
+                  cwd: input.cwd,
+                  cause,
+                }),
+              ),
+            ),
+        },
       } satisfies ProviderInstance;
     }),
 };

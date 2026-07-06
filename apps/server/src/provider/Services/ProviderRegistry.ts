@@ -10,12 +10,15 @@ import type {
   ProviderInstanceId,
   ProviderDriverKind,
   ServerProvider,
+  ServerProviderProjectCapabilitiesInput,
+  ServerProviderProjectCapabilitiesResult,
   ServerProviderUpdateState,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 import type { ProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
+import type { ProviderProjectCapabilitiesError } from "../Errors.ts";
 
 export type ProviderMaintenanceActionKind = "update";
 
@@ -47,6 +50,16 @@ export interface ProviderRegistryShape {
   readonly refreshInstance: (
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+  /**
+   * Resolve provider commands and skills that depend on a project cwd.
+   * Unsupported or unavailable instances resolve to empty capability arrays.
+   * Live provider probe failures are surfaced so callers can retry or display
+   * a recoverable error instead of caching false empty results.
+   */
+  readonly listProjectCapabilities: (
+    input: ServerProviderProjectCapabilitiesInput,
+  ) => Effect.Effect<ServerProviderProjectCapabilitiesResult, ProviderProjectCapabilitiesError>;
 
   /**
    * Resolve the maintenance capabilities owned by one live provider instance.

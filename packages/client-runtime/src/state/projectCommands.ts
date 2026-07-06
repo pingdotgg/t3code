@@ -60,6 +60,12 @@ export function createProjectEnvironmentAtoms<R, E>(
       tag: WS_METHODS.projectsSearchEntries,
       staleTimeMs: 15_000,
     }),
+    projectCapabilities: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:providers:project-capabilities",
+      tag: WS_METHODS.providersProjectCapabilities,
+      staleTimeMs: 30_000,
+      idleTtlMs: 5 * 60_000,
+    }),
     listEntries: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:projects:list-entries",
       tag: WS_METHODS.projectsListEntries,

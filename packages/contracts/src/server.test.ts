@@ -1,9 +1,23 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ServerProvider } from "./server.ts";
+import {
+  ServerProvider,
+  ServerProviderProjectCapabilitiesError,
+  ServerProviderProjectCapabilitiesInput,
+  ServerProviderProjectCapabilitiesResult,
+} from "./server.ts";
 
 const decodeServerProvider = Schema.decodeUnknownSync(ServerProvider);
+const decodeProjectCapabilitiesInput = Schema.decodeUnknownSync(
+  ServerProviderProjectCapabilitiesInput,
+);
+const decodeProjectCapabilitiesResult = Schema.decodeUnknownSync(
+  ServerProviderProjectCapabilitiesResult,
+);
+const decodeProjectCapabilitiesError = Schema.decodeUnknownSync(
+  ServerProviderProjectCapabilitiesError,
+);
 
 describe("ServerProvider", () => {
   it("defaults capability arrays when decoding provider snapshots", () => {
@@ -70,5 +84,32 @@ describe("ServerProvider", () => {
     });
 
     expect(parsed.continuation?.groupKey).toBe("codex:home:/Users/julius/.codex");
+  });
+
+  it("preserves exact project capability cwd values", () => {
+    const input = decodeProjectCapabilitiesInput({
+      providerInstanceId: "codex",
+      cwd: "/repo/with-space ",
+    });
+    const result = decodeProjectCapabilitiesResult({
+      providerInstanceId: "codex",
+      cwd: " /repo/with-leading-space",
+    });
+    const error = decodeProjectCapabilitiesError({
+      _tag: "ServerProviderProjectCapabilitiesError",
+      providerInstanceId: "codex",
+      cwd: "/repo/with-space ",
+      message: "Failed to load project capabilities.",
+    });
+
+    expect(input.cwd).toBe("/repo/with-space ");
+    expect(result.cwd).toBe(" /repo/with-leading-space");
+    expect(error.cwd).toBe("/repo/with-space ");
+    expect(() =>
+      decodeProjectCapabilitiesInput({
+        providerInstanceId: "codex",
+        cwd: "   ",
+      }),
+    ).toThrow();
   });
 });
