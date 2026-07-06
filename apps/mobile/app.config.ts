@@ -66,7 +66,11 @@ const config: ExpoConfig = {
   scheme: variant.scheme,
   version: "0.1.0",
   runtimeVersion: {
-    policy: process.env.MOBILE_VERSION_POLICY ?? "appVersion",
+    // Fingerprint (not appVersion) so an OTA only reaches binaries whose native
+    // project — native deps, config plugins, AND patches/ — matches the update.
+    // With appVersion, every 0.1.0 build shares a runtime version, so a JS update
+    // could land on a binary missing the native changes it needs and crash.
+    policy: process.env.MOBILE_VERSION_POLICY ?? "fingerprint",
   },
   orientation: "portrait",
   icon: "./assets/icon.png",

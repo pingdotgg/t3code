@@ -24,12 +24,14 @@ import {
   AuthWebSocketTicketResult,
   ServerAuthSessionMethod,
 } from "./auth.ts";
-import { AuthSessionId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { AuthSessionId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import {
   ClientOrchestrationCommand,
   DispatchResult,
   OrchestrationReadModel,
+  OrchestrationShellSnapshot,
+  OrchestrationThreadDetailSnapshot,
 } from "./orchestration.ts";
 import {
   RelayCloudEnvironmentHealthRequest,
@@ -80,6 +82,7 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "client_sessions_load_failed",
   "client_session_revoke_failed",
   "orchestration_snapshot_failed",
+  "orchestration_thread_snapshot_failed",
   "orchestration_dispatch_failed",
   "internal_error",
 ]);
@@ -155,11 +158,29 @@ export class EnvironmentInternalError extends Schema.TaggedErrorClass<Environmen
   }
 }
 
+export const EnvironmentResourceNotFoundReason = Schema.Literals(["thread_not_found"]);
+export type EnvironmentResourceNotFoundReason = typeof EnvironmentResourceNotFoundReason.Type;
+
+export class EnvironmentResourceNotFoundError extends Schema.TaggedErrorClass<EnvironmentResourceNotFoundError>()(
+  "EnvironmentResourceNotFoundError",
+  {
+    code: Schema.Literal("not_found"),
+    reason: EnvironmentResourceNotFoundReason,
+    traceId: TrimmedNonEmptyString,
+  },
+  { httpApiStatus: 404 },
+) {
+  [HttpServerRespondable.symbol]() {
+    return HttpServerResponse.schemaJson(EnvironmentResourceNotFoundError)(this, { status: 404 });
+  }
+}
+
 export const EnvironmentHttpCommonError = Schema.Union([
   EnvironmentRequestInvalidError,
   EnvironmentAuthInvalidError,
   EnvironmentScopeRequiredError,
   EnvironmentOperationForbiddenError,
+  EnvironmentResourceNotFoundError,
   EnvironmentInternalError,
 ]);
 export type EnvironmentHttpCommonError = typeof EnvironmentHttpCommonError.Type;
@@ -267,6 +288,11 @@ const EnvironmentSessionRevokeErrors = [
 ] as const;
 const EnvironmentOrchestrationSnapshotErrors = [
   EnvironmentScopeRequiredError,
+  EnvironmentInternalError,
+] as const;
+const EnvironmentOrchestrationThreadSnapshotErrors = [
+  EnvironmentScopeRequiredError,
+  EnvironmentResourceNotFoundError,
   EnvironmentInternalError,
 ] as const;
 const EnvironmentOrchestrationDispatchErrors = [
@@ -422,12 +448,31 @@ export class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
+const EnvironmentOrchestrationThreadSnapshotParams = Schema.Struct({
+  threadId: ThreadId,
+});
+
 export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
   .add(
     HttpApiEndpoint.get("snapshot", "/api/orchestration/snapshot", {
       headers: OptionalBearerHeaders,
       success: OrchestrationReadModel,
       error: EnvironmentOrchestrationSnapshotErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("shellSnapshot", "/api/orchestration/shell", {
+      headers: OptionalBearerHeaders,
+      success: OrchestrationShellSnapshot,
+      error: EnvironmentOrchestrationSnapshotErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("threadSnapshot", "/api/orchestration/threads/:threadId", {
+      headers: OptionalBearerHeaders,
+      params: EnvironmentOrchestrationThreadSnapshotParams,
+      success: OrchestrationThreadDetailSnapshot,
+      error: EnvironmentOrchestrationThreadSnapshotErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(

@@ -20,7 +20,7 @@ import {
 import {
   EnvironmentId,
   OrchestrationShellSnapshot,
-  OrchestrationThread,
+  OrchestrationThreadDetailSnapshot,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -45,11 +45,14 @@ const StoredShellSnapshot = Schema.Struct({
   snapshot: OrchestrationShellSnapshot,
 });
 const StoredShellSnapshotJson = Schema.fromJsonString(StoredShellSnapshot);
+// v2 stores the snapshot sequence alongside the thread so a warm cache can
+// resume via `afterSequence` instead of re-downloading the full thread body.
+// Older v1 entries (no sequence) fail to decode and are treated as a cold cache.
 const StoredThreadSnapshot = Schema.Struct({
-  schemaVersion: Schema.Literal(1),
+  schemaVersion: Schema.Literal(2),
   environmentId: EnvironmentId,
   threadId: ThreadId,
-  thread: OrchestrationThread,
+  snapshot: OrchestrationThreadDetailSnapshot,
 });
 const StoredThreadSnapshotJson = Schema.fromJsonString(StoredThreadSnapshot);
 const ConnectionCatalogDocumentJson = Schema.fromJsonString(ConnectionCatalogDocument);
@@ -473,7 +476,7 @@ export const connectionStorageLayer = Layer.effectContext(
               Effect.mapError((cause) => persistenceError("load-thread", cause)),
               Effect.map((stored) =>
                 stored.environmentId === environmentId && stored.threadId === threadId
-                  ? Option.some(stored.thread)
+                  ? Option.some(stored.snapshot)
                   : Option.none(),
               ),
             );
@@ -484,18 +487,18 @@ export const connectionStorageLayer = Layer.effectContext(
               : persistenceError("load-thread", cause),
           ),
         ),
-      saveThread: (environmentId, thread) =>
+      saveThread: (environmentId, snapshot) =>
         Effect.gen(function* () {
           const encoded = yield* encodeStoredThreadSnapshot({
-            schemaVersion: 1,
+            schemaVersion: 2,
             environmentId,
-            threadId: thread.id,
-            thread,
+            threadId: snapshot.thread.id,
+            snapshot,
           }).pipe(Effect.mapError((cause) => persistenceError("save-thread", cause)));
           yield* writeDatabaseValue(
             database,
             THREAD_STORE_NAME,
-            threadCacheKey(environmentId, thread.id),
+            threadCacheKey(environmentId, snapshot.thread.id),
             encoded,
           );
         }).pipe(
