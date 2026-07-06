@@ -115,6 +115,10 @@ export class ManagedRelayRequestTimeoutError extends Schema.TaggedErrorClass<Man
   {
     activity: ManagedRelayRequestActivity,
     timeoutMs: Schema.Number,
+    // The CLIENT span's trace id. A timed-out request has no server response
+    // to take an id from, but the client span was exported, so carrying its id
+    // makes the failure searchable instead of logging `traceId: null`.
+    traceId: Schema.NullOr(Schema.String),
   },
 ) {
   override get message(): string {
@@ -326,11 +330,18 @@ function timeoutRelayRequest(activity: ManagedRelayRequestActivity) {
       Effect.flatMap(
         Option.match({
           onNone: () =>
-            Effect.fail(
-              new ManagedRelayRequestTimeoutError({
-                activity,
-                timeoutMs: MANAGED_RELAY_REQUEST_TIMEOUT_MS,
-              }),
+            Effect.currentParentSpan.pipe(
+              Effect.map((span) => span.traceId),
+              Effect.orElseSucceed(() => null),
+              Effect.flatMap((traceId) =>
+                Effect.fail(
+                  new ManagedRelayRequestTimeoutError({
+                    activity,
+                    timeoutMs: MANAGED_RELAY_REQUEST_TIMEOUT_MS,
+                    traceId,
+                  }),
+                ),
+              ),
             ),
           onSome: Effect.succeed,
         }),

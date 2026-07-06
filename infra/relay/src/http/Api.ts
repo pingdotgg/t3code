@@ -6,6 +6,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Record from "effect/Record";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -155,6 +156,47 @@ export const relayDocsRedirectRoute = HttpRouter.add(
   HttpServerResponse.redirect("/docs"),
 );
 
+// Shorter than the mobile client's 10s request timeout on purpose: when a
+// request hangs (e.g. a stuck upstream query), the client would otherwise
+// abort first, the invocation would die with the request span still open, and
+// the batched spans would never export — leaving no server-side trace at all.
+// Failing server-side first turns the hang into a completed 504 whose trace
+// contains the exact child span that stalled, and the response still carries
+// the traceparent back to the client.
+export const RELAY_REQUEST_DEADLINE_MS = 9_000;
+
+const relayRequestDeadline = <E, R>(
+  httpEffect: Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
+    E,
+    HttpServerRequest.HttpServerRequest | R
+  >,
+) =>
+  httpEffect.pipe(
+    Effect.timeoutOption(Duration.millis(RELAY_REQUEST_DEADLINE_MS)),
+    Effect.flatMap(
+      Option.match({
+        onNone: () =>
+          Effect.gen(function* () {
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            yield* Effect.logError("relay request exceeded deadline", {
+              "http.method": request.method,
+              "http.url": request.url,
+              "relay.request.deadline_ms": RELAY_REQUEST_DEADLINE_MS,
+            });
+            yield* Effect.annotateCurrentSpan({
+              "relay.request.deadline_exceeded": true,
+            });
+            return HttpServerResponse.jsonUnsafe(
+              { error: "relay_request_deadline_exceeded" },
+              { status: 504 },
+            );
+          }),
+        onSome: Effect.succeed,
+      }),
+    ),
+  );
+
 export const traceRelayHttpRequest = <E, R>(
   httpEffect: Effect.Effect<
     HttpServerResponse.HttpServerResponse,
@@ -164,7 +206,7 @@ export const traceRelayHttpRequest = <E, R>(
 ) =>
   // HttpMiddleware finalizes its span on the dispatcher; do not close a request-scoped exporter first.
   HttpMiddleware.tracer(
-    appendRelayTraceContextResponseHeader.pipe(Effect.andThen(httpEffect)),
+    appendRelayTraceContextResponseHeader.pipe(Effect.andThen(relayRequestDeadline(httpEffect))),
   ).pipe(Effect.ensuring(Effect.yieldNow));
 
 export const traceRelayHttpRequestWith = <E, R, LayerError, LayerRequirements>(

@@ -261,6 +261,7 @@ describe("RelayEnvironmentDiscovery", () => {
             new ManagedRelay.ManagedRelayRequestTimeoutError({
               activity: "Relay environment listing",
               timeoutMs: ManagedRelay.MANAGED_RELAY_REQUEST_TIMEOUT_MS,
+              traceId: null,
             }),
           ),
         getEnvironmentStatus: () => Effect.die("unused"),
