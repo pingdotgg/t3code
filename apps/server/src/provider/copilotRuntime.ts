@@ -123,6 +123,10 @@ function describeCopilotProbeCause(cause: unknown): string {
     const detail =
       "detail" in current && typeof current.detail === "string" ? current.detail.trim() : "";
     const nestedCause = "cause" in current ? current.cause : undefined;
+    if (tag === "CopilotProbePromiseError" && nestedCause !== undefined) {
+      current = nestedCause;
+      continue;
+    }
     if (tag === "CopilotCliPathResolutionError" && nestedCause !== undefined) {
       if (detail.length > 0) {
         fallbackMessages.push(detail);
