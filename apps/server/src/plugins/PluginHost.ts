@@ -31,16 +31,21 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ProjectionThreadActivities from "../persistence/Services/ProjectionThreadActivities.ts";
 import * as ProjectionThreadMessages from "../persistence/Services/ProjectionThreadMessages.ts";
 import * as ProjectionTurns from "../persistence/Services/ProjectionTurns.ts";
+import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { makeAgentsCapability } from "./capabilities/AgentsCapability.ts";
 import { makeDatabaseCapability } from "./capabilities/DatabaseCapability.ts";
 import { makeEnvironmentsReadCapability } from "./capabilities/EnvironmentsReadCapability.ts";
 import { makeHttpCapability } from "./capabilities/HttpCapability.ts";
@@ -49,6 +54,7 @@ import { makeSecretsCapability } from "./capabilities/SecretsCapability.ts";
 import { makeSourceControlCapability } from "./capabilities/SourceControlCapability.ts";
 import { makeTerminalsCapability } from "./capabilities/TerminalsCapability.ts";
 import { makeTextGenerationCapability } from "./capabilities/TextGenerationCapability.ts";
+import { makeVcsCapability } from "./capabilities/VcsCapability.ts";
 import { PluginLockfileStore } from "./PluginLockfileStore.ts";
 import { PluginHttpRegistry } from "./PluginHttpRegistry.ts";
 import { PluginMigrator } from "./PluginMigrator.ts";
@@ -153,10 +159,14 @@ const makeHostApi = (input: {
     readonly fileSystem: FileSystem.FileSystem;
     readonly path: Path.Path;
     readonly environment: ServerEnvironment.ServerEnvironment["Service"];
+    readonly orchestrationEngine: OrchestrationEngine.OrchestrationEngineService["Service"];
     readonly snapshots: ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"];
     readonly turns: ProjectionTurns.ProjectionTurnRepository["Service"];
     readonly messages: ProjectionThreadMessages.ProjectionThreadMessageRepository["Service"];
     readonly activities: ProjectionThreadActivities.ProjectionThreadActivityRepository["Service"];
+    readonly providerInstances: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"];
+    readonly git: GitVcsDriver.GitVcsDriver["Service"];
+    readonly checkpointStore: CheckpointStore.CheckpointStore["Service"];
     readonly textGeneration: TextGeneration.TextGeneration["Service"];
     readonly sourceControlRegistry: SourceControlProviderRegistry.SourceControlProviderRegistry["Service"];
     readonly github: GitHubCli.GitHubCli["Service"];
@@ -184,8 +194,24 @@ const makeHostApi = (input: {
       dataDir: input.dataDir,
       logger: input.logger,
     },
-    agents: unavailable("agents"),
-    vcs: unavailable("vcs"),
+    agents: available(
+      "agents",
+      makeAgentsCapability({
+        pluginId: input.pluginId,
+        engine: input.deps.orchestrationEngine,
+        snapshots: input.deps.snapshots,
+        turns: input.deps.turns,
+        messages: input.deps.messages,
+        providerInstances: input.deps.providerInstances,
+      }),
+    ),
+    vcs: available(
+      "vcs",
+      makeVcsCapability({
+        git: input.deps.git,
+        checkpoints: input.deps.checkpointStore,
+      }),
+    ),
     terminals: available("terminals", terminalsBundle.capability),
     database: available("database", makeDatabaseCapability(input.deps.sql)),
     projectionsRead: available(
@@ -301,10 +327,14 @@ export const make = Effect.fn("PluginHost.make")(function* () {
   const sql = yield* SqlClient.SqlClient;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const environment = yield* ServerEnvironment.ServerEnvironment;
+  const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
   const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const turns = yield* ProjectionTurns.ProjectionTurnRepository;
   const messages = yield* ProjectionThreadMessages.ProjectionThreadMessageRepository;
   const activities = yield* ProjectionThreadActivities.ProjectionThreadActivityRepository;
+  const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+  const git = yield* GitVcsDriver.GitVcsDriver;
+  const checkpointStore = yield* CheckpointStore.CheckpointStore;
   const textGeneration = yield* TextGeneration.TextGeneration;
   const sourceControlRegistry = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
   const github = yield* GitHubCli.GitHubCli;
@@ -379,10 +409,14 @@ export const make = Effect.fn("PluginHost.make")(function* () {
           fileSystem: fs,
           path,
           environment,
+          orchestrationEngine,
           snapshots,
           turns,
           messages,
           activities,
+          providerInstances,
+          git,
+          checkpointStore,
           textGeneration,
           sourceControlRegistry,
           github,
