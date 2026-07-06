@@ -7,6 +7,7 @@ import {
   AuthReviewWriteScope,
   AuthTerminalOperateScope,
   ORCHESTRATION_WS_METHODS,
+  PLUGINS_WS_METHODS,
   type AuthEnvironmentScope,
   WS_METHODS,
   WsRpcGroup,
@@ -97,6 +98,11 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeAuthAccess]: AuthAccessReadScope,
   [WS_METHODS.subscribeBackgroundPolicy]: AuthOrchestrationReadScope,
+  [PLUGINS_WS_METHODS.list]: AuthOrchestrationReadScope,
+  // Plugin method RPCs have this static environment-read baseline; the dispatcher
+  // performs the real per-plugin plugin:<id>:read|operate authorization.
+  [PLUGINS_WS_METHODS.call]: AuthOrchestrationReadScope,
+  [PLUGINS_WS_METHODS.subscribe]: AuthOrchestrationReadScope,
 } as const satisfies Readonly<Record<WsRpcMethod, AuthEnvironmentScope>>;
 
 export function requiredScopeForRpcMethod(method: string): AuthEnvironmentScope {

@@ -1,10 +1,10 @@
 import {
   AuthSessionId,
   AuthStandardClientScopes,
-  AuthEnvironmentScopes,
+  AuthScopes,
   type AuthClientMetadata,
   type AuthClientSession,
-  type AuthEnvironmentScope,
+  type AuthScope,
   type ServerAuthSessionMethod,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -36,7 +36,7 @@ export interface IssuedSession {
   readonly method: ServerAuthSessionMethod;
   readonly client: AuthClientMetadata;
   readonly expiresAt: DateTime.DateTime;
-  readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+  readonly scopes: ReadonlyArray<AuthScope>;
   readonly proofKeyThumbprint?: string;
 }
 
@@ -47,7 +47,7 @@ export interface VerifiedSession {
   readonly client: AuthClientMetadata;
   readonly expiresAt?: DateTime.DateTime;
   readonly subject: string;
-  readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+  readonly scopes: ReadonlyArray<AuthScope>;
   readonly proofKeyThumbprint?: string;
 }
 
@@ -363,7 +363,7 @@ export class SessionStore extends Context.Service<
       readonly ttl?: Duration.Duration;
       readonly subject?: string;
       readonly method?: ServerAuthSessionMethod;
-      readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
+      readonly scopes?: ReadonlyArray<AuthScope>;
       readonly client?: AuthClientMetadata;
       readonly proofKeyThumbprint?: string;
     }) => Effect.Effect<IssuedSession, SessionCredentialInternalError>;
@@ -408,7 +408,7 @@ const SessionClaims = Schema.Struct({
   kind: Schema.Literal("session"),
   sid: AuthSessionId,
   sub: Schema.String,
-  scopes: AuthEnvironmentScopes,
+  scopes: AuthScopes,
   method: Schema.Literals(["browser-session-cookie", "bearer-access-token", "dpop-access-token"]),
   jkt: Schema.optionalKey(Schema.String),
   iat: Schema.Number,
@@ -452,9 +452,16 @@ function toClientMetadata(record: {
   };
 }
 
-function toAuthClientSession(input: Omit<AuthClientSession, "current">): AuthClientSession {
+function toAuthClientSession(
+  input: Omit<AuthClientSession, "current" | "scopes"> & {
+    readonly scopes: ReadonlyArray<AuthScope>;
+  },
+): AuthClientSession {
   return {
     ...input,
+    // Preserve the full scope set (including any plugin scopes) so downscoped
+    // sessions are represented faithfully in listSessions / change events.
+    scopes: input.scopes,
     current: false,
   };
 }

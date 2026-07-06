@@ -3,6 +3,7 @@ import type {
   AuthClientMetadata,
   AuthEnvironmentScope,
   AuthPairingCredentialResult,
+  AuthScope,
   ServerAuthSessionMethod,
   AuthSessionId,
   AuthSessionState,
@@ -120,7 +121,8 @@ const isEnvironmentHttpCommonError = Schema.is(EnvironmentHttpCommonError);
 export interface ServerPairingLinkRecord {
   readonly id: string;
   readonly credential: string;
-  readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+  // Full scopes (may include plugin scopes) mirroring AuthPairingLink.scopes.
+  readonly scopes: ReadonlyArray<AuthScope>;
   readonly subject: string;
   readonly label?: string;
   readonly createdAt: string;
@@ -130,7 +132,10 @@ export interface ServerPairingLinkRecord {
 export interface ServerClientSessionRecord {
   readonly sessionId: AuthSessionId;
   readonly subject: string;
-  readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+  // Full AuthScopes so plugin scopes carried by a downscoped session surface in
+  // the Clients panel, mirroring the pairing-link record above and the widened
+  // `AuthClientSession.scopes` contract.
+  readonly scopes: ReadonlyArray<AuthScope>;
   readonly method: ServerAuthSessionMethod;
   readonly client: AuthClientMetadata;
   readonly issuedAt: string;

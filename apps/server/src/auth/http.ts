@@ -1,13 +1,8 @@
 import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
+  AuthEnvironmentScope,
   AuthStandardClientScopes,
-  AuthOrchestrationOperateScope,
-  AuthOrchestrationReadScope,
-  AuthRelayReadScope,
-  AuthRelayWriteScope,
-  AuthReviewWriteScope,
-  AuthTerminalOperateScope,
   EnvironmentAuthInvalidError,
   type EnvironmentAuthInvalidReason,
   EnvironmentHttpApi,
@@ -21,9 +16,11 @@ import {
   EnvironmentScopeRequiredError,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
+  isPluginScope,
+  satisfiesScope,
 } from "@t3tools/contracts";
-import type { AuthEnvironmentScope } from "@t3tools/contracts";
-import { parseAllowedOAuthScope } from "@t3tools/shared/oauthScope";
+import type { AuthScope } from "@t3tools/contracts";
+import { parseOAuthScope } from "@t3tools/shared/oauthScope";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -111,7 +108,7 @@ export function failEnvironmentInvalidRequest(reason: EnvironmentRequestInvalidR
   );
 }
 
-export function failEnvironmentScopeRequired(requiredScope: AuthEnvironmentScope) {
+export function failEnvironmentScopeRequired(requiredScope: AuthScope) {
   return currentEnvironmentTraceId.pipe(
     Effect.flatMap((traceId) =>
       Effect.fail(
@@ -165,11 +162,33 @@ export const requireEnvironmentScope = Effect.fn("environment.auth.requireScope"
   scope: AuthEnvironmentScope,
 ) {
   const session = yield* EnvironmentAuthenticatedPrincipal;
-  if (!session.scopes.has(scope)) {
+  // Honor implicit satisfaction (satisfiesScope) rather than a verbatim set
+  // lookup, so a pre-upgrade standard-marker session satisfies newer scopes
+  // (e.g. `plugins:manage`) consistently with the WS / token-exchange paths.
+  if (!satisfiesScope(scope, Array.from(session.scopes))) {
     return yield* failEnvironmentScopeRequired(scope);
   }
   return session;
 });
+
+// Derived from the environment-scope schema literals so a newly added env scope
+// is automatically an accepted token-exchange scope instead of being silently
+// rejected by a hand-maintained duplicate of the list.
+const TOKEN_EXCHANGE_CORE_SCOPES = new Set<AuthEnvironmentScope>(AuthEnvironmentScope.literals);
+
+function parseTokenExchangeScope(value: string): ReadonlyArray<AuthScope> | null {
+  const scopes = parseOAuthScope(value);
+  if (scopes === null) return null;
+  if (
+    !scopes.every(
+      (scope): scope is AuthScope =>
+        TOKEN_EXCHANGE_CORE_SCOPES.has(scope as AuthEnvironmentScope) || isPluginScope(scope),
+    )
+  ) {
+    return null;
+  }
+  return scopes;
+}
 
 export const environmentAuthenticatedAuthLayer = Layer.effect(
   EnvironmentAuthenticatedAuth,
@@ -260,19 +279,7 @@ export const authHttpApiLayer = HttpApiBuilder.group(
             const requestedScopes =
               args.payload.scope === undefined
                 ? undefined
-                : parseAllowedOAuthScope({
-                    value: args.payload.scope,
-                    allowedScopes: new Set<AuthEnvironmentScope>([
-                      AuthOrchestrationReadScope,
-                      AuthOrchestrationOperateScope,
-                      AuthTerminalOperateScope,
-                      AuthReviewWriteScope,
-                      AuthAccessReadScope,
-                      AuthAccessWriteScope,
-                      AuthRelayReadScope,
-                      AuthRelayWriteScope,
-                    ]),
-                  });
+                : parseTokenExchangeScope(args.payload.scope);
             if (requestedScopes === null) {
               return yield* failEnvironmentInvalidRequest("invalid_scope");
             }
@@ -340,12 +347,18 @@ export const authHttpApiLayer = HttpApiBuilder.group(
             const delegatedScopes = args.payload.scopes ?? AuthStandardClientScopes;
             if (
               delegatedScopes.length === 0 ||
-              new Set<AuthEnvironmentScope>(delegatedScopes).size !== delegatedScopes.length
+              new Set<AuthScope>(delegatedScopes).size !== delegatedScopes.length
             ) {
               return yield* failEnvironmentInvalidRequest("invalid_scope");
             }
+            const heldScopes = Array.from(session.scopes);
             for (const delegatedScope of delegatedScopes) {
-              if (!session.scopes.has(delegatedScope)) {
+              // Honor implicit satisfaction (satisfiesScope), not just verbatim
+              // membership: a full standard-client session implicitly holds
+              // every plugin scope and plugins:manage via the standard-client
+              // marker, even when those are not listed explicitly (e.g. sessions
+              // persisted before plugins:manage joined the standard bundle).
+              if (!satisfiesScope(delegatedScope, heldScopes)) {
                 return yield* failEnvironmentScopeRequired(delegatedScope);
               }
             }

@@ -18,7 +18,7 @@ import {
   AuthPairingLink,
   AuthRevokeClientSessionInput,
   AuthRevokePairingLinkInput,
-  AuthEnvironmentScope,
+  AuthScope,
   AuthTokenExchangeRequest,
   AuthSessionState,
   AuthWebSocketTicketResult,
@@ -120,7 +120,7 @@ export class EnvironmentScopeRequiredError extends Schema.TaggedErrorClass<Envir
   "EnvironmentScopeRequiredError",
   {
     code: Schema.Literal("insufficient_scope"),
-    requiredScope: AuthEnvironmentScope,
+    requiredScope: AuthScope,
     traceId: TrimmedNonEmptyString,
   },
   { httpApiStatus: 403 },
@@ -305,7 +305,7 @@ export interface EnvironmentSessionPrincipalShape {
   readonly sessionId: AuthSessionId;
   readonly subject: string;
   readonly method: ServerAuthSessionMethod;
-  readonly scopes: ReadonlySet<AuthEnvironmentScope>;
+  readonly scopes: ReadonlySet<AuthScope>;
   readonly proofKeyThumbprint?: string;
   readonly expiresAt?: DateTime.DateTime;
 }

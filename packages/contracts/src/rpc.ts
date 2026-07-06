@@ -155,6 +155,12 @@ import {
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
+import {
+  PLUGINS_WS_METHODS,
+  PluginListResult,
+  PluginMethodInput,
+  PluginRpcError,
+} from "./plugin.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -236,6 +242,11 @@ export const WS_METHODS = {
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
+
+  // Plugin methods
+  pluginsList: PLUGINS_WS_METHODS.list,
+  pluginsCall: PLUGINS_WS_METHODS.call,
+  pluginsSubscribe: PLUGINS_WS_METHODS.subscribe,
 
   // Source control methods
   sourceControlLookupRepository: "sourceControl.lookupRepository",
@@ -753,6 +764,25 @@ export const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeReso
   stream: true,
 });
 
+export const WsPluginsListRpc = Rpc.make(PLUGINS_WS_METHODS.list, {
+  payload: Schema.Struct({}),
+  success: PluginListResult,
+  error: EnvironmentAuthorizationError,
+});
+
+export const WsPluginsCallRpc = Rpc.make(PLUGINS_WS_METHODS.call, {
+  payload: PluginMethodInput,
+  success: Schema.Unknown,
+  error: Schema.Union([PluginRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsPluginsSubscribeRpc = Rpc.make(PLUGINS_WS_METHODS.subscribe, {
+  payload: PluginMethodInput,
+  success: Schema.Unknown,
+  error: Schema.Union([PluginRpcError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
@@ -824,6 +854,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeAuthAccessRpc,
   WsSubscribeBackgroundPolicyRpc,
   WsSubscribeResourceTelemetryRpc,
+  WsPluginsListRpc,
+  WsPluginsCallRpc,
+  WsPluginsSubscribeRpc,
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationGetTurnDiffRpc,
   WsOrchestrationGetFullThreadDiffRpc,
