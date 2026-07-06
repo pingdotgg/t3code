@@ -11,12 +11,14 @@ import {
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetTurnDiffInput,
   OrchestrationLatestTurn,
+  OrchestrationThread,
   ProjectCreatedPayload,
   ProjectMetaUpdatedPayload,
   OrchestrationProposedPlan,
   OrchestrationSession,
   ProjectCreateCommand,
   ThreadMetaUpdatedPayload,
+  ThreadOwner,
   ThreadTurnStartCommand,
   ThreadCreatedPayload,
   ThreadTurnDiff,
@@ -34,7 +36,9 @@ const decodeThreadTurnStartCommand = Schema.decodeUnknownEffect(ThreadTurnStartC
 const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
   ThreadTurnStartRequestedPayload,
 );
+const decodeThreadOwner = Schema.decodeUnknownEffect(ThreadOwner);
 const decodeOrchestrationLatestTurn = Schema.decodeUnknownEffect(OrchestrationLatestTurn);
+const decodeOrchestrationThread = Schema.decodeUnknownEffect(OrchestrationThread);
 const decodeOrchestrationProposedPlan = Schema.decodeUnknownEffect(OrchestrationProposedPlan);
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
 const encodeThreadCreatedPayload = Schema.encodeEffect(ThreadCreatedPayload);
@@ -309,6 +313,109 @@ it.effect("decodes thread.created runtime mode for historical events", () =>
 
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
     assert.strictEqual(parsed.modelSelection.instanceId, "codex");
+  }),
+);
+
+it.effect("decodes thread ownership with legacy user defaults and plugin-owned ids", () =>
+  Effect.gen(function* () {
+    assert.strictEqual(yield* decodeThreadOwner("user"), "user");
+    assert.strictEqual(yield* decodeThreadOwner("plugin:test"), "plugin:test");
+
+    const invalidOwner = yield* Effect.exit(decodeThreadOwner("plugin:"));
+    assert.strictEqual(invalidOwner._tag, "Failure");
+
+    // Owner ids follow the plugin manifest id grammar: lowercase, digits,
+    // hyphens only.
+    const uppercaseOwner = yield* Effect.exit(decodeThreadOwner("plugin:Test"));
+    assert.strictEqual(uppercaseOwner._tag, "Failure");
+    const underscoreOwner = yield* Effect.exit(decodeThreadOwner("plugin:my_plugin"));
+    assert.strictEqual(underscoreOwner._tag, "Failure");
+
+    // Encode direction: a decoded legacy payload re-encodes WITH an explicit
+    // owner — new serializations of old events are self-describing.
+    const encodedLegacy = yield* encodeThreadCreatedPayload(
+      yield* decodeThreadCreatedPayload({
+        threadId: "thread-legacy-encode",
+        projectId: "project-1",
+        title: "Legacy encode",
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5.4",
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    assert.strictEqual((encodedLegacy as { owner?: unknown }).owner, "user");
+
+    const payload = yield* decodeThreadCreatedPayload({
+      threadId: "thread-1",
+      projectId: "project-1",
+      title: "Thread title",
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5.4",
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(payload.owner, "user");
+
+    const thread = yield* decodeOrchestrationThread({
+      id: "thread-1",
+      projectId: "project-1",
+      title: "Thread title",
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5.4",
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      latestTurn: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      archivedAt: null,
+      deletedAt: null,
+      messages: [],
+      proposedPlans: [],
+      activities: [],
+      checkpoints: [],
+      session: null,
+    });
+    assert.strictEqual(thread.owner, "user");
+
+    const command = yield* decodeOrchestrationCommand({
+      type: "thread.create",
+      commandId: "cmd-thread-create",
+      threadId: "thread-plugin",
+      projectId: "project-1",
+      title: "Plugin thread",
+      owner: "plugin:test",
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5.4",
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(command.type, "thread.create");
+    if (command.type !== "thread.create") {
+      assert.fail(`Expected thread.create command, received ${command.type}.`);
+    }
+    assert.strictEqual(command.owner, "plugin:test");
   }),
 );
 

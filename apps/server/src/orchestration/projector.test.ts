@@ -77,6 +77,7 @@ describe("orchestration projector", () => {
         id: "thread-1",
         projectId: "project-1",
         title: "demo",
+        owner: "user",
         modelSelection: {
           instanceId: "codex",
           model: "gpt-5-codex",
@@ -97,6 +98,72 @@ describe("orchestration projector", () => {
         session: null,
       },
     ]);
+  });
+
+  it("projects thread owner and defaults legacy thread.created events to user", async () => {
+    const now = "2026-01-01T00:00:00.000Z";
+    const model = createEmptyReadModel(now);
+
+    const pluginOwned = await Effect.runPromise(
+      projectEvent(
+        model,
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-plugin",
+          occurredAt: now,
+          commandId: "cmd-thread-create-plugin",
+          payload: {
+            threadId: "thread-plugin",
+            projectId: "project-1",
+            title: "plugin",
+            owner: "plugin:test",
+            modelSelection: {
+              provider: ProviderDriverKind.make("codex"),
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        }),
+      ),
+    );
+    expect((pluginOwned.threads[0] as { owner?: unknown } | undefined)?.owner).toBe("plugin:test");
+
+    const legacy = await Effect.runPromise(
+      projectEvent(
+        model,
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-legacy",
+          occurredAt: now,
+          commandId: "cmd-thread-create-legacy",
+          payload: {
+            threadId: "thread-legacy",
+            projectId: "project-1",
+            title: "legacy",
+            modelSelection: {
+              provider: ProviderDriverKind.make("codex"),
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        }),
+      ),
+    );
+    expect((legacy.threads[0] as { owner?: unknown } | undefined)?.owner).toBe("user");
   });
 
   it("fails when event payload cannot be decoded by runtime schema", async () => {
