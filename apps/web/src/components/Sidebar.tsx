@@ -126,6 +126,7 @@ import {
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
+import { PluginSidebarSections } from "../plugins/PluginSidebarSections";
 import { Kbd } from "./ui/kbd";
 import {
   getArm64IntelBuildWarningDescription,
@@ -3745,6 +3746,7 @@ export default function Sidebar() {
             projectsLength={projects.length}
           />
 
+          <PluginSidebarSections />
           <SidebarSeparator />
           <SidebarChromeFooter />
         </>

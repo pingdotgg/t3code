@@ -186,6 +186,10 @@
     "./httpReadiness": {
       "types": "./src/httpReadiness.ts",
       "import": "./src/httpReadiness.ts"
+    },
+    "./pluginHostWeb": {
+      "types": "./src/pluginHostWeb.ts",
+      "import": "./src/pluginHostWeb.ts"
     }
   },
   "scripts": {

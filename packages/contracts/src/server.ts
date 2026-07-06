@@ -20,6 +20,7 @@ import { EditorId } from "./editor.ts";
 import { ModelCapabilities } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ServerSettings } from "./settings.ts";
+import { PluginId, PluginState } from "./plugin.ts";
 
 const KeybindingsMalformedConfigIssue = Schema.Struct({
   kind: Schema.Literal("keybindings.malformed-config"),
@@ -540,9 +541,26 @@ export const ServerLifecycleStreamReadyEvent = Schema.Struct({
 });
 export type ServerLifecycleStreamReadyEvent = typeof ServerLifecycleStreamReadyEvent.Type;
 
+export const ServerLifecyclePluginStateChangedPayload = Schema.Struct({
+  kind: Schema.Literal("plugin-state-changed"),
+  pluginId: PluginId,
+  state: PluginState,
+});
+export type ServerLifecyclePluginStateChangedPayload =
+  typeof ServerLifecyclePluginStateChangedPayload.Type;
+
+export const ServerLifecycleStreamPluginsEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  sequence: NonNegativeInt,
+  type: Schema.Literal("plugins"),
+  payload: ServerLifecyclePluginStateChangedPayload,
+});
+export type ServerLifecycleStreamPluginsEvent = typeof ServerLifecycleStreamPluginsEvent.Type;
+
 export const ServerLifecycleStreamEvent = Schema.Union([
   ServerLifecycleStreamWelcomeEvent,
   ServerLifecycleStreamReadyEvent,
+  ServerLifecycleStreamPluginsEvent,
 ]);
 export type ServerLifecycleStreamEvent = typeof ServerLifecycleStreamEvent.Type;
 

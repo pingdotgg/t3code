@@ -3,6 +3,7 @@ import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "node:crypto";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { PLUGIN_HOST_IMPORT_MAP_MARKER } from "@t3tools/shared/pluginHostWeb";
 
 import {
   AuthAccessTokenType,
@@ -116,6 +117,7 @@ import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as PluginCatalog from "./plugins/PluginCatalog.ts";
 import * as PluginHttpRegistry from "./plugins/PluginHttpRegistry.ts";
+import * as PluginLockfileStore from "./plugins/PluginLockfileStore.ts";
 import * as PluginRpcDispatcher from "./plugins/PluginRpcDispatcher.ts";
 import * as Data from "effect/Data";
 
@@ -756,6 +758,7 @@ const buildAppUnderTest = (options?: {
         ),
       ),
       Layer.provideMerge(PluginHttpRegistry.layer),
+      Layer.provide(PluginLockfileStore.layer),
       Layer.provide(
         Layer.mock(BrowserTraceCollector.BrowserTraceCollector)({
           record: () => Effect.void,
@@ -1267,6 +1270,37 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const response = yield* HttpClient.get("/");
       assert.equal(response.status, 200);
       assert.include(yield* response.text, "router-static-ok");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("injects plugin host import map into index responses only", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-router-static-" });
+      yield* fileSystem.writeFileString(
+        path.join(staticDir, "index.html"),
+        "<html><head><title>T3</title></head><body>shell</body></html>",
+      );
+      yield* fileSystem.writeFileString(path.join(staticDir, "app.js"), "console.log('asset');");
+
+      yield* buildAppUnderTest({ config: { staticDir } });
+
+      const root = yield* HttpClient.get("/");
+      const rootHtml = yield* root.text;
+      assert.equal(root.status, 200);
+      assert.include(rootHtml, PLUGIN_HOST_IMPORT_MAP_MARKER);
+      assert.equal(rootHtml.match(new RegExp(PLUGIN_HOST_IMPORT_MAP_MARKER, "g"))?.length, 1);
+
+      const fallback = yield* HttpClient.get("/deep/link");
+      const fallbackHtml = yield* fallback.text;
+      assert.equal(fallback.status, 200);
+      assert.include(fallbackHtml, PLUGIN_HOST_IMPORT_MAP_MARKER);
+      assert.equal(fallbackHtml.match(new RegExp(PLUGIN_HOST_IMPORT_MAP_MARKER, "g"))?.length, 1);
+
+      const asset = yield* HttpClient.get("/app.js");
+      assert.equal(asset.status, 200);
+      assert.equal(yield* asset.text, "console.log('asset');");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

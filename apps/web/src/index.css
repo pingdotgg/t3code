@@ -1,3 +1,8 @@
+/* Declare a lowest-priority `plugins` cascade layer BEFORE Tailwind's layers, so
+   a plugin's injected stylesheet (wrapped in `@layer plugins`) can never override
+   host styles — host rules always win conflicts, while plugin-unique classes
+   (which nothing else defines) still apply. */
+@layer plugins, theme, base, components, utilities;
 @import "tailwindcss";
 
 @custom-variant dark (&:is(.dark, .dark *));

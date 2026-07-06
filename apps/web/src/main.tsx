@@ -1,3 +1,6 @@
+// Establish the plugin-host readiness promise before anything else runs; the
+// heavy singletons module itself is lazy-loaded by PluginUiHost on first use.
+import "./plugins/hostSingletonsReady";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { ClerkProvider } from "@clerk/react";
