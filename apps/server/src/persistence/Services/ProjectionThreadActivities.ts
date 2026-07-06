@@ -35,6 +35,10 @@ export type ProjectionThreadActivity = typeof ProjectionThreadActivity.Type;
 
 export const ListProjectionThreadActivitiesInput = Schema.Struct({
   threadId: ThreadId,
+  // Optional row cap pushed into the SQL query (LIMIT). Omitted for callers that
+  // need the full timeline; bounded callers (plugin projections.read) pass it so
+  // a huge thread never fully materializes in memory.
+  limit: Schema.optional(NonNegativeInt),
 });
 export type ListProjectionThreadActivitiesInput = typeof ListProjectionThreadActivitiesInput.Type;
 

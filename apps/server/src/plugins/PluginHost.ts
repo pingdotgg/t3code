@@ -27,10 +27,30 @@ import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import packageJson from "../../package.json" with { type: "json" };
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ProjectionThreadActivities from "../persistence/Services/ProjectionThreadActivities.ts";
+import * as ProjectionThreadMessages from "../persistence/Services/ProjectionThreadMessages.ts";
+import * as ProjectionTurns from "../persistence/Services/ProjectionTurns.ts";
+import * as GitHubCli from "../sourceControl/GitHubCli.ts";
+import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
+import * as TerminalManager from "../terminal/Manager.ts";
+import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import { makeDatabaseCapability } from "./capabilities/DatabaseCapability.ts";
+import { makeEnvironmentsReadCapability } from "./capabilities/EnvironmentsReadCapability.ts";
+import { makeHttpCapability } from "./capabilities/HttpCapability.ts";
+import { makeProjectionsReadCapability } from "./capabilities/ProjectionsReadCapability.ts";
+import { makeSecretsCapability } from "./capabilities/SecretsCapability.ts";
+import { makeSourceControlCapability } from "./capabilities/SourceControlCapability.ts";
+import { makeTerminalsCapability } from "./capabilities/TerminalsCapability.ts";
+import { makeTextGenerationCapability } from "./capabilities/TextGenerationCapability.ts";
 import { PluginLockfileStore } from "./PluginLockfileStore.ts";
+import { PluginHttpRegistry } from "./PluginHttpRegistry.ts";
 import { PluginMigrator } from "./PluginMigrator.ts";
 import { PluginModuleLoader } from "./PluginModuleLoader.ts";
 import { makePluginLogger } from "./PluginLogger.ts";
@@ -123,27 +143,93 @@ const unavailable = (capability: string) =>
 
 const makeHostApi = (input: {
   readonly pluginId: PluginId;
+  readonly capabilities: ReadonlyArray<PluginManifest["capabilities"][number]>;
   readonly dataDir: string;
   readonly logger: PluginLogger;
-}): PluginHostApi => ({
-  hostApiVersion: HOST_API_VERSION,
-  config: {
-    appVersion: APP_VERSION,
+  readonly deps: {
+    readonly sql: SqlClient.SqlClient;
+    readonly secretStore: ServerSecretStore.ServerSecretStore["Service"];
+    readonly config: ServerConfig.ServerConfig["Service"];
+    readonly fileSystem: FileSystem.FileSystem;
+    readonly path: Path.Path;
+    readonly environment: ServerEnvironment.ServerEnvironment["Service"];
+    readonly snapshots: ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"];
+    readonly turns: ProjectionTurns.ProjectionTurnRepository["Service"];
+    readonly messages: ProjectionThreadMessages.ProjectionThreadMessageRepository["Service"];
+    readonly activities: ProjectionThreadActivities.ProjectionThreadActivityRepository["Service"];
+    readonly textGeneration: TextGeneration.TextGeneration["Service"];
+    readonly sourceControlRegistry: SourceControlProviderRegistry.SourceControlProviderRegistry["Service"];
+    readonly github: GitHubCli.GitHubCli["Service"];
+    readonly terminals: TerminalManager.TerminalManager["Service"];
+  };
+}): { readonly api: PluginHostApi; readonly teardown: ReadonlyArray<Effect.Effect<void>> } => {
+  const capabilities = new Set(input.capabilities);
+  const available = <A>(capability: PluginManifest["capabilities"][number], value: A) =>
+    capabilities.has(capability) ? Effect.succeed(value) : unavailable(capability);
+
+  const terminalsBundle = makeTerminalsCapability({
+    pluginId: input.pluginId,
+    manager: input.deps.terminals,
+  });
+  const teardown: Array<Effect.Effect<void>> = [];
+  if (capabilities.has("terminals")) {
+    teardown.push(terminalsBundle.shutdown);
+  }
+
+  const api: PluginHostApi = {
     hostApiVersion: HOST_API_VERSION,
-    dataDir: input.dataDir,
-    logger: input.logger,
-  },
-  agents: unavailable("agents"),
-  vcs: unavailable("vcs"),
-  terminals: unavailable("terminals"),
-  database: unavailable("database"),
-  projectionsRead: unavailable("projections.read"),
-  environmentsRead: unavailable("environments.read"),
-  secrets: unavailable("secrets"),
-  http: unavailable("http"),
-  sourceControl: unavailable("sourceControl"),
-  textGeneration: unavailable("textGeneration"),
-});
+    config: {
+      appVersion: APP_VERSION,
+      hostApiVersion: HOST_API_VERSION,
+      dataDir: input.dataDir,
+      logger: input.logger,
+    },
+    agents: unavailable("agents"),
+    vcs: unavailable("vcs"),
+    terminals: available("terminals", terminalsBundle.capability),
+    database: available("database", makeDatabaseCapability(input.deps.sql)),
+    projectionsRead: available(
+      "projections.read",
+      makeProjectionsReadCapability({
+        snapshots: input.deps.snapshots,
+        turns: input.deps.turns,
+        messages: input.deps.messages,
+        activities: input.deps.activities,
+      }),
+    ),
+    environmentsRead: available(
+      "environments.read",
+      makeEnvironmentsReadCapability({
+        environment: input.deps.environment,
+        snapshots: input.deps.snapshots,
+      }),
+    ),
+    secrets: available(
+      "secrets",
+      makeSecretsCapability({
+        pluginId: input.pluginId,
+        store: input.deps.secretStore,
+        config: input.deps.config,
+        fileSystem: input.deps.fileSystem,
+        path: input.deps.path,
+      }),
+    ),
+    http: available("http", makeHttpCapability(input.pluginId)),
+    sourceControl: available(
+      "sourceControl",
+      makeSourceControlCapability({
+        registry: input.deps.sourceControlRegistry,
+        github: input.deps.github,
+      }),
+    ),
+    textGeneration: available(
+      "textGeneration",
+      makeTextGenerationCapability(input.deps.textGeneration),
+    ),
+  };
+
+  return { api, teardown };
+};
 
 const upgradeLockfileEntry = (
   entry: PluginLockfilePlugin,
@@ -210,7 +296,19 @@ export const make = Effect.fn("PluginHost.make")(function* () {
   const loader = yield* PluginModuleLoader;
   const migrator = yield* PluginMigrator;
   const registry = yield* PluginRuntimeRegistry;
+  const httpRegistry = yield* PluginHttpRegistry;
   const clock = yield* Clock.Clock;
+  const sql = yield* SqlClient.SqlClient;
+  const secretStore = yield* ServerSecretStore.ServerSecretStore;
+  const environment = yield* ServerEnvironment.ServerEnvironment;
+  const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const turns = yield* ProjectionTurns.ProjectionTurnRepository;
+  const messages = yield* ProjectionThreadMessages.ProjectionThreadMessageRepository;
+  const activities = yield* ProjectionThreadActivities.ProjectionThreadActivityRepository;
+  const textGeneration = yield* TextGeneration.TextGeneration;
+  const sourceControlRegistry = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
+  const github = yield* GitHubCli.GitHubCli;
+  const terminals = yield* TerminalManager.TerminalManager;
 
   const readManifest = (pluginDir: string) =>
     fs
@@ -269,9 +367,36 @@ export const make = Effect.fn("PluginHost.make")(function* () {
       const readiness = yield* Deferred.make<void>();
       const logger = makePluginLogger(pluginId);
       const dataDir = pluginDataDir(config.pluginsDir, pluginId, path.join);
-      const hostApi = makeHostApi({ pluginId, dataDir, logger });
+      const { api: hostApi, teardown: hostApiTeardown } = makeHostApi({
+        pluginId,
+        capabilities: manifest.capabilities,
+        dataDir,
+        logger,
+        deps: {
+          sql,
+          secretStore,
+          config,
+          fileSystem: fs,
+          path,
+          environment,
+          snapshots,
+          turns,
+          messages,
+          activities,
+          textGeneration,
+          sourceControlRegistry,
+          github,
+          terminals,
+        },
+      });
 
       const activation = Effect.gen(function* () {
+        // Register capability teardowns (e.g. killing leaked terminals) on the
+        // plugin scope before running any plugin code, so cleanup fires on
+        // EVERY exit path — activation failure, stop, disable, crash.
+        for (const teardown of hostApiTeardown) {
+          yield* Scope.addFinalizer(scope, teardown);
+        }
         yield* fs.makeDirectory(dataDir, { recursive: true });
         const definition = yield* loader.loadServerEntry(pluginDir, serverEntry);
         const registration = yield* resolveRegistration(pluginId, definition, hostApi);
@@ -279,6 +404,10 @@ export const make = Effect.fn("PluginHost.make")(function* () {
         yield* migrator.run(pluginId, registration.migrations ?? []);
         if (registration.recover) {
           yield* registration.recover();
+        }
+        if (manifest.capabilities.includes("http") && (registration.http?.length ?? 0) > 0) {
+          yield* httpRegistry.put(pluginId, registration.http ?? []);
+          yield* Scope.addFinalizer(scope, httpRegistry.remove(pluginId));
         }
         yield* registry.put(pluginId, { manifest, registration, readiness, scope });
         for (const service of registration.services ?? []) {

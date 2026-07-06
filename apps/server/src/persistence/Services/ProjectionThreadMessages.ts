@@ -9,6 +9,7 @@
 import {
   ChatAttachment,
   MessageId,
+  NonNegativeInt,
   OrchestrationMessageRole,
   ThreadId,
   TurnId,
@@ -36,6 +37,10 @@ export type ProjectionThreadMessage = typeof ProjectionThreadMessage.Type;
 
 export const ListProjectionThreadMessagesInput = Schema.Struct({
   threadId: ThreadId,
+  // Optional row cap pushed into the SQL query (LIMIT). Omitted for callers that
+  // need the full message list; bounded callers (plugin projections.read) pass it
+  // so a huge thread never fully materializes in memory.
+  limit: Schema.optional(NonNegativeInt),
 });
 export type ListProjectionThreadMessagesInput = typeof ListProjectionThreadMessagesInput.Type;
 

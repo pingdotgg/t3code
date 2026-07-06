@@ -119,7 +119,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
   const listProjectionThreadMessageRows = SqlSchema.findAll({
     Request: ListProjectionThreadMessagesInput,
     Result: ProjectionThreadMessageDbRowSchema,
-    execute: ({ threadId }) =>
+    execute: ({ threadId, limit }) =>
       sql`
         SELECT
           message_id AS "messageId",
@@ -134,6 +134,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
         FROM projection_thread_messages
         WHERE thread_id = ${threadId}
         ORDER BY created_at ASC, message_id ASC
+        ${limit === undefined ? sql.literal("") : sql`LIMIT ${limit}`}
       `,
   });
 

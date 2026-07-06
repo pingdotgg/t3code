@@ -80,6 +80,10 @@ export type ProjectionPendingTurnStart = typeof ProjectionPendingTurnStart.Type;
 
 export const ListProjectionTurnsByThreadInput = Schema.Struct({
   threadId: ThreadId,
+  // Optional row cap pushed into the SQL query (LIMIT). Omitted for callers that
+  // need the full turn list; bounded callers (plugin projections.read) pass it so
+  // a huge thread never fully materializes in memory.
+  limit: Schema.optional(NonNegativeInt),
 });
 export type ListProjectionTurnsByThreadInput = typeof ListProjectionTurnsByThreadInput.Type;
 

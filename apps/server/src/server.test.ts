@@ -124,6 +124,7 @@ import * as NativeTelemetryClient from "./resourceTelemetry/NativeTelemetryClien
 import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as PluginCatalog from "./plugins/PluginCatalog.ts";
+import * as PluginHttpRegistry from "./plugins/PluginHttpRegistry.ts";
 import * as PluginRpcDispatcher from "./plugins/PluginRpcDispatcher.ts";
 import * as Data from "effect/Data";
 
@@ -767,25 +768,26 @@ const buildAppUnderTest = (options?: {
       ),
     );
 
-      const appLayer = servedRoutesLayer.pipe(
-        Layer.provide(resourceTelemetryLayer),
-        Layer.provide(
-          Layer.succeed(
-            PluginCatalog.PluginCatalog,
-            PluginCatalog.PluginCatalog.of({
-              list: Effect.succeed([]),
-            }),
-          ),
+    const appLayer = servedRoutesLayer.pipe(
+      Layer.provide(resourceTelemetryLayer),
+      Layer.provide(
+        Layer.succeed(
+          PluginCatalog.PluginCatalog,
+          PluginCatalog.PluginCatalog.of({
+            list: Effect.succeed([]),
+          }),
         ),
-        Layer.provide(
-          Layer.succeed(
-            PluginRpcDispatcher.PluginRpcDispatcher,
-            PluginRpcDispatcher.PluginRpcDispatcher.of({
-              call: () => Effect.die("PluginRpcDispatcher not stubbed in this test"),
-              subscribe: () => Stream.die("PluginRpcDispatcher not stubbed in this test"),
-            }),
-          ),
+      ),
+      Layer.provide(
+        Layer.succeed(
+          PluginRpcDispatcher.PluginRpcDispatcher,
+          PluginRpcDispatcher.PluginRpcDispatcher.of({
+            call: () => Effect.die("PluginRpcDispatcher not stubbed in this test"),
+            subscribe: () => Stream.die("PluginRpcDispatcher not stubbed in this test"),
+          }),
         ),
+      ),
+      Layer.provideMerge(PluginHttpRegistry.layer),
       Layer.provide(
         Layer.mock(BrowserTraceCollector.BrowserTraceCollector)({
           record: () => Effect.void,
