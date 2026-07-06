@@ -11,7 +11,7 @@ import type { SearchBarCommands } from "react-native-screens";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
-import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
+import { ControlPillMenu } from "../../components/ControlPill";
 import { SymbolView } from "../../components/AppSymbol";
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { useThemeColor } from "../../lib/useThemeColor";
@@ -246,11 +246,24 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
                 />
               </Pressable>
             </ControlPillMenu>
-            <ControlPill
+            {/* Built identically to the filter button so the two circles
+                match exactly (ControlPill sizes via Tailwind classes and
+                resolves to a different box). */}
+            <Pressable
               accessibilityLabel="Open settings"
-              icon="gearshape"
+              accessibilityRole="button"
               onPress={props.onOpenSettings}
-            />
+              style={{
+                alignItems: "center",
+                backgroundColor: subtleColor,
+                borderRadius: 99,
+                height: 44,
+                justifyContent: "center",
+                width: 44,
+              }}
+            >
+              <SymbolView name="gearshape" size={18} tintColor={iconColor} type="monochrome" />
+            </Pressable>
           </View>
 
           <View

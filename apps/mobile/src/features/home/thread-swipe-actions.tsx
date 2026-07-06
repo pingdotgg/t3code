@@ -32,7 +32,8 @@ import Animated, {
 
 import { AppText as Text } from "../../components/AppText";
 
-const ACTION_ITEM_WIDTH = 50;
+// Wide enough for the longest action label ("Unarchive").
+const ACTION_ITEM_WIDTH = 58;
 const ACTION_CIRCLE_SIZE = 36;
 const ACTION_ICON_SIZE = 15;
 
@@ -410,7 +411,9 @@ function SwipeActionButton(props: {
           </Animated.View>
         </View>
         <Animated.View style={[{ paddingTop: 2 }, labelStyle]}>
-          <Text className="text-3xs font-t3-medium text-foreground-muted">{props.label}</Text>
+          <Text className="text-3xs font-t3-medium text-foreground-muted" numberOfLines={1}>
+            {props.label}
+          </Text>
         </Animated.View>
       </Pressable>
     </Animated.View>
