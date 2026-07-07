@@ -1,0 +1,72 @@
+---
+description: Cursor Cloud environment setup and run notes for T3 Code (Cursor-specific; not for other editors/CI)
+alwaysApply: true
+---
+
+# Cursor Cloud specific instructions
+
+These notes apply only to Cursor Cloud agents (kept out of the shared `AGENTS.md` since T3 Code is
+developed in many places). They cover the pre-provisioned VM environment and non-obvious run caveats.
+
+## Toolchain
+
+Pre-installed and wired into login shells (`~/.bashrc`/`~/.profile`): Node 24 (via nvm), the global
+`vp` (Vite+) CLI, and its bundled pnpm. `vp` is the package manager + task runner for this repo
+(`vp i`, `vp check`, `vp run typecheck`, `vp test`, `vp run --filter <pkg> <script>`).
+
+- Node gotcha: the base image also ships an older Node on `/exec-daemon` that wins on `PATH` in
+  non-login shells. Run commands in a login shell (`bash -lc '...'`) or prepend
+  `$HOME/.nvm/versions/node/v24.13.1/bin` so Node 24 (`engines.node: ^24.13.1`) is used.
+- `vp check` also runs the formatter (not just lint); markdown edits must be formatter-clean. Run
+  `vp check --fix` before committing.
+
+## Running the web app
+
+- `npm run dev` (from repo root) starts contracts (watch), web (Vite, port 5733), and the server
+  (`node --watch`, port 13773) together, auto-wiring `VITE_HTTP_URL`/`VITE_WS_URL`. Use
+  `npm run dev:server` / `npm run dev:web` for one side. If base ports are taken it auto-offsets to
+  the next free pair, so read the actual ports from stdout. Avoid production `build`/`start` in dev.
+- Auth/pairing: the server is unauthenticated by default and prints a pairing URL to stdout on startup
+  (e.g. `http://localhost:5733/pair#token=XXXX`). Open that URL in the browser to pair before the web
+  UI can talk to the server. Server state (SQLite, auth, projects) lives under `~/.t3`
+  (`T3CODE_HOME`); multiple `npm run dev` instances bind different ports but share that same DB.
+- Agent providers are external CLIs (`codex`, `claude`, `cursor-agent`, `opencode`) probed on `PATH`.
+  Without one installed the UI loads but no agent can run. Claude Code
+  (`npm i -g @anthropic-ai/claude-code`) works headlessly using `ANTHROPIC_API_KEY` from the
+  environment (the server forwards `process.env` to the child; no interactive `claude auth login`
+  needed). Provider probing runs at startup and refreshes roughly every 5 minutes — restart the dev
+  server to pick up a newly installed provider CLI immediately.
+
+## Android native builds (apps/mobile)
+
+The Android toolchain is pre-installed and wired into login shells: OpenJDK 17
+(`JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64`; the base image's default `java` is 21, so builds must
+use `JAVA_HOME`), and the Android SDK at `$HOME/Android/Sdk` (`ANDROID_HOME`/`ANDROID_SDK_ROOT`) with
+platform-tools, `platforms;android-36`, `build-tools;36.0.0`, `ndk;27.1.12297006`, and `cmake;3.22.1`.
+Gradle auto-downloads any additional pinned SDK packages on demand.
+
+- Generate the native project first: from `apps/mobile`,
+  `EXPO_NO_GIT_STATUS=1 APP_VARIANT=development npx expo prebuild --clean --platform android`
+  (the `android/` folder is generated, not committed). RN 0.85 defaults: compileSdk/targetSdk 36,
+  minSdk 24, NDK `27.1.12297006` (see `react-native/gradle/libs.versions.toml`).
+- Build with Gradle from `apps/mobile/android`, e.g. `./gradlew :app:assembleDebug`. First build is
+  slow (Kotlin + C++/NDK codegen). Limit ABIs to speed things up, e.g.
+  `-PreactNativeArchitectures=arm64-v8a`. Verified working end-to-end on a native module:
+  `./gradlew :react-native-worklets:assembleDebug` compiles Kotlin + C++ and emits an AAR + `.so`s.
+- No emulator: this VM has no `/dev/kvm` (nested virtualization), so a hardware-accelerated Android
+  emulator will not run. Use a physical device (`adb`) or EAS cloud builds (`vp run eas:android:*`) to
+  actually run the app. The full IDE GUI is unnecessary here — the SDK/NDK/Gradle toolchain that
+  Android Studio bundles is what is installed.
+- Known blocker for the full-app `:app:assembleDebug` (pre-existing, app-level — not the environment):
+  `:react-native-screens:compileDebugKotlin` fails because `patches/react-native-screens@4.25.2.patch`
+  adds new codegen props (`subtitle`, `largeSubtitle`, `navigationItemStyle`,
+  `headerCenterBarButtonItems`, `headerToolbarItems`) to the JS spec + iOS native code but includes no
+  Android Kotlin setters, so the generated `ScreenStackHeaderConfigManagerInterface` is unimplemented.
+  The mobile README documents only iOS for local builds and routes Android through EAS. Fixing local
+  Android app builds requires an app/patch change (add the Android Kotlin setters), which is out of
+  scope for environment setup.
+
+## Known flaky tests (unrelated to setup)
+
+- `apps/server/src/git/GitManager.test.ts` (cross-repo PR metadata, can time out at 12s).
+- `apps/server/src/provider/Layers/ProviderRegistry.test.ts` (codex binaryPath re-probe ordering).
