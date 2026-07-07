@@ -279,15 +279,10 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
           if ((yield* Ref.get(accountGeneration)) !== generation) {
             return;
           }
-          // Signed out is the idle state, not a failure: the proactive
-          // refresh on credentials-changed also runs on sign-out and must
-          // settle back to a clean empty list.
-          const signedOut =
-            error._tag === "ConnectionBlockedError" && error.reason === "authentication";
           yield* SubscriptionRef.update(state, (current) => ({
             ...current,
             refreshing: false,
-            error: signedOut ? Option.none() : Option.some(error),
+            error: Option.some(error),
           }));
         }),
       ),
@@ -316,12 +311,11 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
             yield* Ref.update(accountGeneration, (current) => current + 1);
             yield* Ref.set(activeAccountId, Option.none());
             yield* Ref.set(offlineReportFingerprints, new Map());
+            const shouldRefresh = yield* Ref.get(hasRefreshed);
             yield* SubscriptionRef.set(state, EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE);
-            // Refresh proactively — this wakeup fires when a session activates
-            // (sign-in or cold start), and the list should be populated before
-            // any screen asks for it. A signed-out refresh settles back to the
-            // clean empty state.
-            yield* refresh.pipe(Effect.forkScoped);
+            if (shouldRefresh) {
+              yield* refresh.pipe(Effect.forkScoped);
+            }
           })
         : Effect.void,
     ),

@@ -342,55 +342,6 @@ describe("RelayEnvironmentDiscovery", () => {
     }),
   );
 
-  it.effect("refreshes proactively when credentials change before any manual refresh", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness();
-      yield* Effect.gen(function* () {
-        const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
-        const requests = yield* Ref.get(harness.statusRequests);
-        for (const environment of environments) {
-          yield* Deferred.succeed(
-            requests.get(environment.environmentId)!,
-            status(environment, "online"),
-          );
-        }
-
-        // Let the scoped wakeup subscription start before emitting, mirroring
-        // a real sign-in which always happens long after service start.
-        yield* Effect.yieldNow;
-
-        // Sign-in activates the session and emits credentials-changed; the
-        // list must populate without any screen having asked for a refresh.
-        yield* harness.wake("credentials-changed");
-        const populated = yield* SubscriptionRef.changes(discovery.state).pipe(
-          Stream.filter(
-            (state) => state.environments.size === environments.length && !state.refreshing,
-          ),
-          Stream.runHead,
-          Effect.map(Option.getOrThrow),
-        );
-        expect(Option.isNone(populated.error)).toBe(true);
-        expect(yield* Ref.get(harness.listCalls)).toBe(1);
-      }).pipe(Effect.provide(harness.layer), Effect.scoped);
-    }),
-  );
-
-  it.effect("settles to a clean empty state when refreshed while signed out", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness();
-      yield* Effect.gen(function* () {
-        const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
-        yield* Ref.set(harness.clerkToken, null);
-        yield* discovery.refresh;
-
-        const state = yield* SubscriptionRef.get(discovery.state);
-        expect(state.environments.size).toBe(0);
-        expect(state.refreshing).toBe(false);
-        expect(Option.isNone(state.error)).toBe(true);
-      }).pipe(Effect.provide(harness.layer));
-    }),
-  );
-
   it.effect("does not republish stale rows after sign-out invalidates an in-flight refresh", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
