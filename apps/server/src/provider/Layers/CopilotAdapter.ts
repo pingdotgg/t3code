@@ -695,7 +695,8 @@ function completedToolDiffText(
 function copilotBackgroundTasksList(
   session: CopilotSession,
 ): (() => Promise<CopilotTaskList>) | undefined {
-  const list = (session.rpc as typeof session.rpc & CopilotBackgroundTasksRpc).tasks?.list;
+  const list = (session.rpc as typeof session.rpc & CopilotBackgroundTasksRpc).backgroundTasks
+    ?.list;
   return list;
 }
 
