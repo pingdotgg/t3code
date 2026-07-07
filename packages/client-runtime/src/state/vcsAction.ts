@@ -386,12 +386,10 @@ export function applyVcsActionProgressEvent(
       };
     case "action_finished":
       return {
-        ...current,
-        isRunning: false,
+        ...EMPTY_VCS_ACTION_STATE,
         actionId: event.actionId,
         action: event.action,
         operation: "run_change_request",
-        error: null,
       };
     case "action_failed":
       return {

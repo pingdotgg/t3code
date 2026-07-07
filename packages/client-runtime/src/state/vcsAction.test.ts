@@ -155,6 +155,46 @@ describe("vcsActionState", () => {
     });
   });
 
+  it("clears running presentation state once the action finishes", () => {
+    const initial = beginVcsActionState({
+      operation: "run_change_request",
+      label: "Running source control action",
+      actionId,
+    });
+    const pushing = applyVcsActionProgressEvent(
+      initial,
+      progress({
+        actionId,
+        action,
+        cwd,
+        kind: "phase_started",
+        phase: "push",
+        label: "Pushing...",
+      }),
+    );
+    const finished = applyVcsActionProgressEvent(
+      pushing,
+      progress({
+        actionId,
+        action,
+        cwd,
+        kind: "action_finished",
+        result,
+      }),
+    );
+
+    expect(finished).toMatchObject({
+      isRunning: false,
+      operation: "run_change_request",
+      actionId,
+      action,
+      currentLabel: null,
+      currentPhaseLabel: null,
+      lastOutputLine: null,
+      error: null,
+    });
+  });
+
   it("retains a terminal action error for presentation", () => {
     const initial = beginVcsActionState({
       operation: "run_change_request",
