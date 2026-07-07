@@ -320,6 +320,16 @@ function closeClaudeQuery(queryRuntime: ClaudeQuery) {
   });
 }
 
+// Iterate the Query itself, not query[Symbol.asyncIterator]() (the raw
+// sdkMessages generator). The raw generator's return() queues behind the
+// in-flight read of the next CLI message and never settles while the CLI is
+// idle, deadlocking stream interruption (and with it, session scope close).
+// Query.return() runs cleanup() first, which closes the transport and
+// unblocks that read.
+export function claudeQueryMessages(queryRuntime: ClaudeQuery): AsyncIterable<SDKMessage, void> {
+  return { [Symbol.asyncIterator]: () => queryRuntime };
+}
+
 export interface ClaudeAgentSdkLoggedQueryOptions {
   readonly model: ClaudeAgentSdkQueryOptions["model"];
   readonly tools: ClaudeAgentSdkQueryOptions["tools"];
@@ -513,7 +523,7 @@ export const claudeAgentSdkQueryRunnerLiveLayer: Layer.Layer<
         });
 
         return {
-          messages: Stream.fromAsyncIterable(queryRuntime, (cause) =>
+          messages: Stream.fromAsyncIterable(claudeQueryMessages(queryRuntime), (cause) =>
             queryRunnerError(cause, "fromAsyncIterable"),
           ).pipe(
             Stream.tap((message) =>

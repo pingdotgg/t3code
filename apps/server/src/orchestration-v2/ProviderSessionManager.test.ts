@@ -233,6 +233,7 @@ function makeProviderAdapter(
       readonly providerSessionId: ProviderSessionId;
     }) => Effect.Effect<void>;
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
+    readonly hangSessionScopeClose?: boolean;
   } = {},
 ): ProviderAdapterV2Shape {
   return {
@@ -273,6 +274,12 @@ function makeProviderAdapter(
             closeCount: current.closeCount + 1,
           })),
         );
+        if (options.hangSessionScopeClose === true) {
+          // Registered last so it runs first on scope close, wedging the
+          // close before the closeCount finalizer, like a provider process
+          // that never yields its message stream.
+          yield* Effect.addFinalizer(() => Effect.never);
+        }
 
         return {
           instanceId: ProviderInstanceId.make("codex"),
@@ -327,6 +334,7 @@ function makeTestLayer(input: {
   }) => Effect.Effect<void>;
   readonly failReleaseEventWrites?: boolean;
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
+  readonly hangSessionScopeClose?: boolean;
 }) {
   const configuredEventSinkLayer = input.failReleaseEventWrites
     ? FailingReleaseEventSinkLayer
@@ -340,6 +348,9 @@ function makeTestLayer(input: {
       ...(input.hasPendingBackgroundWork === undefined
         ? {}
         : { hasPendingBackgroundWork: input.hasPendingBackgroundWork }),
+      ...(input.hangSessionScopeClose === undefined
+        ? {}
+        : { hangSessionScopeClose: input.hangSessionScopeClose }),
     }),
   );
   return Layer.mergeAll(
@@ -937,6 +948,53 @@ it.effect("ProviderSessionManagerV2 releases idle sessions without sweeping all 
     });
 
     yield* effect.pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 1000 })));
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 persists release when session scope close hangs", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSinkV2;
+      const idAllocator = yield* IdAllocatorV2;
+      const manager = yield* ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = yield* idAllocator.allocate.thread({
+        fixtureName: "provider-session-manager-hung-close",
+        projectId: yield* idAllocator.allocate.project({
+          fixtureName: "provider-session-manager-hung-close",
+        }),
+      });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+
+      yield* TestClock.adjust("1 second");
+      yield* Effect.yieldNow;
+      assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+
+      yield* TestClock.adjust("30 seconds");
+      yield* Effect.yieldNow;
+      const projection = yield* projectionStore.getThreadProjection(threadId);
+      assert.equal(projection.providerSessions.at(-1)?.status, "stopped");
+      assert.equal((yield* Ref.get(state)).closeCount, 0);
+    });
+
+    yield* effect.pipe(
+      Effect.provide(makeTestLayer({ state, idleTimeoutMs: 1000, hangSessionScopeClose: true })),
+    );
   }),
 );
 

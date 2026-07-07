@@ -1,4 +1,8 @@
-import type { SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import type {
+  Query as ClaudeQuery,
+  SDKMessage,
+  SDKUserMessage,
+} from "@anthropic-ai/claude-agent-sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ChatAttachmentId,
@@ -21,11 +25,13 @@ import {
 import { assert, describe, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
@@ -44,6 +50,7 @@ import {
   CLAUDE_READ_ONLY_ALLOWED_TOOLS,
   ClaudeProviderCapabilitiesV2,
   claudeMcpQueryOverrides,
+  claudeQueryMessages,
   claudeRuntimeQueryPolicyForRuntimePolicy,
   loggedClaudeQueryOptions,
   makeClaudeAdapterV2,
@@ -1246,5 +1253,51 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.lengthOf(harness.offeredMessages, 0);
       }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
     ),
+  );
+});
+
+describe("ClaudeAdapterV2 query message stream", () => {
+  it.effect("closes the query when the message stream is interrupted mid-read", () =>
+    Effect.gen(function* () {
+      let closed = false;
+      let releaseRead = () => {};
+      const readStarted = Promise.withResolvers<void>();
+      async function* sdkMessages(): AsyncGenerator<SDKMessage, void> {
+        while (!closed) {
+          await new Promise<void>((resolve) => {
+            releaseRead = resolve;
+            readStarted.resolve();
+          });
+        }
+      }
+      const generator = sdkMessages();
+      const close = () => {
+        closed = true;
+        releaseRead();
+      };
+      const query = {
+        next: () => generator.next(),
+        return: async (value?: void) => {
+          close();
+          return generator.return(value);
+        },
+        throw: (error?: unknown) => generator.throw(error),
+        [Symbol.asyncIterator]: () => generator,
+        close,
+      } as unknown as ClaudeQuery;
+
+      const scope = yield* Scope.make();
+      yield* Stream.fromAsyncIterable(claudeQueryMessages(query), (cause) => cause).pipe(
+        Stream.runForEach(() => Effect.void),
+        Effect.forkIn(scope),
+      );
+      yield* Effect.promise(() => readStarted.promise);
+
+      // Iterating query[Symbol.asyncIterator]() directly deadlocks here:
+      // the raw generator's return() queues behind the in-flight read and
+      // scope close never completes.
+      yield* Scope.close(scope, Exit.void);
+      assert.isTrue(closed);
+    }),
   );
 });

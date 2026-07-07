@@ -41,6 +41,7 @@ import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
+const RELEASE_SCOPE_CLOSE_TIMEOUT_MS = 30 * 1000;
 
 export const ProviderSessionReleaseReason = Schema.Literals([
   "idle_timeout",
@@ -512,7 +513,49 @@ export const layerWithOptions = (
                       input.detail ?? `Provider session released: ${input.reason}.`,
                     );
                   }
-                  const closeExit = yield* Effect.exit(Scope.close(entry.scope, Exit.void));
+                  // Scope close can wedge on a misbehaving adapter finalizer
+                  // (e.g. a provider process that never yields its message
+                  // stream). Time-box it so release still persists released
+                  // events and leaves a diagnosable trail instead of silently
+                  // parking the session as "ready" forever.
+                  const closeFiber = yield* Scope.close(entry.scope, Exit.void).pipe(
+                    Effect.exit,
+                    Effect.forkDetach({ startImmediately: true }),
+                  );
+                  const closeExit = yield* Fiber.join(closeFiber).pipe(
+                    Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
+                  );
+                  if (Option.isNone(closeExit)) {
+                    yield* Effect.logWarning(
+                      "orchestration-v2.provider-session-scope-close-timeout",
+                      {
+                        providerSessionId: input.providerSessionId,
+                        reason: input.reason,
+                        timeoutMs: RELEASE_SCOPE_CLOSE_TIMEOUT_MS,
+                      },
+                    );
+                    yield* Fiber.join(closeFiber).pipe(
+                      Effect.flatMap((exit) =>
+                        Exit.isFailure(exit)
+                          ? Effect.logWarning(
+                              "orchestration-v2.provider-session-scope-close-failed",
+                              {
+                                providerSessionId: input.providerSessionId,
+                                reason: input.reason,
+                                cause: exit.cause,
+                              },
+                            )
+                          : Effect.logInfo(
+                              "orchestration-v2.provider-session-scope-close-completed-late",
+                              {
+                                providerSessionId: input.providerSessionId,
+                                reason: input.reason,
+                              },
+                            ),
+                      ),
+                      Effect.forkDetach,
+                    );
+                  }
                   yield* writeReleasedSessionEvents({
                     entry,
                     reason: input.reason,
@@ -522,8 +565,8 @@ export const layerWithOptions = (
                     entry,
                     reason: input.reason,
                   });
-                  if (Exit.isFailure(closeExit)) {
-                    return yield* Effect.failCause(closeExit.cause);
+                  if (Option.isSome(closeExit) && Exit.isFailure(closeExit.value)) {
+                    return yield* Effect.failCause(closeExit.value.cause);
                   }
                 }),
             }),
