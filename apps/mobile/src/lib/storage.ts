@@ -69,6 +69,8 @@ export interface Preferences {
   /** Code/diff font size override; null/absent means derived from baseFontSize. */
   readonly codeFontSize?: number | null;
   readonly codeWordBreak?: boolean;
+  /** Cloud account ids that opted out of the T3 Connect onboarding sheet. */
+  readonly connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
 }
 
 async function readStorageItem(key: MobileStorageKeyValue): Promise<string | null> {
@@ -167,6 +169,7 @@ export async function loadPreferences(): Promise<Preferences> {
     markdownFontSize?: number;
     codeFontSize?: number | null;
     codeWordBreak?: boolean;
+    connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
   } = {};
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
@@ -187,18 +190,37 @@ export async function loadPreferences(): Promise<Preferences> {
   if (typeof parsed.codeWordBreak === "boolean") {
     preferences.codeWordBreak = parsed.codeWordBreak;
   }
+  if (Array.isArray(parsed.connectOnboardingOptOutAccounts)) {
+    preferences.connectOnboardingOptOutAccounts = parsed.connectOnboardingOptOutAccounts.filter(
+      (account): account is string => typeof account === "string",
+    );
+  }
 
   return preferences;
 }
 
+// Preference writes are read-modify-write over one JSON blob; concurrent
+// writers would drop each other's fields, so all writes are serialized here.
+let preferencesWriteQueue: Promise<unknown> = Promise.resolve();
+
+export async function updatePreferences(
+  update: (current: Preferences) => Partial<Preferences>,
+): Promise<Preferences> {
+  const task = preferencesWriteQueue.then(async () => {
+    const current = await loadPreferences();
+    const next: Preferences = {
+      ...current,
+      ...update(current),
+    };
+    await writeJsonStorageItem(PREFERENCES_KEY, next);
+    return next;
+  });
+  preferencesWriteQueue = task.catch(() => undefined);
+  return task;
+}
+
 export async function savePreferencesPatch(patch: Partial<Preferences>): Promise<Preferences> {
-  const current = await loadPreferences();
-  const next: Preferences = {
-    ...current,
-    ...patch,
-  };
-  await writeJsonStorageItem(PREFERENCES_KEY, next);
-  return next;
+  return updatePreferences(() => patch);
 }
 
 export async function loadOrCreateAgentAwarenessDeviceId(): Promise<string> {
