@@ -1,4 +1,5 @@
 import type { CopilotClient, CopilotSession, SessionConfig } from "@github/copilot-sdk";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -113,6 +114,7 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
   );
   const sharedClientMutex = yield* Semaphore.make(1);
   const sharedClients = new Map<string, SharedCopilotTextClientState>();
+  const pendingClients = new Map<string, Deferred.Deferred<CopilotClient, TextGenerationError>>();
 
   const closeSharedClient = (clientKey: string) =>
     Effect.gen(function* () {
@@ -176,21 +178,39 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
         cwd: input.cwd,
       });
 
-      const existingClient = yield* sharedClientMutex.withPermit(
-        Effect.gen(function* () {
-          const existing = sharedClients.get(clientKey);
-          if (existing) {
+      // First check if a client is already started
+      const existing = sharedClients.get(clientKey);
+      if (existing) {
+        yield* sharedClientMutex.withPermit(
+          Effect.gen(function* () {
             yield* cancelIdleCloseFiber(existing);
             existing.activeRequests += 1;
-            return existing.client;
-          }
-          return undefined;
-        }),
-      );
-      if (existingClient) {
-        return { clientKey, client: existingClient };
+          }),
+        );
+        return { clientKey, client: existing.client };
       }
 
+      // Check if a client is currently being started (pending)
+      const pendingDeferred = pendingClients.get(clientKey);
+      if (pendingDeferred) {
+        const client = yield* Deferred.await(pendingDeferred);
+        yield* sharedClientMutex.withPermit(
+          Effect.gen(function* () {
+            const state = sharedClients.get(clientKey);
+            if (state) {
+              yield* cancelIdleCloseFiber(state);
+              state.activeRequests += 1;
+            }
+          }),
+        );
+        return { clientKey, client };
+      }
+
+      // Create a deferred for this client startup
+      const startupDeferred = yield* Deferred.make<CopilotClient, TextGenerationError>();
+      pendingClients.set(clientKey, startupDeferred);
+
+      // Start the client
       const newClient = yield* createCopilotClient({
         settings: input.settings,
         cwd: input.cwd,
@@ -209,6 +229,7 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
             }),
         ),
       );
+
       const client = yield* Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
           yield* restore(
@@ -240,27 +261,19 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
             }),
           );
 
-          return yield* sharedClientMutex.withPermit(
+          yield* sharedClientMutex.withPermit(
             Effect.gen(function* () {
-              const existing = sharedClients.get(clientKey);
-              if (existing) {
-                yield* Effect.tryPromise({
-                  try: () => newClient.stop(),
-                  catch: () => undefined,
-                }).pipe(Effect.ignore);
-                yield* cancelIdleCloseFiber(existing);
-                existing.activeRequests += 1;
-                return existing.client;
-              }
-
+              pendingClients.delete(clientKey);
               sharedClients.set(clientKey, {
                 client: newClient,
                 activeRequests: 1,
                 idleCloseFiber: null,
               });
-              return newClient;
+              yield* Deferred.succeed(startupDeferred, newClient);
             }),
           );
+
+          return newClient;
         }),
       );
       return { clientKey, client };

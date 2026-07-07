@@ -1,6 +1,7 @@
 import { ProviderDriverKind, type CopilotSettings } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 
 import { buildServerProvider, type ServerProviderDraft } from "../providerSnapshot.ts";
@@ -148,7 +149,9 @@ export function checkCopilotProviderStatus(input: {
             });
           },
           catch: toCopilotProbeError,
-        }).pipe(Effect.catch((cause) => Effect.succeed(fallback(cause)))),
+        })
+          .pipe(Effect.timeout(Duration.seconds(30)))
+          .pipe(Effect.catch((cause) => Effect.succeed(fallback(cause)))),
       (client) => Effect.promise(() => client.stop()).pipe(Effect.ignore({ log: true })),
     ).pipe(Effect.catch((cause) => Effect.succeed(fallback(cause))));
   });
