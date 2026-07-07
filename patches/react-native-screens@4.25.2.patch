@@ -1,3 +1,42 @@
+diff --git a/android/src/main/java/com/swmansion/rnscreens/ScreenStackHeaderConfigViewManager.kt b/android/src/main/java/com/swmansion/rnscreens/ScreenStackHeaderConfigViewManager.kt
+index 03d8d9f3a5c403c93282d53cbacf1a339e877e85..54d5eabc6c8a408e711a5be97286fdbb8ab1c461 100644
+--- a/android/src/main/java/com/swmansion/rnscreens/ScreenStackHeaderConfigViewManager.kt
++++ b/android/src/main/java/com/swmansion/rnscreens/ScreenStackHeaderConfigViewManager.kt
+@@ -103,6 +103,34 @@ class ScreenStackHeaderConfigViewManager :
+         config.setTitle(title)
+     }
+ 
++    // The t3 patch adds these iOS glass-chrome props to the native spec; they have
++    // no Android implementation, but the codegen-generated interface requires the
++    // setters to exist. No-ops keep the Android build compiling.
++    override fun setSubtitle(
++        config: ScreenStackHeaderConfig,
++        subtitle: String?,
++    ) = Unit
++
++    override fun setLargeSubtitle(
++        config: ScreenStackHeaderConfig,
++        largeSubtitle: String?,
++    ) = Unit
++
++    override fun setNavigationItemStyle(
++        config: ScreenStackHeaderConfig,
++        navigationItemStyle: String?,
++    ) = Unit
++
++    override fun setHeaderCenterBarButtonItems(
++        config: ScreenStackHeaderConfig,
++        headerCenterBarButtonItems: ReadableArray?,
++    ) = Unit
++
++    override fun setHeaderToolbarItems(
++        config: ScreenStackHeaderConfig,
++        headerToolbarItems: ReadableArray?,
++    ) = Unit
++
+     override fun setTitleFontFamily(
+         config: ScreenStackHeaderConfig,
+         titleFontFamily: String?,
 diff --git a/ios/RNSBarButtonItem.h b/ios/RNSBarButtonItem.h
 index ea5325ea8d17b1ddfa790ff8dab48ce83142d4d3..acd2fd7ceb7162ed300abc4d3c9f0c24f4d63898 100644
 --- a/ios/RNSBarButtonItem.h
@@ -1067,7 +1106,7 @@ index b7568ecfebd4f4420f2a8d3fec5184d7fc728dd1..41ca1f273f0175929e73105faa463978
      onPressHeaderBarButtonMenuItem?: CT.DirectEventHandler<OnPressHeaderBarButtonMenuItemEvent> | undefined;
      synchronousShadowStateUpdatesEnabled?: CT.WithDefault<boolean, false>;
 diff --git a/lib/typescript/types.d.ts b/lib/typescript/types.d.ts
-index 3b384e03891e38e936f370372a682d73440e7ec2..1e3a966806c8b8b312f75fb367f758efe49dde9d 100644
+index 3b384e03891e38e936f370372a682d73440e7ec2..861ffed850e90f27916c427853b503dbe6ee9840 100644
 --- a/lib/typescript/types.d.ts
 +++ b/lib/typescript/types.d.ts
 @@ -10,6 +10,7 @@ export type SearchBarCommands = {
