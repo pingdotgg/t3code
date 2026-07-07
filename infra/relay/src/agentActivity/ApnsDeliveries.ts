@@ -18,6 +18,8 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
 import {
+  isExpiredAgentActivityState,
+  isTerminalPhase,
   sanitizeAgentActivityAggregateState,
   sanitizeApnsNotificationPayload,
 } from "./agentActivityPayloads.ts";
@@ -33,6 +35,7 @@ import {
   verifySignedApnsDeliveryJob,
   type ApnsDeliveryJobVerificationError,
 } from "./apnsDeliveryJobs.ts";
+import * as AgentActivityRows from "./AgentActivityRows.ts";
 import * as DeliveryAttempts from "./DeliveryAttempts.ts";
 import * as LiveActivities from "./LiveActivities.ts";
 import * as RelayConfiguration from "../Config.ts";
@@ -639,6 +642,31 @@ export const make = Effect.gen(function* () {
   const deliveryQueue = yield* ApnsDeliveryQueue.ApnsDeliveryQueue;
   const config = yield* RelayConfiguration.RelayConfiguration;
   const apns = yield* Apns.ApnsClient;
+  const activityRows = yield* AgentActivityRows.AgentActivityRows;
+
+  // Start jobs are decided at publish time, but consecutive publishes land in
+  // the same queue batch: a start chosen from a running aggregate can be
+  // delivered moments after a newer terminal publish already ended the user's
+  // work, birthing an orphan activity that shows stale content forever (no
+  // token is ever registered for it, so nothing can update or end it).
+  // Re-validate at delivery time that the user still has live work; fail open
+  // on persistence errors so a database hiccup never drops a legitimate start.
+  const userStillHasLiveWork = Effect.fnUntraced(function* (userId: string) {
+    const now = yield* DateTime.now;
+    return yield* activityRows.listForUser({ userId }).pipe(
+      Effect.map((states) =>
+        states.some(
+          (state) =>
+            !isTerminalPhase(state) && !isExpiredAgentActivityState(state, now.epochMilliseconds),
+        ),
+      ),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("live-work recheck failed; allowing queued start", { cause }).pipe(
+          Effect.as(true),
+        ),
+      ),
+    );
+  });
 
   const isCurrentSignedJobToken = Effect.fnUntraced(function* (input: {
     readonly target: LiveActivityDeliveryTarget;
@@ -709,6 +737,22 @@ export const make = Effect.gen(function* () {
         });
         return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
       }
+    }
+    if (
+      input.kind === "live_activity_start" &&
+      !(yield* userStillHasLiveWork(input.target.user_id))
+    ) {
+      yield* liveActivities.clearStartQueued({
+        userId: input.target.user_id,
+        deviceId: input.target.device_id,
+      });
+      if (input.sourceJobId) {
+        yield* attempts.completeSourceJob({
+          sourceJobId: input.sourceJobId,
+          apnsReason: "Stale APNs start job skipped.",
+        });
+      }
+      return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
     }
     const result = yield* apns
       .sendLiveActivityRequest({

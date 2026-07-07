@@ -5,6 +5,7 @@ import type {
 import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeCrypto from "node:crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -26,6 +27,7 @@ import * as DeliveryAttempts from "./DeliveryAttempts.ts";
 import * as LiveActivities from "./LiveActivities.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as ApnsDeliveryQueue from "./ApnsDeliveryQueue.ts";
+import * as AgentActivityRows from "./AgentActivityRows.ts";
 import * as ApnsDeliveries from "./ApnsDeliveries.ts";
 import * as ApnsClient from "./ApnsClient.ts";
 import * as ApnsProviderTokens from "./ApnsProviderTokens.ts";
@@ -159,6 +161,10 @@ function makeLayer(input: {
   >;
   readonly currentTargets?: ReadonlyArray<LiveActivities.TargetRow>;
   readonly config?: RelayConfiguration.RelayConfiguration["Service"];
+  // Live agent-activity rows returned by the delivery-time start recheck.
+  // Defaults to one freshly-updated running thread so queued starts stay
+  // deliverable in tests that don't care about the recheck.
+  readonly activityStates?: ReadonlyArray<RelayAgentActivityState>;
   readonly execute?: (
     request: HttpClientRequest.HttpClientRequest,
   ) => Effect.Effect<HttpClientResponse.HttpClientResponse>;
@@ -169,6 +175,17 @@ function makeLayer(input: {
     Layer.provide(ApnsDeliveryQueue.layer.pipe(Layer.provide(NodeCryptoLayer.layer))),
     Layer.provide(
       Layer.mergeAll(
+        Layer.succeed(AgentActivityRows.AgentActivityRows, {
+          upsert: () => Effect.void,
+          remove: () => Effect.void,
+          pruneTerminal: () => Effect.void,
+          listForUser: () =>
+            input.activityStates !== undefined
+              ? Effect.succeed([...input.activityStates])
+              : DateTime.now.pipe(
+                  Effect.map((now) => [{ ...state, updatedAt: DateTime.formatIso(now) }]),
+                ),
+        } satisfies AgentActivityRows.AgentActivityRows["Service"]),
         Layer.succeed(ApnsDeliveryQueue.ApnsDeliveryQueueSender, {
           send: (body) =>
             Effect.sync(() => {
@@ -821,6 +838,48 @@ describe("ApnsDeliveries", () => {
       });
       expect(error.cause).toMatchObject({ _tag: "SchemaError" });
     }).pipe(Effect.provide(makeLayer({ attempts })));
+  });
+
+  it.effect("skips a queued start when the user no longer has live work", () => {
+    const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
+    const clearedStarts: Array<
+      Parameters<LiveActivities.LiveActivities["Service"]["clearStartQueued"]>[0]
+    > = [];
+    const payload = makeApnsDeliveryJobPayload({
+      kind: "live_activity_start",
+      userId: target.user_id,
+      deviceId: target.device_id,
+      token: target.push_to_start_token ?? "start-token",
+      aggregate,
+      createdAt: "1970-01-01T00:00:00.000Z",
+      expiresAt: "1970-01-01T00:10:00.000Z",
+      jobId: "job-start-1",
+    });
+    const signed = signApnsDeliveryJob({
+      secret: config.apnsDeliveryJobSigningSecret,
+      payload,
+    });
+
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      const result = yield* deliveries.processSignedJob(signed);
+
+      // The start was decided from an aggregate that a newer terminal publish
+      // has since invalidated; delivering it would birth an orphan activity.
+      expect(result).toMatchObject({
+        kind: "live_activity_start",
+        ok: true,
+        apnsStatus: null,
+      });
+      expect(attempts).toMatchObject([
+        {
+          kind: "live_activity_start",
+          sourceJobId: "job-start-1",
+          apnsReason: "Stale APNs start job skipped.",
+        },
+      ]);
+      expect(clearedStarts).toMatchObject([{ userId: target.user_id, deviceId: target.device_id }]);
+    }).pipe(Effect.provide(makeLayer({ attempts, clearedStarts, activityStates: [] })));
   });
 
   it.effect("processes signed jobs through APNs and records attempts", () => {
