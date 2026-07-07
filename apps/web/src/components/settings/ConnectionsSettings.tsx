@@ -1602,15 +1602,17 @@ function CloudLinkSwitch({
   disabled,
   disabledReason,
   onCheckedChange,
+  ariaLabel = "Enable T3 Connect",
 }: {
   readonly checked: boolean;
   readonly disabled: boolean;
   readonly disabledReason: string | null;
   readonly onCheckedChange?: (enabled: boolean) => void;
+  readonly ariaLabel?: string;
 }) {
   const control = (
     <Switch
-      aria-label="Enable T3 Connect"
+      aria-label={ariaLabel}
       checked={checked}
       disabled={disabled}
       {...(onCheckedChange ? { onCheckedChange } : {})}
@@ -1666,146 +1668,169 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
     });
   };
 
-  const updateLink = async (enabled: boolean) => {
-    setIsUpdating(true);
-    setOperationError(null);
-    const tokenResult = await settlePromise(() => getToken(resolveRelayClerkTokenOptions()));
-    if (tokenResult._tag === "Failure") {
-      reportUpdateFailure(squashAtomCommandFailure(tokenResult));
-      setIsUpdating(false);
-      return;
-    }
-
-    const target = primaryCloudLinkState.target;
-    if (!target) {
-      reportUpdateFailure(new Error("Local environment is not ready yet."));
-      setIsUpdating(false);
-      return;
-    }
-    if (enabled && !tokenResult.value) {
-      reportUpdateFailure(new Error("Sign in to T3 Connect before linking this environment."));
-      setIsUpdating(false);
-      return;
-    }
-
-    const linkResult =
-      enabled && tokenResult.value
-        ? await linkPrimaryEnvironment({
-            target,
-            clerkToken: tokenResult.value,
-          })
-        : await unlinkPrimaryEnvironment({
-            target,
-            clerkToken: tokenResult.value ?? null,
-          });
-    if (linkResult._tag === "Failure") {
-      if (!isAtomCommandInterrupted(linkResult)) {
-        reportUpdateFailure(squashAtomCommandFailure(linkResult));
-      }
-      setIsUpdating(false);
-      return;
-    }
-
-    primaryCloudLinkState.refresh();
-    const refreshResult = await refreshRelayEnvironments();
-    if (refreshResult._tag === "Failure") {
-      if (!isAtomCommandInterrupted(refreshResult)) {
-        reportUpdateFailure(squashAtomCommandFailure(refreshResult));
-      }
-      setIsUpdating(false);
-      return;
-    }
-
-    toastManager.add({
-      type: "success",
-      title: enabled ? "T3 Connect linked" : "T3 Connect unlinked",
-      description: enabled
-        ? "This environment is available through T3 Connect."
-        : "This environment is no longer available through T3 Connect.",
-    });
-    setIsUpdating(false);
-  };
-
-  const updatePublishAgentActivity = async (enabled: boolean) => {
-    const target = primaryCloudLinkState.target;
-    if (!target) {
-      reportUpdateFailure(new Error("Local environment is not ready yet."));
-      return;
-    }
-
-    setIsUpdatingPreference(true);
-    setOperationError(null);
-    const updateResult = await updatePrimaryEnvironmentPreferences({
-      target,
-      publishAgentActivity: enabled,
-    });
-    if (updateResult._tag === "Failure") {
-      if (!isAtomCommandInterrupted(updateResult)) {
-        reportUpdateFailure(squashAtomCommandFailure(updateResult));
-      }
-      setIsUpdatingPreference(false);
-      return;
-    }
-
-    primaryCloudLinkState.refresh();
-    toastManager.add({
-      type: "success",
-      title: enabled ? "Agent activity enabled" : "Agent activity disabled",
-      description: enabled
-        ? "This environment can publish agent activity to your mobile clients."
-        : "This environment will stop publishing agent activity.",
-    });
-    setIsUpdatingPreference(false);
-  };
+  // Older environment servers predate the managedTunnelActive field; for them a
+  // link always implies a managed tunnel, so fall back to `linked`.
+  const managedTunnelActive =
+    primaryCloudLinkState.data?.managedTunnelActive ?? primaryCloudLinkState.data?.linked ?? false;
+  const publishAgentActivity = primaryCloudLinkState.data?.publishAgentActivity ?? false;
+  const linked = primaryCloudLinkState.data?.linked ?? false;
   const disabledReason = !isSignedIn
     ? "Sign in to T3 Connect to manage this environment."
     : !canManageRelay
       ? "Your session does not have permission to manage T3 Connect access."
       : null;
-  const linked = primaryCloudLinkState.data?.linked ?? false;
+  const isBusy = isUpdating || isUpdatingPreference;
+
+  // T3 Connect (managed tunnel) and publishing are independent capabilities
+  // backed by a single relay link. Reconcile the whole desired state: unlink
+  // when neither is wanted, otherwise (re)link with the mode the managed-tunnel
+  // bit implies and set the publish preference. Re-linking only happens when the
+  // managed-tunnel mode actually changes, so flipping publish alone is cheap.
+  const reconcileCloudState = async (desired: {
+    readonly managedTunnel: boolean;
+    readonly publish: boolean;
+  }): Promise<boolean> => {
+    setOperationError(null);
+    const target = primaryCloudLinkState.target;
+    if (!target) {
+      reportUpdateFailure(new Error("Local environment is not ready yet."));
+      return false;
+    }
+    const tokenResult = await settlePromise(() => getToken(resolveRelayClerkTokenOptions()));
+    if (tokenResult._tag === "Failure") {
+      reportUpdateFailure(squashAtomCommandFailure(tokenResult));
+      return false;
+    }
+    const clerkToken = tokenResult.value;
+    const wantsLink = desired.managedTunnel || desired.publish;
+
+    // A failure after this point may follow a partially applied mutation (e.g.
+    // the link succeeded but the preference update did not), so every exit —
+    // success or failure — refreshes the rendered state to whatever the server
+    // actually holds now.
+    if (!wantsLink) {
+      const unlinkResult = await unlinkPrimaryEnvironment({
+        target,
+        clerkToken: clerkToken ?? null,
+      });
+      if (unlinkResult._tag === "Failure") {
+        if (!isAtomCommandInterrupted(unlinkResult)) {
+          reportUpdateFailure(squashAtomCommandFailure(unlinkResult));
+        }
+        primaryCloudLinkState.refresh();
+        return false;
+      }
+    } else {
+      if (!clerkToken) {
+        reportUpdateFailure(new Error("Sign in to T3 Connect before enabling this."));
+        return false;
+      }
+      if (!linked || managedTunnelActive !== desired.managedTunnel) {
+        const linkResult = await linkPrimaryEnvironment({
+          target,
+          clerkToken,
+          mode: desired.managedTunnel ? "managed" : "publish_only",
+        });
+        if (linkResult._tag === "Failure") {
+          if (!isAtomCommandInterrupted(linkResult)) {
+            reportUpdateFailure(squashAtomCommandFailure(linkResult));
+          }
+          primaryCloudLinkState.refresh();
+          return false;
+        }
+      }
+      const prefResult = await updatePrimaryEnvironmentPreferences({
+        target,
+        publishAgentActivity: desired.publish,
+      });
+      if (prefResult._tag === "Failure") {
+        if (!isAtomCommandInterrupted(prefResult)) {
+          reportUpdateFailure(squashAtomCommandFailure(prefResult));
+        }
+        primaryCloudLinkState.refresh();
+        return false;
+      }
+    }
+
+    primaryCloudLinkState.refresh();
+    const refreshResult = await refreshRelayEnvironments();
+    if (refreshResult._tag === "Failure" && !isAtomCommandInterrupted(refreshResult)) {
+      reportUpdateFailure(squashAtomCommandFailure(refreshResult));
+      return false;
+    }
+    return true;
+  };
+
+  const updateManagedTunnel = async (enabled: boolean) => {
+    setIsUpdating(true);
+    const ok = await reconcileCloudState({ managedTunnel: enabled, publish: publishAgentActivity });
+    if (ok) {
+      // Turning the tunnel off while publishing stays on downgrades the link
+      // rather than removing it — say so instead of claiming an unlink.
+      toastManager.add({
+        type: "success",
+        title: enabled
+          ? "T3 Connect linked"
+          : publishAgentActivity
+            ? "T3 Connect tunnel disabled"
+            : "T3 Connect unlinked",
+        description: enabled
+          ? "This environment is available through T3 Connect."
+          : publishAgentActivity
+            ? "The managed tunnel was removed. Agent activity publishing stays on."
+            : "This environment is no longer available through T3 Connect.",
+      });
+    }
+    setIsUpdating(false);
+  };
+
+  const updatePublishAgentActivity = async (enabled: boolean) => {
+    setIsUpdatingPreference(true);
+    const ok = await reconcileCloudState({ managedTunnel: managedTunnelActive, publish: enabled });
+    if (ok) {
+      toastManager.add({
+        type: "success",
+        title: enabled ? "Agent activity enabled" : "Agent activity disabled",
+        description: enabled
+          ? "This environment publishes agent activity to your mobile clients."
+          : "This environment will stop publishing agent activity.",
+      });
+    }
+    setIsUpdatingPreference(false);
+  };
 
   return (
     <>
       <SettingsRow
         title="T3 Connect"
         description={
-          linked
+          managedTunnelActive
             ? "This environment is available to your other devices through T3 Connect."
             : "Make this environment available to your other devices through T3 Connect."
         }
         status={operationError ?? primaryCloudLinkState.error}
         control={
           <CloudLinkSwitch
-            checked={linked}
-            disabled={
-              !canManageRelay || !isSignedIn || primaryCloudLinkState.isPending || isUpdating
-            }
+            checked={managedTunnelActive}
+            disabled={!canManageRelay || !isSignedIn || primaryCloudLinkState.isPending || isBusy}
             disabledReason={disabledReason}
-            onCheckedChange={(enabled) => void updateLink(enabled)}
+            onCheckedChange={(enabled) => void updateManagedTunnel(enabled)}
           />
         }
       />
-      {linked ? (
-        <SettingsRow
-          title="Publish agent activity"
-          description="Send activity from this environment to your mobile clients for push notifications and Live Activities."
-          className="bg-muted/20 pl-7 sm:pl-8"
-          control={
-            <Switch
-              aria-label="Publish agent activity to mobile clients"
-              checked={primaryCloudLinkState.data?.publishAgentActivity ?? false}
-              disabled={
-                !canManageRelay ||
-                !isSignedIn ||
-                primaryCloudLinkState.isPending ||
-                isUpdating ||
-                isUpdatingPreference
-              }
-              onCheckedChange={(enabled) => void updatePublishAgentActivity(enabled)}
-            />
-          }
-        />
-      ) : null}
+      <SettingsRow
+        title="Publish agent activity"
+        description="Send activity from this environment to your mobile clients for push notifications and Live Activities. Works without a T3 Connect tunnel."
+        control={
+          <CloudLinkSwitch
+            ariaLabel="Publish agent activity to mobile clients"
+            checked={publishAgentActivity}
+            disabled={!canManageRelay || !isSignedIn || primaryCloudLinkState.isPending || isBusy}
+            disabledReason={disabledReason}
+            onCheckedChange={(enabled) => void updatePublishAgentActivity(enabled)}
+          />
+        }
+      />
     </>
   );
 }

@@ -1,22 +1,30 @@
-import * as NodeCrypto from "node:crypto";
-
 import type { RelayAgentActivityAggregateState } from "@t3tools/contracts/relay";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Headers from "effect/unstable/http/Headers";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import { ApnsEnvironment as ApnsEnvironmentSchema, type ApnsCredentials } from "../Config.ts";
-import type { ApnsNotificationPayload } from "./apnsDeliveryJobs.ts";
+import type { ApnsLiveActivityAlert, ApnsNotificationPayload } from "./apnsDeliveryJobs.ts";
+import { ApnsJwtEncodingError, ApnsJwtSigningError } from "./apnsJwt.ts";
+import * as ApnsProviderTokens from "./ApnsProviderTokens.ts";
+
+export { ApnsJwtEncodingError, ApnsJwtSigningError } from "./apnsJwt.ts";
 
 const LIVE_ACTIVITY_NAME = "AgentActivity";
-const STALE_AFTER_SECONDS = 2 * 60;
+// Updates only flow on domain events, so a healthy agent can be silent for
+// minutes (long tool calls, pending approvals). Two minutes made iOS dim
+// perfectly healthy activities; ten minutes still bounds how long a dead
+// environment can look alive.
+const STALE_AFTER_SECONDS = 10 * 60;
 const DISMISS_AFTER_SECONDS = 5 * 60;
+// An end without a final content-state leaves whatever the card last showed
+// frozen on the lock screen until dismissal — get it off quickly instead of
+// parading stale state for the full window.
+const CONTENTLESS_DISMISS_AFTER_SECONDS = 15;
 
 const ApnsLiveActivityEventSchema = Schema.Literals(["start", "update", "end"]);
 export type ApnsLiveActivityEvent = typeof ApnsLiveActivityEventSchema.Type;
@@ -41,35 +49,6 @@ export interface ApnsDeliveryResult {
   readonly status: number;
   readonly reason?: string;
   readonly apnsId: string | null;
-}
-
-export class ApnsJwtEncodingError extends Schema.TaggedErrorClass<ApnsJwtEncodingError>()(
-  "ApnsJwtEncodingError",
-  {
-    component: Schema.Literals(["header", "payload"]),
-    teamId: Schema.String,
-    keyId: Schema.String,
-    issuedAtUnixSeconds: Schema.Number,
-    cause: Schema.Defect(),
-  },
-) {
-  override get message(): string {
-    return `Failed to encode APNs JWT ${this.component} for key ${this.keyId}.`;
-  }
-}
-
-export class ApnsJwtSigningError extends Schema.TaggedErrorClass<ApnsJwtSigningError>()(
-  "ApnsJwtSigningError",
-  {
-    teamId: Schema.String,
-    keyId: Schema.String,
-    issuedAtUnixSeconds: Schema.Number,
-    cause: Schema.Defect(),
-  },
-) {
-  override get message(): string {
-    return `Failed to sign APNs JWT for key ${this.keyId}.`;
-  }
 }
 
 export class ApnsHttpRequestError extends Schema.TaggedErrorClass<ApnsHttpRequestError>()(
@@ -104,82 +83,6 @@ const decodeApnsErrorResponseJson = Schema.decodeUnknownOption(
     }),
   ),
 );
-const encodeApnsJwtHeaderJson = Schema.encodeEffect(
-  Schema.fromJsonString(
-    Schema.Struct({
-      alg: Schema.Literal("ES256"),
-      kid: Schema.String,
-    }),
-  ),
-);
-const encodeApnsJwtPayloadJson = Schema.encodeEffect(
-  Schema.fromJsonString(
-    Schema.Struct({
-      iss: Schema.String,
-      iat: Schema.Number,
-    }),
-  ),
-);
-
-const makeApnsJwt = Effect.fn("relay.apns.make_jwt")(function* (input: {
-  readonly teamId: ApnsCredentials["teamId"];
-  readonly keyId: ApnsCredentials["keyId"];
-  readonly privateKey: ApnsCredentials["privateKey"];
-  readonly issuedAtUnixSeconds: number;
-}) {
-  const headerJson = yield* encodeApnsJwtHeaderJson({ alg: "ES256", kid: input.keyId }).pipe(
-    Effect.mapError(
-      (cause) =>
-        new ApnsJwtEncodingError({
-          component: "header",
-          teamId: input.teamId,
-          keyId: input.keyId,
-          issuedAtUnixSeconds: input.issuedAtUnixSeconds,
-          cause,
-        }),
-    ),
-  );
-  const payloadJson = yield* encodeApnsJwtPayloadJson({
-    iss: input.teamId,
-    iat: input.issuedAtUnixSeconds,
-  }).pipe(
-    Effect.mapError(
-      (cause) =>
-        new ApnsJwtEncodingError({
-          component: "payload",
-          teamId: input.teamId,
-          keyId: input.keyId,
-          issuedAtUnixSeconds: input.issuedAtUnixSeconds,
-          cause,
-        }),
-    ),
-  );
-
-  const privateKey = Redacted.value(input.privateKey);
-  const header = Encoding.encodeBase64Url(headerJson);
-  const payload = Encoding.encodeBase64Url(payloadJson);
-  const signingInput = `${header}.${payload}`;
-
-  return yield* Effect.try({
-    try: () => {
-      const signature = NodeCrypto.createSign("sha256")
-        .update(signingInput)
-        .sign({
-          key: privateKey.replace(/\\n/g, "\n"),
-          dsaEncoding: "ieee-p1363",
-        });
-      return `${signingInput}.${Encoding.encodeBase64Url(signature)}`;
-    },
-    catch: (cause) =>
-      new ApnsJwtSigningError({
-        teamId: input.teamId,
-        keyId: input.keyId,
-        issuedAtUnixSeconds: input.issuedAtUnixSeconds,
-        cause,
-      }),
-  });
-});
-
 function contentState(state: RelayAgentActivityAggregateState) {
   return {
     name: LIVE_ACTIVITY_NAME,
@@ -197,11 +100,26 @@ type MakeLiveActivityRequestInput =
   | (LiveActivityRequestBase & {
       readonly event: "end";
       readonly state: RelayAgentActivityAggregateState | null;
+      readonly alert?: ApnsLiveActivityAlert | null;
     })
   | (LiveActivityRequestBase & {
       readonly event: "start" | "update";
       readonly state: RelayAgentActivityAggregateState;
+      readonly alert?: ApnsLiveActivityAlert | null;
     });
+
+// An alert dict on an update/end makes it an "alerting" update: iOS wakes the
+// screen and plays the haptic (the Apple Sports score-change behavior) instead
+// of silently redrawing the activity.
+function liveActivityAlertPayload(alert: ApnsLiveActivityAlert) {
+  return {
+    alert: {
+      title: alert.title,
+      body: alert.body,
+      sound: "default",
+    },
+  };
+}
 
 function makeLiveActivityRequest(input: MakeLiveActivityRequestInput): ApnsLiveActivityRequest {
   const timestamp = input.nowEpochSeconds;
@@ -215,7 +133,9 @@ function makeLiveActivityRequest(input: MakeLiveActivityRequestInput): ApnsLiveA
           timestamp,
           event: "end",
           ...(input.state ? { "content-state": contentState(input.state) } : {}),
-          "dismissal-date": timestamp + DISMISS_AFTER_SECONDS,
+          ...(input.alert ? liveActivityAlertPayload(input.alert) : {}),
+          "dismissal-date":
+            timestamp + (input.state ? DISMISS_AFTER_SECONDS : CONTENTLESS_DISMISS_AFTER_SECONDS),
         },
       },
     };
@@ -225,7 +145,9 @@ function makeLiveActivityRequest(input: MakeLiveActivityRequestInput): ApnsLiveA
   return {
     token: input.token,
     event: input.event,
-    priority: input.event === "update" ? "5" : "10",
+    // Alerting updates must land immediately; routine redraws stay at the
+    // budget-friendly low priority.
+    priority: input.event === "update" && !input.alert ? "5" : "10",
     payload: {
       aps: {
         timestamp,
@@ -241,6 +163,7 @@ function makeLiveActivityRequest(input: MakeLiveActivityRequestInput): ApnsLiveA
               },
             }
           : {}),
+        ...(input.event === "update" && input.alert ? liveActivityAlertPayload(input.alert) : {}),
         "content-state": contentState(state),
         "stale-date": timestamp + STALE_AFTER_SECONDS,
       },
@@ -300,12 +223,13 @@ export class ApnsClient extends Context.Service<
 
 export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
+  const providerTokens = yield* ApnsProviderTokens.ApnsProviderTokens;
 
   const sendLiveActivityRequest: ApnsClient["Service"]["sendLiveActivityRequest"] = Effect.fn(
     "relay.apns.send_live_activity_request",
   )(function* (input) {
     yield* Effect.annotateCurrentSpan({ "relay.apns.event": input.request.event });
-    const jwt = yield* makeApnsJwt({
+    const jwt = yield* providerTokens.getJwt({
       ...input.credentials,
       issuedAtUnixSeconds: input.issuedAtUnixSeconds,
     });
@@ -363,7 +287,7 @@ export const make = Effect.gen(function* () {
   const sendPushNotificationRequest: ApnsClient["Service"]["sendPushNotificationRequest"] =
     Effect.fn("relay.apns.send_push_notification_request")(function* (input) {
       yield* Effect.annotateCurrentSpan({ "relay.apns.event": "push_notification" });
-      const jwt = yield* makeApnsJwt({
+      const jwt = yield* providerTokens.getJwt({
         ...input.credentials,
         issuedAtUnixSeconds: input.issuedAtUnixSeconds,
       });

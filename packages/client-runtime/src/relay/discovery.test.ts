@@ -112,6 +112,7 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
     registerDevice: () => Effect.die("unused"),
     unregisterDevice: () => Effect.die("unused"),
     registerLiveActivity: () => Effect.die("unused"),
+    getAgentActivitySnapshot: () => Effect.die("unused"),
     resetTokenCache: Effect.void,
   } satisfies ManagedRelay.ManagedRelayClient["Service"]);
   const connectivity = Connectivity.Connectivity.of({
@@ -261,6 +262,7 @@ describe("RelayEnvironmentDiscovery", () => {
             new ManagedRelay.ManagedRelayRequestTimeoutError({
               activity: "Relay environment listing",
               timeoutMs: ManagedRelay.MANAGED_RELAY_REQUEST_TIMEOUT_MS,
+              traceId: null,
             }),
           ),
         getEnvironmentStatus: () => Effect.die("unused"),
@@ -272,6 +274,7 @@ describe("RelayEnvironmentDiscovery", () => {
         registerDevice: () => Effect.die("unused"),
         unregisterDevice: () => Effect.die("unused"),
         registerLiveActivity: () => Effect.die("unused"),
+        getAgentActivitySnapshot: () => Effect.die("unused"),
         resetTokenCache: Effect.void,
       } satisfies ManagedRelay.ManagedRelayClient["Service"]);
       const layer = RelayEnvironmentDiscovery.layer.pipe(

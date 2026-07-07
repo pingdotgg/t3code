@@ -11,7 +11,13 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
-import { consumeCloudReplayGuards, reconcileDesiredCloudLink } from "./http.ts";
+import type { RelayLinkProofRequest } from "@t3tools/contracts/relay";
+import {
+  consumeCloudReplayGuards,
+  isSupportedLinkProviderKind,
+  linkProofScopes,
+  reconcileDesiredCloudLink,
+} from "./http.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "./traceRelayRequest.ts";
 
@@ -204,4 +210,33 @@ describe("reconcileDesiredCloudLink", () => {
       Effect.provide(NodeServices.layer),
     ),
   );
+});
+
+describe("link proof provider kinds", () => {
+  const proofRequest = (
+    providerKind: RelayLinkProofRequest["endpoint"]["providerKind"],
+  ): RelayLinkProofRequest => ({
+    challenge: "challenge",
+    relayIssuer: "https://relay.example.test",
+    endpoint: {
+      httpBaseUrl: "http://127.0.0.1:7331",
+      wsBaseUrl: "ws://127.0.0.1:7331",
+      providerKind,
+    },
+    origin: { localHttpHost: "127.0.0.1", localHttpPort: 7331 },
+  });
+
+  it("accepts managed and manual endpoints but not t3_relay", () => {
+    expect(isSupportedLinkProviderKind(proofRequest("cloudflare_tunnel"))).toBe(true);
+    expect(isSupportedLinkProviderKind(proofRequest("manual"))).toBe(true);
+    expect(isSupportedLinkProviderKind(proofRequest("t3_relay"))).toBe(false);
+  });
+
+  it("only claims the managed-tunnel scope for tunnel links", () => {
+    expect(linkProofScopes(proofRequest("cloudflare_tunnel"))).toEqual([
+      "agent_activity_notifications",
+      "managed_tunnels",
+    ]);
+    expect(linkProofScopes(proofRequest("manual"))).toEqual(["agent_activity_notifications"]);
+  });
 });

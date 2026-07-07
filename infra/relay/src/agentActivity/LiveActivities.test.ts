@@ -198,6 +198,57 @@ describe("LiveActivities", () => {
     );
   });
 
+  it.effect("retires the previous activity token when a start or end is delivered", () => {
+    const conflictConfigs: Array<{ readonly set?: Record<string, unknown> }> = [];
+    const fakeDb = {
+      insert: () => ({
+        values: () => ({
+          onConflictDoUpdate: (config: { readonly set?: Record<string, unknown> }) => {
+            conflictConfigs.push(config);
+            return Effect.void;
+          },
+        }),
+      }),
+    } as unknown as RelayDb.RelayDb["Service"];
+
+    return Effect.gen(function* () {
+      const liveActivities = yield* LiveActivities.LiveActivities;
+      const mark = (kind: "live_activity_start" | "live_activity_update" | "live_activity_end") =>
+        liveActivities.markDelivery({
+          userId: "user-2",
+          deviceId: "device-1",
+          kind,
+          aggregate,
+          deliveredAt: "2026-05-25T00:00:10.000Z",
+        });
+      yield* mark("live_activity_start");
+      yield* mark("live_activity_update");
+      yield* mark("live_activity_end");
+
+      // A start begins a new activity generation and an end retires the
+      // current one; both must drop the stored update token so later
+      // deliveries can't route to the dead activity. Plain updates keep it.
+      expect(conflictConfigs[0]?.set).toEqual(
+        expect.objectContaining({
+          activityPushToken: null,
+          remoteStartedAt: "2026-05-25T00:00:10.000Z",
+          endedAt: null,
+        }),
+      );
+      expect(conflictConfigs[1]?.set?.activityPushToken).not.toBeNull();
+      expect(conflictConfigs[2]?.set).toEqual(
+        expect.objectContaining({
+          activityPushToken: null,
+          endedAt: "2026-05-25T00:00:10.000Z",
+        }),
+      );
+    }).pipe(
+      Effect.provide(
+        LiveActivities.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb))),
+      ),
+    );
+  });
+
   it.effect("preserves correlation context and causes for persistence failures", () => {
     const cause = new Error("database unavailable");
     const registration: RelayLiveActivityRegistrationRequest = {

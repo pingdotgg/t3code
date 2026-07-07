@@ -14,6 +14,7 @@ import { runtime } from "../../lib/runtime";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
+  releaseAgentAwarenessRelayTokenProvider,
   setAgentAwarenessRelayTokenProvider,
   unregisterAgentAwarenessDeviceForCurrentUser,
 } from "../agent-awareness/remoteRegistration";
@@ -143,7 +144,11 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
   useEffect(
     () => () => {
       previousTokenProviderRef.current = null;
-      deactivateCloudRelayAccount();
+      // Unmounting is not a sign-out: the user is usually still signed in, so
+      // detach the provider without ending lock-screen activities or wiping the
+      // persisted registration (a remount reuses both).
+      releaseAgentAwarenessRelayTokenProvider();
+      setManagedRelaySession(appAtomRegistry, null);
     },
     [],
   );
