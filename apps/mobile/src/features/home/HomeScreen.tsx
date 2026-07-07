@@ -162,6 +162,9 @@ export function HomeScreen(props: HomeScreenProps) {
   >(() => new Map());
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const listRef = useRef<LegendListRef | null>(null);
+  // Chain collapse writes so rapid toggles can't complete out of order and
+  // resurrect a stale collapsed-group list.
+  const collapsePersistQueueRef = useRef<Promise<unknown>>(Promise.resolve());
   const insets = useSafeAreaInsets();
   const accentColor = useThemeColor("--color-icon-muted");
 
@@ -203,7 +206,9 @@ export function HomeScreen(props: HomeScreenProps) {
         const collapsedProjectGroups = [...next.entries()]
           .filter(([, state]) => state.collapsed)
           .map(([groupKey]) => groupKey);
-        void savePreferencesPatch({ collapsedProjectGroups }).catch(() => undefined);
+        collapsePersistQueueRef.current = collapsePersistQueueRef.current
+          .then(() => savePreferencesPatch({ collapsedProjectGroups }))
+          .catch(() => undefined);
       }
       return next;
     });
