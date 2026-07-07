@@ -178,16 +178,20 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
         cwd: input.cwd,
       });
 
-      // First check if a client is already started
-      const existing = sharedClients.get(clientKey);
-      if (existing) {
-        yield* sharedClientMutex.withPermit(
-          Effect.gen(function* () {
-            yield* cancelIdleCloseFiber(existing);
-            existing.activeRequests += 1;
-          }),
-        );
-        return { clientKey, client: existing.client };
+      // First check if a client is already started — done inside the mutex so the
+      // lookup and activeRequests increment are atomic and cannot race with the
+      // idle-close fiber removing the entry.
+      const existingClient = yield* sharedClientMutex.withPermit(
+        Effect.gen(function* () {
+          const existing = sharedClients.get(clientKey);
+          if (!existing) return null;
+          yield* cancelIdleCloseFiber(existing);
+          existing.activeRequests += 1;
+          return existing.client;
+        }),
+      );
+      if (existingClient !== null) {
+        return { clientKey, client: existingClient };
       }
 
       // Check if a client is currently being started (pending)
@@ -210,71 +214,82 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
       const startupDeferred = yield* Deferred.make<CopilotClient, TextGenerationError>();
       pendingClients.set(clientKey, startupDeferred);
 
-      // Start the client
-      const newClient = yield* createCopilotClient({
-        settings: input.settings,
-        cwd: input.cwd,
-        binaryPathBaseDirectory: serverConfig.cwd,
-        ...(options?.baseDirectory ? { baseDirectory: options.baseDirectory } : {}),
-        env: environment,
-        platform,
-        logLevel: "error",
+      // Start the client. If any step fails we must fail and remove
+      // startupDeferred so pending waiters are unblocked rather than
+      // hanging forever.
+      const client = yield* Effect.gen(function* () {
+        const newClient = yield* createCopilotClient({
+          settings: input.settings,
+          cwd: input.cwd,
+          binaryPathBaseDirectory: serverConfig.cwd,
+          ...(options?.baseDirectory ? { baseDirectory: options.baseDirectory } : {}),
+          env: environment,
+          platform,
+          logLevel: "error",
+        }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new TextGenerationError({
+                operation: input.operation,
+                detail: detailFromCause(cause, "Failed to configure Copilot client."),
+                cause,
+              }),
+          ),
+        );
+
+        yield* Effect.uninterruptibleMask((restore) =>
+          Effect.gen(function* () {
+            yield* restore(
+              Effect.tryPromise({
+                try: (signal) =>
+                  new Promise<void>((resolve, reject) => {
+                    const abort = () => {
+                      void newClient.stop().catch(() => undefined);
+                      reject(signal.reason ?? new Error("Copilot client startup interrupted."));
+                    };
+                    if (signal.aborted) {
+                      abort();
+                      return;
+                    }
+                    signal.addEventListener("abort", abort, { once: true });
+                    newClient
+                      .start()
+                      .then(resolve, reject)
+                      .finally(() => {
+                        signal.removeEventListener("abort", abort);
+                      });
+                  }),
+                catch: (cause) =>
+                  new TextGenerationError({
+                    operation: input.operation,
+                    detail: detailFromCause(cause, "Failed to start Copilot client."),
+                    cause,
+                  }),
+              }),
+            );
+
+            yield* sharedClientMutex.withPermit(
+              Effect.gen(function* () {
+                pendingClients.delete(clientKey);
+                sharedClients.set(clientKey, {
+                  client: newClient,
+                  activeRequests: 1,
+                  idleCloseFiber: null,
+                });
+                yield* Deferred.succeed(startupDeferred, newClient);
+              }),
+            );
+          }),
+        );
+
+        return newClient;
       }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new TextGenerationError({
-              operation: input.operation,
-              detail: detailFromCause(cause, "Failed to configure Copilot client."),
-              cause,
-            }),
+        Effect.tapError((error) =>
+          Effect.gen(function* () {
+            pendingClients.delete(clientKey);
+            yield* Deferred.fail(startupDeferred, error);
+          }),
         ),
-      );
-
-      const client = yield* Effect.uninterruptibleMask((restore) =>
-        Effect.gen(function* () {
-          yield* restore(
-            Effect.tryPromise({
-              try: (signal) =>
-                new Promise<void>((resolve, reject) => {
-                  const abort = () => {
-                    void newClient.stop().catch(() => undefined);
-                    reject(signal.reason ?? new Error("Copilot client startup interrupted."));
-                  };
-                  if (signal.aborted) {
-                    abort();
-                    return;
-                  }
-                  signal.addEventListener("abort", abort, { once: true });
-                  newClient
-                    .start()
-                    .then(resolve, reject)
-                    .finally(() => {
-                      signal.removeEventListener("abort", abort);
-                    });
-                }),
-              catch: (cause) =>
-                new TextGenerationError({
-                  operation: input.operation,
-                  detail: detailFromCause(cause, "Failed to start Copilot client."),
-                  cause,
-                }),
-            }),
-          );
-
-          yield* sharedClientMutex.withPermit(
-            Effect.gen(function* () {
-              pendingClients.delete(clientKey);
-              sharedClients.set(clientKey, {
-                client: newClient,
-                activeRequests: 1,
-                idleCloseFiber: null,
-              });
-              yield* Deferred.succeed(startupDeferred, newClient);
-            }),
-          );
-
-          return newClient;
-        }),
       );
       return { clientKey, client };
     });
