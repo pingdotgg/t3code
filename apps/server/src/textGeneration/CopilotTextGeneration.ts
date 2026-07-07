@@ -352,10 +352,9 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
         input.modelSelection,
         "reasoningEffort",
       ) as CopilotReasoningEffort | undefined;
-      const contextTier = getModelSelectionStringOptionValue(
-        input.modelSelection,
-        "contextTier",
-      ) as CopilotContextTier | undefined;
+      const contextTier = getModelSelectionStringOptionValue(input.modelSelection, "contextTier") as
+        | CopilotContextTier
+        | undefined;
 
       // Keep request state isolated per generation call while reusing the
       // started SDK client so git helpers do not respawn the Copilot CLI.
@@ -426,15 +425,16 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
 
       const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(input.outputSchemaJson));
       return yield* decodeOutput(extractJsonObject(rawContent)).pipe(
-        Effect.catchTag("SchemaError", (cause) =>
-          Effect.fail(
-            new TextGenerationError({
-              operation: input.operation,
-              detail: "Copilot returned invalid structured output.",
-              cause,
-            }),
-          ),
-        ),
+        Effect.catchTags({
+          SchemaError: (cause) =>
+            Effect.fail(
+              new TextGenerationError({
+                operation: input.operation,
+                detail: "Copilot returned invalid structured output.",
+                cause,
+              }),
+            ),
+        }),
       );
     }).pipe(
       Effect.mapError((cause) =>
