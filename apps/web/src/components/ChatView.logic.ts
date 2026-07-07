@@ -195,6 +195,15 @@ export function buildLocalDraftThread(
   };
 }
 
+export function resolveInterruptTurnId(
+  thread: Pick<Thread, "session" | "latestTurn"> | null | undefined,
+): TurnId | undefined {
+  return (
+    thread?.session?.activeTurnId ??
+    (thread?.latestTurn?.state === "running" ? thread.latestTurn.turnId : undefined)
+  );
+}
+
 export function shouldWriteThreadErrorToCurrentServerThread(input: {
   serverThread:
     | {

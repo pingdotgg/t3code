@@ -167,6 +167,44 @@ function mapSession(session: OrchestrationSession): ThreadSession {
   };
 }
 
+function latestTurnFromSessionUpdate(
+  latestTurn: Thread["latestTurn"],
+  session: OrchestrationSession,
+  pendingSourceProposedPlan: Thread["pendingSourceProposedPlan"],
+): Thread["latestTurn"] {
+  if (session.status === "running" && session.activeTurnId !== null) {
+    return buildLatestTurn({
+      previous: latestTurn,
+      turnId: session.activeTurnId,
+      state: "running",
+      requestedAt:
+        latestTurn?.turnId === session.activeTurnId ? latestTurn.requestedAt : session.updatedAt,
+      startedAt:
+        latestTurn?.turnId === session.activeTurnId
+          ? (latestTurn.startedAt ?? session.updatedAt)
+          : session.updatedAt,
+      completedAt: null,
+      assistantMessageId:
+        latestTurn?.turnId === session.activeTurnId ? latestTurn.assistantMessageId : null,
+      sourceProposedPlan: pendingSourceProposedPlan,
+    });
+  }
+
+  if (latestTurn?.state === "running" || (latestTurn?.startedAt && !latestTurn.completedAt)) {
+    return buildLatestTurn({
+      previous: latestTurn,
+      turnId: latestTurn.turnId,
+      state: session.status === "error" ? "error" : "interrupted",
+      requestedAt: latestTurn.requestedAt,
+      startedAt: latestTurn.startedAt ?? session.updatedAt,
+      completedAt: session.updatedAt,
+      assistantMessageId: latestTurn.assistantMessageId,
+    });
+  }
+
+  return latestTurn;
+}
+
 function mapMessage(environmentId: EnvironmentId, message: OrchestrationMessage): ChatMessage {
   const attachments = message.attachments?.map((attachment) => ({
     type: "image" as const,
@@ -1451,19 +1489,23 @@ function applyEnvironmentOrchestrationEvent(
       }));
 
     case "thread.turn-interrupt-requested": {
-      if (event.payload.turnId === undefined) {
-        return state;
-      }
       return updateThreadState(state, event.payload.threadId, (thread) => {
+        const turnId =
+          event.payload.turnId ??
+          thread.session?.activeTurnId ??
+          (thread.latestTurn?.state === "running" ? thread.latestTurn.turnId : undefined);
+        if (turnId === undefined) {
+          return thread;
+        }
         const latestTurn = thread.latestTurn;
-        if (latestTurn === null || latestTurn.turnId !== event.payload.turnId) {
+        if (latestTurn === null || latestTurn.turnId !== turnId) {
           return thread;
         }
         return {
           ...thread,
           latestTurn: buildLatestTurn({
             previous: latestTurn,
-            turnId: event.payload.turnId,
+            turnId,
             state: "interrupted",
             requestedAt: latestTurn.requestedAt,
             startedAt: latestTurn.startedAt ?? event.payload.createdAt,
@@ -1570,28 +1612,11 @@ function applyEnvironmentOrchestrationEvent(
         ...thread,
         session: mapSession(event.payload.session),
         error: sanitizeThreadErrorMessage(event.payload.session.lastError),
-        latestTurn:
-          event.payload.session.status === "running" && event.payload.session.activeTurnId !== null
-            ? buildLatestTurn({
-                previous: thread.latestTurn,
-                turnId: event.payload.session.activeTurnId,
-                state: "running",
-                requestedAt:
-                  thread.latestTurn?.turnId === event.payload.session.activeTurnId
-                    ? thread.latestTurn.requestedAt
-                    : event.payload.session.updatedAt,
-                startedAt:
-                  thread.latestTurn?.turnId === event.payload.session.activeTurnId
-                    ? (thread.latestTurn.startedAt ?? event.payload.session.updatedAt)
-                    : event.payload.session.updatedAt,
-                completedAt: null,
-                assistantMessageId:
-                  thread.latestTurn?.turnId === event.payload.session.activeTurnId
-                    ? thread.latestTurn.assistantMessageId
-                    : null,
-                sourceProposedPlan: thread.pendingSourceProposedPlan,
-              })
-            : thread.latestTurn,
+        latestTurn: latestTurnFromSessionUpdate(
+          thread.latestTurn,
+          event.payload.session,
+          thread.pendingSourceProposedPlan,
+        ),
         updatedAt: event.occurredAt,
       }));
 
@@ -1608,6 +1633,19 @@ function applyEnvironmentOrchestrationEvent(
                 activeTurnId: undefined,
                 updatedAt: event.payload.createdAt,
               },
+              latestTurn:
+                thread.latestTurn?.state === "running" ||
+                (thread.latestTurn?.startedAt && !thread.latestTurn.completedAt)
+                  ? buildLatestTurn({
+                      previous: thread.latestTurn,
+                      turnId: thread.latestTurn.turnId,
+                      state: "interrupted",
+                      requestedAt: thread.latestTurn.requestedAt,
+                      startedAt: thread.latestTurn.startedAt ?? event.payload.createdAt,
+                      completedAt: event.payload.createdAt,
+                      assistantMessageId: thread.latestTurn.assistantMessageId,
+                    })
+                  : thread.latestTurn,
               updatedAt: event.occurredAt,
             },
       );

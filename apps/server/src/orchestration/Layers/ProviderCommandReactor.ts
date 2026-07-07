@@ -279,6 +279,29 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const settleInterruptedThreadSession = Effect.fnUntraced(function* (input: {
+    readonly threadId: ThreadId;
+    readonly createdAt: string;
+    readonly lastError?: string | null;
+  }) {
+    const thread = yield* resolveThread(input.threadId);
+    const session = thread?.session;
+    if (!thread || !session || session.status === "stopped") {
+      return;
+    }
+    yield* setThreadSession({
+      threadId: input.threadId,
+      session: {
+        ...session,
+        status: input.lastError ? "interrupted" : "ready",
+        activeTurnId: null,
+        lastError: input.lastError ?? session.lastError ?? null,
+        updatedAt: input.createdAt,
+      },
+      createdAt: input.createdAt,
+    });
+  });
+
   const resolveThread = Effect.fnUntraced(function* (threadId: ThreadId) {
     const readModel = yield* orchestrationEngine.getReadModel();
     return readModel.threads.find((entry) => entry.id === threadId);
@@ -1025,7 +1048,35 @@ const make = Effect.gen(function* () {
     }
 
     // Orchestration turn ids are not provider turn ids, so interrupt by session.
-    yield* providerService.interruptTurn({ threadId: event.payload.threadId });
+    yield* providerService.interruptTurn({ threadId: event.payload.threadId }).pipe(
+      Effect.matchCauseEffect({
+        onFailure: (cause) => {
+          const detail = formatFailureDetail(cause);
+          return appendProviderFailureActivity({
+            threadId: event.payload.threadId,
+            kind: "provider.turn.interrupt.failed",
+            summary: "Provider turn interrupt failed",
+            detail,
+            turnId: event.payload.turnId ?? thread.session?.activeTurnId ?? null,
+            createdAt: event.payload.createdAt,
+          }).pipe(
+            Effect.flatMap(() =>
+              settleInterruptedThreadSession({
+                threadId: event.payload.threadId,
+                createdAt: event.payload.createdAt,
+                lastError: detail,
+              }),
+            ),
+          );
+        },
+        onSuccess: () =>
+          settleInterruptedThreadSession({
+            threadId: event.payload.threadId,
+            createdAt: event.payload.createdAt,
+            lastError: null,
+          }),
+      }),
+    );
   });
 
   const processApprovalResponseRequested = Effect.fn("processApprovalResponseRequested")(function* (
@@ -1129,8 +1180,21 @@ const make = Effect.gen(function* () {
     }
 
     const now = event.payload.createdAt;
+    let stopFailureDetail: string | null = null;
     if (thread.session && thread.session.status !== "stopped") {
-      yield* providerService.stopSession({ threadId: thread.id });
+      yield* providerService.stopSession({ threadId: thread.id }).pipe(
+        Effect.catchCause((cause) => {
+          stopFailureDetail = formatFailureDetail(cause);
+          return appendProviderFailureActivity({
+            threadId: event.payload.threadId,
+            kind: "provider.session.stop.failed",
+            summary: "Provider session stop failed",
+            detail: stopFailureDetail,
+            turnId: thread.session?.activeTurnId ?? null,
+            createdAt: now,
+          });
+        }),
+      );
     }
 
     yield* setThreadSession({
@@ -1147,7 +1211,7 @@ const make = Effect.gen(function* () {
         ...(thread.session?.resumeCursor !== undefined
           ? { resumeCursor: thread.session.resumeCursor }
           : {}),
-        lastError: thread.session?.lastError ?? null,
+        lastError: stopFailureDetail ?? thread.session?.lastError ?? null,
         updatedAt: now,
       },
       createdAt: now,

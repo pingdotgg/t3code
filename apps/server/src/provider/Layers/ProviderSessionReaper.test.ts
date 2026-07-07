@@ -206,6 +206,7 @@ describe("ProviderSessionReaper", () => {
   it("reaps stale persisted sessions without active turns", async () => {
     const threadId = ThreadId.make("thread-reaper-stale");
     const now = new Date().toISOString();
+    const staleSessionSeenAt = new Date(Date.now() - 2_000).toISOString();
     const harness = await createHarness({
       readModel: makeReadModel([
         {
@@ -232,7 +233,7 @@ describe("ProviderSessionReaper", () => {
         adapterKey: "claudeAgent",
         runtimeMode: "full-access",
         status: "running",
-        lastSeenAt: "2026-04-14T00:00:00.000Z",
+        lastSeenAt: staleSessionSeenAt,
         resumeCursor: {
           opaque: "resume-stale",
         },
@@ -280,7 +281,7 @@ describe("ProviderSessionReaper", () => {
         adapterKey: "claudeAgent",
         runtimeMode: "full-access",
         status: "running",
-        lastSeenAt: "2026-04-14T00:00:00.000Z",
+        lastSeenAt: now,
         resumeCursor: {
           opaque: "resume-active-turn",
         },
@@ -464,7 +465,7 @@ describe("ProviderSessionReaper", () => {
         adapterKey: "claudeAgent",
         runtimeMode: "full-access",
         status: "running",
-        lastSeenAt: "2026-04-14T00:00:00.000Z",
+        lastSeenAt: now,
         resumeCursor: {
           opaque: "resume-live-active-turn",
         },
@@ -525,7 +526,7 @@ describe("ProviderSessionReaper", () => {
         adapterKey: "claudeAgent",
         runtimeMode: "full-access",
         status: "running",
-        lastSeenAt: "2026-04-14T00:00:00.000Z",
+        lastSeenAt: now,
         resumeCursor: {
           opaque: "resume-ready-active-turn",
         },
@@ -542,6 +543,75 @@ describe("ProviderSessionReaper", () => {
     expect(harness.dispatchedCommands).toHaveLength(0);
     const remaining = await runtime!.runPromise(repository.getByThreadId({ threadId }));
     expect(Option.isSome(remaining)).toBe(true);
+  });
+
+  it("clears active turns that exceed the maximum active duration even when provider still reports them", async () => {
+    const threadId = ThreadId.make("thread-reaper-aged-active-turn");
+    const turnId = TurnId.make("turn-reaper-aged-active");
+    const now = new Date().toISOString();
+    const staleActiveTurnSeenAt = new Date(Date.now() - 2 * 60 * 60 * 1000 - 1_000).toISOString();
+    const harness = await createHarness({
+      activeSessions: [
+        {
+          provider: ProviderDriverKind.make("claudeAgent"),
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          status: "running",
+          runtimeMode: "full-access",
+          threadId,
+          activeTurnId: turnId,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+      readModel: makeReadModel([
+        {
+          id: threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "claudeAgent",
+            runtimeMode: "full-access",
+            activeTurnId: turnId,
+            lastError: null,
+            updatedAt: now,
+          },
+        },
+      ]),
+    });
+    const repository = await runtime!.runPromise(Effect.service(ProviderSessionRuntimeRepository));
+
+    await runtime!.runPromise(
+      repository.upsert({
+        threadId,
+        providerName: "claudeAgent",
+        providerInstanceId: null,
+        adapterKey: "claudeAgent",
+        runtimeMode: "full-access",
+        status: "running",
+        lastSeenAt: staleActiveTurnSeenAt,
+        resumeCursor: {
+          opaque: "resume-aged-active-turn",
+        },
+        runtimePayload: null,
+      }),
+    );
+
+    const reaper = await runtime!.runPromise(Effect.service(ProviderSessionReaper));
+    scope = await Effect.runPromise(Scope.make("sequential"));
+    await Effect.runPromise(reaper.start().pipe(Scope.provide(scope)));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(harness.stopSession).not.toHaveBeenCalled();
+    expect(harness.dispatchedCommands).toHaveLength(1);
+    expect(harness.dispatchedCommands[0]).toMatchObject({
+      type: "thread.session.set",
+      threadId,
+      session: {
+        status: "interrupted",
+        activeTurnId: null,
+        lastError: "Provider turn exceeded the maximum active duration.",
+      },
+    });
   });
 
   it("does not keep active turns alive from a running provider session without a matching turn id", async () => {
@@ -641,7 +711,7 @@ describe("ProviderSessionReaper", () => {
         adapterKey: "claudeAgent",
         runtimeMode: "full-access",
         status: "running",
-        lastSeenAt: "2026-04-14T00:00:00.000Z",
+        lastSeenAt: now,
         resumeCursor: {
           opaque: "resume-list-failure-active-turn",
         },

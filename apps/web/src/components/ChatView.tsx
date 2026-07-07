@@ -187,6 +187,7 @@ import {
   deriveLockedProvider,
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
+  resolveInterruptTurnId,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
@@ -3060,13 +3061,33 @@ function ChatViewBody(
 
   const onInterrupt = async () => {
     const api = readEnvironmentApi(environmentId);
-    if (!api || !activeThread) return;
-    await api.orchestration.dispatchCommand({
-      type: "thread.turn.interrupt",
-      commandId: newCommandId(),
-      threadId: activeThread.id,
-      createdAt: new Date().toISOString(),
-    });
+    if (!activeThread) return;
+    if (!api) {
+      setThreadError(activeThread.id, "Cannot stop while disconnected. Reconnect and try again.");
+      return;
+    }
+    const turnId = resolveInterruptTurnId(activeThread);
+    const createdAt = new Date().toISOString();
+    await api.orchestration
+      .dispatchCommand(
+        turnId !== undefined
+          ? {
+              type: "thread.turn.interrupt",
+              commandId: newCommandId(),
+              threadId: activeThread.id,
+              turnId,
+              createdAt,
+            }
+          : {
+              type: "thread.session.stop",
+              commandId: newCommandId(),
+              threadId: activeThread.id,
+              createdAt,
+            },
+      )
+      .catch((err: unknown) => {
+        setThreadError(activeThread.id, err instanceof Error ? err.message : "Failed to stop.");
+      });
   };
 
   const onUpdateQueuedTurn = useCallback(

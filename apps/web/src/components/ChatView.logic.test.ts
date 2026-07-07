@@ -20,6 +20,7 @@ import {
   deriveComposerSendState,
   hasServerAcknowledgedLocalDispatch,
   reconcileMountedTerminalThreadIds,
+  resolveInterruptTurnId,
   resolveSendEnvMode,
   shouldWriteThreadErrorToCurrentServerThread,
   waitForStartedServerThread,
@@ -102,6 +103,47 @@ describe("canStartThreadTurn", () => {
         sendInFlight: false,
       }),
     ).toBe(false);
+  });
+
+  describe("resolveInterruptTurnId", () => {
+    it("prefers the session active turn id", () => {
+      expect(
+        resolveInterruptTurnId({
+          session: {
+            provider: ProviderDriverKind.make("codex"),
+            status: "running",
+            orchestrationStatus: "running",
+            activeTurnId: TurnId.make("session-turn"),
+            createdAt: "2026-02-27T00:00:00.000Z",
+            updatedAt: "2026-02-27T00:00:00.000Z",
+          },
+          latestTurn: {
+            turnId: TurnId.make("latest-turn"),
+            state: "running",
+            requestedAt: "2026-02-27T00:00:00.000Z",
+            startedAt: "2026-02-27T00:00:01.000Z",
+            completedAt: null,
+            assistantMessageId: null,
+          },
+        }),
+      ).toBe(TurnId.make("session-turn"));
+    });
+
+    it("falls back to the latest running turn", () => {
+      expect(
+        resolveInterruptTurnId({
+          session: null,
+          latestTurn: {
+            turnId: TurnId.make("latest-turn"),
+            state: "running",
+            requestedAt: "2026-02-27T00:00:00.000Z",
+            startedAt: "2026-02-27T00:00:01.000Z",
+            completedAt: null,
+            assistantMessageId: null,
+          },
+        }),
+      ).toBe(TurnId.make("latest-turn"));
+    });
   });
 
   it("allows a new user turn only when the thread can accept a send", () => {
