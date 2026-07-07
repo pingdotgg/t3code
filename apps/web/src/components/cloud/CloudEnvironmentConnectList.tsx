@@ -136,6 +136,29 @@ export function CloudEnvironmentConnectRows({
   }
 
   if (standalone && visibleEnvironments.length === 0) {
+    // A failed or offline discovery is not "no environments" — misreporting it
+    // as empty would read as the user's devices having disappeared.
+    const discoveryProblem = environmentsState.offline
+      ? "You appear to be offline."
+      : (Option.getOrNull(environmentsState.error)?.message ?? null);
+    if (discoveryProblem !== null && !environmentsState.refreshing) {
+      return (
+        <div className={ITEM_ROW_CLASSNAME}>
+          <p className="text-sm font-medium text-destructive">
+            Could not load T3 Connect environments
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">{discoveryProblem}</p>
+          <Button
+            size="sm"
+            variant="outline"
+            className="mt-3"
+            onClick={() => void refreshRelayEnvironments()}
+          >
+            Try again
+          </Button>
+        </div>
+      );
+    }
     return empty;
   }
 

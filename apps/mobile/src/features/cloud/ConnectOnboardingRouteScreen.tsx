@@ -1,6 +1,6 @@
 import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useAuth } from "@clerk/expo";
-import { useNavigation } from "@react-navigation/native";
+import { StackActions, useNavigation } from "@react-navigation/native";
 import { useCallback, useEffect, useState } from "react";
 import { Pressable, RefreshControl, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -27,8 +27,13 @@ export function ConnectOnboardingRouteScreen() {
   // The route is deep-linkable; without cloud config the sheet would present
   // empty with no chrome to dismiss it, so bail back out instead.
   useEffect(() => {
-    if (!hasCloudPublicConfig() && navigation.canGoBack()) {
+    if (hasCloudPublicConfig()) {
+      return;
+    }
+    if (navigation.canGoBack()) {
       navigation.goBack();
+    } else {
+      navigation.dispatch(StackActions.replace("Home"));
     }
   }, [navigation]);
 

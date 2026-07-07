@@ -47,7 +47,9 @@ export function ConnectOnboardingDialog() {
 type OnboardingStep = "publish" | "devices";
 
 function ConfiguredConnectOnboardingDialog() {
-  const { isLoaded, isSignedIn, userId } = useAuth();
+  // Mirrors ManagedRelayAuthProvider: a pending Clerk session must not read as
+  // signed-out, or its later activation would look like a fresh sign-in.
+  const { isLoaded, isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
   const [optOutState, setOptOutState] = useLocalStorage(
     CONNECT_ONBOARDING_OPT_OUT_STORAGE_KEY,
     EMPTY_CONNECT_ONBOARDING_OPT_OUT_STATE,
@@ -95,6 +97,10 @@ function ConfiguredConnectOnboardingDialog() {
   // load observes undefined → account and must not re-prompt.
   useEffect(() => {
     if (!isLoaded) return;
+    // A loaded-but-incomplete snapshot (signed in, user id not yet populated)
+    // must not be recorded as signed-out — the next render would then look
+    // like a fresh sign-in on a cold load.
+    if (isSignedIn && !userId) return;
     const previousAccount = observedAccountRef.current;
     const nextAccount = isSignedIn && userId ? userId : null;
     observedAccountRef.current = nextAccount;
@@ -102,6 +108,12 @@ function ConfiguredConnectOnboardingDialog() {
       setRequestedAccount(nextAccount);
     }
   }, [isLoaded, isSignedIn, userId]);
+
+  // A manageable session implies a primary environment, so when the scopes
+  // allow publishing, wait for the connection target too — otherwise the
+  // wizard could open on the devices step moments before the publish step
+  // becomes available and freeze there.
+  const publishStepDecided = !canManageRelay || controller.linkState.target !== null;
 
   // Open once the session scopes resolve so the step set is stable. Accounts
   // that chose "Don't show this again" are skipped.
@@ -111,7 +123,7 @@ function ConfiguredConnectOnboardingDialog() {
       setRequestedAccount(null);
       return;
     }
-    if (!sessionScopesKnown) return;
+    if (!sessionScopesKnown || !publishStepDecided) return;
     setRequestedAccount(null);
     prefilledFromLinkStateRef.current = false;
     setExposeEnvironment(true);
@@ -124,6 +136,7 @@ function ConfiguredConnectOnboardingDialog() {
     controller.linkState.target,
     openForAccount,
     optOutAccounts,
+    publishStepDecided,
     requestedAccount,
     sessionScopesKnown,
   ]);
@@ -141,19 +154,25 @@ function ConfiguredConnectOnboardingDialog() {
 
   // Toggles default on, but an environment that is already linked should show
   // its actual configuration instead of silently proposing to rewrite it.
+  // Only when the link belongs to the account being onboarded, though — after
+  // an account switch the cached link state can still describe the previous
+  // account's setup.
   const linkStateData = controller.linkState.data;
   useEffect(() => {
     if (openForAccount === null || prefilledFromLinkStateRef.current || linkStateData === null) {
       return;
     }
     prefilledFromLinkStateRef.current = true;
-    if (linkStateData.linked) {
+    if (linkStateData.linked && linkStateData.cloudUserId === openForAccount) {
       setExposeEnvironment(linkStateData.managedTunnelActive ?? linkStateData.linked);
       setPublishAgentActivity(linkStateData.publishAgentActivity);
     }
   }, [linkStateData, openForAccount]);
 
   const complete = () => {
+    // Keep the wizard up while a link request is in flight so its outcome
+    // (and any failure) stays visible.
+    if (isApplying) return;
     const account = openForAccount;
     setOpenForAccount(null);
     if (account !== null && dontShowAgain) {
@@ -206,7 +225,12 @@ function ConfiguredConnectOnboardingDialog() {
             place.
           </DialogDescription>
           {steps.length > 1 ? (
-            <OnboardingStepper steps={steps} currentStep={step} onStepSelect={setStep} />
+            <OnboardingStepper
+              steps={steps}
+              currentStep={step}
+              disabled={isApplying}
+              onStepSelect={setStep}
+            />
           ) : null}
         </DialogHeader>
         <DialogPanel>
@@ -247,7 +271,9 @@ function ConfiguredConnectOnboardingDialog() {
                 </Button>
               </>
             ) : (
-              <Button onClick={complete}>Done</Button>
+              <Button disabled={isApplying} onClick={complete}>
+                Done
+              </Button>
             )}
           </div>
         </DialogFooter>
@@ -264,10 +290,12 @@ const STEP_LABELS: Record<OnboardingStep, string> = {
 function OnboardingStepper({
   steps,
   currentStep,
+  disabled,
   onStepSelect,
 }: {
   readonly steps: ReadonlyArray<OnboardingStep>;
   readonly currentStep: OnboardingStep;
+  readonly disabled: boolean;
   readonly onStepSelect: (step: OnboardingStep) => void;
 }) {
   const currentIndex = steps.indexOf(currentStep);
@@ -277,6 +305,7 @@ function OnboardingStepper({
         <button
           key={step}
           type="button"
+          disabled={disabled}
           className={cn(
             "grid min-w-0 grid-cols-[1rem_minmax(0,1fr)] gap-x-2 rounded-lg border px-3 py-2 text-left",
             index === currentIndex

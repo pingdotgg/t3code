@@ -85,11 +85,6 @@ export function useCloudLinkController() {
       return false;
     }
     const tokenResult = await settlePromise(() => getToken(resolveRelayClerkTokenOptions()));
-    if (tokenResult._tag === "Failure") {
-      reportUpdateFailure(squashAtomCommandFailure(tokenResult));
-      return false;
-    }
-    const clerkToken = tokenResult.value;
     const wantsLink = desired.managedTunnel || desired.publish;
 
     // A failure after this point may follow a partially applied mutation (e.g.
@@ -97,9 +92,11 @@ export function useCloudLinkController() {
     // success or failure — refreshes the rendered state to whatever the server
     // actually holds now.
     if (!wantsLink) {
+      // Unlink works without a relay token — a failed token read must not
+      // leave the user unable to turn T3 Connect off.
       const unlinkResult = await unlinkPrimaryEnvironment({
         target,
-        clerkToken: clerkToken ?? null,
+        clerkToken: tokenResult._tag === "Success" ? (tokenResult.value ?? null) : null,
       });
       if (unlinkResult._tag === "Failure") {
         if (!isAtomCommandInterrupted(unlinkResult)) {
@@ -109,6 +106,11 @@ export function useCloudLinkController() {
         return false;
       }
     } else {
+      if (tokenResult._tag === "Failure") {
+        reportUpdateFailure(squashAtomCommandFailure(tokenResult));
+        return false;
+      }
+      const clerkToken = tokenResult.value;
       if (!clerkToken) {
         reportUpdateFailure(new Error("Sign in to T3 Connect before enabling this."));
         return false;
