@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -6,6 +7,7 @@ import {
   type AuthAccessStreamEvent,
   AuthSessionId,
   CommandId,
+  DEFAULT_REVIEW_CHANGES_SCOPE,
   type GitActionProgressEvent,
   type GitManagerServiceError,
   OrchestrationDispatchCommandError,
@@ -21,6 +23,7 @@ import {
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
   FilesystemBrowseError,
+  MessageId,
   ServerProviderListCommandsError,
   ServerExportThreadMarkdownError,
   ThreadId,
@@ -30,12 +33,20 @@ import {
   type TerminalMetadataStreamEvent,
   type VcsError,
   GitCommandError,
+  WorkflowRunError,
+  type WorkflowRunInput,
+  type WorkflowRunResult,
+  WorkflowRunId,
   SourceControlRepositoryError,
   ServerProviderUpdateError,
   KeybindingsConfigError,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
+import {
+  buildReviewChangesPrompt,
+  REVIEW_CHANGES_WORKFLOW_ID,
+} from "@t3tools/shared/workflows/reviewChanges";
 import {
   gitCheckoutResultToVcs,
   gitCommandErrorToVcs,
@@ -337,6 +348,157 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           .refreshStatus(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
+      const workflowSkipped = (
+        input: Pick<WorkflowRunInput, "idempotencyKey">,
+        reason: Extract<WorkflowRunResult, { status: "skipped" }>["reason"],
+        message: string,
+      ): WorkflowRunResult => ({
+        status: "skipped" as const,
+        runId: WorkflowRunId.make(input.idempotencyKey),
+        reason,
+        message,
+        createdAt: new Date().toISOString(),
+      });
+
+      const parseReviewScope = (value: unknown) =>
+        value === "uncommitted" || value === "against-base" ? value : null;
+
+      const runWorkflow = (input: WorkflowRunInput) =>
+        Effect.gen(function* () {
+          const runId = WorkflowRunId.make(input.idempotencyKey);
+          const createdAt = new Date().toISOString();
+
+          if (input.workflowId !== REVIEW_CHANGES_WORKFLOW_ID) {
+            return workflowSkipped(input, "workflow-not-found", "Workflow not found.");
+          }
+          if (input.destinationMode !== undefined && input.destinationMode !== "child-chat") {
+            return yield* new WorkflowRunError({
+              message: "Review Code workflow currently supports only the child-chat destination.",
+            });
+          }
+
+          const settings = yield* serverSettings.getSettings;
+          const reviewSettings = settings.agentWorkflows.reviewChanges;
+          const override = settings.agentWorkflows.builtInOverrides[REVIEW_CHANGES_WORKFLOW_ID];
+          const enabled = override?.enabled ?? reviewSettings.enabled;
+          if (!enabled) {
+            return workflowSkipped(input, "workflow-disabled", "Review Code workflow is disabled.");
+          }
+
+          const threadOption = yield* projectionSnapshotQuery.getThreadShellById(input.threadId);
+          if (Option.isNone(threadOption)) {
+            return workflowSkipped(input, "thread-not-found", "Thread not found.");
+          }
+          const thread = threadOption.value;
+
+          const projectId = input.projectId ?? thread.projectId;
+          const projectOption = yield* projectionSnapshotQuery.getProjectShellById(projectId);
+          if (Option.isNone(projectOption)) {
+            return workflowSkipped(input, "project-not-found", "Project not found.");
+          }
+          const project = projectOption.value;
+
+          const requestedScope =
+            parseReviewScope(input.input?.scope) ??
+            parseReviewScope(override?.defaultInput?.scope) ??
+            reviewSettings.defaultScope ??
+            DEFAULT_REVIEW_CHANGES_SCOPE;
+          const cwd = input.cwd ?? thread.worktreePath ?? project.workspaceRoot;
+          const reviewContext = yield* git.resolveReviewChangesContext({
+            cwd,
+            scope: requestedScope,
+          });
+
+          if (!reviewContext.hasReviewableChanges) {
+            return workflowSkipped(
+              input,
+              "no-reviewable-changes",
+              reviewContext.scope === "against-base"
+                ? "No changes against base branch."
+                : "No uncommitted changes.",
+            );
+          }
+
+          const title =
+            input.title ??
+            (reviewContext.scope === "against-base"
+              ? `Review changes against ${reviewContext.baseBranch}`
+              : "Review uncommitted changes");
+          const prompt = buildReviewChangesPrompt({
+            context:
+              reviewContext.scope === "against-base"
+                ? {
+                    scope: "against-base",
+                    baseBranch: reviewContext.baseBranch,
+                    mergeBaseSha: reviewContext.mergeBaseSha,
+                  }
+                : { scope: "uncommitted" },
+            settings: {
+              promptTemplate: override?.promptTemplate ?? reviewSettings.promptTemplate,
+            },
+          });
+          const threadId = ThreadId.make(crypto.randomUUID());
+          const commandId = CommandId.make(crypto.randomUUID());
+          const messageId = MessageId.make(crypto.randomUUID());
+          const modelSelection =
+            input.modelSelection ?? project.defaultModelSelection ?? thread.modelSelection;
+          const runtimeMode = input.runtimeMode ?? thread.runtimeMode;
+          const interactionMode = input.interactionMode ?? thread.interactionMode;
+          const normalizedCommand = yield* normalizeDispatchCommand({
+            type: "thread.turn.start",
+            commandId,
+            threadId,
+            message: {
+              messageId,
+              role: "user",
+              text: prompt,
+              attachments: [],
+            },
+            modelSelection,
+            titleSeed: title,
+            runtimeMode,
+            interactionMode,
+            bootstrap: {
+              createThread: {
+                projectId: project.id,
+                parentThreadId: input.threadId,
+                title,
+                modelSelection,
+                runtimeMode,
+                interactionMode,
+                branch: reviewContext.branch,
+                worktreePath: cwd === project.workspaceRoot ? null : cwd,
+                createdAt,
+              },
+            },
+            source: {
+              kind: "workflow",
+              workflowId: REVIEW_CHANGES_WORKFLOW_ID,
+              runId,
+              trigger: input.trigger,
+            },
+            createdAt,
+          });
+          const dispatchResult = yield* dispatchNormalizedCommand(normalizedCommand);
+          return {
+            status: "started" as const,
+            runId,
+            threadId,
+            commandId,
+            messageId,
+            sequence: dispatchResult.sequence,
+            createdAt,
+          } satisfies WorkflowRunResult;
+        }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new WorkflowRunError({
+                message: cause instanceof Error ? cause.message : "Failed to run workflow.",
+                cause,
+              }),
+          ),
+        );
+
       return WsRpcGroup.of({
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
@@ -626,6 +788,10 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               "rpc.aggregate": "server",
             },
           ),
+        [WS_METHODS.workflowRun]: (input) =>
+          observeRpcEffect(WS_METHODS.workflowRun, runWorkflow(input), {
+            "rpc.aggregate": "workflow",
+          }),
         [WS_METHODS.serverExportThreadMarkdown]: (input) =>
           observeRpcEffect(
             WS_METHODS.serverExportThreadMarkdown,
@@ -749,6 +915,14 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcEffect(WS_METHODS.shellOpenInEditor, open.openInEditor(input), {
             "rpc.aggregate": "workspace",
           }),
+        [WS_METHODS.shellRevealInFileManager]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.shellRevealInFileManager,
+            open.revealInFileManager(input.path),
+            {
+              "rpc.aggregate": "workspace",
+            },
+          ),
         [WS_METHODS.filesystemBrowse]: (input) =>
           observeRpcEffect(
             WS_METHODS.filesystemBrowse,

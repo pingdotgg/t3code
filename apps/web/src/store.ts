@@ -213,8 +213,8 @@ function mapTurnDiffSummary(checkpoint: OrchestrationCheckpointSummary): TurnDif
     checkpointTurnCount: checkpoint.checkpointTurnCount,
     checkpointRef: checkpoint.checkpointRef,
     files: checkpoint.files.map((file) => ({ ...file })),
-    agentTouchedPaths: [...checkpoint.agentTouchedPaths],
-    turnFiles: checkpoint.turnFiles.map((file) => ({ ...file })),
+    agentTouchedPaths: [...(checkpoint.agentTouchedPaths ?? [])],
+    turnFiles: (checkpoint.turnFiles ?? []).map((file) => ({ ...file })),
   };
 }
 
@@ -249,7 +249,7 @@ function mapThread(thread: OrchestrationThread, environmentId: EnvironmentId): T
     title: thread.title,
     modelSelection: normalizeModelSelection(thread.modelSelection),
     runtimeMode: thread.runtimeMode,
-    pendingRuntimeMode: thread.pendingRuntimeMode,
+    pendingRuntimeMode: thread.pendingRuntimeMode ?? null,
     interactionMode: thread.interactionMode,
     session: thread.session ? mapSession(thread.session) : null,
     messages: thread.messages.map((message) => mapMessage(environmentId, message)),
@@ -1365,7 +1365,7 @@ function applyEnvironmentOrchestrationEvent(
           title: event.payload.title,
           modelSelection: event.payload.modelSelection,
           runtimeMode: event.payload.runtimeMode,
-          pendingRuntimeMode: event.payload.pendingRuntimeMode,
+          pendingRuntimeMode: event.payload.pendingRuntimeMode ?? null,
           interactionMode: event.payload.interactionMode,
           branch: event.payload.branch,
           worktreePath: event.payload.worktreePath,
@@ -1639,8 +1639,8 @@ function applyEnvironmentOrchestrationEvent(
           checkpointRef: event.payload.checkpointRef,
           status: event.payload.status,
           files: event.payload.files,
-          agentTouchedPaths: event.payload.agentTouchedPaths,
-          turnFiles: event.payload.turnFiles,
+          agentTouchedPaths: event.payload.agentTouchedPaths ?? [],
+          turnFiles: event.payload.turnFiles ?? [],
           assistantMessageId: event.payload.assistantMessageId,
           completedAt: event.payload.completedAt,
         });

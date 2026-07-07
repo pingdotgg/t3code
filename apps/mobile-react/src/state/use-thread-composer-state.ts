@@ -1,10 +1,17 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useMemo } from "react";
 
-import { EnvironmentScopedThreadShell } from "@t3tools/client-runtime";
-import { CommandId, MessageId, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
+import {
+  CommandId,
+  MessageId,
+  type EnvironmentId,
+  type ModelSelection,
+  type ProviderInteractionMode,
+  type RuntimeMode,
+  type ThreadId,
+} from "@t3tools/contracts";
+import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { deriveActiveWorkStartedAt } from "@t3tools/shared/orchestrationTiming";
-import { Atom } from "effect/unstable/reactivity";
 
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
 import {
@@ -14,62 +21,25 @@ import {
 } from "../lib/composerImages";
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
-import { buildThreadFeed, type QueuedThreadMessage } from "../lib/threadActivity";
+import { buildThreadFeed } from "../lib/threadActivity";
 import { appAtomRegistry } from "../state/atom-registry";
-import { getEnvironmentClient } from "./environment-session-registry";
-import type { ConnectedEnvironmentSummary } from "../state/remote-runtime-types";
 import {
-  setPendingConnectionError,
-  useRemoteConnectionStatus,
-} from "../state/use-remote-environment-registry";
-import { useRemoteCatalog } from "../state/use-remote-catalog";
+  appendComposerDraftAttachments,
+  appendComposerDraftText,
+  clearComposerDraftContent,
+  composerDraftsAtom,
+  ensureComposerDraftsLoaded,
+  getComposerDraftSnapshot,
+  removeComposerDraftAttachment,
+  setComposerDraftText,
+  updateComposerDraftSettings,
+  useComposerDraft,
+} from "./use-composer-drafts";
+import { setPendingConnectionError } from "../state/use-remote-environment-registry";
 import { useSelectedThreadDetail } from "../state/use-thread-detail";
 import { useThreadSelection } from "../state/use-thread-selection";
-
-const draftMessageByThreadKeyAtom = Atom.make<Record<string, string>>({}).pipe(
-  Atom.keepAlive,
-  Atom.withLabel("mobile:thread-composer:draft-message"),
-);
-
-const draftAttachmentsByThreadKeyAtom = Atom.make<
-  Record<string, ReadonlyArray<DraftComposerImageAttachment>>
->({}).pipe(Atom.keepAlive, Atom.withLabel("mobile:thread-composer:draft-attachments"));
-
-const dispatchingQueuedMessageIdAtom = Atom.make<MessageId | null>(null).pipe(
-  Atom.keepAlive,
-  Atom.withLabel("mobile:thread-composer:dispatching-message-id"),
-);
-
-const queuedMessagesByThreadKeyAtom = Atom.make<Record<string, ReadonlyArray<QueuedThreadMessage>>>(
-  {},
-).pipe(Atom.keepAlive, Atom.withLabel("mobile:thread-composer:queued-messages"));
-
-function setDraftMessage(threadKey: string, value: string): void {
-  const current = appAtomRegistry.get(draftMessageByThreadKeyAtom);
-  appAtomRegistry.set(draftMessageByThreadKeyAtom, {
-    ...current,
-    [threadKey]: value,
-  });
-}
-
-function appendDraftAttachments(
-  threadKey: string,
-  attachments: ReadonlyArray<DraftComposerImageAttachment>,
-): void {
-  const current = appAtomRegistry.get(draftAttachmentsByThreadKeyAtom);
-  appAtomRegistry.set(draftAttachmentsByThreadKeyAtom, {
-    ...current,
-    [threadKey]: [...(current[threadKey] ?? []), ...attachments],
-  });
-}
-
-function appendDraftMessage(threadKey: string, value: string): void {
-  const current = appAtomRegistry.get(draftMessageByThreadKeyAtom);
-  appAtomRegistry.set(draftMessageByThreadKeyAtom, {
-    ...current,
-    [threadKey]: `${current[threadKey] ?? ""}${value}`,
-  });
-}
+import { enqueueThreadOutboxMessage } from "./thread-outbox";
+import { useThreadOutboxMessages } from "./use-thread-outbox";
 
 export function appendReviewCommentToDraft(input: {
   readonly environmentId: EnvironmentId;
@@ -78,15 +48,11 @@ export function appendReviewCommentToDraft(input: {
   readonly attachments?: ReadonlyArray<DraftComposerImageAttachment>;
 }): void {
   const threadKey = scopedThreadKey(input.environmentId, input.threadId);
-  const current = appAtomRegistry.get(draftMessageByThreadKeyAtom);
-  const existing = current[threadKey] ?? "";
+  const existing = appAtomRegistry.get(composerDraftsAtom)[threadKey]?.text ?? "";
   const separator = existing.trim().length > 0 && !existing.endsWith("\n") ? "\n\n" : "";
-  appAtomRegistry.set(draftMessageByThreadKeyAtom, {
-    ...current,
-    [threadKey]: `${existing}${separator}${input.text}`,
-  });
+  setComposerDraftText(threadKey, `${existing}${separator}${input.text}`);
   if (input.attachments && input.attachments.length > 0) {
-    appendDraftAttachments(threadKey, input.attachments);
+    appendComposerDraftAttachments(threadKey, input.attachments);
   }
 }
 
@@ -94,147 +60,27 @@ export function useThreadDraftForThread(input: {
   readonly environmentId?: EnvironmentId;
   readonly threadId?: ThreadId;
 }) {
-  const draftMessageByThreadKey = useAtomValue(draftMessageByThreadKeyAtom);
-  const draftAttachmentsByThreadKey = useAtomValue(draftAttachmentsByThreadKeyAtom);
   const threadKey =
     input.environmentId && input.threadId
       ? scopedThreadKey(input.environmentId, input.threadId)
       : null;
+  const draft = useComposerDraft(threadKey);
 
   return {
-    draftMessage: threadKey ? (draftMessageByThreadKey[threadKey] ?? "") : "",
-    draftAttachments: threadKey ? (draftAttachmentsByThreadKey[threadKey] ?? []) : [],
+    draftMessage: draft.text,
+    draftAttachments: draft.attachments,
   };
 }
 
-function clearDraft(threadKey: string): void {
-  const draftMessages = appAtomRegistry.get(draftMessageByThreadKeyAtom);
-  const draftAttachments = appAtomRegistry.get(draftAttachmentsByThreadKeyAtom);
-  appAtomRegistry.set(draftMessageByThreadKeyAtom, {
-    ...draftMessages,
-    [threadKey]: "",
-  });
-  appAtomRegistry.set(draftAttachmentsByThreadKeyAtom, {
-    ...draftAttachments,
-    [threadKey]: [],
-  });
-}
-
-function removeDraftImage(threadKey: string, imageId: string): void {
-  const current = appAtomRegistry.get(draftAttachmentsByThreadKeyAtom);
-  appAtomRegistry.set(draftAttachmentsByThreadKeyAtom, {
-    ...current,
-    [threadKey]: (current[threadKey] ?? []).filter((image) => image.id !== imageId),
-  });
-}
-
-function beginDispatchingQueuedMessage(queuedMessageId: MessageId): void {
-  appAtomRegistry.set(dispatchingQueuedMessageIdAtom, queuedMessageId);
-}
-
-function finishDispatchingQueuedMessage(queuedMessageId: MessageId): void {
-  const current = appAtomRegistry.get(dispatchingQueuedMessageIdAtom);
-  appAtomRegistry.set(dispatchingQueuedMessageIdAtom, current === queuedMessageId ? null : current);
-}
-
-function enqueueQueuedMessage(message: QueuedThreadMessage): void {
-  const current = appAtomRegistry.get(queuedMessagesByThreadKeyAtom);
-  const threadKey = scopedThreadKey(message.environmentId, message.threadId);
-  appAtomRegistry.set(queuedMessagesByThreadKeyAtom, {
-    ...current,
-    [threadKey]: [...(current[threadKey] ?? []), message],
-  });
-}
-
-function removeQueuedMessage(
-  environmentId: EnvironmentId,
-  threadId: ThreadId,
-  queuedMessageId: MessageId,
-): void {
-  const current = appAtomRegistry.get(queuedMessagesByThreadKeyAtom);
-  const threadKey = scopedThreadKey(environmentId, threadId);
-  const existing = current[threadKey];
-  if (!existing) {
-    return;
-  }
-
-  const nextQueue = existing.filter((entry) => entry.messageId !== queuedMessageId);
-  const next = { ...current };
-  if (nextQueue.length === 0) {
-    delete next[threadKey];
-  } else {
-    next[threadKey] = nextQueue;
-  }
-
-  appAtomRegistry.set(queuedMessagesByThreadKeyAtom, next);
-}
-
-function useQueueDrain(input: {
-  readonly dispatchingQueuedMessageId: MessageId | null;
-  readonly queuedMessagesByThreadKey: Record<string, ReadonlyArray<QueuedThreadMessage>>;
-  readonly threads: ReadonlyArray<EnvironmentScopedThreadShell>;
-  readonly environments: ReadonlyArray<ConnectedEnvironmentSummary>;
-  readonly sendQueuedMessage: (message: QueuedThreadMessage) => Promise<void>;
-}) {
-  const {
-    dispatchingQueuedMessageId,
-    environments,
-    queuedMessagesByThreadKey,
-    sendQueuedMessage,
-    threads,
-  } = input;
+export function useThreadComposerState() {
+  const { selectedThread: selectedThreadShell } = useThreadSelection();
+  const selectedThreadDetail = useSelectedThreadDetail();
+  const composerDrafts = useAtomValue(composerDraftsAtom);
+  const queuedMessagesByThreadKey = useThreadOutboxMessages();
 
   useEffect(() => {
-    if (dispatchingQueuedMessageId !== null) {
-      return;
-    }
-
-    for (const [threadKey, queuedMessages] of Object.entries(queuedMessagesByThreadKey)) {
-      const nextQueuedMessage = queuedMessages[0];
-      if (!nextQueuedMessage) {
-        continue;
-      }
-
-      const thread = threads.find(
-        (candidate) => scopedThreadKey(candidate.environmentId, candidate.id) === threadKey,
-      );
-      if (!thread) {
-        continue;
-      }
-
-      const environment = environments.find(
-        (candidate) => candidate.environmentId === nextQueuedMessage.environmentId,
-      );
-      if (!environment || environment.connectionState !== "ready") {
-        continue;
-      }
-
-      const threadStatus = thread.session?.status;
-      if (threadStatus === "running" || threadStatus === "starting") {
-        continue;
-      }
-
-      void sendQueuedMessage(nextQueuedMessage);
-      return;
-    }
-  }, [
-    dispatchingQueuedMessageId,
-    environments,
-    queuedMessagesByThreadKey,
-    sendQueuedMessage,
-    threads,
-  ]);
-}
-
-export function useThreadComposerState() {
-  const { connectedEnvironments } = useRemoteConnectionStatus();
-  const { threads } = useRemoteCatalog();
-  const { selectedThread: selectedThreadShell } = useThreadSelection();
-  const selectedThread = useSelectedThreadDetail();
-  const draftMessageByThreadKey = useAtomValue(draftMessageByThreadKeyAtom);
-  const draftAttachmentsByThreadKey = useAtomValue(draftAttachmentsByThreadKeyAtom);
-  const dispatchingQueuedMessageId = useAtomValue(dispatchingQueuedMessageIdAtom);
-  const queuedMessagesByThreadKey = useAtomValue(queuedMessagesByThreadKeyAtom);
+    ensureComposerDraftsLoaded();
+  }, []);
 
   const selectedThreadKey = selectedThreadShell
     ? scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id)
@@ -243,22 +89,22 @@ export function useThreadComposerState() {
     () => (selectedThreadKey ? (queuedMessagesByThreadKey[selectedThreadKey] ?? []) : []),
     [queuedMessagesByThreadKey, selectedThreadKey],
   );
-
   const selectedThreadFeed = useMemo(
-    () =>
-      selectedThread
-        ? buildThreadFeed(selectedThread, selectedThreadQueuedMessages, dispatchingQueuedMessageId)
-        : [],
-    [dispatchingQueuedMessageId, selectedThread, selectedThreadQueuedMessages],
+    () => (selectedThreadDetail ? buildThreadFeed(selectedThreadDetail) : []),
+    [selectedThreadDetail],
   );
 
-  const draftMessage = selectedThreadKey ? (draftMessageByThreadKey[selectedThreadKey] ?? "") : "";
-  const draftAttachments = selectedThreadKey
-    ? (draftAttachmentsByThreadKey[selectedThreadKey] ?? [])
-    : [];
+  const selectedDraft = selectedThreadKey ? composerDrafts[selectedThreadKey] : null;
+  const draftMessage = selectedDraft?.text ?? "";
+  const draftAttachments = selectedDraft?.attachments ?? [];
   const selectedThreadQueueCount = selectedThreadQueuedMessages.length;
+  const selectedThread = selectedThreadDetail ?? selectedThreadShell;
+  const modelSelection = selectedDraft?.modelSelection ?? selectedThread?.modelSelection ?? null;
+  const runtimeMode = selectedDraft?.runtimeMode ?? selectedThread?.runtimeMode ?? null;
+  const interactionMode = selectedDraft?.interactionMode ?? selectedThread?.interactionMode ?? null;
 
   const selectedThreadSessionActivity = useMemo(() => {
+    const selectedThread = selectedThreadDetail ?? selectedThreadShell;
     if (!selectedThread?.session) {
       return null;
     }
@@ -267,10 +113,10 @@ export function useThreadComposerState() {
       orchestrationStatus: selectedThread.session.status,
       activeTurnId: selectedThread.session.activeTurnId ?? undefined,
     };
-  }, [selectedThread]);
+  }, [selectedThreadDetail, selectedThreadShell]);
 
-  const queuedSendStartedAt = selectedThreadQueuedMessages[0]?.createdAt ?? null;
   const activeWorkStartedAt = useMemo(() => {
+    const selectedThread = selectedThreadDetail ?? selectedThreadShell;
     if (!selectedThread) {
       return null;
     }
@@ -278,96 +124,52 @@ export function useThreadComposerState() {
     return deriveActiveWorkStartedAt(
       selectedThread.latestTurn,
       selectedThreadSessionActivity,
-      queuedSendStartedAt,
+      null,
     );
-  }, [queuedSendStartedAt, selectedThread, selectedThreadSessionActivity]);
+  }, [selectedThreadDetail, selectedThreadSessionActivity, selectedThreadShell]);
 
   const activeThreadBusy =
     !!selectedThread &&
     (selectedThread.session?.status === "running" || selectedThread.session?.status === "starting");
 
-  const sendQueuedMessage = useCallback(
-    async (queuedMessage: QueuedThreadMessage) => {
-      const client = getEnvironmentClient(queuedMessage.environmentId);
-      const thread = threads.find(
-        (candidate) =>
-          candidate.environmentId === queuedMessage.environmentId &&
-          candidate.id === queuedMessage.threadId,
-      );
-      if (!client || !thread) {
-        return;
-      }
-
-      beginDispatchingQueuedMessage(queuedMessage.messageId);
-      try {
-        await client.orchestration.dispatchCommand({
-          type: "thread.turn.start",
-          commandId: queuedMessage.commandId,
-          threadId: queuedMessage.threadId,
-          message: {
-            messageId: queuedMessage.messageId,
-            role: "user",
-            text: queuedMessage.text,
-            attachments: queuedMessage.attachments,
-          },
-          runtimeMode: thread.runtimeMode,
-          interactionMode: thread.interactionMode,
-          createdAt: queuedMessage.createdAt,
-        });
-
-        removeQueuedMessage(
-          queuedMessage.environmentId,
-          queuedMessage.threadId,
-          queuedMessage.messageId,
-        );
-      } catch (error) {
-        removeQueuedMessage(
-          queuedMessage.environmentId,
-          queuedMessage.threadId,
-          queuedMessage.messageId,
-        );
-        setPendingConnectionError(
-          error instanceof Error ? error.message : "Failed to send message.",
-        );
-      } finally {
-        finishDispatchingQueuedMessage(queuedMessage.messageId);
-      }
-    },
-    [threads],
-  );
-
-  useQueueDrain({
-    dispatchingQueuedMessageId,
-    queuedMessagesByThreadKey,
-    threads,
-    environments: connectedEnvironments,
-    sendQueuedMessage,
-  });
-
-  const onSendMessage = useCallback(() => {
+  const onSendMessage = useCallback(async () => {
     if (!selectedThreadShell) {
-      return;
+      return null;
     }
 
     const threadKey = scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id);
-    const text = (draftMessageByThreadKey[threadKey] ?? "").trim();
-    const attachments = draftAttachmentsByThreadKey[threadKey] ?? [];
+    const draft = getComposerDraftSnapshot(threadKey);
+    const thread = selectedThreadDetail ?? selectedThreadShell;
+    const text = draft.text.trim();
+    const attachments = draft.attachments;
     if (text.length === 0 && attachments.length === 0) {
-      return;
+      return null;
     }
 
     const metadata = makeQueuedMessageMetadata();
-    enqueueQueuedMessage({
-      environmentId: selectedThreadShell.environmentId,
-      threadId: selectedThreadShell.id,
-      messageId: MessageId.make(metadata.messageId),
-      commandId: CommandId.make(metadata.commandId),
-      text,
-      attachments,
-      createdAt: metadata.createdAt,
-    });
-    clearDraft(threadKey);
-  }, [draftAttachmentsByThreadKey, draftMessageByThreadKey, selectedThreadShell]);
+    const messageId = MessageId.make(metadata.messageId);
+    try {
+      await enqueueThreadOutboxMessage({
+        environmentId: selectedThreadShell.environmentId,
+        threadId: selectedThreadShell.id,
+        messageId,
+        commandId: CommandId.make(metadata.commandId),
+        text,
+        attachments,
+        modelSelection: draft.modelSelection ?? thread.modelSelection,
+        runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
+        interactionMode: draft.interactionMode ?? thread.interactionMode,
+        createdAt: metadata.createdAt,
+      });
+      clearComposerDraftContent(threadKey);
+      return messageId;
+    } catch (error) {
+      setPendingConnectionError(
+        error instanceof Error ? error.message : "Failed to save the queued message.",
+      );
+      return null;
+    }
+  }, [selectedThreadDetail, selectedThreadShell]);
 
   const onChangeDraftMessage = useCallback(
     (value: string) => {
@@ -376,7 +178,7 @@ export function useThreadComposerState() {
       }
 
       const threadKey = scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id);
-      setDraftMessage(threadKey, value);
+      setComposerDraftText(threadKey, value);
     },
     [selectedThreadShell],
   );
@@ -388,15 +190,15 @@ export function useThreadComposerState() {
 
     const threadKey = scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id);
     const result = await pickComposerImages({
-      existingCount: draftAttachmentsByThreadKey[threadKey]?.length ?? 0,
+      existingCount: composerDrafts[threadKey]?.attachments.length ?? 0,
     });
     if (result.images.length > 0) {
-      appendDraftAttachments(threadKey, result.images);
+      appendComposerDraftAttachments(threadKey, result.images);
     }
     if (result.error) {
       setPendingConnectionError(result.error);
     }
-  }, [draftAttachmentsByThreadKey, selectedThreadShell]);
+  }, [composerDrafts, selectedThreadShell]);
 
   const onPasteIntoDraft = useCallback(async () => {
     if (!selectedThreadShell) {
@@ -405,18 +207,18 @@ export function useThreadComposerState() {
 
     const threadKey = scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id);
     const result = await pasteComposerClipboard({
-      existingCount: draftAttachmentsByThreadKey[threadKey]?.length ?? 0,
+      existingCount: composerDrafts[threadKey]?.attachments.length ?? 0,
     });
     if (result.images.length > 0) {
-      appendDraftAttachments(threadKey, result.images);
+      appendComposerDraftAttachments(threadKey, result.images);
     }
     if (result.text) {
-      appendDraftMessage(threadKey, result.text);
+      appendComposerDraftText(threadKey, result.text);
     }
     if (result.error) {
       setPendingConnectionError(result.error);
     }
-  }, [draftAttachmentsByThreadKey, selectedThreadShell]);
+  }, [composerDrafts, selectedThreadShell]);
 
   const onNativePasteImages = useCallback(
     async (uris: ReadonlyArray<string>) => {
@@ -428,16 +230,21 @@ export function useThreadComposerState() {
       try {
         const images = await convertPastedImagesToAttachments({
           uris,
-          existingCount: draftAttachmentsByThreadKey[threadKey]?.length ?? 0,
+          existingCount: composerDrafts[threadKey]?.attachments.length ?? 0,
         });
         if (images.length > 0) {
-          appendDraftAttachments(threadKey, images);
+          appendComposerDraftAttachments(threadKey, images);
         }
       } catch (error) {
-        console.error("[native paste] error converting images", error);
+        console.error("[native paste] error converting images", {
+          environmentId: selectedThreadShell.environmentId,
+          threadId: selectedThreadShell.id,
+          uriCount: uris.length,
+          ...safeErrorLogAttributes(error),
+        });
       }
     },
-    [draftAttachmentsByThreadKey, selectedThreadShell],
+    [composerDrafts, selectedThreadShell],
   );
 
   const onRemoveDraftImage = useCallback(
@@ -447,9 +254,39 @@ export function useThreadComposerState() {
       }
 
       const threadKey = scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id);
-      removeDraftImage(threadKey, imageId);
+      removeComposerDraftAttachment(threadKey, imageId);
     },
     [selectedThreadShell],
+  );
+
+  const onUpdateModelSelection = useCallback(
+    (value: ModelSelection) => {
+      if (!selectedThreadKey) {
+        return;
+      }
+      updateComposerDraftSettings(selectedThreadKey, { modelSelection: value });
+    },
+    [selectedThreadKey],
+  );
+
+  const onUpdateRuntimeMode = useCallback(
+    (value: RuntimeMode) => {
+      if (!selectedThreadKey) {
+        return;
+      }
+      updateComposerDraftSettings(selectedThreadKey, { runtimeMode: value });
+    },
+    [selectedThreadKey],
+  );
+
+  const onUpdateInteractionMode = useCallback(
+    (value: ProviderInteractionMode) => {
+      if (!selectedThreadKey) {
+        return;
+      }
+      updateComposerDraftSettings(selectedThreadKey, { interactionMode: value });
+    },
+    [selectedThreadKey],
   );
 
   return {
@@ -458,6 +295,9 @@ export function useThreadComposerState() {
     activeWorkStartedAt,
     draftMessage,
     draftAttachments,
+    modelSelection,
+    runtimeMode,
+    interactionMode,
     activeThreadBusy,
     onChangeDraftMessage,
     onPickDraftImages,
@@ -465,5 +305,8 @@ export function useThreadComposerState() {
     onNativePasteImages,
     onRemoveDraftImage,
     onSendMessage,
+    onUpdateModelSelection,
+    onUpdateRuntimeMode,
+    onUpdateInteractionMode,
   };
 }

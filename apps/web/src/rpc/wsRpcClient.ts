@@ -87,6 +87,7 @@ export interface WsRpcClient {
       readonly cwd: Parameters<LocalApi["shell"]["openInEditor"]>[0];
       readonly editor: Parameters<LocalApi["shell"]["openInEditor"]>[1];
     }) => ReturnType<LocalApi["shell"]["openInEditor"]>;
+    readonly revealInFileManager: RpcUnaryMethod<typeof WS_METHODS.shellRevealInFileManager>;
   };
   readonly git: {
     readonly pull: RpcUnaryMethod<typeof WS_METHODS.gitPull>;
@@ -113,6 +114,9 @@ export interface WsRpcClient {
     readonly resolveReviewChangesContext: RpcUnaryMethod<
       typeof WS_METHODS.gitResolveReviewChangesContext
     >;
+  };
+  readonly workflow: {
+    readonly run: RpcUnaryMethod<typeof WS_METHODS.workflowRun>;
   };
   readonly server: {
     readonly getConfig: RpcUnaryNoArgMethod<typeof WS_METHODS.serverGetConfig>;
@@ -199,6 +203,8 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
     shell: {
       openInEditor: (input) =>
         transport.request((client) => client[WS_METHODS.shellOpenInEditor](input)),
+      revealInFileManager: (input) =>
+        transport.request((client) => client[WS_METHODS.shellRevealInFileManager](input)),
     },
     git: {
       pull: (input) => transport.request((client) => client[WS_METHODS.gitPull](input)),
@@ -250,6 +256,9 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
         transport.request((client) => client[WS_METHODS.gitPreparePullRequestThread](input)),
       resolveReviewChangesContext: (input) =>
         transport.request((client) => client[WS_METHODS.gitResolveReviewChangesContext](input)),
+    },
+    workflow: {
+      run: (input) => transport.request((client) => client[WS_METHODS.workflowRun](input)),
     },
     server: {
       getConfig: () => transport.request((client) => client[WS_METHODS.serverGetConfig]({})),

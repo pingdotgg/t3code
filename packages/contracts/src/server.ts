@@ -94,7 +94,7 @@ export class ServerProviderListCommandsError extends Schema.TaggedErrorClass<Ser
   "ServerProviderListCommandsError",
   {
     message: TrimmedNonEmptyString,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Unknown),
   },
 ) {}
 
@@ -283,7 +283,7 @@ export class ServerExportThreadMarkdownError extends Schema.TaggedErrorClass<Ser
   "ServerExportThreadMarkdownError",
   {
     message: TrimmedNonEmptyString,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Unknown),
   },
 ) {}
 
@@ -408,7 +408,7 @@ export class ServerProviderUpdateError extends Schema.TaggedErrorClass<ServerPro
   {
     provider: ProviderDriverKind,
     reason: TrimmedNonEmptyString,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Unknown),
   },
 ) {
   override get message(): string {

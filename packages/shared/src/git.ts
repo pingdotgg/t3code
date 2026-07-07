@@ -325,50 +325,6 @@ export function applyGitStatusStreamEvent(
   }
 }
 
-const EMPTY_VCS_STATUS_REMOTE: VcsStatusRemoteResult = {
-  hasUpstream: false,
-  aheadCount: 0,
-  behindCount: 0,
-  aheadOfDefaultCount: 0,
-  pr: null,
-};
-
-export function mergeVcsStatusParts(
-  local: VcsStatusLocalResult,
-  remote: VcsStatusRemoteResult | null,
-): VcsStatusResult {
-  return {
-    ...local,
-    ...(remote ?? EMPTY_VCS_STATUS_REMOTE),
-  };
-}
-
-function toRemoteVcsStatusPart(status: VcsStatusResult): VcsStatusRemoteResult {
-  return {
-    hasUpstream: status.hasUpstream,
-    aheadCount: status.aheadCount,
-    behindCount: status.behindCount,
-    ...(status.aheadOfDefaultCount === undefined
-      ? {}
-      : { aheadOfDefaultCount: status.aheadOfDefaultCount }),
-    pr: status.pr,
-  };
-}
-
-function toLocalVcsStatusPart(status: VcsStatusResult): VcsStatusLocalResult {
-  return {
-    isRepo: status.isRepo,
-    ...(status.sourceControlProvider
-      ? { sourceControlProvider: status.sourceControlProvider }
-      : {}),
-    hasPrimaryRemote: status.hasPrimaryRemote,
-    isDefaultRef: status.isDefaultRef,
-    refName: status.refName,
-    hasWorkingTreeChanges: status.hasWorkingTreeChanges,
-    workingTree: status.workingTree,
-  };
-}
-
 export function applyVcsStatusStreamEvent(
   current: VcsStatusResult | null,
   event: VcsStatusStreamEvent,
@@ -377,7 +333,7 @@ export function applyVcsStatusStreamEvent(
     case "snapshot":
       return mergeVcsStatusParts(event.local, event.remote);
     case "localUpdated":
-      return mergeVcsStatusParts(event.local, current ? toRemoteVcsStatusPart(current) : null);
+      return mergeVcsStatusParts(event.local, current ? toVcsRemoteStatusPart(current) : null);
     case "remoteUpdated":
       if (current === null) {
         return mergeVcsStatusParts(
@@ -392,6 +348,48 @@ export function applyVcsStatusStreamEvent(
           event.remote,
         );
       }
-      return mergeVcsStatusParts(toLocalVcsStatusPart(current), event.remote);
+      return mergeVcsStatusParts(toVcsLocalStatusPart(current), event.remote);
   }
+}
+
+function mergeVcsStatusParts(
+  local: VcsStatusLocalResult,
+  remote: VcsStatusRemoteResult | null,
+): VcsStatusResult {
+  return {
+    ...local,
+    hasUpstream: remote?.hasUpstream ?? false,
+    aheadCount: remote?.aheadCount ?? 0,
+    behindCount: remote?.behindCount ?? 0,
+    ...(remote?.aheadOfDefaultCount !== undefined
+      ? { aheadOfDefaultCount: remote.aheadOfDefaultCount }
+      : {}),
+    pr: remote?.pr ?? null,
+  };
+}
+
+function toVcsRemoteStatusPart(status: VcsStatusResult): VcsStatusRemoteResult {
+  return {
+    hasUpstream: status.hasUpstream,
+    aheadCount: status.aheadCount,
+    behindCount: status.behindCount,
+    ...(status.aheadOfDefaultCount !== undefined
+      ? { aheadOfDefaultCount: status.aheadOfDefaultCount }
+      : {}),
+    pr: status.pr,
+  };
+}
+
+function toVcsLocalStatusPart(status: VcsStatusResult): VcsStatusLocalResult {
+  return {
+    isRepo: status.isRepo,
+    ...(status.sourceControlProvider
+      ? { sourceControlProvider: status.sourceControlProvider }
+      : {}),
+    hasPrimaryRemote: status.hasPrimaryRemote,
+    isDefaultRef: status.isDefaultRef,
+    refName: status.refName,
+    hasWorkingTreeChanges: status.hasWorkingTreeChanges,
+    workingTree: status.workingTree,
+  };
 }

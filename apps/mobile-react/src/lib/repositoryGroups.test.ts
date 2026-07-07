@@ -1,17 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 
 import { groupProjectsByRepository } from "./repositoryGroups";
-import {
-  EnvironmentScopedProjectShell,
-  EnvironmentScopedThreadShell,
-} from "@t3tools/client-runtime";
+import { EnvironmentProject, EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 
 function makeProject(
-  input: Partial<EnvironmentScopedProjectShell> &
-    Pick<EnvironmentScopedProjectShell, "environmentId" | "id" | "title">,
-): EnvironmentScopedProjectShell {
+  input: Partial<EnvironmentProject> & Pick<EnvironmentProject, "environmentId" | "id" | "title">,
+): EnvironmentProject {
   return {
     workspaceRoot: `/workspaces/${input.id}`,
     repositoryIdentity: null,
@@ -24,16 +20,12 @@ function makeProject(
 }
 
 function makeThread(
-  input: Partial<EnvironmentScopedThreadShell> &
-    Pick<
-      EnvironmentScopedThreadShell,
-      "environmentId" | "id" | "projectId" | "title" | "modelSelection"
-    >,
-): EnvironmentScopedThreadShell {
+  input: Partial<EnvironmentThreadShell> &
+    Pick<EnvironmentThreadShell, "environmentId" | "id" | "projectId" | "title" | "modelSelection">,
+): EnvironmentThreadShell {
   return {
     runtimeMode: "full-access",
     interactionMode: "default",
-    pendingRuntimeMode: null,
     branch: null,
     worktreePath: null,
     latestTurn: null,

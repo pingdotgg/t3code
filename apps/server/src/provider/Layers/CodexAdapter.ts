@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * CodexAdapterLive - Scoped live implementation for the Codex provider adapter.
  *

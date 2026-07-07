@@ -758,6 +758,40 @@ label:has(> select#reasoning-effort) select {
   animation: ultrathink-rainbow 10s linear infinite;
 }
 
+/* Project title shimmer — signals that a project has an actively working chat,
+   replacing the pulsing blue status dot in the sidebar. A sky-tinted highlight
+   band sweeps across the title text. */
+@keyframes project-title-shimmer {
+  0% {
+    background-position: 150% 0;
+  }
+  100% {
+    background-position: -50% 0;
+  }
+}
+
+.project-title-shimmer {
+  background-image: linear-gradient(
+    100deg,
+    var(--foreground) 0%,
+    var(--foreground) 38%,
+    color-mix(in srgb, var(--foreground) 35%, #38bdf8) 50%,
+    var(--foreground) 62%,
+    var(--foreground) 100%
+  );
+  background-size: 200% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  animation: project-title-shimmer 2.4s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .project-title-shimmer {
+    animation: none;
+  }
+}
+
 /* Thin scrollbar for model picker */
 .model-picker-list::-webkit-scrollbar {
   width: 4px;

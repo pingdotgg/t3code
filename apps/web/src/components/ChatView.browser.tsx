@@ -208,6 +208,11 @@ function createMockEnvironmentApi(input: {
     },
     preview: {} as EnvironmentApi["preview"],
     git: {} as EnvironmentApi["git"],
+    workflow: {
+      run: (() => {
+        throw new Error("Not implemented in browser test.");
+      }) as EnvironmentApi["workflow"]["run"],
+    },
     server: {
       exportThreadMarkdown: (() => {
         throw new Error("Not implemented in browser test.");

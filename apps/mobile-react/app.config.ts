@@ -1,8 +1,17 @@
 import type { ExpoConfig } from "expo/config";
 
-type AppVariant = "development" | "preview" | "production";
+import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
 
-const APP_VARIANT = resolveAppVariant(process.env.APP_VARIANT);
+type AppVariant = "development" | "preview" | "production";
+type RuntimeVersionPolicy = NonNullable<
+  Extract<NonNullable<ExpoConfig["runtimeVersion"]>, { readonly policy: string }>["policy"]
+>;
+
+const repoEnv = loadRepoEnv();
+Object.assign(process.env, repoEnv);
+
+const APP_VARIANT = resolveAppVariant(repoEnv.APP_VARIANT);
+const MOBILE_VERSION_POLICY = resolveRuntimeVersionPolicy(repoEnv.MOBILE_VERSION_POLICY);
 
 const VARIANT_CONFIG: Record<
   AppVariant,
@@ -48,15 +57,28 @@ function resolveAppVariant(value: string | undefined): AppVariant {
   }
 }
 
+function resolveRuntimeVersionPolicy(value: string | undefined): RuntimeVersionPolicy {
+  switch (value) {
+    case "appVersion":
+    case "nativeVersion":
+    case "sdkVersion":
+    case "fingerprint":
+      return value;
+    default:
+      return "appVersion";
+  }
+}
+
 const variant = VARIANT_CONFIG[APP_VARIANT];
 
 const config: ExpoConfig = {
   name: variant.appName,
   slug: "t3-code",
+  platforms: ["ios", "android"],
   scheme: variant.scheme,
   version: "0.1.0",
   runtimeVersion: {
-    policy: "appVersion",
+    policy: MOBILE_VERSION_POLICY,
   },
   orientation: "portrait",
   icon: "./assets/icon.png",
@@ -119,7 +141,11 @@ const config: ExpoConfig = {
       "expo-build-properties",
       {
         ios: {
-          deploymentTarget: "16.4",
+          deploymentTarget: "18.0",
+          extraPods: [
+            { name: "GoogleUtilities", modular_headers: true },
+            { name: "RecaptchaInterop", modular_headers: true },
+          ],
         },
         android: {
           enableProguardInReleaseBuilds: true,
@@ -128,12 +154,43 @@ const config: ExpoConfig = {
       },
     ],
     "expo-secure-store",
-    "expo-router",
+    ["@clerk/expo", { theme: "./clerk-theme.json" }],
+    "expo-web-browser",
     "expo-font",
+    "./plugins/withIosCocoaPodsUuidCache.cjs",
+    [
+      "expo-widgets",
+      {
+        bundleIdentifier: `${variant.iosBundleIdentifier}.widgets`,
+        groupIdentifier: `group.${variant.iosBundleIdentifier}`,
+        enablePushNotifications: true,
+        widgets: [
+          {
+            name: "AgentActivity",
+            displayName: "Agent Activity",
+            description: "Shows the current state of active T3 Code agents.",
+            supportedFamilies: ["systemSmall", "systemMedium", "accessoryRectangular"],
+          },
+        ],
+      },
+    ],
+    "./plugins/withIosSceneLifecycle.cjs",
     "./plugins/withAndroidCleartextTraffic.cjs",
   ],
   extra: {
     appVariant: APP_VARIANT,
+    relay: {
+      url: repoEnv.T3CODE_RELAY_URL ?? null,
+    },
+    clerk: {
+      publishableKey: repoEnv.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ?? null,
+      jwtTemplate: repoEnv.EXPO_PUBLIC_CLERK_JWT_TEMPLATE ?? null,
+    },
+    observability: {
+      tracesUrl: repoEnv.EXPO_PUBLIC_OTLP_TRACES_URL ?? "https://api.axiom.co/v1/traces",
+      tracesDataset: repoEnv.EXPO_PUBLIC_OTLP_TRACES_DATASET ?? null,
+      tracesToken: repoEnv.EXPO_PUBLIC_OTLP_TRACES_TOKEN ?? null,
+    },
     eas: {
       projectId: "d763fcb8-d37c-41ea-a773-b54a0ab4a454",
     },

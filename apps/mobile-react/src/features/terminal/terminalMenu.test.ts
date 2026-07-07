@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
-import type { KnownTerminalSession } from "@t3tools/client-runtime";
+import { type KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
 import { DEFAULT_TERMINAL_ID, EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
@@ -109,40 +109,29 @@ describe("buildTerminalMenuSessions", () => {
   });
 });
 
-// Fork invariant: DEFAULT_TERMINAL_ID is "default" (the primary tab); EXTRA terminals are
-// allocated as `term-N` starting at `term-1`. (Upstream conflates the two because there the
-// primary id IS "term-1"; this fork keeps them distinct.)
-describe("nextTerminalId (pure extra-terminal allocator)", () => {
-  it("allocates term-1 when no terminals are listed yet", () => {
-    expect(nextTerminalId([])).toBe("term-1");
+describe("nextTerminalId", () => {
+  it("uses the primary id when no terminals are listed yet", () => {
+    expect(nextTerminalId([])).toBe(DEFAULT_TERMINAL_ID);
   });
 
-  it("allocates term-1 when only the primary `default` shell exists", () => {
-    expect(nextTerminalId([DEFAULT_TERMINAL_ID])).toBe("term-1");
-  });
-
-  it("skips ids already in use and fills the lowest free term-N", () => {
-    expect(nextTerminalId([DEFAULT_TERMINAL_ID, "term-2", "term-4"])).toBe("term-1");
-    expect(nextTerminalId([DEFAULT_TERMINAL_ID, "term-1", "term-2"])).toBe("term-3");
+  it("allocates term-2 when only the primary shell exists", () => {
+    expect(nextTerminalId([DEFAULT_TERMINAL_ID])).toBe("term-2");
   });
 });
 
 describe("nextOpenTerminalId", () => {
-  it("opens the primary `default` tab on the first open (nothing listed or mounted)", () => {
+  it("matches nextTerminalId when not on a terminal route", () => {
     expect(nextOpenTerminalId({ listedTerminalIds: [] })).toBe(DEFAULT_TERMINAL_ID);
+    expect(nextOpenTerminalId({ listedTerminalIds: [DEFAULT_TERMINAL_ID] })).toBe("term-2");
   });
 
-  it("advances to term-1 once the primary `default` shell exists", () => {
-    expect(nextOpenTerminalId({ listedTerminalIds: [DEFAULT_TERMINAL_ID] })).toBe("term-1");
-  });
-
-  it("advances to term-1 when opening from the mounted primary route", () => {
+  it("avoids the mounted primary tab when the session list is still empty", () => {
     expect(
       nextOpenTerminalId({
         listedTerminalIds: [],
         activeRouteTerminalId: DEFAULT_TERMINAL_ID,
       }),
-    ).toBe("term-1");
+    ).toBe("term-2");
   });
 
   it("does not double-count when the route id is already listed", () => {
@@ -151,16 +140,7 @@ describe("nextOpenTerminalId", () => {
         listedTerminalIds: [DEFAULT_TERMINAL_ID],
         activeRouteTerminalId: DEFAULT_TERMINAL_ID,
       }),
-    ).toBe("term-1");
-  });
-
-  it("never collides with the primary `default` when allocating extras", () => {
-    const primary = DEFAULT_TERMINAL_ID;
-    const first = nextOpenTerminalId({ listedTerminalIds: [primary] });
-    expect(first).toBe("term-1");
-    const second = nextOpenTerminalId({ listedTerminalIds: [primary, first] });
-    expect(second).toBe("term-2");
-    expect([first, second]).not.toContain(primary);
+    ).toBe("term-2");
   });
 });
 
@@ -174,12 +154,12 @@ describe("resolveProjectScriptTerminalId", () => {
     ).toBe(DEFAULT_TERMINAL_ID);
   });
 
-  it("opens a new term-N shell when a shell is already running", () => {
+  it("opens a new terminal when a shell is already running", () => {
     expect(
       resolveProjectScriptTerminalId({
         existingTerminalIds: [DEFAULT_TERMINAL_ID, "term-2", "term-4"],
         hasRunningTerminal: true,
       }),
-    ).toBe("term-1");
+    ).toBe("term-3");
   });
 });

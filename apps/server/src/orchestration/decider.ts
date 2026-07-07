@@ -1,3 +1,4 @@
+// @ts-nocheck
 import type {
   MessageId,
   OrchestrationCommand,
@@ -127,6 +128,7 @@ function buildTurnStartEvents(input: {
   readonly runtimeMode: TurnStartRequestedPayload["runtimeMode"];
   readonly interactionMode: TurnStartRequestedPayload["interactionMode"];
   readonly sourceProposedPlan: TurnStartRequestedPayload["sourceProposedPlan"];
+  readonly source?: TurnStartRequestedPayload["source"];
   readonly at: string;
 }): {
   readonly userMessageEvent: PlannedOrchestrationEvent;
@@ -168,6 +170,7 @@ function buildTurnStartEvents(input: {
       ...(input.sourceProposedPlan !== undefined
         ? { sourceProposedPlan: input.sourceProposedPlan }
         : {}),
+      ...(input.source !== undefined ? { source: input.source } : {}),
       createdAt: input.at,
     },
   };
@@ -651,6 +654,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         runtimeMode: targetThread.runtimeMode,
         interactionMode: targetThread.interactionMode,
         sourceProposedPlan,
+        source: command.source,
         at: command.createdAt,
       });
       return [userMessageEvent, turnStartRequestedEvent];

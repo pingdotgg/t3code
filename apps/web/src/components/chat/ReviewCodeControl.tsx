@@ -1,5 +1,10 @@
 import type { ReviewChangesScope } from "@t3tools/contracts";
-import { ClipboardCheckIcon, ChevronDownIcon, LoaderIcon } from "lucide-react";
+import {
+  ClipboardCheckIcon,
+  ChevronDownIcon,
+  GitCompareArrowsIcon,
+  LoaderIcon,
+} from "lucide-react";
 
 import { Button } from "../ui/button";
 import { Group, GroupSeparator } from "../ui/group";
@@ -10,6 +15,13 @@ const REVIEW_SCOPE_LABELS = {
   uncommitted: "Review uncommitted changes",
   "against-base": "Review against base branch",
 } as const satisfies Record<ReviewChangesScope, string>;
+
+function ReviewScopeIcon({ scope, className }: { scope: ReviewChangesScope; className: string }) {
+  if (scope === "against-base") {
+    return <GitCompareArrowsIcon className={className} />;
+  }
+  return <ClipboardCheckIcon className={className} />;
+}
 
 interface ReviewCodeControlProps {
   readonly defaultScope: ReviewChangesScope;
@@ -34,24 +46,21 @@ export function ReviewCodeControl({
         render={
           <Group aria-label="Review Code">
             <Button
-              size="xs"
+              size="icon-xs"
               variant="outline"
-              className="h-6 border-transparent px-2 shadow-none hover:border-input hover:shadow-xs/5"
-              style={{ fontSize: "var(--app-chat-font-size)" }}
+              className="border-transparent px-0 shadow-none hover:border-input hover:shadow-xs/5"
               onClick={() => onReview(defaultScope)}
               disabled={disabled}
               aria-label={defaultLabel}
             >
               {isRunning ? (
-                <LoaderIcon className="size-2.5 animate-spin" />
+                <LoaderIcon className="size-3 animate-spin" />
               ) : (
-                <ClipboardCheckIcon className="size-2.5" />
+                <ReviewScopeIcon scope={defaultScope} className="size-3" />
               )}
-              <span className="sr-only @4xl/header-actions:not-sr-only @4xl/header-actions:ml-0.5">
-                Review
-              </span>
+              <span className="sr-only">{defaultLabel}</span>
             </Button>
-            <GroupSeparator className="hidden @4xl/header-actions:block" />
+            <GroupSeparator />
             <Menu highlightItemOnHover={false}>
               <MenuTrigger
                 render={
@@ -72,7 +81,7 @@ export function ReviewCodeControl({
                   Review uncommitted changes
                 </MenuItem>
                 <MenuItem onClick={() => onReview("against-base")}>
-                  <ClipboardCheckIcon className="size-4" />
+                  <GitCompareArrowsIcon className="size-4" />
                   Review against base branch
                 </MenuItem>
               </MenuPopup>

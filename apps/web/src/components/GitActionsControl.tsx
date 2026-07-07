@@ -7,7 +7,16 @@ import type {
 } from "@t3tools/contracts";
 import { useIsMutating, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
-import { ChevronDownIcon, CloudUploadIcon, GitCommitIcon, InfoIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  CloudDownloadIcon,
+  CloudUploadIcon,
+  GitBranchPlusIcon,
+  GitCommitIcon,
+  GitPullRequestArrowIcon,
+  GitPullRequestCreateArrowIcon,
+  InfoIcon,
+} from "lucide-react";
 import { GitHubIcon } from "./Icons";
 import {
   buildGitActionProgressStages,
@@ -196,15 +205,17 @@ function GitActionItemIcon({ icon }: { icon: GitActionIconName }) {
 }
 
 function GitQuickActionIcon({ quickAction }: { quickAction: GitQuickAction }) {
-  const iconClassName = "size-2.5";
-  if (quickAction.kind === "open_pr") return <GitHubIcon className={iconClassName} />;
-  if (quickAction.kind === "run_pull") return <InfoIcon className={iconClassName} />;
+  const iconClassName = "size-3";
+  if (quickAction.kind === "open_pr") {
+    return <GitPullRequestArrowIcon className={iconClassName} />;
+  }
+  if (quickAction.kind === "run_pull") return <CloudDownloadIcon className={iconClassName} />;
   if (quickAction.kind === "run_action") {
     if (quickAction.action === "commit") return <GitCommitIcon className={iconClassName} />;
     if (quickAction.action === "push" || quickAction.action === "commit_push") {
       return <CloudUploadIcon className={iconClassName} />;
     }
-    return <GitHubIcon className={iconClassName} />;
+    return <GitPullRequestCreateArrowIcon className={iconClassName} />;
   }
   if (quickAction.label === "Commit") return <GitCommitIcon className={iconClassName} />;
   return <InfoIcon className={iconClassName} />;
@@ -867,13 +878,16 @@ export default function GitActionsControl({
       {!isRepo ? (
         <Button
           variant="outline"
-          size="xs"
-          className="h-6 border-transparent px-2 shadow-none hover:border-input hover:shadow-xs/5"
-          style={{ fontSize: "var(--app-chat-font-size)" }}
+          size="icon-xs"
+          className="border-transparent shadow-none hover:border-input hover:shadow-xs/5"
           disabled={initMutation.isPending}
           onClick={() => initMutation.mutate()}
+          aria-label={initMutation.isPending ? "Initializing Git" : "Initialize Git"}
+          title={initMutation.isPending ? "Initializing Git" : "Initialize Git"}
         >
-          {initMutation.isPending ? "Initializing..." : "Initialize Git"}
+          <GitBranchPlusIcon
+            className={initMutation.isPending ? "size-3 animate-pulse" : "size-3"}
+          />
         </Button>
       ) : (
         <Group aria-label="Git actions" className="shrink-0">
@@ -883,18 +897,17 @@ export default function GitActionsControl({
                 openOnHover
                 render={
                   <Button
+                    aria-label={quickAction.label}
                     aria-disabled="true"
-                    className="h-6 cursor-not-allowed rounded-e-none border-e-0 px-2 opacity-64 before:rounded-e-none"
-                    style={{ fontSize: "var(--app-chat-font-size)" }}
-                    size="xs"
+                    className="cursor-not-allowed rounded-e-none border-e-0 border-transparent px-0 opacity-64 before:rounded-e-none hover:border-input hover:shadow-xs/5"
+                    size="icon-xs"
                     variant="outline"
+                    title={quickAction.label}
                   />
                 }
               >
                 <GitQuickActionIcon quickAction={quickAction} />
-                <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
-                  {quickAction.label}
-                </span>
+                <span className="sr-only">{quickAction.label}</span>
               </PopoverTrigger>
               <PopoverPopup tooltipStyle side="bottom" align="start">
                 {quickActionDisabledReason}
@@ -903,19 +916,18 @@ export default function GitActionsControl({
           ) : (
             <Button
               variant="outline"
-              size="xs"
-              className="h-6 border-transparent px-2 shadow-none hover:border-input hover:shadow-xs/5"
-              style={{ fontSize: "var(--app-chat-font-size)" }}
+              size="icon-xs"
+              className="border-transparent px-0 shadow-none hover:border-input hover:shadow-xs/5"
               disabled={isGitActionRunning || quickAction.disabled}
               onClick={runQuickAction}
+              aria-label={quickAction.label}
+              title={quickAction.label}
             >
               <GitQuickActionIcon quickAction={quickAction} />
-              <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
-                {quickAction.label}
-              </span>
+              <span className="sr-only">{quickAction.label}</span>
             </Button>
           )}
-          <GroupSeparator className="hidden @3xl/header-actions:block" />
+          <GroupSeparator />
           <Menu
             onOpenChange={(open) => {
               if (open) {

@@ -79,6 +79,7 @@ import type {
 } from "./orchestration.ts";
 import { EnvironmentId, IsoDateTime, ThreadId, TurnId } from "./baseSchemas.ts";
 import { EditorId } from "./editor.ts";
+import type { WorkflowRunInput, WorkflowRunResult } from "./agentWorkflows.ts";
 import { ServerSettings, type ClientSettings, type ServerSettingsPatch } from "./settings.ts";
 import { Schema } from "effect";
 
@@ -361,6 +362,7 @@ export interface LocalApi {
   };
   shell: {
     openInEditor: (cwd: string, editor: EditorId) => Promise<void>;
+    revealInFileManager: (path: string) => Promise<void>;
     openExternal: (url: string) => Promise<void>;
   };
   contextMenu: {
@@ -477,6 +479,9 @@ export interface EnvironmentApi {
     listProviderCommands: (
       input: ServerProviderListCommandsInput,
     ) => Promise<ServerProviderListCommandsResult>;
+  };
+  workflow: {
+    run: (input: WorkflowRunInput) => Promise<WorkflowRunResult>;
   };
   orchestration: {
     dispatchCommand: (command: ClientOrchestrationCommand) => Promise<{ sequence: number }>;

@@ -1,8 +1,18 @@
-import type { ComponentType } from "react";
+import {
+  createElement,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  type ComponentType,
+  type Ref,
+} from "react";
 import type { NativeSyntheticEvent, ViewProps } from "react-native";
 import { requireNativeView } from "expo";
 
+import { NativeViewResolutionError } from "../../native/nativeViewResolutionError";
+
 const NATIVE_REVIEW_DIFF_MODULE_NAME = "T3ReviewDiffSurface";
+const NATIVE_REVIEW_DIFF_PAYLOAD_RETRY_FRAMES = 60;
 
 interface ExpoGlobalWithViewConfig {
   readonly expo?: {
@@ -101,6 +111,7 @@ export interface NativeReviewDiffViewProps extends ViewProps {
   readonly tokensJson?: string;
   readonly tokensPatchJson?: string;
   readonly tokensResetKey?: string;
+  readonly contentResetKey?: string;
   readonly collapsedFileIdsJson?: string;
   readonly viewedFileIdsJson?: string;
   readonly selectedRowIdsJson?: string;
@@ -110,7 +121,14 @@ export interface NativeReviewDiffViewProps extends ViewProps {
   readonly styleJson?: string;
   readonly rowHeight: number;
   readonly contentWidth: number;
+  readonly initialRowIndex?: number;
+  readonly refreshing?: boolean;
+  readonly nativeViewRef?: Ref<NativeReviewDiffViewHandle>;
+  readonly onPullToRefresh?: (event: NativeSyntheticEvent<Record<string, never>>) => void;
   readonly onDebug?: (event: NativeSyntheticEvent<Record<string, unknown>>) => void;
+  readonly onVisibleFileChange?: (
+    event: NativeSyntheticEvent<{ readonly fileId?: string | null }>,
+  ) => void;
   readonly onToggleFile?: (event: NativeSyntheticEvent<{ readonly fileId?: string }>) => void;
   readonly onToggleViewedFile?: (event: NativeSyntheticEvent<{ readonly fileId?: string }>) => void;
   readonly onPressLine?: (
@@ -126,7 +144,93 @@ export interface NativeReviewDiffViewProps extends ViewProps {
   readonly onToggleComment?: (event: NativeSyntheticEvent<{ readonly commentId?: string }>) => void;
 }
 
-let cachedNativeReviewDiffView: ComponentType<NativeReviewDiffViewProps> | undefined;
+export interface NativeReviewDiffViewHandle {
+  readonly scrollToFile: (fileId: string, animated?: boolean) => Promise<void>;
+  readonly scrollToTop: (animated?: boolean) => Promise<void>;
+}
+
+interface NativeReviewDiffViewRef {
+  readonly setRowsJson: (rowsJson: string) => Promise<void>;
+  readonly setTokensJson: (tokensJson: string) => Promise<void>;
+  readonly setTokensPatchJson: (tokensPatchJson: string) => Promise<void>;
+  readonly scrollToFile: (fileId: string, animated: boolean) => Promise<void>;
+  readonly scrollToTop: (animated: boolean) => Promise<void>;
+}
+
+type NativeReviewDiffRawViewProps = Omit<
+  NativeReviewDiffViewProps,
+  "nativeViewRef" | "rowsJson" | "tokensJson" | "tokensPatchJson"
+> & {
+  readonly ref?: Ref<NativeReviewDiffViewRef>;
+};
+
+let cachedNativeReviewDiffRawView: ComponentType<NativeReviewDiffRawViewProps> | undefined;
+let nativeReviewDiffViewResolutionFailed = false;
+
+type NativeReviewDiffPayloadMethod = "setRowsJson" | "setTokensJson" | "setTokensPatchJson";
+
+export function isPendingNativeViewRegistration(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message.includes(`Unable to find the '${NATIVE_REVIEW_DIFF_MODULE_NAME}' view`)
+  );
+}
+
+function useNativeReviewDiffPayload(
+  nativeRef: React.RefObject<NativeReviewDiffViewRef | null>,
+  method: NativeReviewDiffPayloadMethod,
+  payload: string | undefined,
+) {
+  useEffect(() => {
+    if (payload === undefined) {
+      return;
+    }
+
+    let cancelled = false;
+    let frame: number | null = null;
+    let attempts = 0;
+
+    const dispatch = () => {
+      if (cancelled) {
+        return;
+      }
+
+      const view = nativeRef.current;
+      const command = view?.[method];
+      if (!view || !command) {
+        if (attempts < NATIVE_REVIEW_DIFF_PAYLOAD_RETRY_FRAMES) {
+          attempts += 1;
+          frame = requestAnimationFrame(dispatch);
+        }
+        return;
+      }
+
+      void command.call(view, payload).catch((error: unknown) => {
+        if (
+          !cancelled &&
+          attempts < NATIVE_REVIEW_DIFF_PAYLOAD_RETRY_FRAMES &&
+          isPendingNativeViewRegistration(error)
+        ) {
+          attempts += 1;
+          frame = requestAnimationFrame(dispatch);
+          return;
+        }
+        console.error(`[native-review-diff] ${method} failed`, error);
+      });
+    };
+
+    // Fabric attaches the React ref before Expo registers the native tag used by
+    // view functions. Starting on the next frame avoids racing that registration.
+    frame = requestAnimationFrame(dispatch);
+
+    return () => {
+      cancelled = true;
+      if (frame !== null) {
+        cancelAnimationFrame(frame);
+      }
+    };
+  }, [method, nativeRef, payload]);
+}
 
 function getExpoViewConfig(moduleName: string) {
   return (globalThis as typeof globalThis & ExpoGlobalWithViewConfig).expo?.getViewConfig?.(
@@ -134,9 +238,40 @@ function getExpoViewConfig(moduleName: string) {
   );
 }
 
+function NativeReviewDiffView(props: NativeReviewDiffViewProps) {
+  const { nativeViewRef, rowsJson, tokensJson, tokensPatchJson, ...nativeProps } = props;
+  const nativeRef = useRef<NativeReviewDiffViewRef>(null);
+  useNativeReviewDiffPayload(nativeRef, "setRowsJson", rowsJson);
+  useNativeReviewDiffPayload(nativeRef, "setTokensJson", tokensJson);
+  useNativeReviewDiffPayload(nativeRef, "setTokensPatchJson", tokensPatchJson);
+  useImperativeHandle(
+    nativeViewRef,
+    () => ({
+      scrollToFile: async (fileId, animated = true) => {
+        await nativeRef.current?.scrollToFile(fileId, animated);
+      },
+      scrollToTop: async (animated = true) => {
+        await nativeRef.current?.scrollToTop(animated);
+      },
+    }),
+    [],
+  );
+
+  const RawNativeView = cachedNativeReviewDiffRawView;
+  if (!RawNativeView) {
+    return null;
+  }
+
+  return createElement(RawNativeView, { ...nativeProps, ref: nativeRef });
+}
+
 export function resolveNativeReviewDiffView(): ComponentType<NativeReviewDiffViewProps> | null {
-  if (cachedNativeReviewDiffView) {
-    return cachedNativeReviewDiffView;
+  if (cachedNativeReviewDiffRawView) {
+    return NativeReviewDiffView;
+  }
+
+  if (nativeReviewDiffViewResolutionFailed) {
+    return null;
   }
 
   if (getExpoViewConfig(NATIVE_REVIEW_DIFF_MODULE_NAME) == null) {
@@ -144,12 +279,19 @@ export function resolveNativeReviewDiffView(): ComponentType<NativeReviewDiffVie
   }
 
   try {
-    cachedNativeReviewDiffView = requireNativeView<NativeReviewDiffViewProps>(
+    cachedNativeReviewDiffRawView = requireNativeView<NativeReviewDiffRawViewProps>(
       NATIVE_REVIEW_DIFF_MODULE_NAME,
     );
-  } catch {
+  } catch (cause) {
+    nativeReviewDiffViewResolutionFailed = true;
+    console.error(
+      new NativeViewResolutionError({
+        nativeModuleName: NATIVE_REVIEW_DIFF_MODULE_NAME,
+        cause,
+      }),
+    );
     return null;
   }
 
-  return cachedNativeReviewDiffView ?? null;
+  return cachedNativeReviewDiffRawView ? NativeReviewDiffView : null;
 }
