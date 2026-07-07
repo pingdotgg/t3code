@@ -182,6 +182,10 @@
     "./httpReadiness": {
       "types": "./src/httpReadiness.ts",
       "import": "./src/httpReadiness.ts"
+    },
+    "./review": {
+      "types": "./src/review/cacheKeys.ts",
+      "import": "./src/review/cacheKeys.ts"
     }
   },
   "scripts": {
