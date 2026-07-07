@@ -373,7 +373,7 @@ describe("ApnsDeliveries", () => {
       ...aggregate,
       title: longTitle,
       subtitle: longTitle,
-      activities: [0, 1, 2, 3].map((index) =>
+      activities: [0, 1, 2, 3, 4, 5].map((index) =>
         Object.assign({}, aggregate.activities[0]!, {
           projectTitle: longTitle,
           threadTitle: longTitle,
@@ -396,7 +396,7 @@ describe("ApnsDeliveries", () => {
       const payloadAggregate = queuedJobs[0]?.payload.aggregate;
       expect(payloadAggregate?.title.length).toBeLessThanOrEqual(120);
       expect(payloadAggregate?.subtitle.length).toBeLessThanOrEqual(120);
-      expect(payloadAggregate?.activities).toHaveLength(3);
+      expect(payloadAggregate?.activities).toHaveLength(5);
       expect(payloadAggregate?.activities[0]?.projectTitle.length).toBeLessThanOrEqual(120);
       expect(payloadAggregate?.activities[0]?.status.length).toBeLessThanOrEqual(40);
       expect(payloadAggregate?.activities[0]?.deepLink).toBe("/");

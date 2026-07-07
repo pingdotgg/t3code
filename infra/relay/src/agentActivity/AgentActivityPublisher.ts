@@ -13,6 +13,7 @@ import * as Option from "effect/Option";
 import {
   isExpiredAgentActivityState,
   isTerminalPhase,
+  MAX_ACTIVITY_ROWS,
   sanitizeAgentActivityAggregateState,
 } from "./agentActivityPayloads.ts";
 
@@ -228,7 +229,7 @@ function terminalAggregateState(state: RelayAgentActivityState): RelayAgentActiv
 // How long a finished thread keeps its Done/Failed row in the aggregate while
 // other agents are still active. Long enough to be seen on the lock screen,
 // short enough that the activity list stays about live work.
-export const TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS = 5 * 60 * 1_000;
+export const TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS = 15 * 60 * 1_000;
 
 function isRecentTerminalState(state: RelayAgentActivityState, nowMs: number): boolean {
   if (!isTerminalPhase(state)) {
@@ -273,7 +274,7 @@ export function makeAggregateState(input: {
       subtitle: newest.phase === "failed" ? "Agent work failed" : "Agent work completed",
       activeCount: 0,
       updatedAt: newest.updatedAt,
-      activities: recentTerminal.slice(0, 3).map(aggregateRowForState),
+      activities: recentTerminal.slice(0, MAX_ACTIVITY_ROWS).map(aggregateRowForState),
     });
   }
   // Recently finished threads ride along after the active ones (display slots
@@ -282,7 +283,10 @@ export function makeAggregateState(input: {
   const recentTerminalStates = input.activeStates
     .filter((state) => isRecentTerminalState(state, input.nowMs))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  const displayedStates = [...activeStates.slice(0, 3), ...recentTerminalStates].slice(0, 3);
+  const displayedStates = [
+    ...activeStates.slice(0, MAX_ACTIVITY_ROWS),
+    ...recentTerminalStates,
+  ].slice(0, MAX_ACTIVITY_ROWS);
   const updatedAt = [...activeStates, ...recentTerminalStates].reduce((latest, state) =>
     state.updatedAt.localeCompare(latest.updatedAt) > 0 ? state : latest,
   ).updatedAt;

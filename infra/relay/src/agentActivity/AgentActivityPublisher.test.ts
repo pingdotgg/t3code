@@ -736,7 +736,7 @@ describe("makeAggregateState", () => {
       ...state,
       threadId: "thread-done" as RelayAgentActivityState["threadId"],
       phase: "completed",
-      updatedAt: "1970-01-01T00:50:00.000Z",
+      updatedAt: "1970-01-01T00:44:00.000Z",
     };
     const aggregate = AgentActivityPublisher.makeAggregateState({
       activeStates: [active, staleCompleted],
@@ -769,7 +769,7 @@ describe("makeAggregateState", () => {
     });
     expect(
       AgentActivityPublisher.makeAggregateState({
-        activeStates: [{ ...lingeringCompleted, updatedAt: "1970-01-01T00:50:00.000Z" }],
+        activeStates: [{ ...lingeringCompleted, updatedAt: "1970-01-01T00:44:00.000Z" }],
         terminalState: null,
         nowMs: hourMs,
       }),
@@ -789,16 +789,25 @@ describe("makeAggregateState", () => {
       updatedAt: "1970-01-01T00:59:00.000Z",
     };
     const aggregate = AgentActivityPublisher.makeAggregateState({
-      activeStates: [mkActive("a-1"), mkActive("a-2"), mkActive("a-3"), justCompleted],
+      activeStates: [
+        mkActive("a-1"),
+        mkActive("a-2"),
+        mkActive("a-3"),
+        mkActive("a-4"),
+        mkActive("a-5"),
+        justCompleted,
+      ],
       terminalState: null,
       nowMs: hourMs,
     });
 
-    expect(aggregate?.activeCount).toBe(3);
+    expect(aggregate?.activeCount).toBe(5);
     expect(aggregate?.activities).toMatchObject([
       { threadId: "a-1" },
       { threadId: "a-2" },
       { threadId: "a-3" },
+      { threadId: "a-4" },
+      { threadId: "a-5" },
     ]);
   });
 });
