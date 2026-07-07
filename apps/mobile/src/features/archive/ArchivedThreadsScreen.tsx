@@ -75,7 +75,6 @@ function ArchivedThreadsHeader(props: {
 }) {
   const { width } = useWindowDimensions();
   const hasCustomFilter = props.selectedEnvironmentId !== null || props.sortOrder !== "newest";
-  const usesNativeChrome = Platform.OS === "ios";
   const usesCompactMailToolbar = Platform.OS === "ios" && width < 700;
   const archiveFilterMenu = {
     title: "Archived thread options",
@@ -148,7 +147,7 @@ function ArchivedThreadsHeader(props: {
           headerSearchBarOptions: usesCompactMailToolbar
             ? undefined
             : {
-                ...(usesNativeChrome
+                ...(Platform.OS === "ios"
                   ? {
                       allowToolbarIntegration: true,
                       placement: "integratedButton" as const,
@@ -172,14 +171,12 @@ function ArchivedThreadsHeader(props: {
 
       {usesCompactMailToolbar ? null : (
         <NativeHeaderToolbar placement="right">
-          {usesNativeChrome ? (
-            <NativeHeaderToolbar.Button
-              accessibilityLabel="Refresh archived threads"
-              icon="arrow.clockwise"
-              onPress={props.onRefresh}
-              separateBackground
-            />
-          ) : null}
+          <NativeHeaderToolbar.Button
+            accessibilityLabel="Refresh archived threads"
+            icon="arrow.clockwise"
+            onPress={props.onRefresh}
+            separateBackground
+          />
           <NativeHeaderToolbar.Menu
             accessibilityLabel="Filter and sort archived threads"
             icon={

@@ -56,6 +56,8 @@ cp ~/Downloads/google-services.json apps/mobile/secrets/google-services.developm
 ```
 
 See [`docs/FIREBASE-ANDROID.md`](docs/FIREBASE-ANDROID.md) for variant package names and EAS secrets.
+For tier-0 defaults, native module status, and verification gates, see
+[`docs/ANDROID-PARITY.md`](docs/ANDROID-PARITY.md).
 
 Build and run the local Android dev client (prebuilds `android/`, then installs on a connected device
 or booted emulator):

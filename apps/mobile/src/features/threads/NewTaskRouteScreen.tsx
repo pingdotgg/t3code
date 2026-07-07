@@ -14,6 +14,7 @@ import type { WorkspaceState } from "../../state/workspaceModel";
 import { useWorkspaceState } from "../../state/workspace";
 import { groupProjectsByRepository } from "../../lib/repositoryGroups";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import { BuildVariantBanner } from "../../components/BuildVariantBanner";
 import { deriveWorkspaceEmptyStateAction } from "../home/workspace-empty-state-action";
 
 function deriveProjectEmptyState(catalogState: WorkspaceState): {
@@ -129,6 +130,7 @@ export function NewTaskRouteScreen() {
         />
       </NativeHeaderToolbar>
 
+      <BuildVariantBanner />
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}

@@ -62,8 +62,6 @@ jobs:
     name: Mobile Maestro Android
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 45
-    # Bootstrap week: collect signal without blocking merges (FAULT-TOLERANCE §Maestro).
-    continue-on-error: true
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -75,11 +73,11 @@ jobs:
           cache: true
           run-install: true
 
-      - name: Set up JDK 17
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 21
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3

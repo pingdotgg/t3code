@@ -3,7 +3,7 @@ import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import * as Updates from "expo-updates";
 import { useNavigation } from "@react-navigation/native";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
+import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { SymbolView } from "expo-symbols";
 import * as Effect from "effect/Effect";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -60,6 +60,16 @@ export function SettingsRouteScreen() {
               : undefined,
         }}
       />
+      {Platform.OS !== "ios" ? (
+        <NativeHeaderToolbar placement="right">
+          <NativeHeaderToolbar.Button
+            accessibilityLabel="Close settings"
+            icon="xmark"
+            onPress={() => navigation.goBack()}
+            separateBackground
+          />
+        </NativeHeaderToolbar>
+      ) : null}
       {hasCloudPublicConfig() ? <ConfiguredSettingsRouteScreen /> : <LocalSettingsRouteScreen />}
     </>
   );
@@ -402,15 +412,17 @@ function ConfiguredSettingsRouteScreen() {
             value={notificationStatus === "enabled"}
             onValueChange={handleDeviceNotificationsChange}
           />
-          <SettingsSwitchRow
-            disabled={
-              !isLoaded || liveActivityStatus === "checking" || liveActivityStatus === "linking"
-            }
-            icon="bolt.circle"
-            label="Live Activity Updates"
-            value={liveActivityStatus === "enabled" || liveActivityStatus === "linking"}
-            onValueChange={handleLiveActivitiesChange}
-          />
+          {Platform.OS === "ios" ? (
+            <SettingsSwitchRow
+              disabled={
+                !isLoaded || liveActivityStatus === "checking" || liveActivityStatus === "linking"
+              }
+              icon="bolt.circle"
+              label="Live Activity Updates"
+              value={liveActivityStatus === "enabled" || liveActivityStatus === "linking"}
+              onValueChange={handleLiveActivitiesChange}
+            />
+          ) : null}
         </SettingsSection>
 
         <SettingsSection title="Appearance">
