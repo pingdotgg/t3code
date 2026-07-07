@@ -6,6 +6,7 @@ import { LayoutAnimation, Pressable, ScrollView, useColorScheme, View } from "re
 import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
 import type { ThreadFeedActivity } from "../../lib/threadActivity";
+import Animated, { FadeIn } from "react-native-reanimated";
 
 const WORK_LOG_LAYOUT_ANIMATION = {
   duration: 180,
@@ -69,6 +70,14 @@ function workRowSymbolName(icon: ThreadFeedActivity["icon"]): SymbolViewProps["n
   }
 }
 
+// Entering fades only for rows created moments ago: rows remount whenever the
+// list scrolls them back into view, and old rows must not replay an entrance.
+const FRESH_ROW_WINDOW_MS = 3_000;
+function isFreshRow(createdAt: string): boolean {
+  const timestamp = Date.parse(createdAt);
+  return Number.isFinite(timestamp) && Date.now() - timestamp < FRESH_ROW_WINDOW_MS;
+}
+
 export function ThreadWorkLog(props: {
   readonly activities: ReadonlyArray<ThreadFeedActivity>;
   readonly copiedRowId: string | null;
@@ -105,7 +114,10 @@ export function ThreadWorkLog(props: {
           const iconIsDestructive = row.icon === "alert" || row.icon === "warning";
 
           return (
-            <View key={row.id}>
+            <Animated.View
+              key={row.id}
+              {...(isFreshRow(row.createdAt) ? { entering: FadeIn.duration(200) } : {})}
+            >
               <Pressable
                 accessibilityRole={canExpand ? "button" : undefined}
                 accessibilityLabel={displayText}
@@ -212,7 +224,7 @@ export function ThreadWorkLog(props: {
                   </ScrollView>
                 </View>
               ) : null}
-            </View>
+            </Animated.View>
           );
         })}
       </View>

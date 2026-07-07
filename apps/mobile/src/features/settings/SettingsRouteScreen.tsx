@@ -1,5 +1,7 @@
 import { useAuth, useUser } from "@clerk/expo";
+import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
+import * as Updates from "expo-updates";
 import { useNavigation } from "@react-navigation/native";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { SymbolView } from "../../components/AppSymbol";
@@ -431,6 +433,23 @@ function ConfiguredSettingsRouteScreen() {
 function AppSettingsSection() {
   const icon = useThemeColor("--color-icon");
 
+  const version = Constants.expoConfig?.version ?? "0.0.0";
+  // Fall back to "production" to match resolveAppVariant in app.config.ts, so a
+  // missing variant never mislabels a production build as development.
+  const variant = (Constants.expoConfig?.extra?.appVariant as string | undefined) ?? "production";
+  const variantLabel = variant === "production" ? "" : capitalize(variant);
+  const versionLabel = variantLabel ? `${version} · ${variantLabel}` : version;
+  // Which JS is actually running: the bundle shipped in the binary, or an OTA
+  // update downloaded on top of it. Surfacing this makes "am I even on the
+  // right build?" answerable at a glance.
+  const bundleLabel = Updates.isEnabled
+    ? Updates.isEmbeddedLaunch
+      ? "Embedded"
+      : Updates.updateId
+        ? `OTA ${Updates.updateId.slice(0, 7)}`
+        : null
+    : null;
+
   return (
     <SettingsSection title="App">
       <View className="flex-row items-center gap-4 p-4">
@@ -442,10 +461,19 @@ function AppSettingsSection() {
           weight="regular"
         />
         <Text className="flex-1 text-lg text-foreground">Version</Text>
-        <Text className="text-lg text-foreground-muted">Alpha</Text>
+        <View className="items-end">
+          <Text className="text-lg text-foreground-muted">{versionLabel}</Text>
+          {bundleLabel ? (
+            <Text className="text-xs text-foreground-muted/70">{bundleLabel}</Text>
+          ) : null}
+        </View>
       </View>
     </SettingsSection>
   );
+}
+
+function capitalize(value: string): string {
+  return value.length > 0 ? value.charAt(0).toUpperCase() + value.slice(1) : value;
 }
 
 function ArchivedThreadsSettingsSection() {

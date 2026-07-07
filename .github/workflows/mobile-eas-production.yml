@@ -1,0 +1,110 @@
+name: Mobile EAS Production
+
+# Production builds and OTA updates run from CI (Linux) — never from a laptop.
+# Under the fingerprint runtime-version policy the fingerprint must be computed
+# in the same OS/pnpm as the EAS build; a macOS `eas build` computes a different
+# fingerprint (platform-specific deps + pnpm version) and errors. On this Linux
+# runner, with corepack pinning pnpm 10.24 in eas.json, local == build.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "build (+ auto-submit to TestFlight) or update (OTA)"
+        required: true
+        type: choice
+        default: build
+        options:
+          - build
+          - update
+      platform:
+        description: "Target platform"
+        required: true
+        type: choice
+        default: ios
+        options:
+          - ios
+          - android
+          - all
+      message:
+        description: "OTA update message (mode=update only)"
+        required: false
+        type: string
+
+jobs:
+  production:
+    name: EAS Production ${{ inputs.mode }}
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    permissions:
+      contents: read
+    env:
+      APP_VARIANT: production
+      NODE_OPTIONS: --max-old-space-size=8192
+    steps:
+      - id: expo-token
+        name: Check for EXPO_TOKEN
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if [ -n "$EXPO_TOKEN" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "EXPO_TOKEN is not available; skipping EAS production job."
+          fi
+
+      - name: Checkout
+        if: steps.expo-token.outputs.present == 'true'
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Vite+
+        if: steps.expo-token.outputs.present == 'true'
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Expose pnpm
+        if: steps.expo-token.outputs.present == 'true'
+        run: |
+          pnpm_version="$(node --print "require('./package.json').packageManager.split('@').pop()")"
+          vp_pnpm_bin="$HOME/.vite-plus/package_manager/pnpm/$pnpm_version/pnpm/bin"
+          echo "$vp_pnpm_bin" >> "$GITHUB_PATH"
+          "$vp_pnpm_bin/pnpm" --version
+
+      - name: Setup EAS
+        if: steps.expo-token.outputs.present == 'true'
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+          packager: pnpm
+
+      - name: Pull production environment variables
+        if: steps.expo-token.outputs.present == 'true'
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: eas env:pull production --non-interactive
+
+      - name: Build and submit
+        if: steps.expo-token.outputs.present == 'true' && inputs.mode == 'build'
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: eas build --platform ${{ inputs.platform }} --profile production --auto-submit --non-interactive --no-wait
+
+      - name: Publish OTA update
+        if: steps.expo-token.outputs.present == 'true' && inputs.mode == 'update'
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          eas update \
+            --channel production \
+            --environment production \
+            --platform ${{ inputs.platform }} \
+            --message "${{ inputs.message || format('Production OTA ({0})', github.sha) }}" \
+            --non-interactive
