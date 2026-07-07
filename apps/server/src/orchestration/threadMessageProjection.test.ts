@@ -54,6 +54,20 @@ describe("threadMessageProjection", () => {
     expect(merged.createdAt).toBe("2026-07-01T21:00:00.000Z");
   });
 
+  it("persists first attachments-only messages with empty text", () => {
+    const merged = mergeThreadMessageProjection(undefined, {
+      text: "",
+      turnId: TurnId.make("turn-1"),
+      streaming: false,
+      createdAt: "2026-07-02T01:44:30.000Z",
+      updatedAt: "2026-07-02T01:44:30.000Z",
+    });
+
+    expect(merged.text).toBe("");
+    expect(merged.createdAt).toBe("2026-07-02T01:44:30.000Z");
+    expect(merged.turnId).toBe(TurnId.make("turn-1"));
+  });
+
   it("starts fresh streaming text when the turn changes", () => {
     const merged = mergeThreadMessageProjection(
       {

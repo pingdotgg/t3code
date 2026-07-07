@@ -35,7 +35,7 @@ export function mergeThreadMessageProjection(
       if (incoming.streaming || incoming.text.length > 0) {
         return incoming.text;
       }
-      return turnChanged ? "" : previousMessage.text;
+      return turnChanged ? "" : (previousMessage?.text ?? "");
     }
 
     if (incoming.streaming) {
