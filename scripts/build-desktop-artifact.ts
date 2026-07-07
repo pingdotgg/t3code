@@ -40,6 +40,7 @@ const WorkspaceConfig = Schema.Struct({
   catalog: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   overrides: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   patchedDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  allowBuilds: Schema.optional(Schema.Record(Schema.String, Schema.Boolean)),
 });
 type WorkspaceConfig = typeof WorkspaceConfig.Type;
 
@@ -49,7 +50,14 @@ const StageWorkspaceConfig = Schema.Struct({
     cpu: Schema.Array(Schema.String),
     libc: Schema.optional(Schema.Array(Schema.String)),
   }),
+  // pnpm 11 only reads these from pnpm-workspace.yaml (not package.json#pnpm).
+  // Without allowBuilds the staged `vp install --prod` fails with
+  // ERR_PNPM_IGNORED_BUILDS for packages that have lifecycle scripts.
+  allowBuilds: Schema.optional(Schema.Record(Schema.String, Schema.Boolean)),
+  patchedDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  overrides: Schema.optional(Schema.Record(Schema.String, Schema.String)),
 });
+type StageWorkspaceConfig = typeof StageWorkspaceConfig.Type;
 
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("..", import.meta.url))),
@@ -563,10 +571,6 @@ interface StagePackageJson {
   readonly devDependencies: {
     readonly electron: string;
   };
-  readonly overrides: Record<string, unknown>;
-  readonly pnpm?: {
-    readonly patchedDependencies?: Record<string, string>;
-  };
 }
 
 export const STAGE_INSTALL_ARGS = ["install", "--prod"] as const;
@@ -876,10 +880,14 @@ const stageClerkPasskeyNativeBinaries = Effect.fn("stageClerkPasskeyNativeBinari
   }
 });
 
-export function createStageWorkspaceConfig(
-  platform: typeof BuildPlatform.Type,
-  arch: typeof BuildArch.Type,
-): typeof StageWorkspaceConfig.Type {
+export function createStageWorkspaceConfig(input: {
+  readonly platform: typeof BuildPlatform.Type;
+  readonly arch: typeof BuildArch.Type;
+  readonly allowBuilds?: Record<string, boolean>;
+  readonly patchedDependencies?: Record<string, string>;
+  readonly overrides?: Record<string, string>;
+}): StageWorkspaceConfig {
+  const { platform, arch, allowBuilds, patchedDependencies, overrides } = input;
   const hostOs = platform === "mac" ? "darwin" : platform === "win" ? "win32" : "linux";
   const hostCpu = arch === "universal" ? ["arm64", "x64"] : [arch];
   // Windows artifacts also bundle the same-architecture WSL Linux backend, which loads
@@ -887,36 +895,37 @@ export function createStageWorkspaceConfig(
   // Pull the Linux (glibc) variants in addition to the host platform's so
   // they ship in the asar; without them the WSL backend crash-loops on require
   // ("Cannot find module '@yuuang/ffi-rs-linux-x64-gnu'").
-  if (platform === "win") {
-    return {
-      supportedArchitectures: {
-        os: Array.from(new Set([hostOs, "linux"])),
-        cpu: hostCpu,
-        libc: ["glibc"],
-      },
-    };
-  }
+  const supportedArchitectures =
+    platform === "win"
+      ? {
+          os: Array.from(new Set([hostOs, "linux"])),
+          cpu: hostCpu,
+          libc: ["glibc"],
+        }
+      : {
+          os: [hostOs],
+          cpu: hostCpu,
+        };
+
   return {
-    supportedArchitectures: {
-      os: [hostOs],
-      cpu: hostCpu,
-    },
+    supportedArchitectures,
+    ...(allowBuilds && Object.keys(allowBuilds).length > 0 ? { allowBuilds } : {}),
+    ...(patchedDependencies && Object.keys(patchedDependencies).length > 0
+      ? { patchedDependencies }
+      : {}),
+    ...(overrides && Object.keys(overrides).length > 0 ? { overrides } : {}),
   };
 }
 
-export function createStagePnpmConfig(
+export function createStagePatchedDependencies(
   patchedDependencies: Record<string, string>,
   dependencies: Record<string, unknown>,
-): StagePackageJson["pnpm"] | undefined {
-  const stagePatchedDependencies = Object.fromEntries(
+): Record<string, string> {
+  return Object.fromEntries(
     Object.entries(patchedDependencies).filter(([patchKey]) =>
       Object.hasOwn(dependencies, getPatchedDependencyPackageName(patchKey)),
     ),
   );
-
-  return Object.keys(stagePatchedDependencies).length > 0
-    ? { patchedDependencies: stagePatchedDependencies }
-    : undefined;
 }
 
 function getPatchedDependencyPackageName(patchKey: string): string {
@@ -1540,6 +1549,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const workspaceCatalog = workspaceConfig.catalog ?? {};
   const workspaceOverrides = workspaceConfig.overrides ?? {};
   const workspacePatchedDependencies = workspaceConfig.patchedDependencies ?? {};
+  const workspaceAllowBuilds = workspaceConfig.allowBuilds ?? {};
 
   const platformConfig = PLATFORM_CONFIG[options.platform];
   if (!platformConfig) {
@@ -1709,7 +1719,10 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
         )
       : {}),
   };
-  const stagePnpmConfig = createStagePnpmConfig(workspacePatchedDependencies, stageDependencies);
+  const stagePatchedDependencies = createStagePatchedDependencies(
+    workspacePatchedDependencies,
+    stageDependencies,
+  );
   const stagePackageJson: StagePackageJson = {
     name: "t3code",
     version: appVersion,
@@ -1738,20 +1751,24 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     devDependencies: {
       electron: electronVersion,
     },
-    overrides: resolvedOverrides,
-    ...(stagePnpmConfig ? { pnpm: stagePnpmConfig } : {}),
   };
 
   const stagePackageJsonString = yield* encodeJsonString(stagePackageJson);
   yield* fs.writeFileString(path.join(stageAppDir, "package.json"), `${stagePackageJsonString}\n`);
-  const stageWorkspaceConfig = createStageWorkspaceConfig(options.platform, options.arch);
+  const stageWorkspaceConfig = createStageWorkspaceConfig({
+    platform: options.platform,
+    arch: options.arch,
+    allowBuilds: workspaceAllowBuilds,
+    patchedDependencies: stagePatchedDependencies,
+    overrides: resolvedOverrides,
+  });
   const stageWorkspaceConfigString = yield* encodeStageWorkspaceConfig(stageWorkspaceConfig);
   yield* fs.writeFileString(
     path.join(stageAppDir, "pnpm-workspace.yaml"),
     stageWorkspaceConfigString,
   );
 
-  if (Object.keys(workspacePatchedDependencies).length > 0) {
+  if (Object.keys(stagePatchedDependencies).length > 0) {
     yield* fs.copy(path.join(repoRoot, "patches"), path.join(stageAppDir, "patches"));
   }
 
