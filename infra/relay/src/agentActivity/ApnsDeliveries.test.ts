@@ -1482,4 +1482,55 @@ describe("live activity alert decisions", () => {
     ).toBeNull();
     expect(ApnsDeliveries.alertForTerminalAggregate({ aggregate: null, preferences })).toBeNull();
   });
+
+  it("alerts when a previously active thread finishes mid-flight", () => {
+    const doneRow = {
+      ...aggregate.activities[0]!,
+      phase: "completed" as const,
+      status: "Done",
+    };
+    const next = {
+      ...aggregate,
+      activeCount: 0,
+      activities: [attentionRow, doneRow],
+    };
+    expect(
+      ApnsDeliveries.alertForNewlyTerminal({
+        previousAggregate: aggregate,
+        nextAggregate: next,
+        preferences,
+      }),
+    ).toEqual({ title: "Thread", body: "Done: Project" });
+    // The completion switch mutes it.
+    expect(
+      ApnsDeliveries.alertForNewlyTerminal({
+        previousAggregate: aggregate,
+        nextAggregate: next,
+        preferences: { ...preferences, notifyOnCompletion: false },
+      }),
+    ).toBeNull();
+    // No baseline means no transition to ring on.
+    expect(
+      ApnsDeliveries.alertForNewlyTerminal({
+        previousAggregate: null,
+        nextAggregate: next,
+        preferences,
+      }),
+    ).toBeNull();
+    // A Done row that was already terminal (or absent) before stays silent.
+    expect(
+      ApnsDeliveries.alertForNewlyTerminal({
+        previousAggregate: next,
+        nextAggregate: next,
+        preferences,
+      }),
+    ).toBeNull();
+    expect(
+      ApnsDeliveries.alertForNewlyTerminal({
+        previousAggregate: { ...aggregate, activities: [attentionRow] },
+        nextAggregate: next,
+        preferences,
+      }),
+    ).toBeNull();
+  });
 });

@@ -203,6 +203,47 @@ export function alertForAttentionTransition(input: {
   };
 }
 
+// Alert copy for an update whose aggregate contains threads that finished
+// (Done/Failed) since the previously delivered aggregate — the mid-flight
+// completion buzz while other agents keep the activity alive. Requires the
+// thread to have been present and non-terminal before, so a baseline-less
+// replay or a row that merely fell off the display cap never rings.
+export function alertForNewlyTerminal(input: {
+  readonly previousAggregate: RelayAgentActivityAggregateState | null;
+  readonly nextAggregate: RelayAgentActivityAggregateState;
+  readonly preferences: RelayAgentAwarenessPreferences | null;
+}): ApnsLiveActivityAlert | null {
+  if (input.previousAggregate === null) {
+    return null;
+  }
+  const previousPhases = new Map(
+    input.previousAggregate.activities.map((row) => [row.threadId, row.phase]),
+  );
+  const newlyTerminal = input.nextAggregate.activities.filter((row) => {
+    if (row.phase !== "completed" && row.phase !== "failed") {
+      return false;
+    }
+    const previousPhase = previousPhases.get(row.threadId);
+    return (
+      previousPhase !== undefined &&
+      previousPhase !== "completed" &&
+      previousPhase !== "failed" &&
+      alertAllowedForPhase(input.preferences, row.phase)
+    );
+  });
+  const first = newlyTerminal[0];
+  if (!first) {
+    return null;
+  }
+  if (newlyTerminal.length === 1) {
+    return { title: first.threadTitle, body: `${first.status}: ${first.projectTitle}` };
+  }
+  return {
+    title: `${newlyTerminal.length} agents finished`,
+    body: newlyTerminal.map((row) => row.threadTitle).join(", "),
+  };
+}
+
 // Alert copy for an end event carrying a terminal (Done/Failed) aggregate.
 export function alertForTerminalAggregate(input: {
   readonly aggregate: RelayAgentActivityAggregateState | null;
@@ -340,11 +381,17 @@ function chooseLiveActivityDelivery(input: {
         kind: "live_activity_update",
         token: input.target.activity_push_token,
         aggregate: input.aggregate,
-        alert: alertForAttentionTransition({
-          previousAggregate,
-          nextAggregate: input.aggregate,
-          preferences,
-        }),
+        alert:
+          alertForAttentionTransition({
+            previousAggregate,
+            nextAggregate: input.aggregate,
+            preferences,
+          }) ??
+          alertForNewlyTerminal({
+            previousAggregate,
+            nextAggregate: input.aggregate,
+            preferences,
+          }),
       }
     : "suppressed";
 }

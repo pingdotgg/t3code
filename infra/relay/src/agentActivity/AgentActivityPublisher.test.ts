@@ -62,6 +62,7 @@ function makeAgentActivityRows(
   return {
     upsert: () => Effect.void,
     remove: () => Effect.void,
+    pruneTerminal: () => Effect.void,
     listForUser: () => Effect.succeed([state]),
     ...overrides,
   };
@@ -308,7 +309,7 @@ describe("AgentActivityPublisher", () => {
     const sentAggregates: Array<
       Parameters<ApnsDeliveries.ApnsDeliveries["Service"]["sendForTarget"]>[0]
     > = [];
-    const removals: Array<Parameters<AgentActivityRows.AgentActivityRows["Service"]["remove"]>[0]> =
+    const upserts: Array<Parameters<AgentActivityRows.AgentActivityRows["Service"]["upsert"]>[0]> =
       [];
 
     return Effect.gen(function* () {
@@ -328,9 +329,9 @@ describe("AgentActivityPublisher", () => {
                 Layer.succeed(
                   AgentActivityRows.AgentActivityRows,
                   makeAgentActivityRows({
-                    remove: (input) =>
+                    upsert: (input) =>
                       Effect.sync(() => {
-                        removals.push(input);
+                        upserts.push(input);
                       }),
                     listForUser: () => Effect.succeed([]),
                   }),
@@ -380,11 +381,12 @@ describe("AgentActivityPublisher", () => {
           ok: true,
         },
       ]);
-      expect(removals).toEqual([
+      // Terminal states are persisted (and later pruned by the cron) so the
+      // finished thread can keep a Done row in later aggregates.
+      expect(upserts).toEqual([
         {
-          environmentId: "env",
           environmentPublicKey: "environment-public-key",
-          threadId: "thread",
+          state: completedState,
         },
       ]);
       expect(sentAggregates).toHaveLength(1);
@@ -695,5 +697,94 @@ describe("makeAggregateState", () => {
 
     expect(aggregate?.activeCount).toBe(0);
     expect(aggregate?.activities).toMatchObject([{ phase: "completed" }]);
+  });
+
+  it("keeps a recently finished thread visible as Done beside active agents", () => {
+    const active: RelayAgentActivityState = {
+      ...state,
+      threadId: "thread-active" as RelayAgentActivityState["threadId"],
+      updatedAt: "1970-01-01T00:58:00.000Z",
+    };
+    const justCompleted: RelayAgentActivityState = {
+      ...state,
+      threadId: "thread-done" as RelayAgentActivityState["threadId"],
+      phase: "completed",
+      updatedAt: "1970-01-01T00:59:00.000Z",
+    };
+    const aggregate = AgentActivityPublisher.makeAggregateState({
+      activeStates: [active, justCompleted],
+      terminalState: null,
+      nowMs: hourMs,
+    });
+
+    expect(aggregate?.activeCount).toBe(1);
+    expect(aggregate?.subtitle).toBe("Agent work in progress");
+    expect(aggregate?.activities).toMatchObject([
+      { threadId: "thread-active", phase: "running" },
+      { threadId: "thread-done", phase: "completed", status: "Done" },
+    ]);
+    expect(aggregate?.updatedAt).toBe("1970-01-01T00:59:00.000Z");
+  });
+
+  it("drops finished threads from the aggregate after the display window", () => {
+    const active: RelayAgentActivityState = {
+      ...state,
+      threadId: "thread-active" as RelayAgentActivityState["threadId"],
+      updatedAt: "1970-01-01T00:58:00.000Z",
+    };
+    const staleCompleted: RelayAgentActivityState = {
+      ...state,
+      threadId: "thread-done" as RelayAgentActivityState["threadId"],
+      phase: "completed",
+      updatedAt: "1970-01-01T00:50:00.000Z",
+    };
+    const aggregate = AgentActivityPublisher.makeAggregateState({
+      activeStates: [active, staleCompleted],
+      terminalState: null,
+      nowMs: hourMs,
+    });
+
+    expect(aggregate?.activities).toMatchObject([{ threadId: "thread-active" }]);
+  });
+
+  it("never resurrects lingering terminal rows once nothing is active", () => {
+    const lingeringCompleted: RelayAgentActivityState = {
+      ...state,
+      phase: "completed",
+      updatedAt: "1970-01-01T00:59:00.000Z",
+    };
+    expect(
+      AgentActivityPublisher.makeAggregateState({
+        activeStates: [lingeringCompleted],
+        terminalState: null,
+        nowMs: hourMs,
+      }),
+    ).toBeNull();
+  });
+
+  it("gives active agents the display slots before finished ones", () => {
+    const mkActive = (id: string): RelayAgentActivityState => ({
+      ...state,
+      threadId: id as RelayAgentActivityState["threadId"],
+      updatedAt: "1970-01-01T00:58:00.000Z",
+    });
+    const justCompleted: RelayAgentActivityState = {
+      ...state,
+      threadId: "thread-done" as RelayAgentActivityState["threadId"],
+      phase: "completed",
+      updatedAt: "1970-01-01T00:59:00.000Z",
+    };
+    const aggregate = AgentActivityPublisher.makeAggregateState({
+      activeStates: [mkActive("a-1"), mkActive("a-2"), mkActive("a-3"), justCompleted],
+      terminalState: null,
+      nowMs: hourMs,
+    });
+
+    expect(aggregate?.activeCount).toBe(3);
+    expect(aggregate?.activities).toMatchObject([
+      { threadId: "a-1" },
+      { threadId: "a-2" },
+      { threadId: "a-3" },
+    ]);
   });
 });

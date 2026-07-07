@@ -131,7 +131,11 @@ export const make = Effect.gen(function* () {
         "relay.thread_id": input.threadId,
         "relay.agent_activity.phase": input.state?.phase ?? "deleted",
       });
-      if (input.state && !isTerminalPhase(input.state)) {
+      if (input.state) {
+        // Terminal states are persisted too (pruned by the cron after they
+        // age out) so a thread that finishes while other agents are active
+        // stays visible as Done/Failed in subsequent aggregates instead of
+        // silently vanishing from the Live Activity.
         yield* rows.upsert({
           environmentPublicKey: input.environmentPublicKey,
           state: input.state,
@@ -247,6 +251,25 @@ function terminalAggregateState(state: RelayAgentActivityState): RelayAgentActiv
   });
 }
 
+// How long a finished thread keeps its Done/Failed row in the aggregate while
+// other agents are still active. Long enough to be seen on the lock screen,
+// short enough that the activity list stays about live work.
+export const TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS = 5 * 60 * 1_000;
+
+function isRecentTerminalState(state: RelayAgentActivityState, nowMs: number): boolean {
+  if (!isTerminalPhase(state)) {
+    return false;
+  }
+  const updatedAtMs = Option.match(DateTime.make(state.updatedAt), {
+    onNone: () => Number.NaN,
+    onSome: (dt) => dt.epochMilliseconds,
+  });
+  if (Number.isNaN(updatedAtMs)) {
+    return false;
+  }
+  return nowMs - updatedAtMs <= TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS;
+}
+
 export function makeAggregateState(input: {
   readonly activeStates: ReadonlyArray<RelayAgentActivityState>;
   readonly terminalState: RelayAgentActivityState | null;
@@ -256,9 +279,19 @@ export function makeAggregateState(input: {
     (state) => !isTerminalPhase(state) && !isExpiredAgentActivityState(state, input.nowMs),
   );
   if (activeStates.length === 0) {
+    // Only the just-published terminal event ends the activity with a Done
+    // aggregate; lingering terminal rows alone never do, so a replay after a
+    // fresh registration doesn't resurrect a finished thread.
     return input.terminalState === null ? null : terminalAggregateState(input.terminalState);
   }
-  const updatedAt = activeStates.reduce((latest, state) =>
+  // Recently finished threads ride along after the active ones (display slots
+  // permitting) so a completion is visible as Done/Failed instead of the row
+  // silently vanishing while other agents keep the activity alive.
+  const recentTerminalStates = input.activeStates
+    .filter((state) => isRecentTerminalState(state, input.nowMs))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const displayedStates = [...activeStates.slice(0, 3), ...recentTerminalStates].slice(0, 3);
+  const updatedAt = [...activeStates, ...recentTerminalStates].reduce((latest, state) =>
     state.updatedAt.localeCompare(latest.updatedAt) > 0 ? state : latest,
   ).updatedAt;
   return sanitizeAgentActivityAggregateState({
@@ -266,7 +299,7 @@ export function makeAggregateState(input: {
     subtitle: "Agent work in progress",
     activeCount: activeStates.length,
     updatedAt,
-    activities: activeStates.slice(0, 3).map(aggregateRowForState),
+    activities: displayedStates.map(aggregateRowForState),
   });
 }
 
