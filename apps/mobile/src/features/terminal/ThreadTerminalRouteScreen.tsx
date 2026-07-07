@@ -835,12 +835,13 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   }, [navigation, selectedThread, terminalId, terminalMenuSessions]);
 
   useEffect(() => {
-    // Detached (hidden surface or environment drop): forget the local
-    // markers so a reattach takes the stale-reopen path instead of
-    // misreading the dead snapshot as an exit observed on this screen.
+    // Detached (hidden surface or environment drop): forget the running
+    // marker so a reattach takes the stale-reopen path instead of misreading
+    // the dead snapshot as an exit observed on this screen. A pending exit
+    // navigation stays armed — it only clears once the session runs again —
+    // so refocusing a dead screen still leaves it.
     if (terminalAttachInput === null) {
       runningTerminalKeyRef.current = null;
-      pendingExitNavigationRef.current = null;
       return;
     }
     if (isRunning) {
