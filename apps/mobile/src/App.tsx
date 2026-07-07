@@ -32,6 +32,10 @@ const appLinking = {
   filter: (url: string) => !url.includes("expo-development-client"),
 };
 
+// Keep the native splash up until fonts resolve; without this Expo
+// auto-hides it on first render and the font gate shows a blank screen.
+SplashScreen.preventAutoHideAsync().catch(() => undefined);
+
 const Navigation = createStaticNavigation(RootStack);
 
 export default function App() {
