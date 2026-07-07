@@ -105,10 +105,17 @@ type CopilotTaskInfo = {
 type CopilotTaskList = {
   readonly tasks: ReadonlyArray<CopilotTaskInfo>;
 };
+type CopilotSessionTasks = {
+  readonly list?: () => Promise<CopilotTaskList>;
+};
+type CopilotTasksAccessor = {
+  readonly tasks?: CopilotSessionTasks;
+};
 type CopilotBackgroundTasksRpc = {
   readonly backgroundTasks?: {
     readonly list?: () => Promise<CopilotTaskList>;
   };
+  readonly tasks?: CopilotSessionTasks;
 };
 
 type PlanStep = {
@@ -695,9 +702,12 @@ function completedToolDiffText(
 function copilotBackgroundTasksList(
   session: CopilotSession,
 ): (() => Promise<CopilotTaskList>) | undefined {
-  const list = (session.rpc as typeof session.rpc & CopilotBackgroundTasksRpc).backgroundTasks
-    ?.list;
-  return list;
+  const sessionTasks = (session as CopilotSession & CopilotTasksAccessor).tasks?.list;
+  if (sessionTasks) {
+    return sessionTasks;
+  }
+  const rpc = session.rpc as typeof session.rpc & CopilotBackgroundTasksRpc;
+  return rpc.tasks?.list ?? rpc.backgroundTasks?.list;
 }
 
 function normalizeCopilotTaskStatus(status: CopilotTaskStatus): PlanStep["status"] {
@@ -1339,7 +1349,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         catch: (cause) =>
           new ProviderAdapterRequestError({
             provider: PROVIDER,
-            method: "session.backgroundTasks.list",
+            method: "session.tasks.list",
             detail: detailFromCause(cause, "Failed to read Copilot background tasks."),
             cause,
           }),

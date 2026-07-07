@@ -43,6 +43,13 @@ const waitForSdkEventQueue = () =>
 
 const runtimeMock = vi.hoisted(() => {
   const makeSession = () => ({
+    tasks: {
+      list: vi.fn(
+        async (): Promise<{ tasks: Array<Record<string, unknown>> }> => ({
+          tasks: [],
+        }),
+      ),
+    },
     sessionId: "copilot-sdk-session-1",
     rpc: {
       mode: {
@@ -2614,7 +2621,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       );
       yield* waitForSdkEventQueue();
 
-      runtimeMock.state.lastSession.rpc.backgroundTasks.list.mockResolvedValueOnce({
+      runtimeMock.state.lastSession.tasks.list.mockResolvedValueOnce({
         tasks: [
           {
             type: "agent",
@@ -2737,7 +2744,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       NodeAssert.ok(config?.onEvent);
       const timestamp = yield* nowIso;
 
-      runtimeMock.state.lastSession.rpc.backgroundTasks.list.mockResolvedValueOnce({
+      runtimeMock.state.lastSession.tasks.list.mockResolvedValueOnce({
         tasks: [
           {
             type: "agent",
@@ -2772,7 +2779,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         yield* waitForSdkEventQueue();
       }
 
-      runtimeMock.state.lastSession.rpc.backgroundTasks.list.mockResolvedValueOnce({
+      runtimeMock.state.lastSession.tasks.list.mockResolvedValueOnce({
         tasks: [
           {
             type: "agent",
@@ -2935,7 +2942,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       );
       yield* waitForSdkEventQueue();
 
-      runtimeMock.state.lastSession.rpc.backgroundTasks.list.mockResolvedValueOnce({
+      runtimeMock.state.lastSession.tasks.list.mockResolvedValueOnce({
         tasks: [],
       });
 
@@ -3007,8 +3014,11 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* waitForSdkEventQueue();
 
       const session = runtimeMock.state.lastSession as unknown as {
-        rpc: { backgroundTasks?: unknown };
+        tasks?: unknown;
+        rpc: { tasks?: unknown; backgroundTasks?: unknown };
       };
+      delete session.tasks;
+      delete session.rpc.tasks;
       delete session.rpc.backgroundTasks;
 
       const config = runtimeMock.state.createSessionConfigs.at(-1);
