@@ -141,6 +141,7 @@ interface PendingPermissionHandler {
 }
 
 interface PendingUserInputHandler {
+  readonly handlerId: string;
   readonly signature: string;
   readonly deferred: Deferred.Deferred<CopilotUserInputResponse>;
 }
@@ -694,8 +695,7 @@ function completedToolDiffText(
 function copilotBackgroundTasksList(
   session: CopilotSession,
 ): (() => Promise<CopilotTaskList>) | undefined {
-  const list = (session.rpc as typeof session.rpc & CopilotBackgroundTasksRpc).backgroundTasks
-    ?.list;
+  const list = (session.rpc as typeof session.rpc & CopilotBackgroundTasksRpc).tasks?.list;
   return list;
 }
 
@@ -1052,13 +1052,13 @@ function settlePendingPermissionHandlers(
     context.pendingPermissionHandlersBySignature.clear();
     context.pendingPermissionEventsBySignature.clear();
 
-    for (const binding of context.pendingPermissionBindings.values()) {
+    for (const [key, binding] of context.pendingPermissionBindings.entries()) {
+      context.pendingPermissionBindings.delete(key);
       yield* Deferred.succeed(binding.deferred, DENIED_PERMISSION_RESULT).pipe(Effect.ignore);
       if (onBindingSettled) {
         yield* onBindingSettled(binding).pipe(Effect.ignore);
       }
     }
-    context.pendingPermissionBindings.clear();
   });
 }
 
@@ -2023,9 +2023,11 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       }
 
       const signature = userInputSignature(request);
+      const handlerId = NodeCrypto.randomUUID();
       const deferred = yield* Deferred.make<CopilotUserInputResponse>();
       const queue = context.pendingUserInputHandlersBySignature.get(signature) ?? [];
       queue.push({
+        handlerId,
         signature,
         deferred,
       });

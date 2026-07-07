@@ -340,14 +340,13 @@ export const resolveBundledCopilotCliPath = Effect.fn("resolveBundledCopilotCliP
     const moduleDirectory = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
     const candidateRoots = new Set<string>();
 
+    for (const directory of candidateDirectoryAncestors(moduleDirectory)) {
+      candidateRoots.add(directory);
+    }
     if (input.cwd) {
       candidateRoots.add(input.cwd);
     }
     candidateRoots.add(process.cwd());
-
-    for (const directory of candidateDirectoryAncestors(moduleDirectory)) {
-      candidateRoots.add(directory);
-    }
 
     for (const root of candidateRoots) {
       const candidate = NodePath.join(root, "node_modules", ".bin", COPILOT_CLI_COMMAND);
