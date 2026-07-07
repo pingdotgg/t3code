@@ -11,7 +11,8 @@ echo "==> Android parity preflight"
 python3 scripts/validate-plan.py scratch/android-parity/implementation.md
 
 for f in scratch/android-parity/AGENT-LOOP.md scratch/android-parity/implementation.md \
-  scratch/android-parity/loop-config.json scripts/android-parity/gate.sh; do
+  scratch/android-parity/loop-config.json scripts/android-parity/gate.sh \
+  scripts/android-parity/advance-pr.sh; do
   test -f "$f" || { echo "missing $f" >&2; exit 1; }
 done
 
