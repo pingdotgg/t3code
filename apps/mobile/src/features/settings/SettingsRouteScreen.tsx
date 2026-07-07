@@ -240,8 +240,8 @@ function ConfiguredSettingsRouteScreen() {
 
   const promptSignIn = useCallback(() => {
     Alert.alert(
-      "Request T3 Connect access",
-      "Live Activity updates require approved T3 Connect access so relay can deliver updates to this device.",
+      "Request T3 Cloud access",
+      "Live Activity updates require approved T3 Cloud access so relay can deliver updates to this device.",
       [
         { text: "Cancel", style: "cancel" },
         {

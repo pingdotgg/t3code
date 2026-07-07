@@ -7,7 +7,8 @@ import {
   TerminalIcon,
   TriangleAlertIcon,
 } from "lucide-react";
-import { type ReactNode, memo, useCallback, useMemo, useState } from "react";
+import { useAuth } from "@clerk/react";
+import { type ReactNode, memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
@@ -29,11 +30,18 @@ import {
   type DesktopWslState,
   type EnvironmentId,
 } from "@t3tools/contracts";
-import { connectionStatusText } from "@t3tools/client-runtime/connection";
+import {
+  connectionStatusText,
+  RelayConnectionRegistration,
+  RelayConnectionTarget,
+} from "@t3tools/client-runtime/connection";
+import { findErrorTraceId } from "@t3tools/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
+  settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
@@ -42,6 +50,7 @@ import { cn } from "../../lib/utils";
 import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../timestampFormat";
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
 import { applyWslEnableSelection } from "./ConnectionsSettings.logic";
+import { resolveRelayClerkTokenOptions } from "../../cloud/publicConfig";
 import {
   SettingsPageContainer,
   SettingsRow,
@@ -73,6 +82,7 @@ import {
 } from "../ui/alert-dialog";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { QRCodeSvg } from "../ui/qr-code";
+import { Skeleton } from "../ui/skeleton";
 import { Spinner } from "../ui/spinner";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
@@ -107,8 +117,13 @@ import {
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { useUiStateStore } from "~/uiStateStore";
 import { resolveServerConfigVersionMismatch } from "~/versionSkew";
+import { usePrimaryCloudLinkState } from "~/cloud/primaryCloudLinkState";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
-import { useCloudLinkController } from "~/cloud/useCloudLinkController";
+import {
+  linkPrimaryEnvironment as linkPrimaryEnvironmentAtom,
+  unlinkPrimaryEnvironment as unlinkPrimaryEnvironmentAtom,
+  updatePrimaryEnvironmentPreferences as updatePrimaryEnvironmentPreferencesAtom,
+} from "~/cloud/linkEnvironmentAtoms";
 import { authEnvironment } from "~/state/auth";
 import { environmentCatalog } from "~/connection/catalog";
 import {
@@ -126,11 +141,10 @@ import {
   type EnvironmentPresentation,
   useEnvironments,
   usePrimaryEnvironment,
+  useRelayEnvironmentDiscovery,
 } from "~/state/environments";
+import { relayEnvironmentDiscovery } from "~/state/relay";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { ConnectionStatusDot } from "../ConnectionStatusDot";
-import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
-import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 const EMPTY_ADVERTISED_ENDPOINTS: ReadonlyArray<AdvertisedEndpoint> = [];
@@ -243,6 +257,60 @@ function AccessScopeSummary({
         </div>
       </PopoverPopup>
     </Popover>
+  );
+}
+
+type ConnectionStatusDotProps = {
+  tooltipText?: string | null;
+  dotClassName: string;
+  pingClassName?: string | null;
+};
+
+function ConnectionStatusDot({
+  tooltipText,
+  dotClassName,
+  pingClassName,
+}: ConnectionStatusDotProps) {
+  const dotContent = (
+    <>
+      {pingClassName ? (
+        <span
+          className={cn(
+            "absolute inline-flex h-full w-full animate-ping rounded-full",
+            pingClassName,
+          )}
+        />
+      ) : null}
+      <span className={cn("relative inline-flex size-2 rounded-full", dotClassName)} />
+    </>
+  );
+
+  if (!tooltipText) {
+    return (
+      <span className="relative flex size-3 shrink-0 items-center justify-center">
+        {dotContent}
+      </span>
+    );
+  }
+
+  const dot = (
+    <button
+      type="button"
+      title={tooltipText}
+      aria-label={tooltipText}
+      className="relative flex size-3 shrink-0 cursor-help items-center justify-center rounded-full outline-hidden"
+    >
+      {dotContent}
+    </button>
+  );
+
+  return (
+    <Tooltip>
+      <TooltipTrigger render={dot} />
+      <TooltipPopup side="top" className="max-w-80 whitespace-pre-wrap leading-tight">
+        {tooltipText}
+      </TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -369,7 +437,12 @@ function formatDesktopSshConnectionError(error: unknown): string {
   return withoutTaggedErrorPrefix.trim() || fallback;
 }
 
+/** Direct row in the card – same pattern as the Provider / ACP-agent list rows. */
+const ITEM_ROW_CLASSNAME = "border-t border-border/60 px-4 py-4 first:border-t-0 sm:px-5";
 const ENDPOINT_ROW_CLASSNAME = "border-t border-border/60 px-4 py-2.5 first:border-t-0 sm:px-5";
+
+const ITEM_ROW_INNER_CLASSNAME =
+  "flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between";
 
 type AccessSectionPresentation = "current" | "endpoint-rail";
 
@@ -1556,23 +1629,137 @@ function CloudLinkSwitch({
 }
 
 function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: boolean }) {
-  const {
-    isSignedIn,
-    linkState: primaryCloudLinkState,
-    managedTunnelActive,
-    publishAgentActivity,
-    operationError,
-    reconcileCloudState,
-  } = useCloudLinkController();
+  const { getToken, isSignedIn } = useAuth();
+  const refreshRelayEnvironments = useAtomCommand(relayEnvironmentDiscovery.refresh, {
+    reportFailure: false,
+  });
+  const linkPrimaryEnvironment = useAtomCommand(linkPrimaryEnvironmentAtom, {
+    reportFailure: false,
+  });
+  const unlinkPrimaryEnvironment = useAtomCommand(unlinkPrimaryEnvironmentAtom, {
+    reportFailure: false,
+  });
+  const updatePrimaryEnvironmentPreferences = useAtomCommand(
+    updatePrimaryEnvironmentPreferencesAtom,
+    { reportFailure: false },
+  );
+  const primaryCloudLinkState = usePrimaryCloudLinkState();
+  const [operationError, setOperationError] = useState<string | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
   const [isUpdatingPreference, setIsUpdatingPreference] = useState(false);
 
+  const reportUpdateFailure = (cause: unknown) => {
+    const message = cause instanceof Error ? cause.message : "Could not update T3 Connect access.";
+    const traceId = findErrorTraceId(cause);
+    console.error("[t3-connect] Could not update T3 Connect", { message, traceId, cause });
+    setOperationError(traceId ? `${message} Trace ID: ${traceId}` : message);
+    toastManager.add({
+      type: "error",
+      title: "Could not update T3 Connect",
+      description: message,
+      data: traceId
+        ? {
+            secondaryActionProps: {
+              children: "Copy trace ID",
+              onClick: () => void navigator.clipboard?.writeText(traceId),
+            },
+          }
+        : undefined,
+    });
+  };
+
+  // Older environment servers predate the managedTunnelActive field; for them a
+  // link always implies a managed tunnel, so fall back to `linked`.
+  const managedTunnelActive =
+    primaryCloudLinkState.data?.managedTunnelActive ?? primaryCloudLinkState.data?.linked ?? false;
+  const publishAgentActivity = primaryCloudLinkState.data?.publishAgentActivity ?? false;
+  const linked = primaryCloudLinkState.data?.linked ?? false;
   const disabledReason = !isSignedIn
     ? "Sign in to T3 Connect to manage this environment."
     : !canManageRelay
       ? "Your session does not have permission to manage T3 Connect access."
       : null;
   const isBusy = isUpdating || isUpdatingPreference;
+
+  // T3 Connect (managed tunnel) and publishing are independent capabilities
+  // backed by a single relay link. Reconcile the whole desired state: unlink
+  // when neither is wanted, otherwise (re)link with the mode the managed-tunnel
+  // bit implies and set the publish preference. Re-linking only happens when the
+  // managed-tunnel mode actually changes, so flipping publish alone is cheap.
+  const reconcileCloudState = async (desired: {
+    readonly managedTunnel: boolean;
+    readonly publish: boolean;
+  }): Promise<boolean> => {
+    setOperationError(null);
+    const target = primaryCloudLinkState.target;
+    if (!target) {
+      reportUpdateFailure(new Error("Local environment is not ready yet."));
+      return false;
+    }
+    const tokenResult = await settlePromise(() => getToken(resolveRelayClerkTokenOptions()));
+    if (tokenResult._tag === "Failure") {
+      reportUpdateFailure(squashAtomCommandFailure(tokenResult));
+      return false;
+    }
+    const clerkToken = tokenResult.value;
+    const wantsLink = desired.managedTunnel || desired.publish;
+
+    // A failure after this point may follow a partially applied mutation (e.g.
+    // the link succeeded but the preference update did not), so every exit —
+    // success or failure — refreshes the rendered state to whatever the server
+    // actually holds now.
+    if (!wantsLink) {
+      const unlinkResult = await unlinkPrimaryEnvironment({
+        target,
+        clerkToken: clerkToken ?? null,
+      });
+      if (unlinkResult._tag === "Failure") {
+        if (!isAtomCommandInterrupted(unlinkResult)) {
+          reportUpdateFailure(squashAtomCommandFailure(unlinkResult));
+        }
+        primaryCloudLinkState.refresh();
+        return false;
+      }
+    } else {
+      if (!clerkToken) {
+        reportUpdateFailure(new Error("Sign in to T3 Connect before enabling this."));
+        return false;
+      }
+      if (!linked || managedTunnelActive !== desired.managedTunnel) {
+        const linkResult = await linkPrimaryEnvironment({
+          target,
+          clerkToken,
+          mode: desired.managedTunnel ? "managed" : "publish_only",
+        });
+        if (linkResult._tag === "Failure") {
+          if (!isAtomCommandInterrupted(linkResult)) {
+            reportUpdateFailure(squashAtomCommandFailure(linkResult));
+          }
+          primaryCloudLinkState.refresh();
+          return false;
+        }
+      }
+      const prefResult = await updatePrimaryEnvironmentPreferences({
+        target,
+        publishAgentActivity: desired.publish,
+      });
+      if (prefResult._tag === "Failure") {
+        if (!isAtomCommandInterrupted(prefResult)) {
+          reportUpdateFailure(squashAtomCommandFailure(prefResult));
+        }
+        primaryCloudLinkState.refresh();
+        return false;
+      }
+    }
+
+    primaryCloudLinkState.refresh();
+    const refreshResult = await refreshRelayEnvironments();
+    if (refreshResult._tag === "Failure" && !isAtomCommandInterrupted(refreshResult)) {
+      reportUpdateFailure(squashAtomCommandFailure(refreshResult));
+      return false;
+    }
+    return true;
+  };
 
   const updateManagedTunnel = async (enabled: boolean) => {
     setIsUpdating(true);
@@ -1670,6 +1857,163 @@ function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnable
   );
 }
 
+function RemoteEnvironmentRowsSkeleton() {
+  return (
+    <div className={ITEM_ROW_CLASSNAME}>
+      <div className={ITEM_ROW_INNER_CLASSNAME}>
+        <div className="min-w-0 flex-1 space-y-2">
+          <Skeleton className="h-4 w-32 rounded-full" />
+          <Skeleton className="h-3 w-20 rounded-full" />
+        </div>
+        <Skeleton className="h-7 w-16 rounded-md" />
+      </div>
+    </div>
+  );
+}
+
+function ConfiguredCloudRemoteEnvironmentRows({
+  primaryEnvironmentId,
+  savedEnvironmentIds,
+}: {
+  readonly primaryEnvironmentId: EnvironmentId | null;
+  readonly savedEnvironmentIds: ReadonlyArray<EnvironmentId>;
+}) {
+  const environmentsState = useRelayEnvironmentDiscovery();
+  const registerEnvironment = useAtomCommand(environmentCatalog.register, {
+    reportFailure: false,
+  });
+  const refreshRelayEnvironments = useAtomCommand(relayEnvironmentDiscovery.refresh, {
+    reportFailure: false,
+  });
+  const connectRelayEnvironment = useCallback(
+    (environment: RelayClientEnvironmentRecord) =>
+      registerEnvironment(
+        new RelayConnectionRegistration({
+          target: new RelayConnectionTarget({
+            environmentId: environment.environmentId,
+            label: environment.label,
+          }),
+        }),
+      ),
+    [registerEnvironment],
+  );
+  const [connectingEnvironmentId, setConnectingEnvironmentId] = useState<EnvironmentId | null>(
+    null,
+  );
+  const savedIds = useMemo(() => new Set(savedEnvironmentIds), [savedEnvironmentIds]);
+
+  useEffect(() => {
+    void refreshRelayEnvironments();
+  }, [refreshRelayEnvironments]);
+
+  const connectEnvironment = async (environment: RelayClientEnvironmentRecord) => {
+    setConnectingEnvironmentId(environment.environmentId);
+    const result = await connectRelayEnvironment(environment);
+    setConnectingEnvironmentId(null);
+    if (result._tag === "Success") {
+      toastManager.add({
+        type: "success",
+        title: "Environment connected",
+        description: `${environment.label} is available through T3 Connect.`,
+      });
+      return;
+    }
+    if (isAtomCommandInterrupted(result)) {
+      return;
+    }
+    const cause = squashAtomCommandFailure(result);
+    const message =
+      cause instanceof Error ? cause.message : "Could not connect the T3 Connect environment.";
+    const traceId = findErrorTraceId(cause);
+    console.error("[t3-connect] Could not connect environment", { message, traceId, cause });
+    toastManager.add({
+      type: "error",
+      title: "Could not connect environment",
+      description: message,
+      data: traceId
+        ? {
+            secondaryActionProps: {
+              children: "Copy trace ID",
+              onClick: () => void navigator.clipboard?.writeText(traceId),
+            },
+          }
+        : undefined,
+    });
+  };
+
+  const connectableEnvironments = [...environmentsState.environments.values()].filter(
+    ({ environment }) =>
+      environment.environmentId !== primaryEnvironmentId &&
+      !savedIds.has(environment.environmentId),
+  );
+
+  if (
+    savedEnvironmentIds.length === 0 &&
+    environmentsState.refreshing &&
+    environmentsState.environments.size === 0
+  ) {
+    return <RemoteEnvironmentRowsSkeleton />;
+  }
+
+  if (savedEnvironmentIds.length === 0 && connectableEnvironments.length === 0) {
+    return <EmptyRemoteEnvironments />;
+  }
+
+  return connectableEnvironments.map(({ environment, availability, error }) => (
+    <div key={environment.environmentId} className={ITEM_ROW_CLASSNAME}>
+      <div className={ITEM_ROW_INNER_CLASSNAME}>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <ConnectionStatusDot
+              dotClassName={
+                availability === "online"
+                  ? "bg-success"
+                  : availability === "error"
+                    ? "bg-destructive"
+                    : availability === "checking"
+                      ? "bg-warning"
+                      : "bg-muted-foreground/35"
+              }
+              pingClassName={availability === "checking" ? "bg-warning/60 duration-2000" : null}
+              tooltipText={
+                availability === "online"
+                  ? "Relay online"
+                  : availability === "offline"
+                    ? "Relay offline"
+                    : availability === "checking"
+                      ? "Checking relay status"
+                      : (Option.getOrNull(error)?.message ?? "Relay status unavailable")
+              }
+            />
+            <p className="truncate text-sm font-medium">{environment.label}</p>
+          </div>
+          <p
+            className={cn(
+              "mt-1 truncate text-xs",
+              availability === "error" ? "text-destructive" : "text-muted-foreground",
+            )}
+          >
+            {availability === "online"
+              ? "Available · Relay online"
+              : availability === "offline"
+                ? "Available · Relay offline"
+                : availability === "checking"
+                  ? "Available · Checking relay status…"
+                  : (Option.getOrNull(error)?.message ?? "Available · Relay status unavailable")}
+          </p>
+        </div>
+        <Button
+          size="sm"
+          disabled={connectingEnvironmentId !== null}
+          onClick={() => void connectEnvironment(environment)}
+        >
+          {connectingEnvironmentId === environment.environmentId ? "Connecting…" : "Connect"}
+        </Button>
+      </div>
+    </div>
+  ));
+}
+
 function CloudRemoteEnvironmentRows({
   primaryEnvironmentId,
   savedEnvironmentIds,
@@ -1678,10 +2022,9 @@ function CloudRemoteEnvironmentRows({
   readonly savedEnvironmentIds: ReadonlyArray<EnvironmentId>;
 }) {
   return hasCloudPublicConfig() ? (
-    <CloudEnvironmentConnectRows
+    <ConfiguredCloudRemoteEnvironmentRows
       primaryEnvironmentId={primaryEnvironmentId}
       savedEnvironmentIds={savedEnvironmentIds}
-      empty={<EmptyRemoteEnvironments />}
     />
   ) : savedEnvironmentIds.length === 0 ? (
     <EmptyRemoteEnvironments cloudEnabled={false} />

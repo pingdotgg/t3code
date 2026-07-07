@@ -39,7 +39,7 @@ export function CloudWaitlistEnrollment(props: { readonly onSignIn: () => void }
           You are on the waitlist
         </Text>
         <Text className="text-center font-sans text-base text-foreground-secondary">
-          We will email you when your T3 Connect access is ready.
+          We will email you when your T3 Cloud access is ready.
         </Text>
         <SignInAction onPress={props.onSignIn} />
       </View>
