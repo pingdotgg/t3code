@@ -10,7 +10,13 @@ import type {
   SessionEvent,
 } from "@github/copilot-sdk";
 import { beforeEach, it } from "@effect/vitest";
-import { Context, DateTime, Effect, Fiber, Layer, Schema, Stream } from "effect";
+import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
