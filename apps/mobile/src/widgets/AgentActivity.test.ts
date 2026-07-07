@@ -199,6 +199,70 @@ describe("AgentActivity widget layout", () => {
     ).not.toContain("widgetURL");
   });
 
+  it("leads with the outcome instead of a zero count when nothing is active", () => {
+    const layout = AgentActivity(
+      {
+        ...props,
+        subtitle: "Agent work completed",
+        activeCount: 0,
+        activities: [makeRow({ phase: "completed", status: "Done" })],
+      },
+      environment as never,
+    );
+    const banner = JSON.stringify(layout.banner);
+    expect(banner).toContain("Agent work completed");
+    expect(banner).not.toContain("0 active");
+    expect(banner).toContain("#6ee7b7"); // emerald-300 header tint
+    expect(JSON.stringify(layout.compactTrailing)).toContain("Done");
+    expect(JSON.stringify(layout.compactTrailing)).not.toContain("0 active");
+    expect(JSON.stringify(layout.expandedLeading)).toContain("Done");
+    expect(JSON.stringify(layout.minimal)).toContain("checkmark.circle.fill");
+    expect(JSON.stringify(layout.bannerSmall)).toContain("Done");
+  });
+
+  it("reads Failed when the finished work ended in failure", () => {
+    const layout = AgentActivity(
+      {
+        ...props,
+        subtitle: "Agent work failed",
+        activeCount: 0,
+        activities: [makeRow({ phase: "failed", status: "Failed" })],
+      },
+      environment as never,
+    );
+    const banner = JSON.stringify(layout.banner);
+    expect(banner).toContain("Agent work failed");
+    expect(banner).toContain("#fca5a5"); // red-300 header tint
+    expect(JSON.stringify(layout.compactTrailing)).toContain("Failed");
+    expect(JSON.stringify(layout.expandedLeading)).toContain("Failed");
+    expect(JSON.stringify(layout.minimal)).toContain("xmark.octagon.fill");
+  });
+
+  it("lets a failure dominate mixed finished outcomes across every presentation", () => {
+    const layout = AgentActivity(
+      {
+        ...props,
+        // The server subtitle keys off the newest terminal row (completed
+        // here); the layout must still read Failed everywhere so the header
+        // text never disagrees with the tint, count slots, or minimal glyph.
+        subtitle: "Agent work completed",
+        activeCount: 0,
+        activities: [
+          makeRow({ phase: "completed", status: "Done" }),
+          makeRow({ threadId: "thread-2", phase: "failed", status: "Failed" }),
+        ],
+      },
+      environment as never,
+    );
+    const banner = JSON.stringify(layout.banner);
+    expect(banner).toContain("Agent work failed");
+    expect(banner).not.toContain("Agent work completed");
+    expect(banner).toContain("#fca5a5"); // red-300 header tint
+    expect(JSON.stringify(layout.compactTrailing)).toContain("Failed");
+    expect(JSON.stringify(layout.expandedLeading)).toContain("Failed");
+    expect(JSON.stringify(layout.minimal)).toContain("xmark.octagon.fill");
+  });
+
   it("renders up to five rows in the banner", () => {
     const layout = AgentActivity(
       {
