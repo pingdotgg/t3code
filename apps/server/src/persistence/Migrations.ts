@@ -49,6 +49,7 @@ import Migration0033 from "./Migrations/031_NeuropharmEvidenceLibrary.ts";
 import Migration0034 from "./Migrations/032_NeuropharmAnalysisRuns.ts";
 import Migration0035 from "./Migrations/033_NeuropharmReceptorDatabase.ts";
 import Migration0036 from "./Migrations/034_NeuropharmLocalDatabaseSnapshotsRepair.ts";
+import Migration0037 from "./Migrations/037_AuthSchemaRepair.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -97,6 +98,7 @@ export const migrationEntries = [
   [34, "NeuropharmAnalysisRuns", Migration0034],
   [35, "NeuropharmReceptorDatabase", Migration0035],
   [36, "NeuropharmLocalDatabaseSnapshotsRepair", Migration0036],
+  [37, "AuthSchemaRepair", Migration0037],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>
