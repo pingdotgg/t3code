@@ -16,6 +16,7 @@ import * as DpopProofs from "../auth/DpopProofs.ts";
 import * as RelayTokens from "../auth/RelayTokens.ts";
 import * as EnvironmentCredentials from "./EnvironmentCredentials.ts";
 import * as EnvironmentLinks from "./EnvironmentLinks.ts";
+import { testRelayConfiguration } from "../testRelayConfiguration.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as EnvironmentLinker from "./EnvironmentLinker.ts";
 import * as ManagedEndpointProvider from "./ManagedEndpointProvider.ts";
@@ -37,6 +38,9 @@ const config = RelayConfiguration.RelayConfiguration.of({
     privateKey: Redacted.make("private-key"),
     bundleId: "com.t3tools.t3code.dev",
   },
+  fcm: null,
+  fcmDeliveryEnabled: false,
+  fcmDeliveryJobSigningSecret: Redacted.make("fcm-job-secret"),
   apnsDeliveryJobSigningSecret: Redacted.make("job-secret"),
   clerkSecretKey: Redacted.make("clerk-secret"),
   clerkPublishableKey: "pk_test_test",

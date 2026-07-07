@@ -28,6 +28,7 @@ import * as Tracer from "effect/Tracer";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 
 import * as EnvironmentLinks from "./EnvironmentLinks.ts";
+import { testRelayConfiguration } from "../testRelayConfiguration.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as EnvironmentConnector from "./EnvironmentConnector.ts";
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
@@ -70,6 +71,9 @@ const settings = RelayConfiguration.RelayConfiguration.of({
     privateKey: Redacted.make("private-key"),
     bundleId: "com.t3tools.t3code.dev",
   },
+  fcm: null,
+  fcmDeliveryEnabled: false,
+  fcmDeliveryJobSigningSecret: Redacted.make("fcm-job-secret"),
   apnsDeliveryJobSigningSecret: Redacted.make("job-secret"),
   clerkSecretKey: Redacted.make("clerk-secret"),
   clerkPublishableKey: "pk_test_test",

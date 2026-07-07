@@ -12,16 +12,15 @@ import * as Layer from "effect/Layer";
 import { sanitizeAgentActivityAggregateState } from "./agentActivityPayloads.ts";
 import * as AgentActivityRows from "./AgentActivityRows.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
-import * as LiveActivities from "./LiveActivities.ts";
-import * as ApnsDeliveries from "./ApnsDeliveries.ts";
+import * as MobileDeliveries from "./MobileDeliveries.ts";
+import { isAndroidMobileTarget } from "./mobileTargets.ts";
 
 export type AgentActivityPublishError =
   | AgentActivityRows.AgentActivityRowUpsertPersistenceError
   | AgentActivityRows.AgentActivityRowDeletePersistenceError
   | AgentActivityRows.AgentActivityRowListPersistenceError
   | EnvironmentLinks.EnvironmentLinkUserListPersistenceError
-  | LiveActivities.LiveActivityTargetListPersistenceError
-  | ApnsDeliveries.ApnsDeliveryError;
+  | MobileDeliveries.MobileDeliveryError;
 
 export class AgentActivityPublisher extends Context.Service<
   AgentActivityPublisher,
@@ -42,8 +41,7 @@ export class AgentActivityPublisher extends Context.Service<
 export const make = Effect.gen(function* () {
   const rows = yield* AgentActivityRows.AgentActivityRows;
   const links = yield* EnvironmentLinks.EnvironmentLinks;
-  const liveActivities = yield* LiveActivities.LiveActivities;
-  const apnsDeliveries = yield* ApnsDeliveries.ApnsDeliveries;
+  const mobileDeliveries = yield* MobileDeliveries.MobileDeliveries;
 
   const publishForDeliveryUser = Effect.fnUntraced(function* (input: {
     readonly deliveryUser: EnvironmentLinks.AgentAwarenessDeliveryUserRecord;
@@ -66,20 +64,20 @@ export const make = Effect.gen(function* () {
             terminalState: isTerminalPhase(input.state) ? input.state : null,
           })
         : null;
-    const targets = yield* liveActivities.listTargets({ userId: input.deliveryUser.userId });
+    const targets = yield* mobileDeliveries.listTargets({ userId: input.deliveryUser.userId });
     const deliveriesByTarget = yield* Effect.forEach(
       targets,
       (target) =>
         Effect.all(
           [
-            apnsDeliveries.sendForTarget({
+            mobileDeliveries.sendForTarget({
               target,
               aggregate: liveActivityAggregate,
               nowMs: input.nowMs,
             }),
             notificationOnlyAggregate === null
               ? Effect.succeed(null)
-              : apnsDeliveries.sendPushNotificationForTarget({
+              : mobileDeliveries.sendPushNotificationForTarget({
                   target,
                   aggregate: notificationOnlyAggregate,
                 }),
@@ -99,20 +97,15 @@ export const make = Effect.gen(function* () {
         "relay.mobile.device_id": input.deviceId,
         "relay.operation": "replayForLiveActivityRegistration",
       });
-      const { activeStates, targets } = yield* Effect.all(
-        {
-          activeStates: rows.listForUser({ userId: input.userId }),
-          targets: liveActivities.listTargets({ userId: input.userId }),
-        },
-        { concurrency: 2 },
-      );
+      const targets = yield* mobileDeliveries.listTargets({ userId: input.userId });
       const target = targets.find((row) => row.device_id === input.deviceId) ?? null;
-      if (target === null) {
+      if (target === null || isAndroidMobileTarget(target)) {
         return null;
       }
+      const activeStates = yield* rows.listForUser({ userId: input.userId });
       const aggregate = makeAggregateState({ activeStates, terminalState: null });
       const now = yield* DateTime.now;
-      return yield* apnsDeliveries.sendForTarget({
+      return yield* mobileDeliveries.sendForTarget({
         target,
         aggregate,
         nowMs: now.epochMilliseconds,

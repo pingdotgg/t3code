@@ -22,6 +22,7 @@ import {
   verifyRelayClientBearerToken,
   withoutCapturedParentSpan,
 } from "./Api.ts";
+import { testRelayConfiguration } from "../testRelayConfiguration.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as EnvironmentCredentials from "../environments/EnvironmentCredentials.ts";
 
@@ -42,6 +43,9 @@ const relaySettings: RelayConfiguration.RelayConfiguration["Service"] = {
   clerkSecretKey: Redacted.make("clerk-secret-key"),
   clerkPublishableKey: "pk_test_test",
   clerkJwtAudience: "t3-code-relay",
+  fcm: null,
+  fcmDeliveryEnabled: false,
+  fcmDeliveryJobSigningSecret: Redacted.make("fcm-job-secret"),
   apnsDeliveryJobSigningSecret: Redacted.make("apns-delivery-secret"),
   cloudMintPrivateKey: Redacted.make("cloud-mint-private-key"),
   cloudMintPublicKey: "cloud-mint-public-key",

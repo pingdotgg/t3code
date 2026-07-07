@@ -21,6 +21,7 @@ import {
   sanitizeAgentActivityAggregateState,
   sanitizeApnsNotificationPayload,
 } from "./agentActivityPayloads.ts";
+import { notificationForAggregate as notificationForPushTarget } from "./pushNotificationDelivery.ts";
 import * as Apns from "./ApnsClient.ts";
 import {
   ApnsDeliveryJobLiveActivityAggregateMissing,
@@ -163,32 +164,11 @@ function notificationForAggregate(input: {
   readonly target: LiveActivities.TargetRow;
   readonly aggregate: RelayAgentActivityAggregateState | null;
 }): ApnsNotificationPayload | null {
-  if (!input.target.push_token || input.aggregate === null) {
-    return null;
-  }
-  const preferences = parsePreferences(input.target.preferences_json);
-  if (!preferences?.notificationsEnabled) {
-    return null;
-  }
-  const activity = input.aggregate.activities[0];
-  if (!activity) {
-    return null;
-  }
-  const enabled =
-    (activity.phase === "waiting_for_approval" && preferences.notifyOnApproval) ||
-    (activity.phase === "waiting_for_input" && preferences.notifyOnInput) ||
-    (activity.phase === "completed" && preferences.notifyOnCompletion) ||
-    (activity.phase === "failed" && preferences.notifyOnFailure);
-  if (!enabled) {
-    return null;
-  }
-  return {
-    title: activity.threadTitle,
-    body: `${activity.status}: ${activity.projectTitle}`,
-    environmentId: activity.environmentId,
-    threadId: activity.threadId,
-    deepLink: activity.deepLink,
-  };
+  return notificationForPushTarget({
+    preferencesJson: input.target.preferences_json,
+    pushToken: input.target.push_token,
+    aggregate: input.aggregate,
+  });
 }
 
 function chooseLiveActivityDelivery(input: {

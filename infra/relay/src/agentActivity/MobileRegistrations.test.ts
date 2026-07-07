@@ -21,7 +21,12 @@ import * as AgentActivityPublisher from "./AgentActivityPublisher.ts";
 import * as ApnsDeliveries from "./ApnsDeliveries.ts";
 import * as ApnsClient from "./ApnsClient.ts";
 import * as ApnsDeliveryQueue from "./ApnsDeliveryQueue.ts";
+import * as FcmDeliveries from "./FcmDeliveries.ts";
+import * as FcmClient from "./FcmClient.ts";
+import * as FcmDeliveryQueue from "./FcmDeliveryQueue.ts";
+import * as MobileDeliveries from "./MobileDeliveries.ts";
 import * as MobileRegistrations from "./MobileRegistrations.ts";
+import { testRelayConfiguration } from "../testRelayConfiguration.ts";
 
 const device: RelayDeviceRegistrationRequest = {
   deviceId: "device-1" as RelayDeviceRegistrationRequest["deviceId"],
@@ -46,6 +51,7 @@ function makeDevices(
     register: () => Effect.void,
     unregister: () => Effect.void,
     listForUser: () => Effect.succeed([]),
+    listAndroidPushTargets: () => Effect.succeed([]),
     ...overrides,
   };
 }
@@ -121,8 +127,7 @@ function makeDeliveryAttempts(
   };
 }
 
-const config = RelayConfiguration.RelayConfiguration.of({
-  relayIssuer: "https://relay.example.test",
+const config = testRelayConfiguration({
   apns: {
     environment: "sandbox",
     teamId: "team-id",
@@ -130,14 +135,7 @@ const config = RelayConfiguration.RelayConfiguration.of({
     bundleId: "codes.t3.mobile",
     privateKey: Redacted.make("apns-private-key"),
   },
-  clerkSecretKey: Redacted.make("clerk-secret"),
-  clerkPublishableKey: "pk_test_test",
-  clerkJwtAudience: "t3-code-relay",
   apnsDeliveryJobSigningSecret: Redacted.make("apns-job-secret"),
-  cloudMintPrivateKey: Redacted.make("cloud-private-key"),
-  cloudMintPublicKey: "cloud-public-key",
-  managedEndpointBaseDomain: undefined,
-  managedEndpointNamespace: undefined,
 });
 
 function makeRegistrationReplayLayer(input: {
@@ -147,8 +145,11 @@ function makeRegistrationReplayLayer(input: {
 }) {
   return MobileRegistrations.layer.pipe(
     Layer.provide(AgentActivityPublisher.layer),
+    Layer.provide(MobileDeliveries.layer),
     Layer.provide(ApnsDeliveries.layer.pipe(Layer.provide(ApnsClient.layer))),
+    Layer.provide(FcmDeliveries.layer.pipe(Layer.provide(FcmClient.layer))),
     Layer.provide(ApnsDeliveryQueue.layer.pipe(Layer.provide(NodeCryptoLayer.layer))),
+    Layer.provide(FcmDeliveryQueue.layer.pipe(Layer.provide(NodeCryptoLayer.layer))),
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(Devices.Devices, input.devices),
@@ -162,6 +163,9 @@ function makeRegistrationReplayLayer(input: {
             Effect.sync(() => {
               input.queuedJobs.push(body);
             }),
+        }),
+        Layer.succeed(FcmDeliveryQueue.FcmDeliveryQueueSender, {
+          send: () => Effect.void,
         }),
       ),
     ),

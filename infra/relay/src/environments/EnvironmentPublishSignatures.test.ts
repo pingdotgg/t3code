@@ -16,6 +16,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import * as DpopProofs from "../auth/DpopProofs.ts";
+import { testRelayConfiguration } from "../testRelayConfiguration.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as EnvironmentPublishSignatures from "./EnvironmentPublishSignatures.ts";
 
@@ -32,6 +33,9 @@ const config = RelayConfiguration.RelayConfiguration.of({
     privateKey: Redacted.make("private-key"),
     bundleId: "com.t3tools.t3code.dev",
   },
+  fcm: null,
+  fcmDeliveryEnabled: false,
+  fcmDeliveryJobSigningSecret: Redacted.make("fcm-job-secret"),
   apnsDeliveryJobSigningSecret: Redacted.make("job-secret"),
   clerkSecretKey: Redacted.make("clerk-secret"),
   clerkPublishableKey: "pk_test_test",

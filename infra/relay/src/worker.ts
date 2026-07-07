@@ -43,12 +43,21 @@ import * as EnvironmentLinks from "./environments/EnvironmentLinks.ts";
 import * as ManagedEndpointAllocations from "./environments/ManagedEndpointAllocations.ts";
 import * as LiveActivities from "./agentActivity/LiveActivities.ts";
 import * as RelayDb from "./db.ts";
-import { RelayApnsDeliveryDeadLetterQueue, RelayApnsDeliveryQueue } from "./queues.ts";
+import {
+  RelayApnsDeliveryDeadLetterQueue,
+  RelayApnsDeliveryQueue,
+  RelayFcmDeliveryDeadLetterQueue,
+  RelayFcmDeliveryQueue,
+} from "./queues.ts";
 import * as RelayConfiguration from "./Config.ts";
 import * as AgentActivityPublisher from "./agentActivity/AgentActivityPublisher.ts";
 import * as ApnsClient from "./agentActivity/ApnsClient.ts";
 import * as ApnsDeliveryQueue from "./agentActivity/ApnsDeliveryQueue.ts";
 import * as ApnsDeliveries from "./agentActivity/ApnsDeliveries.ts";
+import * as FcmDeliveryQueue from "./agentActivity/FcmDeliveryQueue.ts";
+import * as FcmDeliveries from "./agentActivity/FcmDeliveries.ts";
+import * as FcmClient from "./agentActivity/FcmClient.ts";
+import * as MobileDeliveries from "./agentActivity/MobileDeliveries.ts";
 import * as EnvironmentConnector from "./environments/EnvironmentConnector.ts";
 import * as EnvironmentLinker from "./environments/EnvironmentLinker.ts";
 import * as EnvironmentPublishSignatures from "./environments/EnvironmentPublishSignatures.ts";
@@ -87,6 +96,9 @@ const CloudMintKeyPair = Alchemy.KeyPair("CloudMintKeyPair");
 const ApnsDeliveryJobSigningSecret = Alchemy.makeRandom("ApnsDeliveryJobSigningSecret", {
   bytes: 32,
 });
+const FcmDeliveryJobSigningSecret = Alchemy.makeRandom("FcmDeliveryJobSigningSecret", {
+  bytes: 32,
+});
 
 export default class Api extends Cloudflare.Worker<Api>()(
   "Api",
@@ -108,10 +120,13 @@ export default class Api extends Cloudflare.Worker<Api>()(
     const { relayPublicOrigin, stage } = yield* RelayDeploymentConfig;
     const apnsDeliveryQueue = yield* RelayApnsDeliveryQueue;
     const apnsDeliveryDeadLetterQueue = yield* RelayApnsDeliveryDeadLetterQueue;
+    const fcmDeliveryQueue = yield* RelayFcmDeliveryQueue;
+    const fcmDeliveryDeadLetterQueue = yield* RelayFcmDeliveryDeadLetterQueue;
     const cloudMintKeyPair = yield* CloudMintKeyPair;
     const relayApiZone = yield* RelayApiZone;
     const managedEndpointZone = yield* ManagedEndpointZone;
     const randomApnsDeliveryJobSigningSecret = yield* ApnsDeliveryJobSigningSecret;
+    const randomFcmDeliveryJobSigningSecret = yield* FcmDeliveryJobSigningSecret;
     const observability = yield* RelayObservability;
 
     //
@@ -126,11 +141,20 @@ export default class Api extends Cloudflare.Worker<Api>()(
     const apnsBundleId = yield* Config.string("APNS_BUNDLE_ID");
     const apnsPrivateKey = yield* Config.redacted("APNS_PRIVATE_KEY");
     const apnsDeliveryJobSigningSecret = yield* randomApnsDeliveryJobSigningSecret;
+    const fcmDeliveryJobSigningSecret = yield* randomFcmDeliveryJobSigningSecret;
     const apnsDeliveryQueueSender = yield* Cloudflare.QueueBinding.bind(apnsDeliveryQueue);
+    const fcmDeliveryQueueSender = yield* Cloudflare.QueueBinding.bind(fcmDeliveryQueue);
 
     const axiomDatasetName = yield* observability.traces.name;
     const axiomIngestToken = yield* observability.workerIngestToken.token;
     const axiomTracesEndpoint = yield* observability.traces.otelTracesEndpoint;
+
+    const fcmProjectId = yield* Config.string("FCM_PROJECT_ID").pipe(Effect.option);
+    const fcmClientEmail = yield* Config.string("FCM_CLIENT_EMAIL").pipe(Effect.option);
+    const fcmPrivateKey = yield* Config.redacted("FCM_PRIVATE_KEY").pipe(Effect.option);
+    const fcmDeliveryEnabled = yield* Config.boolean("RELAY_FCM_DELIVERY_ENABLED").pipe(
+      Config.withDefault(false),
+    );
 
     const clerkSecretKey = yield* Config.redacted("CLERK_SECRET_KEY");
     const clerkPublishableKey = yield* Config.string("CLERK_PUBLISHABLE_KEY");
@@ -153,6 +177,17 @@ export default class Api extends Cloudflare.Worker<Api>()(
     const alchemyRuntimeContext = yield* Alchemy.RuntimeContext;
 
     const loadSettings = Effect.gen(function* () {
+      const fcmCredentials =
+        fcmProjectId._tag === "Some" &&
+        fcmClientEmail._tag === "Some" &&
+        fcmPrivateKey._tag === "Some"
+          ? {
+              projectId: fcmProjectId.value,
+              clientEmail: fcmClientEmail.value,
+              privateKey: fcmPrivateKey.value,
+            }
+          : null;
+
       return RelayConfiguration.RelayConfiguration.of({
         relayIssuer: relayPublicOrigin,
         apns: {
@@ -162,7 +197,10 @@ export default class Api extends Cloudflare.Worker<Api>()(
           bundleId: apnsBundleId,
           privateKey: apnsPrivateKey,
         },
+        fcm: fcmCredentials,
+        fcmDeliveryEnabled,
         apnsDeliveryJobSigningSecret: yield* apnsDeliveryJobSigningSecret,
+        fcmDeliveryJobSigningSecret: yield* fcmDeliveryJobSigningSecret,
         clerkSecretKey,
         clerkPublishableKey,
         clerkJwtAudience,
@@ -181,9 +219,22 @@ export default class Api extends Cloudflare.Worker<Api>()(
       }).pipe(Effect.map(makeRelayTraceLayer)),
     );
 
-    const runtimeLayer = Layer.empty.pipe(
+    const runtimeLayerCore = Layer.empty.pipe(
       Layer.provideMerge(MobileRegistrations.layer),
       Layer.provideMerge(AgentActivityPublisher.layer),
+      Layer.provideMerge(MobileDeliveries.layer),
+      Layer.provideMerge(ApnsDeliveries.layer),
+      Layer.provideMerge(FcmDeliveries.layer),
+      Layer.provideMerge(ApnsClient.layer),
+      Layer.provideMerge(FcmClient.layer),
+      Layer.provideMerge(
+        ApnsDeliveryQueue.layerCloudflareQueues(apnsDeliveryQueueSender, alchemyRuntimeContext),
+      ),
+      Layer.provideMerge(
+        FcmDeliveryQueue.layerCloudflareQueues(fcmDeliveryQueueSender, alchemyRuntimeContext),
+      ),
+      Layer.provideMerge(LiveActivities.layer),
+      Layer.provideMerge(DeliveryAttempts.layer),
       Layer.provideMerge(EnvironmentConnector.layer),
       Layer.provideMerge(EnvironmentLinker.layer),
       Layer.provideMerge(EnvironmentPublishSignatures.layer),
@@ -195,17 +246,13 @@ export default class Api extends Cloudflare.Worker<Api>()(
         ),
       ),
       Layer.provideMerge(DpopProofs.layer),
-      Layer.provideMerge(ApnsDeliveries.layer),
-      Layer.provideMerge(ApnsClient.layer),
-      Layer.provideMerge(
-        ApnsDeliveryQueue.layerCloudflareQueues(apnsDeliveryQueueSender, alchemyRuntimeContext),
-      ),
       Layer.provideMerge(AgentActivityRows.layer),
       Layer.provideMerge(Devices.layer),
       Layer.provideMerge(EnvironmentCredentials.layer),
       Layer.provideMerge(Layer.mergeAll(EnvironmentLinks.layer, ManagedEndpointAllocations.layer)),
-      Layer.provideMerge(LiveActivities.layer),
-      Layer.provideMerge(DeliveryAttempts.layer),
+    );
+
+    const runtimeLayer = runtimeLayerCore.pipe(
       Layer.provideMerge(RelayTokens.layer),
       Layer.provideMerge(Layer.succeed(RelayDb.RelayDb, db)),
       Layer.provideMerge(Layer.effect(RelayConfiguration.RelayConfiguration, loadSettings)),
@@ -217,6 +264,25 @@ export default class Api extends Cloudflare.Worker<Api>()(
       Layer.provideMerge(relayDpopClientAuthLayer),
       Layer.provideMerge(relayEnvironmentAuthLayer),
       Layer.provide(runtimeLayer),
+    );
+
+    yield* Cloudflare.messages<unknown>(fcmDeliveryQueue, {
+      batchSize: 10,
+      maxRetries: 5,
+      maxWaitTime: "5 seconds",
+      retryDelay: "30 seconds",
+      deadLetterQueue: fcmDeliveryDeadLetterQueue.queueName as unknown as string,
+    }).subscribe((stream) =>
+      stream.pipe(
+        Stream.withSpan("relay.fcm_delivery_queue.process_batch"),
+        Stream.runForEach((message) =>
+          FcmDeliveries.FcmDeliveries.pipe(
+            Effect.flatMap((deliveries) => deliveries.processSignedJob(message.body)),
+            Effect.withSpan("relay.fcm_delivery_queue.process_message"),
+          ),
+        ),
+        Effect.provide(runtimeLayer),
+      ),
     );
 
     yield* Cloudflare.messages<unknown>(apnsDeliveryQueue, {
