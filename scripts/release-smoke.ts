@@ -19,6 +19,7 @@ const workspaceFiles = [
   "apps/mobile/package.json",
   "apps/mobile/deps/react-native-nitro-markdown-0.5.0.tgz",
   "apps/mobile/modules/t3-markdown-text/package.json",
+  "apps/mobile/modules/t3-native-controls/package.json",
   "apps/mobile/modules/t3-review-diff/package.json",
   "apps/mobile/modules/t3-terminal/package.json",
   "apps/marketing/package.json",

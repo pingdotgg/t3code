@@ -61,6 +61,7 @@
     "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/mobile-markdown-text": "file:./modules/t3-markdown-text",
+    "@t3tools/mobile-native-controls": "file:./modules/t3-native-controls",
     "@t3tools/mobile-review-diff-native": "file:./modules/t3-review-diff",
     "@t3tools/mobile-terminal-native": "file:./modules/t3-terminal",
     "@t3tools/shared": "workspace:*",

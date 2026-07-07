@@ -1,6 +1,10 @@
 {
-  "platforms": ["apple"],
+  "platforms": ["apple", "android"],
   "apple": {
-    "modules": ["T3NativeControlsModule", "T3KeyboardCommandsModule"]
+    "modules": ["T3NativeControlsModule", "T3KeyboardCommandsModule"],
+    "podspecPath": "ios/T3NativeControls.podspec"
+  },
+  "android": {
+    "modules": ["expo.modules.t3nativecontrols.T3KeyboardCommandsModule"]
   }
 }
