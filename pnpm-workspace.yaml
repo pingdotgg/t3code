@@ -5,6 +5,23 @@ packages:
   - packages/*
   - scripts
 
+# Successor to onlyBuiltDependencies/ignoredBuiltDependencies (pnpm 11).
+# true = allowed to run build scripts; false mirrors the pnpm 10 behavior
+# where anything outside onlyBuiltDependencies was silently not built.
+allowBuilds:
+  browser-tabs-lock: false
+  bufferutil: false
+  core-js: false
+  electron: true
+  electron-winstaller: false
+  esbuild: true
+  msgpackr-extract: true
+  msw: false
+  node-pty: true
+  sharp: true
+  utf-8-validate: false
+  workerd: false
+
 catalog:
   "@clerk/backend": 3.8.4
   "@clerk/clerk-js": 6.22.0
@@ -33,16 +50,6 @@ catalog:
   vite: npm:@voidzero-dev/vite-plus-core@0.2.2
   vite-plus: 0.2.2
   yaml: ^2.9.0
-
-ignoredBuiltDependencies:
-  - msw
-
-onlyBuiltDependencies:
-  - electron
-  - esbuild
-  - msgpackr-extract
-  - node-pty
-  - sharp
 
 overrides:
   "@clerk/backend": "catalog:"
