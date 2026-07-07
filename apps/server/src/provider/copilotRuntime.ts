@@ -303,14 +303,15 @@ const validateConfiguredCopilotCliPath = Effect.fn("validateConfiguredCopilotCli
       platform: input.platform,
       ...(input.binaryPathBaseDirectory ? { cwd: input.binaryPathBaseDirectory } : {}),
     }).pipe(
-      Effect.catchTag("CommandResolutionError", () =>
-        Effect.fail(
-          new CopilotCliPathResolutionError({
-            detail: "The configured Copilot binary could not be found.",
-            binaryPath: cliPath,
-          }),
-        ),
-      ),
+      Effect.catchTags({
+        CommandResolutionError: () =>
+          Effect.fail(
+            new CopilotCliPathResolutionError({
+              detail: "The configured Copilot binary could not be found.",
+              binaryPath: cliPath,
+            }),
+          ),
+      }),
     );
   },
 );
@@ -353,7 +354,7 @@ export const resolveBundledCopilotCliPath = Effect.fn("resolveBundledCopilotCliP
       const resolved = yield* resolveCopilotCommandPath(candidate, {
         env: input.env ?? process.env,
         platform: input.platform,
-      }).pipe(Effect.catchTag("CommandResolutionError", () => Effect.void));
+      }).pipe(Effect.catchTags({ CommandResolutionError: () => Effect.void }));
       if (resolved) {
         return resolved;
       }
