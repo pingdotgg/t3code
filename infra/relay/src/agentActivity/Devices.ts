@@ -11,6 +11,7 @@ import * as Schema from "effect/Schema";
 import { and, eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 
+import type { AndroidMobileTarget } from "./mobileTargets.ts";
 import * as RelayDb from "../db.ts";
 import { relayLiveActivities, relayMobileDevices } from "../persistence/schema.ts";
 
@@ -75,6 +76,9 @@ export class Devices extends Context.Service<
     readonly listForUser: (input: {
       readonly userId: string;
     }) => Effect.Effect<ReadonlyArray<RelayClientDeviceRecord>, DeviceListPersistenceError>;
+    readonly listAndroidPushTargets: (input: {
+      readonly userId: string;
+    }) => Effect.Effect<ReadonlyArray<AndroidMobileTarget>, DeviceListPersistenceError>;
   }
 >()("t3code-relay/agentActivity/Devices") {}
 
@@ -311,6 +315,35 @@ export const make = Effect.gen(function* () {
           updatedAt: row.updatedAt,
         };
       });
+    }),
+    listAndroidPushTargets: Effect.fn("relay.devices.list_android_push_targets")(function* (input) {
+      const rows = yield* db
+        .select({
+          deviceId: relayMobileDevices.deviceId,
+          pushToken: relayMobileDevices.pushToken,
+          preferences: relayMobileDevices.preferencesJson,
+        })
+        .from(relayMobileDevices)
+        .where(
+          and(
+            eq(relayMobileDevices.userId, input.userId),
+            eq(relayMobileDevices.platform, "android"),
+          ),
+        )
+        .pipe(
+          Effect.mapError(
+            (cause) => new DeviceListPersistenceError({ userId: input.userId, cause }),
+          ),
+        );
+      return rows.map(
+        (row): AndroidMobileTarget => ({
+          user_id: input.userId,
+          device_id: row.deviceId,
+          platform: "android",
+          push_token: row.pushToken,
+          preferences_json: JSON.stringify(row.preferences),
+        }),
+      );
     }),
   });
 });

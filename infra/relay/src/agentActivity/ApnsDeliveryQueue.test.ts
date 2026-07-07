@@ -6,26 +6,10 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 
 import * as RelayConfiguration from "../Config.ts";
+import { testRelayConfiguration } from "../testRelayConfiguration.ts";
 import * as ApnsDeliveryQueue from "./ApnsDeliveryQueue.ts";
 
-const config: RelayConfiguration.RelayConfiguration["Service"] = {
-  relayIssuer: "https://relay.example.com",
-  apns: {
-    teamId: "team-1",
-    keyId: "key-1",
-    privateKey: Redacted.make("apns-private-key"),
-    bundleId: "com.t3tools.test",
-    environment: "sandbox",
-  },
-  clerkSecretKey: Redacted.make("clerk-secret"),
-  clerkPublishableKey: "pk_test_test",
-  clerkJwtAudience: "t3-code-relay",
-  apnsDeliveryJobSigningSecret: Redacted.make("apns-job-secret"),
-  cloudMintPrivateKey: Redacted.make("cloud-private-key"),
-  cloudMintPublicKey: "cloud-public-key",
-  managedEndpointBaseDomain: undefined,
-  managedEndpointNamespace: undefined,
-};
+const config = testRelayConfiguration();
 
 describe("ApnsDeliveryQueue", () => {
   it.effect("preserves job identity and the queue sender cause", () => {

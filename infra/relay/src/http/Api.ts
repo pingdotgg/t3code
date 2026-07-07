@@ -854,6 +854,60 @@ export const serverApi = HttpApiBuilder.group(
               reason: "upstream_unavailable",
               traceId,
             }),
+          FcmDeliveryJobQueuePayloadInvalid: (_error, traceId) =>
+            new RelayInternalError({
+              code: "internal_error",
+              reason: "internal_error",
+              traceId,
+            }),
+          FcmDeliveryJobCreatedAtInvalid: (_error, traceId) =>
+            new RelayInternalError({
+              code: "internal_error",
+              reason: "internal_error",
+              traceId,
+            }),
+          FcmDeliveryJobExpiresAtInvalid: (_error, traceId) =>
+            new RelayInternalError({
+              code: "internal_error",
+              reason: "internal_error",
+              traceId,
+            }),
+          FcmDeliveryJobTimeWindowInvalid: (_error, traceId) =>
+            new RelayInternalError({
+              code: "internal_error",
+              reason: "internal_error",
+              traceId,
+            }),
+          FcmDeliveryJobTimeWindowTooLong: (_error, traceId) =>
+            new RelayInternalError({
+              code: "internal_error",
+              reason: "internal_error",
+              traceId,
+            }),
+          FcmDeliveryJobSignatureInvalid: (_error, traceId) =>
+            new RelayInternalError({
+              code: "internal_error",
+              reason: "internal_error",
+              traceId,
+            }),
+          FcmDeliveryJobExpired: (_error, traceId) =>
+            new RelayInternalError({
+              code: "internal_error",
+              reason: "internal_error",
+              traceId,
+            }),
+          FcmDeliveryJobClaimInFlight: (_error, traceId) =>
+            new RelayInternalError({
+              code: "internal_error",
+              reason: "internal_error",
+              traceId,
+            }),
+          FcmDeliveryQueueSendError: (_error, traceId) =>
+            new RelayInternalError({
+              code: "internal_error",
+              reason: "upstream_unavailable",
+              traceId,
+            }),
         }),
         mapRelayCommonApiErrors("not_authorized"),
       ),
