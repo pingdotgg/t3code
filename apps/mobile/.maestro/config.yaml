@@ -1,0 +1,4 @@
+# Maestro config — expanded in step s15
+appId: com.t3tools.t3code.dev
+env:
+  MAESTRO_AUTH_BYPASS: ${EXPO_PUBLIC_MAESTRO_AUTH_BYPASS}

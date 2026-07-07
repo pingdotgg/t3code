@@ -29,6 +29,9 @@ dist-electron/
 .electron-runtime/
 node_modules/
 .alchemy/
+.aden/
+.grok-worktrees/
+scratch/
 *.log
 .env*
 !.env.example

@@ -1,0 +1,64 @@
+# Android parity plan/loop docs: local scratch/android-parity/ (gitignored).
+name: Mobile QA
+
+on:
+  pull_request:
+    paths:
+      - "apps/mobile/**"
+      - "packages/shared/**"
+      - "packages/client-runtime/**"
+      - ".github/workflows/mobile-qa.yml"
+      - "scripts/android-parity/**"
+
+jobs:
+  mobile_expo_doctor:
+    name: Mobile Expo Doctor
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: expo-doctor
+        working-directory: apps/mobile
+        run: npx expo-doctor
+
+  mobile_ios_regression_unit:
+    name: Mobile iOS regression (FORCE_* dogfood)
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Ensure Electron runtime is installed
+        run: vp run --filter @t3tools/desktop ensure:electron
+
+      - name: FORCE_* mobile unit tests
+        env:
+          EXPO_PUBLIC_FORCE_JS_REVIEW: "1"
+          EXPO_PUBLIC_FORCE_NITRO_MARKDOWN: "1"
+        run: vp test run apps/mobile
+
+  mobile_maestro_android:
+    name: Mobile Maestro Android
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 20
+    if: false
+    steps:
+      - name: Disabled until s16 enables Maestro CI
+        run: echo "Enable by setting if:true after dev client artifact + emulator wired (step s16)"

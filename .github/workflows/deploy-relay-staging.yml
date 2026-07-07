@@ -1,0 +1,42 @@
+name: Deploy T3 Connect relay (staging)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type deploy-staging to confirm"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: relay-staging
+  cancel-in-progress: false
+
+jobs:
+  deploy_relay_staging:
+    name: Deploy staging relay
+    if: github.event.inputs.confirm == 'deploy-staging'
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 15
+    environment:
+      name: staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Deploy relay (staging)
+        working-directory: infra/relay
+        run: |
+          echo "Wire staging secrets in GitHub environment 'staging' before first run."
+          echo "Required: FCM_PROJECT_ID, FCM_SERVICE_ACCOUNT_JSON, RELAY_FCM_DELIVERY_ENABLED"
+          echo "See scratch/android-parity/STAGING-RUNBOOK.md"
+          exit 1
