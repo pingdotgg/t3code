@@ -9,8 +9,10 @@
 // drops the compiled Assets.car into the extension bundle. Marked
 // alwaysOutOfDate so the build system always runs it.
 //
-// Idempotent across re-runs. Returns true when it added the phase, false when it
-// was already present or the target was not found.
+// Idempotent across re-runs. Returns true when it added the phase, false when
+// it was already present. Throws when the target does not exist — that means
+// this ran before expo-widgets created the target (plugin ordering bug) and
+// silently skipping would ship a widget without its assets.
 
 const PHASE_NAME = "Compile Widget Assets";
 
@@ -20,8 +22,8 @@ const ACTOOL_SCRIPT = [
   "set -e",
   'CATALOG="${SRCROOT}/ExpoWidgetsTarget/Assets.xcassets"',
   'if [ ! -d "$CATALOG" ]; then',
-  '  echo "warning: widget asset catalog not found at $CATALOG"',
-  "  exit 0",
+  '  echo "error: widget asset catalog not found at $CATALOG (expo-widgets wiped it? check plugin ordering in app.config.ts)"',
+  "  exit 1",
   "fi",
   'DEST="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}"',
   'mkdir -p "$DEST"',
@@ -51,7 +53,13 @@ function findByName(map, name) {
 function addWidgetAssetCatalog(proj, opts) {
   const objects = proj.hash.project.objects;
   const target = findByName(objects.PBXNativeTarget, opts.targetName);
-  if (!target) return false;
+  if (!target) {
+    throw new Error(
+      `addWidgetAssetCatalog: target "${opts.targetName}" not found — ` +
+        "withWidgetLogoAsset must be registered before expo-widgets so its " +
+        "xcodeproj mod runs after the widget target is created.",
+    );
+  }
 
   const phases = target.value.buildPhases || [];
   const existing = objects.PBXShellScriptBuildPhase || {};

@@ -159,6 +159,12 @@ const config: ExpoConfig = {
       },
     ],
     "./plugins/withIosCocoaPodsUuidCache.cjs",
+    // Must be listed BEFORE expo-widgets: same-type mods run last-registered-
+    // first, so registering earlier makes this plugin's mods run AFTER
+    // expo-widgets' — its dangerous mod wipes ios/ExpoWidgetsTarget/ (which
+    // would delete the asset catalog) and its xcodeproj mod creates the widget
+    // target (which must exist before the compile phase can be attached).
+    "./plugins/withWidgetLogoAsset.cjs",
     [
       "expo-widgets",
       {
@@ -178,9 +184,6 @@ const config: ExpoConfig = {
         ],
       },
     ],
-    // Must run after expo-widgets so the widget target exists when it wires in
-    // the branded logo asset catalog.
-    "./plugins/withWidgetLogoAsset.cjs",
     "./plugins/withIosSceneLifecycle.cjs",
     "./plugins/withAndroidCleartextTraffic.cjs",
   ],

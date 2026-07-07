@@ -26,5 +26,5 @@ if (added) {
   fs.writeFileSync(pbxprojPath, proj.writeSync());
   console.log("Added widget asset-compile phase to ExpoWidgetsTarget.");
 } else {
-  console.log("No change: phase already present or target not found.");
+  console.log("No change: phase already present.");
 }

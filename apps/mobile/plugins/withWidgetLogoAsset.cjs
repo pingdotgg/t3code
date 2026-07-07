@@ -5,9 +5,15 @@
 // expo-widgets generates ExpoWidgetsTarget without a Resources build phase and
 // has no asset support, so this plugin (a) writes an SVG template image set into
 // the generated widget asset catalog and (b) wires that catalog into the widget
-// target with a dedicated Resources build phase. Both steps are idempotent and
-// survive `expo prebuild --clean`. Must be listed AFTER "expo-widgets" in the
-// plugins array so the widget target exists when this runs.
+// target with an actool build phase.
+//
+// ORDERING: must be listed BEFORE "expo-widgets" in the plugins array. Expo
+// chains same-type mods so the last-registered runs FIRST; registering this
+// plugin earlier makes its mods run AFTER expo-widgets' mods. That matters
+// twice: expo-widgets' dangerous mod rmSync's ios/ExpoWidgetsTarget/ (deleting
+// any catalog written before it), and its xcodeproj mod is what creates the
+// widget target. Listed after expo-widgets, both steps silently no-op on a
+// fresh prebuild — which is how prod build 8 shipped without the logo.
 
 const path = require("path");
 const fs = require("fs");
