@@ -15,7 +15,7 @@ export class NotificationPermissionReadError extends Schema.TaggedErrorClass<Not
   },
 ) {
   override get message(): string {
-    return "Failed to read notification permissions on iOS.";
+    return "Failed to read notification permissions.";
   }
 }
 
@@ -26,15 +26,32 @@ export class NotificationPermissionRequestError extends Schema.TaggedErrorClass<
   },
 ) {
   override get message(): string {
-    return "Failed to request notification permissions on iOS.";
+    return "Failed to request notification permissions.";
   }
+}
+
+function supportsAgentNotificationPermissions(): boolean {
+  return Platform.OS === "ios" || Platform.OS === "android";
+}
+
+function requestNotificationPermissions(): Promise<Notifications.NotificationPermissionsStatus> {
+  if (Platform.OS === "ios") {
+    return Notifications.requestPermissionsAsync({
+      ios: {
+        allowAlert: true,
+        allowBadge: true,
+        allowSound: true,
+      },
+    });
+  }
+  return Notifications.requestPermissionsAsync();
 }
 
 export const requestAgentNotificationPermission: Effect.Effect<
   NotificationPermissionResult,
   NotificationPermissionReadError | NotificationPermissionRequestError
 > = Effect.gen(function* () {
-  if (Platform.OS !== "ios") {
+  if (!supportsAgentNotificationPermissions()) {
     return { type: "unsupported" };
   }
 
@@ -51,14 +68,7 @@ export const requestAgentNotificationPermission: Effect.Effect<
   }
 
   const requested = yield* Effect.tryPromise({
-    try: () =>
-      Notifications.requestPermissionsAsync({
-        ios: {
-          allowAlert: true,
-          allowBadge: true,
-          allowSound: true,
-        },
-      }),
+    try: () => requestNotificationPermissions(),
     catch: (cause) => new NotificationPermissionRequestError({ cause }),
   });
   return requested.granted
