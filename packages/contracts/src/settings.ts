@@ -72,6 +72,12 @@ export const ClientSettingsSchema = Schema.Struct({
       modelOrder: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
     }),
   ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  // Renders preview <webview> tags with Electron's `disablewebsecurity`
+  // attribute, turning off the same-origin policy (CORS) inside the guest
+  // page — the embedded-browser equivalent of Chrome's
+  // `--disable-web-security`. Local development escape hatch; applies to
+  // webviews created after the change.
+  previewDisableWebSecurity: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE)),
   ),
@@ -559,6 +565,7 @@ export const ClientSettingsPatch = Schema.Struct({
       }),
     ),
   ),
+  previewDisableWebSecurity: Schema.optionalKey(Schema.Boolean),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, SidebarProjectGroupingMode),

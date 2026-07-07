@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { previewBridge } from "~/components/preview/previewBridge";
 import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
+import { getClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 
 import { stopBrowserRecording, useActiveBrowserRecordingTabId } from "./browserRecording";
@@ -43,6 +44,8 @@ export function HostedBrowserWebview(props: {
   const { threadRef, tabId, initialUrl, viewport, zoomFactor } = props;
   const config = usePreviewWebviewConfig(threadRef.environmentId);
   const [initialSrc] = useState(() => initialUrl ?? "about:blank");
+  // Frozen per webview: Electron reads the attribute only at guest attach.
+  const [disableWebSecurity] = useState(() => getClientSettings().previewDisableWebSecurity);
   const tabLeaseRef = useRef<AcquiredDesktopTab | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const webviewRef = useRef<ElectronWebview | null>(null);
@@ -206,6 +209,10 @@ export function HostedBrowserWebview(props: {
           partition={config.partition}
           webpreferences={config.webPreferences}
           {...(config.preloadUrl ? { preload: config.preloadUrl } : {})}
+          {...(disableWebSecurity
+            ? // string, not boolean: React omits boolean values on this unknown attribute
+              { disablewebsecurity: "true" as unknown as boolean }
+            : {})}
           data-preview-tab={tabId}
           data-preview-viewport-mode={effectiveViewport._tag}
           data-preview-viewport-key={browserViewportSettingKey(effectiveViewport)}
