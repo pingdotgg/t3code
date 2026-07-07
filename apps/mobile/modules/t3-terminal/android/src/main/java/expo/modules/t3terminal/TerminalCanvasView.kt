@@ -188,6 +188,8 @@ internal class TerminalCanvasView(context: Context) : View(context) {
     actionMode?.finish()
   }
 
+  fun hasActiveSelection(): Boolean = selectionActive
+
   fun usableWidth(): Float = max(width - contentPadding * 2f, 1f)
   fun usableHeight(): Float = max(height - contentPadding * 2f, 1f)
 

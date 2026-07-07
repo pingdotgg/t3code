@@ -335,6 +335,12 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     val suffix = initialBuffer.substring(fedBuffer.length)
     if (suffix.isNotEmpty()) {
       emitResponse(GhosttyBridge.nativeFeed(terminalHandle, suffix.toByteArray(Charsets.UTF_8)))
+      // New output invalidates an active selection (matches the web drawer);
+      // otherwise the copy toolbar drifts out of sync with the grid.
+      if (terminalCanvas.hasActiveSelection()) {
+        GhosttyBridge.nativeClearSelection(terminalHandle)
+        terminalCanvas.resetSelectionState()
+      }
     }
     fedBuffer = initialBuffer
     renderSnapshot()

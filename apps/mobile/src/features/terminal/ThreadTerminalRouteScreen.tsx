@@ -359,6 +359,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   // (they restart on attach).
   const runningTerminalKeyRef = useRef<string | null>(null);
   const reopenedStaleTerminalKeyRef = useRef<string | null>(null);
+  const pendingExitNavigationRef = useRef<string | null>(null);
 
   // Attach subscriptions are cached with an idle TTL, so revisiting a
   // terminal whose session ended while unobserved reuses the stale stream
@@ -800,32 +801,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     [navigation, selectedThread, terminalId],
   );
 
-  useEffect(() => {
-    if (isRunning) {
-      runningTerminalKeyRef.current = terminalKey;
-      return;
-    }
-    // The web drawer treats both exited and closed as session end.
-    const sessionEnded = terminal.status === "exited" || terminal.status === "closed";
-    if (!sessionEnded || runningTerminalKeyRef.current !== terminalKey) {
-      return;
-    }
-    runningTerminalKeyRef.current = null;
-    // Mark this key handled so the stale-attach effect doesn't respawn the
-    // session the user just ended.
-    reopenedStaleTerminalKeyRef.current = terminalKey;
-    if (selectedThread) {
-      void closeTerminal({
-        environmentId: selectedThread.environmentId,
-        input: {
-          threadId: selectedThread.id,
-          terminalId,
-        },
-      });
-    }
-    if (!navigation.isFocused()) {
-      return;
-    }
+  const navigateAwayAfterExit = useCallback(() => {
     // With other shells still live, fall through to the previous one instead
     // of dropping the user back on the thread.
     const fallbackTerminalId = previousLiveTerminalId({
@@ -856,16 +832,60 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
         }),
       );
     }
+  }, [navigation, selectedThread, terminalId, terminalMenuSessions]);
+
+  useEffect(() => {
+    if (isRunning) {
+      runningTerminalKeyRef.current = terminalKey;
+      return;
+    }
+    // The web drawer treats both exited and closed as session end.
+    const sessionEnded = terminal.status === "exited" || terminal.status === "closed";
+    if (!sessionEnded || runningTerminalKeyRef.current !== terminalKey) {
+      return;
+    }
+    runningTerminalKeyRef.current = null;
+    // Mark this key handled so the stale-attach effect doesn't respawn the
+    // session the user just ended.
+    reopenedStaleTerminalKeyRef.current = terminalKey;
+    if (selectedThread) {
+      void closeTerminal({
+        environmentId: selectedThread.environmentId,
+        input: {
+          threadId: selectedThread.id,
+          terminalId,
+        },
+      });
+    }
+    if (navigation.isFocused()) {
+      navigateAwayAfterExit();
+      return;
+    }
+    // An unfocused screen can't navigate; leave when the user returns so
+    // they never land on the dead session.
+    pendingExitNavigationRef.current = terminalKey;
   }, [
     closeTerminal,
     isRunning,
+    navigateAwayAfterExit,
     navigation,
     selectedThread,
     terminal.status,
     terminalId,
     terminalKey,
-    terminalMenuSessions,
   ]);
+
+  useEffect(
+    () =>
+      navigation.addListener("focus", () => {
+        if (pendingExitNavigationRef.current !== terminalKey) {
+          return;
+        }
+        pendingExitNavigationRef.current = null;
+        navigateAwayAfterExit();
+      }),
+    [navigateAwayAfterExit, navigation, terminalKey],
+  );
 
   const handleOpenNewTerminal = useCallback(() => {
     if (!selectedThread) {
