@@ -48,11 +48,10 @@ struct ChatTimelineRowView: View {
     }
 }
 
-/// Right-aligned solid bubble for the user's own messages, with a
-/// hover-revealed action row (copy / edit / retry). Sessions are stateful on
-/// the provider side, so Edit and Retry send a new message rather than
-/// rewriting history: Edit stages the text in the composer, Retry resends it
-/// as-is.
+/// Right-aligned solid bubble for the user's own messages, with hover-revealed
+/// overlay actions (copy / edit / retry). Sessions are stateful on the
+/// provider side, so Edit and Retry send a new message rather than rewriting
+/// history: Edit stages the text in the composer, Retry resends it as-is.
 private struct UserMessageBubble: View {
     let text: String
     let model: AppModel
@@ -71,44 +70,44 @@ private struct UserMessageBubble: View {
     var body: some View {
         HStack {
             Spacer(minLength: 48)
-            VStack(alignment: .trailing, spacing: 3) {
-                Text(text)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 16))
-                    .foregroundStyle(.white)
-
-                // Row keeps its layout slot and fades on hover — overlaying
-                // would collide with the next timeline row.
-                HStack(spacing: 2) {
-                    CopyActionButton(text: text)
-                    MessageActionButton(
-                        systemImage: "pencil", help: "Edit in composer and resend",
-                        disabled: !canResend
-                    ) {
-                        model.stageComposerText(text)
+            Text(text)
+                .textSelection(.enabled)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 16))
+                .foregroundStyle(.white)
+                .overlay(alignment: .topTrailing) {
+                    MessageActionChip {
+                        CopyActionButton(text: text)
+                        MessageActionButton(
+                            systemImage: "pencil", help: "Edit in composer and resend",
+                            disabled: !canResend
+                        ) {
+                            model.stageComposerText(text)
+                        }
+                        MessageActionButton(
+                            systemImage: "arrow.clockwise", help: "Send this message again",
+                            disabled: !canResend
+                        ) {
+                            resend()
+                        }
                     }
-                    MessageActionButton(
-                        systemImage: "arrow.clockwise", help: "Send this message again",
-                        disabled: !canResend
-                    ) {
-                        resend()
-                    }
+                    .opacity(isHovering ? 1 : 0)
+                    .allowsHitTesting(isHovering)
+                    .accessibilityHidden(!isHovering)
+                    .padding(3)
                 }
-                .opacity(isHovering ? 1 : 0)
-            }
-            // Hover and context menu live on the bubble stack, not the full
-            // row — the spacer's empty area shouldn't reveal actions.
-            .onHover { isHovering = $0 }
-            .animation(Motion.fade, value: isHovering)
-            .contextMenu {
-                Button("Copy") { Pasteboard.copy(text) }
-                Button("Edit in Composer") { model.stageComposerText(text) }
-                    .disabled(!canResend)
-                Button("Retry") { resend() }
-                    .disabled(!canResend)
-            }
+                // Hover and context menu live on the bubble, not the full
+                // row — the spacer's empty area shouldn't reveal actions.
+                .onHover { isHovering = $0 }
+                .animation(Motion.fade, value: isHovering)
+                .contextMenu {
+                    Button("Copy") { Pasteboard.copy(text) }
+                    Button("Edit in Composer") { model.stageComposerText(text) }
+                        .disabled(!canResend)
+                    Button("Retry") { resend() }
+                        .disabled(!canResend)
+                }
         }
     }
 
