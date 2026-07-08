@@ -587,6 +587,26 @@ public struct OutgoingAttachment: Identifiable, Hashable, Sendable {
     }
 }
 
+/// A composer message waiting for the selected thread to become idle.
+public struct QueuedOutgoingMessage: Identifiable, Hashable, Sendable {
+    public var id: String
+    public var text: String
+    public var attachments: [OutgoingAttachment]
+    public var createdAt: Date
+    public var sendAttempts: Int
+
+    public init(
+        id: String = UUID().uuidString, text: String,
+        attachments: [OutgoingAttachment] = [], createdAt: Date = Date(), sendAttempts: Int = 0
+    ) {
+        self.id = id
+        self.text = text
+        self.attachments = attachments
+        self.createdAt = createdAt
+        self.sendAttempts = sendAttempts
+    }
+}
+
 // MARK: - Git / VCS
 
 /// Lifecycle of the branch's pull request, from the wire's

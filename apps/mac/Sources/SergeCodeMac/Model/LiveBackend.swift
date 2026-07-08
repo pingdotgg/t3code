@@ -84,6 +84,14 @@ public actor LiveBackend: BackendService {
     private var sidecarStatesTask: Task<Void, Never>?
     private var socketSessionTask: Task<Void, Never>?
     private var threadSubscriptions: [String: Task<Void, Never>] = [:]
+    private struct RunningLivenessCheck {
+        let turnKey: String
+        let task: Task<Void, Never>
+    }
+    private var runningLivenessChecks: [String: RunningLivenessCheck] = [:]
+    private var latestRunningLivenessTurnKeys: [String: String] = [:]
+    private var confirmedRunningTurnKeys: [String: String] = [:]
+    private var staleRunningTurnKeys: [String: String] = [:]
 
     // MARK: Projection state (source for the query methods)
 
@@ -169,6 +177,7 @@ public actor LiveBackend: BackendService {
     /// Port of the running sidecar, captured at spawn for the mobile
     /// pairing URL.
     private var sidecarPort: Int?
+    private static let runningLivenessConfirmationDelay: Duration = .seconds(12)
 
     public init(allowLanAccess: Bool = false) {
         self.allowLanAccess = allowLanAccess
@@ -234,6 +243,7 @@ public actor LiveBackend: BackendService {
         socketSessionTask = nil
         cancelAllThreadSubscriptions()
         cancelAllVcsSubscriptions()
+        cancelAllRunningLivenessChecks()
 
         if let conn = currentConnection {
             currentConnection = nil
@@ -282,6 +292,7 @@ public actor LiveBackend: BackendService {
         socketSessionTask = nil
         cancelAllThreadSubscriptions()
         cancelAllVcsSubscriptions()
+        cancelAllRunningLivenessChecks()
         currentClient = nil
         if let conn = currentConnection {
             currentConnection = nil
@@ -426,6 +437,7 @@ public actor LiveBackend: BackendService {
                 threadsByID[id] = nil
                 titleSeedsByThread[id] = nil
                 threadEnvByThread[id] = nil
+                clearRunningLivenessState(threadID: id)
                 emit(.threadRemoved(id: id))
             }
             for shell in snapshot.threads {
@@ -435,6 +447,7 @@ public actor LiveBackend: BackendService {
                 threadEnvByThread[thread.id] = ThreadEnvState(
                     worktreePath: shell.worktreePath, hasTurns: shell.latestTurn != nil)
                 emit(.threadUpserted(thread))
+                reconcileRunningLiveness(for: shell)
             }
         case .event(let event):
             switch event {
@@ -452,11 +465,13 @@ public actor LiveBackend: BackendService {
                     worktreePath: shell.worktreePath, hasTurns: shell.latestTurn != nil)
                 restartVcsWatchIfStale(threadID: thread.id)
                 emit(.threadUpserted(thread))
+                reconcileRunningLiveness(for: shell)
             case .threadRemoved(_, let threadID):
                 threadsByID[threadID] = nil
                 modelSelectionsByThread[threadID] = nil
                 titleSeedsByThread[threadID] = nil
                 threadEnvByThread[threadID] = nil
+                clearRunningLivenessState(threadID: threadID)
                 emit(.threadRemoved(id: threadID))
             }
         }
@@ -515,6 +530,115 @@ public actor LiveBackend: BackendService {
             task.cancel()
         }
         threadSubscriptions.removeAll()
+    }
+
+    private func reconcileRunningLiveness(for shell: OrchestrationThreadShell) {
+        let turnKey = runningLivenessTurnKey(for: shell)
+        latestRunningLivenessTurnKeys[shell.id] = turnKey
+        let wireStatus = mapStatus(
+            session: shell.session, latestTurn: shell.latestTurn, archivedAt: shell.archivedAt,
+            hasPendingApprovals: shell.hasPendingApprovals || shell.hasPendingUserInput)
+        if wireStatus == .running {
+            scheduleRunningLivenessCheck(
+                threadID: shell.id, turnKey: turnKey)
+        } else {
+            clearRunningLivenessState(threadID: shell.id)
+        }
+    }
+
+    private func runningLivenessTurnKey(for shell: OrchestrationThreadShell) -> String {
+        shell.latestTurn?.turnId ?? shell.session?.activeTurnId ?? "pending-turn"
+    }
+
+    private func scheduleRunningLivenessCheck(threadID: String, turnKey: String) {
+        if let existingCheck = runningLivenessChecks[threadID] {
+            guard existingCheck.turnKey != turnKey else { return }
+            existingCheck.task.cancel()
+            runningLivenessChecks[threadID] = nil
+        }
+
+        guard confirmedRunningTurnKeys[threadID] != turnKey,
+            staleRunningTurnKeys[threadID] != turnKey,
+            let client = currentClient
+        else { return }
+        let task = Task { [weak self, client] in
+            guard let self else { return }
+            await self.runRunningLivenessCheck(
+                threadID: threadID, turnKey: turnKey, client: client)
+        }
+        runningLivenessChecks[threadID] = RunningLivenessCheck(turnKey: turnKey, task: task)
+    }
+
+    private func runRunningLivenessCheck(threadID: String, turnKey: String, client: T3Client) async {
+        do {
+            let firstCheck = try await client.getThreadLiveness(threadId: threadID)
+            try Task.checkCancellation()
+            if firstCheck.hasActiveTurn {
+                markRunningThreadLive(threadID: threadID, turnKey: turnKey)
+                finishRunningLivenessCheck(threadID: threadID, turnKey: turnKey)
+                return
+            }
+
+            try await Task.sleep(for: Self.runningLivenessConfirmationDelay)
+            let secondCheck = try await client.getThreadLiveness(threadId: threadID)
+            try Task.checkCancellation()
+            if secondCheck.hasActiveTurn {
+                markRunningThreadLive(threadID: threadID, turnKey: turnKey)
+            } else {
+                markRunningThreadStale(threadID: threadID, turnKey: turnKey)
+            }
+        } catch {
+            if !Task.isCancelled {
+                finishRunningLivenessCheck(threadID: threadID, turnKey: turnKey)
+            }
+            return
+        }
+        finishRunningLivenessCheck(threadID: threadID, turnKey: turnKey)
+    }
+
+    private func markRunningThreadStale(threadID: String, turnKey: String) {
+        guard latestRunningLivenessTurnKeys[threadID] == turnKey else { return }
+        confirmedRunningTurnKeys[threadID] = nil
+        guard var thread = threadsByID[threadID], thread.status == .running else { return }
+        staleRunningTurnKeys[threadID] = turnKey
+        thread.status = .error
+        threadsByID[threadID] = thread
+        emit(.threadUpserted(thread))
+    }
+
+    private func markRunningThreadLive(threadID: String, turnKey: String) {
+        guard latestRunningLivenessTurnKeys[threadID] == turnKey else { return }
+        confirmedRunningTurnKeys[threadID] = turnKey
+        let wasStale = staleRunningTurnKeys.removeValue(forKey: threadID) != nil
+        guard wasStale, var thread = threadsByID[threadID], thread.status == .error else {
+            return
+        }
+        thread.status = .running
+        threadsByID[threadID] = thread
+        emit(.threadUpserted(thread))
+    }
+
+    private func finishRunningLivenessCheck(threadID: String, turnKey: String) {
+        guard runningLivenessChecks[threadID]?.turnKey == turnKey else { return }
+        runningLivenessChecks[threadID] = nil
+    }
+
+    private func clearRunningLivenessState(threadID: String) {
+        runningLivenessChecks[threadID]?.task.cancel()
+        runningLivenessChecks[threadID] = nil
+        latestRunningLivenessTurnKeys[threadID] = nil
+        confirmedRunningTurnKeys[threadID] = nil
+        staleRunningTurnKeys[threadID] = nil
+    }
+
+    private func cancelAllRunningLivenessChecks() {
+        for check in runningLivenessChecks.values {
+            check.task.cancel()
+        }
+        runningLivenessChecks.removeAll()
+        latestRunningLivenessTurnKeys.removeAll()
+        confirmedRunningTurnKeys.removeAll()
+        staleRunningTurnKeys.removeAll()
     }
 
     private func cancelAllVcsSubscriptions() {
@@ -1695,10 +1819,14 @@ public actor LiveBackend: BackendService {
         let status = mapStatus(
             session: shell.session, latestTurn: shell.latestTurn, archivedAt: shell.archivedAt,
             hasPendingApprovals: shell.hasPendingApprovals || shell.hasPendingUserInput)
+        let presentedStatus =
+            status == .running
+            && staleRunningTurnKeys[shell.id] == runningLivenessTurnKey(for: shell)
+            ? .error : status
         let updatedAt = WireDate.parse(shell.updatedAt) ?? Date()
         return ChatThread(
             id: shell.id, projectID: shell.projectId, title: shell.title, provider: kind,
-            status: status, updatedAt: updatedAt,
+            status: presentedStatus, updatedAt: updatedAt,
             runtimeMode: Self.uiRuntimeMode(shell.runtimeMode),
             interactionMode: Self.uiInteractionMode(shell.interactionMode),
             modelInstanceID: shell.modelSelection.instanceId, modelID: shell.modelSelection.model,

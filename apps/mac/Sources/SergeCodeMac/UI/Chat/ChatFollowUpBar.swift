@@ -4,6 +4,8 @@ import SwiftUI
 /// Contextual next-step strip between the timeline and the composer. Shows
 /// at most one suggestion:
 /// - the branch's PR merged → offer to archive the finished chat;
+/// - the branch has an open PR → offer to fix actionable review comments,
+///   or plain link to the PR when there is nothing to fix;
 /// - the agent finished a turn with shippable work and no PR yet → offer to
 ///   have it open one.
 struct ChatFollowUpBar: View {
@@ -23,12 +25,29 @@ struct ChatFollowUpBar: View {
         - Follow the repository's PR template and contribution guidelines if present.
         """
 
+    /// The turn the agent is asked to run when the user clicks "Fix Reviews".
+    /// Plain user-message text, so it works identically across providers.
+    private static let fixReviewCommentsPrompt = """
+        Please fix the actionable review comments on this pull request.
+
+        Guidelines:
+        - Use the gh CLI to fetch PR comments and review threads, including human reviewers and bot reviewers such as CodeRabbit.
+        - Start with gh pr view --comments, then use gh api graphql to inspect review threads and their resolved/outdated state.
+        - Ignore comments that are resolved, outdated, purely informational, or nitpick-level unless they block correctness.
+        - Implement the fixes, run the relevant checks, commit, and push to the PR branch.
+        - Reply to each addressed comment with what changed, and resolve the corresponding review threads with gh api graphql where possible.
+        - Summarize any comments you intentionally skipped and why.
+        """
+
     var body: some View {
         Group {
             if let thread = model.selectedThread, thread.status != .archived {
                 let vcs = model.selectedVcsStatus()
                 if let vcs, vcs.prState == .merged {
                     archiveSuggestion(thread: thread, vcs: vcs)
+                        .transition(Motion.bannerDrop)
+                } else if let vcs, shouldOfferReviewFixes(thread: thread, vcs: vcs) {
+                    fixReviewCommentsSuggestion
                         .transition(Motion.bannerDrop)
                 } else if let vcs, vcs.prState == .open, let url = pullRequestURL(vcs) {
                     openPullRequestChip(vcs: vcs, url: url)
@@ -129,10 +148,7 @@ struct ChatFollowUpBar: View {
         let hasShippableWork = vcs.changedFileCount > 0 || vcs.aheadCount > 0
             || (vcs.aheadOfDefaultCount ?? 0) > 0
         guard hasShippableWork else { return false }
-        return model.selectedTimeline().contains {
-            if case .assistantMessage(_, _, let isStreaming, _) = $0 { return !isStreaming }
-            return false
-        }
+        return hasCompletedAssistantMessage
     }
 
     private var createPRSuggestion: some View {
@@ -142,10 +158,54 @@ struct ChatFollowUpBar: View {
                 Task { await model.send(text: Self.createPRPrompt) }
             } label: {
                 Label("Create PR", systemImage: "arrow.triangle.pull")
-                    .font(.callout)
             }
+            .buttonStyle(BrightPillButtonStyle())
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
+    }
+
+    // MARK: - PR open → fix review comments
+
+    private func shouldOfferReviewFixes(thread: ChatThread, vcs: VcsStatus) -> Bool {
+        guard thread.status == .idle, vcs.prNumber != nil, vcs.prState == .open
+        else { return false }
+        return hasCompletedAssistantMessage
+    }
+
+    private var fixReviewCommentsSuggestion: some View {
+        HStack {
+            Spacer()
+            Button {
+                Task { await model.send(text: Self.fixReviewCommentsPrompt) }
+            } label: {
+                Label("Fix Reviews", systemImage: "text.bubble")
+            }
+            .buttonStyle(BrightPillButtonStyle())
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+    }
+
+    private var hasCompletedAssistantMessage: Bool {
+        return model.selectedTimeline().contains {
+            if case .assistantMessage(_, _, let isStreaming, _) = $0 { return !isStreaming }
+            return false
+        }
+    }
+}
+
+private struct BrightPillButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.callout.weight(.medium))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 5)
+            .background {
+                Capsule()
+                    .fill(.white.opacity(configuration.isPressed ? 0.75 : 0.92))
+            }
+            .foregroundStyle(.black)
+            .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
     }
 }

@@ -61,6 +61,28 @@
                 print("UIProbe: no horizontally scrollable diff view found")
             }
 
+            // Queue while the mock thread is running, then force an idle
+            // transition. The first queued message should be removed and sent
+            // through the normal send path; any later queued items would wait
+            // for the next idle transition.
+            let queuedMarker = "Probe queued: send after idle"
+            model.enqueueMessage(text: queuedMarker)
+            try? await Task.sleep(for: .seconds(1))
+            print("UIProbe: queued before idle=\(model.selectedQueuedMessages.count)")
+            snapshot("5-queued-message", dir: dir)
+            await model.cancelCurrentTurn()
+            try? await Task.sleep(for: .seconds(2))
+            let autoSent = model.selectedTimeline().contains {
+                if case .userMessage(_, let text, _) = $0 {
+                    return text.contains(queuedMarker)
+                }
+                return false
+            }
+            print(
+                "UIProbe: queued after idle=\(model.selectedQueuedMessages.count) "
+                    + "autoSent=\(autoSent)")
+            snapshot("6-queued-autosent", dir: dir)
+
             // Message actions: Edit stages text that the composer must pick
             // up as its draft (visible in its NSTextView) and consume.
             let marker = "Probe edit: resend me"
@@ -68,7 +90,7 @@
             try? await Task.sleep(for: .seconds(1))
             let staged = textView(containing: marker) != nil
             print("UIProbe: edit prefill in composer=\(staged) consumed=\(model.composerPrefill == nil)")
-            snapshot("5-composer-prefill", dir: dir)
+            snapshot("7-composer-prefill", dir: dir)
 
             // Retry: resending an existing user message appends a new user
             // row to the timeline (mock backend echoes sends).
@@ -78,7 +100,7 @@
             }
             try? await Task.sleep(for: .seconds(1))
             print("UIProbe: retry user rows before=\(before) after=\(userMessageCount(model))")
-            snapshot("6-after-retry", dir: dir)
+            snapshot("8-after-retry", dir: dir)
 
             // Settings ▸ iPhone: enable the mobile-access preference so the
             // mock backend reports LAN-reachable and the QR pairing card
@@ -93,12 +115,12 @@
                 let previousMobileAccess = MobileAccessPreference.isEnabled
                 MobileAccessPreference.setEnabled(true)
                 await snapshotSettings(
-                    tab: .iphone, name: "7-settings-iphone", model: model, dir: dir)
+                    tab: .iphone, name: "9-settings-iphone", model: model, dir: dir)
                 await snapshotSettings(
-                    tab: .connection, name: "8-settings-connection", model: model, dir: dir)
+                    tab: .connection, name: "10-settings-connection", model: model, dir: dir)
                 MobileAccessPreference.setEnabled(previousMobileAccess)
                 await snapshotSettings(
-                    tab: .dictation, name: "9-settings-dictation", model: model, dir: dir)
+                    tab: .dictation, name: "11-settings-dictation", model: model, dir: dir)
             } else {
                 print("UIProbe: skipping settings snapshots (live backend run)")
             }
