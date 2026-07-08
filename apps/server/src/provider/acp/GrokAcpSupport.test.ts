@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as EffectAcpErrors from "effect-acp/errors";
+import { ProviderInstanceId } from "@t3tools/contracts";
 
 import {
   applyGrokAcpModelSelection,
@@ -10,8 +11,8 @@ import {
 
 describe("resolveGrokAcpBaseModelId", () => {
   it("normalizes empty and custom Grok model ids", () => {
-    expect(resolveGrokAcpBaseModelId(undefined)).toBe("grok-build");
-    expect(resolveGrokAcpBaseModelId("   ")).toBe("grok-build");
+    expect(resolveGrokAcpBaseModelId(undefined)).toBe("grok-4.5");
+    expect(resolveGrokAcpBaseModelId("   ")).toBe("grok-4.5");
     expect(resolveGrokAcpBaseModelId("  grok-test-custom-model  ")).toBe("grok-test-custom-model");
   });
 });
@@ -32,6 +33,21 @@ describe("buildGrokAcpSpawnInput", () => {
         GROK_OAUTH2_REFERRER: "t3code",
       },
     });
+  });
+
+  it("passes selected reasoning effort between the agent subcommand and stdio", () => {
+    const spawn = buildGrokAcpSpawnInput(
+      { binaryPath: "/usr/local/bin/grok" },
+      "/tmp/project",
+      {},
+      {
+        instanceId: ProviderInstanceId.make("grok"),
+        model: "grok-4.5",
+        options: [{ id: "reasoningEffort", value: "low" }],
+      },
+    );
+
+    expect(spawn.args).toEqual(["agent", "--reasoning-effort", "low", "stdio"]);
   });
 });
 
@@ -54,7 +70,7 @@ describe("applyGrokAcpModelSelection", () => {
       const { runtime, modelCalls } = makeRecordingRuntime();
       const result = yield* applyGrokAcpModelSelection({
         runtime,
-        currentModelId: "grok-build",
+        currentModelId: "grok-4.5",
         requestedModelId: "grok-mock-alt",
         mapError: (cause) => cause.message,
       });
@@ -68,12 +84,12 @@ describe("applyGrokAcpModelSelection", () => {
       const { runtime, modelCalls } = makeRecordingRuntime();
       const result = yield* applyGrokAcpModelSelection({
         runtime,
-        currentModelId: "grok-build",
-        requestedModelId: "grok-build",
+        currentModelId: "grok-4.5",
+        requestedModelId: "grok-4.5",
         mapError: (cause) => cause.message,
       });
       expect(modelCalls).toEqual([]);
-      expect(result).toBe("grok-build");
+      expect(result).toBe("grok-4.5");
     }),
   );
 
@@ -82,12 +98,12 @@ describe("applyGrokAcpModelSelection", () => {
       const { runtime, modelCalls } = makeRecordingRuntime();
       const result = yield* applyGrokAcpModelSelection({
         runtime,
-        currentModelId: "grok-build",
+        currentModelId: "grok-4.5",
         requestedModelId: undefined,
         mapError: (cause) => cause.message,
       });
       expect(modelCalls).toEqual([]);
-      expect(result).toBe("grok-build");
+      expect(result).toBe("grok-4.5");
     }),
   );
 
@@ -98,7 +114,7 @@ describe("applyGrokAcpModelSelection", () => {
       const error = yield* Effect.flip(
         applyGrokAcpModelSelection({
           runtime,
-          currentModelId: "grok-build",
+          currentModelId: "grok-4.5",
           requestedModelId: "grok-mock-alt",
           mapError: (cause) => cause.message,
         }),

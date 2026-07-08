@@ -443,6 +443,7 @@ private extension ProviderKind {
         case .claude: "sparkles"
         case .codex: "chevron.left.forwardslash.chevron.right"
         case .cursor: "cursorarrow"
+        case .grok: "bolt"
         case .opencode: "curlybraces"
         }
     }
@@ -452,6 +453,7 @@ private extension ProviderKind {
         case .claude: "claude"
         case .codex: "codex"
         case .cursor: "cursor-agent"
+        case .grok: "grok"
         case .opencode: "opencode"
         }
     }

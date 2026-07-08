@@ -46,11 +46,23 @@ const permissionOptionIds = {
   rejectOnce: process.env.T3_ACP_REJECT_ONCE_OPTION_ID ?? "reject-once",
 };
 const sessionId = "mock-session-1";
+const agentArgs = process.argv.slice(2);
+
+function initialAgentStringFlag(...flagNames: ReadonlyArray<string>): string | undefined {
+  for (let index = 0; index < agentArgs.length; index += 1) {
+    const flag = agentArgs[index];
+    if (!flag || !flagNames.includes(flag)) continue;
+    const value = agentArgs[index + 1]?.trim();
+    return value && value.length > 0 ? value : undefined;
+  }
+  return undefined;
+}
 
 let currentModeId = "ask";
-let currentModelId = "default";
+let currentModelId = initialAgentStringFlag("-m", "--model") ?? "default";
 let parameterizedModelPicker = false;
 let currentReasoning = "medium";
+const currentGrokReasoningEffort = initialAgentStringFlag("--reasoning-effort") ?? "high";
 let currentContext = "272k";
 let currentFast = false;
 let promptCount = 0;
@@ -278,18 +290,53 @@ function modeState(): AcpSchema.SessionModeState {
   };
 }
 
-const grokAcpModels: ReadonlyArray<AcpSchema.ModelInfo> = [
-  { modelId: "grok-build", name: "Grok Build" },
-  { modelId: "grok-mock-alt", name: "Grok Mock Alt" },
-];
+function grokAcpModels(): ReadonlyArray<AcpSchema.ModelInfo> {
+  return [
+    {
+      modelId: "grok-4.5",
+      name: "Grok 4.5",
+      _meta: {
+        totalContextTokens: 500000,
+        supportsReasoningEffort: true,
+        reasoningEffort: currentGrokReasoningEffort,
+        reasoningEfforts: [
+          {
+            id: "high",
+            value: "high",
+            label: "High Effort",
+            description: "Use the most reasoning for complex tasks.",
+            default: true,
+          },
+          {
+            id: "medium",
+            value: "medium",
+            label: "Medium Effort",
+            description: "Balance latency and reasoning depth.",
+            default: false,
+          },
+          {
+            id: "low",
+            value: "low",
+            label: "Low Effort",
+            description: "Minimize reasoning for faster responses.",
+            default: false,
+          },
+        ],
+      },
+    },
+    { modelId: "grok-composer-2.5-fast", name: "Grok Composer 2.5 Fast" },
+    { modelId: "grok-mock-alt", name: "Grok Mock Alt" },
+  ];
+}
 
 function modelState(): AcpSchema.SessionModelState {
-  const modelId = grokAcpModels.some((model) => model.modelId === currentModelId)
+  const models = grokAcpModels();
+  const modelId = models.some((model) => model.modelId === currentModelId)
     ? currentModelId
-    : "grok-build";
+    : "grok-4.5";
   return {
     currentModelId: modelId,
-    availableModels: grokAcpModels,
+    availableModels: models,
   };
 }
 
@@ -382,7 +429,7 @@ const program = Effect.gen(function* () {
 
   yield* agent.handleSetSessionModel((request) =>
     Effect.gen(function* () {
-      if (!grokAcpModels.some((model) => model.modelId === request.modelId)) {
+      if (!grokAcpModels().some((model) => model.modelId === request.modelId)) {
         return yield* AcpError.AcpRequestError.invalidParams(
           `Unknown mock model id: ${request.modelId}`,
           {

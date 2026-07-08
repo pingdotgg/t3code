@@ -64,6 +64,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
         environment,
         childProcessSpawner: commandSpawner,
         cwd,
+        modelSelection,
         clientInfo: { name: "t3-code-git-text", version: "0.0.0" },
       });
 
