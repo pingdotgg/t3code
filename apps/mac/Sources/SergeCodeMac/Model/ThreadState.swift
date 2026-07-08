@@ -1,0 +1,28 @@
+import Foundation
+import Observation
+
+/// Per-thread UI state owned by `AppModel`. Each thread gets its own
+/// `@Observable` instance so a mutation on thread B only invalidates views
+/// that read thread B — not every view that happens to read some thread's
+/// timeline/diff/etc through a shared dictionary on `AppModel`.
+@Observable
+@MainActor
+public final class ThreadState {
+    public internal(set) var timeline: [TimelineItem] = []
+    public internal(set) var contextWindow: ContextWindowStatus?
+    public internal(set) var planProgress: PlanProgress?
+    public internal(set) var vcsStatus: VcsStatus?
+    public internal(set) var diff: [DiffFile]?
+    public internal(set) var checkpoints: [Checkpoint]?
+
+    /// Monotonic version bumped on every timeline write. Grouped-display
+    /// memo caches key on this so body re-evals without a timeline mutation
+    /// reuse prior work. Ignored by Observation — readers go through
+    /// `AppModel.timelineVersion(threadID:)`.
+    @ObservationIgnored var timelineVersion = 0
+    /// True once a timeline has been loaded or written via events. Mirrors
+    /// the old "key exists in `timelines`" gate for `loadTimelineIfNeeded`.
+    @ObservationIgnored var hasLoadedTimeline = false
+
+    public init() {}
+}

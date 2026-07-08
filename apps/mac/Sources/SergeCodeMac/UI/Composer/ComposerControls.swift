@@ -13,13 +13,13 @@ struct ComposerControlsRow: View {
             RuntimeModeMenu(thread: thread, model: model)
             PlanModeToggle(thread: thread, model: model)
             Spacer()
-            if let status = model.contextWindows[thread.id] {
+            if let status = model.threadState(thread.id)?.contextWindow {
                 ContextMeterView(status: status)
                     .transition(Motion.materialize)
             }
         }
         .padding(.horizontal, 4)
-        .animation(Motion.ambient, value: model.contextWindows[thread.id] == nil)
+        .animation(Motion.ambient, value: model.threadState(thread.id)?.contextWindow == nil)
     }
 }
 

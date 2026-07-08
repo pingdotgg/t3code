@@ -123,7 +123,7 @@ struct PlanProgressView: View {
     let threadID: String
 
     var body: some View {
-        if let progress = model.planProgress[threadID], !progress.steps.isEmpty {
+        if let progress = model.threadState(threadID)?.planProgress, !progress.steps.isEmpty {
             List {
                 if let explanation = progress.explanation, !explanation.isEmpty {
                     Text(explanation)

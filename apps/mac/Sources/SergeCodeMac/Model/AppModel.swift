@@ -7,20 +7,18 @@ public final class AppModel {
     public private(set) var connection: ConnectionPhase = .launchingServer
     public private(set) var projects: [Project] = []
     public private(set) var threads: [ChatThread] = []
-    public private(set) var timelines: [String: [TimelineItem]] = [:]
     public private(set) var providers: [ProviderInstance] = []
-    public private(set) var diffs: [String: [DiffFile]] = [:]
-    public private(set) var checkpoints: [String: [Checkpoint]] = [:]
     public private(set) var models: [ModelOption] = []
-    public private(set) var contextWindows: [String: ContextWindowStatus] = [:]
-    public private(set) var planProgress: [String: PlanProgress] = [:]
-    /// Keyed by threadID (a worktree thread's status is its worktree's).
-    public private(set) var vcsStatuses: [String: VcsStatus] = [:]
     /// Outcome of the most recent git action, shown as a transient banner.
     public var lastGitActionOutcome: GitActionOutcome?
 
     public var selectedThreadID: String?
     public var lastError: String?
+
+    /// Per-thread `@Observable` children. The dictionary itself only mutates
+    /// on first-touch create and `threadRemoved` — rare — so streaming a
+    /// token on thread B never dirties views bound to thread A's child.
+    private var threadStates: [String: ThreadState] = [:]
 
     private let backend: any BackendService
     private var eventTask: Task<Void, Never>?
@@ -28,11 +26,10 @@ public final class AppModel {
     // MARK: - Event intake buffers
     //
     // Streaming backends emit one event per wire chunk. Applying each one
-    // individually made every token of every thread a separate @Observable
-    // mutation — and, because `timelines` and friends are single stored
-    // properties, a separate invalidation of every view reading them. Events
-    // are buffered and applied as one transaction per ~33ms tick instead:
-    // one property write per touched thread per flush.
+    // individually made every token a separate @Observable mutation on the
+    // touched thread's `ThreadState`. Events are buffered and applied as one
+    // transaction per ~33ms tick instead: one property write per touched
+    // thread per flush.
 
     /// Bounds pending-buffer growth under bursts: past this, flush now.
     static let maxPendingEvents = 256
@@ -47,10 +44,6 @@ public final class AppModel {
     /// Approval/user-input request id → threadID, so resolving one is a
     /// keyed removal instead of a scan across every thread's timeline.
     @ObservationIgnored private var interactionThreadByID: [String: String] = [:]
-    /// Monotonic version per thread timeline write. Views that derive from
-    /// `timelines[threadID]` (e.g. grouped display) key memo caches on this
-    /// so body re-evals without a timeline mutation reuse prior work.
-    @ObservationIgnored private var timelineVersions: [String: Int] = [:]
     /// Fresh `updatedAt` when a threadUpserted differs only by timestamp —
     /// the sidebar array is left alone so rows don't jump, but new-thread
     /// insertion still sorts against the real latest activity time.
@@ -60,9 +53,25 @@ public final class AppModel {
         self.backend = backend
     }
 
+    /// Lookup only — does not create a `ThreadState`.
+    public func threadState(_ threadID: String) -> ThreadState? {
+        threadStates[threadID]
+    }
+
+    /// Get-or-create. Inserting a new entry is the only write to
+    /// `threadStates` outside of `threadRemoved`.
+    private func state(creating threadID: String) -> ThreadState {
+        if let existing = threadStates[threadID] {
+            return existing
+        }
+        let created = ThreadState()
+        threadStates[threadID] = created
+        return created
+    }
+
     /// Version of the stored timeline for `threadID` (0 if never written).
     public func timelineVersion(threadID: String) -> Int {
-        timelineVersions[threadID] ?? 0
+        threadStates[threadID]?.timelineVersion ?? 0
     }
 
     public var selectedThread: ChatThread? {
@@ -70,7 +79,7 @@ public final class AppModel {
     }
 
     public func selectedTimeline() -> [TimelineItem] {
-        selectedThreadID.flatMap { timelines[$0] } ?? []
+        selectedThreadID.flatMap { threadStates[$0]?.timeline } ?? []
     }
 
     // MARK: - Lifecycle
@@ -132,13 +141,14 @@ public final class AppModel {
 
     /// Applies a batch in arrival order, but stages timeline mutations in a
     /// scratch dictionary so each touched thread gets exactly one
-    /// `timelines[threadID] = …` write per flush (one observation
-    /// invalidation), no matter how many events landed for it.
+    /// `ThreadState.timeline = …` write per flush (one observation
+    /// invalidation on that child only), no matter how many events landed
+    /// for it.
     private func applyBatch(_ events: [BackendEvent]) {
         var touched: [String: [TimelineItem]] = [:]
 
         func currentItems(_ threadID: String) -> [TimelineItem] {
-            touched[threadID] ?? timelines[threadID] ?? []
+            touched[threadID] ?? threadStates[threadID]?.timeline ?? []
         }
 
         // A run of deltas for the same message collapses to one string
@@ -174,7 +184,7 @@ public final class AppModel {
             }
             // Fallback for items that predate the map (e.g. from a snapshot
             // loaded via loadTimelineIfNeeded rather than an event).
-            for threadID in Set(timelines.keys).union(touched.keys) {
+            for threadID in Set(threadStates.keys).union(touched.keys) {
                 if removeItem(threadID: threadID) {
                     return
                 }
@@ -222,8 +232,10 @@ public final class AppModel {
         flushPendingDelta()
 
         for (threadID, items) in touched {
-            timelines[threadID] = items
-            timelineVersions[threadID, default: 0] += 1
+            let state = self.state(creating: threadID)
+            state.timeline = items
+            state.timelineVersion += 1
+            state.hasLoadedTimeline = true
         }
     }
 
@@ -265,7 +277,7 @@ public final class AppModel {
             }
         case .threadRemoved(let id):
             threads.removeAll { $0.id == id }
-            vcsStatuses[id] = nil
+            threadStates[id] = nil
             effectiveUpdatedAt[id] = nil
             if selectedThreadID == id { selectedThreadID = nil }
         case .approvalRequested, .userInputRequested:
@@ -282,11 +294,11 @@ public final class AppModel {
             providers = list
             Task { await refreshModels() }
         case .contextWindowUpdated(let threadID, let status):
-            contextWindows[threadID] = status
+            state(creating: threadID).contextWindow = status
         case .planProgressUpdated(let threadID, let progress):
-            planProgress[threadID] = progress
+            state(creating: threadID).planProgress = progress
         case .vcsStatusChanged(let threadID, let status):
-            vcsStatuses[threadID] = status
+            state(creating: threadID).vcsStatus = status
         case .timelineAppended, .timelineReset, .assistantDelta, .assistantCompleted,
             .approvalResolved, .userInputResolved:
             // Timeline events are staged by applyBatch; never reach here.
@@ -381,10 +393,12 @@ public final class AppModel {
     }
 
     public func loadTimelineIfNeeded(threadID: String) async {
-        guard timelines[threadID] == nil else { return }
+        let state = self.state(creating: threadID)
+        guard !state.hasLoadedTimeline else { return }
         do {
-            timelines[threadID] = try await backend.timeline(threadID: threadID)
-            timelineVersions[threadID, default: 0] += 1
+            state.timeline = try await backend.timeline(threadID: threadID)
+            state.timelineVersion += 1
+            state.hasLoadedTimeline = true
         } catch {
             lastError = String(describing: error)
         }
@@ -392,7 +406,7 @@ public final class AppModel {
 
     public func refreshDiff(threadID: String) async {
         do {
-            diffs[threadID] = try await backend.diff(threadID: threadID)
+            state(creating: threadID).diff = try await backend.diff(threadID: threadID)
         } catch {
             lastError = String(describing: error)
         }
@@ -400,7 +414,7 @@ public final class AppModel {
 
     public func refreshCheckpoints(threadID: String) async {
         do {
-            checkpoints[threadID] = try await backend.checkpoints(threadID: threadID)
+            state(creating: threadID).checkpoints = try await backend.checkpoints(threadID: threadID)
         } catch {
             lastError = String(describing: error)
         }
@@ -645,8 +659,7 @@ public final class AppModel {
     // MARK: - Git / VCS
 
     public func selectedVcsStatus() -> VcsStatus? {
-        guard let threadID = selectedThreadID else { return nil }
-        return vcsStatuses[threadID]
+        selectedThreadID.flatMap { threadStates[$0]?.vcsStatus }
     }
 
     public func watchVcsStatus() async {
