@@ -131,6 +131,29 @@ describe("consumeCloudReplayGuards", () => {
       expect(removed).toEqual(["cloud-health-jti-invalid"]);
     }),
   );
+
+  it.effect("rolls back partially claimed guards when another guard is already consumed", () =>
+    Effect.gen(function* () {
+      const removed: string[] = [];
+      const consumed = yield* consumeCloudReplayGuards({
+        secrets: makeSecretStore(
+          (name) =>
+            name === "cloud-jti" ? Effect.void : Effect.fail(storeFailure("AlreadyExists")),
+          {
+            remove: (name) =>
+              Effect.sync(() => {
+                removed.push(name);
+              }),
+          },
+        ),
+        names: ["cloud-jti", "cloud-nonce"],
+        value: new Uint8Array(),
+      });
+
+      expect(consumed).toBe(false);
+      expect(removed).toEqual(["cloud-jti"]);
+    }),
+  );
 });
 
 describe("relay request tracing", () => {

@@ -168,10 +168,10 @@ export function consumeCloudReplayGuards(input: {
       Effect.all(
         input.names.map((name) =>
           input.secrets.create(name, input.value).pipe(
-            Effect.as(true),
+            Effect.as({ name, created: true }),
             Effect.catchIf(ServerSecretStore.isSecretStoreError, (error) =>
               ServerSecretStore.isSecretAlreadyExistsError(error)
-                ? Effect.succeed(false)
+                ? Effect.succeed({ name, created: false })
                 : Effect.fail(error),
             ),
           ),
@@ -179,7 +179,20 @@ export function consumeCloudReplayGuards(input: {
         { concurrency: input.names.length },
       ),
     ),
-    Effect.map((created) => created.every(Boolean)),
+    Effect.flatMap((results) => {
+      if (results.every((result) => result.created)) {
+        return Effect.succeed(true);
+      }
+      // Partial claim: this request is treated as replayed. Roll back the guards we created so a
+      // concurrent split (two identical requests each winning a different guard name) does not
+      // permanently block the legitimate owner and does not leave orphaned guard files behind
+      // until TTL cleanup. Rollback failures are ignored; the TTL sweep will reclaim them.
+      const createdNames = results.filter((result) => result.created).map((result) => result.name);
+      return Effect.forEach(createdNames, (name) => Effect.ignore(input.secrets.remove(name)), {
+        concurrency: "unbounded",
+        discard: true,
+      }).pipe(Effect.as(false));
+    }),
   );
 }
 
@@ -478,18 +491,12 @@ const applyCloudRelayConfig = Effect.fn("environment.cloud.applyRelayConfig")(fu
     cloudUserId: payload.cloudUserId,
   });
   yield* validateCloudMintPublicKey(payload.cloudMintPublicKey);
-  const endpointRuntimeStatus = yield* dependencies.endpointRuntime.applyConfig(
-    payload.endpointRuntime,
-  );
-  const ok =
-    endpointRuntimeStatus.status === "disabled" || endpointRuntimeStatus.status === "running";
-  if (!ok) {
-    return yield* new EnvironmentCloudEndpointUnavailableError({
-      message: "Managed endpoint runtime could not be started.",
-      endpointRuntimeStatus,
-    });
-  }
 
+  // Persist relay credentials and endpoint runtime config before (re)starting the managed
+  // endpoint runtime. Starting the tunnel first risks leaving it running with a new connector
+  // token that was never durably persisted if a later secret write fails. With persistence
+  // first, the stored config is the source of truth and startup reconciliation converges the
+  // runtime to it on the next restart.
   yield* dependencies.secrets.set(RELAY_URL_SECRET, stringToBytes(payload.relayUrl));
   yield* dependencies.secrets.set(
     RELAY_ISSUER_SECRET,
@@ -510,6 +517,19 @@ const applyCloudRelayConfig = Effect.fn("environment.cloud.applyRelayConfig")(fu
   } else {
     yield* dependencies.secrets.remove(CLOUD_ENDPOINT_RUNTIME_CONFIG);
   }
+
+  const endpointRuntimeStatus = yield* dependencies.endpointRuntime.applyConfig(
+    payload.endpointRuntime,
+  );
+  const ok =
+    endpointRuntimeStatus.status === "disabled" || endpointRuntimeStatus.status === "running";
+  if (!ok) {
+    return yield* new EnvironmentCloudEndpointUnavailableError({
+      message: "Managed endpoint runtime could not be started.",
+      endpointRuntimeStatus,
+    });
+  }
+
   return { ok, endpointRuntimeStatus } satisfies EnvironmentCloudRelayConfigResult;
 });
 
