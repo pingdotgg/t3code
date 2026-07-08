@@ -10,6 +10,7 @@ import yamlLanguage from "@shikijs/langs/yaml";
 import githubDarkDefault from "@shikijs/themes/github-dark-default";
 import githubLightDefault from "@shikijs/themes/github-light-default";
 import { getFiletypeFromFileName } from "@pierre/diffs/utils/getFiletypeFromFileName";
+import * as Schema from "effect/Schema";
 
 import {
   resolveReviewHighlighterEngine,
@@ -21,6 +22,19 @@ import { applyDiffRangesToTokens, computeWordAltDiffRanges } from "./reviewWordD
 
 export type ReviewDiffTheme = "light" | "dark";
 export type { ReviewHighlighterEngine };
+
+export class ReviewHighlighterEngineInitializationError extends Schema.TaggedErrorClass<ReviewHighlighterEngineInitializationError>()(
+  "ReviewHighlighterEngineInitializationError",
+  {
+    preferredEngine: Schema.Literals(["native", "javascript"]),
+    attemptedEngine: Schema.Literals(["native", "javascript"]),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to initialize the ${this.attemptedEngine} review highlighter with ${this.preferredEngine} preferred.`;
+  }
+}
 
 export interface ReviewHighlightedToken {
   content: string;
@@ -227,16 +241,6 @@ function logReviewHighlighterDiagnosticError(message: string, error: unknown): v
   if (!isReviewHighlighterDebugLoggingEnabled()) {
     return;
   }
-
-  if (error instanceof Error) {
-    console.error(`[review-highlighter] ${message}`, {
-      name: error.name,
-      message: error.message,
-      stack: error.stack,
-    });
-    return;
-  }
-
   console.error(`[review-highlighter] ${message}`, error);
 }
 
@@ -258,6 +262,7 @@ async function getHighlighter(): Promise<HighlighterCore> {
   if (!highlighterPromise) {
     const configuredHighlighterPromise = (async () => {
       let nativeEngineAvailable = false;
+      let nativeInitializationError: ReviewHighlighterEngineInitializationError | undefined;
 
       logReviewHighlighterDiagnostic("initializing", {
         configuredPreference: REVIEW_HIGHLIGHTER_ENGINE_ENV_VALUE,
@@ -289,9 +294,14 @@ async function getHighlighter(): Promise<HighlighterCore> {
             };
           }
         } catch (error) {
+          nativeInitializationError = new ReviewHighlighterEngineInitializationError({
+            preferredEngine: REVIEW_HIGHLIGHTER_ENGINE_PREFERENCE,
+            attemptedEngine: "native",
+            cause: error,
+          });
           logReviewHighlighterDiagnosticError(
             "native engine initialization failed; falling back to javascript",
-            error,
+            nativeInitializationError,
           );
           nativeEngineAvailable = false;
         }
@@ -305,11 +315,30 @@ async function getHighlighter(): Promise<HighlighterCore> {
         REVIEW_HIGHLIGHTER_ENGINE_PREFERENCE,
         nativeEngineAvailable,
       );
-      const highlighter = await createHighlighterCore({
-        themes,
-        langs: REVIEW_INITIAL_LANGUAGE_MODULES,
-        engine: createJavaScriptRegexEngine(),
-      });
+      let highlighter: HighlighterCore;
+      try {
+        highlighter = await createHighlighterCore({
+          themes,
+          langs: REVIEW_INITIAL_LANGUAGE_MODULES,
+          engine: createJavaScriptRegexEngine(),
+        });
+      } catch (cause) {
+        const javascriptError = new ReviewHighlighterEngineInitializationError({
+          preferredEngine: REVIEW_HIGHLIGHTER_ENGINE_PREFERENCE,
+          attemptedEngine: "javascript",
+          cause,
+        });
+        if (!nativeInitializationError) throw javascriptError;
+        throw new ReviewHighlighterEngineInitializationError({
+          preferredEngine: REVIEW_HIGHLIGHTER_ENGINE_PREFERENCE,
+          attemptedEngine: "javascript",
+          cause: new AggregateError(
+            [nativeInitializationError, javascriptError],
+            "Native and JavaScript review highlighter initialization failed.",
+            { cause: nativeInitializationError },
+          ),
+        });
+      }
       logReviewHighlighterDiagnostic("using javascript engine", {
         resolvedEngine: engine,
       });
@@ -683,6 +712,25 @@ async function highlightLines(
   await flushShortLineBatch();
 
   return highlightedLines;
+}
+
+export async function highlightCodeSnippet(input: {
+  readonly code: string;
+  readonly language?: string | null;
+  readonly theme: ReviewDiffTheme;
+}): Promise<ReadonlyArray<ReadonlyArray<ReviewHighlightedToken>>> {
+  const languageHint = input.language?.trim() || "text";
+  const language = await resolveLanguageFromPath(`snippet.${languageHint}`, languageHint);
+  return highlightLines(input.code, language, SHIKI_THEME_NAME_BY_SCHEME[input.theme]);
+}
+
+export async function highlightSourceFile(input: {
+  readonly path: string;
+  readonly contents: string;
+  readonly theme: ReviewDiffTheme;
+}): Promise<ReadonlyArray<ReadonlyArray<ReviewHighlightedToken>>> {
+  const language = await resolveLanguageFromPath(input.path);
+  return highlightLines(input.contents, language, SHIKI_THEME_NAME_BY_SCHEME[input.theme]);
 }
 
 async function highlightPatchLinesInChunks(input: {

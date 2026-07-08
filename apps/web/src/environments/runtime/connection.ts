@@ -57,6 +57,7 @@ function createBootstrapGate() {
       reject = null;
     },
     reject: (error: unknown) => {
+      void promise.catch(() => undefined);
       reject?.(error);
       resolve = null;
       reject = null;
@@ -82,14 +83,46 @@ export function createEnvironmentConnection(
   }
 
   let disposed = false;
+  let clientDisposed = false;
+  let fatalError: Error | null = null;
   const bootstrapGate = createBootstrapGate();
+  const unsubscribers: Array<() => void> = [];
 
-  const observeEnvironmentIdentity = (nextEnvironmentId: EnvironmentId, source: string) => {
-    if (environmentId !== nextEnvironmentId) {
-      throw new Error(
-        `Environment connection ${environmentId} changed identity to ${nextEnvironmentId} via ${source}.`,
-      );
+  const cleanup = () => {
+    if (disposed) {
+      return;
     }
+    disposed = true;
+    for (const unsubscribe of unsubscribers.toReversed()) {
+      unsubscribe();
+    }
+    unsubscribers.length = 0;
+  };
+
+  const failConnection = (error: Error) => {
+    if (disposed) {
+      return;
+    }
+    fatalError = error;
+    bootstrapGate.reject(error);
+    cleanup();
+    clientDisposed = true;
+    void input.client.dispose();
+  };
+
+  const observeEnvironmentIdentity = (
+    nextEnvironmentId: EnvironmentId,
+    source: string,
+  ): boolean => {
+    if (environmentId !== nextEnvironmentId) {
+      failConnection(
+        new Error(
+          `Environment connection ${environmentId} changed identity to ${nextEnvironmentId} via ${source}.`,
+        ),
+      );
+      return false;
+    }
+    return true;
   };
 
   const unsubLifecycle = input.client.server.subscribeLifecycle(
@@ -97,23 +130,36 @@ export function createEnvironmentConnection(
       if (event.type !== "welcome") {
         return;
       }
-      observeEnvironmentIdentity(
-        event.payload.environment.environmentId,
-        "server lifecycle welcome",
-      );
+      if (
+        !observeEnvironmentIdentity(
+          event.payload.environment.environmentId,
+          "server lifecycle welcome",
+        )
+      ) {
+        return;
+      }
       input.onWelcome?.(event.payload);
     },
   );
+  unsubscribers.push(unsubLifecycle);
 
   const unsubConfig = input.client.server.subscribeConfig(
     (event: Parameters<Parameters<WsRpcClient["server"]["subscribeConfig"]>[0]>[0]) => {
       if (event.type !== "snapshot") {
         return;
       }
-      observeEnvironmentIdentity(event.config.environment.environmentId, "server config snapshot");
+      if (
+        !observeEnvironmentIdentity(
+          event.config.environment.environmentId,
+          "server config snapshot",
+        )
+      ) {
+        return;
+      }
       input.onConfigSnapshot?.(event.config);
     },
   );
+  unsubscribers.push(unsubConfig);
 
   const unsubShell = input.client.orchestration.subscribeShell(
     (item: Parameters<Parameters<WsRpcClient["orchestration"]["subscribeShell"]>[0]>[0]) => {
@@ -133,28 +179,25 @@ export function createEnvironmentConnection(
       },
     },
   );
+  unsubscribers.push(unsubShell);
 
   const unsubTerminalEvent = input.client.terminal.onEvent(
     (event: Parameters<Parameters<WsRpcClient["terminal"]["onEvent"]>[0]>[0]) => {
       input.applyTerminalEvent(event, environmentId);
     },
   );
-
-  const cleanup = () => {
-    disposed = true;
-    unsubShell();
-    unsubTerminalEvent();
-    unsubLifecycle();
-    unsubConfig();
-  };
+  unsubscribers.push(unsubTerminalEvent);
 
   return {
     kind: input.kind,
     environmentId,
     knownEnvironment: input.knownEnvironment,
     client: input.client,
-    ensureBootstrapped: () => bootstrapGate.wait(),
+    ensureBootstrapped: () => (fatalError ? Promise.reject(fatalError) : bootstrapGate.wait()),
     reconnect: async () => {
+      if (fatalError) {
+        throw fatalError;
+      }
       bootstrapGate.reset();
       try {
         await input.client.reconnect();
@@ -167,7 +210,10 @@ export function createEnvironmentConnection(
     },
     dispose: async () => {
       cleanup();
-      await input.client.dispose();
+      if (!clientDisposed) {
+        clientDisposed = true;
+        await input.client.dispose();
+      }
     },
   };
 }

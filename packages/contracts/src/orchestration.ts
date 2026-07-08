@@ -327,10 +327,12 @@ export const OrchestrationCheckpointSummary = Schema.Struct({
   checkpointRef: CheckpointRef,
   status: OrchestrationCheckpointStatus,
   files: OrchestrationCheckpointFiles,
-  agentTouchedPaths: OrchestrationAgentTouchedPaths.pipe(
+  agentTouchedPaths: Schema.optionalKey(OrchestrationAgentTouchedPaths).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
-  turnFiles: OrchestrationCheckpointFiles.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  turnFiles: Schema.optionalKey(OrchestrationCheckpointFiles).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   assistantMessageId: Schema.NullOr(MessageId),
   completedAt: IsoDateTime,
 });
@@ -382,7 +384,7 @@ export const OrchestrationThread = Schema.Struct({
   title: TrimmedNonEmptyString,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
-  pendingRuntimeMode: Schema.NullOr(RuntimeMode).pipe(
+  pendingRuntimeMode: Schema.optionalKey(Schema.NullOr(RuntimeMode)).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   interactionMode: ProviderInteractionMode.pipe(
@@ -433,7 +435,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   title: TrimmedNonEmptyString,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
-  pendingRuntimeMode: Schema.NullOr(RuntimeMode).pipe(
+  pendingRuntimeMode: Schema.optionalKey(Schema.NullOr(RuntimeMode)).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   interactionMode: ProviderInteractionMode.pipe(
@@ -877,10 +879,12 @@ const ThreadTurnDiffCompleteCommand = Schema.Struct({
   checkpointRef: CheckpointRef,
   status: OrchestrationCheckpointStatus,
   files: OrchestrationCheckpointFiles,
-  agentTouchedPaths: OrchestrationAgentTouchedPaths.pipe(
+  agentTouchedPaths: Schema.optionalKey(OrchestrationAgentTouchedPaths).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
-  turnFiles: OrchestrationCheckpointFiles.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  turnFiles: Schema.optionalKey(OrchestrationCheckpointFiles).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   assistantMessageId: Schema.optional(MessageId),
   checkpointTurnCount: NonNegativeInt,
   createdAt: IsoDateTime,
@@ -991,7 +995,7 @@ export const ThreadCreatedPayload = Schema.Struct({
   title: TrimmedNonEmptyString,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
-  pendingRuntimeMode: Schema.NullOr(RuntimeMode).pipe(
+  pendingRuntimeMode: Schema.optionalKey(Schema.NullOr(RuntimeMode)).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   interactionMode: ProviderInteractionMode.pipe(
@@ -1167,10 +1171,12 @@ export const ThreadTurnDiffCompletedPayload = Schema.Struct({
   checkpointRef: CheckpointRef,
   status: OrchestrationCheckpointStatus,
   files: OrchestrationCheckpointFiles,
-  agentTouchedPaths: OrchestrationAgentTouchedPaths.pipe(
+  agentTouchedPaths: Schema.optionalKey(OrchestrationAgentTouchedPaths).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
-  turnFiles: OrchestrationCheckpointFiles.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  turnFiles: Schema.optionalKey(OrchestrationCheckpointFiles).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   assistantMessageId: Schema.NullOr(MessageId),
   completedAt: IsoDateTime,
 });
@@ -1548,10 +1554,12 @@ const ProjectionCheckpointRow = Schema.Struct({
   checkpointRef: CheckpointRef,
   status: OrchestrationCheckpointStatus,
   files: OrchestrationCheckpointFiles,
-  agentTouchedPaths: OrchestrationAgentTouchedPaths.pipe(
+  agentTouchedPaths: Schema.optionalKey(OrchestrationAgentTouchedPaths).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
-  turnFiles: OrchestrationCheckpointFiles.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  turnFiles: Schema.optionalKey(OrchestrationCheckpointFiles).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   assistantMessageId: Schema.NullOr(MessageId),
   completedAt: IsoDateTime,
 });
@@ -1571,7 +1579,9 @@ export type DispatchResult = typeof DispatchResult.Type;
 export const OrchestrationGetTurnDiffInput = TurnCountRange.mapFields(
   Struct.assign({
     threadId: ThreadId,
-    scope: TurnDiffScope.pipe(Schema.withDecodingDefault(Effect.succeed("snapshot" as const))),
+    scope: Schema.optionalKey(TurnDiffScope).pipe(
+      Schema.withDecodingDefault(Effect.succeed("snapshot" as const)),
+    ),
     ignoreWhitespace: Schema.optionalKey(Schema.Boolean),
   }),
   { unsafePreserveChecks: true },
@@ -1669,7 +1679,7 @@ export class OrchestrationGetSnapshotError extends Schema.TaggedErrorClass<Orche
   "OrchestrationGetSnapshotError",
   {
     message: TrimmedNonEmptyString,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Unknown),
   },
 ) {}
 
@@ -1677,7 +1687,7 @@ export class OrchestrationDispatchCommandError extends Schema.TaggedErrorClass<O
   "OrchestrationDispatchCommandError",
   {
     message: TrimmedNonEmptyString,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Unknown),
   },
 ) {}
 
@@ -1685,7 +1695,7 @@ export class OrchestrationGetTurnDiffError extends Schema.TaggedErrorClass<Orche
   "OrchestrationGetTurnDiffError",
   {
     message: TrimmedNonEmptyString,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Unknown),
   },
 ) {}
 
@@ -1693,7 +1703,7 @@ export class OrchestrationGetFullThreadDiffError extends Schema.TaggedErrorClass
   "OrchestrationGetFullThreadDiffError",
   {
     message: TrimmedNonEmptyString,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Unknown),
   },
 ) {}
 
@@ -1701,7 +1711,7 @@ export class OrchestrationGetTurnDiffStateError extends Schema.TaggedErrorClass<
   "OrchestrationGetTurnDiffStateError",
   {
     message: TrimmedNonEmptyString,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Unknown),
   },
 ) {}
 
@@ -1709,7 +1719,7 @@ export class OrchestrationGetFullThreadDiffStateError extends Schema.TaggedError
   "OrchestrationGetFullThreadDiffStateError",
   {
     message: TrimmedNonEmptyString,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Unknown),
   },
 ) {}
 
@@ -1717,6 +1727,6 @@ export class OrchestrationReplayEventsError extends Schema.TaggedErrorClass<Orch
   "OrchestrationReplayEventsError",
   {
     message: TrimmedNonEmptyString,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Unknown),
   },
 ) {}

@@ -1,14 +1,8 @@
 import { EnvironmentId } from "@t3tools/contracts";
-import {
-  bootstrapRemoteBearerSession,
-  fetchRemoteEnvironmentDescriptor,
-} from "@t3tools/client-runtime";
-import { resolveRemotePairingTarget, stripPairingTokenFromUrl } from "@t3tools/shared/remote";
-import { mobileRemoteHttpRuntime } from "./runtime";
+import { stripPairingTokenFromUrl } from "@t3tools/shared/remote";
+import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 
-export interface RemoteConnectionInput {
-  readonly pairingUrl: string;
-}
+export { authClientMetadata } from "./authClientMetadata";
 
 export interface SavedRemoteConnection {
   readonly environmentId: EnvironmentId;
@@ -17,15 +11,13 @@ export interface SavedRemoteConnection {
   readonly displayUrl: string;
   readonly httpBaseUrl: string;
   readonly wsBaseUrl: string;
-  readonly bearerToken: string;
+  readonly bearerToken: string | null;
+  readonly authenticationMethod?: "bearer" | "dpop";
+  readonly dpopAccessToken?: string;
+  readonly relayManaged?: true;
 }
 
-export type RemoteClientConnectionState =
-  | "idle"
-  | "connecting"
-  | "ready"
-  | "reconnecting"
-  | "disconnected";
+export type RemoteClientConnectionState = EnvironmentConnectionPhase;
 
 export function redactPairingCredential(pairingUrl: string): string {
   const trimmed = pairingUrl.trim();
@@ -36,33 +28,19 @@ export function redactPairingCredential(pairingUrl: string): string {
   }
 }
 
-export async function bootstrapRemoteConnection(
-  input: RemoteConnectionInput,
-): Promise<SavedRemoteConnection> {
-  const target = resolveRemotePairingTarget({
-    pairingUrl: input.pairingUrl,
-  });
+export function isRelayManagedConnection(
+  connection: Pick<SavedRemoteConnection, "authenticationMethod" | "relayManaged">,
+): boolean {
+  return connection.relayManaged === true || connection.authenticationMethod === "dpop";
+}
 
-  const descriptor = await mobileRemoteHttpRuntime.runPromise(
-    fetchRemoteEnvironmentDescriptor({
-      httpBaseUrl: target.httpBaseUrl,
-    }),
-  );
+export function toStableSavedRemoteConnection(
+  connection: SavedRemoteConnection,
+): SavedRemoteConnection {
+  if (!isRelayManagedConnection(connection) || !connection.dpopAccessToken) {
+    return connection;
+  }
 
-  const bootstrap = await mobileRemoteHttpRuntime.runPromise(
-    bootstrapRemoteBearerSession({
-      httpBaseUrl: target.httpBaseUrl,
-      credential: target.credential,
-    }),
-  );
-
-  return {
-    environmentId: descriptor.environmentId,
-    environmentLabel: descriptor.label,
-    pairingUrl: redactPairingCredential(input.pairingUrl),
-    displayUrl: target.httpBaseUrl,
-    httpBaseUrl: target.httpBaseUrl,
-    wsBaseUrl: target.wsBaseUrl,
-    bearerToken: bootstrap.sessionToken,
-  };
+  const { dpopAccessToken: _, ...stableConnection } = connection;
+  return stableConnection;
 }

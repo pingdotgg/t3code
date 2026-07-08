@@ -69,6 +69,7 @@ const rpcClientMock = {
   },
   shell: {
     openInEditor: vi.fn(),
+    revealInFileManager: vi.fn(),
   },
   git: {
     pull: vi.fn(),
@@ -85,6 +86,11 @@ const rpcClientMock = {
     init: vi.fn(),
     resolvePullRequest: vi.fn(),
     preparePullRequestThread: vi.fn(),
+    resolveReviewChangesContext: vi.fn(),
+  },
+  workflow: {
+    run: vi.fn(),
+    listRuns: vi.fn(),
   },
   server: {
     getConfig: vi.fn(),

@@ -11,7 +11,7 @@ export class CheckpointUnavailableError extends Schema.TaggedErrorClass<Checkpoi
     threadId: Schema.String,
     turnCount: Schema.Number,
     detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Unknown),
   },
 ) {
   override get message(): string {
@@ -27,7 +27,7 @@ export class CheckpointInvariantError extends Schema.TaggedErrorClass<Checkpoint
   {
     operation: Schema.String,
     detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Unknown),
   },
 ) {
   override get message(): string {

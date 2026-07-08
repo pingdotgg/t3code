@@ -19,7 +19,7 @@ const TerminalEnvSchema = Schema.Record(TerminalEnvKeySchema, TerminalEnvValueSc
   Schema.isMaxProperties(128),
 );
 
-const TerminalIdWithDefaultSchema = TerminalIdSchema.pipe(
+const TerminalIdWithDefaultSchema = Schema.optionalKey(TerminalIdSchema).pipe(
   Schema.withDecodingDefault(Effect.succeed(DEFAULT_TERMINAL_ID)),
 );
 
@@ -28,6 +28,7 @@ export const TerminalThreadInput = Schema.Struct({
 });
 export type TerminalThreadInput = typeof TerminalThreadInput.Type;
 
+/** Terminal ids are client-selected and sent explicitly so clients can resume stable sessions. */
 const TerminalSessionInput = Schema.Struct({
   ...TerminalThreadInput.fields,
   terminalId: TerminalIdWithDefaultSchema,
@@ -240,7 +241,7 @@ export class TerminalCwdError extends Schema.TaggedErrorClass<TerminalCwdError>(
   {
     cwd: Schema.String,
     reason: Schema.Literals(["notFound", "notDirectory", "statFailed"]),
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Unknown),
   },
 ) {
   override get message() {
@@ -266,7 +267,7 @@ export class TerminalHistoryError extends Schema.TaggedErrorClass<TerminalHistor
     operation: Schema.Literals(["read", "truncate", "migrate"]),
     threadId: Schema.String,
     terminalId: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Unknown),
   },
 ) {
   override get message() {

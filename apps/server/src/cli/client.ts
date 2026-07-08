@@ -46,20 +46,20 @@ export const nowIso = (): string => new Date().toISOString();
 
 export class CliPayloadError extends Schema.TaggedErrorClass<CliPayloadError>()("CliPayloadError", {
   message: Schema.String,
-  cause: Schema.optional(Schema.Defect),
+  cause: Schema.optional(Schema.Unknown),
 }) {}
 
 export class CliLiveTargetError extends Schema.TaggedErrorClass<CliLiveTargetError>()(
   "CliLiveTargetError",
   {
     message: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Unknown),
   },
 ) {}
 
 export class CliRpcError extends Schema.TaggedErrorClass<CliRpcError>()("CliRpcError", {
   message: Schema.String,
-  cause: Schema.optional(Schema.Defect),
+  cause: Schema.optional(Schema.Unknown),
 }) {}
 
 const JsonRecord = Schema.Record(Schema.String, Schema.Unknown);
@@ -73,6 +73,13 @@ const makeWsRpcClient = RpcClient.make(WsRpcGroup);
 const isCliRpcError = Schema.is(CliRpcError);
 const isCliLiveTargetError = Schema.is(CliLiveTargetError);
 const isCliPayloadError = Schema.is(CliPayloadError);
+
+// Every live request to the local server borrows an auth session and issues a
+// single HTTP round-trip. `fetch` has no built-in timeout, so a server that
+// accepts the socket but never responds (wedged mid-restart, deadlocked) would
+// hang the CLI indefinitely. Bound each request so commands fail fast with a
+// typed error instead of blocking forever.
+const LIVE_REQUEST_TIMEOUT = Duration.seconds(10);
 
 export type WsRpcClient =
   typeof makeWsRpcClient extends Effect.Effect<infer Client, any, any> ? Client : never;
@@ -216,7 +223,17 @@ const requestWebSocketToken = (origin: string, bearerToken: string) =>
           }),
       ),
     );
-  });
+  }).pipe(
+    Effect.timeoutOrElse({
+      duration: LIVE_REQUEST_TIMEOUT,
+      orElse: () =>
+        new CliLiveTargetError({
+          message: `Timed out requesting a WebSocket token after ${Duration.toSeconds(
+            LIVE_REQUEST_TIMEOUT,
+          )}s. Is the T3 server responsive?`,
+        }),
+    }),
+  );
 
 const fetchSnapshot = (origin: string, bearerToken: string) =>
   Effect.gen(function* () {
@@ -240,7 +257,17 @@ const fetchSnapshot = (origin: string, bearerToken: string) =>
           }),
       ),
     );
-  });
+  }).pipe(
+    Effect.timeoutOrElse({
+      duration: LIVE_REQUEST_TIMEOUT,
+      orElse: () =>
+        new CliRpcError({
+          message: `Timed out fetching orchestration snapshot after ${Duration.toSeconds(
+            LIVE_REQUEST_TIMEOUT,
+          )}s. Is the T3 server responsive?`,
+        }),
+    }),
+  );
 
 const dispatchCommand = (
   origin: string,
@@ -271,6 +298,15 @@ const dispatchCommand = (
         );
       }),
     ),
+    Effect.timeoutOrElse({
+      duration: LIVE_REQUEST_TIMEOUT,
+      orElse: () =>
+        new CliRpcError({
+          message: `Timed out dispatching orchestration command after ${Duration.toSeconds(
+            LIVE_REQUEST_TIMEOUT,
+          )}s. Is the T3 server responsive?`,
+        }),
+    }),
   );
 
 const wsRpcProtocolLayer = (url: string) => {
@@ -370,7 +406,7 @@ export const withLiveRpcClient = <A, E, R>(
 
 export const getLiveOrchestrationSnapshot = (flags: CliLiveTargetFlags) =>
   withBorrowedBearerToken(flags, ({ origin, bearerToken }) =>
-    fetchSnapshot(origin, bearerToken).pipe(Effect.timeout(Duration.seconds(10))),
+    fetchSnapshot(origin, bearerToken),
   ).pipe(Effect.provide(FetchHttpClient.layer));
 
 export const withLiveOrchestrationClient = <A, E, R>(

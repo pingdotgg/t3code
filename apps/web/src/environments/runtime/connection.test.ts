@@ -199,11 +199,19 @@ describe("createEnvironmentConnection", () => {
       applyTerminalEvent: vi.fn(),
     });
 
-    expect(() => emitWelcome(EnvironmentId.make("env-2"))).toThrow(
+    const bootstrapped = connection.ensureBootstrapped();
+    emitWelcome(EnvironmentId.make("env-2"));
+
+    await expect(bootstrapped).rejects.toThrow(
       "Environment connection env-1 changed identity to env-2 via server lifecycle welcome.",
     );
+    await expect(connection.reconnect()).rejects.toThrow(
+      "Environment connection env-1 changed identity to env-2 via server lifecycle welcome.",
+    );
+    expect(client.dispose).toHaveBeenCalledTimes(1);
 
     await connection.dispose();
+    expect(client.dispose).toHaveBeenCalledTimes(1);
   });
 
   it("waits for a fresh shell snapshot after reconnect", async () => {

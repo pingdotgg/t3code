@@ -2,13 +2,14 @@ import { Schema } from "effect";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
-import { OpenError, OpenInEditorInput } from "./editor.ts";
+import { OpenError, OpenInEditorInput, RevealInFileManagerInput } from "./editor.ts";
 import { AuthAccessStreamEvent } from "./auth.ts";
 import {
   FilesystemBrowseInput,
   FilesystemBrowseResult,
   FilesystemBrowseError,
 } from "./filesystem.ts";
+import { AssetAccessError, AssetCreateUrlInput, AssetCreateUrlResult } from "./assets.ts";
 import {
   GitActionProgressEvent,
   GitCheckoutInput,
@@ -54,6 +55,12 @@ import {
 } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
+  ProjectListEntriesError,
+  ProjectListEntriesInput,
+  ProjectListEntriesResult,
+  ProjectReadFileError,
+  ProjectReadFileInput,
+  ProjectReadFileResult,
   ProjectSearchEntriesError,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
@@ -61,6 +68,18 @@ import {
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project.ts";
+import {
+  PreviewAutomationError,
+  PreviewAutomationHost,
+  PreviewAutomationHostFocus,
+  PreviewAutomationResponse,
+  PreviewAutomationStreamEvent,
+} from "./previewAutomation.ts";
+import {
+  RelayClientInstallFailedError,
+  RelayClientInstallProgressEventSchema,
+  RelayClientStatusSchema,
+} from "./relayClient.ts";
 import {
   PreviewCloseInput,
   PreviewDiscoverLocalServersInput,
@@ -150,20 +169,31 @@ import {
   ReviewDiffPreviewInput,
   ReviewDiffPreviewResult,
 } from "./review.ts";
+import {
+  WorkflowListRunsInput,
+  WorkflowListRunsResult,
+  WorkflowRunError,
+  WorkflowRunInput,
+  WorkflowRunResult,
+} from "./agentWorkflows.ts";
 
 export const WS_METHODS = {
   // Project registry methods
   projectsList: "projects.list",
   projectsAdd: "projects.add",
   projectsRemove: "projects.remove",
+  projectsListEntries: "projects.listEntries",
+  projectsReadFile: "projects.readFile",
   projectsSearchEntries: "projects.searchEntries",
   projectsWriteFile: "projects.writeFile",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
+  shellRevealInFileManager: "shell.revealInFileManager",
 
   // Filesystem methods
   filesystemBrowse: "filesystem.browse",
+  assetsCreateUrl: "assets.createUrl",
 
   // Preview methods
   previewOpen: "preview.open",
@@ -174,6 +204,9 @@ export const WS_METHODS = {
   previewClose: "preview.close",
   previewList: "preview.list",
   previewDiscoverLocalServers: "preview.discoverLocalServers",
+  previewAutomationConnect: "previewAutomation.connect",
+  previewAutomationRespond: "previewAutomation.respond",
+  previewAutomationFocusHost: "previewAutomation.focusHost",
 
   // Git methods
   gitPull: "git.pull",
@@ -208,6 +241,10 @@ export const WS_METHODS = {
   // Review methods
   reviewGetDiffPreview: "review.getDiffPreview",
 
+  // Workflow methods
+  workflowRun: "workflow.run",
+  workflowListRuns: "workflow.listRuns",
+
   // Terminal methods
   terminalOpen: "terminal.open",
   terminalAttach: "terminal.attach",
@@ -233,6 +270,10 @@ export const WS_METHODS = {
   serverGetProcessResourceHistory: "server.getProcessResourceHistory",
   serverSignalProcess: "server.signalProcess",
 
+  // Cloud environment methods
+  cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
+  cloudInstallRelayClient: "cloud.installRelayClient",
+
   // Streaming subscriptions
   subscribeGitStatus: "subscribeGitStatus",
   subscribeVcsStatus: "subscribeVcsStatus",
@@ -242,6 +283,7 @@ export const WS_METHODS = {
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
   subscribePreviewEvents: "subscribePreviewEvents",
+  subscribeDiscoveredLocalServers: "subscribeDiscoveredLocalServers",
 } as const;
 
 export const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -304,6 +346,18 @@ export const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntr
   error: ProjectSearchEntriesError,
 });
 
+export const WsProjectsListEntriesRpc = Rpc.make(WS_METHODS.projectsListEntries, {
+  payload: ProjectListEntriesInput,
+  success: ProjectListEntriesResult,
+  error: ProjectListEntriesError,
+});
+
+export const WsProjectsReadFileRpc = Rpc.make(WS_METHODS.projectsReadFile, {
+  payload: ProjectReadFileInput,
+  success: ProjectReadFileResult,
+  error: ProjectReadFileError,
+});
+
 export const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
   payload: ProjectWriteFileInput,
   success: ProjectWriteFileResult,
@@ -315,10 +369,21 @@ export const WsShellOpenInEditorRpc = Rpc.make(WS_METHODS.shellOpenInEditor, {
   error: OpenError,
 });
 
+export const WsShellRevealInFileManagerRpc = Rpc.make(WS_METHODS.shellRevealInFileManager, {
+  payload: RevealInFileManagerInput,
+  error: OpenError,
+});
+
 export const WsFilesystemBrowseRpc = Rpc.make(WS_METHODS.filesystemBrowse, {
   payload: FilesystemBrowseInput,
   success: FilesystemBrowseResult,
   error: FilesystemBrowseError,
+});
+
+export const WsAssetsCreateUrlRpc = Rpc.make(WS_METHODS.assetsCreateUrl, {
+  payload: AssetCreateUrlInput,
+  success: AssetCreateUrlResult,
+  error: AssetAccessError,
 });
 
 export const WsPreviewOpenRpc = Rpc.make(WS_METHODS.previewOpen, {
@@ -361,6 +426,22 @@ export const WsPreviewListRpc = Rpc.make(WS_METHODS.previewList, {
 export const WsPreviewDiscoverLocalServersRpc = Rpc.make(WS_METHODS.previewDiscoverLocalServers, {
   payload: PreviewDiscoverLocalServersInput,
   success: PreviewDiscoverLocalServersResult,
+});
+
+export const WsPreviewAutomationConnectRpc = Rpc.make(WS_METHODS.previewAutomationConnect, {
+  payload: PreviewAutomationHost,
+  success: PreviewAutomationStreamEvent,
+  error: PreviewAutomationError,
+  stream: true,
+});
+
+export const WsPreviewAutomationRespondRpc = Rpc.make(WS_METHODS.previewAutomationRespond, {
+  payload: PreviewAutomationResponse,
+  error: PreviewAutomationError,
+});
+
+export const WsPreviewAutomationFocusHostRpc = Rpc.make(WS_METHODS.previewAutomationFocusHost, {
+  payload: PreviewAutomationHostFocus,
 });
 
 export const WsSubscribeGitStatusRpc = Rpc.make(WS_METHODS.subscribeGitStatus, {
@@ -660,6 +741,29 @@ export const WsReviewGetDiffPreviewRpc = Rpc.make(WS_METHODS.reviewGetDiffPrevie
   error: ReviewDiffPreviewError,
 });
 
+export const WsWorkflowRunRpc = Rpc.make(WS_METHODS.workflowRun, {
+  payload: WorkflowRunInput,
+  success: WorkflowRunResult,
+  error: WorkflowRunError,
+});
+
+export const WsWorkflowListRunsRpc = Rpc.make(WS_METHODS.workflowListRuns, {
+  payload: WorkflowListRunsInput,
+  success: WorkflowListRunsResult,
+});
+
+export const WsCloudGetRelayClientStatusRpc = Rpc.make(WS_METHODS.cloudGetRelayClientStatus, {
+  payload: Schema.Struct({}),
+  success: RelayClientStatusSchema,
+});
+
+export const WsCloudInstallRelayClientRpc = Rpc.make(WS_METHODS.cloudInstallRelayClient, {
+  payload: Schema.Struct({}),
+  success: RelayClientInstallProgressEventSchema,
+  error: RelayClientInstallFailedError,
+  stream: true,
+});
+
 export const WsTerminalAttachRpc = Rpc.make(WS_METHODS.terminalAttach, {
   payload: TerminalAttachInput,
   success: TerminalAttachStreamEvent,
@@ -727,9 +831,13 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerUpdateSettingsRpc,
   WsServerExportThreadMarkdownRpc,
   WsProjectsSearchEntriesRpc,
+  WsProjectsListEntriesRpc,
+  WsProjectsReadFileRpc,
   WsProjectsWriteFileRpc,
   WsShellOpenInEditorRpc,
+  WsShellRevealInFileManagerRpc,
   WsFilesystemBrowseRpc,
+  WsAssetsCreateUrlRpc,
   WsPreviewOpenRpc,
   WsPreviewNavigateRpc,
   WsPreviewReportStatusRpc,
@@ -738,6 +846,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewCloseRpc,
   WsPreviewListRpc,
   WsPreviewDiscoverLocalServersRpc,
+  WsPreviewAutomationConnectRpc,
+  WsPreviewAutomationRespondRpc,
+  WsPreviewAutomationFocusHostRpc,
   WsSubscribeGitStatusRpc,
   WsGitPullRpc,
   WsGitRefreshStatusRpc,
@@ -785,6 +896,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsSourceControlCloneRepositoryRpc,
   WsSourceControlPublishRepositoryRpc,
   WsReviewGetDiffPreviewRpc,
+  WsWorkflowRunRpc,
+  WsWorkflowListRunsRpc,
+  WsCloudGetRelayClientStatusRpc,
+  WsCloudInstallRelayClientRpc,
   WsTerminalAttachRpc,
   WsSubscribeTerminalMetadataRpc,
   WsServerRemoveKeybindingRpc,

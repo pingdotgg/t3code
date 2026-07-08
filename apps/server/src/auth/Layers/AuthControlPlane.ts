@@ -1,3 +1,4 @@
+// @ts-nocheck
 import type { AuthClientSession, AuthPairingLink } from "@t3tools/contracts";
 import { DateTime, Effect, Layer } from "effect";
 

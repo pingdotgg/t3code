@@ -463,6 +463,7 @@ function TimelineRowContent(props: { row: TimelineRow }) {
                   turnSummary={row.assistantTurnDiffSummary}
                   resolvedTheme={ctx.resolvedTheme}
                   onOpenTurnDiff={ctx.onOpenTurnDiff}
+                  workspaceRoot={ctx.workspaceRoot}
                 />
                 <div className="mt-1.5 flex min-w-0 items-center gap-2">
                   <p className="shrink-0 text-[10px] text-muted-foreground/30">
@@ -703,10 +704,12 @@ const AssistantChangedFilesSection = memo(function AssistantChangedFilesSection(
   turnSummary,
   resolvedTheme,
   onOpenTurnDiff,
+  workspaceRoot,
 }: {
   turnSummary: TurnDiffSummary | undefined;
   resolvedTheme: "light" | "dark";
   onOpenTurnDiff: (turnId: TurnId, filePath?: string, scope?: TurnDiffScope) => void;
+  workspaceRoot: string | undefined;
 }) {
   if (!turnSummary) return null;
   const snapshotFiles = turnSummary.files;
@@ -718,6 +721,7 @@ const AssistantChangedFilesSection = memo(function AssistantChangedFilesSection(
       turnSummary={turnSummary}
       resolvedTheme={resolvedTheme}
       onOpenTurnDiff={onOpenTurnDiff}
+      workspaceRoot={workspaceRoot}
     />
   );
 });
@@ -728,10 +732,12 @@ function AssistantChangedFilesSectionInner({
   turnSummary,
   resolvedTheme,
   onOpenTurnDiff,
+  workspaceRoot,
 }: {
   turnSummary: TurnDiffSummary;
   resolvedTheme: "light" | "dark";
   onOpenTurnDiff: (turnId: TurnId, filePath?: string, scope?: TurnDiffScope) => void;
+  workspaceRoot: string | undefined;
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const preferredScope = useUiStateStore((store) => store.changedFilesDiffScope);
@@ -798,6 +804,7 @@ function AssistantChangedFilesSectionInner({
             resolvedTheme={resolvedTheme}
             diffScope={selectedScope}
             onOpenTurnDiff={onOpenTurnDiff}
+            workspaceRoot={workspaceRoot}
           />
         </div>
       )}

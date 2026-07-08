@@ -3,6 +3,7 @@ import { createRef } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { LegendListRef } from "@legendapp/list/react";
+import { MessagesTimeline } from "./MessagesTimeline";
 
 vi.mock("@legendapp/list/react", async () => {
   const React = await import("react");
@@ -126,7 +127,6 @@ function buildUserTimelineEntry(text: string) {
 
 describe("MessagesTimeline", () => {
   it("renders collapse controls for long user messages", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -143,7 +143,6 @@ describe("MessagesTimeline", () => {
   });
 
   it("does not render collapse controls for short user messages", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline {...buildProps()} timelineEntries={[buildUserTimelineEntry("Short.")]} />,
     );
@@ -153,7 +152,6 @@ describe("MessagesTimeline", () => {
   });
 
   it("forces active chat find user message rows expanded", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -169,7 +167,6 @@ describe("MessagesTimeline", () => {
   });
 
   it("keeps footer controls for collapsed long user messages", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -183,7 +180,6 @@ describe("MessagesTimeline", () => {
   });
 
   it("renders text content that chat search can match against", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -222,7 +218,6 @@ describe("MessagesTimeline", () => {
   });
 
   it("renders inline terminal labels with the composer chip UI", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -257,7 +252,6 @@ describe("MessagesTimeline", () => {
   }, 20_000);
 
   it("renders context compaction entries in the normal work log", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -282,7 +276,6 @@ describe("MessagesTimeline", () => {
   });
 
   it("collapses completed tool-call groups to an expandable header", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -324,7 +317,6 @@ describe("MessagesTimeline", () => {
   });
 
   it("keeps completed tool-call groups open while the response is still active", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -370,7 +362,6 @@ describe("MessagesTimeline", () => {
   });
 
   it("collapses active tool-call groups once following assistant text starts", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -424,7 +415,6 @@ describe("MessagesTimeline", () => {
   });
 
   it("collapses completed work-log groups to an expandable header", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -466,7 +456,6 @@ describe("MessagesTimeline", () => {
   });
 
   it("collapses reasoning before the response into a worked-for divider", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -521,7 +510,6 @@ describe("MessagesTimeline", () => {
   });
 
   it("keeps reasoning visible while the response is still active", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -574,7 +562,6 @@ describe("MessagesTimeline", () => {
   });
 
   it("keeps incomplete work-log groups expanded while the response is active", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -616,7 +603,6 @@ describe("MessagesTimeline", () => {
   });
 
   it("formats changed file paths from the workspace root", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -643,7 +629,6 @@ describe("MessagesTimeline", () => {
   });
 
   it("renders the Copilot resume command only in terminal assistant message metadata", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
     const copilotResumeCommand = "copilot --resume=a7f0c803-7cce-4554-9ad6-dfd9df539e33";
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -687,7 +672,6 @@ describe("MessagesTimeline", () => {
   });
 
   it("hides the Copilot resume command while the terminal assistant message is still active", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
     const copilotResumeCommand = "copilot --resume=a7f0c803-7cce-4554-9ad6-dfd9df539e33";
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -718,7 +702,6 @@ describe("MessagesTimeline", () => {
   });
 
   it("renders the fork action only on the last assistant metadata row for a response", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -760,7 +743,6 @@ describe("MessagesTimeline", () => {
   });
 
   it("renders turn-scoped changed files by default", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
     const { useUiStateStore } = await import("../../uiStateStore");
     useUiStateStore.setState({ changedFilesDiffScope: "turn" });
     const assistantMessageId = MessageId.make("message-assistant");
@@ -811,7 +793,6 @@ describe("MessagesTimeline", () => {
   });
 
   it("hides explicit empty-turn state without falling back to snapshot", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
     const { useUiStateStore } = await import("../../uiStateStore");
     useUiStateStore.setState({ changedFilesDiffScope: "turn" });
     const assistantMessageId = MessageId.make("message-assistant");

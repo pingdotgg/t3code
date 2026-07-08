@@ -192,3 +192,6 @@ export const resolveStaticDir = Effect.fn(function* () {
   }
   return undefined;
 });
+
+export const layerTest = ServerConfig.layerTest;
+export const layer = (config: ServerConfigShape) => Layer.succeed(ServerConfig, config);

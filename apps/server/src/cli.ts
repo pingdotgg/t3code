@@ -1,13 +1,12 @@
 import { NetService } from "@t3tools/shared/Net";
 import type { NodeServices } from "@effect/platform-node/NodeServices";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
-import { buildReviewChangesPrompt } from "@t3tools/shared/workflows/reviewChanges";
+import { REVIEW_CHANGES_WORKFLOW_ID } from "@t3tools/shared/workflows/reviewChanges";
 import {
   ApprovalRequestId,
   AuthSessionId,
   CommandId,
   EditorId,
-  DEFAULT_REVIEW_CHANGES_SCOPE,
   KeybindingRule,
   MessageId,
   ModelSelection,
@@ -22,7 +21,6 @@ import {
   TurnId,
   WS_METHODS,
   type GitStackedAction,
-  type ReviewChangesScope,
   type ProviderApprovalDecision,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
@@ -3468,14 +3466,6 @@ const gitCommand = Command.make("git").pipe(
   ]),
 );
 
-const reviewThreadTitle = (input: {
-  readonly scope: ReviewChangesScope;
-  readonly baseBranch?: string;
-}) =>
-  input.scope === "against-base" && input.baseBranch
-    ? `Review changes against ${input.baseBranch}`
-    : "Review uncommitted changes";
-
 const reviewCommand = Command.make("review", {
   ...liveTargetFlags,
   ...modelSelectionFlags,
@@ -3493,85 +3483,39 @@ const reviewCommand = Command.make("review", {
   Command.withHandler((flags) =>
     withLiveSnapshotAndRpc(flags, ({ getSnapshot, client }) =>
       Effect.gen(function* () {
-        const [snapshot, settings] = yield* Effect.all(
-          [getSnapshot, client[WS_METHODS.serverGetSettings]({})],
-          { concurrency: "unbounded" },
-        );
+        const snapshot = yield* getSnapshot;
         const project = yield* findProjectForCli(
           snapshot,
           Option.getOrUndefined(flags.project) ?? flags.cwd,
         );
-        const workflowSettings = settings.agentWorkflows.reviewChanges;
-        if (!workflowSettings.enabled) {
-          return yield* Effect.fail(new Error("Review Code workflow is disabled in settings."));
-        }
-
-        const scope =
-          Option.getOrUndefined(flags.scope) ??
-          workflowSettings.defaultScope ??
-          DEFAULT_REVIEW_CHANGES_SCOPE;
-        const reviewContext = yield* client[WS_METHODS.gitResolveReviewChangesContext]({
-          cwd: flags.cwd,
-          scope,
-        });
-        const prompt = buildReviewChangesPrompt({
-          context:
-            reviewContext.scope === "against-base"
-              ? {
-                  scope: "against-base",
-                  baseBranch: reviewContext.baseBranch,
-                  mergeBaseSha: reviewContext.mergeBaseSha,
-                }
-              : { scope: "uncommitted" },
-          settings: workflowSettings,
-        });
-        const title =
-          Option.getOrUndefined(flags.title) ??
-          reviewThreadTitle({
-            scope: reviewContext.scope,
-            ...(reviewContext.scope === "against-base"
-              ? { baseBranch: reviewContext.baseBranch }
-              : {}),
-          });
         const modelSelection = yield* resolveModelSelectionWithDefault(
           flags,
           resolveDefaultModelSelectionForProject(project),
         );
-        const threadId = ThreadId.make(crypto.randomUUID());
-        const createdAt = new Date().toISOString();
-        const dispatchResult = yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
-          type: "thread.turn.start",
-          commandId: CommandId.make(crypto.randomUUID()),
-          threadId,
-          message: {
-            messageId: MessageId.make(crypto.randomUUID()),
-            role: "user",
-            text: prompt,
-            attachments: [],
-          },
+        const sourceThread = activeThreadsOf(snapshot).find(
+          (thread) => thread.projectId === project.id,
+        );
+        const sourceThreadId =
+          sourceThread?.id ??
+          (yield* Effect.fail(new Error(`Project '${project.title}' has no active thread.`)));
+        const scope = Option.getOrUndefined(flags.scope);
+        const result = yield* client[WS_METHODS.workflowRun]({
+          workflowId: REVIEW_CHANGES_WORKFLOW_ID,
+          threadId: sourceThreadId,
+          projectId: project.id,
+          cwd: flags.cwd,
+          ...(scope !== undefined ? { input: { scope } } : {}),
+          destinationMode: "child-chat",
+          ...(Option.isSome(flags.title) ? { title: flags.title.value } : {}),
+          trigger: "manual",
+          idempotencyKey: crypto.randomUUID(),
           modelSelection,
-          titleSeed: title,
           runtimeMode: flags.runtimeMode,
           interactionMode: flags.interactionMode,
-          bootstrap: {
-            createThread: {
-              projectId: project.id,
-              title,
-              modelSelection,
-              runtimeMode: flags.runtimeMode,
-              interactionMode: flags.interactionMode,
-              branch: reviewContext.branch,
-              worktreePath: flags.cwd === project.workspaceRoot ? null : flags.cwd,
-              createdAt,
-            },
-          },
-          createdAt,
         });
 
         yield* printJson({
-          threadId,
-          result: dispatchResult,
-          review: reviewContext,
+          result,
         });
       }),
     ),

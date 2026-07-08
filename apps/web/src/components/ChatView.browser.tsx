@@ -208,6 +208,14 @@ function createMockEnvironmentApi(input: {
     },
     preview: {} as EnvironmentApi["preview"],
     git: {} as EnvironmentApi["git"],
+    workflow: {
+      run: (() => {
+        throw new Error("Not implemented in browser test.");
+      }) as EnvironmentApi["workflow"]["run"],
+      listRuns: (() => {
+        throw new Error("Not implemented in browser test.");
+      }) as EnvironmentApi["workflow"]["listRuns"],
+    },
     server: {
       exportThreadMarkdown: (() => {
         throw new Error("Not implemented in browser test.");
@@ -670,6 +678,7 @@ function setDraftThreadWithoutWorktree(): void {
         threadId: THREAD_ID,
         environmentId: LOCAL_ENVIRONMENT_ID,
         projectId: PROJECT_ID,
+        parentThreadId: null,
         logicalProjectKey: PROJECT_DRAFT_KEY,
         createdAt: NOW_ISO,
         runtimeMode: "full-access",
@@ -2105,6 +2114,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           threadId: THREAD_ID,
           environmentId: LOCAL_ENVIRONMENT_ID,
           projectId: PROJECT_ID,
+          parentThreadId: null,
           logicalProjectKey: PROJECT_DRAFT_KEY,
           createdAt: NOW_ISO,
           runtimeMode: "full-access",
@@ -2184,6 +2194,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           threadId: THREAD_ID,
           environmentId: LOCAL_ENVIRONMENT_ID,
           projectId: PROJECT_ID,
+          parentThreadId: null,
           logicalProjectKey: PROJECT_DRAFT_KEY,
           createdAt: NOW_ISO,
           runtimeMode: "full-access",
@@ -2250,6 +2261,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           threadId: THREAD_ID,
           environmentId: LOCAL_ENVIRONMENT_ID,
           projectId: PROJECT_ID,
+          parentThreadId: null,
           logicalProjectKey: PROJECT_DRAFT_KEY,
           createdAt: NOW_ISO,
           runtimeMode: "full-access",
@@ -2378,6 +2390,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           threadId: THREAD_ID,
           environmentId: LOCAL_ENVIRONMENT_ID,
           projectId: PROJECT_ID,
+          parentThreadId: null,
           logicalProjectKey: PROJECT_DRAFT_KEY,
           createdAt: NOW_ISO,
           runtimeMode: "full-access",
@@ -2882,6 +2895,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           threadId: THREAD_ID,
           environmentId: LOCAL_ENVIRONMENT_ID,
           projectId: PROJECT_ID,
+          parentThreadId: null,
           logicalProjectKey: PROJECT_DRAFT_KEY,
           createdAt: NOW_ISO,
           runtimeMode: "full-access",
@@ -3019,6 +3033,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           threadId: THREAD_ID,
           environmentId: LOCAL_ENVIRONMENT_ID,
           projectId: PROJECT_ID,
+          parentThreadId: null,
           logicalProjectKey: `${PROJECT_DRAFT_KEY}:stale`,
           createdAt: NOW_ISO,
           runtimeMode: "full-access",
@@ -3031,6 +3046,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           threadId: THREAD_ID,
           environmentId: LOCAL_ENVIRONMENT_ID,
           projectId: PROJECT_ID,
+          parentThreadId: null,
           logicalProjectKey: PROJECT_DRAFT_KEY,
           createdAt: NOW_ISO,
           runtimeMode: "full-access",
@@ -3157,6 +3173,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           threadId: THREAD_ID,
           environmentId: LOCAL_ENVIRONMENT_ID,
           projectId: PROJECT_ID,
+          parentThreadId: null,
           logicalProjectKey: PROJECT_DRAFT_KEY,
           createdAt: NOW_ISO,
           runtimeMode: "full-access",

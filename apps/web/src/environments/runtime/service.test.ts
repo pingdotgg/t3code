@@ -57,7 +57,7 @@ describe("shouldApplyProjectionSnapshot", () => {
     ).toBe(true);
   });
 
-  it("drops snapshots with an older sequence", () => {
+  it("accepts snapshots with an older sequence as a server projection reset", () => {
     expect(
       shouldApplyProjectionSnapshot({
         current: {
@@ -69,7 +69,7 @@ describe("shouldApplyProjectionSnapshot", () => {
           updatedAt: "2026-04-22T10:06:00.000Z",
         },
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("drops snapshots with the same sequence and older timestamp", () => {

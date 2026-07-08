@@ -7,6 +7,7 @@
  * @module Open
  */
 import { spawn } from "node:child_process";
+import path from "node:path";
 
 import { EDITORS, OpenError, type EditorId } from "@t3tools/contracts";
 import {
@@ -144,6 +145,11 @@ export interface OpenShape {
    * Launches the editor as a detached process so server startup is not blocked.
    */
   readonly openInEditor: (input: OpenInEditorInput) => Effect.Effect<void, OpenError>;
+
+  /**
+   * Reveal a file or folder in the platform file manager.
+   */
+  readonly revealInFileManager: (targetPath: string) => Effect.Effect<void, OpenError>;
 }
 
 /**
@@ -219,6 +225,21 @@ export const launchDetached = (launch: EditorLaunch) =>
     });
   });
 
+export function resolveRevealInFileManagerLaunch(
+  targetPath: string,
+  platform: NodeJS.Platform = process.platform,
+): EditorLaunch {
+  if (platform === "darwin") {
+    return { command: "open", args: ["-R", targetPath] };
+  }
+
+  if (platform === "win32") {
+    return { command: "explorer.exe", args: ["/select,", targetPath] };
+  }
+
+  return { command: "xdg-open", args: [path.dirname(targetPath)] };
+}
+
 const make = Effect.gen(function* () {
   const open = yield* Effect.tryPromise({
     try: () => import("open"),
@@ -232,6 +253,8 @@ const make = Effect.gen(function* () {
         catch: (cause) => new OpenError({ message: "Browser auto-open failed", cause }),
       }),
     openInEditor: (input) => Effect.flatMap(resolveEditorLaunch(input), launchDetached),
+    revealInFileManager: (targetPath) =>
+      launchDetached(resolveRevealInFileManagerLaunch(targetPath)),
   } satisfies OpenShape;
 });
 

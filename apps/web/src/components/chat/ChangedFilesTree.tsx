@@ -1,11 +1,13 @@
 import { type TurnDiffScope, type TurnId } from "@t3tools/contracts";
-import { memo, useCallback, useMemo, useState } from "react";
+import { memo, useCallback, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { type TurnDiffFileChange } from "../../types";
 import { buildTurnDiffTree, type TurnDiffTreeNode } from "../../lib/turnDiffTree";
 import { ChevronRightIcon, FolderIcon, FolderClosedIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { VscodeEntryIcon } from "./VscodeEntryIcon";
+import { readLocalApi } from "~/localApi";
+import { toastManager } from "../ui/toast";
 
 const EMPTY_DIRECTORY_OVERRIDES: Record<string, boolean> = {};
 
@@ -16,8 +18,17 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
   resolvedTheme: "light" | "dark";
   onOpenTurnDiff: (turnId: TurnId, filePath?: string, scope?: TurnDiffScope) => void;
   diffScope?: TurnDiffScope;
+  workspaceRoot?: string | undefined;
 }) {
-  const { files, allDirectoriesExpanded, onOpenTurnDiff, resolvedTheme, turnId, diffScope } = props;
+  const {
+    files,
+    allDirectoriesExpanded,
+    onOpenTurnDiff,
+    resolvedTheme,
+    turnId,
+    diffScope,
+    workspaceRoot,
+  } = props;
   const treeNodes = useMemo(() => buildTurnDiffTree(files), [files]);
   const directoryPathsKey = useMemo(
     () => collectDirectoryPaths(treeNodes).join("\u0000"),
@@ -53,6 +64,39 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
     [allDirectoriesExpanded, expansionStateKey],
   );
 
+  const showFileManagerContextMenu = useCallback(
+    (event: ReactMouseEvent, pathValue: string) => {
+      if (!workspaceRoot) return;
+      event.preventDefault();
+      event.stopPropagation();
+
+      const targetPath = joinWorkspacePath(workspaceRoot, pathValue);
+      const localApi = readLocalApi();
+      if (!localApi) return;
+      const fallbackPosition = window.desktopBridge
+        ? undefined
+        : {
+            x: event.clientX,
+            y: event.clientY,
+          };
+
+      void localApi.contextMenu
+        .show([{ id: "open-in-finder", label: "Open in Finder" }], fallbackPosition)
+        .then((selected) => {
+          if (selected !== "open-in-finder") return;
+          return localApi.shell.revealInFileManager(targetPath);
+        })
+        .catch((error: unknown) => {
+          toastManager.add({
+            title: "Could not open in Finder",
+            description: error instanceof Error ? error.message : "Unable to reveal path.",
+            type: "error",
+          });
+        });
+    },
+    [workspaceRoot],
+  );
+
   const renderTreeNode = (node: TurnDiffTreeNode, depth: number) => {
     const leftPadding = 8 + depth * 14;
     if (node.kind === "directory") {
@@ -65,6 +109,7 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
             className="group flex w-full items-center gap-1.5 rounded-xl py-1 pr-3 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
             style={{ paddingLeft: `${leftPadding}px` }}
             onClick={() => toggleDirectory(node.path)}
+            onContextMenu={(event) => showFileManagerContextMenu(event, node.path)}
           >
             <ChevronRightIcon
               aria-hidden="true"
@@ -103,6 +148,7 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
         className="group flex w-full items-center gap-1.5 rounded-xl py-1 pr-3 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
         style={{ paddingLeft: `${leftPadding}px` }}
         onClick={() => onOpenTurnDiff(turnId, node.path, diffScope)}
+        onContextMenu={(event) => showFileManagerContextMenu(event, node.path)}
       >
         {hasDirectoryNodes || depth > 0 ? (
           <span aria-hidden="true" className="size-3.5 shrink-0" />
@@ -131,6 +177,12 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
     </div>
   );
 });
+
+function joinWorkspacePath(workspaceRoot: string, pathValue: string): string {
+  const trimmedRoot = workspaceRoot.replace(/\/+$/, "");
+  const trimmedPath = pathValue.replace(/^\/+/, "");
+  return `${trimmedRoot}/${trimmedPath}`;
+}
 
 function collectDirectoryPaths(nodes: ReadonlyArray<TurnDiffTreeNode>): string[] {
   const paths: string[] = [];

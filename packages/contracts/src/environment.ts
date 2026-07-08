@@ -76,3 +76,20 @@ export const ScopedThreadSessionRef = Schema.Struct({
   threadId: ThreadId,
 });
 export type ScopedThreadSessionRef = typeof ScopedThreadSessionRef.Type;
+
+export const DesktopSshEnvironmentTargetSchema = Schema.Struct({
+  host: Schema.optionalKey(TrimmedNonEmptyString),
+  alias: Schema.optionalKey(TrimmedNonEmptyString),
+  hostname: Schema.optionalKey(TrimmedNonEmptyString),
+  port: Schema.optionalKey(Schema.Number),
+  username: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type DesktopSshEnvironmentTarget = typeof DesktopSshEnvironmentTargetSchema.Type;
+
+export const DesktopSshEnvironmentBootstrap = Schema.Struct({
+  target: DesktopSshEnvironmentTargetSchema,
+  httpBaseUrl: Schema.optionalKey(TrimmedNonEmptyString),
+  wsBaseUrl: Schema.optionalKey(TrimmedNonEmptyString),
+  pairingToken: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type DesktopSshEnvironmentBootstrap = typeof DesktopSshEnvironmentBootstrap.Type;

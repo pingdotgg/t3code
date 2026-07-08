@@ -1,14 +1,29 @@
-import type { KnownTerminalSession } from "@t3tools/client-runtime";
+import { type KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
 import { DEFAULT_TERMINAL_ID, type ProjectScript } from "@t3tools/contracts";
-import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
+import {
+  nextTerminalId as nextNumberedTerminalId,
+  resolveTerminalSessionLabel,
+} from "@t3tools/shared/terminalLabels";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 
-export {
-  getTerminalLabel,
-  nextTerminalId,
-  resolveTerminalSessionLabel,
-} from "@t3tools/shared/terminalLabels";
+export { getTerminalLabel, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
+
+const PRIMARY_NUMBERED_TERMINAL_ID = "term-1";
+
+export function nextTerminalId(existingTerminalIds: ReadonlyArray<string>): string {
+  const listed = existingTerminalIds.filter((id) => id.trim().length > 0);
+  const hasPrimary =
+    listed.includes(DEFAULT_TERMINAL_ID) || listed.includes(PRIMARY_NUMBERED_TERMINAL_ID);
+
+  if (!hasPrimary) {
+    return DEFAULT_TERMINAL_ID;
+  }
+
+  return nextNumberedTerminalId(
+    listed.map((id) => (id === DEFAULT_TERMINAL_ID ? PRIMARY_NUMBERED_TERMINAL_ID : id)),
+  );
+}
 
 export interface TerminalMenuSession {
   readonly terminalId: string;
@@ -63,15 +78,9 @@ export function getTerminalStatusLabel(input: {
 }
 
 /**
- * Picks an id for the "open new terminal" action.
- *
- * Fork invariant: the primary tab is `DEFAULT_TERMINAL_ID` ("default") and EXTRA terminals are
- * allocated as `term-N` starting at `term-1`. So the first open (no sessions listed and no
- * terminal screen mounted) opens the primary `default` tab; once `default` exists (listed or as
- * the mounted `activeRouteTerminalId`), the next open advances to `term-1`, `term-2`, …
- *
- * `activeRouteTerminalId` counts the terminal screen already mounted as occupied so opening from
- * the primary route advances to `term-1` instead of `replace`-navigating to the same `default` tab.
+ * Picks an id for "open another shell". Counts the terminal screen already mounted
+ * (`activeRouteTerminalId`) as occupied so an empty session list on the primary route
+ * still advances to `term-2` instead of `replace`-navigating to the same `default` tab.
  */
 export function nextOpenTerminalId(input: {
   readonly listedTerminalIds: ReadonlyArray<string>;
@@ -79,10 +88,6 @@ export function nextOpenTerminalId(input: {
 }): string {
   const listed = input.listedTerminalIds.filter((id) => id.trim().length > 0);
   const routeId = input.activeRouteTerminalId?.trim() ? input.activeRouteTerminalId : null;
-
-  if (listed.length === 0 && !routeId) {
-    return DEFAULT_TERMINAL_ID;
-  }
 
   if (!routeId || listed.includes(routeId)) {
     return nextTerminalId(listed);

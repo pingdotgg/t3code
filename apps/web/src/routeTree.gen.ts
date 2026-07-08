@@ -14,6 +14,7 @@ import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as PairRouteImport } from './routes/pair'
 import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
+import { Route as SettingsWorkflowsRouteImport } from './routes/settings.workflows'
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsConnectionsRouteImport } from './routes/settings.connections'
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
@@ -43,6 +44,11 @@ const ChatIndexRoute = ChatIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => ChatRoute,
+} as any)
+const SettingsWorkflowsRoute = SettingsWorkflowsRouteImport.update({
+  id: '/workflows',
+  path: '/workflows',
+  getParentRoute: () => SettingsRoute,
 } as any)
 const SettingsGeneralRoute = SettingsGeneralRouteImport.update({
   id: '/general',
@@ -79,6 +85,7 @@ export interface FileRoutesByFullPath {
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/general': typeof SettingsGeneralRoute
+  '/settings/workflows': typeof SettingsWorkflowsRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
 }
@@ -89,6 +96,7 @@ export interface FileRoutesByTo {
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/general': typeof SettingsGeneralRoute
+  '/settings/workflows': typeof SettingsWorkflowsRoute
   '/': typeof ChatIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
@@ -102,6 +110,7 @@ export interface FileRoutesById {
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/general': typeof SettingsGeneralRoute
+  '/settings/workflows': typeof SettingsWorkflowsRoute
   '/_chat/': typeof ChatIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
@@ -116,6 +125,7 @@ export interface FileRouteTypes {
     | '/settings/archived'
     | '/settings/connections'
     | '/settings/general'
+    | '/settings/workflows'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
   fileRoutesByTo: FileRoutesByTo
@@ -126,6 +136,7 @@ export interface FileRouteTypes {
     | '/settings/archived'
     | '/settings/connections'
     | '/settings/general'
+    | '/settings/workflows'
     | '/'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
@@ -138,6 +149,7 @@ export interface FileRouteTypes {
     | '/settings/archived'
     | '/settings/connections'
     | '/settings/general'
+    | '/settings/workflows'
     | '/_chat/'
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
@@ -186,6 +198,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof ChatIndexRouteImport
       parentRoute: typeof ChatRoute
+    }
+    '/settings/workflows': {
+      id: '/settings/workflows'
+      path: '/workflows'
+      fullPath: '/settings/workflows'
+      preLoaderRoute: typeof SettingsWorkflowsRouteImport
+      parentRoute: typeof SettingsRoute
     }
     '/settings/general': {
       id: '/settings/general'
@@ -243,12 +262,14 @@ interface SettingsRouteChildren {
   SettingsArchivedRoute: typeof SettingsArchivedRoute
   SettingsConnectionsRoute: typeof SettingsConnectionsRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
+  SettingsWorkflowsRoute: typeof SettingsWorkflowsRoute
 }
 
 const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsArchivedRoute: SettingsArchivedRoute,
   SettingsConnectionsRoute: SettingsConnectionsRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
+  SettingsWorkflowsRoute: SettingsWorkflowsRoute,
 }
 
 const SettingsRouteWithChildren = SettingsRoute._addFileChildren(

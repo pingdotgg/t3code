@@ -1,0 +1,37 @@
+diff --git a/dist/src/binary.js b/dist/src/binary.js
+index ee181aef5007e4bf34a49479c089ca30f73a320b..327e2c55c83cc4c50d396a3109190ef10af75ca7 100644
+--- a/dist/src/binary.js
++++ b/dist/src/binary.js
+@@ -7,7 +7,7 @@
+  */
+ import { existsSync, readFileSync } from "node:fs";
+ import { createRequire } from "node:module";
+-import { dirname, join } from "node:path";
++import { dirname, join, sep } from "node:path";
+ import { fileURLToPath } from "node:url";
+ import { getLibFilename, getNpmPackageName } from "./platform.js";
+ /**
+@@ -46,6 +46,14 @@ function getPackageDir() {
+     // Fallback: assume we're one level deep in src/
+     return dirname(currentDir);
+ }
++function resolveUnpackedAsarPath(binaryPath) {
++    const asarSegment = `${sep}app.asar${sep}`;
++    if (!binaryPath.includes(asarSegment)) {
++        return binaryPath;
++    }
++    const unpackedPath = binaryPath.replace(asarSegment, `${sep}app.asar.unpacked${sep}`);
++    return existsSync(unpackedPath) ? unpackedPath : binaryPath;
++}
+ /**
+  * Check if the binary exists in any known location
+  */
+@@ -69,7 +77,7 @@ function resolveFromNpmPackage() {
+         const packageDir = dirname(packageJsonPath);
+         const binaryPath = join(packageDir, getLibFilename());
+         if (existsSync(binaryPath)) {
+-            return binaryPath;
++            return resolveUnpackedAsarPath(binaryPath);
+         }
+     }
+     catch {

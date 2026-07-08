@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ReviewChangesScope } from "./agentWorkflows.ts";
 
@@ -142,7 +142,7 @@ export const GitCreateWorktreeInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   branch: TrimmedNonEmptyStringSchema,
   newBranch: Schema.optional(TrimmedNonEmptyStringSchema),
-  path: Schema.NullOr(TrimmedNonEmptyStringSchema),
+  path: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),
 });
 export type GitCreateWorktreeInput = typeof GitCreateWorktreeInput.Type;
 
@@ -207,6 +207,18 @@ const GitStatusPr = Schema.Struct({
   state: GitStatusPrState,
 });
 
+const GitStatusWorkingTree = Schema.Struct({
+  files: Schema.Array(
+    Schema.Struct({
+      path: TrimmedNonEmptyStringSchema,
+      insertions: NonNegativeInt,
+      deletions: NonNegativeInt,
+    }),
+  ),
+  insertions: NonNegativeInt,
+  deletions: NonNegativeInt,
+});
+
 const GitStatusLocalShape = {
   isRepo: Schema.Boolean,
   hostingProvider: Schema.optional(GitHostingProvider),
@@ -214,17 +226,7 @@ const GitStatusLocalShape = {
   isDefaultBranch: Schema.Boolean,
   branch: Schema.NullOr(TrimmedNonEmptyStringSchema),
   hasWorkingTreeChanges: Schema.Boolean,
-  workingTree: Schema.Struct({
-    files: Schema.Array(
-      Schema.Struct({
-        path: TrimmedNonEmptyStringSchema,
-        insertions: NonNegativeInt,
-        deletions: NonNegativeInt,
-      }),
-    ),
-    insertions: NonNegativeInt,
-    deletions: NonNegativeInt,
-  }),
+  workingTree: GitStatusWorkingTree,
 };
 
 const GitStatusRemoteShape = {
@@ -259,6 +261,119 @@ export const GitStatusStreamEvent = Schema.Union([
   }),
 ]);
 export type GitStatusStreamEvent = typeof GitStatusStreamEvent.Type;
+
+export const VcsRef = Schema.Struct({
+  name: TrimmedNonEmptyStringSchema,
+  isRemote: Schema.optional(Schema.Boolean),
+  remoteName: Schema.optional(TrimmedNonEmptyStringSchema),
+  current: Schema.Boolean,
+  isDefault: Schema.Boolean,
+  worktreePath: Schema.NullOr(TrimmedNonEmptyStringSchema),
+});
+export type VcsRef = typeof VcsRef.Type;
+
+export const VcsStatusLocalResult = Schema.Struct({
+  isRepo: Schema.Boolean,
+  sourceControlProvider: Schema.optional(GitHostingProvider),
+  hasPrimaryRemote: Schema.Boolean,
+  isDefaultRef: Schema.Boolean,
+  refName: Schema.NullOr(TrimmedNonEmptyStringSchema),
+  hasWorkingTreeChanges: Schema.Boolean,
+  workingTree: GitStatusWorkingTree,
+});
+export type VcsStatusLocalResult = any;
+
+export const VcsStatusRemoteResult = Schema.Struct({
+  hasUpstream: Schema.Boolean,
+  aheadCount: NonNegativeInt,
+  behindCount: NonNegativeInt,
+  aheadOfDefaultCount: Schema.optionalKey(NonNegativeInt).pipe(
+    Schema.withDecodingDefault(Effect.succeed(0)),
+  ),
+  pr: Schema.NullOr(GitStatusPr),
+});
+export type VcsStatusRemoteResult = any;
+
+export const VcsStatusResult = Schema.Struct({
+  isRepo: Schema.Boolean,
+  sourceControlProvider: Schema.optional(GitHostingProvider),
+  hasPrimaryRemote: Schema.Boolean,
+  isDefaultRef: Schema.Boolean,
+  refName: Schema.NullOr(TrimmedNonEmptyStringSchema),
+  hasWorkingTreeChanges: Schema.Boolean,
+  workingTree: GitStatusWorkingTree,
+  hasUpstream: Schema.Boolean,
+  aheadCount: NonNegativeInt,
+  behindCount: NonNegativeInt,
+  aheadOfDefaultCount: Schema.optionalKey(NonNegativeInt).pipe(
+    Schema.withDecodingDefault(Effect.succeed(0)),
+  ),
+  pr: Schema.NullOr(GitStatusPr),
+});
+export type VcsStatusResult = any;
+
+export const VcsStatusStreamEvent = Schema.Union([
+  Schema.TaggedStruct("snapshot", {
+    local: VcsStatusLocalResult,
+    remote: Schema.NullOr(VcsStatusRemoteResult),
+  }),
+  Schema.TaggedStruct("localUpdated", {
+    local: VcsStatusLocalResult,
+  }),
+  Schema.TaggedStruct("remoteUpdated", {
+    remote: Schema.NullOr(VcsStatusRemoteResult),
+  }),
+]);
+export type VcsStatusStreamEvent = any;
+
+export const VcsPullInput = GitPullInput;
+export type VcsPullInput = any;
+export const VcsPullResult = Schema.Struct({
+  changed: Schema.Boolean,
+});
+export type VcsPullResult = any;
+export const VcsCreateRefInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  refName: Schema.optional(TrimmedNonEmptyStringSchema),
+  switchRef: Schema.optional(Schema.Boolean),
+});
+export type VcsCreateRefInput = any;
+export const VcsCreateRefResult = Schema.Struct({
+  refName: Schema.optional(TrimmedNonEmptyStringSchema),
+});
+export type VcsCreateRefResult = any;
+export const VcsSwitchRefInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  refName: Schema.optional(TrimmedNonEmptyStringSchema),
+});
+export type VcsSwitchRefInput = any;
+export const VcsSwitchRefResult = Schema.Struct({
+  refName: Schema.optional(TrimmedNonEmptyStringSchema),
+});
+export type VcsSwitchRefResult = any;
+export const VcsCreateWorktreeInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  refName: Schema.optional(TrimmedNonEmptyStringSchema),
+  newRefName: Schema.optional(TrimmedNonEmptyStringSchema),
+  baseRefName: Schema.optional(TrimmedNonEmptyStringSchema),
+  path: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),
+});
+export type VcsCreateWorktreeInput = any;
+export const VcsCreateWorktreeResult = Schema.Struct({
+  path: TrimmedNonEmptyStringSchema,
+  refName: Schema.optional(TrimmedNonEmptyStringSchema),
+});
+export type VcsCreateWorktreeResult = any;
+export const VcsListRefsInput = GitListBranchesInput;
+export type VcsListRefsInput = any;
+export const VcsListRefsResult = Schema.Struct({
+  refs: Schema.Array(VcsRef),
+  isRepo: Schema.Boolean,
+  hasPrimaryRemote: Schema.Boolean,
+  nextCursor: Schema.NullOr(NonNegativeInt),
+  totalCount: NonNegativeInt,
+});
+export type VcsListRefsResult = typeof VcsListRefsResult.Type;
 
 export const GitListBranchesResult = Schema.Struct({
   branches: Schema.Array(GitBranch),
@@ -354,7 +469,7 @@ export class GitCommandError extends Schema.TaggedErrorClass<GitCommandError>()(
   command: Schema.String,
   cwd: Schema.String,
   detail: Schema.String,
-  cause: Schema.optional(Schema.Defect),
+  cause: Schema.optional(Schema.Unknown),
 }) {
   override get message(): string {
     return `Git command failed in ${this.operation}: ${this.command} (${this.cwd}) - ${this.detail}`;
@@ -364,7 +479,7 @@ export class GitCommandError extends Schema.TaggedErrorClass<GitCommandError>()(
 export class GitHubCliError extends Schema.TaggedErrorClass<GitHubCliError>()("GitHubCliError", {
   operation: Schema.String,
   detail: Schema.String,
-  cause: Schema.optional(Schema.Defect),
+  cause: Schema.optional(Schema.Unknown),
 }) {
   override get message(): string {
     return `GitHub CLI failed in ${this.operation}: ${this.detail}`;
@@ -376,7 +491,7 @@ export class TextGenerationError extends Schema.TaggedErrorClass<TextGenerationE
   {
     operation: Schema.String,
     detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Unknown),
   },
 ) {
   override get message(): string {
@@ -387,7 +502,7 @@ export class TextGenerationError extends Schema.TaggedErrorClass<TextGenerationE
 export class GitManagerError extends Schema.TaggedErrorClass<GitManagerError>()("GitManagerError", {
   operation: Schema.String,
   detail: Schema.String,
-  cause: Schema.optional(Schema.Defect),
+  cause: Schema.optional(Schema.Unknown),
 }) {
   override get message(): string {
     return `Git manager failed in ${this.operation}: ${this.detail}`;

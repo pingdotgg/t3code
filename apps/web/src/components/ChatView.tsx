@@ -10,7 +10,6 @@ import {
   type QueuedTurnId,
   type ProviderApprovalDecision,
   ProviderInstanceId,
-  type ReviewChangesScope,
   type ServerProvider,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
@@ -105,7 +104,7 @@ import { useTheme } from "../hooks/useTheme";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
-import { buildReviewChangesPrompt } from "@t3tools/shared/workflows/reviewChanges";
+import { REVIEW_CHANGES_WORKFLOW_ID } from "@t3tools/shared/workflows/reviewChanges";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import { BranchToolbar } from "./BranchToolbar";
@@ -118,6 +117,10 @@ import { cn, randomUUID } from "~/lib/utils";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
 import { type NewProjectScriptInput } from "./ProjectScriptsControl";
+import type {
+  AgentWorkflowHeaderAction,
+  AgentWorkflowRunRequest,
+} from "./chat/AgentWorkflowHeaderActions";
 import {
   commandForProjectScript,
   nextProjectScriptId,
@@ -709,7 +712,7 @@ function ChatViewBody(
   const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
   const [isExportingThread, setIsExportingThread] = useState(false);
-  const [isStartingReviewThread, setIsStartingReviewThread] = useState(false);
+  const [startingWorkflowId, setStartingWorkflowId] = useState<string | null>(null);
   const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
   const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] = useState<
     ApprovalRequestId[]
@@ -2972,6 +2975,9 @@ function ChatViewBody(
                 ? {
                     createThread: {
                       projectId: activeProject.id,
+                      ...(draftThread?.parentThreadId
+                        ? { parentThreadId: draftThread.parentThreadId }
+                        : {}),
                       title,
                       modelSelection: threadCreateModelSelection,
                       runtimeMode,
@@ -3737,15 +3743,18 @@ function ChatViewBody(
     settings.chatExportDirectory,
   ]);
 
-  const onReviewCode = useCallback(
-    (requestedScope: ReviewChangesScope) => {
+  const onRunWorkflow = useCallback(
+    (request: AgentWorkflowRunRequest) => {
       const api = readEnvironmentApi(environmentId);
-      if (!api || !activeThread || !activeProject || !gitCwd || isStartingReviewThread) {
+      if (!api || !activeThread || !activeProject || startingWorkflowId !== null) {
         return;
       }
 
-      const workflowSettings = settings.agentWorkflows.reviewChanges;
-      if (!workflowSettings.enabled) {
+      const workflowId = request.workflowId;
+      if (
+        workflowId === REVIEW_CHANGES_WORKFLOW_ID &&
+        !settings.agentWorkflows.reviewChanges.enabled
+      ) {
         toastManager.add({
           type: "error",
           title: "Review Code is disabled",
@@ -3758,104 +3767,58 @@ function ChatViewBody(
         sendCtx?.selectedModelSelection ??
         activeProject.defaultModelSelection ??
         activeThread.modelSelection;
-      const createdAt = new Date().toISOString();
-      const nextThreadId = newThreadId();
 
-      setIsStartingReviewThread(true);
-      void api.git
-        .resolveReviewChangesContext({
-          cwd: gitCwd,
-          scope: requestedScope,
+      setStartingWorkflowId(workflowId);
+      void api.workflow
+        .run({
+          workflowId,
+          threadId: activeThread.id,
+          projectId: activeProject.id,
+          cwd: gitCwd ?? activeProject.cwd,
+          ...(request.input !== undefined ? { input: request.input } : {}),
+          ...(request.destinationMode !== undefined
+            ? { destinationMode: request.destinationMode }
+            : {}),
+          trigger: "manual",
+          idempotencyKey: crypto.randomUUID(),
+          modelSelection,
+          runtimeMode: DEFAULT_RUNTIME_MODE,
+          interactionMode: DEFAULT_INTERACTION_MODE,
         })
-        .then(async (reviewContext) => {
-          if (!reviewContext.hasReviewableChanges) {
+        .then(async (result) => {
+          if (result.status === "skipped") {
             toastManager.add({
               type: "warning",
-              title:
-                reviewContext.scope === "against-base"
-                  ? "No changes against base branch"
-                  : "No uncommitted changes",
+              title: result.message,
             });
             return;
           }
 
-          const title =
-            reviewContext.scope === "against-base"
-              ? `Review changes against ${reviewContext.baseBranch}`
-              : "Review uncommitted changes";
-          const prompt = buildReviewChangesPrompt({
-            context:
-              reviewContext.scope === "against-base"
-                ? {
-                    scope: "against-base",
-                    baseBranch: reviewContext.baseBranch,
-                    mergeBaseSha: reviewContext.mergeBaseSha,
-                  }
-                : { scope: "uncommitted" },
-            settings: workflowSettings,
-          });
-          const outgoingPrompt = sendCtx
-            ? formatOutgoingPrompt({
-                provider: sendCtx.selectedProvider,
-                model: sendCtx.selectedModel,
-                models: sendCtx.selectedProviderModels,
-                effort: sendCtx.selectedPromptEffort,
-                text: prompt,
-              })
-            : prompt;
-
-          await api.orchestration.dispatchCommand({
-            type: "thread.turn.start",
-            commandId: newCommandId(),
-            threadId: nextThreadId,
-            message: {
-              messageId: newMessageId(),
-              role: "user",
-              text: outgoingPrompt,
-              attachments: [],
-            },
-            modelSelection,
-            titleSeed: title,
-            runtimeMode: DEFAULT_RUNTIME_MODE,
-            interactionMode: DEFAULT_INTERACTION_MODE,
-            bootstrap: {
-              createThread: {
-                projectId: activeProject.id,
-                parentThreadId: activeThread.id,
-                title,
-                modelSelection,
-                runtimeMode: DEFAULT_RUNTIME_MODE,
-                interactionMode: DEFAULT_INTERACTION_MODE,
-                branch: reviewContext.branch,
-                worktreePath: gitCwd === activeProject.cwd ? null : gitCwd,
-                createdAt,
+          if (result.threadId !== activeThread.id) {
+            await waitForStartedServerThread(scopeThreadRef(environmentId, result.threadId));
+            await navigate({
+              to: "/$environmentId/$threadId",
+              params: {
+                environmentId,
+                threadId: result.threadId,
               },
-            },
-            createdAt,
-          });
-          await waitForStartedServerThread(scopeThreadRef(environmentId, nextThreadId));
-          await navigate({
-            to: "/$environmentId/$threadId",
-            params: {
-              environmentId,
-              threadId: nextThreadId,
-            },
-          });
+            });
+          }
         })
         .catch((error: unknown) => {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Could not start review",
+              title: "Could not start workflow",
               description:
                 error instanceof Error
                   ? error.message
-                  : "An error occurred while creating the review chat.",
+                  : "An error occurred while starting the workflow.",
             }),
           );
         })
         .finally(() => {
-          setIsStartingReviewThread(false);
+          setStartingWorkflowId(null);
         });
     },
     [
@@ -3863,11 +3826,61 @@ function ChatViewBody(
       activeThread,
       environmentId,
       gitCwd,
-      isStartingReviewThread,
       navigate,
       settings.agentWorkflows.reviewChanges,
+      startingWorkflowId,
     ],
   );
+
+  const workflowHeaderActions = useMemo((): AgentWorkflowHeaderAction[] => {
+    const projectUnavailableReason =
+      activeProject === undefined
+        ? "Workflow actions are unavailable until this thread has an active project."
+        : null;
+    const reviewDisabledReason =
+      projectUnavailableReason ??
+      (!isGitRepo
+        ? "Review Code is unavailable because this project is not a git repository."
+        : gitCwd === null
+          ? "Review Code is unavailable until this thread has an active project."
+          : null);
+    const reviewActions: AgentWorkflowHeaderAction[] =
+      settings.agentWorkflows.reviewChanges.enabled && activeProject !== undefined
+        ? [
+            {
+              kind: "review-code",
+              id: REVIEW_CHANGES_WORKFLOW_ID,
+              label: "Review Code",
+              defaultScope: settings.agentWorkflows.reviewChanges.defaultScope,
+              disabledReason: reviewDisabledReason,
+              isRunning: startingWorkflowId === REVIEW_CHANGES_WORKFLOW_ID,
+            },
+          ]
+        : [];
+    const customActions = settings.agentWorkflows.customWorkflows
+      .filter((workflow) => workflow.enabled && workflow.showInHeader)
+      .map(
+        (workflow): AgentWorkflowHeaderAction => ({
+          kind: "custom",
+          id: workflow.id,
+          label: workflow.buttonLabel,
+          name: workflow.name,
+          destinationMode: workflow.destinationMode,
+          disabledReason: projectUnavailableReason,
+          isRunning: startingWorkflowId === workflow.id,
+        }),
+      );
+
+    return [...reviewActions, ...customActions];
+  }, [
+    activeProject,
+    gitCwd,
+    isGitRepo,
+    settings.agentWorkflows.customWorkflows,
+    settings.agentWorkflows.reviewChanges.defaultScope,
+    settings.agentWorkflows.reviewChanges.enabled,
+    startingWorkflowId,
+  ]);
 
   // Both the Map and the revert handler are read from refs at call-time so
   // the callback reference is fully stable and never busts context identity.
@@ -3970,11 +3983,9 @@ function ChatViewBody(
           diffToggleShortcutLabel={diffPanelShortcutLabel}
           gitCwd={gitCwd}
           diffOpen={diffOpen}
-          reviewCodeEnabled={settings.agentWorkflows.reviewChanges.enabled}
-          reviewCodeDefaultScope={settings.agentWorkflows.reviewChanges.defaultScope}
-          reviewCodeRunning={isStartingReviewThread}
+          workflowActions={workflowHeaderActions}
           onRunProjectScript={runProjectScript}
-          onReviewCode={onReviewCode}
+          onRunWorkflow={onRunWorkflow}
           onAddProjectScript={saveProjectScript}
           onUpdateProjectScript={updateProjectScript}
           onDeleteProjectScript={deleteProjectScript}

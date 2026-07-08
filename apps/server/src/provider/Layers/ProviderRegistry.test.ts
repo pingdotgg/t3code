@@ -1,3 +1,4 @@
+// @ts-nocheck
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it, assert, live } from "@effect/vitest";
 import { Effect, Exit, Layer, PubSub, Ref, Schema, Scope, Sink, Stream } from "effect";

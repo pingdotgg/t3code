@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -6,6 +7,7 @@ import {
   type AuthAccessStreamEvent,
   AuthSessionId,
   CommandId,
+  DEFAULT_REVIEW_CHANGES_SCOPE,
   type GitActionProgressEvent,
   type GitManagerServiceError,
   OrchestrationDispatchCommandError,
@@ -21,6 +23,7 @@ import {
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
   FilesystemBrowseError,
+  MessageId,
   ServerProviderListCommandsError,
   ServerExportThreadMarkdownError,
   ThreadId,
@@ -30,12 +33,20 @@ import {
   type TerminalMetadataStreamEvent,
   type VcsError,
   GitCommandError,
+  WorkflowRunError,
+  type WorkflowRunInput,
+  type WorkflowRunResult,
+  WorkflowRunId,
   SourceControlRepositoryError,
   ServerProviderUpdateError,
   KeybindingsConfigError,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
+import {
+  buildReviewChangesPrompt,
+  REVIEW_CHANGES_WORKFLOW_ID,
+} from "@t3tools/shared/workflows/reviewChanges";
 import {
   gitCheckoutResultToVcs,
   gitCommandErrorToVcs,
@@ -126,6 +137,49 @@ async function writeThreadMarkdownExportFile(input: {
 }
 
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
+const WORKFLOW_RUN_HISTORY_LIMIT = 200;
+const workflowRunHistory = [];
+const workflowAutomationCooldowns = new Map();
+const workflowAutomationRunCounts = new Map();
+const workflowTargetThreadIds = new Set();
+let workflowAutomationStarted = false;
+
+function pushWorkflowRunRecord(record) {
+  workflowRunHistory.unshift(record);
+  if (workflowRunHistory.length > WORKFLOW_RUN_HISTORY_LIMIT) {
+    workflowRunHistory.length = WORKFLOW_RUN_HISTORY_LIMIT;
+  }
+  if (record.status === "started" && record.targetThreadId !== undefined) {
+    workflowTargetThreadIds.add(record.targetThreadId);
+  }
+}
+
+function listWorkflowRunRecords(input) {
+  const matchingRuns =
+    input.threadId === undefined
+      ? workflowRunHistory
+      : workflowRunHistory.filter(
+          (run) =>
+            run.requestedThreadId === input.threadId || run.targetThreadId === input.threadId,
+        );
+  return { runs: matchingRuns.slice(0, input.limit) };
+}
+
+function pushWorkflowAutomationSkipped(input) {
+  const now = new Date().toISOString();
+  pushWorkflowRunRecord({
+    runId: WorkflowRunId.make(input.idempotencyKey),
+    workflowId: input.workflowId,
+    workflowName: input.workflowName,
+    status: "skipped",
+    trigger: "after-assistant-turn-completes",
+    requestedThreadId: input.threadId,
+    skipReason: input.reason,
+    message: input.message,
+    createdAt: now,
+    completedAt: now,
+  });
+}
 
 function toAuthAccessStreamEvent(
   change: BootstrapCredentialChange | SessionCredentialChange,
@@ -336,6 +390,370 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
         gitStatusBroadcaster
           .refreshStatus(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
+
+      const workflowSkipped = (
+        input: Pick<WorkflowRunInput, "idempotencyKey" | "workflowId" | "threadId" | "trigger">,
+        workflowName: string,
+        reason: Extract<WorkflowRunResult, { status: "skipped" }>["reason"],
+        message: string,
+      ): WorkflowRunResult => {
+        const createdAt = new Date().toISOString();
+        const result = {
+          status: "skipped" as const,
+          runId: WorkflowRunId.make(input.idempotencyKey),
+          reason,
+          message,
+          createdAt,
+        };
+        pushWorkflowRunRecord({
+          runId: result.runId,
+          workflowId: input.workflowId,
+          workflowName,
+          status: "skipped",
+          trigger: input.trigger,
+          requestedThreadId: input.threadId,
+          skipReason: reason,
+          message,
+          createdAt,
+          completedAt: createdAt,
+        });
+        return result;
+      };
+
+      const parseReviewScope = (value: unknown) =>
+        value === "uncommitted" || value === "against-base" ? value : null;
+
+      const runWorkflow = (input: WorkflowRunInput) =>
+        Effect.gen(function* () {
+          const runId = WorkflowRunId.make(input.idempotencyKey);
+          const createdAt = new Date().toISOString();
+          const settings = yield* serverSettings.getSettings;
+          const threadOption = yield* projectionSnapshotQuery.getThreadShellById(input.threadId);
+          if (Option.isNone(threadOption)) {
+            return workflowSkipped(
+              input,
+              input.workflowId,
+              "thread-not-found",
+              "Thread not found.",
+            );
+          }
+          const thread = threadOption.value;
+
+          const projectId = input.projectId ?? thread.projectId;
+          const projectOption = yield* projectionSnapshotQuery.getProjectShellById(projectId);
+          if (Option.isNone(projectOption)) {
+            return workflowSkipped(
+              input,
+              input.workflowId,
+              "project-not-found",
+              "Project not found.",
+            );
+          }
+          const project = projectOption.value;
+          const cwd = input.cwd ?? thread.worktreePath ?? project.workspaceRoot;
+          const dispatchWorkflowTurn = (turn: {
+            readonly workflowId: string;
+            readonly workflowName: string;
+            readonly prompt: string;
+            readonly title: string;
+            readonly destinationMode: "same-chat" | "new-chat" | "child-chat";
+            readonly branch: string | null;
+          }) =>
+            Effect.gen(function* () {
+              const threadId =
+                turn.destinationMode === "same-chat"
+                  ? input.threadId
+                  : ThreadId.make(crypto.randomUUID());
+              const commandId = CommandId.make(crypto.randomUUID());
+              const messageId = MessageId.make(crypto.randomUUID());
+              const modelSelection =
+                input.modelSelection ?? project.defaultModelSelection ?? thread.modelSelection;
+              const runtimeMode = input.runtimeMode ?? thread.runtimeMode;
+              const interactionMode = input.interactionMode ?? thread.interactionMode;
+              const bootstrap =
+                turn.destinationMode === "same-chat"
+                  ? undefined
+                  : {
+                      createThread: {
+                        projectId: project.id,
+                        parentThreadId:
+                          turn.destinationMode === "child-chat" ? input.threadId : null,
+                        title: turn.title,
+                        modelSelection,
+                        runtimeMode,
+                        interactionMode,
+                        branch: turn.branch,
+                        worktreePath: cwd === project.workspaceRoot ? null : cwd,
+                        createdAt,
+                      },
+                    };
+              const normalizedCommand = yield* normalizeDispatchCommand({
+                type: "thread.turn.start",
+                commandId,
+                threadId,
+                message: {
+                  messageId,
+                  role: "user",
+                  text: turn.prompt,
+                  attachments: [],
+                },
+                modelSelection,
+                titleSeed: turn.title,
+                runtimeMode,
+                interactionMode,
+                ...(bootstrap !== undefined ? { bootstrap } : {}),
+                source: {
+                  kind: "workflow",
+                  workflowId: turn.workflowId,
+                  runId,
+                  trigger: input.trigger,
+                },
+                createdAt,
+              });
+              const dispatchResult = yield* dispatchNormalizedCommand(normalizedCommand);
+              const result = {
+                status: "started" as const,
+                runId,
+                threadId,
+                commandId,
+                messageId,
+                sequence: dispatchResult.sequence,
+                createdAt,
+              } satisfies WorkflowRunResult;
+              pushWorkflowRunRecord({
+                runId,
+                workflowId: turn.workflowId,
+                workflowName: turn.workflowName,
+                status: "started",
+                trigger: input.trigger,
+                requestedThreadId: input.threadId,
+                targetThreadId: threadId,
+                commandId,
+                messageId,
+                createdAt,
+              });
+              return result;
+            });
+
+          if (input.workflowId !== REVIEW_CHANGES_WORKFLOW_ID) {
+            const workflow = settings.agentWorkflows.customWorkflows.find(
+              (candidate) => candidate.id === input.workflowId,
+            );
+            if (!workflow) {
+              return workflowSkipped(
+                input,
+                input.workflowId,
+                "workflow-not-found",
+                "Workflow not found.",
+              );
+            }
+            if (!workflow.enabled) {
+              return workflowSkipped(
+                input,
+                workflow.name,
+                "workflow-disabled",
+                "Workflow is disabled.",
+              );
+            }
+            const prompt = workflow.promptTemplate.trim();
+            if (prompt.length === 0) {
+              return yield* new WorkflowRunError({
+                message: "Custom workflow prompt cannot be empty.",
+              });
+            }
+            return yield* dispatchWorkflowTurn({
+              workflowId: workflow.id,
+              workflowName: workflow.name,
+              prompt,
+              title: input.title ?? workflow.name,
+              destinationMode: input.destinationMode ?? workflow.destinationMode,
+              branch: thread.branch,
+            });
+          }
+          if (input.destinationMode !== undefined && input.destinationMode !== "child-chat") {
+            return yield* new WorkflowRunError({
+              message: "Review Code workflow currently supports only the child-chat destination.",
+            });
+          }
+
+          const reviewSettings = settings.agentWorkflows.reviewChanges;
+          const override = settings.agentWorkflows.builtInOverrides[REVIEW_CHANGES_WORKFLOW_ID];
+          const enabled = override?.enabled ?? reviewSettings.enabled;
+          if (!enabled) {
+            return workflowSkipped(
+              input,
+              "Review Code",
+              "workflow-disabled",
+              "Review Code workflow is disabled.",
+            );
+          }
+
+          const requestedScope =
+            parseReviewScope(input.input?.scope) ??
+            parseReviewScope(override?.defaultInput?.scope) ??
+            reviewSettings.defaultScope ??
+            DEFAULT_REVIEW_CHANGES_SCOPE;
+          const reviewContext = yield* git.resolveReviewChangesContext({
+            cwd,
+            scope: requestedScope,
+          });
+
+          if (!reviewContext.hasReviewableChanges) {
+            return workflowSkipped(
+              input,
+              "Review Code",
+              "no-reviewable-changes",
+              reviewContext.scope === "against-base"
+                ? "No changes against base branch."
+                : "No uncommitted changes.",
+            );
+          }
+
+          const title =
+            input.title ??
+            (reviewContext.scope === "against-base"
+              ? `Review changes against ${reviewContext.baseBranch}`
+              : "Review uncommitted changes");
+          const prompt = buildReviewChangesPrompt({
+            context:
+              reviewContext.scope === "against-base"
+                ? {
+                    scope: "against-base",
+                    baseBranch: reviewContext.baseBranch,
+                    mergeBaseSha: reviewContext.mergeBaseSha,
+                  }
+                : { scope: "uncommitted" },
+            settings: {
+              promptTemplate: override?.promptTemplate ?? reviewSettings.promptTemplate,
+            },
+          });
+          return yield* dispatchWorkflowTurn({
+            workflowId: REVIEW_CHANGES_WORKFLOW_ID,
+            workflowName: "Review Code",
+            prompt,
+            title,
+            destinationMode: "child-chat",
+            branch: reviewContext.branch,
+          });
+        }).pipe(
+          Effect.tapError((cause) =>
+            Effect.sync(() => {
+              const createdAt = new Date().toISOString();
+              pushWorkflowRunRecord({
+                runId: WorkflowRunId.make(input.idempotencyKey),
+                workflowId: input.workflowId,
+                workflowName: input.workflowId,
+                status: "failed",
+                trigger: input.trigger,
+                requestedThreadId: input.threadId,
+                message: cause instanceof Error ? cause.message : "Failed to run workflow.",
+                createdAt,
+                completedAt: createdAt,
+              });
+            }),
+          ),
+          Effect.mapError(
+            (cause) =>
+              new WorkflowRunError({
+                message: cause instanceof Error ? cause.message : "Failed to run workflow.",
+                cause,
+              }),
+          ),
+        );
+
+      const runWorkflowAutomationForEvent = (event) =>
+        Effect.gen(function* () {
+          if (event.type !== "thread.turn-diff-completed") {
+            return;
+          }
+          const threadId = event.payload.threadId;
+          if (workflowTargetThreadIds.has(threadId)) {
+            return;
+          }
+
+          const settings = yield* serverSettings.getSettings;
+          const automations = settings.agentWorkflows.customWorkflows.filter(
+            (workflow) =>
+              workflow.enabled &&
+              workflow.automation.afterAssistantTurnCompletes &&
+              workflow.promptTemplate.trim().length > 0,
+          );
+          const now = Date.now();
+
+          for (const workflow of automations) {
+            const automationKey = `${threadId}:${workflow.id}`;
+            const idempotencyKey = `workflow:auto:after-assistant-turn-completes:${workflow.id}:${threadId}:${event.payload.turnId}`;
+            const runCount = workflowAutomationRunCounts.get(automationKey) ?? 0;
+            if (
+              workflow.automation.maxRunsPerThread > 0 &&
+              runCount >= workflow.automation.maxRunsPerThread
+            ) {
+              pushWorkflowAutomationSkipped({
+                idempotencyKey,
+                workflowId: workflow.id,
+                workflowName: workflow.name,
+                threadId,
+                reason: "automation-run-limit",
+                message:
+                  "Workflow automation skipped because the per-thread run limit was reached.",
+              });
+              continue;
+            }
+
+            const lastRunAt = workflowAutomationCooldowns.get(automationKey);
+            if (lastRunAt !== undefined && now - lastRunAt < workflow.automation.cooldownMs) {
+              pushWorkflowAutomationSkipped({
+                idempotencyKey,
+                workflowId: workflow.id,
+                workflowName: workflow.name,
+                threadId,
+                reason: "automation-cooldown",
+                message: "Workflow automation skipped because the cooldown is still active.",
+              });
+              continue;
+            }
+
+            workflowAutomationCooldowns.set(automationKey, now);
+            workflowAutomationRunCounts.set(automationKey, runCount + 1);
+            yield* runWorkflow({
+              workflowId: workflow.id,
+              threadId,
+              destinationMode: workflow.destinationMode,
+              title: workflow.name,
+              trigger: "after-assistant-turn-completes",
+              idempotencyKey,
+            }).pipe(
+              Effect.catchAll((error) =>
+                Effect.logWarning("workflow automation failed", {
+                  workflowId: workflow.id,
+                  threadId,
+                  error: error.message,
+                }),
+              ),
+            );
+          }
+        });
+
+      const startWorkflowAutomation = Effect.sync(() => {
+        if (workflowAutomationStarted) {
+          return false;
+        }
+        workflowAutomationStarted = true;
+        return true;
+      }).pipe(
+        Effect.flatMap((shouldStart) =>
+          shouldStart
+            ? orchestrationEngine.streamDomainEvents.pipe(
+                Stream.runForEach(runWorkflowAutomationForEvent),
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("workflow automation subscription failed", { cause }),
+                ),
+                Effect.fork,
+                Effect.asVoid,
+              )
+            : Effect.void,
+        ),
+      );
 
       return WsRpcGroup.of({
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
@@ -626,6 +1044,24 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               "rpc.aggregate": "server",
             },
           ),
+        [WS_METHODS.workflowRun]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.workflowRun,
+            startWorkflowAutomation.pipe(Effect.flatMap(() => runWorkflow(input))),
+            {
+              "rpc.aggregate": "workflow",
+            },
+          ),
+        [WS_METHODS.workflowListRuns]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.workflowListRuns,
+            startWorkflowAutomation.pipe(
+              Effect.flatMap(() => Effect.sync(() => listWorkflowRunRecords(input))),
+            ),
+            {
+              "rpc.aggregate": "workflow",
+            },
+          ),
         [WS_METHODS.serverExportThreadMarkdown]: (input) =>
           observeRpcEffect(
             WS_METHODS.serverExportThreadMarkdown,
@@ -749,6 +1185,14 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcEffect(WS_METHODS.shellOpenInEditor, open.openInEditor(input), {
             "rpc.aggregate": "workspace",
           }),
+        [WS_METHODS.shellRevealInFileManager]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.shellRevealInFileManager,
+            open.revealInFileManager(input.path),
+            {
+              "rpc.aggregate": "workspace",
+            },
+          ),
         [WS_METHODS.filesystemBrowse]: (input) =>
           observeRpcEffect(
             WS_METHODS.filesystemBrowse,

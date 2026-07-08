@@ -5,7 +5,12 @@ import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import { DEFAULT_GIT_TEXT_GENERATION_MODEL, ProviderOptionSelections } from "./model.ts";
 import { ModelSelection } from "./orchestration.ts";
 import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.ts";
-import { AgentWorkflowSettings, ReviewChangesScope } from "./agentWorkflows.ts";
+import {
+  AgentWorkflowDestinationMode,
+  AgentWorkflowSettings,
+  CustomAgentWorkflowAutomationSettings,
+  ReviewChangesScope,
+} from "./agentWorkflows.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -262,7 +267,7 @@ export class ServerSettingsError extends Schema.TaggedErrorClass<ServerSettingsE
   {
     settingsPath: Schema.String,
     detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Unknown),
   },
 ) {
   override get message(): string {
@@ -338,6 +343,30 @@ const AgentWorkflowSettingsPatch = Schema.Struct({
       defaultScope: Schema.optionalKey(ReviewChangesScope),
       promptTemplate: Schema.optionalKey(Schema.String),
     }),
+  ),
+  builtInOverrides: Schema.optionalKey(
+    Schema.Record(
+      TrimmedNonEmptyString,
+      Schema.Struct({
+        enabled: Schema.optionalKey(Schema.Boolean),
+        promptTemplate: Schema.optionalKey(Schema.String),
+        defaultInput: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
+      }),
+    ),
+  ),
+  customWorkflows: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        id: TrimmedNonEmptyString,
+        enabled: Schema.optionalKey(Schema.Boolean),
+        name: TrimmedNonEmptyString,
+        buttonLabel: TrimmedNonEmptyString,
+        promptTemplate: Schema.String,
+        showInHeader: Schema.optionalKey(Schema.Boolean),
+        destinationMode: Schema.optionalKey(AgentWorkflowDestinationMode),
+        automation: Schema.optionalKey(CustomAgentWorkflowAutomationSettings),
+      }),
+    ),
   ),
 });
 

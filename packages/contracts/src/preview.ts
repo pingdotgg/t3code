@@ -16,6 +16,8 @@ const Title = Schema.String.check(Schema.isMaxLength(PREVIEW_TITLE_MAX_LENGTH));
 
 export const PreviewTabId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 export type PreviewTabId = typeof PreviewTabId.Type;
+export const PreviewViewportPresetId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
+export type PreviewViewportPresetId = typeof PreviewViewportPresetId.Type;
 
 export const PREVIEW_VIEWPORT_MIN_DIMENSION = 240;
 export const PREVIEW_VIEWPORT_MAX_DIMENSION = 3840;
@@ -226,7 +228,7 @@ export class PreviewInvalidUrlError extends Schema.TaggedErrorClass<PreviewInval
     inputLength: Schema.Number,
     reason: Schema.Literals(["empty", "parse", "unsupported-protocol", "unexpected"]),
     protocol: Schema.optional(Schema.String),
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Unknown),
   },
 ) {
   override get message(): string {

@@ -1,26 +1,24 @@
-import type {
-  EnvironmentConnection,
-  EnvironmentConnectionState,
-  WsRpcClient,
-} from "@t3tools/client-runtime";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import { EnvironmentId, ThreadId, type ServerConfig } from "@t3tools/contracts";
 
-export type { EnvironmentRuntimeState } from "@t3tools/client-runtime";
+export interface EnvironmentRuntimeState {
+  readonly connectionState: EnvironmentConnectionPhase;
+  readonly connectionError: string | null;
+  readonly connectionErrorTraceId: string | null;
+  readonly serverConfig: ServerConfig | null;
+}
 
 export interface ConnectedEnvironmentSummary {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
   readonly displayUrl: string;
-  readonly connectionState: EnvironmentConnectionState;
+  readonly isRelayManaged: boolean;
+  readonly connectionState: EnvironmentConnectionPhase;
   readonly connectionError: string | null;
+  readonly connectionErrorTraceId: string | null;
 }
 
 export interface SelectedThreadRef {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
-}
-
-export interface EnvironmentSession {
-  readonly client: WsRpcClient;
-  readonly connection: EnvironmentConnection;
 }
