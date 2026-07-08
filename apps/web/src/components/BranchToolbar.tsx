@@ -418,6 +418,9 @@ export const BranchToolbar = memo(function BranchToolbar({
         {...(activeThreadWorktreePathOverride !== undefined
           ? { activeWorktreePathOverride: activeThreadWorktreePathOverride }
           : {})}
+        {...(onActiveThreadWorktreePathOverrideChange
+          ? { onActiveWorktreePathOverrideChange: onActiveThreadWorktreePathOverrideChange }
+          : {})}
         startFromOrigin={startFromOrigin}
         onStartFromOriginChange={onStartFromOriginChange}
         {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}

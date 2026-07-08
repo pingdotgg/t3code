@@ -68,6 +68,7 @@ interface BranchToolbarBranchSelectorProps {
   activeThreadBranchOverride?: string | null;
   onActiveThreadBranchOverrideChange?: (refName: string | null) => void;
   activeWorktreePathOverride?: string | null;
+  onActiveWorktreePathOverrideChange?: (worktreePath: string | null) => void;
   startFromOrigin: boolean;
   onStartFromOriginChange: (startFromOrigin: boolean) => void;
   onCheckoutPullRequestRequest?: (reference: string) => void;
@@ -103,6 +104,7 @@ export function BranchToolbarBranchSelector({
   activeThreadBranchOverride,
   onActiveThreadBranchOverrideChange,
   activeWorktreePathOverride,
+  onActiveWorktreePathOverrideChange,
   startFromOrigin,
   onStartFromOriginChange,
   onCheckoutPullRequestRequest,
@@ -188,6 +190,11 @@ export function BranchToolbarBranchSelector({
       }
       if (hasServerThread) {
         onActiveThreadBranchOverrideChange?.(branch);
+        // Keep the parent's optimistic worktree-path override in step with the
+        // branch action; otherwise picking a branch that retargets the main
+        // checkout (worktreePath === null) leaves a stale override pinning
+        // branchCwd and the next send to the previously-picked worktree.
+        onActiveWorktreePathOverrideChange?.(worktreePath);
         return;
       }
       const nextDraftEnvMode = resolveDraftEnvModeAfterBranchChange({
@@ -209,6 +216,7 @@ export function BranchToolbarBranchSelector({
       activeWorktreePath,
       hasServerThread,
       onActiveThreadBranchOverrideChange,
+      onActiveWorktreePathOverrideChange,
       setDraftThreadContext,
       draftId,
       threadRef,
