@@ -173,13 +173,21 @@ public final class SceneryStore {
         return name
     }
 
+    /// Legacy scene numbering started at 2 (`<base> 1` was never produced).
+    /// Plain-space lap names are capped to one digit to avoid hiding AI titles
+    /// that end in years or large numbers.
     private static func isLegacyNumberedSceneTitle(_ title: String, base: String) -> Bool {
-        let separators = [" · ", " "]
-        return separators.contains { separator in
-            guard title.hasPrefix(base + separator) else { return false }
-            let suffix = title.dropFirst(base.count + separator.count)
-            return Int(suffix).map { $0 > 1 } ?? false
+        let reuseSeparator = " · "
+        if title.hasPrefix(base + reuseSeparator) {
+            let suffix = title.dropFirst(base.count + reuseSeparator.count)
+            return Int(suffix).map { $0 >= 2 } ?? false
         }
+
+        let lapSeparator = " "
+        guard title.hasPrefix(base + lapSeparator) else { return false }
+        let suffix = title.dropFirst(base.count + lapSeparator.count)
+        guard suffix.count == 1, let lap = Int(suffix) else { return false }
+        return (2...9).contains(lap)
     }
 
     /// Empty-state hero: rotates daily through the pool.
