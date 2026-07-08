@@ -90,7 +90,6 @@ const rpcClientMock = {
   },
   workflow: {
     run: vi.fn(),
-    listRuns: vi.fn(),
   },
   server: {
     getConfig: vi.fn(),

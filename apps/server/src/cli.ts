@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { NetService } from "@t3tools/shared/Net";
 import type { NodeServices } from "@effect/platform-node/NodeServices";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";

@@ -52,7 +52,6 @@ import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
 import { ProjectSetupScriptRunnerLive } from "./project/Layers/ProjectSetupScriptRunner.ts";
 import { ObservabilityLive } from "./observability/Layers/Observability.ts";
 import { ServerEnvironmentLive } from "./environment/Layers/ServerEnvironment.ts";
-import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
 import {
   authBearerBootstrapRouteLayer,
   authBootstrapRouteLayer,
@@ -68,7 +67,6 @@ import {
 } from "./auth/http.ts";
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
-import { AuthControlPlaneRuntimeLive } from "./auth/Layers/AuthControlPlane.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
 import {
   clearPersistedServerRuntimeState,
@@ -234,8 +232,7 @@ type CloudHttpRuntimeServices = Exclude<
 
 const CloudBaseLayerLive = Layer.mergeAll(
   CloudServerSecretStore.layer,
-  ServerEnvironmentLive,
-  CloudEnvironmentAuth.runtimeLayer.pipe(Layer.provide(AuthControlPlaneRuntimeLive)),
+  CloudEnvironmentAuth.runtimeLayer,
   CloudRelayClientLayerLive,
 );
 
@@ -248,12 +245,6 @@ export const CloudHttpRuntimeLayerLive = Layer.mergeAll(
 export const CloudRuntimeLayerLive = AgentAwarenessRelay.layer.pipe(
   Layer.provide(CloudBaseLayerLive),
   Layer.provideMerge(CloudHttpRuntimeLayerLive),
-  Layer.provideMerge(
-    OrchestrationLayerLive.pipe(
-      Layer.provide(RepositoryIdentityResolverLive),
-      Layer.provide(PersistenceLayerLive),
-    ),
-  ),
 ) as unknown as Layer.Layer<CloudRuntimeServices>;
 
 const ConnectHttpApiLayerLive = connectHttpApiLayer as unknown as Layer.Layer<never>;
@@ -343,24 +334,6 @@ export const makeServerLayer = Layer.unwrap(
     const httpListeningLayer = Layer.effectDiscard(
       Effect.gen(function* () {
         yield* HttpServer.HttpServer;
-        yield* CloudServerSecretStore.ServerSecretStore;
-        yield* ServerEnvironment;
-        yield* CloudEnvironmentAuth.EnvironmentAuth;
-        yield* CliTokenManager.CloudCliTokenManager;
-        yield* RelayClient.RelayClient;
-        yield* ManagedEndpointRuntime.CloudManagedEndpointRuntime;
-        yield* AgentAwarenessRelay.AgentAwarenessRelay;
-        yield* Effect.logInfo("cloud runtime services ready", {
-          services: [
-            "ServerSecretStore",
-            "ServerEnvironment",
-            "EnvironmentAuth",
-            "CloudCliTokenManager",
-            "RelayClient",
-            "CloudManagedEndpointRuntime",
-            "AgentAwarenessRelay",
-          ],
-        });
         const startup = yield* ServerRuntimeStartup;
         yield* startup.markHttpListening;
       }),

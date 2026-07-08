@@ -117,10 +117,6 @@ import { cn, randomUUID } from "~/lib/utils";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
 import { type NewProjectScriptInput } from "./ProjectScriptsControl";
-import type {
-  AgentWorkflowHeaderAction,
-  AgentWorkflowRunRequest,
-} from "./chat/AgentWorkflowHeaderActions";
 import {
   commandForProjectScript,
   nextProjectScriptId,
@@ -155,6 +151,10 @@ import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
+import {
+  type AgentWorkflowHeaderAction,
+  type AgentWorkflowRunRequest,
+} from "./chat/AgentWorkflowHeaderActions";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import { resolveEffectiveEnvMode, resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
@@ -2975,9 +2975,6 @@ function ChatViewBody(
                 ? {
                     createThread: {
                       projectId: activeProject.id,
-                      ...(draftThread?.parentThreadId
-                        ? { parentThreadId: draftThread.parentThreadId }
-                        : {}),
                       title,
                       modelSelection: threadCreateModelSelection,
                       runtimeMode,

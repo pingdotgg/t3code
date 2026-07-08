@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect";
+import { Schema } from "effect";
 import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ReviewChangesScope } from "./agentWorkflows.ts";
 
@@ -287,9 +287,7 @@ export const VcsStatusRemoteResult = Schema.Struct({
   hasUpstream: Schema.Boolean,
   aheadCount: NonNegativeInt,
   behindCount: NonNegativeInt,
-  aheadOfDefaultCount: Schema.optionalKey(NonNegativeInt).pipe(
-    Schema.withDecodingDefault(Effect.succeed(0)),
-  ),
+  aheadOfDefaultCount: Schema.optional(NonNegativeInt),
   pr: Schema.NullOr(GitStatusPr),
 });
 export type VcsStatusRemoteResult = any;
@@ -305,9 +303,7 @@ export const VcsStatusResult = Schema.Struct({
   hasUpstream: Schema.Boolean,
   aheadCount: NonNegativeInt,
   behindCount: NonNegativeInt,
-  aheadOfDefaultCount: Schema.optionalKey(NonNegativeInt).pipe(
-    Schema.withDecodingDefault(Effect.succeed(0)),
-  ),
+  aheadOfDefaultCount: Schema.optional(NonNegativeInt),
   pr: Schema.NullOr(GitStatusPr),
 });
 export type VcsStatusResult = any;

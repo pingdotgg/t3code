@@ -1,81 +1,85 @@
 ---
 name: split-worktree-prs
-description: Splits a large dirty git worktree into logical, self-contained branches and GitHub pull requests against a base branch. Use when the user wants uncommitted changes separated into PRs, asks to create logical PRs, or needs a large local diff grouped by feature/domain before pushing.
+description: Splits a large dirty git worktree into logical branches and GitHub pull requests against a base branch. Use when the user wants uncommitted changes separated into PRs, asks to create logical PRs, or needs a large local diff grouped by feature/domain before pushing.
 ---
 
 # Split Worktree PRs
 
-Turn a large uncommitted worktree into coherent PRs that are each **self-contained** — every PR is independently mergeable: it installs, and passes the repo's checks (build/typecheck/lint/format) on its own branch. Logical grouping is worthless if a slice is red or references files it doesn't include.
+Turn a large uncommitted worktree into coherent PRs without losing local work.
 
-Never lose local work: snapshot first, restore at the end.
-
-## 1. Snapshot the full worktree into one ref
-
-A single ref is easier to slice than a stash (tracked + untracked + deletions in one place) and leaves the working tree byte-identical:
+## Quick start
 
 ```sh
-git add -A && git commit -q -m 'wip: split snapshot (temp)'
-git branch snap                    # immutable full snapshot
-git reset --soft HEAD~1 && git reset -q   # restore exact dirty state
+git --no-pager status --short
+git --no-pager diff --stat
+git stash push -u -m 'copilot-pr-split-full-worktree'
+git switch -C split/<scope> origin/main
+git restore --source=stash@{0} --staged --worktree -- <tracked-paths>
+git checkout stash@{0}^3 -- <untracked-paths>
+git add -- <paths>
+git commit -m "<message>" -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+git push -u origin split/<scope>
+gh pr create --base main --head split/<scope> --title "<title>" --body "<body>"
 ```
 
-`snap` now holds the complete change. `git diff --name-only origin/main..snap` is the authoritative file set.
+## Workflow
 
-## 2. Assess coupling BEFORE splitting
-
-A clean split is only possible if slices don't break each other. Probe for coupling that forces slices to ship together:
-
-- **Shared interfaces/contracts** — if a slice changes a type/schema/API implemented or consumed by other slices, those consumers fail to compile until updated. They must land together. Test empirically: build one candidate slice and count errors in the others.
-- **Global lockfile / manifests** — one monorepo `pnpm-lock.yaml` (or equivalent) reflects all manifests at once; a partial branch fails `--frozen-lockfile`. Either regenerate a consistent lockfile per branch, or keep coupled manifest changes together.
-- **Global config** — shared catalog/overrides/patched-dependencies referencing packages only present in another slice will error.
-
-Then pick a topology:
-
-- **Independent PRs (base = main):** only when slices are genuinely decoupled and each is green alone.
-- **Stacked PRs (base = parent branch):** when slices depend in order (foundation → backend → frontend). Each is self-contained _relative to its base_; retarget with `gh pr edit <n> --base <parent-branch>`.
-- **Consolidate:** when a shared change breaks every consumer (e.g. a contract touched by all apps), a green split is impossible. Merge the coupled work into one PR rather than ship red PRs. Prefer this over pretending decoupling exists.
-
-## 3. Build each slice by pathspec
-
-Restore only a slice from `snap` onto a fresh branch. Negative pathspecs make "everything except the apps" trivial and correctly apply additions **and** deletions:
+1. Inspect the full worktree: `git status --short`, `git diff --stat`, `git diff --name-status`, and `git ls-files --others --exclude-standard`.
+2. Identify PR seams by dependency order and reviewability: shared contracts/runtime first, server/API next, web/client next, app/mobile/UI last.
+3. Save a durable safety copy before changing branches:
 
 ```sh
-git switch -C split/foundations origin/main
-git restore --source=snap -SW -- ':/' ':(exclude)apps/server' ':(exclude)apps/web'
-git commit -q -m "<title>" -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+mkdir -p .copilot-pr-split
+git --no-pager diff --binary > .copilot-pr-split/tracked.patch
+git ls-files --others --exclude-standard > .copilot-pr-split/untracked-files.txt
+git stash push -u -m 'copilot-pr-split-full-worktree'
 ```
 
-For a stack, branch the next slice from the previous branch instead of `origin/main`, then restore its paths.
+4. For each PR, create a fresh branch from the base branch and restore only that slice from the stash.
+5. Commit and push each branch. Include the required co-author trailer unless the user opted out.
+6. Create each PR with `gh pr create --base <base> --head <branch>`.
+7. Restore the original local worktree at the end with `git switch <original-branch>` and `git stash apply stash@{0}`. Leave the safety stash unless the user asks to drop it.
 
-Typical seams (dependency order): shared contracts/runtime/manifests → backend/API/relay → web client → mobile/native app + mobile-only patches. Keep each app's manifest/lockfile delta and config (patches, catalog entries) with the branch that introduces the code using it.
+## Choosing PR boundaries
 
-## 4. Verify — this is the point of the skill
+Prefer small dependency-respecting slices:
 
-**Completeness (catches dropped files, the most common failure):** the union of all branch diffs must equal the snapshot exactly.
+- **Foundations:** package manifests, lockfile, shared utilities, contracts, generated protocol wrappers.
+- **Backend:** server routes, protocol handlers, auth, persistence, relay/cloud services.
+- **Frontend web:** browser UI and web-specific client integration.
+- **Mobile/app:** React Native/Expo app shell, native modules, mobile feature screens, mobile-only patches.
+- **Docs/config:** keep with the code they explain unless they are independently useful.
+
+Avoid PRs that cannot build because required types or dependency metadata were split away. If a slice depends on another new slice, say so in the PR body.
+
+## Restoring tracked and untracked stash content
+
+Tracked files are in the stash commit:
 
 ```sh
-git diff --name-only origin/main..snap | sort > /tmp/all.txt
-{ for b in <branches>; do git diff --name-only <base-of-b>..$b; done; } | sort -u > /tmp/union.txt
-comm -3 /tmp/all.txt /tmp/union.txt   # empty = nothing dropped or duplicated
+git restore --source=stash@{0} --staged --worktree -- <paths>
 ```
 
-**Green per branch:** on each branch run the smallest install + checks that prove it (e.g. `pnpm install --frozen-lockfile`, then the repo's fmt/lint/typecheck). Use the repo's required Node/toolchain version. If a branch is red because a peer slice is missing, revisit step 2 (stack or consolidate).
-
-## 5. Restore and finish
+Untracked files are usually in the third stash parent:
 
 ```sh
-git switch <original-branch>   # working tree is already intact from step 1
-git branch -D snap             # only after PRs are pushed and verified
+git checkout stash@{0}^3 -- <path>
+```
+
+Check path existence before restoring untracked paths:
+
+```sh
+git cat-file -e "stash@{0}^3:<path>"
 ```
 
 ## Safety rules
 
-- Never `git reset --hard` or destructive-checkout the user's worktree. The snapshot in step 1 keeps the tree unchanged.
-- Keep `snap` until PRs are pushed and verified; it's the only recovery path.
-- Don't bundle unrelated changes into a PR for convenience, and don't drop files to make a slice smaller.
-- Force-pushing over existing PR branches is fine (old heads stay in `refs/pull/<n>/head`), but confirm before closing PRs; note when consolidating supersedes others.
-- If a hook warns but commits, or a check has pre-existing warnings, surface that in the final answer.
+- Never use `git reset --hard` or destructive checkout commands to clean the user's worktree.
+- Do not drop the safety stash unless explicitly asked.
+- Do not include unrelated user changes in a PR just because they are convenient.
+- If a commit hook reports warnings but still commits, mention that caveat in the final answer and PR notes.
+- If branch creation or PR creation fails, preserve the stash and report the exact branch/state.
 
 ## Final response
 
-Report each PR's URL, scope, base branch, and green/red status in a compact table. State the topology chosen (independent/stacked/consolidated) and why, confirm completeness (union == snapshot), and note the worktree was restored and whether `snap` remains.
+Report the created PR URLs and scopes in a compact table. State whether the original worktree was restored and whether the safety stash remains.

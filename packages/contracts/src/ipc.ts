@@ -79,12 +79,7 @@ import type {
 } from "./orchestration.ts";
 import { EnvironmentId, IsoDateTime, ThreadId, TurnId } from "./baseSchemas.ts";
 import { EditorId } from "./editor.ts";
-import type {
-  WorkflowListRunsInput,
-  WorkflowListRunsResult,
-  WorkflowRunInput,
-  WorkflowRunResult,
-} from "./agentWorkflows.ts";
+import type { WorkflowRunInput, WorkflowRunResult } from "./agentWorkflows.ts";
 import { ServerSettings, type ClientSettings, type ServerSettingsPatch } from "./settings.ts";
 import { Schema } from "effect";
 
@@ -487,7 +482,6 @@ export interface EnvironmentApi {
   };
   workflow: {
     run: (input: WorkflowRunInput) => Promise<WorkflowRunResult>;
-    listRuns: (input: WorkflowListRunsInput) => Promise<WorkflowListRunsResult>;
   };
   orchestration: {
     dispatchCommand: (command: ClientOrchestrationCommand) => Promise<{ sequence: number }>;

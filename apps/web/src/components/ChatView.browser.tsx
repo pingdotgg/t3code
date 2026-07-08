@@ -212,9 +212,6 @@ function createMockEnvironmentApi(input: {
       run: (() => {
         throw new Error("Not implemented in browser test.");
       }) as EnvironmentApi["workflow"]["run"],
-      listRuns: (() => {
-        throw new Error("Not implemented in browser test.");
-      }) as EnvironmentApi["workflow"]["listRuns"],
     },
     server: {
       exportThreadMarkdown: (() => {

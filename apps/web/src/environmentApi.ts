@@ -50,7 +50,6 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
     },
     workflow: {
       run: rpcClient.workflow.run,
-      listRuns: rpcClient.workflow.listRuns,
     },
     server: {
       listProviderCommands: rpcClient.server.listProviderCommands,

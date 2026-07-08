@@ -1,4 +1,3 @@
-// @ts-nocheck
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -60,7 +59,7 @@ import { vi } from "vitest";
 
 import type { ServerConfigShape } from "./config.ts";
 import { deriveServerPaths, ServerConfig } from "./config.ts";
-import { CloudHttpRuntimeLayerLive, CloudRuntimeLayerLive, makeRoutesLayer } from "./server.ts";
+import { CloudHttpRuntimeLayerLive, makeRoutesLayer } from "./server.ts";
 import { resolveAttachmentRelativePath } from "./attachmentPaths.ts";
 import {
   CheckpointDiffQuery,
@@ -645,7 +644,7 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provideMerge(authTestLayer),
-      Layer.provideMerge(CloudHttpRuntimeLayerLive),
+      Layer.provideMerge(CloudHttpRuntimeLayerLive.pipe(Layer.provide(authTestLayer))),
       Layer.provide(_workspaceAndProjectServicesLayer),
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provide(layerConfig),
@@ -935,22 +934,6 @@ const readNodeWebSocketJson = (socket: NodeWsSocket) =>
 const decodeMobileServerMessage = Schema.decodeUnknownSync(MobileServerMessage);
 
 it.layer(NodeServices.layer)("server router seam", (it) => {
-  it.effect("builds production cloud runtime wiring", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const tempBaseDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-cloud-runtime-test-",
-      });
-
-      yield* Layer.build(
-        CloudRuntimeLayerLive.pipe(
-          Layer.provide(ServerConfig.layerTest(process.cwd(), tempBaseDir)),
-          Layer.provideMerge(FetchHttpClient.layer),
-        ),
-      );
-    }),
-  );
-
   it.effect("serves static index content for GET / when staticDir is configured", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -2919,7 +2902,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               Effect.sync(() => {
                 openedInput = input;
               }),
-            revealInFileManager: () => Effect.void,
           },
         },
       });
@@ -2945,7 +2927,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         layers: {
           open: {
             openInEditor: () => Effect.fail(openError),
-            revealInFileManager: () => Effect.void,
           },
         },
       });
@@ -3026,7 +3007,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               Effect.sync(() => {
                 openedInput = input;
               }),
-            revealInFileManager: () => Effect.void,
           },
         },
       });
