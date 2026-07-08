@@ -26,6 +26,8 @@ struct ChatTimelineRowView: View {
             ToolEventRow(
                 name: name, detail: detail, kind: kind, status: status,
                 threadStatus: model.selectedThread?.status)
+        case .subagentTask(let task):
+            SubagentTaskRow(task: task)
         case .approval(let request):
             ApprovalCard(request: request) { approve in
                 Task { await model.respond(to: request, approve: approve) }
@@ -234,7 +236,7 @@ private struct ToolEventRow: View {
         case .failed: return .failed
         case .running:
             switch threadStatus {
-            case .running, .waitingApproval, nil: return .running
+            case .running, .waitingApproval, .backgroundWork, nil: return .running
             case .idle, .archived, .error: return .settled
             }
         }
@@ -347,6 +349,132 @@ private struct ToolEventRow: View {
         case .failed: .red
         case .settled: .secondary
         }
+    }
+}
+
+private struct SubagentTaskRow: View {
+    let task: SubagentTaskItem
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 9) {
+            statusIcon
+                .frame(width: 16, height: 16)
+                .padding(.top, 1)
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 7) {
+                    Image(systemName: "person.2")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 14)
+                    if let label = taskTypeLabel {
+                        Text(label)
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(.secondary.opacity(0.12), in: Capsule())
+                    }
+                    Text(title)
+                        .font(.callout.weight(.medium))
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    if let durationText {
+                        Text(durationText)
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(backgroundTint, in: RoundedRectangle(cornerRadius: 10))
+        .animation(Motion.ambient, value: task.state)
+    }
+
+    private var title: String {
+        task.description?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            ? task.description!
+            : "Subagent task"
+    }
+
+    private var taskTypeLabel: String? {
+        guard let type = task.taskType?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !type.isEmpty
+        else { return nil }
+        return type.replacingOccurrences(of: "-", with: " ")
+    }
+
+    private var subtitle: String? {
+        if let progress = task.latestProgress?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !progress.isEmpty
+        {
+            return progress
+        }
+        switch task.state {
+        case .running: return "Working..."
+        case .completed: return "Completed"
+        case .failed: return "Failed"
+        case .stopped: return "Stopped"
+        }
+    }
+
+    private var durationText: String? {
+        guard task.state != .running, let duration = task.duration else { return nil }
+        return Self.format(duration: duration)
+    }
+
+    private var statusIcon: some View {
+        Image(systemName: iconName)
+            .symbolEffect(.pulse, isActive: task.state == .running)
+            .foregroundStyle(iconTint)
+            .contentTransition(.symbolEffect(.replace))
+    }
+
+    private var iconName: String {
+        switch task.state {
+        case .running: "circle.dotted"
+        case .completed: "checkmark.circle.fill"
+        case .failed: "xmark.circle.fill"
+        case .stopped: "stop.circle.fill"
+        }
+    }
+
+    private var iconTint: Color {
+        switch task.state {
+        case .running: .secondary
+        case .completed: .green
+        case .failed: .red
+        case .stopped: .secondary
+        }
+    }
+
+    private var backgroundTint: Color {
+        switch task.state {
+        case .running: Color.accentColor.opacity(0.08)
+        case .completed: Color.green.opacity(0.08)
+        case .failed: Color.red.opacity(0.08)
+        case .stopped: Color.secondary.opacity(0.08)
+        }
+    }
+
+    private static func format(duration: TimeInterval) -> String {
+        if duration < 1 { return "<1s" }
+        if duration < 60 { return "\(Int(duration.rounded()))s" }
+        let minutes = Int(duration) / 60
+        let seconds = Int(duration) % 60
+        return seconds == 0 ? "\(minutes)m" : "\(minutes)m \(seconds)s"
     }
 }
 

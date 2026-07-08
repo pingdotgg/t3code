@@ -30,7 +30,7 @@ public struct Project: Identifiable, Hashable, Sendable {
 }
 
 public enum ThreadStatus: String, Sendable {
-    case idle, running, waitingApproval, error, archived
+    case idle, running, waitingApproval, backgroundWork, error, archived
 }
 
 /// UI mirror of the wire `RuntimeMode` (how much the agent may do unprompted).
@@ -127,6 +127,9 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
     /// Explicit reasoning-effort choice id from the thread's modelSelection
     /// options; nil means the provider default applies.
     public var reasoningEffort: String?
+    /// Active delegated/background task count. Used for sidebar accessibility
+    /// when `status == .backgroundWork`; zero for ordinary thread states.
+    public var backgroundAgentCount: Int
 
     public init(
         id: String, projectID: String, title: String, provider: ProviderKind,
@@ -134,7 +137,7 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
         runtimeMode: ThreadRuntimeMode = .fullAccess,
         interactionMode: ThreadInteractionMode = .normal,
         modelInstanceID: String? = nil, modelID: String? = nil,
-        reasoningEffort: String? = nil
+        reasoningEffort: String? = nil, backgroundAgentCount: Int = 0
     ) {
         self.id = id
         self.projectID = projectID
@@ -147,6 +150,7 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
         self.modelInstanceID = modelInstanceID
         self.modelID = modelID
         self.reasoningEffort = reasoningEffort
+        self.backgroundAgentCount = backgroundAgentCount
     }
 }
 
@@ -174,6 +178,35 @@ public enum ToolEventKind: String, Sendable {
     }
 }
 
+public enum SubagentTaskState: String, Sendable {
+    case running, completed, failed, stopped
+}
+
+public struct SubagentTaskItem: Hashable, Sendable {
+    public var taskId: String
+    public var taskType: String?
+    public var description: String?
+    public var state: SubagentTaskState
+    public var latestProgress: String?
+    public var startedAt: Date
+    public var duration: TimeInterval?
+
+    public var id: String { "subagent-task:\(taskId)" }
+
+    public init(
+        taskId: String, taskType: String?, description: String?, state: SubagentTaskState,
+        latestProgress: String?, startedAt: Date, duration: TimeInterval?
+    ) {
+        self.taskId = taskId
+        self.taskType = taskType
+        self.description = description
+        self.state = state
+        self.latestProgress = latestProgress
+        self.startedAt = startedAt
+        self.duration = duration
+    }
+}
+
 public enum TimelineItem: Identifiable, Sendable {
     case userMessage(id: String, text: String, at: Date)
     case assistantMessage(id: String, markdown: String, isStreaming: Bool, at: Date)
@@ -188,6 +221,7 @@ public enum TimelineItem: Identifiable, Sendable {
     /// Streaming task/reasoning progress; the id is stable across updates of
     /// the same task, so new text replaces the row instead of stacking.
     case reasoning(id: String, text: String, at: Date)
+    case subagentTask(SubagentTaskItem)
 
     public var id: String {
         switch self {
@@ -200,6 +234,7 @@ public enum TimelineItem: Identifiable, Sendable {
         case .plan(let plan): plan.id
         case .notice(let id, _, _): id
         case .reasoning(let id, _, _): id
+        case .subagentTask(let item): item.id
         }
     }
 }

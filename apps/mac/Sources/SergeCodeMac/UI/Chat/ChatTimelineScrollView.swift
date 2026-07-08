@@ -141,7 +141,7 @@ struct ChatTimelineScrollView: View {
     private var threadIsSettled: Bool {
         switch model.selectedThread?.status {
         case .idle, .archived, .error: true
-        case .running, .waitingApproval, nil: false
+        case .running, .waitingApproval, .backgroundWork, nil: false
         }
     }
 }
