@@ -1085,7 +1085,9 @@ function applyClaudeTaskToolResult(
       id,
       subject,
       status: normalizeClaudeTaskStatus(resultTask.status),
-      blockedBy: readStringArray(resultTask.blockedBy),
+      ...(resultTask.blockedBy !== undefined
+        ? { blockedBy: readStringArray(resultTask.blockedBy) }
+        : {}),
     });
   }
 
@@ -1137,7 +1139,9 @@ function applyClaudeTaskToolResult(
     id: taskId,
     ...(subject ? { subject } : {}),
     ...(status ? { status } : {}),
-    blockedBy: readStringArray(tool.input.blockedBy),
+    ...(tool.input.blockedBy !== undefined
+      ? { blockedBy: readStringArray(tool.input.blockedBy) }
+      : {}),
   });
 
   const task = tasks.get(taskId);

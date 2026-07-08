@@ -40,6 +40,11 @@ public final class AppModel {
 
     private let backend: any BackendService
     private var eventTask: Task<Void, Never>?
+    private var queuedSendInFlightThreadIDs: Set<String> = []
+    private var queuedRetryTokensByThread: [String: UUID] = [:]
+
+    private let maxQueuedSendAttempts = 3
+    private let queuedSendRetryDelay: UInt64 = 2_000_000_000
 
     public init(backend: any BackendService) {
         self.backend = backend
@@ -109,6 +114,8 @@ public final class AppModel {
             threads.removeAll { $0.id == id }
             vcsStatuses[id] = nil
             queuedMessagesByThread[id] = nil
+            queuedSendInFlightThreadIDs.remove(id)
+            queuedRetryTokensByThread[id] = nil
             if selectedThreadID == id { selectedThreadID = nil }
         case .timelineAppended(let threadID, let item):
             // Upsert: lifecycle updates arrive with the stable row id of an
@@ -289,9 +296,18 @@ public final class AppModel {
         return previousStatus != .idle && newStatus == .idle
     }
 
-    private func dequeueNextQueuedMessageIfNeeded(threadID: String) {
+    private func dequeueNextQueuedMessageIfNeeded(
+        threadID: String, expectedMessageID: String? = nil
+    ) {
+        guard !queuedSendInFlightThreadIDs.contains(threadID) else { return }
+        guard threadStatus(for: threadID) == .idle else { return }
+        if let expectedMessageID, queuedMessagesByThread[threadID]?.first?.id != expectedMessageID {
+            return
+        }
+        queuedRetryTokensByThread[threadID] = nil
         guard let message = takeFirstQueuedMessage(from: threadID) else { return }
-        Task { await sendQueuedMessage(message, threadID: threadID) }
+        queuedSendInFlightThreadIDs.insert(threadID)
+        Task { await sendQueuedMessage(message, threadID: threadID, tracksDequeue: true) }
     }
 
     private func takeFirstQueuedMessage(from threadID: String) -> QueuedOutgoingMessage? {
@@ -301,13 +317,25 @@ public final class AppModel {
         return message
     }
 
-    private func sendQueuedMessage(_ message: QueuedOutgoingMessage, threadID: String) async {
+    private func sendQueuedMessage(
+        _ message: QueuedOutgoingMessage, threadID: String, tracksDequeue: Bool = false
+    ) async {
+        var failedMessage: QueuedOutgoingMessage?
         do {
             try await sendMessage(
                 threadID: threadID, text: message.text, attachments: message.attachments)
         } catch {
+            var message = message
+            message.sendAttempts += 1
+            failedMessage = message
             requeue(message, atFrontOf: threadID)
             lastError = String(describing: error)
+        }
+        if tracksDequeue {
+            queuedSendInFlightThreadIDs.remove(threadID)
+        }
+        if let failedMessage {
+            scheduleQueuedSendRetryIfNeeded(failedMessage, threadID: threadID)
         }
     }
 
@@ -326,6 +354,36 @@ public final class AppModel {
     ) async throws {
         guard !(text.isEmpty && attachments.isEmpty) else { return }
         try await backend.sendMessage(threadID: threadID, text: text, attachments: attachments)
+    }
+
+    private func threadStatus(for threadID: String) -> ThreadStatus? {
+        threads.first { $0.id == threadID }?.status
+    }
+
+    private func scheduleQueuedSendRetryIfNeeded(
+        _ message: QueuedOutgoingMessage, threadID: String
+    ) {
+        guard message.sendAttempts < maxQueuedSendAttempts else { return }
+        guard threadStatus(for: threadID) == .idle else { return }
+        guard queuedMessagesByThread[threadID]?.first?.id == message.id else { return }
+        guard queuedRetryTokensByThread[threadID] == nil else { return }
+
+        let token = UUID()
+        let retryDelay = queuedSendRetryDelay
+        queuedRetryTokensByThread[threadID] = token
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: retryDelay)
+            await self?.dequeueScheduledQueuedMessage(
+                threadID: threadID, expectedMessageID: message.id, token: token)
+        }
+    }
+
+    private func dequeueScheduledQueuedMessage(
+        threadID: String, expectedMessageID: String, token: UUID
+    ) {
+        guard queuedRetryTokensByThread[threadID] == token else { return }
+        queuedRetryTokensByThread[threadID] = nil
+        dequeueNextQueuedMessageIfNeeded(threadID: threadID, expectedMessageID: expectedMessageID)
     }
 
     private func requeue(_ message: QueuedOutgoingMessage, atFrontOf threadID: String) {

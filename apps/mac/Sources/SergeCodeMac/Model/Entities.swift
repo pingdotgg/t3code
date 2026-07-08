@@ -559,15 +559,17 @@ public struct QueuedOutgoingMessage: Identifiable, Hashable, Sendable {
     public var text: String
     public var attachments: [OutgoingAttachment]
     public var createdAt: Date
+    public var sendAttempts: Int
 
     public init(
         id: String = UUID().uuidString, text: String,
-        attachments: [OutgoingAttachment] = [], createdAt: Date = Date()
+        attachments: [OutgoingAttachment] = [], createdAt: Date = Date(), sendAttempts: Int = 0
     ) {
         self.id = id
         self.text = text
         self.attachments = attachments
         self.createdAt = createdAt
+        self.sendAttempts = sendAttempts
     }
 }
 

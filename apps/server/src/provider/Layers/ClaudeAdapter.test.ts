@@ -1461,6 +1461,98 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("preserves Claude task dependencies across status-only TaskUpdate results", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }),
+      ).pipe(Effect.forkChild);
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "make and update a blocked plan",
+        attachments: [],
+      });
+
+      harness.query.emit(
+        taskToolStartMessage({
+          sessionId: "sdk-session-task-plan-preserve-blocked-by",
+          uuid: "stream-task-create-preserve-blocked-by",
+          index: 1,
+          toolUseId: "tool-task-create-preserve-blocked-by",
+          toolName: "TaskCreate",
+          toolInput: {
+            subject: "Build plan strip",
+            blockedBy: ["task-blocker"],
+          },
+        }),
+      );
+      harness.query.emit(
+        taskToolResultMessage({
+          sessionId: "sdk-session-task-plan-preserve-blocked-by",
+          uuid: "user-task-create-preserve-blocked-by",
+          toolUseId: "tool-task-create-preserve-blocked-by",
+          content: "created",
+          toolUseResult: {
+            task: {
+              id: "task-real-blocked",
+              subject: "Build plan strip",
+            },
+          },
+        }),
+      );
+      harness.query.emit(
+        taskToolStartMessage({
+          sessionId: "sdk-session-task-plan-preserve-blocked-by",
+          uuid: "stream-task-update-preserve-blocked-by",
+          index: 2,
+          toolUseId: "tool-task-update-preserve-blocked-by",
+          toolName: "TaskUpdate",
+          toolInput: {
+            taskId: "task-real-blocked",
+            status: "in_progress",
+          },
+        }),
+      );
+      harness.query.emit(
+        taskToolResultMessage({
+          sessionId: "sdk-session-task-plan-preserve-blocked-by",
+          uuid: "user-task-update-preserve-blocked-by",
+          toolUseId: "tool-task-update-preserve-blocked-by",
+          content: "updated",
+          toolUseResult: {
+            status: "in_progress",
+          },
+        }),
+      );
+
+      yield* flushRuntimeEvents();
+      runtimeEventsFiber.interruptUnsafe();
+
+      const planUpdates = runtimeEvents.filter((event) => event.type === "turn.plan.updated");
+      const latestPlanUpdate = planUpdates[planUpdates.length - 1];
+      assert.equal(latestPlanUpdate?.type, "turn.plan.updated");
+      if (latestPlanUpdate?.type === "turn.plan.updated") {
+        assert.deepEqual(latestPlanUpdate.payload.plan, [
+          { step: "Build plan strip (blocked by #task-blocker)", status: "inProgress" },
+        ]);
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("creates a placeholder plan step for TaskUpdate with an unknown id", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
