@@ -47,9 +47,22 @@ public final class AppModel {
     /// Approval/user-input request id → threadID, so resolving one is a
     /// keyed removal instead of a scan across every thread's timeline.
     @ObservationIgnored private var interactionThreadByID: [String: String] = [:]
+    /// Monotonic version per thread timeline write. Views that derive from
+    /// `timelines[threadID]` (e.g. grouped display) key memo caches on this
+    /// so body re-evals without a timeline mutation reuse prior work.
+    @ObservationIgnored private var timelineVersions: [String: Int] = [:]
+    /// Fresh `updatedAt` when a threadUpserted differs only by timestamp —
+    /// the sidebar array is left alone so rows don't jump, but new-thread
+    /// insertion still sorts against the real latest activity time.
+    @ObservationIgnored private var effectiveUpdatedAt: [String: Date] = [:]
 
     public init(backend: any BackendService) {
         self.backend = backend
+    }
+
+    /// Version of the stored timeline for `threadID` (0 if never written).
+    public func timelineVersion(threadID: String) -> Int {
+        timelineVersions[threadID] ?? 0
     }
 
     public var selectedThread: ChatThread? {
@@ -210,6 +223,7 @@ public final class AppModel {
 
         for (threadID, items) in touched {
             timelines[threadID] = items
+            timelineVersions[threadID, default: 0] += 1
         }
     }
 
@@ -226,18 +240,33 @@ public final class AppModel {
             // Update in place: `updatedAt` bumps on every activity while a
             // thread runs, so resorting here made sidebar rows jump around
             // mid-conversation. Order is recomputed only on refreshAll.
+            // When only `updatedAt` changed, skip the array write entirely —
+            // rewriting threads[index] invalidates every sidebar row — and
+            // stash the fresh timestamp for insertion-position searches.
             if let index = threads.firstIndex(where: { $0.id == thread.id }) {
-                threads[index] = thread
+                let existing = threads[index]
+                if existing.displayEquivalent(to: thread) {
+                    effectiveUpdatedAt[thread.id] = thread.updatedAt
+                } else {
+                    threads[index] = thread
+                    effectiveUpdatedAt[thread.id] = nil
+                }
             } else {
                 // New rows still slot in by the sidebar's sort key: snapshot
                 // replays after a reconnect arrive as upserts, and blind
                 // insertion at 0 would show them in reverse snapshot order.
-                let index = threads.firstIndex { $0.updatedAt < thread.updatedAt } ?? threads.count
+                let incomingAt = thread.updatedAt
+                let index = threads.firstIndex {
+                    let existingAt = effectiveUpdatedAt[$0.id] ?? $0.updatedAt
+                    return existingAt < incomingAt
+                } ?? threads.count
                 threads.insert(thread, at: index)
+                effectiveUpdatedAt[thread.id] = nil
             }
         case .threadRemoved(let id):
             threads.removeAll { $0.id == id }
             vcsStatuses[id] = nil
+            effectiveUpdatedAt[id] = nil
             if selectedThreadID == id { selectedThreadID = nil }
         case .approvalRequested, .userInputRequested:
             break
@@ -337,6 +366,7 @@ public final class AppModel {
             self.threads = try await threads.sorted { $0.updatedAt > $1.updatedAt }
             self.providers = try await providers
             self.models = try await models
+            self.effectiveUpdatedAt.removeAll(keepingCapacity: true)
         } catch {
             lastError = String(describing: error)
         }
@@ -354,6 +384,7 @@ public final class AppModel {
         guard timelines[threadID] == nil else { return }
         do {
             timelines[threadID] = try await backend.timeline(threadID: threadID)
+            timelineVersions[threadID, default: 0] += 1
         } catch {
             lastError = String(describing: error)
         }
