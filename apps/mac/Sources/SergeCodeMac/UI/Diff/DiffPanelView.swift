@@ -16,7 +16,8 @@ private enum DiffZoom {
     private static let gutterBaseWidth: CGFloat = 40
 
     static func clamp(_ factor: Double) -> Double {
-        min(maxFactor, max(minFactor, factor))
+        let rounded = (factor * 100).rounded() / 100
+        return min(maxFactor, max(minFactor, rounded))
     }
 
     static func stepped(_ factor: Double, by delta: Double) -> Double {

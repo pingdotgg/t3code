@@ -29,13 +29,11 @@ struct PanScrollView<Content: View>: NSViewRepresentable {
         scroll.autohidesScrollers = true
         scroll.drawsBackground = false
 
-        if onMagnify != nil {
-            let magnification = NSMagnificationGestureRecognizer(
-                target: context.coordinator,
-                action: #selector(Coordinator.handleMagnification(_:))
-            )
-            scroll.addGestureRecognizer(magnification)
-        }
+        let magnification = NSMagnificationGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleMagnification(_:))
+        )
+        scroll.addGestureRecognizer(magnification)
 
         let hosting = NSHostingView(rootView: content)
         hosting.sizingOptions = .intrinsicContentSize

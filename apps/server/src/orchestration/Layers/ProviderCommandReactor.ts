@@ -319,32 +319,44 @@ const make = Effect.gen(function* () {
         continue;
       }
 
-      const interruptedAt = yield* nowIso;
-      yield* providerService.stopSession({ threadId: thread.id }).pipe(
+      const interrupted = yield* Effect.gen(function* () {
+        const interruptedAt = yield* nowIso;
+        yield* providerService.stopSession({ threadId: thread.id }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("provider command reactor failed to stop stale provider binding", {
+              threadId: thread.id,
+              cause: Cause.pretty(cause),
+            }),
+          ),
+        );
+        yield* setThreadSession({
+          threadId: thread.id,
+          session: {
+            threadId: thread.id,
+            status: "interrupted",
+            providerName: thread.session?.providerName ?? null,
+            ...(thread.session?.providerInstanceId !== undefined
+              ? { providerInstanceId: thread.session.providerInstanceId }
+              : {}),
+            runtimeMode: thread.session?.runtimeMode ?? thread.runtimeMode,
+            activeTurnId: null,
+            lastError: thread.session?.lastError ?? STALE_RUNNING_SESSION_DETAIL,
+            updatedAt: interruptedAt,
+          },
+          createdAt: interruptedAt,
+        });
+        return true;
+      }).pipe(
         Effect.catchCause((cause) =>
-          Effect.logWarning("provider command reactor failed to stop stale provider binding", {
+          Effect.logWarning("provider command reactor failed to interrupt stale running session", {
             threadId: thread.id,
             cause: Cause.pretty(cause),
-          }),
+          }).pipe(Effect.as(false)),
         ),
       );
-      yield* setThreadSession({
-        threadId: thread.id,
-        session: {
-          threadId: thread.id,
-          status: "interrupted",
-          providerName: thread.session?.providerName ?? null,
-          ...(thread.session?.providerInstanceId !== undefined
-            ? { providerInstanceId: thread.session.providerInstanceId }
-            : {}),
-          runtimeMode: thread.session?.runtimeMode ?? thread.runtimeMode,
-          activeTurnId: null,
-          lastError: thread.session?.lastError ?? STALE_RUNNING_SESSION_DETAIL,
-          updatedAt: interruptedAt,
-        },
-        createdAt: interruptedAt,
-      });
-      interruptedCount += 1;
+      if (interrupted) {
+        interruptedCount += 1;
+      }
     }
 
     if (interruptedCount > 0) {

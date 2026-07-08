@@ -1738,6 +1738,85 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.lastError ?? "").toContain("Provider process was not running");
   });
 
+  it("continues interrupting stale projected running turns when one thread update fails", async () => {
+    const harness = await createHarness({ startReactor: false });
+    const now = "2026-01-01T00:00:00.000Z";
+    const firstThreadId = ThreadId.make("thread-1");
+    const secondThreadId = ThreadId.make("thread-2");
+    const modelSelection = {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5-codex",
+    };
+    const setRunningSession = (threadId: ThreadId, turnId: TurnId, commandId: string) =>
+      runtime!.runPromise(
+        harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make(commandId),
+          threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "codex",
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            runtimeMode: "approval-required",
+            activeTurnId: turnId,
+            lastError: null,
+            updatedAt: now,
+          },
+          createdAt: now,
+        }),
+      );
+
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-create-second-stale-running"),
+        threadId: secondThreadId,
+        projectId: asProjectId("project-1"),
+        title: "Second thread",
+        modelSelection,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt: now,
+      }),
+    );
+    await setRunningSession(
+      firstThreadId,
+      asTurnId("turn-stale-first"),
+      "cmd-session-set-stale-first",
+    );
+    await setRunningSession(
+      secondThreadId,
+      asTurnId("turn-stale-second"),
+      "cmd-session-set-stale-second",
+    );
+    harness.stopSession.mockImplementationOnce(
+      () =>
+        harness.engine
+          .dispatch({
+            type: "thread.delete",
+            commandId: CommandId.make("cmd-delete-before-stale-session-set"),
+            threadId: firstThreadId,
+          })
+          .pipe(Effect.as(undefined)) as never,
+    );
+
+    await harness.startReactor();
+
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      const secondThread = readModel.threads.find((entry) => entry.id === secondThreadId);
+      return secondThread?.session?.status === "interrupted";
+    });
+    const readModel = await harness.readModel();
+    const secondThread = readModel.threads.find((entry) => entry.id === secondThreadId);
+    expect(harness.stopSession.mock.calls.length).toBe(2);
+    expect(secondThread?.session?.activeTurnId).toBeNull();
+    expect(secondThread?.latestTurn?.state).not.toBe("running");
+  });
+
   it("keeps projected running turns when a live provider turn exists on startup", async () => {
     const harness = await createHarness({ startReactor: false });
     const now = "2026-01-01T00:00:00.000Z";

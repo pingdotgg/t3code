@@ -84,7 +84,12 @@ public actor LiveBackend: BackendService {
     private var sidecarStatesTask: Task<Void, Never>?
     private var socketSessionTask: Task<Void, Never>?
     private var threadSubscriptions: [String: Task<Void, Never>] = [:]
-    private var runningLivenessChecks: [String: Task<Void, Never>] = [:]
+    private struct RunningLivenessCheck {
+        let turnKey: String
+        let task: Task<Void, Never>
+    }
+    private var runningLivenessChecks: [String: RunningLivenessCheck] = [:]
+    private var latestRunningLivenessTurnKeys: [String: String] = [:]
     private var confirmedRunningTurnKeys: [String: String] = [:]
     private var staleRunningTurnKeys: [String: String] = [:]
 
@@ -528,12 +533,14 @@ public actor LiveBackend: BackendService {
     }
 
     private func reconcileRunningLiveness(for shell: OrchestrationThreadShell) {
+        let turnKey = runningLivenessTurnKey(for: shell)
+        latestRunningLivenessTurnKeys[shell.id] = turnKey
         let wireStatus = mapStatus(
             session: shell.session, latestTurn: shell.latestTurn, archivedAt: shell.archivedAt,
             hasPendingApprovals: shell.hasPendingApprovals || shell.hasPendingUserInput)
         if wireStatus == .running {
             scheduleRunningLivenessCheck(
-                threadID: shell.id, turnKey: runningLivenessTurnKey(for: shell))
+                threadID: shell.id, turnKey: turnKey)
         } else {
             clearRunningLivenessState(threadID: shell.id)
         }
@@ -544,8 +551,13 @@ public actor LiveBackend: BackendService {
     }
 
     private func scheduleRunningLivenessCheck(threadID: String, turnKey: String) {
-        guard runningLivenessChecks[threadID] == nil,
-            confirmedRunningTurnKeys[threadID] != turnKey,
+        if let existingCheck = runningLivenessChecks[threadID] {
+            guard existingCheck.turnKey != turnKey else { return }
+            existingCheck.task.cancel()
+            runningLivenessChecks[threadID] = nil
+        }
+
+        guard confirmedRunningTurnKeys[threadID] != turnKey,
             staleRunningTurnKeys[threadID] != turnKey,
             let client = currentClient
         else { return }
@@ -554,7 +566,7 @@ public actor LiveBackend: BackendService {
             await self.runRunningLivenessCheck(
                 threadID: threadID, turnKey: turnKey, client: client)
         }
-        runningLivenessChecks[threadID] = task
+        runningLivenessChecks[threadID] = RunningLivenessCheck(turnKey: turnKey, task: task)
     }
 
     private func runRunningLivenessCheck(threadID: String, turnKey: String, client: T3Client) async {
@@ -563,7 +575,7 @@ public actor LiveBackend: BackendService {
             try Task.checkCancellation()
             if firstCheck.hasActiveTurn {
                 markRunningThreadLive(threadID: threadID, turnKey: turnKey)
-                finishRunningLivenessCheck(threadID: threadID)
+                finishRunningLivenessCheck(threadID: threadID, turnKey: turnKey)
                 return
             }
 
@@ -577,15 +589,15 @@ public actor LiveBackend: BackendService {
             }
         } catch {
             if !Task.isCancelled {
-                finishRunningLivenessCheck(threadID: threadID)
+                finishRunningLivenessCheck(threadID: threadID, turnKey: turnKey)
             }
             return
         }
-        finishRunningLivenessCheck(threadID: threadID)
+        finishRunningLivenessCheck(threadID: threadID, turnKey: turnKey)
     }
 
     private func markRunningThreadStale(threadID: String, turnKey: String) {
-        runningLivenessChecks[threadID] = nil
+        guard latestRunningLivenessTurnKeys[threadID] == turnKey else { return }
         confirmedRunningTurnKeys[threadID] = nil
         guard var thread = threadsByID[threadID], thread.status == .running else { return }
         staleRunningTurnKeys[threadID] = turnKey
@@ -595,6 +607,7 @@ public actor LiveBackend: BackendService {
     }
 
     private func markRunningThreadLive(threadID: String, turnKey: String) {
+        guard latestRunningLivenessTurnKeys[threadID] == turnKey else { return }
         confirmedRunningTurnKeys[threadID] = turnKey
         let wasStale = staleRunningTurnKeys.removeValue(forKey: threadID) != nil
         guard wasStale, var thread = threadsByID[threadID], thread.status == .error else {
@@ -605,22 +618,25 @@ public actor LiveBackend: BackendService {
         emit(.threadUpserted(thread))
     }
 
-    private func finishRunningLivenessCheck(threadID: String) {
+    private func finishRunningLivenessCheck(threadID: String, turnKey: String) {
+        guard runningLivenessChecks[threadID]?.turnKey == turnKey else { return }
         runningLivenessChecks[threadID] = nil
     }
 
     private func clearRunningLivenessState(threadID: String) {
-        runningLivenessChecks[threadID]?.cancel()
+        runningLivenessChecks[threadID]?.task.cancel()
         runningLivenessChecks[threadID] = nil
+        latestRunningLivenessTurnKeys[threadID] = nil
         confirmedRunningTurnKeys[threadID] = nil
         staleRunningTurnKeys[threadID] = nil
     }
 
     private func cancelAllRunningLivenessChecks() {
-        for task in runningLivenessChecks.values {
-            task.cancel()
+        for check in runningLivenessChecks.values {
+            check.task.cancel()
         }
         runningLivenessChecks.removeAll()
+        latestRunningLivenessTurnKeys.removeAll()
         confirmedRunningTurnKeys.removeAll()
         staleRunningTurnKeys.removeAll()
     }
