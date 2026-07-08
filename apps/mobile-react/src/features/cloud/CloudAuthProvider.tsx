@@ -43,6 +43,12 @@ export function activateCloudRelayAccount(
   });
 }
 
+export function shouldEnableCloudAuth(
+  config: ReturnType<typeof resolveCloudPublicConfig>,
+): boolean {
+  return Boolean(config.clerk.publishableKey && config.clerk.jwtTemplate && config.relay.url);
+}
+
 function CloudAuthBridge(props: { readonly children: ReactNode }) {
   const { getToken, isLoaded, isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
   const removeRelayEnvironments = useAtomCommand(environmentCatalog.removeRelayEnvironments, {
@@ -154,15 +160,15 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
 export function CloudAuthProvider(props: { readonly children: ReactNode }) {
   const config = resolveCloudPublicConfig();
   const publishableKey = config.clerk.publishableKey;
-  const relayUrl = config.relay.url;
+  const cloudAuthEnabled = shouldEnableCloudAuth(config);
 
   useEffect(() => {
-    if (!publishableKey || !relayUrl) {
+    if (!cloudAuthEnabled) {
       deactivateCloudRelayAccount();
     }
-  }, [publishableKey, relayUrl]);
+  }, [cloudAuthEnabled]);
 
-  if (!publishableKey || !relayUrl) {
+  if (!cloudAuthEnabled || !publishableKey) {
     return props.children;
   }
 

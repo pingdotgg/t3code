@@ -80,6 +80,7 @@ it.layer(NodeServices.layer)("getOrCreateEnvironmentKeyPairFromSecretStore", (it
           ),
         getOrCreateRandom: unusedSecretStoreOperation,
         remove: unusedSecretStoreOperation,
+        list: () => Effect.succeed([]),
       } satisfies ServerSecretStore.ServerSecretStore["Service"];
 
       assert.deepEqual(yield* getOrCreateEnvironmentKeyPairFromSecretStore(secretStore), {

@@ -91,6 +91,10 @@ function makeMemorySecretStore() {
       Effect.sync(() => {
         values.delete(name);
       })) satisfies ServerSecretStore.ServerSecretStore["Service"]["remove"],
+    list: (() =>
+      Effect.sync(() => [
+        ...values.keys(),
+      ])) satisfies ServerSecretStore.ServerSecretStore["Service"]["list"],
   } satisfies ServerSecretStore.ServerSecretStore["Service"];
   return {
     store,

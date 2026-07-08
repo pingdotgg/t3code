@@ -31,13 +31,19 @@ const unusedSecretStoreOperation = () => Effect.die("unused secret-store operati
 
 function makeSecretStore(
   create: ServerSecretStore.ServerSecretStore["Service"]["create"],
+  options?: {
+    readonly get?: ServerSecretStore.ServerSecretStore["Service"]["get"];
+    readonly remove?: ServerSecretStore.ServerSecretStore["Service"]["remove"];
+    readonly list?: ServerSecretStore.ServerSecretStore["Service"]["list"];
+  },
 ): ServerSecretStore.ServerSecretStore["Service"] {
   return {
-    get: unusedSecretStoreOperation,
+    get: options?.get ?? unusedSecretStoreOperation,
     set: unusedSecretStoreOperation,
     create,
     getOrCreateRandom: unusedSecretStoreOperation,
-    remove: unusedSecretStoreOperation,
+    remove: options?.remove ?? unusedSecretStoreOperation,
+    list: options?.list ?? (() => Effect.succeed([])),
   };
 }
 
@@ -90,6 +96,39 @@ describe("consumeCloudReplayGuards", () => {
       );
 
       expect(error).toBe(failure);
+    }),
+  );
+
+  it.effect("removes invalid replay guard files before consuming new guards", () =>
+    Effect.gen(function* () {
+      const removed: string[] = [];
+      const consumed = yield* consumeCloudReplayGuards({
+        secrets: makeSecretStore(() => Effect.void, {
+          list: () =>
+            Effect.succeed([
+              "cloud-health-jti-invalid",
+              "cloud-mint-nonce-current",
+              "relay-credential",
+            ]),
+          get: (name) =>
+            Effect.succeed(
+              Option.some(
+                new TextEncoder().encode(
+                  name.endsWith("invalid") ? "invalid-date" : new Date().toISOString(),
+                ),
+              ),
+            ),
+          remove: (name) =>
+            Effect.sync(() => {
+              removed.push(name);
+            }),
+        }),
+        names: ["cloud-jti", "cloud-nonce"],
+        value: new TextEncoder().encode(new Date().toISOString()),
+      });
+
+      expect(consumed).toBe(true);
+      expect(removed).toEqual(["cloud-health-jti-invalid"]);
     }),
   );
 });

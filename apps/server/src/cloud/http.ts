@@ -80,6 +80,8 @@ const CLOUD_HEALTH_NONCE_PREFIX = "cloud-health-nonce-";
 const CLOUD_HEALTH_JTI_PREFIX = "cloud-health-jti-";
 const CLOUD_PROOF_MAX_LIFETIME_SECONDS = 5 * 60;
 const CLOUD_PROOF_CLOCK_SKEW_SECONDS = 60;
+const CLOUD_REPLAY_GUARD_TTL_MILLIS =
+  (CLOUD_PROOF_MAX_LIFETIME_SECONDS + CLOUD_PROOF_CLOCK_SKEW_SECONDS) * 1_000;
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 const CLOUD_CREDENTIAL_RESPONSE_HEADERS = {
   "cache-control": "no-store",
@@ -118,24 +120,67 @@ function stringToBytes(value: string): Uint8Array {
   return new TextEncoder().encode(value);
 }
 
+const CLOUD_REPLAY_GUARD_PREFIXES = [
+  CLOUD_MINT_NONCE_PREFIX,
+  CLOUD_MINT_JTI_PREFIX,
+  CLOUD_HEALTH_NONCE_PREFIX,
+  CLOUD_HEALTH_JTI_PREFIX,
+] as const;
+
+function isCloudReplayGuardName(name: string): boolean {
+  return CLOUD_REPLAY_GUARD_PREFIXES.some((prefix) => name.startsWith(prefix));
+}
+
+const cleanupExpiredCloudReplayGuards = Effect.fn("environment.cloud.cleanupReplayGuards")(
+  function* (secrets: ServerSecretStore.ServerSecretStore["Service"]) {
+    const now = yield* DateTime.now;
+    const expiresBeforeEpochMs = now.epochMilliseconds - CLOUD_REPLAY_GUARD_TTL_MILLIS;
+    const names = yield* secrets.list();
+
+    yield* Effect.forEach(
+      names.filter(isCloudReplayGuardName),
+      (name) =>
+        secrets.get(name).pipe(
+          Effect.flatMap(
+            Option.match({
+              onNone: () => Effect.void,
+              onSome: (createdAtBytes) => {
+                const createdAtEpochMs = Date.parse(bytesToString(createdAtBytes));
+                return Number.isNaN(createdAtEpochMs) || createdAtEpochMs < expiresBeforeEpochMs
+                  ? secrets.remove(name)
+                  : Effect.void;
+              },
+            }),
+          ),
+        ),
+      { concurrency: 16, discard: true },
+    );
+  },
+);
+
 export function consumeCloudReplayGuards(input: {
   readonly secrets: ServerSecretStore.ServerSecretStore["Service"];
   readonly names: ReadonlyArray<string>;
   readonly value: Uint8Array;
 }) {
-  return Effect.all(
-    input.names.map((name) =>
-      input.secrets.create(name, input.value).pipe(
-        Effect.as(true),
-        Effect.catchIf(ServerSecretStore.isSecretStoreError, (error) =>
-          ServerSecretStore.isSecretAlreadyExistsError(error)
-            ? Effect.succeed(false)
-            : Effect.fail(error),
+  return cleanupExpiredCloudReplayGuards(input.secrets).pipe(
+    Effect.andThen(
+      Effect.all(
+        input.names.map((name) =>
+          input.secrets.create(name, input.value).pipe(
+            Effect.as(true),
+            Effect.catchIf(ServerSecretStore.isSecretStoreError, (error) =>
+              ServerSecretStore.isSecretAlreadyExistsError(error)
+                ? Effect.succeed(false)
+                : Effect.fail(error),
+            ),
+          ),
         ),
+        { concurrency: input.names.length },
       ),
     ),
-    { concurrency: input.names.length },
-  ).pipe(Effect.map((created) => created.every(Boolean)));
+    Effect.map((created) => created.every(Boolean)),
+  );
 }
 
 function normalizePemForSignedPayload(value: string): string {

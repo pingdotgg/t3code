@@ -1,18 +1,81 @@
 import {
+  AuthAdministrativeScopes,
   type AuthBearerBootstrapResult,
   AuthBootstrapInput,
   AuthCreatePairingCredentialInput,
+  type AuthEnvironmentScope,
   AuthRevokeClientSessionInput,
   AuthRevokePairingLinkInput,
+  AuthStandardClientScopes,
+  EnvironmentAuthenticatedAuth,
+  EnvironmentAuthenticatedPrincipal,
+  EnvironmentAuthInvalidError,
+  EnvironmentInternalError,
+  EnvironmentScopeRequiredError,
   type AuthWebSocketTokenResult,
 } from "@t3tools/contracts";
-import { DateTime, Effect, Schema } from "effect";
+import { DateTime, Effect, Layer, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
 import { AuthError, ServerAuth } from "./Services/ServerAuth.ts";
 import { SessionCredentialService } from "./Services/SessionCredentialService.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { browserApiCorsHeaders } from "../httpCors.ts";
+
+const makeTraceId = () => crypto.randomUUID().replaceAll("-", "");
+
+const sessionScopes = (role: string): ReadonlySet<AuthEnvironmentScope> =>
+  new Set(role === "owner" ? AuthAdministrativeScopes : AuthStandardClientScopes);
+
+const toEnvironmentAuthError = (error: AuthError) =>
+  error.status === 401
+    ? new EnvironmentAuthInvalidError({
+        code: "auth_invalid",
+        reason: "invalid_credential",
+        traceId: makeTraceId(),
+      })
+    : new EnvironmentInternalError({
+        code: "internal_error",
+        reason: "internal_error",
+        traceId: makeTraceId(),
+      });
+
+export const environmentAuthenticatedAuthLayer = Layer.effect(
+  EnvironmentAuthenticatedAuth,
+  Effect.gen(function* () {
+    const serverAuth = yield* ServerAuth;
+    return EnvironmentAuthenticatedAuth.of((handler) =>
+      Effect.gen(function* () {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        const session = yield* serverAuth
+          .authenticateHttpRequest(request)
+          .pipe(Effect.mapError(toEnvironmentAuthError));
+        const principal = EnvironmentAuthenticatedPrincipal.of({
+          sessionId: session.sessionId,
+          subject: session.subject,
+          method: session.method,
+          scopes: sessionScopes(session.role),
+          ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
+        });
+        return yield* handler.pipe(
+          Effect.provideService(EnvironmentAuthenticatedPrincipal, principal),
+        );
+      }),
+    );
+  }),
+);
+
+export const requireEnvironmentScope = (requiredScope: AuthEnvironmentScope) =>
+  Effect.gen(function* () {
+    const principal = yield* EnvironmentAuthenticatedPrincipal;
+    if (!principal.scopes.has(requiredScope)) {
+      return yield* new EnvironmentScopeRequiredError({
+        code: "insufficient_scope",
+        requiredScope,
+        traceId: makeTraceId(),
+      });
+    }
+  });
 
 export const respondToAuthError = (error: AuthError) =>
   Effect.gen(function* () {
