@@ -1,18 +1,9 @@
 import type { MenuAction, MenuComponentProps } from "@react-native-menu/menu";
 import { BlurView } from "expo-blur";
 import type { ReactNode } from "react";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
-import {
-  Dimensions,
-  Modal,
-  Pressable,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  useColorScheme,
-  View,
-} from "react-native";
+import { BackHandler, Pressable, ScrollView, StyleSheet, useColorScheme, View } from "react-native";
 import Animated, { FadeIn } from "react-native-reanimated";
 
 import { appBlurTargetRef } from "../lib/appBlurTarget";
@@ -20,23 +11,29 @@ import { useThemeColor } from "../lib/useThemeColor";
 import { cn } from "../lib/cn";
 import { type AppSymbolName, SymbolView } from "./AppSymbol";
 import { AppText as Text } from "./AppText";
+import { OverlayPortal } from "./OverlayPortal";
 
 const MENU_WIDTH = 250;
 const SCREEN_MARGIN = 12;
 const ANCHOR_GAP = 6;
 
-// The window metrics are snapshotted alongside the anchor when the menu
-// opens: the keyboard often dismisses right after (the anchor pills sit on
-// the composer), and a live useWindowDimensions would re-flow the menu
-// mid-presentation — flipping it from opens-up to opens-down and making it
-// flicker or jump.
+// Anchor position is snapshotted in window coordinates when the menu opens;
+// the overlay root measures itself the same way, and the menu is placed from
+// the delta. Both snapshots are taken at open time so later reflows (keyboard
+// show/hide, screen transitions) can't flip an opens-up menu to opens-down
+// mid-presentation.
 type AnchorSnapshot = {
   readonly x: number;
   readonly y: number;
   readonly width: number;
   readonly height: number;
-  readonly windowWidth: number;
-  readonly windowHeight: number;
+};
+
+type OverlayFrame = {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
 };
 
 export type AndroidAnchoredMenuProps = {
@@ -73,7 +70,12 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
   // menu's measured height made every submenu transition settle over two
   // frames and jitter.
   const [rootHeight, setRootHeight] = useState<number | null>(null);
+  // Window frame of the overlay root, measured on layout. Anchor coordinates
+  // are converted into this frame, so the menu lands correctly no matter
+  // where the portal host sits (status bar, keyboard resize, etc.).
+  const [overlay, setOverlay] = useState<OverlayFrame | null>(null);
   const anchorRef = useRef<View>(null);
+  const overlayRef = useRef<View>(null);
 
   const isDarkMode = useColorScheme() === "dark";
   const rippleColor = useThemeColor("--color-subtle");
@@ -84,54 +86,74 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
   const close = useCallback(() => {
     setAnchor(null);
     setPath([]);
+    setOverlay(null);
+    setRootHeight(null);
   }, []);
 
   const open = useCallback(() => {
     anchorRef.current?.measureInWindow((x, y, width, height) => {
-      const window = Dimensions.get("window");
-      // measureInWindow reports y excluding the status bar, but the
-      // translucent modal's coordinate space starts at the true screen top —
-      // without this the menu floats above its anchor by the inset height.
-      setAnchor({
-        x,
-        y: y + (StatusBar.currentHeight ?? 0),
-        width,
-        height,
-        windowWidth: window.width,
-        windowHeight: window.height,
-      });
+      setAnchor({ x, y, width, height });
     });
   }, []);
+
+  const measureOverlay = useCallback(() => {
+    overlayRef.current?.measureInWindow((x, y, width, height) => {
+      setOverlay({ x, y, width, height });
+      setRootHeight(height);
+    });
+  }, []);
+
+  // The dropdown renders in-window (no Modal takes focus), so the hardware
+  // back gesture needs explicit handling while it is open.
+  useEffect(() => {
+    if (anchor === null) {
+      return;
+    }
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      close();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [anchor, close]);
 
   const parent = path.length > 0 ? path[path.length - 1] : null;
   const levelActions = (parent?.subactions ?? props.actions).filter(
     (action) => !(action.attributes?.hidden ?? false),
   );
 
+  // Anchor in overlay-local coordinates (both measured in window space).
+  const local =
+    anchor === null || overlay === null
+      ? null
+      : {
+          x: anchor.x - overlay.x,
+          y: anchor.y - overlay.y,
+          width: anchor.width,
+          height: anchor.height,
+        };
   const preferredLeft =
-    anchor === null
+    local === null || overlay === null
       ? 0
-      : anchor.x + anchor.width / 2 <= anchor.windowWidth / 2
-        ? anchor.x
-        : anchor.x + anchor.width - MENU_WIDTH;
+      : local.x + local.width / 2 <= overlay.width / 2
+        ? local.x
+        : local.x + local.width - MENU_WIDTH;
   const left =
-    anchor === null
+    overlay === null
       ? 0
       : Math.min(
           Math.max(preferredLeft, SCREEN_MARGIN),
-          anchor.windowWidth - MENU_WIDTH - SCREEN_MARGIN,
+          overlay.width - MENU_WIDTH - SCREEN_MARGIN,
         );
   const spaceBelow =
-    anchor === null
+    local === null || overlay === null
       ? 0
-      : anchor.windowHeight - (anchor.y + anchor.height) - ANCHOR_GAP - SCREEN_MARGIN;
-  const spaceAbove = anchor === null ? 0 : anchor.y - ANCHOR_GAP - SCREEN_MARGIN;
+      : overlay.height - (local.y + local.height) - ANCHOR_GAP - SCREEN_MARGIN;
+  const spaceAbove = local === null ? 0 : local.y - ANCHOR_GAP - SCREEN_MARGIN;
   const opensDown = spaceBelow >= 280 || spaceBelow >= spaceAbove;
   const maxHeight = Math.min(opensDown ? spaceBelow : spaceAbove, 480);
-  // Flipped-up menus need the root height before they can be placed; they
-  // stay unmounted for that first frame so the fade-in plays at the final
-  // position.
-  const placeable = opensDown || rootHeight !== null;
+  // The menu needs the overlay frame before it can be placed; it stays
+  // unmounted for that first frame so the fade-in plays at the final position.
+  const placeable = local !== null && rootHeight !== null;
 
   const onPressItem = useCallback(
     (action: MenuAction) => {
@@ -166,125 +188,129 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
           <View pointerEvents="none">{props.children}</View>
         </Pressable>
       )}
-      <Modal
-        visible={anchor !== null}
-        transparent
-        statusBarTranslucent
-        navigationBarTranslucent
-        animationType="none"
-        onRequestClose={close}
-      >
-        <View
-          className="flex-1"
-          onLayout={(event) => setRootHeight(event.nativeEvent.layout.height)}
-        >
-          <Pressable accessible={false} className="absolute inset-0" onPress={close} />
-          {anchor === null || !placeable ? null : (
-            <Animated.View
-              entering={FadeIn.duration(120)}
-              className="absolute overflow-hidden rounded-[12px] border border-border"
-              style={{
-                width: MENU_WIDTH,
-                left,
-                maxHeight,
-                elevation: 16,
-                shadowColor: "#000000",
-                ...(opensDown
-                  ? { top: anchor.y + anchor.height + ANCHOR_GAP }
-                  : { bottom: (rootHeight ?? 0) - anchor.y + ANCHOR_GAP }),
-              }}
-            >
-              {/* Frosted backdrop: blur of the app content behind the menu,
+      {anchor === null ? null : (
+        <OverlayPortal>
+          <View
+            ref={overlayRef}
+            collapsable={false}
+            style={StyleSheet.absoluteFill}
+            onLayout={measureOverlay}
+          >
+            <Pressable accessible={false} className="absolute inset-0" onPress={close} />
+            {!placeable || local === null ? null : (
+              <Animated.View
+                entering={FadeIn.duration(120)}
+                className="absolute overflow-hidden rounded-[12px] border border-border"
+                style={{
+                  width: MENU_WIDTH,
+                  left,
+                  maxHeight,
+                  elevation: 16,
+                  shadowColor: "#000000",
+                  ...(opensDown
+                    ? { top: local.y + local.height + ANCHOR_GAP }
+                    : { bottom: (rootHeight ?? 0) - local.y + ANCHOR_GAP }),
+                }}
+              >
+                {/* Frosted backdrop: blur of the app content behind the menu,
                   washed with the translucent card tone so rows keep contrast. */}
-              <BlurView
-                blurMethod="dimezisBlurView"
-                blurTarget={appBlurTargetRef}
-                intensity={40}
-                tint={isDarkMode ? "dark" : "light"}
-                style={StyleSheet.absoluteFill}
-              />
-              <View className="absolute inset-0 bg-card-translucent" />
-              <ScrollView bounces={false} showsVerticalScrollIndicator={false}>
-                {parent !== null ? (
-                  // Muted parent title as the submenu header; tapping it
-                  // steps back, but it reads as a label, not a button.
-                  <Pressable
-                    className="px-3.5 pb-1 pt-2.5"
-                    onPress={() => setPath((current) => current.slice(0, -1))}
-                  >
-                    <Text className="text-xs font-t3-bold text-foreground-muted">
-                      {parent.title}
-                    </Text>
-                  </Pressable>
-                ) : props.title ? (
-                  <>
-                    <View className="px-3.5 py-2">
-                      <Text className="text-center text-xs text-foreground-muted">
-                        {props.title}
-                      </Text>
-                    </View>
-                    <View className="h-px bg-border" />
-                  </>
-                ) : null}
-                {levelActions.map((action, index) => {
-                  const destructive = action.attributes?.destructive ?? false;
-                  const disabled = action.attributes?.disabled ?? false;
-                  const hasSubmenu = (action.subactions?.length ?? 0) > 0;
-                  return (
+                <BlurView
+                  blurMethod="dimezisBlurView"
+                  blurTarget={appBlurTargetRef}
+                  intensity={40}
+                  tint={isDarkMode ? "dark" : "light"}
+                  style={StyleSheet.absoluteFill}
+                />
+                <View className="absolute inset-0 bg-card-translucent" />
+                {/* keyboardShouldPersistTaps: the menu often opens over an
+                  active editor; the first item tap must act, not just
+                  dismiss the keyboard. */}
+                <ScrollView
+                  bounces={false}
+                  keyboardShouldPersistTaps="always"
+                  showsVerticalScrollIndicator={false}
+                >
+                  {parent !== null ? (
+                    // Muted parent title as the submenu header; tapping it
+                    // steps back, but it reads as a label, not a button.
                     <Pressable
-                      key={action.id ?? `${index}-${action.title}`}
-                      android_ripple={{ color: rippleColor }}
-                      disabled={disabled}
-                      className="min-h-11 flex-row items-center gap-2.5 px-3.5 py-2.5"
-                      style={{ opacity: disabled ? 0.45 : 1 }}
-                      onPress={() => onPressItem(action)}
+                      className="px-3.5 pb-1 pt-2.5"
+                      onPress={() => setPath((current) => current.slice(0, -1))}
                     >
-                      <View className="flex-1 gap-0.5">
-                        <Text
-                          className={cn(
-                            // Same face as the pill labels that open these menus.
-                            "text-sm font-t3-bold",
-                            destructive && "text-danger-foreground",
-                          )}
-                        >
-                          {action.title}
-                        </Text>
-                        {action.subtitle ? (
-                          <Text className="text-xs leading-snug text-foreground-muted">
-                            {action.subtitle}
-                          </Text>
-                        ) : null}
-                      </View>
-                      {hasSubmenu ? (
-                        <SymbolView
-                          name="chevron.right"
-                          size={13}
-                          tintColor={iconSubtleColor}
-                          type="monochrome"
-                        />
-                      ) : action.state === "on" ? (
-                        <SymbolView
-                          name="checkmark"
-                          size={15}
-                          tintColor={iconColor}
-                          type="monochrome"
-                        />
-                      ) : action.image ? (
-                        <SymbolView
-                          name={action.image as AppSymbolName}
-                          size={15}
-                          tintColor={destructive ? dangerColor : iconColor}
-                          type="monochrome"
-                        />
-                      ) : null}
+                      <Text className="text-xs font-t3-bold text-foreground-muted">
+                        {parent.title}
+                      </Text>
                     </Pressable>
-                  );
-                })}
-              </ScrollView>
-            </Animated.View>
-          )}
-        </View>
-      </Modal>
+                  ) : props.title ? (
+                    <>
+                      <View className="px-3.5 py-2">
+                        <Text className="text-center text-xs text-foreground-muted">
+                          {props.title}
+                        </Text>
+                      </View>
+                      <View className="h-px bg-border" />
+                    </>
+                  ) : null}
+                  {levelActions.map((action, index) => {
+                    const destructive = action.attributes?.destructive ?? false;
+                    const disabled = action.attributes?.disabled ?? false;
+                    const hasSubmenu = (action.subactions?.length ?? 0) > 0;
+                    return (
+                      <Pressable
+                        key={action.id ?? `${index}-${action.title}`}
+                        android_ripple={{ color: rippleColor }}
+                        disabled={disabled}
+                        className="min-h-11 flex-row items-center gap-2.5 px-3.5 py-2.5"
+                        style={{ opacity: disabled ? 0.45 : 1 }}
+                        onPress={() => onPressItem(action)}
+                      >
+                        <View className="flex-1 gap-0.5">
+                          <Text
+                            className={cn(
+                              // Same face as the pill labels that open these menus.
+                              "text-sm font-t3-bold",
+                              destructive && "text-danger-foreground",
+                            )}
+                          >
+                            {action.title}
+                          </Text>
+                          {action.subtitle ? (
+                            <Text className="text-xs leading-snug text-foreground-muted">
+                              {action.subtitle}
+                            </Text>
+                          ) : null}
+                        </View>
+                        {hasSubmenu ? (
+                          <SymbolView
+                            name="chevron.right"
+                            size={13}
+                            tintColor={iconSubtleColor}
+                            type="monochrome"
+                          />
+                        ) : action.state === "on" ? (
+                          <SymbolView
+                            name="checkmark"
+                            size={15}
+                            tintColor={iconColor}
+                            type="monochrome"
+                          />
+                        ) : action.image ? (
+                          <SymbolView
+                            name={action.image as AppSymbolName}
+                            size={15}
+                            tintColor={destructive ? dangerColor : iconColor}
+                            type="monochrome"
+                          />
+                        ) : null}
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+              </Animated.View>
+            )}
+          </View>
+        </OverlayPortal>
+      )}
     </>
   );
 }

@@ -109,7 +109,7 @@ export function ControlPillMenu(
           {(open) =>
             cloneElement(child, {
               onLongPress: () => {
-                void Haptics.selectionAsync();
+                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                 open();
               },
             })

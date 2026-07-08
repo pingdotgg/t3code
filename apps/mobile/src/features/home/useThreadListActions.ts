@@ -22,7 +22,7 @@ function actionFailureMessage(action: ThreadListAction, cause: Cause.Cause<unkno
 }
 
 function selectionHaptic(): void {
-  void Haptics.selectionAsync();
+  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 }
 
 function actionFailureTitle(action: ThreadListAction): string {

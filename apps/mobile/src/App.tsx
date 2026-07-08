@@ -14,6 +14,7 @@ import { CloudAuthProvider } from "./features/cloud/CloudAuthProvider";
 import { AppearancePreferencesProvider } from "./features/settings/appearance/AppearancePreferencesProvider";
 import { RootStack } from "./Stack";
 import { appAtomRegistry } from "./state/atom-registry";
+import { OverlayPortalHost } from "./components/OverlayPortal";
 import { appBlurTargetRef } from "./lib/appBlurTarget";
 import { useThemeColor } from "./lib/useThemeColor";
 
@@ -63,6 +64,9 @@ export default function App() {
                   />
                   <ConfirmDialogHost />
                 </BlurTargetView>
+                {/* Anchored-menu overlays render here — in-window, so the
+                    keyboard stays up while a dropdown is open. */}
+                <OverlayPortalHost />
               </SafeAreaProvider>
             </KeyboardProvider>
           </GestureHandlerRootView>
