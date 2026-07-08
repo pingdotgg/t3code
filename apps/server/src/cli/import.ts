@@ -36,6 +36,7 @@ import {
 } from "../import/claudeTranscript.ts";
 import {
   buildOwnedSessionIdMap,
+  detectForkCopy,
   isRalphSession,
   planThreadSync,
   type ResumeBindingView,
@@ -269,6 +270,21 @@ const loadOwnedSessionIds = Effect.gen(function* () {
   return buildOwnedSessionIdMap(bindings);
 });
 
+/**
+ * Index of every message id in the read model -> owning thread id. Imported
+ * messages use transcript uuids as ids, so a fork-copy transcript's uuids
+ * collide with the already-imported original (see `detectForkCopy`).
+ */
+function buildMessageOwnerIndex(snapshot: OrchestrationReadModel): ReadonlyMap<string, string> {
+  const index = new Map<string, string>();
+  for (const thread of snapshot.threads) {
+    for (const message of thread.messages) {
+      index.set(message.id, thread.id);
+    }
+  }
+  return index;
+}
+
 /** Outcome of a create-or-incremental-update pass for one session. */
 type SyncOutcome =
   | {
@@ -283,7 +299,12 @@ type SyncOutcome =
   | { readonly kind: "unchanged"; readonly threadId: ThreadId }
   | { readonly kind: "skipped-deleted"; readonly threadId: ThreadId }
   | { readonly kind: "skipped-forked"; readonly threadId: ThreadId; readonly reason: string }
-  | { readonly kind: "skipped-owned"; readonly ownerThreadId: string };
+  | { readonly kind: "skipped-owned"; readonly ownerThreadId: string }
+  | {
+      readonly kind: "skipped-copy";
+      readonly ownerThreadId: string;
+      readonly sharedRatio: number;
+    };
 
 /**
  * Create-or-incrementally-update the T3 thread mirroring a Claude session.
@@ -307,6 +328,8 @@ const syncSession = Effect.fn("syncSession")(function* (input: {
   readonly everExistingThreadStreamIds: ReadonlySet<string>;
   /** Session ids owned by another thread's resume binding: sessionId -> threadId. */
   readonly ownedSessionIds: ReadonlyMap<string, string>;
+  /** Already-imported message ids (transcript uuids) -> owning thread id. */
+  readonly messageOwnerIndex: ReadonlyMap<string, string>;
   readonly projectOverlay?: Map<string, ProjectId>;
 }) {
   const {
@@ -315,6 +338,7 @@ const syncSession = Effect.fn("syncSession")(function* (input: {
     snapshot,
     everExistingThreadStreamIds,
     ownedSessionIds,
+    messageOwnerIndex,
     projectOverlay,
   } = input;
   const path = yield* Path.Path;
@@ -379,6 +403,24 @@ const syncSession = Effect.fn("syncSession")(function* (input: {
   }
   if (plan.kind === "unchanged") {
     return { kind: "unchanged", threadId } satisfies SyncOutcome;
+  }
+
+  // Fork-copy guard (creation only): a transcript whose messages largely
+  // already live on another thread is a forkSession copy — importing it
+  // would duplicate that thread's conversation.
+  if (plan.kind === "create") {
+    const copy = detectForkCopy({
+      sessionMessages: session.messages,
+      threadId,
+      messageOwnerIndex,
+    });
+    if (copy !== null) {
+      return {
+        kind: "skipped-copy",
+        ownerThreadId: copy.ownerThreadId,
+        sharedRatio: copy.sharedRatio,
+      } satisfies SyncOutcome;
+    }
   }
 
   const engine = yield* OrchestrationEngineService;
@@ -563,12 +605,14 @@ const importClaudeCommand = Command.make("claude", {
         );
         const everExistingThreadStreamIds = yield* loadEverExistingThreadStreamIds;
         const ownedSessionIds = yield* loadOwnedSessionIds;
+        const messageOwnerIndex = buildMessageOwnerIndex(snapshot);
         return yield* syncSession({
           session,
           instanceId,
           snapshot,
           everExistingThreadStreamIds,
           ownedSessionIds,
+          messageOwnerIndex,
         });
       }).pipe(
         Effect.provide(
@@ -622,6 +666,12 @@ const importClaudeCommand = Command.make("claude", {
               `(the session was produced by T3 itself; importing it would duplicate that conversation).`,
           );
           break;
+        case "skipped-copy":
+          yield* Console.log(
+            `Skipped Claude session ${session.sessionId}: it is a fork copy of thread ${result.ownerThreadId} ` +
+              `(${Math.round(result.sharedRatio * 100)}% of its messages are already on that thread).`,
+          );
+          break;
       }
     }),
   ),
@@ -651,6 +701,7 @@ interface SyncCounters {
   skippedDeleted: number;
   skippedOwned: number;
   skippedWorktree: number;
+  skippedCopy: number;
   failed: number;
   total: number;
 }
@@ -710,6 +761,7 @@ const importSyncCommand = Command.make("sync", {
         skippedDeleted: 0,
         skippedOwned: 0,
         skippedWorktree: 0,
+        skippedCopy: 0,
         failed: 0,
         total: 0,
       };
@@ -728,6 +780,7 @@ const importSyncCommand = Command.make("sync", {
 
         const everExistingThreadStreamIds = yield* loadEverExistingThreadStreamIds;
         const ownedSessionIds = yield* loadOwnedSessionIds;
+        const messageOwnerIndex = buildMessageOwnerIndex(snapshot);
         const projectOverlay = new Map<string, ProjectId>();
         const seenSessionIds = new Set<string>();
 
@@ -792,6 +845,7 @@ const importSyncCommand = Command.make("sync", {
               snapshot,
               everExistingThreadStreamIds,
               ownedSessionIds,
+              messageOwnerIndex,
               projectOverlay,
             }),
           );
@@ -831,6 +885,13 @@ const importSyncCommand = Command.make("sync", {
                 `skipped-owned sessionId=${sessionId} ownerThreadId=${result.ownerThreadId}`,
               );
               break;
+            case "skipped-copy":
+              counters.skippedCopy += 1;
+              yield* Console.log(
+                `skipped-copy sessionId=${sessionId} ownerThreadId=${result.ownerThreadId} ` +
+                  `shared=${Math.round(result.sharedRatio * 100)}%`,
+              );
+              break;
           }
         }
       }).pipe(
@@ -847,7 +908,8 @@ const importSyncCommand = Command.make("sync", {
           `unchanged=${counters.unchanged} skipped-forked=${counters.skippedForked} ` +
           `skipped-ralph=${counters.skippedRalph} skipped-empty=${counters.skippedEmpty} ` +
           `skipped-deleted=${counters.skippedDeleted} skipped-owned=${counters.skippedOwned} ` +
-          `skipped-worktree=${counters.skippedWorktree} failed=${counters.failed} total=${counters.total}`,
+          `skipped-worktree=${counters.skippedWorktree} skipped-copy=${counters.skippedCopy} ` +
+          `failed=${counters.failed} total=${counters.total}`,
       );
     }),
   ),

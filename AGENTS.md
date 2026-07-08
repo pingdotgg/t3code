@@ -42,8 +42,9 @@ checkout at `~/projects/meta/t3code-v2` to mirror every Claude Code transcript u
 The sweep logic lives in `apps/server/src/cli/import.ts` and `apps/server/src/import/syncPlan.ts`.
 When debugging duplicate or missing conversations, look here first. Key invariants: transcripts of
 sessions T3 itself spawned are skipped (`skipped-owned` — session id found in another thread's
-`provider_session_runtime` resume cursor — and `skipped-worktree` — transcript cwd inside the T3
-worktrees dir), and deleted imported threads stay deleted via the event-log tombstone.
+`provider_session_runtime` resume cursor; `skipped-worktree` — transcript cwd inside the T3
+worktrees dir; `skipped-copy` — a forkSession copy whose message uuids largely already live on
+another thread), and deleted imported threads stay deleted via the event-log tombstone.
 
 ## Reference Repos
 

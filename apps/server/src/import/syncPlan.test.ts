@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import type { ParsedClaudeMessage, ParsedClaudeSession } from "./claudeTranscript.ts";
-import { buildOwnedSessionIdMap, isRalphSession, planThreadSync } from "./syncPlan.ts";
+import {
+  buildOwnedSessionIdMap,
+  detectForkCopy,
+  isRalphSession,
+  planThreadSync,
+} from "./syncPlan.ts";
 
 const message = (
   uuid: string,
@@ -262,5 +267,80 @@ describe("buildOwnedSessionIdMap", () => {
       { threadId: "other-thread", resumeSessionId: "  " },
     ]);
     expect(owned.size).toBe(0);
+  });
+});
+
+describe("detectForkCopy", () => {
+  const msgs = (uuids: string[]) => uuids.map((uuid) => ({ uuid }));
+  const index = (entries: Array<[string, string]>) => new Map(entries);
+
+  it("flags a transcript whose messages all belong to another thread", () => {
+    const copy = detectForkCopy({
+      sessionMessages: msgs(["m-1", "m-2", "m-3"]),
+      threadId: "claude-import-fork",
+      messageOwnerIndex: index([
+        ["m-1", "claude-import-original"],
+        ["m-2", "claude-import-original"],
+        ["m-3", "claude-import-original"],
+      ]),
+    });
+    expect(copy).toEqual({ ownerThreadId: "claude-import-original", sharedRatio: 1 });
+  });
+
+  it("flags a fork copy with a short new tail (ratio above threshold)", () => {
+    const copy = detectForkCopy({
+      sessionMessages: msgs(["m-1", "m-2", "m-3", "new-1"]),
+      threadId: "claude-import-fork",
+      messageOwnerIndex: index([
+        ["m-1", "claude-import-original"],
+        ["m-2", "claude-import-original"],
+        ["m-3", "claude-import-original"],
+      ]),
+    });
+    expect(copy?.ownerThreadId).toBe("claude-import-original");
+    expect(copy?.sharedRatio).toBe(0.75);
+  });
+
+  it("does not flag a long-diverged fork (mostly new content)", () => {
+    const copy = detectForkCopy({
+      sessionMessages: msgs(["m-1", "new-1", "new-2", "new-3", "new-4"]),
+      threadId: "claude-import-fork",
+      messageOwnerIndex: index([["m-1", "claude-import-original"]]),
+    });
+    expect(copy).toBeNull();
+  });
+
+  it("ignores messages owned by the transcript's own thread", () => {
+    const copy = detectForkCopy({
+      sessionMessages: msgs(["m-1", "m-2"]),
+      threadId: "claude-import-self",
+      messageOwnerIndex: index([
+        ["m-1", "claude-import-self"],
+        ["m-2", "claude-import-self"],
+      ]),
+    });
+    expect(copy).toBeNull();
+  });
+
+  it("attributes the copy to the majority owner", () => {
+    const copy = detectForkCopy({
+      sessionMessages: msgs(["m-1", "m-2", "m-3"]),
+      threadId: "claude-import-fork",
+      messageOwnerIndex: index([
+        ["m-1", "claude-import-a"],
+        ["m-2", "claude-import-b"],
+        ["m-3", "claude-import-b"],
+      ]),
+    });
+    expect(copy?.ownerThreadId).toBe("claude-import-b");
+  });
+
+  it("returns null for an empty transcript", () => {
+    const copy = detectForkCopy({
+      sessionMessages: [],
+      threadId: "claude-import-fork",
+      messageOwnerIndex: index([]),
+    });
+    expect(copy).toBeNull();
   });
 });

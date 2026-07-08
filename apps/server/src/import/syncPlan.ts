@@ -151,6 +151,56 @@ export function buildOwnedSessionIdMap(
 }
 
 /**
+ * Fraction of a transcript's message uuids that must already belong to a
+ * different thread before the transcript is treated as a fork copy. Forked
+ * transcripts carry the full copied history, so real copies sit near 1.0; a
+ * fork that diverged long ago (mostly new content) stays importable.
+ */
+export const COPY_SHARE_THRESHOLD = 0.5;
+
+/**
+ * Detect a fork-copy transcript: one whose messages largely already live on
+ * a DIFFERENT thread. Continuing a Claude session with forkSession copies
+ * the entire history into a brand-new session id, so a naive sweep imports
+ * the copy as a duplicate thread. The resume-cursor ownership check only
+ * knows the LATEST fork id; this content check also catches intermediate
+ * forks whose cursor pointer has since moved on.
+ *
+ * `messageOwnerIndex` maps already-imported message ids (transcript uuids)
+ * to their thread id. Returns the majority owner when at least
+ * `COPY_SHARE_THRESHOLD` of the transcript's messages belong to another
+ * thread, else null.
+ */
+export function detectForkCopy(input: {
+  readonly sessionMessages: ReadonlyArray<{ readonly uuid: string }>;
+  /** Thread id the transcript would map to (`claude-import-<sessionId>`). */
+  readonly threadId: string;
+  readonly messageOwnerIndex: ReadonlyMap<string, string>;
+}): { readonly ownerThreadId: string; readonly sharedRatio: number } | null {
+  const { sessionMessages, threadId, messageOwnerIndex } = input;
+  if (sessionMessages.length === 0) return null;
+  const ownerCounts = new Map<string, number>();
+  let shared = 0;
+  for (const message of sessionMessages) {
+    const owner = messageOwnerIndex.get(message.uuid);
+    if (owner === undefined || owner === threadId) continue;
+    shared += 1;
+    ownerCounts.set(owner, (ownerCounts.get(owner) ?? 0) + 1);
+  }
+  const sharedRatio = shared / sessionMessages.length;
+  if (sharedRatio < COPY_SHARE_THRESHOLD) return null;
+  let ownerThreadId: string | null = null;
+  let best = 0;
+  for (const [owner, count] of ownerCounts) {
+    if (count > best) {
+      best = count;
+      ownerThreadId = owner;
+    }
+  }
+  return ownerThreadId === null ? null : { ownerThreadId, sharedRatio };
+}
+
+/**
  * Prefixes of the first user prompt that identify "ralph" harness transcripts
  * (generator/evaluator/rescue loops) which should not be mirrored into T3.
  */
