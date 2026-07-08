@@ -3060,4 +3060,87 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("runtime still processed");
   });
+  it("coalesces bursts of tool.updated snapshots for the same item", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "thread.started",
+      eventId: asEventId("evt-coalesce-thread"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+    });
+    harness.emit({
+      type: "session.started",
+      eventId: asEventId("evt-coalesce-session"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+    });
+
+    // Strictly increasing createdAt so the projection sort (createdAt, then id)
+    // reflects dispatch order rather than alphabetical id ties.
+    const updateTimestamps = {
+      one: "2026-01-01T00:00:01.000Z",
+      two: "2026-01-01T00:00:02.000Z",
+      three: "2026-01-01T00:00:03.000Z",
+    } as const;
+
+    for (const step of ["one", "two", "three"] as const) {
+      harness.emit({
+        type: "item.updated",
+        eventId: asEventId(`evt-coalesce-update-${step}`),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: updateTimestamps[step],
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-c1"),
+        itemId: asItemId("item-c1-tool"),
+        payload: {
+          itemType: "command_execution",
+          status: "in_progress",
+          title: "Run tests",
+          detail: `step ${step}`,
+        },
+      });
+    }
+
+    await harness.drain();
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    const updates = (thread?.activities ?? []).filter(
+      (activity: ProviderRuntimeTestActivity) => activity.kind === "tool.updated",
+    );
+    // Three progress snapshots for one item collapse to the latest state.
+    expect(updates).toHaveLength(1);
+    expect(updates[0]?.id).toBe("evt-coalesce-update-three");
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-coalesce-complete"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:04.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-c1"),
+      itemId: asItemId("item-c1-tool"),
+      payload: {
+        itemType: "command_execution",
+        title: "Run tests",
+        detail: "step three",
+      },
+    });
+
+    await harness.drain();
+    const afterComplete = await harness.readModel();
+    const completedThread = afterComplete.threads.find(
+      (entry) => entry.id === ThreadId.make("thread-1"),
+    );
+    const activityIds = (completedThread?.activities ?? []).map(
+      (activity: ProviderRuntimeTestActivity) => activity.id,
+    );
+    // The buffered snapshot stays ahead of the terminal row in the work log.
+    expect(activityIds.indexOf(asEventId("evt-coalesce-update-three"))).toBeLessThan(
+      activityIds.indexOf(asEventId("evt-coalesce-complete")),
+    );
+  });
 });
