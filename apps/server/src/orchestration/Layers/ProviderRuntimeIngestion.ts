@@ -329,7 +329,9 @@ function runtimeEventToActivities(
     }
 
     case "runtime.error": {
-      const usageLimit = isUsageLimitDetail(event.payload.detail) ? event.payload.detail : undefined;
+      const usageLimit = isUsageLimitDetail(event.payload.detail)
+        ? event.payload.detail
+        : undefined;
       if (usageLimit !== undefined) {
         return [
           {
@@ -346,7 +348,9 @@ function runtimeEventToActivities(
               ...(usageLimit.resetsAtEpochSeconds !== undefined
                 ? { resetsAtEpochSeconds: usageLimit.resetsAtEpochSeconds }
                 : {}),
-              ...(usageLimit.resetSource !== undefined ? { resetSource: usageLimit.resetSource } : {}),
+              ...(usageLimit.resetSource !== undefined
+                ? { resetSource: usageLimit.resetSource }
+                : {}),
             },
             turnId: toTurnId(event.turnId) ?? null,
             ...maybeSequence,

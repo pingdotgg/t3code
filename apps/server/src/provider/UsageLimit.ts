@@ -40,7 +40,8 @@ function epochSecondsFromUnixLike(value: unknown): number | undefined {
     }
     return undefined;
   }
-  const epochSeconds = numeric > 1_000_000_000_000 ? Math.floor(numeric / 1000) : Math.floor(numeric);
+  const epochSeconds =
+    numeric > 1_000_000_000_000 ? Math.floor(numeric / 1000) : Math.floor(numeric);
   return epochSeconds > 0 ? epochSeconds : undefined;
 }
 
@@ -100,8 +101,7 @@ function collectResetCandidates(
       const seconds = epochSecondsFromUnixLike(child);
       if (seconds !== undefined) {
         candidates.push({
-          epochSeconds:
-            Math.floor(DateTime.toEpochMillis(DateTime.nowUnsafe()) / 1000) + seconds,
+          epochSeconds: Math.floor(DateTime.toEpochMillis(DateTime.nowUnsafe()) / 1000) + seconds,
           source: childPath,
           reached,
           priority: 1,
@@ -112,7 +112,9 @@ function collectResetCandidates(
     if (isRecord(child)) {
       collectResetCandidates(child, childPath, candidates);
     } else if (Array.isArray(child)) {
-      child.forEach((entry, index) => collectResetCandidates(entry, `${childPath}[${index}]`, candidates));
+      child.forEach((entry, index) =>
+        collectResetCandidates(entry, `${childPath}[${index}]`, candidates),
+      );
     }
   }
 }
@@ -246,7 +248,8 @@ export function detectClaudeUsageLimit(input: {
 }): RuntimeUsageLimitDetail | undefined {
   const messageIndicatesLimit =
     input.message !== undefined &&
-    (CLAUDE_USAGE_LIMIT_PATTERN.test(input.message) || USAGE_LIMIT_MESSAGE_PATTERN.test(input.message));
+    (CLAUDE_USAGE_LIMIT_PATTERN.test(input.message) ||
+      USAGE_LIMIT_MESSAGE_PATTERN.test(input.message));
   const rateLimitEventIndicatesRejectedUsageLimit =
     input.source === "rate_limit_event" &&
     claudeRateLimitEventIsRejected(input.raw) &&

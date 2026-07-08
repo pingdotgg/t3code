@@ -1366,7 +1366,10 @@ function mapToRuntimeEvents(
         payload: {
           message,
           ...(!willRetry
-            ? { class: usageLimit !== undefined ? ("usage_limit" as const) : ("provider_error" as const) }
+            ? {
+                class:
+                  usageLimit !== undefined ? ("usage_limit" as const) : ("provider_error" as const),
+              }
             : {}),
           ...(usageLimit !== undefined
             ? { detail: usageLimit }
