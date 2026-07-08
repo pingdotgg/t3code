@@ -22,23 +22,22 @@ function catalogError(operation: string, cause: unknown) {
   });
 }
 
+const ConnectionCatalogDocumentJson = Schema.fromJsonString(ConnectionCatalogDocument);
+const decodeConnectionCatalogDocument = Schema.decodeEffect(ConnectionCatalogDocumentJson);
+const encodeConnectionCatalogDocument = Schema.encodeEffect(ConnectionCatalogDocumentJson);
+
 const decodeCatalog = Effect.fn("mobile.connectionStorage.decodeCatalog")(function* (raw: string) {
-  const parsed = yield* Effect.try({
-    try: () => JSON.parse(raw) as unknown,
-    catch: (cause) => catalogError("decode", cause),
-  });
-  return yield* Effect.fromResult(
-    Schema.decodeUnknownResult(ConnectionCatalogDocument)(parsed),
-  ).pipe(Effect.mapError((cause) => catalogError("decode", cause)));
+  return yield* decodeConnectionCatalogDocument(raw).pipe(
+    Effect.mapError((cause) => catalogError("decode", cause)),
+  );
 });
 
 const encodeCatalog = Effect.fn("mobile.connectionStorage.encodeCatalog")(function* (
   catalog: ConnectionCatalogDocumentType,
 ) {
-  const encoded = yield* Effect.fromResult(
-    Schema.encodeUnknownResult(ConnectionCatalogDocument)(catalog),
-  ).pipe(Effect.mapError((cause) => catalogError("encode", cause)));
-  return JSON.stringify(encoded);
+  return yield* encodeConnectionCatalogDocument(catalog).pipe(
+    Effect.mapError((cause) => catalogError("encode", cause)),
+  );
 });
 
 interface CatalogStore {

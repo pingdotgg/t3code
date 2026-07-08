@@ -49,6 +49,7 @@ const StoredShellSnapshot = Schema.Struct({
   environmentId: EnvironmentId,
   snapshot: OrchestrationShellSnapshot,
 });
+const StoredShellSnapshotJson = Schema.fromJsonString(StoredShellSnapshot);
 
 const StoredThreadSnapshot = Schema.Struct({
   schemaVersion: Schema.Literal(THREAD_SNAPSHOT_CACHE_SCHEMA_VERSION),
@@ -56,12 +57,14 @@ const StoredThreadSnapshot = Schema.Struct({
   threadId: ThreadId,
   snapshot: OrchestrationThreadDetailSnapshot,
 });
+const StoredThreadSnapshotJson = Schema.fromJsonString(StoredThreadSnapshot);
 
 const StoredServerConfig = Schema.Struct({
   schemaVersion: Schema.Literal(SERVER_CONFIG_CACHE_SCHEMA_VERSION),
   environmentId: EnvironmentId,
   config: ServerConfig,
 });
+const StoredServerConfigJson = Schema.fromJsonString(StoredServerConfig);
 
 const StoredVcsRefs = Schema.Struct({
   schemaVersion: Schema.Literal(VCS_REFS_CACHE_SCHEMA_VERSION),
@@ -69,6 +72,7 @@ const StoredVcsRefs = Schema.Struct({
   cwd: Schema.String,
   refs: VcsListRefsResult,
 });
+const StoredVcsRefsJson = Schema.fromJsonString(StoredVcsRefs);
 
 const LegacyStoredShellSnapshot = Schema.Struct({
   schemaVersion: Schema.Literal(1),
@@ -76,16 +80,17 @@ const LegacyStoredShellSnapshot = Schema.Struct({
   snapshotReceivedAt: Schema.String,
   snapshot: OrchestrationShellSnapshot,
 });
+const LegacyStoredShellSnapshotJson = Schema.fromJsonString(LegacyStoredShellSnapshot);
 
-const decodeStoredShellSnapshot = Schema.decodeUnknownEffect(StoredShellSnapshot);
-const encodeStoredShellSnapshot = Schema.encodeUnknownEffect(StoredShellSnapshot);
-const decodeStoredThreadSnapshot = Schema.decodeUnknownEffect(StoredThreadSnapshot);
-const encodeStoredThreadSnapshot = Schema.encodeUnknownEffect(StoredThreadSnapshot);
-const decodeStoredServerConfig = Schema.decodeUnknownEffect(StoredServerConfig);
-const encodeStoredServerConfig = Schema.encodeUnknownEffect(StoredServerConfig);
-const decodeStoredVcsRefs = Schema.decodeUnknownEffect(StoredVcsRefs);
-const encodeStoredVcsRefs = Schema.encodeUnknownEffect(StoredVcsRefs);
-const decodeLegacyStoredShellSnapshot = Schema.decodeUnknownEffect(LegacyStoredShellSnapshot);
+const decodeStoredShellSnapshot = Schema.decodeEffect(StoredShellSnapshotJson);
+const encodeStoredShellSnapshot = Schema.encodeEffect(StoredShellSnapshotJson);
+const decodeStoredThreadSnapshot = Schema.decodeEffect(StoredThreadSnapshotJson);
+const encodeStoredThreadSnapshot = Schema.encodeEffect(StoredThreadSnapshotJson);
+const decodeStoredServerConfig = Schema.decodeEffect(StoredServerConfigJson);
+const encodeStoredServerConfig = Schema.encodeEffect(StoredServerConfigJson);
+const decodeStoredVcsRefs = Schema.decodeEffect(StoredVcsRefsJson);
+const encodeStoredVcsRefs = Schema.encodeEffect(StoredVcsRefsJson);
+const decodeLegacyStoredShellSnapshot = Schema.decodeEffect(LegacyStoredShellSnapshotJson);
 
 function catalogError(operation: string, cause: unknown) {
   return new ConnectionTransientError({
@@ -374,11 +379,7 @@ export const connectionStorageLayer = Layer.effectContext(
               try: () => file.text(),
               catch: (cause) => shellPersistenceError("load-shell", cause),
             });
-            const parsed = yield* Effect.try({
-              try: () => JSON.parse(raw) as unknown,
-              catch: (cause) => shellPersistenceError("load-shell", cause),
-            });
-            const stored = yield* decodeStoredShellSnapshot(parsed).pipe(
+            const stored = yield* decodeStoredShellSnapshot(raw).pipe(
               Effect.mapError((cause) => shellPersistenceError("load-shell", cause)),
             );
             return stored.environmentId === environmentId
@@ -394,11 +395,7 @@ export const connectionStorageLayer = Layer.effectContext(
             try: () => legacyFile.text(),
             catch: (cause) => shellPersistenceError("load-shell", cause),
           });
-          const legacyParsed = yield* Effect.try({
-            try: () => JSON.parse(legacyRaw) as unknown,
-            catch: (cause) => shellPersistenceError("load-shell", cause),
-          });
-          const legacyStored = yield* decodeLegacyStoredShellSnapshot(legacyParsed).pipe(
+          const legacyStored = yield* decodeLegacyStoredShellSnapshot(legacyRaw).pipe(
             Effect.mapError((cause) => shellPersistenceError("load-shell", cause)),
           );
           return legacyStored.environmentId === environmentId
@@ -421,7 +418,7 @@ export const connectionStorageLayer = Layer.effectContext(
               if (!file.exists) {
                 file.create({ intermediates: true, overwrite: true });
               }
-              file.write(JSON.stringify(encoded));
+              file.write(encoded);
             },
             catch: (cause) => shellPersistenceError("save-shell", cause),
           });
@@ -436,11 +433,7 @@ export const connectionStorageLayer = Layer.effectContext(
             try: () => file.text(),
             catch: (cause) => shellPersistenceError("load-server-config", cause),
           });
-          const parsed = yield* Effect.try({
-            try: () => JSON.parse(raw) as unknown,
-            catch: (cause) => shellPersistenceError("load-server-config", cause),
-          });
-          const stored = yield* decodeStoredServerConfig(parsed).pipe(
+          const stored = yield* decodeStoredServerConfig(raw).pipe(
             Effect.mapError((cause) => shellPersistenceError("load-server-config", cause)),
           );
           return stored.environmentId === environmentId
@@ -460,7 +453,7 @@ export const connectionStorageLayer = Layer.effectContext(
               if (!file.exists) {
                 file.create({ intermediates: true, overwrite: true });
               }
-              file.write(JSON.stringify(encoded));
+              file.write(encoded);
             },
             catch: (cause) => shellPersistenceError("save-server-config", cause),
           });
@@ -475,11 +468,7 @@ export const connectionStorageLayer = Layer.effectContext(
             try: () => file.text(),
             catch: (cause) => shellPersistenceError("load-thread", cause),
           });
-          const parsed = yield* Effect.try({
-            try: () => JSON.parse(raw) as unknown,
-            catch: (cause) => shellPersistenceError("load-thread", cause),
-          });
-          const stored = yield* decodeStoredThreadSnapshot(parsed).pipe(
+          const stored = yield* decodeStoredThreadSnapshot(raw).pipe(
             Effect.mapError((cause) => shellPersistenceError("load-thread", cause)),
           );
           return stored.environmentId === environmentId && stored.threadId === threadId
@@ -500,7 +489,7 @@ export const connectionStorageLayer = Layer.effectContext(
               if (!file.exists) {
                 file.create({ intermediates: true, overwrite: true });
               }
-              file.write(JSON.stringify(encoded));
+              file.write(encoded);
             },
             catch: (cause) => shellPersistenceError("save-thread", cause),
           });
@@ -515,11 +504,7 @@ export const connectionStorageLayer = Layer.effectContext(
             try: () => file.text(),
             catch: (cause) => shellPersistenceError("load-vcs-refs", cause),
           });
-          const parsed = yield* Effect.try({
-            try: () => JSON.parse(raw) as unknown,
-            catch: (cause) => shellPersistenceError("load-vcs-refs", cause),
-          });
-          const stored = yield* decodeStoredVcsRefs(parsed).pipe(
+          const stored = yield* decodeStoredVcsRefs(raw).pipe(
             Effect.mapError((cause) => shellPersistenceError("load-vcs-refs", cause)),
           );
           return stored.environmentId === environmentId && stored.cwd === cwd
@@ -540,7 +525,7 @@ export const connectionStorageLayer = Layer.effectContext(
               if (!file.exists) {
                 file.create({ intermediates: true, overwrite: true });
               }
-              file.write(JSON.stringify(encoded));
+              file.write(encoded);
             },
             catch: (cause) => shellPersistenceError("save-vcs-refs", cause),
           });
