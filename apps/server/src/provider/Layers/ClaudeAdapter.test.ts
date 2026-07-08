@@ -267,6 +267,66 @@ async function readFirstPromptMessage(
 const THREAD_ID = ThreadId.make("thread-claude-1");
 const RESUME_THREAD_ID = ThreadId.make("thread-claude-resume");
 
+function taskToolStartMessage(input: {
+  readonly sessionId: string;
+  readonly uuid: string;
+  readonly index: number;
+  readonly toolUseId: string;
+  readonly toolName: string;
+  readonly toolInput: Record<string, unknown>;
+}): SDKMessage {
+  return {
+    type: "stream_event",
+    session_id: input.sessionId,
+    uuid: input.uuid,
+    parent_tool_use_id: null,
+    event: {
+      type: "content_block_start",
+      index: input.index,
+      content_block: {
+        type: "tool_use",
+        id: input.toolUseId,
+        name: input.toolName,
+        input: input.toolInput,
+      },
+    },
+  } as unknown as SDKMessage;
+}
+
+function taskToolResultMessage(input: {
+  readonly sessionId: string;
+  readonly uuid: string;
+  readonly toolUseId: string;
+  readonly content: unknown;
+  readonly toolUseResult?: unknown;
+}): SDKMessage {
+  return {
+    type: "user",
+    session_id: input.sessionId,
+    uuid: input.uuid,
+    parent_tool_use_id: null,
+    ...(input.toolUseResult !== undefined ? { tool_use_result: input.toolUseResult } : {}),
+    message: {
+      role: "user",
+      content: [
+        {
+          type: "tool_result",
+          tool_use_id: input.toolUseId,
+          content: input.content,
+        },
+      ],
+    },
+  } as unknown as SDKMessage;
+}
+
+function flushRuntimeEvents(): Effect.Effect<void> {
+  return Effect.gen(function* () {
+    yield* Effect.yieldNow;
+    yield* Effect.yieldNow;
+    yield* Effect.yieldNow;
+  });
+}
+
 describe("ClaudeAdapterLive", () => {
   it.effect("returns validation error for non-claude provider on startSession", () => {
     const harness = makeHarness();
@@ -1257,6 +1317,329 @@ describe("ClaudeAdapterLive", () => {
         assert.deepEqual(planUpdated.payload.plan, [
           { step: "Task", status: "inProgress" },
           { step: "Ship it", status: "completed" },
+        ]);
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("emits plan updates from Claude TaskCreate input", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }),
+      ).pipe(Effect.forkChild);
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "make a plan",
+        attachments: [],
+      });
+
+      harness.query.emit(
+        taskToolStartMessage({
+          sessionId: "sdk-session-task-plan-create",
+          uuid: "stream-task-create-start",
+          index: 1,
+          toolUseId: "tool-task-create-1",
+          toolName: "task_create",
+          toolInput: {
+            subject: "Inspect SDK task events",
+            description: "Find the emitted task payload shapes",
+          },
+        }),
+      );
+
+      yield* flushRuntimeEvents();
+      runtimeEventsFiber.interruptUnsafe();
+
+      const planUpdated = runtimeEvents.find((event) => event.type === "turn.plan.updated");
+      assert.equal(planUpdated?.type, "turn.plan.updated");
+      if (planUpdated?.type === "turn.plan.updated") {
+        assert.equal(String(planUpdated.turnId), String(turn.turnId));
+        assert.equal(planUpdated.payload.explanation, "Claude Tasks");
+        assert.deepEqual(planUpdated.payload.plan, [
+          { step: "Inspect SDK task events", status: "pending" },
+        ]);
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("reconciles Claude TaskCreate result ids for later TaskUpdate status changes", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }),
+      ).pipe(Effect.forkChild);
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "make and update a plan",
+        attachments: [],
+      });
+
+      harness.query.emit(
+        taskToolStartMessage({
+          sessionId: "sdk-session-task-plan-reconcile",
+          uuid: "stream-task-create-reconcile",
+          index: 1,
+          toolUseId: "tool-task-create-reconcile",
+          toolName: "TaskCreate",
+          toolInput: {
+            subject: "Build plan strip",
+            description: "Emit live task plan updates",
+          },
+        }),
+      );
+      harness.query.emit(
+        taskToolResultMessage({
+          sessionId: "sdk-session-task-plan-reconcile",
+          uuid: "user-task-create-reconcile",
+          toolUseId: "tool-task-create-reconcile",
+          content: "created",
+          toolUseResult: {
+            task: {
+              id: "task-real-1",
+              subject: "Build plan strip",
+            },
+          },
+        }),
+      );
+      harness.query.emit(
+        taskToolStartMessage({
+          sessionId: "sdk-session-task-plan-reconcile",
+          uuid: "stream-task-update-reconcile",
+          index: 2,
+          toolUseId: "tool-task-update-reconcile",
+          toolName: "TaskUpdate",
+          toolInput: {
+            taskId: "task-real-1",
+            status: "in_progress",
+          },
+        }),
+      );
+
+      yield* flushRuntimeEvents();
+      runtimeEventsFiber.interruptUnsafe();
+
+      const planUpdates = runtimeEvents.filter((event) => event.type === "turn.plan.updated");
+      assert.deepEqual(
+        planUpdates.map((event) => (event.type === "turn.plan.updated" ? event.payload.plan : [])),
+        [
+          [{ step: "Build plan strip", status: "pending" }],
+          [{ step: "Build plan strip", status: "inProgress" }],
+        ],
+      );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("creates a placeholder plan step for TaskUpdate with an unknown id", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }),
+      ).pipe(Effect.forkChild);
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "update a task",
+        attachments: [],
+      });
+
+      harness.query.emit(
+        taskToolStartMessage({
+          sessionId: "sdk-session-task-plan-placeholder",
+          uuid: "stream-task-update-placeholder",
+          index: 1,
+          toolUseId: "tool-task-update-placeholder",
+          toolName: "TaskUpdate",
+          toolInput: {
+            taskId: "task-missing-1",
+            subject: "Recover missing task",
+            status: "running",
+          },
+        }),
+      );
+
+      yield* flushRuntimeEvents();
+      runtimeEventsFiber.interruptUnsafe();
+
+      const planUpdated = runtimeEvents.find((event) => event.type === "turn.plan.updated");
+      assert.equal(planUpdated?.type, "turn.plan.updated");
+      if (planUpdated?.type === "turn.plan.updated") {
+        assert.deepEqual(planUpdated.payload.plan, [
+          { step: "Recover missing task", status: "inProgress" },
+        ]);
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("maps TaskList statuses to runtime plan statuses", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }),
+      ).pipe(Effect.forkChild);
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "list tasks",
+        attachments: [],
+      });
+
+      harness.query.emit(
+        taskToolStartMessage({
+          sessionId: "sdk-session-task-plan-list",
+          uuid: "stream-task-list-start",
+          index: 1,
+          toolUseId: "tool-task-list-1",
+          toolName: "TASKLIST",
+          toolInput: {},
+        }),
+      );
+      harness.query.emit(
+        taskToolResultMessage({
+          sessionId: "sdk-session-task-plan-list",
+          uuid: "user-task-list-result",
+          toolUseId: "tool-task-list-1",
+          content: "listed",
+          toolUseResult: {
+            tasks: [
+              { id: "task-1", subject: "Queued task", status: "pending", blockedBy: [] },
+              { id: "task-2", subject: "Active task", status: "in_progress", blockedBy: [] },
+              { id: "task-3", subject: "Done task", status: "completed", blockedBy: [] },
+            ],
+          },
+        }),
+      );
+
+      yield* flushRuntimeEvents();
+      runtimeEventsFiber.interruptUnsafe();
+
+      const planUpdated = runtimeEvents.find((event) => event.type === "turn.plan.updated");
+      assert.equal(planUpdated?.type, "turn.plan.updated");
+      if (planUpdated?.type === "turn.plan.updated") {
+        assert.deepEqual(planUpdated.payload.plan, [
+          { step: "Queued task", status: "pending" },
+          { step: "Active task", status: "inProgress" },
+          { step: "Done task", status: "completed" },
+        ]);
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("keeps TaskCreate input plans when tool result shape drifts", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }),
+      ).pipe(Effect.forkChild);
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "create a task",
+        attachments: [],
+      });
+
+      harness.query.emit(
+        taskToolStartMessage({
+          sessionId: "sdk-session-task-plan-drift",
+          uuid: "stream-task-create-drift",
+          index: 1,
+          toolUseId: "tool-task-create-drift",
+          toolName: "TaskCreate",
+          toolInput: {
+            subject: "Survive result drift",
+            description: "Do not depend on result.task.id to emit",
+          },
+        }),
+      );
+      harness.query.emit(
+        taskToolResultMessage({
+          sessionId: "sdk-session-task-plan-drift",
+          uuid: "user-task-create-drift",
+          toolUseId: "tool-task-create-drift",
+          content: "created task without structured result",
+          toolUseResult: {
+            ok: true,
+          },
+        }),
+      );
+
+      yield* flushRuntimeEvents();
+      runtimeEventsFiber.interruptUnsafe();
+
+      const planUpdates = runtimeEvents.filter((event) => event.type === "turn.plan.updated");
+      assert.equal(planUpdates.length, 1);
+      const planUpdated = planUpdates[0];
+      assert.equal(planUpdated?.type, "turn.plan.updated");
+      if (planUpdated?.type === "turn.plan.updated") {
+        assert.deepEqual(planUpdated.payload.plan, [
+          { step: "Survive result drift", status: "pending" },
         ]);
       }
     }).pipe(
