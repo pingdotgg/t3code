@@ -2,62 +2,55 @@
 
 ## Task Completion Requirements
 
-- All of `pnpm fmt:check`, `pnpm lint`, and `pnpm typecheck` must pass before considering tasks completed.
+- Run `pnpm fmt:check`, `pnpm lint`, and `pnpm typecheck` before considering code tasks complete.
 - Use `pnpm test` for the Vite Plus test suite.
-
-## Project Snapshot
-
-T3 Code is a minimal web GUI for using coding agents.
-
-This repository is a VERY EARLY WIP. Proposing sweeping changes that improve long-term maintainability is encouraged.
+- Current toolchain: `pnpm@10.24.0`, `node@^24.13.1`.
 
 ## Core Priorities
 
 1. Performance first.
 2. Reliability first.
-3. Keep behavior predictable under load and during failures (session restarts, reconnects, partial streams).
+3. Keep behavior predictable under load and during failures: session restarts, reconnects, and partial streams.
 
 If a tradeoff is required, choose correctness and robustness over short-term convenience.
 
 ## Maintainability
 
-Long term maintainability is a core priority. If you add new functionality, first check if there is shared logic that can be extracted to a separate module. Duplicate logic across multiple files is a code smell and should be avoided. Don't be afraid to change existing code. Don't take shortcuts by just adding local logic to solve a problem.
+Long-term maintainability is a core priority. Before adding functionality, check whether shared logic should be extracted. Avoid duplicated logic, don't be afraid to change existing code, and don't solve problems with narrow local shortcuts.
 
-## Package Roles
+## Project Structure
 
-- `apps/server`: Node.js WebSocket server. Wraps Codex app-server (JSON-RPC over stdio), serves the React web app, and manages provider sessions.
-- `apps/web`: React/Vite UI. Owns session UX, conversation/event rendering, and client-side state. Connects to the server via WebSocket.
-- `packages/contracts`: Shared effect/Schema schemas and TypeScript contracts for provider events, WebSocket protocol, and model/session types. Keep this package schema-only — no runtime logic.
-- `packages/shared`: Shared runtime utilities consumed by both server and web. Uses explicit subpath exports (e.g. `@t3tools/shared/git`) — no barrel index.
+- `.agents/`: agent skills and automation config.
+- `.cursor/`, `.vscode/`, `.devcontainer/`: editor/dev environment config.
+- `.docs/`, `.plans/`, `.pi/`: local planning/reference material.
+- `.turbo/`: Turbo cache.
+- `apps/`: deployable apps.
+  - `desktop/`: desktop shell/app.
+  - `marketing/`: marketing site.
+  - `mobile/`, `mobile-react/`: mobile experiments/apps.
+  - `server/`: Node WebSocket/API server and provider orchestration.
+  - `web/`: React/Vite client UI.
+- `assets/`: release/dev/prod assets.
+- `docs/`: durable project and agent documentation.
+- `oxlint-plugin-t3code/`: custom lint rules.
+- `packages/`: shared workspace packages.
+  - `client-runtime/`: client-side runtime helpers.
+  - `contracts/`: schemas and protocol types only.
+  - `effect-acp/`, `effect-codex-app-server/`: Effect wrappers/integrations.
+  - `shared/`: shared runtime utilities via explicit subpath exports.
+  - `ssh/`, `tailscale/`: connectivity integrations.
+- `patches/`: dependency patches.
+- `release/`: release metadata/config.
+- `scripts/`: repo automation and build/dev helpers.
 
-How we use it in this codebase:
+## Scars
 
-- Session startup/resume and turn lifecycle are brokered in `apps/server/src/codexAppServerManager.ts`.
-- Provider dispatch and thread event logging are coordinated in `apps/server/src/providerManager.ts`.
-- WebSocket server routes NativeApi methods in `apps/server/src/wsServer.ts`.
-- Web app consumes orchestration domain events via WebSocket push on channel `orchestration.domainEvent` (provider runtime activity is projected into orchestration events server-side).
+- `packages/contracts` stays schema-only; no runtime logic.
+- `packages/shared` uses explicit subpath exports; do not add a barrel index.
+- Provider runtime activity is projected into orchestration domain events server-side before the web app consumes it.
+- Session startup/resume and turn lifecycle are fragile paths; optimize for predictable restart/reconnect behavior over quick local fixes.
 
-Docs:
+## Keep This File Updated
 
-- Codex App Server docs: https://developers.openai.com/codex/sdk/#app-server
-
-## Reference Repos
-
-- Open-source Codex repo: https://github.com/openai/codex
-- Codex-Monitor (Tauri, feature-complete, strong reference implementation): https://github.com/Dimillian/CodexMonitor
-
-Use these as implementation references when designing protocol handling, UX flows, and operational safeguards.
-
-## Agent skills
-
-### Issue tracker
-
-Issues and PRDs are tracked in GitHub Issues. See `docs/agents/issue-tracker.md`.
-
-### Triage labels
-
-Triage roles use the default Matt Pocock label vocabulary. See `docs/agents/triage-labels.md`.
-
-### Domain docs
-
-This is a single-context repo. See `docs/agents/domain.md`.
+- Update **Project Structure** whenever top-level, `apps/`, or `packages/` directories are added, removed, or renamed.
+- Add a **Scar** when a hard-earned lesson prevents repeat mistakes; keep each scar short, actionable, and specific.
