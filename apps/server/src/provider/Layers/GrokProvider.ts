@@ -207,7 +207,7 @@ function buildGrokReasoningEffortDescriptor(
     label: "Reasoning",
     type: "select",
     options,
-    ...(currentValue ? { currentValue } : {}),
+    ...(currentValue && seen.has(currentValue) ? { currentValue } : {}),
   };
 }
 

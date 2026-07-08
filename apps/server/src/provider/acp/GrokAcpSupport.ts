@@ -1,4 +1,9 @@
-import { type GrokSettings, type ModelSelection, ProviderDriverKind } from "@t3tools/contracts";
+import {
+  DEFAULT_MODEL_BY_PROVIDER,
+  type GrokSettings,
+  type ModelSelection,
+  ProviderDriverKind,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
@@ -16,6 +21,7 @@ const T3_CODE_OAUTH_REFERRER = "t3code";
 const GROK_AUTH_METHOD_API_KEY = "xai.api_key";
 const GROK_AUTH_METHOD_CACHED_TOKEN = "cached_token";
 const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
+const DEFAULT_GROK_MODEL = DEFAULT_MODEL_BY_PROVIDER[GROK_DRIVER_KIND] ?? "grok-4.5";
 
 type GrokAcpRuntimeGrokSettings = Pick<GrokSettings, "binaryPath">;
 
@@ -85,8 +91,8 @@ export const makeGrokAcpRuntime = (
 
 export function resolveGrokAcpBaseModelId(model: string | null | undefined): string {
   const trimmed = model?.trim();
-  const base = trimmed && trimmed.length > 0 ? trimmed : "grok-4.5";
-  return normalizeModelSlug(base, GROK_DRIVER_KIND) ?? "grok-4.5";
+  const base = trimmed && trimmed.length > 0 ? trimmed : DEFAULT_GROK_MODEL;
+  return normalizeModelSlug(base, GROK_DRIVER_KIND) ?? DEFAULT_GROK_MODEL;
 }
 
 export function currentGrokModelIdFromSessionSetup(

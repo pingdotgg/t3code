@@ -443,7 +443,7 @@ private extension ProviderKind {
         case .claude: "sparkles"
         case .codex: "chevron.left.forwardslash.chevron.right"
         case .cursor: "cursorarrow"
-        case .grok: "xmark"
+        case .grok: "bolt"
         case .opencode: "curlybraces"
         }
     }

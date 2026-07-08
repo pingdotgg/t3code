@@ -109,6 +109,18 @@ describe("buildInitialGrokProviderSnapshot", () => {
           },
         },
         {
+          modelId: "grok-missing-current-effort",
+          name: "Grok Missing Current Effort",
+          _meta: {
+            supportsReasoningEffort: true,
+            reasoningEffort: "medium",
+            reasoningEfforts: [
+              { id: "high", value: "high", label: "High Effort", default: true },
+              { id: "low", value: "low", label: "Low Effort", default: false },
+            ],
+          },
+        },
+        {
           modelId: "grok-invalid-meta",
           name: "Grok Invalid Meta",
           _meta: {
@@ -118,6 +130,19 @@ describe("buildInitialGrokProviderSnapshot", () => {
         },
       ],
     } as EffectAcpSchema.SessionModelState);
+
+    const missingCurrentDescriptor = models
+      .find((model) => model.slug === "grok-missing-current-effort")
+      ?.capabilities?.optionDescriptors?.find(
+        (descriptor) => descriptor.id === "reasoningEffort" && descriptor.type === "select",
+      );
+    expect(missingCurrentDescriptor).toMatchObject({
+      options: [
+        { id: "high", label: "High", isDefault: true },
+        { id: "low", label: "Low" },
+      ],
+    });
+    expect(missingCurrentDescriptor).not.toHaveProperty("currentValue");
 
     const liveDescriptor = models
       .find((model) => model.slug === "grok-live-meta")
