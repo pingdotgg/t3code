@@ -96,10 +96,22 @@ const RuntimeErrorClass = Schema.Literals([
   "provider_error",
   "transport_error",
   "permission_error",
+  "usage_limit",
   "validation_error",
   "unknown",
 ]);
 export type RuntimeErrorClass = typeof RuntimeErrorClass.Type;
+
+export const RuntimeUsageLimitDetail = Schema.Struct({
+  kind: Schema.Literal("usage-limit"),
+  provider: Schema.optional(TrimmedNonEmptyStringSchema),
+  source: Schema.optional(TrimmedNonEmptyStringSchema),
+  resetsAt: Schema.optional(IsoDateTime),
+  resetsAtEpochSeconds: Schema.optional(NonNegativeInt),
+  resetSource: Schema.optional(TrimmedNonEmptyStringSchema),
+  raw: Schema.optional(Schema.Unknown),
+});
+export type RuntimeUsageLimitDetail = typeof RuntimeUsageLimitDetail.Type;
 
 export const TOOL_LIFECYCLE_ITEM_TYPES = [
   "command_execution",

@@ -28,6 +28,7 @@ import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import { isUsageLimitDetail } from "../../provider/UsageLimit.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
 import { isGitRepository } from "../../git/Utils.ts";
@@ -328,6 +329,34 @@ function runtimeEventToActivities(
     }
 
     case "runtime.error": {
+      const usageLimit = isUsageLimitDetail(event.payload.detail)
+        ? event.payload.detail
+        : undefined;
+      if (usageLimit !== undefined) {
+        return [
+          {
+            id: event.eventId,
+            createdAt: event.createdAt,
+            tone: "error",
+            kind: "usage-limit.reached",
+            summary: "Usage limit reached",
+            payload: {
+              message: truncateDetail(event.payload.message),
+              provider: usageLimit.provider ?? event.provider,
+              source: usageLimit.source,
+              ...(usageLimit.resetsAt !== undefined ? { resetsAt: usageLimit.resetsAt } : {}),
+              ...(usageLimit.resetsAtEpochSeconds !== undefined
+                ? { resetsAtEpochSeconds: usageLimit.resetsAtEpochSeconds }
+                : {}),
+              ...(usageLimit.resetSource !== undefined
+                ? { resetSource: usageLimit.resetSource }
+                : {}),
+            },
+            turnId: toTurnId(event.turnId) ?? null,
+            ...maybeSequence,
+          },
+        ];
+      }
       return [
         {
           id: event.eventId,

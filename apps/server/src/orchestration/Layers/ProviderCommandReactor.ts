@@ -8,6 +8,7 @@ import {
   ProviderDriverKind,
   type ProjectId,
   type OrchestrationSession,
+  type OrchestrationThread,
   ThreadId,
   type ProviderSession,
   type RuntimeMode,
@@ -118,6 +119,26 @@ function canReplaceThreadTitle(currentTitle: string, titleSeed?: string): boolea
   return trimmedTitleSeed !== undefined && trimmedTitleSeed.length > 0
     ? trimmedCurrentTitle === trimmedTitleSeed
     : false;
+}
+
+function latestTurnFailedWithUsageLimit(thread: OrchestrationThread): boolean {
+  const latestTurn = thread.latestTurn;
+  if (latestTurn?.state !== "error") {
+    return false;
+  }
+  const latestTurnRequestedAt = Date.parse(latestTurn.requestedAt);
+  return thread.activities.some((activity) => {
+    if (activity.kind !== "usage-limit.reached") {
+      return false;
+    }
+    if (activity.turnId === latestTurn.turnId) {
+      return true;
+    }
+    if (activity.turnId !== null) {
+      return false;
+    }
+    return Date.parse(activity.createdAt) >= latestTurnRequestedAt;
+  });
 }
 
 function projectedThreadLooksInFlight(
@@ -405,6 +426,7 @@ const make = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly currentModelSelection: ModelSelection;
     readonly requestedModelSelection: ModelSelection | undefined;
+    readonly allowAfterUsageLimit: boolean;
   }) {
     const requestedModelSelection = input.requestedModelSelection;
     if (
@@ -421,6 +443,9 @@ const make = Effect.gen(function* () {
       providers.find((snapshot) => snapshot.instanceId === requestedModelSelection.instanceId)
         ?.requiresNewThreadForModelChange === true;
     if (!requiresNewThread) {
+      return;
+    }
+    if (input.allowAfterUsageLimit) {
       return;
     }
     return yield* new ProviderAdapterRequestError({
@@ -524,6 +549,7 @@ const make = Effect.gen(function* () {
               }
             : thread.modelSelection,
         requestedModelSelection,
+        allowAfterUsageLimit: latestTurnFailedWithUsageLimit(thread),
       });
     }
     if (

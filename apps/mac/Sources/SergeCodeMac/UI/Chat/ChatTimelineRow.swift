@@ -34,6 +34,18 @@ struct ChatTimelineRowView: View {
             UserInputCard(request: request) { answers in
                 Task { await model.respond(to: request, answers: answers) }
             }
+        case .usageLimit(let notice):
+            UsageLimitCard(
+                notice: notice,
+                state: model.usageLimitActions[notice.id] ?? .idle,
+                switchModels: switchModels(for: notice)
+            ) {
+                model.waitForUsageLimitReset(notice)
+            } onSwitch: { option in
+                Task { await model.switchModelAfterUsageLimit(notice, to: option) }
+            } onDismiss: {
+                model.dismissUsageLimit(notice)
+            }
         case .plan(let plan):
             PlanCard(plan: plan) {
                 Task { await model.implementPlan(plan) }
@@ -44,6 +56,16 @@ struct ChatTimelineRowView: View {
             NoticeRow(text: text)
         case .reasoning(_, let text, _):
             ReasoningRow(text: text)
+        }
+    }
+
+    private func switchModels(for notice: UsageLimitNotice) -> [ModelOption] {
+        let thread = model.threads.first { $0.id == notice.threadID }
+        return model.models.filter { option in
+            if let provider = notice.provider, option.provider != provider {
+                return false
+            }
+            return !(option.instanceID == thread?.modelInstanceID && option.modelID == thread?.modelID)
         }
     }
 }

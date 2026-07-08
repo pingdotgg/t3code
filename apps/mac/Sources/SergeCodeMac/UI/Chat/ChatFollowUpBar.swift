@@ -1,9 +1,11 @@
+import AppKit
 import SwiftUI
 
 /// Contextual next-step strip between the timeline and the composer. Shows
 /// at most one suggestion:
 /// - the branch's PR merged → offer to archive the finished chat;
-/// - the branch has an open PR → offer to fix actionable review comments;
+/// - the branch has an open PR → offer to fix actionable review comments,
+///   or plain link to the PR when there is nothing to fix;
 /// - the agent finished a turn with shippable work and no PR yet → offer to
 ///   have it open one.
 struct ChatFollowUpBar: View {
@@ -38,19 +40,75 @@ struct ChatFollowUpBar: View {
         """
 
     var body: some View {
-        if let thread = model.selectedThread, thread.status != .archived {
-            let vcs = model.selectedVcsStatus()
-            if let vcs, vcs.prState == .merged {
-                archiveSuggestion(thread: thread, vcs: vcs)
-                    .transition(Motion.bannerDrop)
-            } else if let vcs, shouldOfferReviewFixes(thread: thread, vcs: vcs) {
-                fixReviewCommentsSuggestion
-                    .transition(Motion.bannerDrop)
-            } else if let vcs, shouldOfferPR(thread: thread, vcs: vcs) {
-                createPRSuggestion
-                    .transition(Motion.bannerDrop)
+        Group {
+            if let thread = model.selectedThread, thread.status != .archived {
+                let vcs = model.selectedVcsStatus()
+                if let vcs, vcs.prState == .merged {
+                    archiveSuggestion(thread: thread, vcs: vcs)
+                        .transition(Motion.bannerDrop)
+                } else if let vcs, shouldOfferReviewFixes(thread: thread, vcs: vcs) {
+                    fixReviewCommentsSuggestion
+                        .transition(Motion.bannerDrop)
+                } else if let vcs, vcs.prState == .open, let url = pullRequestURL(vcs) {
+                    openPullRequestChip(vcs: vcs, url: url)
+                        .transition(Motion.bannerDrop)
+                } else if let vcs, shouldOfferPR(thread: thread, vcs: vcs) {
+                    createPRSuggestion
+                        .transition(Motion.bannerDrop)
+                }
             }
         }
+        .animation(Motion.settle, value: model.selectedVcsStatus())
+    }
+
+    // MARK: - PR open → link
+
+    private func openPullRequestChip(vcs: VcsStatus, url: URL) -> some View {
+        Button {
+            NSWorkspace.shared.open(url)
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.triangle.pull")
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(.tint)
+
+                Text(pullRequestLabel(vcs))
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "arrow.up.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.regular, in: .rect(cornerRadius: 16))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .help(vcs.prTitle ?? "Open pull request")
+    }
+
+    private func pullRequestURL(_ vcs: VcsStatus) -> URL? {
+        guard let prURL = vcs.prURL else { return nil }
+        return URL(string: prURL)
+    }
+
+    private func pullRequestLabel(_ vcs: VcsStatus) -> String {
+        let number = vcs.prNumber.map { "PR #\($0)" } ?? "Pull request"
+        guard
+            let title = vcs.prTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !title.isEmpty
+        else {
+            return number
+        }
+        return "\(number) · \(title)"
     }
 
     // MARK: - PR merged → archive
