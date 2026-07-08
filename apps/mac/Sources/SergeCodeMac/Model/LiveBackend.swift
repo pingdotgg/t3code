@@ -41,10 +41,10 @@ import T3Kit
 //    the ServerConfig provider table, falling back to session.providerName, then
 //    to `.claude`. Documented in `resolveProviderKind`.
 //  * ThreadStatus is a projection of session.status + latestTurn.state +
-//    hasPendingApprovals + archivedAt (see `mapStatus`); the shell subscription
-//    is the source of truth for status (per-thread `thread.session-set` events
-//    are intentionally NOT used to mutate status, to avoid fighting the shell
-//    projection which already reflects session changes).
+//    hasPendingApprovals + archivedAt + active subagent task count (see
+//    `mapStatus`); the shell subscription remains the source of truth for the
+//    session/turn inputs. Per-thread task events only update the active-count
+//    input and then re-run that projection.
 //  * Assistant streaming: repeated `thread.message-sent` events for one
 //    messageId carry DELTA chunks in `text` while `streaming` is true, and
 //    the terminal `streaming: false` event replaces the full text only when
@@ -108,6 +108,10 @@ public actor LiveBackend: BackendService {
     /// away.
     private var titleSeedsByThread: [String: String] = [:]
     private var providersByInstanceId: [String: ServerProvider] = [:]
+    /// Latest shell per thread. Task lifecycle events re-project this cached
+    /// shell with the active subagent count instead of writing a competing
+    /// status value directly.
+    private var threadShellsByID: [String: OrchestrationThreadShell] = [:]
 
     /// Where a thread runs, from its shell (`worktreePath`) plus whether it
     /// has started any turn (`latestTurn`). Drives the first-turn worktree
@@ -147,6 +151,9 @@ public actor LiveBackend: BackendService {
     private var checkpointsByThread: [String: [Checkpoint]] = [:]
     /// Highest completed-turn count per thread, used as getFullThreadDiff's `toTurnCount`.
     private var currentTurnCount: [String: Int] = [:]
+    /// Active/background delegated task lifecycle, rebuilt from thread
+    /// snapshots and advanced by live `task.*` activity events.
+    private var subagentTasksByThread: [String: T3SubagentTaskActivityState] = [:]
 
     /// Verification-only breadcrumb path (see `emit`), opt-in via
     /// `$SERGECODE_DEBUG_LOG` (e.g. for a manual `open`-launched run whose
@@ -437,10 +444,13 @@ public actor LiveBackend: BackendService {
                 threadsByID[id] = nil
                 titleSeedsByThread[id] = nil
                 threadEnvByThread[id] = nil
+                threadShellsByID[id] = nil
+                subagentTasksByThread[id] = nil
                 clearRunningLivenessState(threadID: id)
                 emit(.threadRemoved(id: id))
             }
             for shell in snapshot.threads {
+                threadShellsByID[shell.id] = shell
                 let thread = mapThread(shell)
                 threadsByID[thread.id] = thread
                 modelSelectionsByThread[thread.id] = shell.modelSelection
@@ -458,6 +468,7 @@ public actor LiveBackend: BackendService {
                 projectsByID[projectID] = nil
                 emit(.projectsChanged(currentProjectList()))
             case .threadUpserted(_, let shell):
+                threadShellsByID[shell.id] = shell
                 let thread = mapThread(shell)
                 threadsByID[thread.id] = thread
                 modelSelectionsByThread[thread.id] = shell.modelSelection
@@ -471,6 +482,8 @@ public actor LiveBackend: BackendService {
                 modelSelectionsByThread[threadID] = nil
                 titleSeedsByThread[threadID] = nil
                 threadEnvByThread[threadID] = nil
+                threadShellsByID[threadID] = nil
+                subagentTasksByThread[threadID] = nil
                 clearRunningLivenessState(threadID: threadID)
                 emit(.threadRemoved(id: threadID))
             }
@@ -535,9 +548,12 @@ public actor LiveBackend: BackendService {
     private func reconcileRunningLiveness(for shell: OrchestrationThreadShell) {
         let turnKey = runningLivenessTurnKey(for: shell)
         latestRunningLivenessTurnKeys[shell.id] = turnKey
+        // Liveness only watches running turns; background subagents have no
+        // turn to go stale, so their count must not influence this projection.
         let wireStatus = mapStatus(
             session: shell.session, latestTurn: shell.latestTurn, archivedAt: shell.archivedAt,
-            hasPendingApprovals: shell.hasPendingApprovals || shell.hasPendingUserInput)
+            hasPendingApprovals: shell.hasPendingApprovals || shell.hasPendingUserInput,
+            activeSubagentCount: 0)
         if wireStatus == .running {
             scheduleRunningLivenessCheck(
                 threadID: shell.id, turnKey: turnKey)
@@ -724,10 +740,19 @@ public actor LiveBackend: BackendService {
         }
 
         // Upsert (not append) so lifecycle activities sharing a row id —
-        // tool updated/completed for one call, successive reasoning updates
-        // of one task — collapse into a single row, same as the live tail.
+        // tool updated/completed for one call, subagent task lifecycle
+        // updates — collapse into a single row, same as the live tail.
         var items: [TimelineItem] = []
+        var subagentState = T3SubagentTaskActivityState()
+        let hadSubagentTasks = !(subagentTasksByThread[threadID]?.items.isEmpty ?? true)
         for entry in OrchestrationMapping.timeline(for: thread) {
+            if case let .activity(activity, at) = entry,
+                Self.isTaskLifecycleActivity(activity),
+                let task = subagentState.apply(activity: activity, at: at)
+            {
+                items.upsertTimelineItem(mapSubagentTask(task))
+                continue
+            }
             guard
                 let item = mapEntry(
                     entry, threadID: threadID, pendingUserInputIDs: pendingInputIDs,
@@ -735,6 +760,8 @@ public actor LiveBackend: BackendService {
             else { continue }
             items.upsertTimelineItem(item)
         }
+        let hasSubagentTasks = !subagentState.items.isEmpty
+        subagentTasksByThread[threadID] = hasSubagentTasks ? subagentState : nil
         // A prior timeline means this snapshot is a *re*-subscribe (e.g. after
         // a socket reconnect), not the thread's first load. `timeline()`
         // callers already have `latestTimeline` cached, so `snapshotWaiters`
@@ -747,6 +774,9 @@ public actor LiveBackend: BackendService {
             emit(.timelineReset(threadID: threadID, items: items))
         }
         resolveSnapshotWaiters(threadID: threadID, items: items)
+        if hadSubagentTasks || hasSubagentTasks {
+            reemitThreadWithCurrentProjection(threadID: threadID)
+        }
 
         // Side-channel state derived from the newest matching activity.
         if let activity = thread.activities.last(where: { $0.kind == ActivityKind.turnPlanUpdated }),
@@ -786,6 +816,9 @@ public actor LiveBackend: BackendService {
             guard !(seenActivityIDs[threadID]?.contains(activity.id) ?? false) else { return }
             seenActivityIDs[threadID, default: []].insert(activity.id)
             let at = WireDate.parse(activity.createdAt) ?? Date()
+            if applySubagentTaskActivity(activity, threadID: threadID, at: at) {
+                return
+            }
             // Typed activity kinds (user-input, live plan, context window)
             // are consumed into dedicated events, not generic timeline rows.
             if consumeSpecialActivity(activity, threadID: threadID, at: at, appendToTimeline: true) {
@@ -1816,9 +1849,16 @@ public actor LiveBackend: BackendService {
     private func mapThread(_ shell: OrchestrationThreadShell) -> ChatThread {
         let kind = resolveProviderKind(
             instanceId: shell.modelSelection.instanceId, providerName: shell.session?.providerName)
+        if shell.archivedAt != nil || shell.session?.status == .error
+            || shell.latestTurn?.state == .error
+        {
+            subagentTasksByThread[shell.id]?.clearActiveTasks()
+        }
+        let activeSubagentCount = subagentTasksByThread[shell.id]?.activeTaskCount ?? 0
         let status = mapStatus(
             session: shell.session, latestTurn: shell.latestTurn, archivedAt: shell.archivedAt,
-            hasPendingApprovals: shell.hasPendingApprovals || shell.hasPendingUserInput)
+            hasPendingApprovals: shell.hasPendingApprovals || shell.hasPendingUserInput,
+            activeSubagentCount: activeSubagentCount)
         let presentedStatus =
             status == .running
             && staleRunningTurnKeys[shell.id] == runningLivenessTurnKey(for: shell)
@@ -1830,7 +1870,8 @@ public actor LiveBackend: BackendService {
             runtimeMode: Self.uiRuntimeMode(shell.runtimeMode),
             interactionMode: Self.uiInteractionMode(shell.interactionMode),
             modelInstanceID: shell.modelSelection.instanceId, modelID: shell.modelSelection.model,
-            reasoningEffort: Self.effortValue(of: shell.modelSelection))
+            reasoningEffort: Self.effortValue(of: shell.modelSelection),
+            backgroundAgentCount: activeSubagentCount)
     }
 
     // MARK: - Mode mapping (wire <-> UI)
@@ -1867,25 +1908,20 @@ public actor LiveBackend: BackendService {
 
     private func mapStatus(
         session: OrchestrationSession?, latestTurn: OrchestrationLatestTurn?, archivedAt: String?,
-        hasPendingApprovals: Bool
+        hasPendingApprovals: Bool, activeSubagentCount: Int
     ) -> ThreadStatus {
-        if archivedAt != nil { return .archived }
-        if hasPendingApprovals { return .waitingApproval }
-        if let status = session?.status {
-            switch status {
-            case .running, .starting: return .running
-            case .error: return .error
-            case .idle, .ready, .interrupted, .stopped: break
-            }
+        switch ThreadStatusProjection.project(
+            session: session, latestTurn: latestTurn, archivedAt: archivedAt,
+            hasPendingApprovals: hasPendingApprovals,
+            activeSubagentCount: activeSubagentCount)
+        {
+        case .idle: return .idle
+        case .running: return .running
+        case .waitingApproval: return .waitingApproval
+        case .backgroundWork: return .backgroundWork
+        case .error: return .error
+        case .archived: return .archived
         }
-        if let state = latestTurn?.state {
-            switch state {
-            case .running: return .running
-            case .error: return .error
-            case .interrupted, .completed: break
-            }
-        }
-        return .idle
     }
 
     /// Maps one merged timeline entry to a UI item. Returns nil for entries
@@ -1947,9 +1983,8 @@ public actor LiveBackend: BackendService {
     }
 
     /// Refined activity row (ActivityRows): lifecycle noise maps to nil,
-    /// tool rows get their human title + payload detail, task progress
-    /// surfaces the actual reasoning text. Row ids are stable across one
-    /// tool call / task, so consumers upsert rather than append.
+    /// tool rows get their human title + payload detail, and row ids are
+    /// stable across one tool call so consumers upsert rather than append.
     private func mapActivity(_ activity: OrchestrationThreadActivity, at: Date) -> TimelineItem? {
         switch ActivityRows.row(for: activity) {
         case .tool(let id, let title, let detail, let itemType, let phase):
@@ -1968,6 +2003,64 @@ public actor LiveBackend: BackendService {
             return .notice(id: id, text: text, at: at)
         case nil:
             return nil
+        }
+    }
+
+    private static func isTaskLifecycleActivity(_ activity: OrchestrationThreadActivity) -> Bool {
+        switch activity.kind {
+        case ActivityKind.taskStarted, ActivityKind.taskProgress, ActivityKind.taskCompleted:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func applySubagentTaskActivity(
+        _ activity: OrchestrationThreadActivity, threadID: String, at: Date
+    ) -> Bool {
+        guard Self.isTaskLifecycleActivity(activity) else { return false }
+        var state = subagentTasksByThread[threadID] ?? T3SubagentTaskActivityState()
+        guard let task = state.apply(activity: activity, at: at) else { return false }
+        subagentTasksByThread[threadID] = state
+        emit(.timelineAppended(threadID: threadID, item: mapSubagentTask(task)))
+        reemitThreadWithCurrentProjection(threadID: threadID)
+        return true
+    }
+
+    private func reemitThreadWithCurrentProjection(threadID: String) {
+        if let shell = threadShellsByID[threadID] {
+            let thread = mapThread(shell)
+            threadsByID[threadID] = thread
+            emit(.threadUpserted(thread))
+            return
+        }
+        guard var thread = threadsByID[threadID] else { return }
+        let activeCount = subagentTasksByThread[threadID]?.activeTaskCount ?? 0
+        thread.backgroundAgentCount = activeCount
+        if thread.status == .idle, activeCount > 0 {
+            thread.status = .backgroundWork
+        } else if thread.status == .backgroundWork, activeCount == 0 {
+            thread.status = .idle
+        }
+        threadsByID[threadID] = thread
+        emit(.threadUpserted(thread))
+    }
+
+    private func mapSubagentTask(_ task: T3SubagentTaskItem) -> TimelineItem {
+        .subagentTask(
+            SubagentTaskItem(
+                taskId: task.taskId, taskType: task.taskType, description: task.description,
+                state: Self.uiSubagentTaskState(task.state),
+                latestProgress: task.completionSummary ?? task.latestProgress,
+                startedAt: task.startedAt, duration: task.duration))
+    }
+
+    private static func uiSubagentTaskState(_ state: T3SubagentTaskState) -> SubagentTaskState {
+        switch state {
+        case .running: .running
+        case .completed: .completed
+        case .failed: .failed
+        case .stopped: .stopped
         }
     }
 
