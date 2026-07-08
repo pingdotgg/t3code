@@ -30,6 +30,9 @@ public final class AppModel {
     /// UUID per staging makes repeat edits of the same text observable.
     public private(set) var composerPrefill: ComposerPrefill?
 
+    /// In-memory outgoing queue, scoped by thread. Items are lost on app restart.
+    public private(set) var queuedMessagesByThread: [String: [QueuedOutgoingMessage]] = [:]
+
     public struct ComposerPrefill: Equatable, Sendable {
         public let id: UUID
         public let text: String
@@ -48,6 +51,10 @@ public final class AppModel {
 
     public func selectedTimeline() -> [TimelineItem] {
         selectedThreadID.flatMap { timelines[$0] } ?? []
+    }
+
+    public var selectedQueuedMessages: [QueuedOutgoingMessage] {
+        selectedThreadID.flatMap { queuedMessagesByThread[$0] } ?? []
     }
 
     // MARK: - Lifecycle
@@ -83,18 +90,25 @@ public final class AppModel {
             // Update in place: `updatedAt` bumps on every activity while a
             // thread runs, so resorting here made sidebar rows jump around
             // mid-conversation. Order is recomputed only on refreshAll.
+            let previousStatus: ThreadStatus?
             if let index = threads.firstIndex(where: { $0.id == thread.id }) {
+                previousStatus = threads[index].status
                 threads[index] = thread
             } else {
+                previousStatus = nil
                 // New rows still slot in by the sidebar's sort key: snapshot
                 // replays after a reconnect arrive as upserts, and blind
                 // insertion at 0 would show them in reverse snapshot order.
                 let index = threads.firstIndex { $0.updatedAt < thread.updatedAt } ?? threads.count
                 threads.insert(thread, at: index)
             }
+            if shouldSendQueuedMessage(previousStatus: previousStatus, newStatus: thread.status) {
+                dequeueNextQueuedMessageIfNeeded(threadID: thread.id)
+            }
         case .threadRemoved(let id):
             threads.removeAll { $0.id == id }
             vcsStatuses[id] = nil
+            queuedMessagesByThread[id] = nil
             if selectedThreadID == id { selectedThreadID = nil }
         case .timelineAppended(let threadID, let item):
             // Upsert: lifecycle updates arrive with the stable row id of an
@@ -168,10 +182,18 @@ public final class AppModel {
             async let threads = backend.threads()
             async let providers = backend.providers()
             async let models = backend.models()
+            let previousStatuses = Dictionary(uniqueKeysWithValues: self.threads.map { ($0.id, $0.status) })
+            let refreshedThreads = try await threads.sorted { $0.updatedAt > $1.updatedAt }
             self.projects = try await projects
-            self.threads = try await threads.sorted { $0.updatedAt > $1.updatedAt }
+            self.threads = refreshedThreads
             self.providers = try await providers
             self.models = try await models
+            for thread in refreshedThreads
+            where shouldSendQueuedMessage(
+                previousStatus: previousStatuses[thread.id], newStatus: thread.status)
+            {
+                dequeueNextQueuedMessageIfNeeded(threadID: thread.id)
+            }
         } catch {
             lastError = String(describing: error)
         }
@@ -223,12 +245,98 @@ public final class AppModel {
         return composerPrefill
     }
 
+    public func enqueueMessage(text: String, attachments: [OutgoingAttachment] = []) {
+        guard let threadID = selectedThreadID else { return }
+        enqueueMessage(threadID: threadID, text: text, attachments: attachments)
+    }
+
+    @discardableResult
+    public func takeQueuedMessage(id: String, from threadID: String) -> QueuedOutgoingMessage? {
+        guard var queue = queuedMessagesByThread[threadID],
+            let index = queue.firstIndex(where: { $0.id == id })
+        else { return nil }
+        let message = queue.remove(at: index)
+        setQueuedMessages(queue, for: threadID)
+        return message
+    }
+
+    public func removeQueuedMessage(id: String, from threadID: String) {
+        _ = takeQueuedMessage(id: id, from: threadID)
+    }
+
+    public func sendQueuedMessageNow(id: String, from threadID: String) async {
+        guard let message = takeQueuedMessage(id: id, from: threadID) else { return }
+        await sendQueuedMessage(message, threadID: threadID)
+    }
+
     public func send(text: String, attachments: [OutgoingAttachment] = []) async {
-        guard let threadID = selectedThreadID, !(text.isEmpty && attachments.isEmpty) else { return }
+        guard let threadID = selectedThreadID else { return }
+        await sendAndReport(threadID: threadID, text: text, attachments: attachments)
+    }
+
+    private func enqueueMessage(
+        threadID: String, text: String, attachments: [OutgoingAttachment]
+    ) {
+        guard !(text.isEmpty && attachments.isEmpty) else { return }
+        let message = QueuedOutgoingMessage(text: text, attachments: attachments)
+        queuedMessagesByThread[threadID, default: []].append(message)
+    }
+
+    private func shouldSendQueuedMessage(
+        previousStatus: ThreadStatus?, newStatus: ThreadStatus
+    ) -> Bool {
+        guard let previousStatus else { return false }
+        return previousStatus != .idle && newStatus == .idle
+    }
+
+    private func dequeueNextQueuedMessageIfNeeded(threadID: String) {
+        guard let message = takeFirstQueuedMessage(from: threadID) else { return }
+        Task { await sendQueuedMessage(message, threadID: threadID) }
+    }
+
+    private func takeFirstQueuedMessage(from threadID: String) -> QueuedOutgoingMessage? {
+        guard var queue = queuedMessagesByThread[threadID], !queue.isEmpty else { return nil }
+        let message = queue.removeFirst()
+        setQueuedMessages(queue, for: threadID)
+        return message
+    }
+
+    private func sendQueuedMessage(_ message: QueuedOutgoingMessage, threadID: String) async {
         do {
-            try await backend.sendMessage(threadID: threadID, text: text, attachments: attachments)
+            try await sendMessage(
+                threadID: threadID, text: message.text, attachments: message.attachments)
+        } catch {
+            requeue(message, atFrontOf: threadID)
+            lastError = String(describing: error)
+        }
+    }
+
+    private func sendAndReport(
+        threadID: String, text: String, attachments: [OutgoingAttachment]
+    ) async {
+        do {
+            try await sendMessage(threadID: threadID, text: text, attachments: attachments)
         } catch {
             lastError = String(describing: error)
+        }
+    }
+
+    private func sendMessage(
+        threadID: String, text: String, attachments: [OutgoingAttachment]
+    ) async throws {
+        guard !(text.isEmpty && attachments.isEmpty) else { return }
+        try await backend.sendMessage(threadID: threadID, text: text, attachments: attachments)
+    }
+
+    private func requeue(_ message: QueuedOutgoingMessage, atFrontOf threadID: String) {
+        queuedMessagesByThread[threadID, default: []].insert(message, at: 0)
+    }
+
+    private func setQueuedMessages(_ messages: [QueuedOutgoingMessage], for threadID: String) {
+        if messages.isEmpty {
+            queuedMessagesByThread[threadID] = nil
+        } else {
+            queuedMessagesByThread[threadID] = messages
         }
     }
 
