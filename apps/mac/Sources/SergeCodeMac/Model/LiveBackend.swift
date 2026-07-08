@@ -84,6 +84,14 @@ public actor LiveBackend: BackendService {
     private var sidecarStatesTask: Task<Void, Never>?
     private var socketSessionTask: Task<Void, Never>?
     private var threadSubscriptions: [String: Task<Void, Never>] = [:]
+    private struct RunningLivenessCheck {
+        let turnKey: String
+        let task: Task<Void, Never>
+    }
+    private var runningLivenessChecks: [String: RunningLivenessCheck] = [:]
+    private var latestRunningLivenessTurnKeys: [String: String] = [:]
+    private var confirmedRunningTurnKeys: [String: String] = [:]
+    private var staleRunningTurnKeys: [String: String] = [:]
 
     // MARK: Projection state (source for the query methods)
 
@@ -176,6 +184,7 @@ public actor LiveBackend: BackendService {
     /// Port of the running sidecar, captured at spawn for the mobile
     /// pairing URL.
     private var sidecarPort: Int?
+    private static let runningLivenessConfirmationDelay: Duration = .seconds(12)
 
     public init(allowLanAccess: Bool = false) {
         self.allowLanAccess = allowLanAccess
@@ -241,6 +250,7 @@ public actor LiveBackend: BackendService {
         socketSessionTask = nil
         cancelAllThreadSubscriptions()
         cancelAllVcsSubscriptions()
+        cancelAllRunningLivenessChecks()
 
         if let conn = currentConnection {
             currentConnection = nil
@@ -289,6 +299,7 @@ public actor LiveBackend: BackendService {
         socketSessionTask = nil
         cancelAllThreadSubscriptions()
         cancelAllVcsSubscriptions()
+        cancelAllRunningLivenessChecks()
         currentClient = nil
         if let conn = currentConnection {
             currentConnection = nil
@@ -435,6 +446,7 @@ public actor LiveBackend: BackendService {
                 threadEnvByThread[id] = nil
                 threadShellsByID[id] = nil
                 subagentTasksByThread[id] = nil
+                clearRunningLivenessState(threadID: id)
                 emit(.threadRemoved(id: id))
             }
             for shell in snapshot.threads {
@@ -445,6 +457,7 @@ public actor LiveBackend: BackendService {
                 threadEnvByThread[thread.id] = ThreadEnvState(
                     worktreePath: shell.worktreePath, hasTurns: shell.latestTurn != nil)
                 emit(.threadUpserted(thread))
+                reconcileRunningLiveness(for: shell)
             }
         case .event(let event):
             switch event {
@@ -463,6 +476,7 @@ public actor LiveBackend: BackendService {
                     worktreePath: shell.worktreePath, hasTurns: shell.latestTurn != nil)
                 restartVcsWatchIfStale(threadID: thread.id)
                 emit(.threadUpserted(thread))
+                reconcileRunningLiveness(for: shell)
             case .threadRemoved(_, let threadID):
                 threadsByID[threadID] = nil
                 modelSelectionsByThread[threadID] = nil
@@ -470,6 +484,7 @@ public actor LiveBackend: BackendService {
                 threadEnvByThread[threadID] = nil
                 threadShellsByID[threadID] = nil
                 subagentTasksByThread[threadID] = nil
+                clearRunningLivenessState(threadID: threadID)
                 emit(.threadRemoved(id: threadID))
             }
         }
@@ -528,6 +543,118 @@ public actor LiveBackend: BackendService {
             task.cancel()
         }
         threadSubscriptions.removeAll()
+    }
+
+    private func reconcileRunningLiveness(for shell: OrchestrationThreadShell) {
+        let turnKey = runningLivenessTurnKey(for: shell)
+        latestRunningLivenessTurnKeys[shell.id] = turnKey
+        // Liveness only watches running turns; background subagents have no
+        // turn to go stale, so their count must not influence this projection.
+        let wireStatus = mapStatus(
+            session: shell.session, latestTurn: shell.latestTurn, archivedAt: shell.archivedAt,
+            hasPendingApprovals: shell.hasPendingApprovals || shell.hasPendingUserInput,
+            activeSubagentCount: 0)
+        if wireStatus == .running {
+            scheduleRunningLivenessCheck(
+                threadID: shell.id, turnKey: turnKey)
+        } else {
+            clearRunningLivenessState(threadID: shell.id)
+        }
+    }
+
+    private func runningLivenessTurnKey(for shell: OrchestrationThreadShell) -> String {
+        shell.latestTurn?.turnId ?? shell.session?.activeTurnId ?? "pending-turn"
+    }
+
+    private func scheduleRunningLivenessCheck(threadID: String, turnKey: String) {
+        if let existingCheck = runningLivenessChecks[threadID] {
+            guard existingCheck.turnKey != turnKey else { return }
+            existingCheck.task.cancel()
+            runningLivenessChecks[threadID] = nil
+        }
+
+        guard confirmedRunningTurnKeys[threadID] != turnKey,
+            staleRunningTurnKeys[threadID] != turnKey,
+            let client = currentClient
+        else { return }
+        let task = Task { [weak self, client] in
+            guard let self else { return }
+            await self.runRunningLivenessCheck(
+                threadID: threadID, turnKey: turnKey, client: client)
+        }
+        runningLivenessChecks[threadID] = RunningLivenessCheck(turnKey: turnKey, task: task)
+    }
+
+    private func runRunningLivenessCheck(threadID: String, turnKey: String, client: T3Client) async {
+        do {
+            let firstCheck = try await client.getThreadLiveness(threadId: threadID)
+            try Task.checkCancellation()
+            if firstCheck.hasActiveTurn {
+                markRunningThreadLive(threadID: threadID, turnKey: turnKey)
+                finishRunningLivenessCheck(threadID: threadID, turnKey: turnKey)
+                return
+            }
+
+            try await Task.sleep(for: Self.runningLivenessConfirmationDelay)
+            let secondCheck = try await client.getThreadLiveness(threadId: threadID)
+            try Task.checkCancellation()
+            if secondCheck.hasActiveTurn {
+                markRunningThreadLive(threadID: threadID, turnKey: turnKey)
+            } else {
+                markRunningThreadStale(threadID: threadID, turnKey: turnKey)
+            }
+        } catch {
+            if !Task.isCancelled {
+                finishRunningLivenessCheck(threadID: threadID, turnKey: turnKey)
+            }
+            return
+        }
+        finishRunningLivenessCheck(threadID: threadID, turnKey: turnKey)
+    }
+
+    private func markRunningThreadStale(threadID: String, turnKey: String) {
+        guard latestRunningLivenessTurnKeys[threadID] == turnKey else { return }
+        confirmedRunningTurnKeys[threadID] = nil
+        guard var thread = threadsByID[threadID], thread.status == .running else { return }
+        staleRunningTurnKeys[threadID] = turnKey
+        thread.status = .error
+        threadsByID[threadID] = thread
+        emit(.threadUpserted(thread))
+    }
+
+    private func markRunningThreadLive(threadID: String, turnKey: String) {
+        guard latestRunningLivenessTurnKeys[threadID] == turnKey else { return }
+        confirmedRunningTurnKeys[threadID] = turnKey
+        let wasStale = staleRunningTurnKeys.removeValue(forKey: threadID) != nil
+        guard wasStale, var thread = threadsByID[threadID], thread.status == .error else {
+            return
+        }
+        thread.status = .running
+        threadsByID[threadID] = thread
+        emit(.threadUpserted(thread))
+    }
+
+    private func finishRunningLivenessCheck(threadID: String, turnKey: String) {
+        guard runningLivenessChecks[threadID]?.turnKey == turnKey else { return }
+        runningLivenessChecks[threadID] = nil
+    }
+
+    private func clearRunningLivenessState(threadID: String) {
+        runningLivenessChecks[threadID]?.task.cancel()
+        runningLivenessChecks[threadID] = nil
+        latestRunningLivenessTurnKeys[threadID] = nil
+        confirmedRunningTurnKeys[threadID] = nil
+        staleRunningTurnKeys[threadID] = nil
+    }
+
+    private func cancelAllRunningLivenessChecks() {
+        for check in runningLivenessChecks.values {
+            check.task.cancel()
+        }
+        runningLivenessChecks.removeAll()
+        latestRunningLivenessTurnKeys.removeAll()
+        confirmedRunningTurnKeys.removeAll()
+        staleRunningTurnKeys.removeAll()
     }
 
     private func cancelAllVcsSubscriptions() {
@@ -810,6 +937,15 @@ public actor LiveBackend: BackendService {
             }
             return true
 
+        case ActivityKind.usageLimitReached:
+            guard let notice = mapUsageLimitNotice(activity, threadID: threadID, at: at) else {
+                return false
+            }
+            if appendToTimeline {
+                emit(.timelineAppended(threadID: threadID, item: .usageLimit(notice)))
+            }
+            return true
+
         case ActivityKind.userInputResolved:
             let requestID =
                 activity.decodePayload(UserInputResolvedActivityPayload.self)?.requestId
@@ -864,6 +1000,30 @@ public actor LiveBackend: BackendService {
                 multiSelect: question.multiSelect)
         }
         return UserInputRequest(id: requestID, threadID: threadID, questions: questions, createdAt: at)
+    }
+
+    private func mapUsageLimitNotice(
+        _ activity: OrchestrationThreadActivity, threadID: String, at: Date
+    ) -> UsageLimitNotice? {
+        guard let payload = activity.decodePayload(UsageLimitReachedActivityPayload.self) else {
+            return nil
+        }
+        let resetAt =
+            payload.resetsAt.flatMap(WireDate.parse)
+            ?? payload.resetsAtEpochSeconds.map { Date(timeIntervalSince1970: TimeInterval($0)) }
+        let provider = payload.provider.flatMap(providerKind(fromDriver:))
+        let providerName =
+            provider?.displayName
+            ?? payload.provider?.replacingOccurrences(of: "Agent", with: " Agent")
+            ?? "Agent"
+        return UsageLimitNotice(
+            id: activity.id,
+            threadID: threadID,
+            provider: provider,
+            providerName: providerName,
+            message: payload.message,
+            resetsAt: resetAt,
+            createdAt: at)
     }
 
     private static func uiPlanStatus(_ status: TurnPlanStepStatus?) -> PlanStepStatus {
@@ -1038,7 +1198,8 @@ public actor LiveBackend: BackendService {
         }
         let thread = ChatThread(
             id: threadID, projectID: projectID, title: title, provider: provider, status: .idle,
-            updatedAt: Date(), modelInstanceID: selection.instanceId, modelID: selection.model)
+            updatedAt: Date(), modelInstanceID: selection.instanceId, modelID: selection.model,
+            reasoningEffort: Self.effortValue(of: selection))
         threadsByID[threadID] = thread
         modelSelectionsByThread[threadID] = selection
         titleSeedsByThread[threadID] = title
@@ -1341,14 +1502,14 @@ public actor LiveBackend: BackendService {
         else {
             throw LiveBackendError.noEffortOption(selection.model)
         }
-        // Replace any prior effort selection, keep unrelated options.
-        var options = selection.canonicalOptions ?? []
-        options.removeAll { Self.effortOptionIDs.contains($0.id) }
-        options.append(ProviderOptionSelection(id: descriptor.id, value: .string(value)))
-        let updated = ModelSelection(
-            instanceId: selection.instanceId, model: selection.model, canonicalOptions: options)
+        let updated = Self.modelSelection(selection, settingEffort: value, descriptorID: descriptor.id)
         _ = try await client.updateThreadMeta(threadId: threadID, modelSelection: updated)
         modelSelectionsByThread[threadID] = updated
+        if let instance = providersByInstanceId[selection.instanceId],
+            let provider = providerKind(fromDriver: instance.driver)
+        {
+            rememberReasoningEffort(value, for: provider)
+        }
         updateCachedThread(threadID) { $0.reasoningEffort = value }
     }
 
@@ -1698,10 +1859,14 @@ public actor LiveBackend: BackendService {
             session: shell.session, latestTurn: shell.latestTurn, archivedAt: shell.archivedAt,
             hasPendingApprovals: shell.hasPendingApprovals || shell.hasPendingUserInput,
             activeSubagentCount: activeSubagentCount)
+        let presentedStatus =
+            status == .running
+            && staleRunningTurnKeys[shell.id] == runningLivenessTurnKey(for: shell)
+            ? .error : status
         let updatedAt = WireDate.parse(shell.updatedAt) ?? Date()
         return ChatThread(
             id: shell.id, projectID: shell.projectId, title: shell.title, provider: kind,
-            status: status, updatedAt: updatedAt,
+            status: presentedStatus, updatedAt: updatedAt,
             runtimeMode: Self.uiRuntimeMode(shell.runtimeMode),
             interactionMode: Self.uiInteractionMode(shell.interactionMode),
             modelInstanceID: shell.modelSelection.instanceId, modelID: shell.modelSelection.model,
@@ -1778,6 +1943,11 @@ public actor LiveBackend: BackendService {
                     pendingUserInputIDs.contains(request.id)
                 else { return nil }
                 return .userInput(request)
+            case ActivityKind.usageLimitReached:
+                guard let notice = mapUsageLimitNotice(activity, threadID: threadID, at: at) else {
+                    return nil
+                }
+                return .usageLimit(notice)
             case ActivityKind.userInputResolved, ActivityKind.turnPlanUpdated,
                 ActivityKind.contextWindowUpdated:
                 return nil
@@ -1971,7 +2141,9 @@ public actor LiveBackend: BackendService {
     private func modelSelection(for provider: ProviderKind) -> ModelSelection? {
         // Prefer the model the user last picked for this provider kind, so a
         // new thread doesn't silently reset to the instance's first model.
-        if let remembered = lastUsedModelSelection(for: provider) { return remembered }
+        if let remembered = lastUsedModelSelection(for: provider) {
+            return applyingLastUsedEffort(to: remembered, for: provider)
+        }
         // Same bar as the provider list UI (`availability(for:)`): an
         // uninstalled/unauthenticated instance, or one with no models, can't
         // run a thread — returning nil surfaces `noProviderForKind` instead
@@ -1982,19 +2154,65 @@ public actor LiveBackend: BackendService {
                 && !$0.models.isEmpty
         }
         guard let chosen, let model = chosen.models.first?.slug else { return nil }
-        return ModelSelection(instanceId: chosen.instanceId, model: model)
+        return applyingLastUsedEffort(
+            to: ModelSelection(instanceId: chosen.instanceId, model: model), for: provider)
     }
 
-    // MARK: - Last-used model memory
+    private static func modelSelection(
+        _ selection: ModelSelection, settingEffort effort: String, descriptorID: String
+    ) -> ModelSelection {
+        // Replace any prior effort selection, keep unrelated options.
+        var options = selection.canonicalOptions ?? []
+        options.removeAll { Self.effortOptionIDs.contains($0.id) }
+        options.append(ProviderOptionSelection(id: descriptorID, value: .string(effort)))
+        return ModelSelection(
+            instanceId: selection.instanceId, model: selection.model, canonicalOptions: options)
+    }
+
+    private func applyingLastUsedEffort(
+        to selection: ModelSelection, for provider: ProviderKind
+    ) -> ModelSelection {
+        guard
+            let instance = providersByInstanceId[selection.instanceId],
+            let model = instance.models.first(where: { $0.slug == selection.model }),
+            let descriptor = Self.effortDescriptor(of: model),
+            let effort = resolvedLastUsedEffort(for: provider, descriptor: descriptor)
+        else { return selection }
+        return Self.modelSelection(selection, settingEffort: effort, descriptorID: descriptor.id)
+    }
+
+    private func resolvedLastUsedEffort(
+        for provider: ProviderKind, descriptor: SelectProviderOptionDescriptor
+    ) -> String? {
+        guard let remembered = lastUsedReasoningEffort(for: provider) else { return nil }
+        if descriptor.options.contains(where: { $0.id == remembered }) {
+            return remembered
+        }
+        return descriptor.options.first(where: { $0.isDefault == true })?.id
+    }
+
+    // MARK: - Last-used model/effort memory
 
     private static func lastUsedModelKey(for provider: ProviderKind) -> String {
         "lastUsedModel.\(provider.rawValue)"
+    }
+
+    private static func lastUsedEffortKey(for provider: ProviderKind) -> String {
+        "lastUsedEffort.\(provider.rawValue)"
     }
 
     private func rememberModelSelection(_ selection: ModelSelection, for provider: ProviderKind) {
         UserDefaults.standard.set(
             "\(selection.instanceId)\t\(selection.model)",
             forKey: Self.lastUsedModelKey(for: provider))
+    }
+
+    private func rememberReasoningEffort(_ value: String, for provider: ProviderKind) {
+        UserDefaults.standard.set(value, forKey: Self.lastUsedEffortKey(for: provider))
+    }
+
+    private func lastUsedReasoningEffort(for provider: ProviderKind) -> String? {
+        UserDefaults.standard.string(forKey: Self.lastUsedEffortKey(for: provider))
     }
 
     /// The remembered selection, only while it still points at an available

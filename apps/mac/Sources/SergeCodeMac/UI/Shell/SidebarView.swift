@@ -24,7 +24,8 @@ struct SidebarView: View {
                 let threadsForProject = visibleThreads(for: project)
                 Section {
                     ForEach(threadsForProject) { thread in
-                        SidebarThreadRow(thread: thread, scenery: scenery)
+                        SidebarThreadRow(
+                            thread: thread, vcs: model.vcsStatuses[thread.id], scenery: scenery)
                             .tag(thread.id)
                             .contextMenu {
                                 Button("Archive") {
@@ -150,6 +151,7 @@ private struct ProjectSectionHeader: View {
 
 private struct SidebarThreadRow: View {
     let thread: ChatThread
+    let vcs: VcsStatus?
     let scenery: SceneryStore
 
     var body: some View {
@@ -161,8 +163,15 @@ private struct SidebarThreadRow: View {
             .frame(width: 28, height: 28)
             .clipShape(RoundedRectangle(cornerRadius: 7))
             .overlay(alignment: .bottomTrailing) {
-                SidebarStatusDot(thread: thread)
-                    .offset(x: 2, y: 2)
+                HStack(spacing: 2) {
+                    if hasOpenPullRequest {
+                        pullRequestIndicator
+                    }
+                    SidebarStatusDot(thread: thread)
+                }
+                .offset(x: 2, y: 2)
+                .animation(Motion.ambient, value: thread.status)
+                .animation(Motion.ambient, value: hasOpenPullRequest)
             }
             let names = scenery.displayNames(for: thread)
             VStack(alignment: .leading, spacing: 2) {
@@ -179,6 +188,18 @@ private struct SidebarThreadRow: View {
         .padding(.vertical, 2)
     }
 
+    private var hasOpenPullRequest: Bool {
+        vcs?.prState == .open
+    }
+
+    private var pullRequestIndicator: some View {
+        Image(systemName: "arrow.triangle.pull")
+            .font(.system(size: 7, weight: .bold))
+            .foregroundStyle(.tint)
+            .frame(width: 12, height: 12)
+            .background(Circle().fill(.background))
+            .help(vcs?.prNumber.map { "PR #\($0)" } ?? "Open pull request")
+    }
 }
 
 private struct SidebarStatusDot: View {
