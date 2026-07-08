@@ -167,6 +167,12 @@ public actor T3Client {
                 threadId: threadId, toTurnCount: toTurnCount, ignoreWhitespace: ignoreWhitespace))
     }
 
+    public func getThreadLiveness(threadId: String) async throws -> OrchestrationThreadLiveness {
+        try await call(
+            "orchestration.getThreadLiveness",
+            OrchestrationGetThreadLivenessInput(threadId: threadId))
+    }
+
     public func replayEvents(fromSequenceExclusive: Int) async throws -> [OrchestrationEvent] {
         try await call(
             "orchestration.replayEvents",
