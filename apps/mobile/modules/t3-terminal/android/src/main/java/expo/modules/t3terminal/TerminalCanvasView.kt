@@ -254,6 +254,10 @@ internal class TerminalCanvasView(context: Context) : View(context) {
   override fun onTouchEvent(event: MotionEvent): Boolean {
     if (event.actionMasked == MotionEvent.ACTION_DOWN) {
       parent?.requestDisallowInterceptTouchEvent(true)
+      // Touch-down always stops momentum, even when the event is consumed by
+      // a selection-handle grab and never reaches the gesture detector.
+      scroller.forceFinished(true)
+      removeCallbacks(flingRunnable)
     } else if (event.actionMasked == MotionEvent.ACTION_UP ||
       event.actionMasked == MotionEvent.ACTION_CANCEL
     ) {
@@ -534,6 +538,9 @@ internal class TerminalCanvasView(context: Context) : View(context) {
 
         override fun onDestroyActionMode(mode: ActionMode) {
           actionMode = null
+          // Dismissing the toolbar (e.g. Back) drops the selection too —
+          // except mid-drag, where grabHandleAt finishes the mode on purpose.
+          if (selectionActive && !dragSelecting) clearSelection()
         }
 
         override fun onGetContentRect(mode: ActionMode, view: View, outRect: Rect) {
