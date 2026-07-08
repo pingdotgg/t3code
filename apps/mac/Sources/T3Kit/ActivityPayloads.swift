@@ -16,6 +16,7 @@ public enum ActivityKind {
     public static let approvalResolved = "approval.resolved"
     public static let userInputRequested = "user-input.requested"
     public static let userInputResolved = "user-input.resolved"
+    public static let usageLimitReached = "usage-limit.reached"
     public static let turnPlanUpdated = "turn.plan.updated"
     public static let contextWindowUpdated = "context-window.updated"
     /// Tool lifecycle (tone `.tool`): started is pure noise (always followed
@@ -104,6 +105,19 @@ public struct UserInputRequestedActivityPayload: Decodable, Sendable {
 /// Activity payload for kind `user-input.resolved`: `{ requestId?, answers }`.
 public struct UserInputResolvedActivityPayload: Decodable, Sendable {
     public var requestId: String?
+}
+
+// MARK: - usage-limit.reached
+
+/// Activity payload for kind `usage-limit.reached`:
+/// `{ message, provider?, source?, resetsAt?, resetsAtEpochSeconds?, resetSource? }`.
+public struct UsageLimitReachedActivityPayload: Decodable, Sendable {
+    public var message: String
+    public var provider: String?
+    public var source: String?
+    public var resetsAt: String?
+    public var resetsAtEpochSeconds: Int?
+    public var resetSource: String?
 }
 
 // MARK: - turn.plan.updated

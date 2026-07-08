@@ -14,6 +14,7 @@ public final class AppModel {
     public private(set) var models: [ModelOption] = []
     public private(set) var contextWindows: [String: ContextWindowStatus] = [:]
     public private(set) var planProgress: [String: PlanProgress] = [:]
+    public private(set) var usageLimitActions: [String: UsageLimitActionState] = [:]
     /// Keyed by threadID (a worktree thread's status is its worktree's).
     public private(set) var vcsStatuses: [String: VcsStatus] = [:]
     /// Outcome of the most recent git action, shown as a transient banner.
@@ -37,6 +38,11 @@ public final class AppModel {
 
     private let backend: any BackendService
     private var eventTask: Task<Void, Never>?
+    private var usageLimitResumeTasks: [String: Task<Void, Never>] = [:]
+    private var dismissedUsageLimitIDs: Set<String> = []
+
+    private static let usageLimitContinuationPrompt =
+        "Continue the interrupted task from where you stopped."
 
     public init(backend: any BackendService) {
         self.backend = backend
@@ -95,14 +101,16 @@ public final class AppModel {
         case .threadRemoved(let id):
             threads.removeAll { $0.id == id }
             vcsStatuses[id] = nil
+            cancelUsageLimitResumeTasks(threadID: id)
             if selectedThreadID == id { selectedThreadID = nil }
         case .timelineAppended(let threadID, let item):
+            guard !isDismissedUsageLimit(item) else { return }
             // Upsert: lifecycle updates arrive with the stable row id of an
             // earlier item (tool call updated -> completed, streaming
             // reasoning text) and must replace it, not stack.
             timelines[threadID, default: []].upsertTimelineItem(item)
         case .timelineReset(let threadID, let items):
-            timelines[threadID] = items
+            timelines[threadID] = items.filter { !isDismissedUsageLimit($0) }
         case .assistantDelta(let threadID, let messageID, let delta):
             appendDelta(threadID: threadID, messageID: messageID, delta: delta)
         case .assistantCompleted(let threadID, let messageID, let markdown):
@@ -134,6 +142,11 @@ public final class AppModel {
         case .vcsStatusChanged(let threadID, let status):
             vcsStatuses[threadID] = status
         }
+    }
+
+    private func isDismissedUsageLimit(_ item: TimelineItem) -> Bool {
+        guard case .usageLimit(let notice) = item else { return false }
+        return dismissedUsageLimitIDs.contains(notice.id)
     }
 
     private func appendDelta(threadID: String, messageID: String, delta: String) {
@@ -309,6 +322,69 @@ public final class AppModel {
             try await backend.setModel(threadID: threadID, model: model)
         } catch {
             lastError = String(describing: error)
+        }
+    }
+
+    public func waitForUsageLimitReset(_ notice: UsageLimitNotice) {
+        guard let resetsAt = notice.resetsAt else { return }
+        usageLimitResumeTasks[notice.id]?.cancel()
+        let resumeAt = resetsAt.addingTimeInterval(90)
+        usageLimitActions[notice.id] = .waiting(resumeAt: resumeAt)
+        usageLimitResumeTasks[notice.id] = Task { [weak self] in
+            let delay = max(0, resumeAt.timeIntervalSinceNow)
+            let nanoseconds = UInt64(min(delay, 60 * 60 * 24 * 14) * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: nanoseconds)
+            guard !Task.isCancelled else { return }
+            await self?.continueAfterUsageLimit(notice, model: nil)
+        }
+    }
+
+    public func switchModelAfterUsageLimit(_ notice: UsageLimitNotice, to model: ModelOption) async {
+        usageLimitResumeTasks[notice.id]?.cancel()
+        await continueAfterUsageLimit(notice, model: model)
+    }
+
+    public func dismissUsageLimit(_ notice: UsageLimitNotice) {
+        dismissedUsageLimitIDs.insert(notice.id)
+        usageLimitResumeTasks[notice.id]?.cancel()
+        usageLimitResumeTasks[notice.id] = nil
+        usageLimitActions[notice.id] = nil
+        for threadID in Array(timelines.keys) {
+            timelines[threadID]?.removeAll { $0.id == notice.id }
+        }
+    }
+
+    private func continueAfterUsageLimit(_ notice: UsageLimitNotice, model: ModelOption?) async {
+        do {
+            if let model {
+                usageLimitActions[notice.id] = .switching(modelName: model.displayName)
+                try await backend.setModel(threadID: notice.threadID, model: model)
+            } else {
+                usageLimitActions[notice.id] = .resuming
+            }
+            try await backend.sendMessage(
+                threadID: notice.threadID,
+                text: Self.usageLimitContinuationPrompt,
+                attachments: [])
+            usageLimitActions[notice.id] = .continued
+        } catch {
+            let message = String(describing: error)
+            usageLimitActions[notice.id] = .failed(message)
+            lastError = message
+        }
+        usageLimitResumeTasks[notice.id] = nil
+    }
+
+    private func cancelUsageLimitResumeTasks(threadID: String) {
+        let noticeIDs =
+            timelines[threadID]?.compactMap { item -> String? in
+                guard case .usageLimit(let notice) = item else { return nil }
+                return notice.id
+            } ?? []
+        for id in noticeIDs {
+            usageLimitResumeTasks[id]?.cancel()
+            usageLimitResumeTasks[id] = nil
+            usageLimitActions[id] = nil
         }
     }
 

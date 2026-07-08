@@ -11,6 +11,7 @@ import {
   type CanonicalItemType,
   type CanonicalRequestType,
   type CodexSettings,
+  EventId,
   ProviderDriverKind,
   type ProviderEvent,
   ProviderInstanceId,
@@ -18,6 +19,7 @@ import {
   type ProviderRequestKind,
   type ThreadTokenUsageSnapshot,
   type ProviderUserInputAnswers,
+  type RuntimeUsageLimitDetail,
   RuntimeItemId,
   RuntimeRequestId,
   ProviderApprovalDecision,
@@ -52,6 +54,7 @@ import {
 import { type CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { detectCodexUsageLimit } from "../UsageLimit.ts";
 import {
   CodexResumeCursorSchema,
   CodexSessionRuntimeThreadIdMissingError,
@@ -486,22 +489,76 @@ function mapItemLifecycle(
   };
 }
 
+function mergeUsageLimitReset(
+  usageLimit: RuntimeUsageLimitDetail | undefined,
+  fallback: RuntimeUsageLimitDetail | undefined,
+): RuntimeUsageLimitDetail | undefined {
+  if (usageLimit === undefined) {
+    return fallback;
+  }
+  if (
+    fallback === undefined ||
+    usageLimit.resetsAt !== undefined ||
+    usageLimit.resetsAtEpochSeconds !== undefined
+  ) {
+    return usageLimit;
+  }
+  return {
+    ...usageLimit,
+    ...(fallback.resetsAt !== undefined ? { resetsAt: fallback.resetsAt } : {}),
+    ...(fallback.resetsAtEpochSeconds !== undefined
+      ? { resetsAtEpochSeconds: fallback.resetsAtEpochSeconds }
+      : {}),
+    ...(fallback.resetSource !== undefined ? { resetSource: fallback.resetSource } : {}),
+  };
+}
+
+function detectCodexRateLimitEventUsageLimit(
+  event: ProviderEvent,
+): RuntimeUsageLimitDetail | undefined {
+  if (event.method !== "account/rateLimits/updated") {
+    return undefined;
+  }
+  if (!readPayload(EffectCodexSchema.V2AccountRateLimitsUpdatedNotification, event.payload)) {
+    return undefined;
+  }
+  return detectCodexUsageLimit({
+    raw: event.payload,
+    source: event.method,
+  });
+}
+
 function mapToRuntimeEvents(
   event: ProviderEvent,
   canonicalThreadId: ThreadId,
+  options?: {
+    readonly pendingUsageLimit?: RuntimeUsageLimitDetail | undefined;
+  },
 ): ReadonlyArray<ProviderRuntimeEvent> {
   if (event.kind === "error") {
     if (!event.message) {
       return [];
     }
+    const usageLimit = mergeUsageLimitReset(
+      detectCodexUsageLimit({
+        message: event.message,
+        raw: event.payload,
+        source: "error",
+      }),
+      options?.pendingUsageLimit,
+    );
     return [
       {
         ...runtimeEventBase(event, canonicalThreadId),
         type: "runtime.error",
         payload: {
           message: event.message,
-          class: "provider_error",
-          ...(event.payload !== undefined ? { detail: event.payload } : {}),
+          class: usageLimit !== undefined ? "usage_limit" : "provider_error",
+          ...(usageLimit !== undefined
+            ? { detail: usageLimit }
+            : event.payload !== undefined
+              ? { detail: event.payload }
+              : {}),
         },
       },
     ];
@@ -642,6 +699,33 @@ function mapToRuntimeEvents(
 
   if (event.method === "session/exited" || event.method === "session/closed") {
     return [
+      ...(options?.pendingUsageLimit !== undefined
+        ? [
+            {
+              ...runtimeEventBase(event, canonicalThreadId),
+              eventId: EventId.make(`${event.id}:usage-limit`),
+              type: "runtime.error" as const,
+              payload: {
+                message: "Codex usage limit reached.",
+                class: "usage_limit" as const,
+                detail: options.pendingUsageLimit,
+              },
+            },
+            ...(event.turnId
+              ? [
+                  {
+                    ...runtimeEventBase(event, canonicalThreadId),
+                    eventId: EventId.make(`${event.id}:usage-limit-turn-completed`),
+                    type: "turn.completed" as const,
+                    payload: {
+                      state: "failed" as const,
+                      errorMessage: "Codex usage limit reached.",
+                    },
+                  },
+                ]
+              : []),
+          ]
+        : []),
       {
         ...runtimeEventBase(event, canonicalThreadId),
         type: "session.exited",
@@ -765,15 +849,38 @@ function mapToRuntimeEvents(
       return [];
     }
     const errorMessage = trimText(payload.turn.error?.message);
+    const usageLimit = mergeUsageLimitReset(
+      detectCodexUsageLimit({
+        message: errorMessage,
+        codexErrorInfo: payload.turn.error?.codexErrorInfo,
+        raw: event.payload,
+        source: event.method,
+      }),
+      toTurnStatus(payload.turn.status) === "failed" ? options?.pendingUsageLimit : undefined,
+    );
+    const completedEvent = {
+      ...runtimeEventBase(event, canonicalThreadId),
+      type: "turn.completed" as const,
+      payload: {
+        state: toTurnStatus(payload.turn.status),
+        ...(errorMessage ? { errorMessage } : {}),
+      },
+    };
+    if (usageLimit === undefined) {
+      return [completedEvent];
+    }
     return [
       {
         ...runtimeEventBase(event, canonicalThreadId),
-        type: "turn.completed",
+        eventId: EventId.make(`${event.id}:usage-limit`),
+        type: "runtime.error",
         payload: {
-          state: toTurnStatus(payload.turn.status),
-          ...(errorMessage ? { errorMessage } : {}),
+          message: errorMessage ?? "Codex usage limit reached.",
+          class: "usage_limit" as const,
+          detail: usageLimit,
         },
       },
+      completedEvent,
     ];
   }
 
@@ -1243,14 +1350,29 @@ function mapToRuntimeEvents(
     const payload = readPayload(EffectCodexSchema.V2ErrorNotification, event.payload);
     const message = payload?.error.message ?? event.message ?? "Provider runtime error";
     const willRetry = payload?.willRetry === true;
+    const usageLimit = mergeUsageLimitReset(
+      detectCodexUsageLimit({
+        message,
+        codexErrorInfo: payload?.error.codexErrorInfo,
+        raw: event.payload,
+        source: event.method,
+      }),
+      willRetry ? undefined : options?.pendingUsageLimit,
+    );
     return [
       {
         type: willRetry ? "runtime.warning" : "runtime.error",
         ...runtimeEventBase(event, canonicalThreadId),
         payload: {
           message,
-          ...(!willRetry ? { class: "provider_error" as const } : {}),
-          ...(event.payload !== undefined ? { detail: event.payload } : {}),
+          ...(!willRetry
+            ? { class: usageLimit !== undefined ? ("usage_limit" as const) : ("provider_error" as const) }
+            : {}),
+          ...(usageLimit !== undefined
+            ? { detail: usageLimit }
+            : event.payload !== undefined
+              ? { detail: event.payload }
+              : {}),
         },
       },
     ];
@@ -1438,10 +1560,14 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           ),
         );
 
+        let pendingUsageLimit: RuntimeUsageLimitDetail | undefined;
         const eventFiber = yield* Stream.runForEach(runtime.events, (event) =>
           Effect.gen(function* () {
             yield* writeNativeEvent(event);
-            const runtimeEvents = mapToRuntimeEvents(event, event.threadId);
+            pendingUsageLimit = detectCodexRateLimitEventUsageLimit(event) ?? pendingUsageLimit;
+            const runtimeEvents = mapToRuntimeEvents(event, event.threadId, {
+              pendingUsageLimit,
+            });
             if (runtimeEvents.length === 0) {
               yield* Effect.logDebug("ignoring unhandled Codex provider event", {
                 method: event.method,
@@ -1452,6 +1578,22 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               return;
             }
             yield* Queue.offerAll(runtimeEventQueue, runtimeEvents);
+            const usageLimitConsumed = runtimeEvents.some(
+              (runtimeEvent) =>
+                runtimeEvent.type === "runtime.error" &&
+                runtimeEvent.payload.class === "usage_limit",
+            );
+            if (
+              usageLimitConsumed ||
+              (event.method === "turn/completed" &&
+                !runtimeEvents.some(
+                  (runtimeEvent) =>
+                    runtimeEvent.type === "turn.completed" &&
+                    runtimeEvent.payload.state === "failed",
+                ))
+            ) {
+              pendingUsageLimit = undefined;
+            }
           }),
         ).pipe(Effect.forkChild);
 

@@ -38,6 +38,7 @@ import {
   type ProviderSession,
   type ThreadTokenUsageSnapshot,
   type ProviderUserInputAnswers,
+  type RuntimeUsageLimitDetail,
   type RuntimeContentStreamKind,
   RuntimeItemId,
   RuntimeRequestId,
@@ -88,6 +89,7 @@ import {
 } from "../Errors.ts";
 import { type ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { detectClaudeUsageLimit, isUsageLimitDetail } from "../UsageLimit.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.UnknownFromJsonString);
 const decodeUnknownJsonStringExit = Schema.decodeUnknownExit(Schema.UnknownFromJsonString);
 
@@ -199,6 +201,7 @@ interface ClaudeSessionContext {
   lastKnownTotalProcessedTokens: number | undefined;
   lastAssistantUuid: string | undefined;
   lastThreadStartedId: string | undefined;
+  pendingUsageLimit: RuntimeUsageLimitDetail | undefined;
   stopped: boolean;
 }
 
@@ -1700,7 +1703,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       ...(turnState ? { turnId: asCanonicalTurnId(turnState.turnId) } : {}),
       payload: {
         message,
-        class: "provider_error",
+        class: isUsageLimitDetail(cause) ? "usage_limit" : "provider_error",
         ...(cause !== undefined ? { detail: cause } : {}),
       },
       providerRefs: nativeProviderRefs(context),
@@ -2553,12 +2556,27 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     const status = turnStatusFromResult(message);
     const errorMessage = message.subtype === "success" ? undefined : message.errors[0];
+    const usageLimit =
+      status === "failed"
+        ? (detectClaudeUsageLimit({
+            message: errorMessage,
+            raw: message,
+            source: "result",
+          }) ?? context.pendingUsageLimit)
+        : undefined;
 
     if (status === "failed") {
-      yield* emitRuntimeError(context, errorMessage ?? "Claude turn failed.");
+      yield* emitRuntimeError(
+        context,
+        errorMessage ?? (usageLimit ? "Claude usage limit reached." : "Claude turn failed."),
+        usageLimit,
+      );
     }
 
     yield* completeTurn(context, status, errorMessage, message);
+    if (usageLimit !== undefined || status !== "failed") {
+      context.pendingUsageLimit = undefined;
+    }
   });
 
   const handleSystemMessage = Effect.fn("handleSystemMessage")(function* (
@@ -2838,6 +2856,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     if (message.type === "rate_limit_event") {
+      const usageLimit = detectClaudeUsageLimit({
+        raw: message,
+        source: "rate_limit_event",
+      });
+      if (usageLimit !== undefined) {
+        context.pendingUsageLimit = usageLimit;
+      }
       yield* offerRuntimeEvent({
         ...base,
         type: "account.rate-limits.updated",
@@ -2934,11 +2959,25 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         const failures = exit.cause.reasons.flatMap((reason) =>
           Cause.isFailReason(reason) ? [reason.error] : [],
         );
-        const message = failures[0]?.detail ?? "Claude runtime stream failed.";
-        yield* emitRuntimeError(context, message, {
-          failureCount: failures.length,
-          failureTags: failures.map((failure) => failure._tag),
-        });
+        const usageLimit = context.pendingUsageLimit;
+        const message =
+          usageLimit !== undefined
+            ? "Claude usage limit reached."
+            : (failures[0]?.detail ?? "Claude runtime stream failed.");
+        yield* emitRuntimeError(
+          context,
+          message,
+          usageLimit ?? {
+            failureCount: failures.length,
+            failureTags: failures.map((failure) => failure._tag),
+          },
+        );
+        yield* completeTurn(context, "failed", message);
+      }
+    } else if (context.pendingUsageLimit !== undefined) {
+      const message = "Claude usage limit reached.";
+      yield* emitRuntimeError(context, message, context.pendingUsageLimit);
+      if (context.turnState) {
         yield* completeTurn(context, "failed", message);
       }
     } else if (context.turnState) {
@@ -3563,6 +3602,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         lastKnownTotalProcessedTokens: undefined,
         lastAssistantUuid: resumeState?.resumeSessionAt,
         lastThreadStartedId: undefined,
+        pendingUsageLimit: undefined,
         stopped: false,
       };
       yield* Ref.set(contextRef, context);

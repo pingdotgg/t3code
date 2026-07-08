@@ -780,6 +780,15 @@ public actor LiveBackend: BackendService {
             }
             return true
 
+        case ActivityKind.usageLimitReached:
+            guard let notice = mapUsageLimitNotice(activity, threadID: threadID, at: at) else {
+                return false
+            }
+            if appendToTimeline {
+                emit(.timelineAppended(threadID: threadID, item: .usageLimit(notice)))
+            }
+            return true
+
         case ActivityKind.userInputResolved:
             let requestID =
                 activity.decodePayload(UserInputResolvedActivityPayload.self)?.requestId
@@ -834,6 +843,30 @@ public actor LiveBackend: BackendService {
                 multiSelect: question.multiSelect)
         }
         return UserInputRequest(id: requestID, threadID: threadID, questions: questions, createdAt: at)
+    }
+
+    private func mapUsageLimitNotice(
+        _ activity: OrchestrationThreadActivity, threadID: String, at: Date
+    ) -> UsageLimitNotice? {
+        guard let payload = activity.decodePayload(UsageLimitReachedActivityPayload.self) else {
+            return nil
+        }
+        let resetAt =
+            payload.resetsAt.flatMap(WireDate.parse)
+            ?? payload.resetsAtEpochSeconds.map { Date(timeIntervalSince1970: TimeInterval($0)) }
+        let provider = payload.provider.flatMap(providerKind(fromDriver:))
+        let providerName =
+            provider?.displayName
+            ?? payload.provider?.replacingOccurrences(of: "Agent", with: " Agent")
+            ?? "Agent"
+        return UsageLimitNotice(
+            id: activity.id,
+            threadID: threadID,
+            provider: provider,
+            providerName: providerName,
+            message: payload.message,
+            resetsAt: resetAt,
+            createdAt: at)
     }
 
     private static func uiPlanStatus(_ status: TurnPlanStepStatus?) -> PlanStepStatus {
@@ -1746,6 +1779,11 @@ public actor LiveBackend: BackendService {
                     pendingUserInputIDs.contains(request.id)
                 else { return nil }
                 return .userInput(request)
+            case ActivityKind.usageLimitReached:
+                guard let notice = mapUsageLimitNotice(activity, threadID: threadID, at: at) else {
+                    return nil
+                }
+                return .usageLimit(notice)
             case ActivityKind.userInputResolved, ActivityKind.turnPlanUpdated,
                 ActivityKind.contextWindowUpdated:
                 return nil
