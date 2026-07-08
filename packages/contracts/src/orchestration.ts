@@ -26,6 +26,7 @@ export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
+  getThreadLiveness: "orchestration.getThreadLiveness",
   replayEvents: "orchestration.replayEvents",
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   subscribeShell: "orchestration.subscribeShell",
@@ -1210,6 +1211,20 @@ export type OrchestrationGetFullThreadDiffInput = typeof OrchestrationGetFullThr
 export const OrchestrationGetFullThreadDiffResult = ThreadTurnDiff;
 export type OrchestrationGetFullThreadDiffResult = typeof OrchestrationGetFullThreadDiffResult.Type;
 
+export const OrchestrationGetThreadLivenessInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type OrchestrationGetThreadLivenessInput = typeof OrchestrationGetThreadLivenessInput.Type;
+
+export const OrchestrationGetThreadLivenessResult = Schema.Struct({
+  threadId: ThreadId,
+  hasLiveSession: Schema.Boolean,
+  hasActiveTurn: Schema.Boolean,
+  activeTurnId: Schema.NullOr(TurnId),
+  checkedAt: IsoDateTime,
+});
+export type OrchestrationGetThreadLivenessResult = typeof OrchestrationGetThreadLivenessResult.Type;
+
 export const OrchestrationReplayEventsInput = Schema.Struct({
   fromSequenceExclusive: NonNegativeInt,
 });
@@ -1230,6 +1245,10 @@ export const OrchestrationRpcSchemas = {
   getFullThreadDiff: {
     input: OrchestrationGetFullThreadDiffInput,
     output: OrchestrationGetFullThreadDiffResult,
+  },
+  getThreadLiveness: {
+    input: OrchestrationGetThreadLivenessInput,
+    output: OrchestrationGetThreadLivenessResult,
   },
   replayEvents: {
     input: OrchestrationReplayEventsInput,
