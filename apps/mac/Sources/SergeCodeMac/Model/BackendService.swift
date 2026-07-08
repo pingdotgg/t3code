@@ -47,6 +47,11 @@ public protocol BackendService: Sendable {
     func projects() async throws -> [Project]
     func threads() async throws -> [ChatThread]
     func timeline(threadID: String) async throws -> [TimelineItem]
+    /// Drop a thread's live timeline subscription and per-thread caches.
+    /// Re-opening later goes through `timeline(threadID:)` which re-subscribes
+    /// and returns a fresh authoritative snapshot. Sidebar status continues
+    /// via the shell subscription and is unaffected.
+    func closeTimeline(threadID: String) async
     func providers() async throws -> [ProviderInstance]
 
     /// Every selectable (instance, model) pair across configured providers.

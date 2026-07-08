@@ -12,13 +12,30 @@ public final class AppModel {
     /// Outcome of the most recent git action, shown as a transient banner.
     public var lastGitActionOutcome: GitActionOutcome?
 
-    public var selectedThreadID: String?
+    /// Selected thread. Updates the recent-selection LRU and prunes excess
+    /// timeline subscriptions (selected + 3 most recently selected others).
+    public var selectedThreadID: String? {
+        didSet {
+            guard let id = selectedThreadID else { return }
+            recentlySelected.removeAll { $0 == id }
+            recentlySelected.insert(id, at: 0)
+            pruneTimelineSubscriptions()
+        }
+    }
     public var lastError: String?
 
     /// Per-thread `@Observable` children. The dictionary itself only mutates
     /// on first-touch create and `threadRemoved` — rare — so streaming a
     /// token on thread B never dirties views bound to thread A's child.
     private var threadStates: [String: ThreadState] = [:]
+
+    /// MRU order of selected thread IDs (front = most recent / current).
+    /// Drives timeline subscription eviction; ignored by Observation.
+    @ObservationIgnored private var recentlySelected: [String] = []
+
+    /// Keep the selected thread plus this many other recently selected ones
+    /// subscribed. Beyond that, `closeTimeline` drops the live subscription.
+    static let timelineSubscriptionKeepCount = 4
 
     private let backend: any BackendService
     private var eventTask: Task<Void, Never>?
@@ -279,6 +296,7 @@ public final class AppModel {
             threads.removeAll { $0.id == id }
             threadStates[id] = nil
             effectiveUpdatedAt[id] = nil
+            recentlySelected.removeAll { $0 == id }
             if selectedThreadID == id { selectedThreadID = nil }
         case .approvalRequested, .userInputRequested:
             break
@@ -722,6 +740,7 @@ public final class AppModel {
     public func archiveThread(_ thread: ChatThread) async {
         do {
             try await backend.archiveThread(id: thread.id)
+            await releaseTimeline(threadID: thread.id)
         } catch {
             lastError = String(describing: error)
         }
@@ -738,8 +757,48 @@ public final class AppModel {
     public func deleteThread(_ thread: ChatThread) async {
         do {
             try await backend.deleteThread(id: thread.id)
+            await releaseTimeline(threadID: thread.id)
         } catch {
             lastError = String(describing: error)
+        }
+    }
+
+    // MARK: - Timeline subscription LRU
+
+    /// Pure eviction policy: `recent` is MRU-first (index 0 = selected).
+    /// Returns IDs past the `keep` window. Empty when under the limit.
+    static func evictionCandidates(recent: [String], keep: Int) -> [String] {
+        guard keep >= 0, recent.count > keep else { return [] }
+        return Array(recent.dropFirst(keep))
+    }
+
+    /// Tear down backend timeline subscription and local timeline cache so a
+    /// later selection refetches via `loadTimelineIfNeeded`.
+    private func releaseTimeline(threadID: String) async {
+        recentlySelected.removeAll { $0 == threadID }
+        await backend.closeTimeline(threadID: threadID)
+        if let state = threadStates[threadID] {
+            state.timeline = []
+            state.hasLoadedTimeline = false
+        }
+    }
+
+    private func pruneTimelineSubscriptions() {
+        let toEvict = Self.evictionCandidates(
+            recent: recentlySelected, keep: Self.timelineSubscriptionKeepCount)
+        guard !toEvict.isEmpty else { return }
+        recentlySelected.removeAll { toEvict.contains($0) }
+        for threadID in toEvict {
+            // Never drop the currently selected thread, even if it somehow
+            // appears past the keep window.
+            guard threadID != selectedThreadID else { continue }
+            if let state = threadStates[threadID] {
+                state.timeline = []
+                state.hasLoadedTimeline = false
+            }
+            Task { [backend] in
+                await backend.closeTimeline(threadID: threadID)
+            }
         }
     }
 }

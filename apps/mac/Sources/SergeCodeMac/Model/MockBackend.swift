@@ -37,6 +37,10 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         await state.timeline(threadID: threadID)
     }
 
+    public func closeTimeline(threadID: String) async {
+        // Mock has no live subscriptions to tear down.
+    }
+
     public func providers() async throws -> [ProviderInstance] {
         await state.providers()
     }

@@ -129,6 +129,13 @@ public actor LiveBackend: BackendService {
     private var seenCheckpointRefs: [String: Set<String>] = [:]
     private var seenPlanIDs: [String: Set<String>] = [:]
 
+    /// Wire assistant deltas arrive per chunk; buffer them here and emit a
+    /// merged `.assistantDelta` at ~30Hz so AppModel's intake (also ~30Hz)
+    /// isn't flooded with single-token events. Keyed threadID → messageID → text.
+    private var pendingAssistantDeltas: [String: [String: String]] = [:]
+    /// True while a flush-after-33ms task is outstanding.
+    private var deltaFlushScheduled = false
+
     /// Approval id -> (threadId, wire requestId) for respondToApproval.
     private var approvalRoutes: [String: (threadID: String, requestId: String)] = [:]
     /// User-input request id -> (dispatch route + the request itself, kept so
@@ -408,7 +415,7 @@ public actor LiveBackend: BackendService {
                 threadsByID[id] = nil
                 titleSeedsByThread[id] = nil
                 threadEnvByThread[id] = nil
-                emit(.threadRemoved(id: id))
+                emitOrdered(threadID: id, event: .threadRemoved(id: id))
             }
             for shell in snapshot.threads {
                 let thread = mapThread(shell)
@@ -416,7 +423,7 @@ public actor LiveBackend: BackendService {
                 modelSelectionsByThread[thread.id] = shell.modelSelection
                 threadEnvByThread[thread.id] = ThreadEnvState(
                     worktreePath: shell.worktreePath, hasTurns: shell.latestTurn != nil)
-                emit(.threadUpserted(thread))
+                emitOrdered(threadID: thread.id, event: .threadUpserted(thread))
             }
         case .event(let event):
             switch event {
@@ -433,13 +440,13 @@ public actor LiveBackend: BackendService {
                 threadEnvByThread[thread.id] = ThreadEnvState(
                     worktreePath: shell.worktreePath, hasTurns: shell.latestTurn != nil)
                 restartVcsWatchIfStale(threadID: thread.id)
-                emit(.threadUpserted(thread))
+                emitOrdered(threadID: thread.id, event: .threadUpserted(thread))
             case .threadRemoved(_, let threadID):
                 threadsByID[threadID] = nil
                 modelSelectionsByThread[threadID] = nil
                 titleSeedsByThread[threadID] = nil
                 threadEnvByThread[threadID] = nil
-                emit(.threadRemoved(id: threadID))
+                emitOrdered(threadID: threadID, event: .threadRemoved(id: threadID))
             }
         }
     }
@@ -602,7 +609,8 @@ public actor LiveBackend: BackendService {
         let isResubscribe = latestTimeline[threadID] != nil
         latestTimeline[threadID] = items
         if isResubscribe {
-            emit(.timelineReset(threadID: threadID, items: items))
+            emitOrdered(
+                threadID: threadID, event: .timelineReset(threadID: threadID, items: items))
         }
         resolveSnapshotWaiters(threadID: threadID, items: items)
 
@@ -613,8 +621,9 @@ public actor LiveBackend: BackendService {
             let steps = payload.plan.enumerated().map { index, step in
                 PlanStep(id: index, title: step.step, status: Self.uiPlanStatus(step.status))
             }
-            emit(
-                .planProgressUpdated(
+            emitOrdered(
+                threadID: threadID,
+                event: .planProgressUpdated(
                     threadID: threadID,
                     progress: PlanProgress(steps: steps, explanation: payload.explanation)))
         }
@@ -623,8 +632,9 @@ public actor LiveBackend: BackendService {
         }),
             let payload = activity.decodePayload(ContextWindowUpdatedActivityPayload.self)
         {
-            emit(
-                .contextWindowUpdated(
+            emitOrdered(
+                threadID: threadID,
+                event: .contextWindowUpdated(
                     threadID: threadID,
                     status: ContextWindowStatus(
                         usedTokens: payload.usedTokens, maxTokens: payload.maxTokens)))
@@ -658,19 +668,23 @@ public actor LiveBackend: BackendService {
                     id: requestID, threadID: threadID, kind: approvalKind(activity.kind),
                     title: activity.summary.isEmpty ? "Approval required" : activity.summary,
                     detail: approvalDetail(activity.payload), createdAt: at)
-                emit(.approvalRequested(request))
-                emit(.timelineAppended(threadID: threadID, item: .approval(request)))
+                emitOrdered(threadID: threadID, event: .approvalRequested(request))
+                emitOrdered(
+                    threadID: threadID,
+                    event: .timelineAppended(threadID: threadID, item: .approval(request)))
             case ActivityKind.approvalResolved:
                 // The request was answered (possibly by another client);
                 // retire the pending card instead of rendering a new one —
                 // both activities share tone `.approval`.
                 if let requestID = OrchestrationMapping.extractRequestId(from: activity.payload) {
                     approvalRoutes[requestID] = nil
-                    emit(.approvalResolved(id: requestID))
+                    emitOrdered(threadID: threadID, event: .approvalResolved(id: requestID))
                 }
             default:
                 guard let item = mapActivity(activity, at: at) else { return }
-                emit(.timelineAppended(threadID: threadID, item: item))
+                emitOrdered(
+                    threadID: threadID,
+                    event: .timelineAppended(threadID: threadID, item: item))
             }
 
         case .threadProposedPlanUpserted(let payload):
@@ -678,8 +692,9 @@ public actor LiveBackend: BackendService {
             guard !(seenPlanIDs[threadID]?.contains(plan.id) ?? false) else { return }
             seenPlanIDs[threadID, default: []].insert(plan.id)
             let at = WireDate.parse(plan.createdAt) ?? Date()
-            emit(
-                .timelineAppended(
+            emitOrdered(
+                threadID: threadID,
+                event: .timelineAppended(
                     threadID: threadID,
                     item: .plan(
                         ProposedPlan(
@@ -704,8 +719,10 @@ public actor LiveBackend: BackendService {
                 id: payload.checkpointRef, threadID: threadID,
                 label: "Turn \(payload.checkpointTurnCount)", createdAt: at)
             checkpointsByThread[threadID, default: []].append(checkpoint)
-            emit(.timelineAppended(threadID: threadID, item: .checkpoint(checkpoint)))
-            emit(.diffInvalidated(threadID: threadID))
+            emitOrdered(
+                threadID: threadID,
+                event: .timelineAppended(threadID: threadID, item: .checkpoint(checkpoint)))
+            emitOrdered(threadID: threadID, event: .diffInvalidated(threadID: threadID))
 
         case .threadReverted(let payload):
             // The revert rewinds the thread to `turnCount`; checkpoints (and
@@ -722,9 +739,10 @@ public actor LiveBackend: BackendService {
                 checkpointRoutes[ref] = nil
                 seenCheckpointRefs[threadID]?.remove(ref)
             }
-            emit(.diffInvalidated(threadID: threadID))
-            emit(
-                .timelineAppended(
+            emitOrdered(threadID: threadID, event: .diffInvalidated(threadID: threadID))
+            emitOrdered(
+                threadID: threadID,
+                event: .timelineAppended(
                     threadID: threadID,
                     item: .notice(
                         id: "revert-\(event.eventId)",
@@ -756,9 +774,11 @@ public actor LiveBackend: BackendService {
                 return false  // Malformed payload: degrade to generic rendering.
             }
             userInputRoutes[request.id] = (threadID, request.id, request)
-            emit(.userInputRequested(request))
+            emitOrdered(threadID: threadID, event: .userInputRequested(request))
             if appendToTimeline {
-                emit(.timelineAppended(threadID: threadID, item: .userInput(request)))
+                emitOrdered(
+                    threadID: threadID,
+                    event: .timelineAppended(threadID: threadID, item: .userInput(request)))
             }
             return true
 
@@ -768,7 +788,7 @@ public actor LiveBackend: BackendService {
                 ?? OrchestrationMapping.extractRequestId(from: activity.payload)
             if let requestID {
                 userInputRoutes[requestID] = nil
-                emit(.userInputResolved(id: requestID))
+                emitOrdered(threadID: threadID, event: .userInputResolved(id: requestID))
             }
             return true
 
@@ -779,8 +799,9 @@ public actor LiveBackend: BackendService {
             let steps = payload.plan.enumerated().map { index, step in
                 PlanStep(id: index, title: step.step, status: Self.uiPlanStatus(step.status))
             }
-            emit(
-                .planProgressUpdated(
+            emitOrdered(
+                threadID: threadID,
+                event: .planProgressUpdated(
                     threadID: threadID,
                     progress: PlanProgress(steps: steps, explanation: payload.explanation)))
             return true
@@ -788,8 +809,9 @@ public actor LiveBackend: BackendService {
         case ActivityKind.contextWindowUpdated:
             guard let payload = activity.decodePayload(ContextWindowUpdatedActivityPayload.self)
             else { return false }
-            emit(
-                .contextWindowUpdated(
+            emitOrdered(
+                threadID: threadID,
+                event: .contextWindowUpdated(
                     threadID: threadID,
                     status: ContextWindowStatus(
                         usedTokens: payload.usedTokens, maxTokens: payload.maxTokens)))
@@ -835,8 +857,9 @@ public actor LiveBackend: BackendService {
         case .user:
             guard !alreadySeen else { return }
             seenMessageIDs[threadID, default: []].insert(messageID)
-            emit(
-                .timelineAppended(
+            emitOrdered(
+                threadID: threadID,
+                event: .timelineAppended(
                     threadID: threadID,
                     item: .userMessage(id: messageID, text: payload.text, at: at)))
 
@@ -849,8 +872,9 @@ public actor LiveBackend: BackendService {
             if !alreadySeen {
                 seenMessageIDs[threadID, default: []].insert(messageID)
                 assistantTextByMessage[threadID, default: [:]][messageID] = payload.text
-                emit(
-                    .timelineAppended(
+                emitOrdered(
+                    threadID: threadID,
+                    event: .timelineAppended(
                         threadID: threadID,
                         item: .assistantMessage(
                             id: messageID, markdown: payload.text,
@@ -859,25 +883,27 @@ public actor LiveBackend: BackendService {
                 if !payload.text.isEmpty {
                     let old = assistantTextByMessage[threadID]?[messageID] ?? ""
                     assistantTextByMessage[threadID, default: [:]][messageID] = old + payload.text
-                    emit(
-                        .assistantDelta(
-                            threadID: threadID, messageID: messageID, delta: payload.text))
+                    // Buffer: merged at ~30Hz (or flushed before any non-delta).
+                    bufferAssistantDelta(
+                        threadID: threadID, messageID: messageID, delta: payload.text)
                 }
             }
             if !payload.streaming {
                 let accumulated = assistantTextByMessage[threadID]?[messageID] ?? ""
                 let finalText = payload.text.isEmpty ? accumulated : payload.text
                 assistantTextByMessage[threadID, default: [:]][messageID] = finalText
-                emit(
-                    .assistantCompleted(
+                emitOrdered(
+                    threadID: threadID,
+                    event: .assistantCompleted(
                         threadID: threadID, messageID: messageID, markdown: finalText))
             }
 
         case .system:
             guard !alreadySeen else { return }
             seenMessageIDs[threadID, default: []].insert(messageID)
-            emit(
-                .timelineAppended(
+            emitOrdered(
+                threadID: threadID,
+                event: .timelineAppended(
                     threadID: threadID,
                     item: .notice(id: messageID, text: payload.text, at: at)))
         }
@@ -928,6 +954,33 @@ public actor LiveBackend: BackendService {
         return try await withCheckedThrowingContinuation { continuation in
             snapshotWaiters[threadID, default: []].append(continuation)
         }
+    }
+
+    public func closeTimeline(threadID: String) async {
+        // Cancel live timeline fan-in; shell status for this thread stays live.
+        threadSubscriptions[threadID]?.cancel()
+        threadSubscriptions[threadID] = nil
+        activeThreadIDs.remove(threadID)
+
+        // Drop per-thread projection/dedup caches so a later timeline() load
+        // re-subscribes cleanly and treats the next snapshot as authoritative.
+        latestTimeline[threadID] = nil
+        seenMessageIDs[threadID] = nil
+        assistantTextByMessage[threadID] = nil
+        seenActivityIDs[threadID] = nil
+        seenCheckpointRefs[threadID] = nil
+        seenPlanIDs[threadID] = nil
+        pendingAssistantDeltas[threadID] = nil
+
+        // Fail any waiter still blocked on the first snapshot.
+        failSnapshotWaiters(threadID: threadID, error: LiveBackendError.notConnected)
+
+        // Tear down VCS watch so watchVcsStatus can re-establish after prune
+        // (it guards on vcsSubscriptions[threadID] == nil).
+        vcsSubscriptions[threadID]?.cancel()
+        clearVcsSubscription(threadID: threadID)
+        vcsLocal[threadID] = nil
+        vcsRemote[threadID] = nil
     }
 
     public func providers() async throws -> [ProviderInstance] {
@@ -1000,7 +1053,7 @@ public actor LiveBackend: BackendService {
         // lag (or be missed across a reconnect), and the caller selects the
         // thread right away — without this the detail pane shows an empty
         // state for a thread that exists.
-        emit(.threadUpserted(thread))
+        emitOrdered(threadID: threadID, event: .threadUpserted(thread))
         return thread
     }
 
@@ -1023,14 +1076,8 @@ public actor LiveBackend: BackendService {
         threadsByID[id] = nil
         titleSeedsByThread[id] = nil
         threadEnvByThread[id] = nil
-        latestTimeline[id] = nil
-        activeThreadIDs.remove(id)
-        threadSubscriptions[id]?.cancel()
-        threadSubscriptions[id] = nil
-        vcsSubscriptions[id]?.cancel()
-        clearVcsSubscription(threadID: id)
-        vcsLocal[id] = nil
-        vcsRemote[id] = nil
+        modelSelectionsByThread[id] = nil
+        await closeTimeline(threadID: id)
     }
 
     public func sendMessage(
@@ -1204,7 +1251,7 @@ public actor LiveBackend: BackendService {
         _ = try await client.respondToApproval(
             threadId: route.threadID, requestId: route.requestId, decision: decision)
         approvalRoutes[id] = nil
-        emit(.approvalResolved(id: id))
+        emitOrdered(threadID: route.threadID, event: .approvalResolved(id: id))
     }
 
     public func respondToUserInput(id: String, answers: [String: [String]]) async throws {
@@ -1225,7 +1272,7 @@ public actor LiveBackend: BackendService {
         _ = try await client.respondToUserInput(
             threadId: route.threadID, requestId: route.requestId, answers: wireAnswers)
         userInputRoutes[id] = nil
-        emit(.userInputResolved(id: id))
+        emitOrdered(threadID: route.threadID, event: .userInputResolved(id: id))
     }
 
     public func setRuntimeMode(threadID: String, mode: ThreadRuntimeMode) async throws {
@@ -1310,7 +1357,7 @@ public actor LiveBackend: BackendService {
         guard var thread = threadsByID[threadID] else { return }
         mutate(&thread)
         threadsByID[threadID] = thread
-        emit(.threadUpserted(thread))
+        emitOrdered(threadID: threadID, event: .threadUpserted(thread))
     }
 
     public func diff(threadID: String) async throws -> [DiffFile] {
@@ -1333,7 +1380,7 @@ public actor LiveBackend: BackendService {
             throw LiveBackendError.unresolvedCheckpoint(id)
         }
         _ = try await client.revertCheckpoint(threadId: route.threadID, turnCount: route.turnCount)
-        emit(.diffInvalidated(threadID: route.threadID))
+        emitOrdered(threadID: route.threadID, event: .diffInvalidated(threadID: route.threadID))
     }
 
     public func addProject(path: String) async throws -> Project {
@@ -1374,16 +1421,10 @@ public actor LiveBackend: BackendService {
         for (threadID, thread) in threadsByID where thread.projectID == id {
             threadsByID[threadID] = nil
             modelSelectionsByThread[threadID] = nil
+            titleSeedsByThread[threadID] = nil
             threadEnvByThread[threadID] = nil
-            latestTimeline[threadID] = nil
-            activeThreadIDs.remove(threadID)
-            threadSubscriptions[threadID]?.cancel()
-            threadSubscriptions[threadID] = nil
-            vcsSubscriptions[threadID]?.cancel()
-            clearVcsSubscription(threadID: threadID)
-            vcsLocal[threadID] = nil
-            vcsRemote[threadID] = nil
-            emit(.threadRemoved(id: threadID))
+            await closeTimeline(threadID: threadID)
+            emitOrdered(threadID: threadID, event: .threadRemoved(id: threadID))
         }
     }
 
@@ -1453,8 +1494,9 @@ public actor LiveBackend: BackendService {
             if let remote { vcsRemote[threadID] = remote }
         }
         guard let local = vcsLocal[threadID] else { return }
-        emit(
-            .vcsStatusChanged(
+        emitOrdered(
+            threadID: threadID,
+            event: .vcsStatusChanged(
                 threadID: threadID,
                 status: Self.uiVcsStatus(local: local, remote: vcsRemote[threadID])))
     }
@@ -1582,7 +1624,52 @@ public actor LiveBackend: BackendService {
             addProjectBaseDirectory: settings.addProjectBaseDirectory)
     }
 
-    // MARK: - Emit helper
+    // MARK: - Emit helpers
+
+    /// Buffer a wire assistant-delta chunk. Flushed on the ~30Hz schedule or
+    /// immediately before any non-delta event for the same thread.
+    private func bufferAssistantDelta(threadID: String, messageID: String, delta: String) {
+        pendingAssistantDeltas[threadID, default: [:]][messageID, default: ""] += delta
+        scheduleDeltaFlush()
+    }
+
+    private func scheduleDeltaFlush() {
+        guard !deltaFlushScheduled else { return }
+        deltaFlushScheduled = true
+        Task {
+            try? await Task.sleep(for: .milliseconds(33))
+            await self.flushDeltas()
+        }
+    }
+
+    /// Emit every buffered assistant delta (all threads) and clear the schedule flag.
+    private func flushDeltas() {
+        deltaFlushScheduled = false
+        let pending = pendingAssistantDeltas
+        pendingAssistantDeltas.removeAll(keepingCapacity: true)
+        for (threadID, byMessage) in pending {
+            for (messageID, text) in byMessage where !text.isEmpty {
+                emit(.assistantDelta(threadID: threadID, messageID: messageID, delta: text))
+            }
+        }
+    }
+
+    /// Flush pending deltas for one thread only (ordering barrier before a
+    /// non-delta event). Leaves other threads' buffers and the schedule flag alone.
+    private func flushDeltas(for threadID: String) {
+        guard let byMessage = pendingAssistantDeltas.removeValue(forKey: threadID) else { return }
+        for (messageID, text) in byMessage where !text.isEmpty {
+            emit(.assistantDelta(threadID: threadID, messageID: messageID, delta: text))
+        }
+    }
+
+    /// Ordering barrier: any non-delta event for a thread must land after that
+    /// thread's pending assistant deltas (in particular `assistantCompleted`
+    /// and `timelineReset`). Deltas themselves go through `bufferAssistantDelta`.
+    private func emitOrdered(threadID: String, event: BackendEvent) {
+        flushDeltas(for: threadID)
+        emit(event)
+    }
 
     private func emit(_ event: BackendEvent) {
         if case .connection(let phase) = event {
