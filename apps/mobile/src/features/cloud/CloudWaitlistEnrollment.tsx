@@ -3,6 +3,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 
 import { useState } from "react";
 
 import { useThemeColor } from "../../lib/useThemeColor";
+import { CloudWaitlistJoinRejectedError, joinCloudWaitlist } from "./cloudWaitlistJoin";
 
 export function CloudWaitlistEnrollment(props: { readonly onSignIn: () => void }) {
   const { errors, fetchStatus, waitlist } = useWaitlist();
@@ -20,20 +21,24 @@ export function CloudWaitlistEnrollment(props: { readonly onSignIn: () => void }
 
     setRequestError(null);
     try {
-      const { error } = await waitlist.join({ emailAddress: normalizedEmailAddress });
-      if (error) {
-        setRequestError("Could not join the waitlist. Check your email address and try again.");
-      }
-    } catch {
-      setRequestError("Could not join the waitlist. Check your connection and try again.");
+      await joinCloudWaitlist(waitlist, normalizedEmailAddress);
+    } catch (error) {
+      console.error(error);
+      setRequestError(
+        error instanceof CloudWaitlistJoinRejectedError
+          ? "Could not join the waitlist. Check your email address and try again."
+          : "Could not join the waitlist. Check your connection and try again.",
+      );
     }
   };
 
   if (waitlist.id) {
     return (
       <View style={styles.content}>
-        <Text style={[styles.title, { color: colors.foreground }]}>You are on the waitlist</Text>
-        <Text style={[styles.body, styles.confirmationBody, { color: colors.secondaryForeground }]}>
+        <Text className="text-center font-t3-bold text-xl text-foreground">
+          You are on the waitlist
+        </Text>
+        <Text className="text-center font-sans text-base text-foreground-secondary">
           We will email you when your T3 Cloud access is ready.
         </Text>
         <SignInAction onPress={props.onSignIn} />
@@ -43,17 +48,18 @@ export function CloudWaitlistEnrollment(props: { readonly onSignIn: () => void }
 
   return (
     <View style={styles.content}>
-      <Text style={[styles.body, { color: colors.secondaryForeground }]}>
+      <Text className="font-sans text-base text-foreground-secondary">
         Enter your email and we will let you know when access is ready.
       </Text>
 
       <View style={styles.field}>
-        <Text style={[styles.label, { color: colors.secondaryForeground }]}>Email address</Text>
+        <Text className="font-t3-bold text-sm text-foreground-secondary">Email address</Text>
         <TextInput
           accessibilityLabel="Email address"
           autoCapitalize="none"
           autoComplete="email"
           autoCorrect={false}
+          className="font-sans text-lg text-foreground"
           keyboardType="email-address"
           onChangeText={(value) => {
             setEmailAddress(value);
@@ -69,7 +75,6 @@ export function CloudWaitlistEnrollment(props: { readonly onSignIn: () => void }
               backgroundColor: colors.input,
               borderColor:
                 fieldError || requestError ? colors.dangerForeground : colors.inputBorder,
-              color: colors.foreground,
             },
           ]}
           textContentType="emailAddress"
@@ -78,7 +83,7 @@ export function CloudWaitlistEnrollment(props: { readonly onSignIn: () => void }
         {fieldError || requestError ? (
           <Text
             accessibilityLiveRegion="polite"
-            style={[styles.error, { color: colors.dangerForeground }]}
+            className="font-sans text-sm text-danger-foreground"
             selectable
           >
             {fieldError ?? requestError}
@@ -103,7 +108,7 @@ export function CloudWaitlistEnrollment(props: { readonly onSignIn: () => void }
         ]}
       >
         {isSubmitting ? <ActivityIndicator color={colors.primaryForeground} size="small" /> : null}
-        <Text style={[styles.buttonText, { color: colors.primaryForeground }]}>
+        <Text className="font-t3-bold text-base text-primary-foreground">
           {isSubmitting ? "Joining" : "Join the waitlist"}
         </Text>
       </Pressable>
@@ -114,12 +119,11 @@ export function CloudWaitlistEnrollment(props: { readonly onSignIn: () => void }
 }
 
 function SignInAction(props: { readonly onPress: () => void }) {
-  const colors = useCloudWaitlistColors();
   return (
     <View style={styles.signInRow}>
-      <Text style={[styles.body, { color: colors.secondaryForeground }]}>Already have access?</Text>
+      <Text className="font-sans text-base text-foreground-secondary">Already have access?</Text>
       <Pressable accessibilityRole="button" hitSlop={8} onPress={props.onPress}>
-        <Text style={[styles.signInText, { color: colors.foreground }]}>Sign in</Text>
+        <Text className="font-t3-bold text-base text-foreground">Sign in</Text>
       </Pressable>
     </View>
   );
@@ -128,36 +132,17 @@ function SignInAction(props: { readonly onPress: () => void }) {
 function useCloudWaitlistColors() {
   return {
     dangerForeground: String(useThemeColor("--color-danger-foreground")),
-    foreground: String(useThemeColor("--color-foreground")),
     input: String(useThemeColor("--color-input")),
     inputBorder: String(useThemeColor("--color-input-border")),
     placeholder: String(useThemeColor("--color-placeholder")),
     primary: String(useThemeColor("--color-primary")),
     primaryForeground: String(useThemeColor("--color-primary-foreground")),
-    secondaryForeground: String(useThemeColor("--color-foreground-secondary")),
   };
 }
 
 const styles = StyleSheet.create({
-  body: {
-    fontFamily: "DMSans_400Regular",
-    fontSize: 15,
-    lineHeight: 21,
-  },
-  buttonText: {
-    fontFamily: "DMSans_700Bold",
-    fontSize: 16,
-  },
   content: {
     gap: 18,
-  },
-  confirmationBody: {
-    textAlign: "center",
-  },
-  error: {
-    fontFamily: "DMSans_400Regular",
-    fontSize: 13,
-    lineHeight: 18,
   },
   field: {
     gap: 8,
@@ -166,16 +151,9 @@ const styles = StyleSheet.create({
     borderCurve: "continuous",
     borderRadius: 16,
     borderWidth: 1,
-    fontFamily: "DMSans_400Regular",
-    fontSize: 17,
     minHeight: 54,
     paddingHorizontal: 16,
     paddingVertical: 14,
-  },
-  label: {
-    fontFamily: "DMSans_700Bold",
-    fontSize: 13,
-    lineHeight: 18,
   },
   primaryButton: {
     alignItems: "center",
@@ -193,16 +171,5 @@ const styles = StyleSheet.create({
     gap: 4,
     justifyContent: "center",
     paddingTop: 4,
-  },
-  signInText: {
-    fontFamily: "DMSans_700Bold",
-    fontSize: 15,
-    lineHeight: 21,
-  },
-  title: {
-    fontFamily: "DMSans_700Bold",
-    fontSize: 20,
-    lineHeight: 26,
-    textAlign: "center",
   },
 });

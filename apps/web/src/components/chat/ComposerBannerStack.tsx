@@ -40,14 +40,12 @@ interface ComposerBannerStackProps {
 }
 
 export function ComposerBannerStack({ className, items }: ComposerBannerStackProps) {
-  const [exitingItemId, setExitingItemId] = useState<string | null>(null);
+  const [requestedExitingItemId, setExitingItemId] = useState<string | null>(null);
   const dismissTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    if (exitingItemId && !items.some((item) => item.id === exitingItemId)) {
-      setExitingItemId(null);
-    }
-  }, [exitingItemId, items]);
+  const exitingItemId =
+    requestedExitingItemId !== null && items.some((item) => item.id === requestedExitingItemId)
+      ? requestedExitingItemId
+      : null;
 
   useEffect(() => {
     return () => {
@@ -84,7 +82,7 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
   };
 
   return (
-    <div className={cn("group/banner-stack mx-auto mb-2 max-w-208", className)}>
+    <div className={cn("group/banner-stack mx-auto mb-2 max-w-3xl", className)}>
       <div
         className={cn(
           "relative",

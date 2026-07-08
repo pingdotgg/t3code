@@ -1,24 +1,42 @@
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
+import * as Socket from "effect/unstable/socket/Socket";
 
-import { remoteHttpClientLayer } from "@t3tools/client-runtime";
+import { remoteHttpClientLayer } from "@t3tools/client-runtime/rpc";
 
-import { mobileCryptoLayer } from "../features/cloud/dpop";
-import { mobileManagedRelayClientLayer } from "../features/cloud/managedRelayLayer";
+import { cryptoLayer } from "../features/cloud/dpop";
+import { managedRelayClientLayer } from "../features/cloud/managedRelayLayer";
 import { resolveCloudPublicConfig } from "../features/cloud/publicConfig";
+import { tracingLayer } from "../features/observability/tracing";
 
 function configuredRelayUrl(): string {
-  return resolveCloudPublicConfig().relayUrl ?? "http://relay.invalid";
+  return resolveCloudPublicConfig().relay.url ?? "http://relay.invalid";
 }
 
-const mobileHttpClientLayer = remoteHttpClientLayer(fetch);
+const httpClientLayer = remoteHttpClientLayer(fetch);
 
-export const mobileRuntime = ManagedRuntime.make(
-  Layer.mergeAll(
-    mobileHttpClientLayer,
-    mobileCryptoLayer,
-    mobileManagedRelayClientLayer(configuredRelayUrl()).pipe(
-      Layer.provide(Layer.mergeAll(mobileHttpClientLayer, mobileCryptoLayer)),
-    ),
-  ),
+type RuntimeLayerSource =
+  | ReturnType<typeof managedRelayClientLayer>
+  | typeof Socket.layerWebSocketConstructorGlobal
+  | typeof cryptoLayer
+  | typeof httpClientLayer
+  | typeof tracingLayer;
+
+const runtimeLayer = Layer.merge(
+  managedRelayClientLayer(configuredRelayUrl()),
+  Socket.layerWebSocketConstructorGlobal,
+).pipe(
+  Layer.provideMerge(cryptoLayer),
+  Layer.provideMerge(httpClientLayer),
+  Layer.provideMerge(tracingLayer.pipe(Layer.provide(httpClientLayer))),
 );
+
+export const runtime: ManagedRuntime.ManagedRuntime<
+  Layer.Success<RuntimeLayerSource>,
+  Layer.Error<RuntimeLayerSource>
+> = ManagedRuntime.make(runtimeLayer);
+
+export const runtimeContextLayer: Layer.Layer<
+  Layer.Success<RuntimeLayerSource>,
+  Layer.Error<RuntimeLayerSource>
+> = Layer.effectContext(runtime.contextEffect);

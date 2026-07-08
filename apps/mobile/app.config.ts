@@ -8,6 +8,15 @@ const repoEnv = loadRepoEnv();
 Object.assign(process.env, repoEnv);
 
 const APP_VARIANT = resolveAppVariant(repoEnv.APP_VARIANT);
+const isIosPersonalTeamBuild = repoEnv.T3CODE_IOS_PERSONAL_TEAM === "1";
+
+const personalTeamBundleIdentifier = repoEnv.T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID?.trim();
+
+if (isIosPersonalTeamBuild && !personalTeamBundleIdentifier) {
+  throw new Error(
+    "T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID is required when T3CODE_IOS_PERSONAL_TEAM=1.",
+  );
+}
 
 const VARIANT_CONFIG: Record<
   AppVariant,
@@ -17,6 +26,7 @@ const VARIANT_CONFIG: Record<
     readonly iosIcon: string;
     readonly iosBundleIdentifier: string;
     readonly androidPackage: string;
+    readonly relyingParty?: string;
   }
 > = {
   development: {
@@ -25,6 +35,7 @@ const VARIANT_CONFIG: Record<
     iosIcon: "./assets/icon-composer-dev.icon",
     iosBundleIdentifier: "com.t3tools.t3code.dev",
     androidPackage: "com.t3tools.t3code.dev",
+    relyingParty: "clerk.t3.codes",
   },
   preview: {
     appName: "T3 Code Preview",
@@ -32,6 +43,7 @@ const VARIANT_CONFIG: Record<
     iosIcon: "./assets/icon-composer-prod.icon",
     iosBundleIdentifier: "com.t3tools.t3code.preview",
     androidPackage: "com.t3tools.t3code.preview",
+    relyingParty: "clerk.t3.codes",
   },
   production: {
     appName: "T3 Code",
@@ -39,6 +51,7 @@ const VARIANT_CONFIG: Record<
     iosIcon: "./assets/icon-composer-prod.icon",
     iosBundleIdentifier: "com.t3tools.t3code",
     androidPackage: "com.t3tools.t3code",
+    relyingParty: "clerk.t3.codes",
   },
 };
 
@@ -54,6 +67,27 @@ function resolveAppVariant(value: string | undefined): AppVariant {
 }
 
 const variant = VARIANT_CONFIG[APP_VARIANT];
+const iosBundleIdentifier =
+  isIosPersonalTeamBuild && personalTeamBundleIdentifier
+    ? personalTeamBundleIdentifier
+    : variant.iosBundleIdentifier;
+
+const widgetsPlugin = [
+  "expo-widgets",
+  {
+    bundleIdentifier: `${iosBundleIdentifier}.widgets`,
+    groupIdentifier: `group.${iosBundleIdentifier}`,
+    enablePushNotifications: true,
+    widgets: [
+      {
+        name: "AgentActivity",
+        displayName: "Agent Activity",
+        description: "Shows the current state of active T3 Code agents.",
+        supportedFamilies: ["systemSmall", "systemMedium", "accessoryRectangular"],
+      },
+    ],
+  },
+] satisfies NonNullable<ExpoConfig["plugins"]>[number];
 
 const config: ExpoConfig = {
   name: variant.appName,
@@ -62,7 +96,11 @@ const config: ExpoConfig = {
   scheme: variant.scheme,
   version: "0.1.0",
   runtimeVersion: {
-    policy: process.env.MOBILE_VERSION_POLICY ?? "appVersion",
+    // Fingerprint (not appVersion) so an OTA only reaches binaries whose native
+    // project — native deps, config plugins, AND patches/ — matches the update.
+    // With appVersion, every 0.1.0 build shares a runtime version, so a JS update
+    // could land on a binary missing the native changes it needs and crash.
+    policy: process.env.MOBILE_VERSION_POLICY ?? "fingerprint",
   },
   orientation: "portrait",
   icon: "./assets/icon.png",
@@ -76,7 +114,20 @@ const config: ExpoConfig = {
   ios: {
     icon: variant.iosIcon,
     supportsTablet: true,
-    bundleIdentifier: variant.iosBundleIdentifier,
+    bundleIdentifier: iosBundleIdentifier,
+    ...(isIosPersonalTeamBuild
+      ? {}
+      : {
+          // Pin code signing to the T3 Tools team so non-interactive `expo run:ios`
+          // does not fall back to a personal team (which cannot sign app groups,
+          // Sign in with Apple, or push notification entitlements). Personal-team
+          // builds opt out explicitly via T3CODE_IOS_PERSONAL_TEAM=1.
+          appleTeamId: "ARK85ZXQ4Z",
+          associatedDomains: [
+            `applinks:${variant.relyingParty}`,
+            `webcredentials:${variant.relyingParty}`,
+          ],
+        }),
     infoPlist: {
       NSAppTransportSecurity: {
         NSAllowsArbitraryLoads: true,
@@ -101,10 +152,39 @@ const config: ExpoConfig = {
     favicon: "./assets/favicon.png",
   },
   plugins: [
-    "expo-router",
-    "expo-font",
+    "expo-asset",
+    [
+      "expo-font",
+      {
+        // Embeds DM Sans as native Android font resources (res/font) so
+        // native chrome themed by the config plugins (alert dialogs) can use
+        // the app typeface; JS font loading via @expo-google-fonts is
+        // unaffected.
+        android: {
+          fonts: [
+            {
+              fontFamily: "DM Sans",
+              fontDefinitions: [
+                {
+                  path: "node_modules/@expo-google-fonts/dm-sans/400Regular/DMSans_400Regular.ttf",
+                  weight: 400,
+                },
+                {
+                  path: "node_modules/@expo-google-fonts/dm-sans/500Medium/DMSans_500Medium.ttf",
+                  weight: 500,
+                },
+                {
+                  path: "node_modules/@expo-google-fonts/dm-sans/700Bold/DMSans_700Bold.ttf",
+                  weight: 700,
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ],
     "expo-secure-store",
-    ["@clerk/expo", { theme: "./clerk-theme.json" }],
+    ["@clerk/expo", { theme: "./clerk-theme.json", appleSignIn: !isIosPersonalTeamBuild }],
     "expo-web-browser",
     [
       "expo-camera",
@@ -131,26 +211,22 @@ const config: ExpoConfig = {
       {
         ios: {
           deploymentTarget: "18.0",
+          // AppCheckCore 11.3+ includes Swift and needs module maps for these Objective-C dependencies.
+          extraPods: [
+            { name: "GoogleUtilities", modular_headers: true },
+            { name: "RecaptchaInterop", modular_headers: true },
+          ],
         },
       },
     ],
-    [
-      "expo-widgets",
-      {
-        bundleIdentifier: `${variant.iosBundleIdentifier}.widgets`,
-        groupIdentifier: `group.${variant.iosBundleIdentifier}`,
-        enablePushNotifications: true,
-        widgets: [
-          {
-            name: "AgentActivity",
-            displayName: "Agent Activity",
-            description: "Shows the current state of active T3 Code agents.",
-            supportedFamilies: ["systemSmall", "systemMedium", "accessoryRectangular"],
-          },
-        ],
-      },
-    ],
+    "./plugins/withIosCocoaPodsUuidCache.cjs",
+    ...(!isIosPersonalTeamBuild ? [widgetsPlugin] : []),
+    "./plugins/withIosSceneLifecycle.cjs",
     "./plugins/withAndroidCleartextTraffic.cjs",
+    "./plugins/withAndroidGradleHeap.cjs",
+    "./plugins/withAndroidModernPopupMenu.cjs",
+    "./plugins/withAndroidModernAlertDialog.cjs",
+    ...(isIosPersonalTeamBuild ? ["./plugins/withoutIosPersonalTeamCapabilities.cjs"] : []),
   ],
   extra: {
     appVariant: APP_VARIANT,
@@ -160,6 +236,11 @@ const config: ExpoConfig = {
     clerk: {
       publishableKey: repoEnv.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ?? null,
       jwtTemplate: repoEnv.EXPO_PUBLIC_CLERK_JWT_TEMPLATE ?? null,
+    },
+    observability: {
+      tracesUrl: repoEnv.EXPO_PUBLIC_OTLP_TRACES_URL ?? "https://api.axiom.co/v1/traces",
+      tracesDataset: repoEnv.EXPO_PUBLIC_OTLP_TRACES_DATASET ?? null,
+      tracesToken: repoEnv.EXPO_PUBLIC_OTLP_TRACES_TOKEN ?? null,
     },
     eas: {
       projectId: "d763fcb8-d37c-41ea-a773-b54a0ab4a454",

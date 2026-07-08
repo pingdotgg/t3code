@@ -1,20 +1,26 @@
 import { sanitizeFeatureBranchName } from "@t3tools/shared/git";
-import { useRouter } from "expo-router";
+import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../../lib/useThemeColor";
 
 import { AppText as Text, AppTextInput as TextInput } from "../../../components/AppText";
-import { useVcsStatus } from "../../../state/use-vcs-status";
+import { useEnvironmentQuery } from "../../../state/query";
 import { useThreadSelection } from "../../../state/use-thread-selection";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
 import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-worktree";
+import { vcsEnvironment } from "../../../state/vcs";
 import { SheetActionButton } from "./gitSheetComponents";
 
-export function GitBranchesSheet() {
-  const router = useRouter();
+type GitBranchesSheetProps = StaticScreenProps<{
+  readonly environmentId: string;
+  readonly threadId: string;
+}>;
+
+export function GitBranchesSheet(_props: GitBranchesSheetProps) {
+  const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { selectedThread } = useThreadSelection();
   const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
@@ -27,10 +33,14 @@ export function GitBranchesSheet() {
   const foregroundColor = useThemeColor("--color-foreground");
   const subtleStrongColor = useThemeColor("--color-subtle-strong");
 
-  const gitStatus = useVcsStatus({
-    environmentId: selectedThread?.environmentId ?? null,
-    cwd: selectedThreadCwd,
-  });
+  const gitStatus = useEnvironmentQuery(
+    selectedThread !== null && selectedThreadCwd !== null
+      ? vcsEnvironment.status({
+          environmentId: selectedThread.environmentId,
+          input: { cwd: selectedThreadCwd },
+        })
+      : null,
+  );
 
   const currentBranchLabel = gitStatus.data?.refName ?? selectedThread?.branch ?? "Detached HEAD";
   const currentWorktreePath = selectedThreadWorktreePath;
@@ -64,7 +74,7 @@ export function GitBranchesSheet() {
     >
       <View className="gap-2 rounded-[18px] border border-border bg-card px-4 py-4">
         <Text
-          className="text-foreground-secondary text-[11px] font-t3-bold uppercase"
+          className="text-foreground-secondary text-2xs font-t3-bold uppercase"
           style={{ letterSpacing: 1 }}
         >
           New branch
@@ -73,7 +83,7 @@ export function GitBranchesSheet() {
           value={newBranchName}
           onChangeText={setNewBranchName}
           placeholder="feature/mobile-polish"
-          className="rounded-[18px] px-3.5 py-3 font-sans text-[15px]"
+          className="rounded-[18px] px-3.5 py-3 font-sans text-base"
           style={{
             borderWidth: 1,
             borderColor: inputBorderColor,
@@ -91,7 +101,7 @@ export function GitBranchesSheet() {
             if (branch.length === 0) return;
             void gitActions.onCreateSelectedThreadBranch(branch).then(() => {
               setNewBranchName("");
-              router.dismiss();
+              navigation.goBack();
             });
           }}
         />
@@ -99,7 +109,7 @@ export function GitBranchesSheet() {
 
       <View className="gap-2 rounded-[18px] border border-border bg-card px-4 py-4">
         <Text
-          className="text-foreground-secondary text-[11px] font-t3-bold uppercase"
+          className="text-foreground-secondary text-2xs font-t3-bold uppercase"
           style={{ letterSpacing: 1 }}
         >
           New worktree
@@ -108,7 +118,7 @@ export function GitBranchesSheet() {
           value={worktreeBaseBranch}
           onChangeText={setWorktreeBaseBranch}
           placeholder="main"
-          className="rounded-[18px] px-3.5 py-3 font-sans text-[15px]"
+          className="rounded-[18px] px-3.5 py-3 font-sans text-base"
           style={{
             borderWidth: 1,
             borderColor: inputBorderColor,
@@ -120,7 +130,7 @@ export function GitBranchesSheet() {
           value={worktreeBranchName}
           onChangeText={setWorktreeBranchName}
           placeholder="feature/mobile-thread"
-          className="rounded-[18px] px-3.5 py-3 font-sans text-[15px]"
+          className="rounded-[18px] px-3.5 py-3 font-sans text-base"
           style={{
             borderWidth: 1,
             borderColor: inputBorderColor,
@@ -141,7 +151,7 @@ export function GitBranchesSheet() {
             if (baseBranch.length === 0 || newBranch.length === 0) return;
             void gitActions.onCreateSelectedThreadWorktree({ baseBranch, newBranch }).then(() => {
               setWorktreeBranchName("");
-              router.dismiss();
+              navigation.goBack();
             });
           }}
         />
@@ -149,18 +159,16 @@ export function GitBranchesSheet() {
 
       <View className="gap-2">
         <Text
-          className="text-foreground-secondary text-[11px] font-t3-bold uppercase"
+          className="text-foreground-secondary text-2xs font-t3-bold uppercase"
           style={{ letterSpacing: 1 }}
         >
           Existing branches
         </Text>
         {branchesLoading ? (
-          <Text className="text-foreground-secondary text-[13px] font-medium">
-            Loading branches...
-          </Text>
+          <Text className="text-foreground-secondary text-sm font-medium">Loading branches...</Text>
         ) : null}
         {!branchesLoading && availableBranches.length === 0 ? (
-          <Text className="text-foreground-secondary text-[13px] font-medium">
+          <Text className="text-foreground-secondary text-sm font-medium">
             No local branches found.
           </Text>
         ) : null}
@@ -185,13 +193,13 @@ export function GitBranchesSheet() {
               }}
               onPress={() => {
                 void gitActions.onCheckoutSelectedThreadBranch(branch.name).then(() => {
-                  router.dismiss();
+                  navigation.goBack();
                 });
               }}
             >
               <View className="absolute inset-0 rounded-[18px] bg-card" />
-              <Text className="text-foreground text-[15px] font-t3-bold">{branch.name}</Text>
-              <Text className="text-foreground-secondary text-[12px] font-medium">{subtitle}</Text>
+              <Text className="text-foreground text-base font-t3-bold">{branch.name}</Text>
+              <Text className="text-foreground-secondary text-xs font-medium">{subtitle}</Text>
             </Pressable>
           );
         })}

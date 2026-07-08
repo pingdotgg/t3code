@@ -1,4 +1,4 @@
-import { SymbolView } from "expo-symbols";
+import { SymbolView } from "../../components/AppSymbol";
 import { Platform, Pressable } from "react-native";
 import { useThemeColor } from "../../lib/useThemeColor";
 
@@ -104,7 +104,7 @@ export function ConnectionSheetButton(props: {
         type="monochrome"
       />
       <Text
-        className="text-[12px] font-t3-bold uppercase"
+        className="text-xs font-t3-bold uppercase"
         style={{ color: colors.textColor, letterSpacing: 0.8 }}
       >
         {props.label}

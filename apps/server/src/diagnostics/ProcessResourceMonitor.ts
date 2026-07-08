@@ -1,8 +1,10 @@
-import type {
-  ServerProcessResourceHistoryBucket,
-  ServerProcessResourceHistoryInput,
-  ServerProcessResourceHistoryResult,
-  ServerProcessResourceHistorySummary,
+import {
+  ServerProcessResourceHistoryFailureTag,
+  type ServerProcessResourceHistoryBucket,
+  type ServerProcessResourceHistoryFailureTag as ServerProcessResourceHistoryFailureTagType,
+  type ServerProcessResourceHistoryInput,
+  type ServerProcessResourceHistoryResult,
+  type ServerProcessResourceHistorySummary,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -10,14 +12,10 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import * as Schema from "effect/Schema";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
-import {
-  buildDescendantEntries,
-  isDiagnosticsQueryProcess,
-  type ProcessRow,
-  readProcessRows,
-} from "./ProcessDiagnostics.ts";
+import * as ProcessDiagnostics from "./ProcessDiagnostics.ts";
 
 const SAMPLE_INTERVAL_MS = 5_000;
 const RETENTION_MS = 60 * 60_000;
@@ -36,43 +34,58 @@ export interface ProcessResourceSample {
   readonly isServerRoot: boolean;
 }
 
-interface MonitorState {
-  readonly samples: ReadonlyArray<ProcessResourceSample>;
-  readonly lastError: string | null;
+export class ProcessResourceSamplingError extends Schema.TaggedErrorClass<ProcessResourceSamplingError>()(
+  "ProcessResourceSamplingError",
+  {
+    failureTag: ServerProcessResourceHistoryFailureTag,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to sample process resources (${this.failureTag}).`;
+  }
 }
 
-export interface ProcessResourceMonitorShape {
-  readonly readHistory: (
-    input: ServerProcessResourceHistoryInput,
-  ) => Effect.Effect<ServerProcessResourceHistoryResult>;
+interface MonitorState {
+  readonly samples: ReadonlyArray<ProcessResourceSample>;
+  readonly lastFailure: ProcessResourceSamplingError | null;
 }
 
 export class ProcessResourceMonitor extends Context.Service<
   ProcessResourceMonitor,
-  ProcessResourceMonitorShape
+  {
+    readonly readHistory: (
+      input: ServerProcessResourceHistoryInput,
+    ) => Effect.Effect<ServerProcessResourceHistoryResult>;
+  }
 >()("t3/diagnostics/ProcessResourceMonitor") {}
 
 function dateTimeFromMillis(ms: number): DateTime.Utc {
   return DateTime.makeUnsafe(ms);
 }
 
-function sampleKey(row: Pick<ProcessRow, "pid" | "command">): string {
+function sampleKey(row: Pick<ProcessDiagnostics.ProcessRow, "pid" | "command">): string {
   return `${row.pid}:${row.command}`;
 }
 
-function findServerRootRow(rows: ReadonlyArray<ProcessRow>, serverPid: number): ProcessRow | null {
+function findServerRootRow(
+  rows: ReadonlyArray<ProcessDiagnostics.ProcessRow>,
+  serverPid: number,
+): ProcessDiagnostics.ProcessRow | null {
   return rows.find((row) => row.pid === serverPid) ?? null;
 }
 
 export function collectMonitoredSamples(input: {
-  readonly rows: ReadonlyArray<ProcessRow>;
+  readonly rows: ReadonlyArray<ProcessDiagnostics.ProcessRow>;
   readonly serverPid: number;
   readonly sampledAt: DateTime.Utc;
   readonly sampledAtMs: number;
 }): ReadonlyArray<ProcessResourceSample> {
-  const rows = input.rows.filter((row) => !isDiagnosticsQueryProcess(row, input.serverPid));
+  const rows = input.rows.filter(
+    (row) => !ProcessDiagnostics.isDiagnosticsQueryProcess(row, input.serverPid),
+  );
   const root = findServerRootRow(rows, input.serverPid);
-  const descendants = buildDescendantEntries(rows, input.serverPid);
+  const descendants = ProcessDiagnostics.buildDescendantEntries(rows, input.serverPid);
   const samples: ProcessResourceSample[] = [];
 
   if (root) {
@@ -220,7 +233,7 @@ export function aggregateProcessResourceHistory(input: {
   readonly readAtMs: number;
   readonly windowMs: number;
   readonly bucketMs: number;
-  readonly lastError: string | null;
+  readonly lastFailure: ProcessResourceSamplingError | null;
 }): ServerProcessResourceHistoryResult {
   const windowMs = Math.max(1_000, input.windowMs);
   const bucketMs = Math.max(1_000, input.bucketMs);
@@ -241,18 +254,34 @@ export function aggregateProcessResourceHistory(input: {
     totalCpuSecondsApprox,
     buckets: buildBuckets({ samples, nowMs: input.readAtMs, windowMs, bucketMs }),
     topProcesses,
-    error: input.lastError ? Option.some({ message: input.lastError }) : Option.none(),
+    error: input.lastFailure
+      ? Option.some({
+          failureTag: input.lastFailure.failureTag,
+          message: input.lastFailure.message,
+        })
+      : Option.none(),
   };
 }
 
-export const make = Effect.fn("makeProcessResourceMonitor")(function* () {
+export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const state = yield* Ref.make<MonitorState>({ samples: [], lastError: null });
+  const state = yield* Ref.make<MonitorState>({ samples: [], lastFailure: null });
+
+  const recordSamplingFailure = (cause: {
+    readonly _tag: ServerProcessResourceHistoryFailureTagType;
+  }) =>
+    Ref.update(state, (current) => ({
+      ...current,
+      lastFailure: new ProcessResourceSamplingError({
+        failureTag: cause._tag,
+        cause,
+      }),
+    }));
 
   const sampleOnce = Effect.gen(function* () {
     const sampledAt = yield* DateTime.now;
     const sampledAtMs = DateTime.toEpochMillis(sampledAt);
-    const rows = yield* readProcessRows().pipe(
+    const rows = yield* ProcessDiagnostics.readProcessRows.pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
     const samples = collectMonitoredSamples({
@@ -263,22 +292,23 @@ export const make = Effect.fn("makeProcessResourceMonitor")(function* () {
     });
     yield* Ref.update(state, (current) => ({
       samples: trimSamples([...current.samples, ...samples], sampledAtMs),
-      lastError: null,
+      lastFailure: null,
     }));
   }).pipe(
-    Effect.catch((error: unknown) =>
-      Ref.update(state, (current) => ({
-        ...current,
-        lastError: error instanceof Error ? error.message : "Failed to sample process resources.",
-      })),
-    ),
+    Effect.catchTags({
+      ProcessDiagnosticsQueryTimeoutError: recordSamplingFailure,
+      ProcessDiagnosticsQueryFailedError: recordSamplingFailure,
+      ProcessDiagnosticsServerProcessSignalError: recordSamplingFailure,
+      ProcessDiagnosticsNotDescendantError: recordSamplingFailure,
+      ProcessDiagnosticsSignalFailedError: recordSamplingFailure,
+    }),
   );
 
   yield* Effect.forever(sampleOnce.pipe(Effect.andThen(Effect.sleep(SAMPLE_INTERVAL_MS)))).pipe(
     Effect.forkScoped,
   );
 
-  const readHistory: ProcessResourceMonitorShape["readHistory"] = (input) =>
+  const readHistory: ProcessResourceMonitor["Service"]["readHistory"] = (input) =>
     Effect.gen(function* () {
       const readAt = yield* DateTime.now;
       const readAtMs = DateTime.toEpochMillis(readAt);
@@ -289,11 +319,11 @@ export const make = Effect.fn("makeProcessResourceMonitor")(function* () {
         readAtMs,
         windowMs: input.windowMs,
         bucketMs: input.bucketMs,
-        lastError: current.lastError,
+        lastFailure: current.lastFailure,
       });
     });
 
   return ProcessResourceMonitor.of({ readHistory });
 });
 
-export const layer = Layer.effect(ProcessResourceMonitor, make());
+export const layer = Layer.effect(ProcessResourceMonitor, make);

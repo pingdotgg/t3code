@@ -5,7 +5,7 @@ import {
   EnvironmentHttpInternalServerError,
   EnvironmentHttpUnauthorizedError,
 } from "@t3tools/contracts";
-import { makeEnvironmentHttpApiClient } from "@t3tools/client-runtime";
+import { makeEnvironmentHttpApiClient } from "@t3tools/client-runtime/rpc";
 import {
   RelayCloudEnvironmentHealthProofPayload,
   RelayEnvironmentHealthResponse,
@@ -35,7 +35,9 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import { FetchHttpClient, HttpClient } from "effect/unstable/http";
+import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientError from "effect/unstable/http/HttpClientError";
 
 import * as EnvironmentLinks from "./EnvironmentLinks.ts";
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
@@ -139,22 +141,20 @@ export type EnvironmentConnectorError =
 export const ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS = 10_000;
 const ENVIRONMENT_HEALTH_CLOCK_SKEW_MILLIS = 60 * 1_000;
 
-export interface EnvironmentConnectorShape {
-  readonly connect: (input: {
-    readonly userId: string;
-    readonly environmentId: string;
-    readonly clientProofKeyThumbprint: string;
-    readonly deviceId?: string;
-  }) => Effect.Effect<RelayEnvironmentConnectResponse, EnvironmentConnectorError>;
-  readonly status: (input: {
-    readonly userId: string;
-    readonly environmentId: string;
-  }) => Effect.Effect<RelayEnvironmentStatusResponse, EnvironmentConnectorError>;
-}
-
 export class EnvironmentConnector extends Context.Service<
   EnvironmentConnector,
-  EnvironmentConnectorShape
+  {
+    readonly connect: (input: {
+      readonly userId: string;
+      readonly environmentId: string;
+      readonly clientProofKeyThumbprint: string;
+      readonly deviceId?: string;
+    }) => Effect.Effect<RelayEnvironmentConnectResponse, EnvironmentConnectorError>;
+    readonly status: (input: {
+      readonly userId: string;
+      readonly environmentId: string;
+    }) => Effect.Effect<RelayEnvironmentStatusResponse, EnvironmentConnectorError>;
+  }
 >()("t3code-relay/environments/EnvironmentConnector") {}
 
 const decodeMintResponseProof = Schema.decodeUnknownEffect(
@@ -178,6 +178,24 @@ function environmentHealthRequestFailureMessage(cause: unknown): string {
     ? `Managed endpoint health request failed: ${cause.message}`
     : "Managed endpoint health request failed.";
 }
+
+function environmentHealthRequestFailureReason(cause: unknown): string {
+  if (isEnvironmentHealthError(cause)) {
+    return cause._tag;
+  }
+  if (HttpClientError.isHttpClientError(cause)) {
+    return cause.reason._tag;
+  }
+  if (Schema.isSchemaError(cause)) {
+    return "SchemaError";
+  }
+  return cause instanceof Error && cause.name ? cause.name : "Unknown";
+}
+
+const currentTraceId = Effect.currentSpan.pipe(
+  Effect.map((span) => span.traceId),
+  Effect.orElseSucceed(() => "unavailable"),
+);
 
 const withoutRedirects = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }));
@@ -295,9 +313,9 @@ const make = Effect.gen(function* () {
     );
   const resolveManagedEndpoint = Effect.fn("relay.environment_connector.resolve_managed_endpoint")(
     function* (input: {
-      readonly userId: string;
       readonly operation: "connect" | "status";
       readonly link: EnvironmentLinks.RelayLinkedEnvironmentRecord;
+      readonly allocation: ManagedEndpointAllocations.ManagedEndpointAllocation | null;
     }) {
       if (input.link.endpoint.providerKind !== "cloudflare_tunnel") {
         yield* Effect.annotateCurrentSpan({
@@ -309,11 +327,7 @@ const make = Effect.gen(function* () {
           reason: "endpoint_provider_not_managed",
         });
       }
-      const allocation = yield* allocations.get({
-        userId: input.userId,
-        environmentId: input.link.environmentId,
-      });
-      if (!allocation) {
+      if (!input.allocation) {
         return yield* new EnvironmentConnectNotAuthorized({
           environmentId: input.link.environmentId,
           operation: input.operation,
@@ -321,10 +335,10 @@ const make = Effect.gen(function* () {
         });
       }
       const allocationAttributes = {
-        "relay.authorization.allocation_hostname": allocation.hostname,
-        "relay.authorization.allocation_has_ready_at": allocation.readyAt !== null,
-        "relay.authorization.allocation_has_tunnel_id": allocation.tunnelId !== null,
-        "relay.authorization.allocation_has_dns_record_id": allocation.dnsRecordId !== null,
+        "relay.authorization.allocation_hostname": input.allocation.hostname,
+        "relay.authorization.allocation_has_ready_at": input.allocation.readyAt !== null,
+        "relay.authorization.allocation_has_tunnel_id": input.allocation.tunnelId !== null,
+        "relay.authorization.allocation_has_dns_record_id": input.allocation.dnsRecordId !== null,
       } as const;
       if (!settings.managedEndpointBaseDomain) {
         yield* Effect.annotateCurrentSpan(allocationAttributes);
@@ -335,9 +349,9 @@ const make = Effect.gen(function* () {
         });
       }
       if (
-        allocation.readyAt === null ||
-        allocation.tunnelId === null ||
-        allocation.dnsRecordId === null
+        input.allocation.readyAt === null ||
+        input.allocation.tunnelId === null ||
+        input.allocation.dnsRecordId === null
       ) {
         yield* Effect.annotateCurrentSpan(allocationAttributes);
         return yield* new EnvironmentConnectNotAuthorized({
@@ -346,7 +360,9 @@ const make = Effect.gen(function* () {
           reason: "managed_endpoint_allocation_not_ready",
         });
       }
-      if (!isManagedEndpointHostname(allocation.hostname, settings.managedEndpointBaseDomain)) {
+      if (
+        !isManagedEndpointHostname(input.allocation.hostname, settings.managedEndpointBaseDomain)
+      ) {
         yield* Effect.annotateCurrentSpan({
           ...allocationAttributes,
           "relay.authorization.managed_endpoint_base_domain": settings.managedEndpointBaseDomain,
@@ -358,7 +374,7 @@ const make = Effect.gen(function* () {
         });
       }
       const endpoint = ManagedEndpointAllocations.resolveReadyManagedEndpoint({
-        allocation,
+        allocation: input.allocation,
         baseDomain: settings.managedEndpointBaseDomain,
       });
       if (
@@ -393,7 +409,13 @@ const make = Effect.gen(function* () {
         "relay.environment_id": input.environmentId,
         "relay.operation": "status",
       });
-      const link = yield* links.getForUser(input);
+      const { link, allocation } = yield* Effect.all(
+        {
+          link: links.getForUser(input),
+          allocation: allocations.get(input),
+        },
+        { concurrency: 2 },
+      );
       if (!link) {
         return yield* new EnvironmentConnectNotAuthorized({
           environmentId: input.environmentId,
@@ -402,9 +424,9 @@ const make = Effect.gen(function* () {
         });
       }
       const endpoint = yield* resolveManagedEndpoint({
-        userId: input.userId,
         operation: "status",
         link,
+        allocation,
       });
       const now = yield* DateTime.now;
       const expiresAt = DateTime.add(now, { minutes: 2 });
@@ -453,8 +475,9 @@ const make = Effect.gen(function* () {
         ),
       );
       const checkedAt = DateTime.formatIso(now);
+      const traceId = yield* currentTraceId;
       const environmentClient = yield* makeEnvironmentClient(endpoint.httpBaseUrl);
-      const responseOption = yield* environmentClient.cloud.health({ payload: { proof } }).pipe(
+      const responseOption = yield* environmentClient.connect.health({ payload: { proof } }).pipe(
         withoutRedirects,
         Effect.match({
           onFailure: (cause) => ({ _tag: "Failure" as const, cause }),
@@ -463,21 +486,44 @@ const make = Effect.gen(function* () {
         Effect.timeoutOption(Duration.millis(ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS)),
       );
       if (Option.isNone(responseOption)) {
+        yield* Effect.annotateCurrentSpan({
+          "relay.environment_health.outcome": "timeout",
+          "relay.environment_health.trace_id": traceId,
+        });
+        yield* Effect.logWarning("Managed endpoint health request timed out", {
+          environmentId: link.environmentId,
+          endpoint: endpoint.httpBaseUrl,
+          traceId,
+        });
         return {
           environmentId: link.environmentId,
           endpoint,
           status: "offline" as const,
           checkedAt,
           error: "Managed endpoint health request timed out.",
+          traceId,
         };
       }
       if (responseOption.value._tag === "Failure") {
+        const failureReason = environmentHealthRequestFailureReason(responseOption.value.cause);
+        yield* Effect.annotateCurrentSpan({
+          "relay.environment_health.outcome": "failure",
+          "relay.environment_health.failure_reason": failureReason,
+          "relay.environment_health.trace_id": traceId,
+        });
+        yield* Effect.logWarning("Managed endpoint health request failed", {
+          environmentId: link.environmentId,
+          endpoint: endpoint.httpBaseUrl,
+          failureReason,
+          traceId,
+        });
         return {
           environmentId: link.environmentId,
           endpoint,
           status: "offline" as const,
           checkedAt,
           error: environmentHealthRequestFailureMessage(responseOption.value.cause),
+          traceId,
         };
       }
       const decoded = responseOption.value.response;
@@ -518,7 +564,13 @@ const make = Effect.gen(function* () {
           reason: "client_proof_key_thumbprint_missing",
         });
       }
-      const link = yield* links.getForUser(input);
+      const { link, allocation } = yield* Effect.all(
+        {
+          link: links.getForUser(input),
+          allocation: allocations.get(input),
+        },
+        { concurrency: 2 },
+      );
       if (!link) {
         return yield* new EnvironmentConnectNotAuthorized({
           environmentId: input.environmentId,
@@ -527,9 +579,9 @@ const make = Effect.gen(function* () {
         });
       }
       const endpoint = yield* resolveManagedEndpoint({
-        userId: input.userId,
         operation: "connect",
         link,
+        allocation,
       });
       const now = yield* DateTime.now;
       const expiresAt = DateTime.add(now, { minutes: 2 });
@@ -581,30 +633,32 @@ const make = Effect.gen(function* () {
         ),
       );
       const environmentClient = yield* makeEnvironmentClient(endpoint.httpBaseUrl);
-      const decoded = yield* environmentClient.cloud.t3MintCredential({ payload: { proof } }).pipe(
-        withoutRedirects,
-        Effect.mapError(
-          (cause) =>
-            new EnvironmentMintRequestFailed({
-              environmentId: input.environmentId,
-              operation: "connect",
-              cause,
+      const decoded = yield* environmentClient.connect
+        .t3MintCredential({ payload: { proof } })
+        .pipe(
+          withoutRedirects,
+          Effect.mapError(
+            (cause) =>
+              new EnvironmentMintRequestFailed({
+                environmentId: input.environmentId,
+                operation: "connect",
+                cause,
+              }),
+          ),
+          Effect.timeoutOption(Duration.millis(ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS)),
+          Effect.flatMap(
+            Option.match({
+              onNone: () =>
+                Effect.fail(
+                  new EnvironmentMintRequestTimedOut({
+                    environmentId: input.environmentId,
+                    timeoutMs: ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS,
+                  }),
+                ),
+              onSome: Effect.succeed,
             }),
-        ),
-        Effect.timeoutOption(Duration.millis(ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS)),
-        Effect.flatMap(
-          Option.match({
-            onNone: () =>
-              Effect.fail(
-                new EnvironmentMintRequestTimedOut({
-                  environmentId: input.environmentId,
-                  timeoutMs: ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS,
-                }),
-              ),
-            onSome: Effect.succeed,
-          }),
-        ),
-      );
+          ),
+        );
       const verified = yield* verifyEnvironmentResponse({
         response: decoded,
         environmentId: input.environmentId,

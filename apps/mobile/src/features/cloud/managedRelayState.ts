@@ -1,33 +1,26 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   createManagedRelayQueryManager,
-  ManagedRelayClient,
   managedRelaySessionAtom,
   readManagedRelaySnapshotState,
-} from "@t3tools/client-runtime";
+} from "@t3tools/client-runtime/relay";
 import type {
   RelayClientEnvironmentRecord,
   RelayEnvironmentStatusResponse,
 } from "@t3tools/contracts/relay";
-import * as Context from "effect/Context";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
 
-import { mobileRuntime } from "../../lib/runtime";
+import { runtimeContextLayer } from "../../lib/runtime";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { cloudDebugLog } from "./cloudDebugLog";
 
-const managedRelayAtomRuntime = Atom.runtime(
-  Layer.effect(
-    ManagedRelayClient,
-    mobileRuntime.contextEffect.pipe(
-      Effect.map((context) => Context.get(context, ManagedRelayClient)),
-    ),
-  ),
-);
+const managedRelayAtomRuntime = Atom.runtime(runtimeContextLayer);
 
-export const managedRelayQueryManager = createManagedRelayQueryManager(managedRelayAtomRuntime);
+export const managedRelayQueryManager = createManagedRelayQueryManager(managedRelayAtomRuntime, {
+  onQueryEvent: (event) =>
+    cloudDebugLog(`query:${event.operation}:${event.stage}:${event.phase}`, { ...event }),
+});
 
 const EMPTY_ENVIRONMENTS_ATOM = Atom.make(
   AsyncResult.success<ReadonlyArray<RelayClientEnvironmentRecord>>([]),
@@ -44,6 +37,15 @@ export function useManagedRelayEnvironments() {
     ? managedRelayQueryManager.environmentsAtom(accountId)
     : EMPTY_ENVIRONMENTS_ATOM;
   const result = useAtomValue(atom);
+  const snapshot = readManagedRelaySnapshotState(result);
+  useEffect(() => {
+    if (snapshot.error) {
+      console.error("[t3-cloud] Relay environment listing failed", {
+        message: snapshot.error,
+        traceId: snapshot.errorTraceId,
+      });
+    }
+  }, [snapshot.error, snapshot.errorTraceId]);
   const refresh = useCallback(() => {
     if (accountId) {
       managedRelayQueryManager.refreshEnvironments(appAtomRegistry, accountId);
@@ -51,7 +53,7 @@ export function useManagedRelayEnvironments() {
   }, [accountId]);
 
   return {
-    ...readManagedRelaySnapshotState(result),
+    ...snapshot,
     accountId,
     refresh,
   };
@@ -64,6 +66,16 @@ export function useManagedRelayEnvironmentStatus(environment: RelayClientEnviron
     ? managedRelayQueryManager.environmentStatusAtom({ accountId, environment })
     : EMPTY_ENVIRONMENT_STATUS_ATOM;
   const result = useAtomValue(atom);
+  const snapshot = readManagedRelaySnapshotState(result);
+  useEffect(() => {
+    if (snapshot.error) {
+      console.error("[t3-cloud] Relay environment status failed", {
+        environmentId: environment.environmentId,
+        message: snapshot.error,
+        traceId: snapshot.errorTraceId,
+      });
+    }
+  }, [environment.environmentId, snapshot.error, snapshot.errorTraceId]);
   const refresh = useCallback(() => {
     if (accountId) {
       managedRelayQueryManager.refreshEnvironmentStatus(appAtomRegistry, {
@@ -74,7 +86,7 @@ export function useManagedRelayEnvironmentStatus(environment: RelayClientEnviron
   }, [accountId, environment]);
 
   return {
-    ...readManagedRelaySnapshotState(result),
+    ...snapshot,
     accountId,
     refresh,
   };

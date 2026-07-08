@@ -1,23 +1,27 @@
+import { httpHeaderRedactionLayer } from "@t3tools/shared/httpObservability";
 import { makeLocalFileTracer, makeTraceSink } from "@t3tools/shared/observability";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as References from "effect/References";
 import * as Tracer from "effect/Tracer";
-import { OtlpMetrics, OtlpSerialization, OtlpTracer } from "effect/unstable/observability";
+import * as OtlpMetrics from "effect/unstable/observability/OtlpMetrics";
+import * as OtlpSerialization from "effect/unstable/observability/OtlpSerialization";
+import * as OtlpTracer from "effect/unstable/observability/OtlpTracer";
 
-import { ServerConfig } from "../../config.ts";
+import * as ServerConfig from "../../config.ts";
 import { ServerLoggerLive } from "../../serverLogger.ts";
-import { BrowserTraceCollector } from "../Services/BrowserTraceCollector.ts";
+import * as BrowserTraceCollector from "../BrowserTraceCollector.ts";
 
 const otlpSerializationLayer = OtlpSerialization.layerJson;
 
 export const ObservabilityLive = Layer.unwrap(
   Effect.gen(function* () {
-    const config = yield* ServerConfig;
+    const config = yield* ServerConfig.ServerConfig;
 
     const traceReferencesLayer = Layer.mergeAll(
       Layer.succeed(Tracer.MinimumTraceLevel, config.traceMinLevel),
       Layer.succeed(References.TracerTimingEnabled, config.traceTimingEnabled),
+      httpHeaderRedactionLayer,
     );
 
     const tracerLayer = Layer.unwrap(
@@ -54,14 +58,7 @@ export const ObservabilityLive = Layer.unwrap(
 
         return Layer.mergeAll(
           Layer.succeed(Tracer.Tracer, tracer),
-          Layer.succeed(BrowserTraceCollector, {
-            record: (records) =>
-              Effect.sync(() => {
-                for (const record of records) {
-                  sink.push(record);
-                }
-              }),
-          }),
+          BrowserTraceCollector.layer(sink),
         );
       }),
     ).pipe(Layer.provideMerge(otlpSerializationLayer));

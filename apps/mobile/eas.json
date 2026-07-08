@@ -1,10 +1,12 @@
 {
   "cli": {
     "version": ">= 18.4.0",
-    "appVersionSource": "remote"
+    "appVersionSource": "remote",
+    "promptToConfigurePushNotifications": false
   },
   "build": {
     "development": {
+      "corepack": true,
       "env": {
         "APP_VARIANT": "development"
       },
@@ -13,6 +15,7 @@
       "distribution": "internal"
     },
     "preview": {
+      "corepack": true,
       "env": {
         "APP_VARIANT": "preview"
       },
@@ -21,6 +24,7 @@
       "distribution": "internal"
     },
     "preview:dev": {
+      "corepack": true,
       "env": {
         "APP_VARIANT": "preview",
         "MOBILE_VERSION_POLICY": "fingerprint"
@@ -34,6 +38,7 @@
       }
     },
     "production": {
+      "corepack": true,
       "env": {
         "APP_VARIANT": "production"
       },
@@ -45,7 +50,10 @@
   "submit": {
     "production": {
       "ios": {
-        "ascAppId": "6761315631"
+        "ascAppId": "6787819824"
+      },
+      "android": {
+        "track": "internal"
       }
     }
   }

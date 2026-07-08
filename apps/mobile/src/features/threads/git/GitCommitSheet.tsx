@@ -1,19 +1,25 @@
-import { useRouter } from "expo-router";
+import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useCallback, useState } from "react";
 import { Pressable, ScrollView, View, useColorScheme } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../../lib/useThemeColor";
 
 import { AppText as Text, AppTextInput as TextInput } from "../../../components/AppText";
-import { useVcsStatus } from "../../../state/use-vcs-status";
+import { useEnvironmentQuery } from "../../../state/query";
 import { useThreadSelection } from "../../../state/use-thread-selection";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
 import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-worktree";
+import { vcsEnvironment } from "../../../state/vcs";
 import { SheetActionButton } from "./gitSheetComponents";
 
-export function GitCommitSheet() {
-  const router = useRouter();
+type GitCommitSheetProps = StaticScreenProps<{
+  readonly environmentId: string;
+  readonly threadId: string;
+}>;
+
+export function GitCommitSheet(_props: GitCommitSheetProps) {
+  const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const isDarkMode = useColorScheme() === "dark";
   const { selectedThread } = useThreadSelection();
@@ -27,10 +33,14 @@ export function GitCommitSheet() {
   const inputBg = useThemeColor("--color-input");
   const foregroundColor = useThemeColor("--color-foreground");
 
-  const gitStatus = useVcsStatus({
-    environmentId: selectedThread?.environmentId ?? null,
-    cwd: selectedThreadCwd,
-  });
+  const gitStatus = useEnvironmentQuery(
+    selectedThread !== null && selectedThreadCwd !== null
+      ? vcsEnvironment.status({
+          environmentId: selectedThread.environmentId,
+          input: { cwd: selectedThreadCwd },
+        })
+      : null,
+  );
 
   const busy = gitState.gitOperationLabel !== null;
   const isDefaultRef = gitStatus.data?.isDefaultRef ?? false;
@@ -50,7 +60,7 @@ export function GitCommitSheet() {
   const runCommitAction = useCallback(
     async (featureBranch: boolean) => {
       const commitMessage = dialogCommitMessage.trim();
-      router.dismiss();
+      navigation.goBack();
       await gitActions.onRunSelectedThreadGitAction({
         action: "commit",
         featureBranch,
@@ -58,7 +68,7 @@ export function GitCommitSheet() {
         ...(!allSelected ? { filePaths: selectedFiles.map((file) => file.path) } : {}),
       });
     },
-    [allSelected, dialogCommitMessage, gitActions, router, selectedFiles],
+    [allSelected, dialogCommitMessage, gitActions, navigation, selectedFiles],
   );
 
   return (
@@ -74,14 +84,14 @@ export function GitCommitSheet() {
     >
       <View className="gap-3 rounded-[22px] border border-border bg-card px-4 py-4">
         <View className="flex-row items-center justify-between gap-3">
-          <Text className="text-foreground-muted text-[13px] font-medium">Branch</Text>
-          <Text className="text-foreground text-[15px] font-t3-bold">
+          <Text className="text-foreground-muted text-sm font-medium">Branch</Text>
+          <Text className="text-foreground text-base font-t3-bold">
             {gitStatus.data?.refName ?? "(detached HEAD)"}
           </Text>
         </View>
         {isDefaultRef ? (
           <Text
-            className="text-[12px] leading-[18px]"
+            className="text-xs leading-normal"
             style={{ color: isDarkMode ? "#fbbf24" : "#b45309" }}
           >
             Warning: this is the default branch.
@@ -92,8 +102,8 @@ export function GitCommitSheet() {
       <View className="gap-3 rounded-[22px] border border-border bg-card px-4 py-4">
         <View className="flex-row items-center justify-between gap-3">
           <View className="gap-1">
-            <Text className="text-foreground text-[16px] font-t3-bold">Files</Text>
-            <Text className="text-foreground-muted text-[12px] leading-[18px]">
+            <Text className="text-foreground text-base font-t3-bold">Files</Text>
+            <Text className="text-foreground-muted text-xs leading-normal">
               {selectedFiles.length} selected · +{selectedInsertions} / -{selectedDeletions}
             </Text>
           </View>
@@ -103,14 +113,14 @@ export function GitCommitSheet() {
                 className="bg-subtle rounded-full px-3 py-2"
                 onPress={() => setExcludedFiles(new Set())}
               >
-                <Text className="text-foreground text-[11px] font-t3-bold uppercase">Reset</Text>
+                <Text className="text-foreground text-2xs font-t3-bold uppercase">Reset</Text>
               </Pressable>
             ) : null}
             <Pressable
               className="bg-subtle rounded-full px-3 py-2"
               onPress={() => setIsEditingFiles((current) => !current)}
             >
-              <Text className="text-foreground text-[11px] font-t3-bold uppercase">
+              <Text className="text-foreground text-2xs font-t3-bold uppercase">
                 {isEditingFiles ? "Done" : "Edit"}
               </Text>
             </Pressable>
@@ -118,26 +128,26 @@ export function GitCommitSheet() {
         </View>
 
         {allFiles.length === 0 ? (
-          <Text className="text-foreground-secondary text-[13px] leading-[19px]">
+          <Text className="text-foreground-secondary text-sm leading-normal">
             No changed files are available to commit.
           </Text>
         ) : !isEditingFiles ? (
           <View className="gap-2">
             {selectedFilePreview.map((file) => (
               <View key={file.path} className="flex-row items-center justify-between gap-3">
-                <Text className="text-foreground flex-1 text-[13px] font-medium" numberOfLines={1}>
+                <Text className="text-foreground flex-1 text-sm font-medium" numberOfLines={1}>
                   {file.path}
                 </Text>
-                <Text className="text-[12px] font-t3-bold" style={{ color: "#10b981" }}>
+                <Text className="text-xs font-t3-bold" style={{ color: "#10b981" }}>
                   +{file.insertions}
                 </Text>
-                <Text className="text-[12px] font-t3-bold" style={{ color: "#f43f5e" }}>
+                <Text className="text-xs font-t3-bold" style={{ color: "#f43f5e" }}>
                   -{file.deletions}
                 </Text>
               </View>
             ))}
             {selectedFiles.length > selectedFilePreview.length ? (
-              <Text className="text-foreground-muted text-[12px] leading-[17px]">
+              <Text className="text-foreground-muted text-xs leading-snug">
                 +{selectedFiles.length - selectedFilePreview.length} more files
               </Text>
             ) : null}
@@ -172,21 +182,21 @@ export function GitCommitSheet() {
                     <View className="flex-1 gap-1">
                       <Text
                         selectable
-                        className={`text-[13px] font-t3-bold ${included ? "text-foreground" : "text-foreground-muted"}`}
+                        className={`text-sm font-t3-bold ${included ? "text-foreground" : "text-foreground-muted"}`}
                       >
                         {file.path}
                       </Text>
                       {!included ? (
-                        <Text className="text-foreground-muted text-[11px] leading-[16px]">
+                        <Text className="text-foreground-muted text-2xs leading-normal">
                           Excluded from this commit
                         </Text>
                       ) : null}
                     </View>
                     <View className="items-end gap-1">
-                      <Text className="text-[12px] font-t3-bold" style={{ color: "#10b981" }}>
+                      <Text className="text-xs font-t3-bold" style={{ color: "#10b981" }}>
                         +{file.insertions}
                       </Text>
-                      <Text className="text-[12px] font-t3-bold" style={{ color: "#f43f5e" }}>
+                      <Text className="text-xs font-t3-bold" style={{ color: "#f43f5e" }}>
                         -{file.deletions}
                       </Text>
                     </View>
@@ -199,14 +209,14 @@ export function GitCommitSheet() {
       </View>
 
       <View className="gap-2">
-        <Text className="text-foreground text-[13px] font-t3-bold">Commit message</Text>
+        <Text className="text-foreground text-sm font-t3-bold">Commit message</Text>
         <TextInput
           multiline
           value={dialogCommitMessage}
           onChangeText={setDialogCommitMessage}
           placeholder="Leave empty to auto-generate"
           textAlignVertical="top"
-          className="min-h-[128px] rounded-[20px] px-4 py-3.5 font-sans text-[15px]"
+          className="min-h-[128px] rounded-[20px] px-4 py-3.5 font-sans text-base"
           style={{
             minHeight: 128,
             borderWidth: 1,

@@ -3,21 +3,21 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
-import { HttpClient } from "effect/unstable/http";
+import * as Tracer from "effect/Tracer";
+import { HttpClient, HttpServerRequest } from "effect/unstable/http";
 
+import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import { ServerEnvironment } from "../environment/Services/ServerEnvironment.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
 import { consumeCloudReplayGuards, reconcileDesiredCloudLink } from "./http.ts";
-import {
-  CloudManagedEndpointRuntime,
-  type CloudManagedEndpointRuntimeShape,
-} from "./ManagedEndpointRuntime.ts";
+import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
+import { traceAuthenticatedRelayRequest, traceRelayRequest } from "./traceRelayRequest.ts";
 
 const storeFailure = (tag: "AlreadyExists" | "PermissionDenied") =>
-  new ServerSecretStore.SecretStoreError({
-    message: "Failed to persist cloud replay guard.",
+  new ServerSecretStore.SecretStorePersistError({
+    resource: "cloud replay guard",
     cause: PlatformError.systemError({
       _tag: tag,
       module: "FileSystem",
@@ -29,8 +29,8 @@ const storeFailure = (tag: "AlreadyExists" | "PermissionDenied") =>
 const unusedSecretStoreOperation = () => Effect.die("unused secret-store operation");
 
 function makeSecretStore(
-  create: ServerSecretStore.ServerSecretStoreShape["create"],
-): ServerSecretStore.ServerSecretStoreShape {
+  create: ServerSecretStore.ServerSecretStore["Service"]["create"],
+): ServerSecretStore.ServerSecretStore["Service"] {
   return {
     get: unusedSecretStoreOperation,
     set: unusedSecretStoreOperation,
@@ -39,6 +39,30 @@ function makeSecretStore(
     remove: unusedSecretStoreOperation,
   };
 }
+
+it("preserves messages surfaced by cloud 500 responses", () => {
+  const cause = new Error("cloud operation failed");
+
+  expect([
+    new EnvironmentAuth.ServerAuthLinkedCloudAccountVerificationError({ cause }).message,
+    new EnvironmentAuth.ServerAuthLinkedCloudAccountReadError({ cause }).message,
+    new EnvironmentAuth.ServerAuthLinkedCloudAccountMissingError({}).message,
+    new EnvironmentAuth.ServerAuthCloudLinkJwtSigningError({ cause }).message,
+    new EnvironmentAuth.ServerAuthCloudMintPublicKeyMissingError({}).message,
+    new EnvironmentAuth.ServerAuthCloudRelayIssuerMissingError({}).message,
+    new EnvironmentAuth.ServerAuthCloudHealthJwtSigningError({ cause }).message,
+    new EnvironmentAuth.ServerAuthCloudMintJwtSigningError({ cause }).message,
+  ]).toEqual([
+    "Could not verify the linked cloud account.",
+    "Could not read the linked cloud account.",
+    "Cloud linked user is not installed for this environment.",
+    "Failed to sign cloud link JWT.",
+    "Cloud mint public key is not installed for this environment.",
+    "Cloud relay issuer is not installed for this environment.",
+    "Failed to sign cloud health JWT.",
+    "Failed to sign cloud mint JWT.",
+  ]);
+});
 
 describe("consumeCloudReplayGuards", () => {
   it.effect("reports already-created guards as replay conflicts", () =>
@@ -69,6 +93,70 @@ describe("consumeCloudReplayGuards", () => {
   );
 });
 
+describe("relay request tracing", () => {
+  it.effect("does not accept an unauthenticated request trace parent", () =>
+    Effect.gen(function* () {
+      const spans: Array<Tracer.Span> = [];
+      const productTracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+      const request = HttpServerRequest.fromWeb(
+        new Request("https://environment.example.test/api/t3-cloud/mint-credential", {
+          headers: {
+            traceparent: "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
+          },
+        }),
+      );
+
+      yield* traceRelayRequest(Effect.void.pipe(Effect.withSpan("relay.mint.handler"))).pipe(
+        Effect.provideService(HttpServerRequest.HttpServerRequest, request),
+        Effect.provideService(RelayClientTracer, Option.some(productTracer)),
+      );
+
+      expect(spans).toHaveLength(1);
+      const span = spans[0]!;
+      expect(span.traceId).not.toBe("0123456789abcdef0123456789abcdef");
+      expect(Option.isNone(span.parent)).toBe(true);
+    }),
+  );
+
+  it.effect("continues an authenticated relay trace with the product tracer", () =>
+    Effect.gen(function* () {
+      const spans: Array<Tracer.Span> = [];
+      const productTracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+      const request = HttpServerRequest.fromWeb(
+        new Request("https://environment.example.test/api/t3-cloud/mint-credential", {
+          headers: {
+            traceparent: "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
+          },
+        }),
+      );
+
+      yield* traceAuthenticatedRelayRequest(
+        Effect.void.pipe(Effect.withSpan("relay.mint.handler")),
+      ).pipe(
+        Effect.provideService(HttpServerRequest.HttpServerRequest, request),
+        Effect.provideService(RelayClientTracer, Option.some(productTracer)),
+      );
+
+      expect(spans).toHaveLength(1);
+      const span = spans[0]!;
+      expect(span.traceId).toBe("0123456789abcdef0123456789abcdef");
+      expect(Option.getOrUndefined(span.parent)?.spanId).toBe("0123456789abcdef");
+    }),
+  );
+});
+
 describe("reconcileDesiredCloudLink", () => {
   it.effect("requires stored CLI authorization without exposing an HTTP endpoint", () =>
     Effect.gen(function* () {
@@ -76,7 +164,7 @@ describe("reconcileDesiredCloudLink", () => {
 
       expect(error).toMatchObject({
         _tag: "EnvironmentHttpUnauthorizedError",
-        message: "Run `t3 cloud link` to authorize this environment.",
+        message: "Run `t3 connect link` to authorize this environment.",
       });
     }).pipe(
       Effect.provideService(
@@ -84,21 +172,21 @@ describe("reconcileDesiredCloudLink", () => {
         makeSecretStore(unusedSecretStoreOperation),
       ),
       Effect.provideService(
-        ServerEnvironment,
-        ServerEnvironment.of({
+        ServerEnvironment.ServerEnvironment,
+        ServerEnvironment.ServerEnvironment.of({
           getEnvironmentId: unusedSecretStoreOperation(),
           getDescriptor: unusedSecretStoreOperation(),
         }),
       ),
       Effect.provideService(
-        CloudManagedEndpointRuntime,
-        CloudManagedEndpointRuntime.of({
+        ManagedEndpointRuntime.CloudManagedEndpointRuntime,
+        ManagedEndpointRuntime.CloudManagedEndpointRuntime.of({
           applyConfig: unusedSecretStoreOperation,
-        } satisfies CloudManagedEndpointRuntimeShape),
+        } satisfies ManagedEndpointRuntime.CloudManagedEndpointRuntime["Service"]),
       ),
       Effect.provideService(
         EnvironmentAuth.EnvironmentAuth,
-        EnvironmentAuth.EnvironmentAuth.of({} as EnvironmentAuth.EnvironmentAuthShape),
+        EnvironmentAuth.EnvironmentAuth.of({} as EnvironmentAuth.EnvironmentAuth["Service"]),
       ),
       Effect.provideService(
         CliTokenManager.CloudCliTokenManager,

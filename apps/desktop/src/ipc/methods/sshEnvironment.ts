@@ -1,11 +1,11 @@
 import {
   bootstrapRemoteBearerSession,
-  fetchRemoteEnvironmentDescriptor,
   fetchRemoteSessionState,
   issueRemoteWebSocketTicket,
   RemoteEnvironmentAuthUndeclaredStatusError,
   type RemoteEnvironmentAuthError,
-} from "@t3tools/client-runtime";
+} from "@t3tools/client-runtime/authorization";
+import { fetchRemoteEnvironmentDescriptor } from "@t3tools/client-runtime/environment";
 import {
   EnvironmentAuthInvalidError,
   DesktopDiscoveredSshHostSchema,
@@ -33,7 +33,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import * as IpcChannels from "../channels.ts";
-import { makeIpcMethod } from "../DesktopIpc.ts";
+import * as DesktopIpc from "../DesktopIpc.ts";
 import * as DesktopSshEnvironment from "../../ssh/DesktopSshEnvironment.ts";
 import * as DesktopSshPasswordPrompts from "../../ssh/DesktopSshPasswordPrompts.ts";
 
@@ -107,7 +107,7 @@ const withLoopbackSshApi =
       ),
     );
 
-export const discoverSshHosts = makeIpcMethod({
+export const discoverSshHosts = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.DISCOVER_SSH_HOSTS_CHANNEL,
   payload: Schema.Void,
   result: Schema.Array(DesktopDiscoveredSshHostSchema),
@@ -117,7 +117,7 @@ export const discoverSshHosts = makeIpcMethod({
   }),
 });
 
-export const ensureSshEnvironment = makeIpcMethod({
+export const ensureSshEnvironment = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.ENSURE_SSH_ENVIRONMENT_CHANNEL,
   payload: DesktopSshEnvironmentEnsureInputSchema,
   result: DesktopSshEnvironmentEnsureResultSchema,
@@ -139,7 +139,7 @@ export const ensureSshEnvironment = makeIpcMethod({
   }),
 });
 
-export const disconnectSshEnvironment = makeIpcMethod({
+export const disconnectSshEnvironment = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.DISCONNECT_SSH_ENVIRONMENT_CHANNEL,
   payload: DesktopSshEnvironmentTargetSchema,
   result: Schema.Void,
@@ -149,7 +149,7 @@ export const disconnectSshEnvironment = makeIpcMethod({
   }),
 });
 
-export const fetchSshEnvironmentDescriptor = makeIpcMethod({
+export const fetchSshEnvironmentDescriptor = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.FETCH_SSH_ENVIRONMENT_DESCRIPTOR_CHANNEL,
   payload: DesktopSshHttpBaseUrlInputSchema,
   result: ExecutionEnvironmentDescriptor,
@@ -160,7 +160,7 @@ export const fetchSshEnvironmentDescriptor = makeIpcMethod({
   }),
 });
 
-export const bootstrapSshBearerSession = makeIpcMethod({
+export const bootstrapSshBearerSession = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.BOOTSTRAP_SSH_BEARER_SESSION_CHANNEL,
   payload: DesktopSshBearerBootstrapInputSchema,
   result: AuthAccessTokenResult,
@@ -177,7 +177,7 @@ export const bootstrapSshBearerSession = makeIpcMethod({
   }),
 });
 
-export const fetchSshSessionState = makeIpcMethod({
+export const fetchSshSessionState = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.FETCH_SSH_SESSION_STATE_CHANNEL,
   payload: DesktopSshBearerRequestInputSchema,
   result: AuthSessionState,
@@ -194,7 +194,7 @@ export const fetchSshSessionState = makeIpcMethod({
   }),
 });
 
-export const issueSshWebSocketTicket = makeIpcMethod({
+export const issueSshWebSocketTicket = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.ISSUE_SSH_WEBSOCKET_TOKEN_CHANNEL,
   payload: DesktopSshBearerRequestInputSchema,
   result: AuthWebSocketTicketResult,
@@ -211,7 +211,7 @@ export const issueSshWebSocketTicket = makeIpcMethod({
   }),
 });
 
-export const resolveSshPasswordPrompt = makeIpcMethod({
+export const resolveSshPasswordPrompt = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.RESOLVE_SSH_PASSWORD_PROMPT_CHANNEL,
   payload: DesktopSshPasswordPromptResolutionInputSchema,
   result: Schema.Void,

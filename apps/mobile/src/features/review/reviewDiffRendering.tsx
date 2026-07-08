@@ -1,6 +1,7 @@
 import { Platform, Text as NativeText, View } from "react-native";
 
 import { cn } from "../../lib/cn";
+import { MOBILE_CODE_SURFACE } from "../../lib/typography";
 
 import type { ReviewRenderableLineRow } from "./reviewModel";
 import type { ReviewHighlightedToken } from "./shikiReviewHighlighter";
@@ -11,8 +12,7 @@ export const REVIEW_MONO_FONT_FAMILY = Platform.select({
   default: "monospace",
 });
 
-export const REVIEW_DIFF_LINE_HEIGHT = 26;
-const REVIEW_DELETE_STRIPE_COUNT = REVIEW_DIFF_LINE_HEIGHT / 2;
+export const REVIEW_DIFF_LINE_HEIGHT = MOBILE_CODE_SURFACE.rowHeight;
 
 export function renderVisibleWhitespace(value: string): string {
   const expandedTabs = value.replace(/\t/g, "    ");
@@ -37,12 +37,16 @@ function diffHighlightColor(change: ReviewRenderableLineRow["change"]): string |
   return undefined;
 }
 
-export function ReviewChangeBar(props: { readonly change: ReviewRenderableLineRow["change"] }) {
+export function ReviewChangeBar(props: {
+  readonly change: ReviewRenderableLineRow["change"];
+  readonly height?: number;
+}) {
+  const height = props.height ?? REVIEW_DIFF_LINE_HEIGHT;
   if (props.change === "delete") {
     return (
-      <View className="w-[5px] overflow-hidden" style={{ height: REVIEW_DIFF_LINE_HEIGHT }}>
+      <View className="w-[5px] overflow-hidden" style={{ height }}>
         <View>
-          {Array.from({ length: REVIEW_DELETE_STRIPE_COUNT }, (_, index) => (
+          {Array.from({ length: Math.ceil(height / 2) }, (_, index) => (
             <View key={index}>
               <View className="w-[5px] bg-rose-400" style={{ height: 1 }} />
               <View style={{ height: 1 }} />
@@ -54,7 +58,7 @@ export function ReviewChangeBar(props: { readonly change: ReviewRenderableLineRo
   }
 
   return (
-    <View className="w-[5px] overflow-hidden" style={{ height: REVIEW_DIFF_LINE_HEIGHT }}>
+    <View className="w-[5px] overflow-hidden" style={{ height }}>
       <View className={cn("h-full w-[5px] flex-1", changeBarTone(props.change))} />
     </View>
   );
@@ -65,14 +69,22 @@ export function DiffTokenText(props: {
   readonly fallback: string;
   readonly change?: ReviewRenderableLineRow["change"];
   readonly className?: string;
+  readonly fontSize?: number;
+  readonly lineHeight?: number;
 }) {
+  const fontSize = props.fontSize ?? MOBILE_CODE_SURFACE.fontSize;
+  const lineHeight = props.lineHeight ?? MOBILE_CODE_SURFACE.rowHeight;
   if (!props.tokens || props.tokens.length === 0) {
     return (
       <NativeText
         numberOfLines={1}
         selectable
-        className={cn("text-[13px] leading-[17px] font-medium text-foreground", props.className)}
-        style={{ fontFamily: REVIEW_MONO_FONT_FAMILY }}
+        className={cn("font-normal text-foreground", props.className)}
+        style={{
+          fontFamily: REVIEW_MONO_FONT_FAMILY,
+          fontSize,
+          lineHeight,
+        }}
       >
         {renderVisibleWhitespace(props.fallback || " ")}
       </NativeText>
@@ -83,8 +95,12 @@ export function DiffTokenText(props: {
     <NativeText
       numberOfLines={1}
       selectable
-      className={cn("text-[13px] leading-[17px] font-medium text-foreground", props.className)}
-      style={{ fontFamily: REVIEW_MONO_FONT_FAMILY }}
+      className={cn("font-normal text-foreground", props.className)}
+      style={{
+        fontFamily: REVIEW_MONO_FONT_FAMILY,
+        fontSize,
+        lineHeight,
+      }}
     >
       {(() => {
         let offset = 0;

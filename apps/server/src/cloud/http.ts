@@ -29,6 +29,7 @@ import {
   RelayLinkProofRequest,
   RelayManagedEndpointOrigin,
 } from "@t3tools/contracts/relay";
+import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import {
   normalizeRelayIssuer,
   RELAY_HEALTH_REQUEST_TYP,
@@ -54,14 +55,8 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { requireEnvironmentScope } from "../auth/http.ts";
-import {
-  ServerEnvironment,
-  type ServerEnvironmentShape,
-} from "../environment/Services/ServerEnvironment.ts";
-import {
-  CloudManagedEndpointRuntime,
-  type CloudManagedEndpointRuntimeShape,
-} from "./ManagedEndpointRuntime.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import {
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
   CLOUD_LINKED_USER_ID,
@@ -73,9 +68,10 @@ import {
   RELAY_URL_SECRET,
 } from "./config.ts";
 import { relayUrlConfig } from "./publicConfig.ts";
-import * as CliState from "./CliState.ts";
+import { setCliDesiredCloudLink } from "./CliState.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
 import { getOrCreateEnvironmentKeyPairFromSecretStore } from "./environmentKeys.ts";
+import { traceRelayRequest } from "./traceRelayRequest.ts";
 
 const CLOUD_MINT_NONCE_PREFIX = "cloud-mint-nonce-";
 const CLOUD_MINT_JTI_PREFIX = "cloud-mint-jti-";
@@ -101,6 +97,9 @@ const failEnvironmentCloudInternalError =
       Effect.flatMap(() => Effect.fail(new EnvironmentHttpInternalServerError({ message }))),
     );
 
+const failCloudCliTokenManagerError = (error: CliTokenManager.CloudCliTokenManagerError) =>
+  failEnvironmentCloudInternalError(error.message)(error);
+
 const requireRelayUrl = relayUrlConfig.pipe(
   Effect.mapError(
     () =>
@@ -119,7 +118,7 @@ function stringToBytes(value: string): Uint8Array {
 }
 
 export function consumeCloudReplayGuards(input: {
-  readonly secrets: ServerSecretStore.ServerSecretStoreShape;
+  readonly secrets: ServerSecretStore.ServerSecretStore["Service"];
   readonly names: ReadonlyArray<string>;
   readonly value: Uint8Array;
 }) {
@@ -127,7 +126,7 @@ export function consumeCloudReplayGuards(input: {
     input.names.map((name) =>
       input.secrets.create(name, input.value).pipe(
         Effect.as(true),
-        Effect.catchTag("SecretStoreError", (error) =>
+        Effect.catchIf(ServerSecretStore.isSecretStoreError, (error) =>
           ServerSecretStore.isSecretAlreadyExistsError(error)
             ? Effect.succeed(false)
             : Effect.fail(error),
@@ -206,22 +205,21 @@ function validateRelayConfigPayload(
 }
 
 function validateLinkedCloudUser(input: {
-  readonly secrets: ServerSecretStore.ServerSecretStoreShape;
+  readonly secrets: ServerSecretStore.ServerSecretStore["Service"];
   readonly cloudUserId: string;
 }): Effect.Effect<void, EnvironmentAuth.ServerAuthInternalError | EnvironmentHttpConflictError> {
   return input.secrets.get(CLOUD_LINKED_USER_ID).pipe(
     Effect.mapError(
       (cause) =>
-        new EnvironmentAuth.ServerAuthInternalError({
-          message: "Could not verify the linked cloud account.",
+        new EnvironmentAuth.ServerAuthLinkedCloudAccountVerificationError({
           cause,
         }),
     ),
     Effect.flatMap((existing) => {
-      if (!existing) {
+      if (Option.isNone(existing)) {
         return Effect.void;
       }
-      const existingCloudUserId = bytesToString(existing);
+      const existingCloudUserId = bytesToString(existing.value);
       return existingCloudUserId === input.cloudUserId
         ? Effect.void
         : Effect.fail(
@@ -235,24 +233,19 @@ function validateLinkedCloudUser(input: {
 }
 
 function readInstalledCloudUserId(
-  secrets: ServerSecretStore.ServerSecretStoreShape,
+  secrets: ServerSecretStore.ServerSecretStore["Service"],
 ): Effect.Effect<string, EnvironmentAuth.ServerAuthInternalError> {
   return secrets.get(CLOUD_LINKED_USER_ID).pipe(
     Effect.mapError(
       (cause) =>
-        new EnvironmentAuth.ServerAuthInternalError({
-          message: "Could not read the linked cloud account.",
+        new EnvironmentAuth.ServerAuthLinkedCloudAccountReadError({
           cause,
         }),
     ),
     Effect.flatMap((bytes) =>
-      bytes
-        ? Effect.succeed(bytesToString(bytes))
-        : Effect.fail(
-            new EnvironmentAuth.ServerAuthInternalError({
-              message: "Cloud linked user is not installed for this environment.",
-            }),
-          ),
+      Option.isSome(bytes)
+        ? Effect.succeed(bytesToString(bytes.value))
+        : Effect.fail(new EnvironmentAuth.ServerAuthLinkedCloudAccountMissingError({})),
     ),
   );
 }
@@ -333,19 +326,19 @@ const decodeCloudHealthProof = Schema.decodeUnknownEffect(RelayCloudEnvironmentH
 const decodeCloudMintProof = Schema.decodeUnknownEffect(RelayCloudMintCredentialProofPayload);
 
 interface CloudHttpDependencies {
-  readonly secrets: ServerSecretStore.ServerSecretStoreShape;
-  readonly environment: ServerEnvironmentShape;
-  readonly endpointRuntime: CloudManagedEndpointRuntimeShape;
-  readonly environmentAuth: EnvironmentAuth.EnvironmentAuthShape;
-  readonly cliTokenManager: CliTokenManager.CloudCliTokenManagerShape;
+  readonly secrets: ServerSecretStore.ServerSecretStore["Service"];
+  readonly environment: ServerEnvironment.ServerEnvironment["Service"];
+  readonly endpointRuntime: ManagedEndpointRuntime.CloudManagedEndpointRuntime["Service"];
+  readonly environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"];
+  readonly cliTokenManager: CliTokenManager.CloudCliTokenManager["Service"];
   readonly httpClient: HttpClient.HttpClient;
 }
 
 const cloudHttpDependencies = Effect.gen(function* () {
   return {
     secrets: yield* ServerSecretStore.ServerSecretStore,
-    environment: yield* ServerEnvironment,
-    endpointRuntime: yield* CloudManagedEndpointRuntime,
+    environment: yield* ServerEnvironment.ServerEnvironment,
+    endpointRuntime: yield* ManagedEndpointRuntime.CloudManagedEndpointRuntime,
     environmentAuth: yield* EnvironmentAuth.EnvironmentAuth,
     cliTokenManager: yield* CliTokenManager.CloudCliTokenManager,
     httpClient: yield* HttpClient.HttpClient,
@@ -395,8 +388,7 @@ const makeCloudLinkProof = Effect.fn("environment.cloud.makeLinkProof")(function
   }).pipe(
     Effect.mapError(
       (cause) =>
-        new EnvironmentAuth.ServerAuthInternalError({
-          message: "Failed to sign cloud link JWT.",
+        new EnvironmentAuth.ServerAuthCloudLinkJwtSigningError({
           cause,
         }),
     ),
@@ -417,15 +409,17 @@ const cloudLinkProofHandler = Effect.fn("environment.cloud.linkProof")(
     yield* appendCloudCredentialResponseHeaders;
     return proof satisfies RelayEnvironmentLinkProof;
   },
-  Effect.catchTag("ServerAuthInternalError", (error) =>
-    failEnvironmentCloudInternalError(error.message)(error.cause),
+  Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+    failEnvironmentCloudInternalError(error.message)(error),
   ),
-  Effect.catchTags({
-    PlatformError: failEnvironmentCloudInternalError("Could not generate environment link proof."),
-    SecretStoreError: failEnvironmentCloudInternalError(
-      "Could not generate environment link proof.",
-    ),
-  }),
+  Effect.catchIf(
+    ServerSecretStore.isSecretStoreError,
+    failEnvironmentCloudInternalError("Could not generate environment link proof."),
+  ),
+  Effect.catchTag(
+    "PlatformError",
+    failEnvironmentCloudInternalError("Could not generate environment link proof."),
+  ),
 );
 
 const applyCloudRelayConfig = Effect.fn("environment.cloud.applyRelayConfig")(function* (
@@ -478,17 +472,17 @@ const cloudRelayConfigHandler = Effect.fn("environment.cloud.relayConfig")(
     yield* requireEnvironmentScope(AuthRelayWriteScope);
     return yield* applyCloudRelayConfig(dependencies, payload);
   },
-  Effect.catchTag("ServerAuthInternalError", (error) =>
-    failEnvironmentCloudInternalError(error.message)(error.cause),
+  Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+    failEnvironmentCloudInternalError(error.message)(error),
   ),
-  Effect.catchTags({
-    SchemaError: failEnvironmentCloudInternalError(
-      "Could not persist environment relay configuration.",
-    ),
-    SecretStoreError: failEnvironmentCloudInternalError(
-      "Could not persist environment relay configuration.",
-    ),
-  }),
+  Effect.catchIf(
+    ServerSecretStore.isSecretStoreError,
+    failEnvironmentCloudInternalError("Could not persist environment relay configuration."),
+  ),
+  Effect.catchTag(
+    "SchemaError",
+    failEnvironmentCloudInternalError("Could not persist environment relay configuration."),
+  ),
 );
 
 const relayClientRequest = <A>(
@@ -509,9 +503,10 @@ const relayClientRequest = <A>(
     Effect.mapError(
       (cause) =>
         new EnvironmentHttpInternalServerError({
-          message: `T3 Cloud relay request failed: ${String(cause)}`,
+          message: `T3 Connect relay request failed: ${String(cause)}`,
         }),
     ),
+    withRelayClientTracing,
   );
 
 const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesiredLinkWith")(
@@ -535,7 +530,7 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
           onNone: () =>
             Effect.fail(
               new EnvironmentHttpUnauthorizedError({
-                message: "Run `t3 cloud link` to authorize this environment.",
+                message: "Run `t3 connect link` to authorize this environment.",
               }),
             ),
           onSome: Effect.succeed,
@@ -581,7 +576,7 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
       },
       schema: RelayEnvironmentLinkResponse,
     });
-    yield* CliState.setCliDesiredCloudLink(true);
+    yield* setCliDesiredCloudLink(true);
     return yield* applyCloudRelayConfig(dependencies, {
       relayUrl,
       relayIssuer: link.relayIssuer,
@@ -591,12 +586,16 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
       endpointRuntime: link.endpointRuntime,
     });
   },
+  Effect.catchIf(
+    ServerSecretStore.isSecretStoreError,
+    failEnvironmentCloudInternalError("Could not persist desired T3 Connect link state."),
+  ),
   Effect.catchTags({
-    CloudCliTokenManagerError: (error) =>
-      failEnvironmentCloudInternalError(error.message)(error.cause),
-    SecretStoreError: failEnvironmentCloudInternalError(
-      "Could not persist desired T3 Cloud link state.",
-    ),
+    CloudCliCredentialRemovalError: failCloudCliTokenManagerError,
+    CloudCliCredentialRefreshError: failCloudCliTokenManagerError,
+    CloudCliCredentialReadError: failCloudCliTokenManagerError,
+    CloudCliAuthorizationError: failCloudCliTokenManagerError,
+    CloudCliAuthorizationTimeoutError: failCloudCliTokenManagerError,
   }),
 );
 
@@ -619,12 +618,12 @@ const readCloudLinkState = Effect.fn("environment.cloud.readLinkState")(function
     { concurrency: 4 },
   );
   return {
-    linked: cloudUserId !== null,
-    cloudUserId: cloudUserId ? bytesToString(cloudUserId) : null,
-    relayUrl: relayUrl ? bytesToString(relayUrl) : null,
-    relayIssuer: relayIssuer ? bytesToString(relayIssuer) : null,
-    publishAgentActivity: publishAgentActivity
-      ? bytesToString(publishAgentActivity) === "true"
+    linked: Option.isSome(cloudUserId),
+    cloudUserId: Option.isSome(cloudUserId) ? bytesToString(cloudUserId.value) : null,
+    relayUrl: Option.isSome(relayUrl) ? bytesToString(relayUrl.value) : null,
+    relayIssuer: Option.isSome(relayIssuer) ? bytesToString(relayIssuer.value) : null,
+    publishAgentActivity: Option.isSome(publishAgentActivity)
+      ? bytesToString(publishAgentActivity.value) === "true"
       : false,
   } satisfies EnvironmentCloudLinkStateResult;
 });
@@ -634,8 +633,8 @@ const cloudLinkStateHandler = Effect.fn("environment.cloud.linkState")(
     yield* requireEnvironmentScope(AuthRelayReadScope);
     return yield* readCloudLinkState(dependencies);
   },
-  Effect.catchTag(
-    "SecretStoreError",
+  Effect.catchIf(
+    ServerSecretStore.isSecretStoreError,
     failEnvironmentCloudInternalError("Could not read environment relay configuration."),
   ),
 );
@@ -656,11 +655,11 @@ const cloudUnlinkHandler = Effect.fn("environment.cloud.unlink")(
       ],
       { concurrency: 7 },
     );
-    yield* CliState.setCliDesiredCloudLink(false);
+    yield* setCliDesiredCloudLink(false);
     return { ok: true, endpointRuntimeStatus } satisfies EnvironmentCloudRelayConfigResult;
   },
-  Effect.catchTag(
-    "SecretStoreError",
+  Effect.catchIf(
+    ServerSecretStore.isSecretStoreError,
     failEnvironmentCloudInternalError("Could not remove environment relay configuration."),
   ),
 );
@@ -677,42 +676,40 @@ const cloudPreferencesHandler = Effect.fn("environment.cloud.preferences")(
     );
     return yield* readCloudLinkState(dependencies);
   },
-  Effect.catchTag(
-    "SecretStoreError",
+  Effect.catchIf(
+    ServerSecretStore.isSecretStoreError,
     failEnvironmentCloudInternalError("Could not persist environment cloud preferences."),
   ),
 );
 
 const cloudEnvironmentHealthHandler = Effect.fn("environment.cloud.health")(
   function* (dependencies: CloudHttpDependencies, request: RelayCloudEnvironmentHealthRequest) {
-    const cloudMintPublicKey = yield* dependencies.secrets.get(CLOUD_MINT_PUBLIC_KEY).pipe(
-      Effect.flatMap((bytes) =>
-        bytes
-          ? Effect.succeed(bytesToString(bytes))
-          : Effect.fail(
-              new EnvironmentAuth.ServerAuthInternalError({
-                message: "Cloud mint public key is not installed for this environment.",
-              }),
-            ),
-      ),
-    );
-    const relayIssuer = yield* dependencies.secrets.get(RELAY_ISSUER_SECRET).pipe(
-      Effect.flatMap((bytes) =>
-        bytes
-          ? Effect.succeed(bytesToString(bytes))
-          : dependencies.secrets.get(RELAY_URL_SECRET).pipe(
-              Effect.flatMap((fallbackBytes) =>
-                fallbackBytes
-                  ? Effect.succeed(bytesToString(fallbackBytes))
-                  : Effect.fail(
-                      new EnvironmentAuth.ServerAuthInternalError({
-                        message: "Cloud relay issuer is not installed for this environment.",
-                      }),
-                    ),
-              ),
-            ),
-      ),
-    );
+    const cloudMintPublicKey = yield* dependencies.secrets
+      .get(CLOUD_MINT_PUBLIC_KEY)
+      .pipe(
+        Effect.flatMap((bytes) =>
+          Option.isSome(bytes)
+            ? Effect.succeed(bytesToString(bytes.value))
+            : Effect.fail(new EnvironmentAuth.ServerAuthCloudMintPublicKeyMissingError({})),
+        ),
+      );
+    const relayIssuer = yield* dependencies.secrets
+      .get(RELAY_ISSUER_SECRET)
+      .pipe(
+        Effect.flatMap((bytes) =>
+          Option.isSome(bytes)
+            ? Effect.succeed(bytesToString(bytes.value))
+            : dependencies.secrets
+                .get(RELAY_URL_SECRET)
+                .pipe(
+                  Effect.flatMap((fallbackBytes) =>
+                    Option.isSome(fallbackBytes)
+                      ? Effect.succeed(bytesToString(fallbackBytes.value))
+                      : Effect.fail(new EnvironmentAuth.ServerAuthCloudRelayIssuerMissingError({})),
+                  ),
+                ),
+        ),
+      );
     const environmentId = yield* dependencies.environment.getEnvironmentId;
     const linkedCloudUserId = yield* readInstalledCloudUserId(dependencies.secrets);
     const now = yield* DateTime.now;
@@ -774,8 +771,7 @@ const cloudEnvironmentHealthHandler = Effect.fn("environment.cloud.health")(
     }).pipe(
       Effect.mapError(
         (cause) =>
-          new EnvironmentAuth.ServerAuthInternalError({
-            message: "Failed to sign cloud health JWT.",
+          new EnvironmentAuth.ServerAuthCloudHealthJwtSigningError({
             cause,
           }),
       ),
@@ -791,45 +787,47 @@ const cloudEnvironmentHealthHandler = Effect.fn("environment.cloud.health")(
     yield* appendCloudCredentialResponseHeaders;
     return response;
   },
-  Effect.catchTag("ServerAuthInternalError", (error) =>
-    failEnvironmentCloudInternalError(error.message)(error.cause),
+  Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+    failEnvironmentCloudInternalError(error.message)(error),
   ),
-  Effect.catchTags({
-    PlatformError: failEnvironmentCloudInternalError("Could not answer cloud health request."),
-    SecretStoreError: failEnvironmentCloudInternalError("Could not answer cloud health request."),
-  }),
+  Effect.catchIf(
+    ServerSecretStore.isSecretStoreError,
+    failEnvironmentCloudInternalError("Could not answer cloud health request."),
+  ),
+  Effect.catchTag(
+    "PlatformError",
+    failEnvironmentCloudInternalError("Could not answer cloud health request."),
+  ),
 );
 
 const cloudMintCredentialHandler = Effect.fn("environment.cloud.mintCredential")(
   function* (dependencies: CloudHttpDependencies, request: RelayCloudMintCredentialRequest) {
-    const cloudMintPublicKey = yield* dependencies.secrets.get(CLOUD_MINT_PUBLIC_KEY).pipe(
-      Effect.flatMap((bytes) =>
-        bytes
-          ? Effect.succeed(bytesToString(bytes))
-          : Effect.fail(
-              new EnvironmentAuth.ServerAuthInternalError({
-                message: "Cloud mint public key is not installed for this environment.",
-              }),
-            ),
-      ),
-    );
-    const relayIssuer = yield* dependencies.secrets.get(RELAY_ISSUER_SECRET).pipe(
-      Effect.flatMap((bytes) =>
-        bytes
-          ? Effect.succeed(bytesToString(bytes))
-          : dependencies.secrets.get(RELAY_URL_SECRET).pipe(
-              Effect.flatMap((fallbackBytes) =>
-                fallbackBytes
-                  ? Effect.succeed(bytesToString(fallbackBytes))
-                  : Effect.fail(
-                      new EnvironmentAuth.ServerAuthInternalError({
-                        message: "Cloud relay issuer is not installed for this environment.",
-                      }),
-                    ),
-              ),
-            ),
-      ),
-    );
+    const cloudMintPublicKey = yield* dependencies.secrets
+      .get(CLOUD_MINT_PUBLIC_KEY)
+      .pipe(
+        Effect.flatMap((bytes) =>
+          Option.isSome(bytes)
+            ? Effect.succeed(bytesToString(bytes.value))
+            : Effect.fail(new EnvironmentAuth.ServerAuthCloudMintPublicKeyMissingError({})),
+        ),
+      );
+    const relayIssuer = yield* dependencies.secrets
+      .get(RELAY_ISSUER_SECRET)
+      .pipe(
+        Effect.flatMap((bytes) =>
+          Option.isSome(bytes)
+            ? Effect.succeed(bytesToString(bytes.value))
+            : dependencies.secrets
+                .get(RELAY_URL_SECRET)
+                .pipe(
+                  Effect.flatMap((fallbackBytes) =>
+                    Option.isSome(fallbackBytes)
+                      ? Effect.succeed(bytesToString(fallbackBytes.value))
+                      : Effect.fail(new EnvironmentAuth.ServerAuthCloudRelayIssuerMissingError({})),
+                  ),
+                ),
+        ),
+      );
     const environmentId = yield* dependencies.environment.getEnvironmentId;
     const linkedCloudUserId = yield* readInstalledCloudUserId(dependencies.secrets);
     const now = yield* DateTime.now;
@@ -874,7 +872,7 @@ const cloudMintCredentialHandler = Effect.fn("environment.cloud.mintCredential")
       scopes: AuthStandardClientScopes,
       subject: "cloud-connect",
       ttl: Duration.minutes(2),
-      label: "T3 Cloud connect",
+      label: "T3 Connect connect",
       proofKeyThumbprint: proof.clientProofKeyThumbprint,
     });
     const responsePayload = {
@@ -896,8 +894,7 @@ const cloudMintCredentialHandler = Effect.fn("environment.cloud.mintCredential")
     }).pipe(
       Effect.mapError(
         (cause) =>
-          new EnvironmentAuth.ServerAuthInternalError({
-            message: "Failed to sign cloud mint JWT.",
+          new EnvironmentAuth.ServerAuthCloudMintJwtSigningError({
             cause,
           }),
       ),
@@ -911,22 +908,22 @@ const cloudMintCredentialHandler = Effect.fn("environment.cloud.mintCredential")
     yield* appendCloudCredentialResponseHeaders;
     return response;
   },
-  Effect.catchTag("ServerAuthInternalError", (error) =>
-    failEnvironmentCloudInternalError(error.message)(error.cause),
+  Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+    failEnvironmentCloudInternalError(error.message)(error),
   ),
-  Effect.catchTags({
-    PlatformError: failEnvironmentCloudInternalError(
-      "Could not issue cloud connection credential.",
-    ),
-    SecretStoreError: failEnvironmentCloudInternalError(
-      "Could not issue cloud connection credential.",
-    ),
-  }),
+  Effect.catchIf(
+    ServerSecretStore.isSecretStoreError,
+    failEnvironmentCloudInternalError("Could not issue cloud connection credential."),
+  ),
+  Effect.catchTag(
+    "PlatformError",
+    failEnvironmentCloudInternalError("Could not issue cloud connection credential."),
+  ),
 );
 
-export const cloudHttpApiLayer = HttpApiBuilder.group(
+export const connectHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
-  "cloud",
+  "connect",
   Effect.fnUntraced(function* (handlers) {
     const dependencies = yield* cloudHttpDependencies;
     return handlers
@@ -938,7 +935,7 @@ export const cloudHttpApiLayer = HttpApiBuilder.group(
       .handle("health", ({ payload }) => cloudEnvironmentHealthHandler(dependencies, payload))
       .handle("mintCredential", ({ payload }) => cloudMintCredentialHandler(dependencies, payload))
       .handle("t3MintCredential", ({ payload }) =>
-        cloudMintCredentialHandler(dependencies, payload),
+        traceRelayRequest(cloudMintCredentialHandler(dependencies, payload)),
       );
   }),
 );

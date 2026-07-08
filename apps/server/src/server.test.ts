@@ -2,6 +2,7 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "node:crypto";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import {
   AuthAccessTokenType,
@@ -14,12 +15,13 @@ import {
   GitCommandError,
   KeybindingRule,
   MessageId,
-  ExternalLauncherError,
+  ExternalLauncherCommandNotFoundError,
   type OrchestrationThreadShell,
   TerminalNotRunningError,
   type OrchestrationCommand,
   type OrchestrationEvent,
   ORCHESTRATION_WS_METHODS,
+  type PreviewEvent,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -48,7 +50,9 @@ import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   FetchHttpClient,
@@ -66,58 +70,33 @@ import { vi } from "vite-plus/test";
 
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 
-import type { ServerConfigShape } from "./config.ts";
-import { deriveServerPaths, ServerConfig } from "./config.ts";
+import * as ServerConfig from "./config.ts";
 import { makeRoutesLayer } from "./server.ts";
-import { resolveAttachmentRelativePath } from "./attachmentPaths.ts";
-import {
-  CheckpointDiffQuery,
-  type CheckpointDiffQueryShape,
-} from "./checkpointing/Services/CheckpointDiffQuery.ts";
-import { GitManager, type GitManagerShape } from "./git/GitManager.ts";
-import { Keybindings, type KeybindingsShape } from "./keybindings.ts";
+import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
+import * as GitManager from "./git/GitManager.ts";
+import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
-import {
-  OrchestrationEngineService,
-  type OrchestrationEngineShape,
-} from "./orchestration/Services/OrchestrationEngine.ts";
+import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import { OrchestrationListenerCallbackError } from "./orchestration/Errors.ts";
-import {
-  ProjectionSnapshotQuery,
-  type ProjectionSnapshotQueryShape,
-} from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
-import {
-  ProviderRegistry,
-  type ProviderRegistryShape,
-} from "./provider/Services/ProviderRegistry.ts";
+import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "./provider/providerMaintenance.ts";
-import { ServerLifecycleEvents, type ServerLifecycleEventsShape } from "./serverLifecycleEvents.ts";
-import { ServerRuntimeStartup, type ServerRuntimeStartupShape } from "./serverRuntimeStartup.ts";
-import { ServerSettingsService, type ServerSettingsShape } from "./serverSettings.ts";
-import { TerminalManager, type TerminalManagerShape } from "./terminal/Services/Manager.ts";
-import {
-  BrowserTraceCollector,
-  type BrowserTraceCollectorShape,
-} from "./observability/Services/BrowserTraceCollector.ts";
-import { ProjectFaviconResolverLive } from "./project/Layers/ProjectFaviconResolver.ts";
-import {
-  ProjectSetupScriptRunner,
-  ProjectSetupScriptRunnerError,
-  type ProjectSetupScriptRunnerShape,
-} from "./project/Services/ProjectSetupScriptRunner.ts";
-import {
-  RepositoryIdentityResolver,
-  type RepositoryIdentityResolverShape,
-} from "./project/Services/RepositoryIdentityResolver.ts";
-import {
-  ServerEnvironment,
-  type ServerEnvironmentShape,
-} from "./environment/Services/ServerEnvironment.ts";
-import { WorkspaceEntriesLive } from "./workspace/Layers/WorkspaceEntries.ts";
-import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem.ts";
-import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
+import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
+import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
+import * as ServerSettings from "./serverSettings.ts";
+import * as TerminalManager from "./terminal/Manager.ts";
+import * as PreviewManager from "./preview/Manager.ts";
+import * as PortScanner from "./preview/PortScanner.ts";
+import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
+import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
+import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
+import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
+import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
+import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
+import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
+import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriver from "./vcs/VcsDriver.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
@@ -128,10 +107,7 @@ import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
-import {
-  CloudManagedEndpointRuntime,
-  type CloudManagedEndpointRuntimeShape,
-} from "./cloud/ManagedEndpointRuntime.ts";
+import * as CloudManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts";
 import * as CloudCliTokenManager from "./cloud/CliTokenManager.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
@@ -337,32 +313,40 @@ const makeBrowserOtlpPayload = (spanName: string) =>
   });
 
 const buildAppUnderTest = (options?: {
-  config?: Partial<ServerConfigShape>;
+  config?: Partial<ServerConfig.ServerConfig["Service"]>;
   layers?: {
-    keybindings?: Partial<KeybindingsShape>;
-    providerRegistry?: Partial<ProviderRegistryShape>;
-    serverSettings?: Partial<ServerSettingsShape>;
-    externalLauncher?: Partial<ExternalLauncher.ExternalLauncherShape>;
-    vcsDriver?: Partial<VcsDriver.VcsDriverShape>;
-    vcsDriverRegistry?: Partial<VcsDriverRegistry.VcsDriverRegistryShape>;
-    gitVcsDriver?: Partial<GitVcsDriver.GitVcsDriverShape>;
-    gitManager?: Partial<GitManagerShape>;
-    sourceControlRepositoryService?: Partial<SourceControlRepositoryService.SourceControlRepositoryServiceShape>;
-    reviewService?: Partial<ReviewService.ReviewServiceShape>;
-    vcsStatusBroadcaster?: Partial<VcsStatusBroadcaster.VcsStatusBroadcasterShape>;
-    projectSetupScriptRunner?: Partial<ProjectSetupScriptRunnerShape>;
-    terminalManager?: Partial<TerminalManagerShape>;
-    orchestrationEngine?: Partial<OrchestrationEngineShape>;
-    projectionSnapshotQuery?: Partial<ProjectionSnapshotQueryShape>;
-    checkpointDiffQuery?: Partial<CheckpointDiffQueryShape>;
-    browserTraceCollector?: Partial<BrowserTraceCollectorShape>;
-    serverLifecycleEvents?: Partial<ServerLifecycleEventsShape>;
-    serverRuntimeStartup?: Partial<ServerRuntimeStartupShape>;
-    serverEnvironment?: Partial<ServerEnvironmentShape>;
-    repositoryIdentityResolver?: Partial<RepositoryIdentityResolverShape>;
-    cloudManagedEndpointRuntime?: Partial<CloudManagedEndpointRuntimeShape>;
-    relayClient?: Partial<RelayClient.RelayClientShape>;
-    cloudCliTokenManager?: Partial<CloudCliTokenManager.CloudCliTokenManagerShape>;
+    keybindings?: Partial<Keybindings.Keybindings["Service"]>;
+    providerRegistry?: Partial<ProviderRegistry.ProviderRegistry["Service"]>;
+    serverSettings?: Partial<ServerSettings.ServerSettingsService["Service"]>;
+    externalLauncher?: Partial<ExternalLauncher.ExternalLauncher["Service"]>;
+    vcsDriver?: Partial<VcsDriver.VcsDriver["Service"]>;
+    vcsDriverRegistry?: Partial<VcsDriverRegistry.VcsDriverRegistry["Service"]>;
+    gitVcsDriver?: Partial<GitVcsDriver.GitVcsDriver["Service"]>;
+    gitManager?: Partial<GitManager.GitManager["Service"]>;
+    sourceControlRepositoryService?: Partial<
+      SourceControlRepositoryService.SourceControlRepositoryService["Service"]
+    >;
+    reviewService?: Partial<ReviewService.ReviewService["Service"]>;
+    vcsStatusBroadcaster?: Partial<VcsStatusBroadcaster.VcsStatusBroadcaster["Service"]>;
+    projectSetupScriptRunner?: Partial<
+      ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]
+    >;
+    terminalManager?: Partial<TerminalManager.TerminalManager["Service"]>;
+    orchestrationEngine?: Partial<OrchestrationEngine.OrchestrationEngineService["Service"]>;
+    projectionSnapshotQuery?: Partial<ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"]>;
+    checkpointDiffQuery?: Partial<CheckpointDiffQuery.CheckpointDiffQuery["Service"]>;
+    browserTraceCollector?: Partial<BrowserTraceCollector.BrowserTraceCollector["Service"]>;
+    serverLifecycleEvents?: Partial<ServerLifecycleEvents.ServerLifecycleEvents["Service"]>;
+    serverRuntimeStartup?: Partial<ServerRuntimeStartup.ServerRuntimeStartup["Service"]>;
+    serverEnvironment?: Partial<ServerEnvironment.ServerEnvironment["Service"]>;
+    repositoryIdentityResolver?: Partial<
+      RepositoryIdentityResolver.RepositoryIdentityResolver["Service"]
+    >;
+    cloudManagedEndpointRuntime?: Partial<
+      CloudManagedEndpointRuntime.CloudManagedEndpointRuntime["Service"]
+    >;
+    relayClient?: Partial<RelayClient.RelayClient["Service"]>;
+    cloudCliTokenManager?: Partial<CloudCliTokenManager.CloudCliTokenManager["Service"]>;
   };
 }) =>
   Effect.gen(function* () {
@@ -370,8 +354,8 @@ const buildAppUnderTest = (options?: {
     const tempBaseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-router-test-" });
     const baseDir = options?.config?.baseDir ?? tempBaseDir;
     const devUrl = options?.config?.devUrl;
-    const derivedPaths = yield* deriveServerPaths(baseDir, devUrl);
-    const config: ServerConfigShape = {
+    const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, devUrl);
+    const config: ServerConfig.ServerConfig["Service"] = {
       logLevel: "Info",
       traceMinLevel: "Info",
       traceTimingEnabled: true,
@@ -399,8 +383,8 @@ const buildAppUnderTest = (options?: {
       tailscaleServePort: 443,
       ...options?.config,
     };
-    const layerConfig = Layer.succeed(ServerConfig, config);
-    const defaultVcsDriver: VcsDriver.VcsDriverShape = {
+    const layerConfig = ServerConfig.layer(config);
+    const defaultVcsDriver: VcsDriver.VcsDriver["Service"] = {
       capabilities: {
         kind: "git",
         supportsWorktrees: true,
@@ -498,21 +482,21 @@ const buildAppUnderTest = (options?: {
     const gitVcsDriverLayer = Layer.mock(GitVcsDriver.GitVcsDriver)({
       ...options?.layers?.gitVcsDriver,
     });
-    const gitManagerLayer = Layer.mock(GitManager)({
+    const gitManagerLayer = Layer.mock(GitManager.GitManager)({
       ...options?.layers?.gitManager,
     });
-    const workspaceEntriesLayer = WorkspaceEntriesLive.pipe(
-      Layer.provide(WorkspacePathsLive),
+    const workspaceEntriesLayer = WorkspaceEntries.layer.pipe(
+      Layer.provide(WorkspacePaths.layer),
       Layer.provideMerge(vcsDriverRegistryLayer),
     );
     const workspaceAndProjectServicesLayer = Layer.mergeAll(
-      WorkspacePathsLive,
+      WorkspacePaths.layer,
       workspaceEntriesLayer,
-      WorkspaceFileSystemLive.pipe(
-        Layer.provide(WorkspacePathsLive),
+      WorkspaceFileSystem.layer.pipe(
+        Layer.provide(WorkspacePaths.layer),
         Layer.provide(workspaceEntriesLayer),
       ),
-      ProjectFaviconResolverLive,
+      ProjectFaviconResolver.layer.pipe(Layer.provide(WorkspacePaths.layer)),
     );
     const gitWorkflowLayer = GitWorkflowService.layer.pipe(
       Layer.provideMerge(vcsDriverRegistryLayer),
@@ -541,7 +525,7 @@ const buildAppUnderTest = (options?: {
       disableLogger: true,
     }).pipe(
       Layer.provide(
-        Layer.mock(Keybindings)({
+        Layer.mock(Keybindings.Keybindings)({
           loadConfigState: Effect.succeed({
             keybindings: [],
             issues: [],
@@ -551,7 +535,7 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provide(
-        Layer.mock(ProviderRegistry)({
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
           getProviders: Effect.succeed([]),
           refresh: () => Effect.succeed([]),
           refreshInstance: () => Effect.succeed([]),
@@ -565,7 +549,7 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provide(
-        Layer.mock(ServerSettingsService)({
+        Layer.mock(ServerSettings.ServerSettingsService)({
           start: Effect.void,
           ready: Effect.void,
           getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
@@ -576,6 +560,7 @@ const buildAppUnderTest = (options?: {
       ),
       Layer.provide(
         Layer.mock(ExternalLauncher.ExternalLauncher)({
+          resolveAvailableEditors: () => Effect.succeed([]),
           ...options?.layers?.externalLauncher,
         }),
       ),
@@ -653,18 +638,42 @@ const buildAppUnderTest = (options?: {
       ),
       Layer.provideMerge(vcsStatusBroadcasterLayer),
       Layer.provide(
-        Layer.mock(ProjectSetupScriptRunner)({
+        Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
           runForThread: () => Effect.succeed({ status: "no-script" as const }),
           ...options?.layers?.projectSetupScriptRunner,
         }),
       ),
       Layer.provide(
-        Layer.mock(TerminalManager)({
+        Layer.mock(TerminalManager.TerminalManager)({
           ...options?.layers?.terminalManager,
         }),
       ),
       Layer.provide(
-        Layer.mock(OrchestrationEngineService)({
+        Layer.mergeAll(
+          Layer.mock(PreviewManager.PreviewManager)({
+            open: () => Effect.die("PreviewManager not stubbed in this test"),
+            navigate: () => Effect.die("PreviewManager not stubbed in this test"),
+            resize: () => Effect.die("PreviewManager not stubbed in this test"),
+            reportStatus: () => Effect.void,
+            refresh: () => Effect.void,
+            close: () => Effect.void,
+            list: () => Effect.succeed({ sessions: [] }),
+            events: Stream.empty,
+            subscribeEvents: Effect.flatMap(PubSub.unbounded<PreviewEvent>(), (pubsub) =>
+              PubSub.subscribe(pubsub),
+            ),
+          }),
+          Layer.mock(PortScanner.PortDiscovery)({
+            scan: () => Effect.succeed([]),
+            subscribe: () => Effect.void,
+            retain: Effect.void,
+            registerTerminalProcesses: () => Effect.void,
+            unregisterTerminal: () => Effect.void,
+          }),
+        ),
+      ),
+      Layer.provide(
+        Layer.mock(OrchestrationEngine.OrchestrationEngineService)({
           readEvents: () => Stream.empty,
           dispatch: () => Effect.succeed({ sequence: 0 }),
           streamDomainEvents: Stream.empty,
@@ -672,7 +681,7 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provide(
-        Layer.mock(ProjectionSnapshotQuery)({
+        Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
           getCommandReadModel: () => Effect.succeed(makeDefaultOrchestrationReadModel()),
           getSnapshot: () => Effect.succeed(makeDefaultOrchestrationReadModel()),
           getShellSnapshot: () =>
@@ -693,6 +702,7 @@ const buildAppUnderTest = (options?: {
           getProjectShellById: () => Effect.succeed(Option.none()),
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
+          getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
           getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
           getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
           getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
@@ -701,7 +711,7 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provide(
-        Layer.mock(CheckpointDiffQuery)({
+        Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({
           getTurnDiff: () =>
             Effect.succeed({
               threadId: defaultThreadId,
@@ -723,13 +733,13 @@ const buildAppUnderTest = (options?: {
 
     const appLayer = servedRoutesLayer.pipe(
       Layer.provide(
-        Layer.mock(BrowserTraceCollector)({
+        Layer.mock(BrowserTraceCollector.BrowserTraceCollector)({
           record: () => Effect.void,
           ...options?.layers?.browserTraceCollector,
         }),
       ),
       Layer.provide(
-        Layer.mock(ServerLifecycleEvents)({
+        Layer.mock(ServerLifecycleEvents.ServerLifecycleEvents)({
           publish: (event) => Effect.succeed({ ...(event as any), sequence: 1 }),
           snapshot: Effect.succeed({ sequence: 0, events: [] }),
           stream: Stream.empty,
@@ -737,7 +747,7 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provide(
-        Layer.mock(ServerRuntimeStartup)({
+        Layer.mock(ServerRuntimeStartup.ServerRuntimeStartup)({
           awaitCommandReady: Effect.void,
           markHttpListening: Effect.void,
           enqueueCommand: (effect) => effect,
@@ -745,22 +755,22 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provide(
-        Layer.mock(ServerEnvironment)({
+        Layer.mock(ServerEnvironment.ServerEnvironment)({
           getEnvironmentId: Effect.succeed(testEnvironmentDescriptor.environmentId),
           getDescriptor: Effect.succeed(testEnvironmentDescriptor),
           ...options?.layers?.serverEnvironment,
         }),
       ),
       Layer.provide(
-        Layer.mock(RepositoryIdentityResolver)({
+        Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
           resolve: () => Effect.succeed(null),
           ...options?.layers?.repositoryIdentityResolver,
         }),
       ),
       Layer.provide(
         Layer.succeed(
-          CloudManagedEndpointRuntime,
-          CloudManagedEndpointRuntime.of({
+          CloudManagedEndpointRuntime.CloudManagedEndpointRuntime,
+          CloudManagedEndpointRuntime.CloudManagedEndpointRuntime.of({
             applyConfig: () => Effect.succeed({ status: "disabled" }),
             ...options?.layers?.cloudManagedEndpointRuntime,
           }),
@@ -782,7 +792,7 @@ const buildAppUnderTest = (options?: {
       ),
       Layer.provide(
         Layer.mock(CloudCliTokenManager.CloudCliTokenManager)({
-          get: Effect.die(new Error("Unexpected T3 Cloud CLI authorization request.")),
+          get: Effect.die(new Error("Unexpected T3 Connect CLI authorization request.")),
           getExisting: Effect.succeed(Option.none()),
           hasCredential: Effect.succeed(false),
           clear: Effect.void,
@@ -1252,61 +1262,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("serves project favicon requests before the dev URL redirect", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const projectDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-router-project-favicon-",
-      });
-      yield* fileSystem.writeFileString(
-        path.join(projectDir, "favicon.svg"),
-        "<svg>router-project-favicon</svg>",
-      );
-
-      yield* buildAppUnderTest({
-        config: { devUrl: new URL("http://127.0.0.1:5173") },
-      });
-
-      const response = yield* HttpClient.get(
-        `/api/project-favicon?cwd=${encodeURIComponent(projectDir)}`,
-        {
-          headers: {
-            cookie: yield* getAuthenticatedSessionCookieHeader(),
-          },
-        },
-      );
-
-      assert.equal(response.status, 200);
-      assert.equal(yield* response.text, "<svg>router-project-favicon</svg>");
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
-  it.effect("serves the fallback project favicon when no icon exists", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const projectDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-router-project-favicon-fallback-",
-      });
-
-      yield* buildAppUnderTest({
-        config: { devUrl: new URL("http://127.0.0.1:5173") },
-      });
-
-      const response = yield* HttpClient.get(
-        `/api/project-favicon?cwd=${encodeURIComponent(projectDir)}`,
-        {
-          headers: {
-            cookie: yield* getAuthenticatedSessionCookieHeader(),
-          },
-        },
-      );
-
-      assert.equal(response.status, 200);
-      assert.include(yield* response.text, 'data-fallback="project-favicon"');
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
   it.effect("serves the public environment descriptor without requiring auth", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
@@ -1713,7 +1668,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* buildAppUnderTest();
 
       const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-      const linkProofUrl = yield* getHttpServerUrl("/api/cloud/link-proof");
+      const linkProofUrl = yield* getHttpServerUrl("/api/connect/link-proof");
       const linkProofResponse = yield* fetchEffect(linkProofUrl, {
         method: "POST",
         headers: {
@@ -1750,7 +1705,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* buildAppUnderTest();
 
       const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-      const linkProofUrl = yield* getHttpServerUrl("/api/cloud/link-proof");
+      const linkProofUrl = yield* getHttpServerUrl("/api/connect/link-proof");
       const serverPort = Number(new URL(linkProofUrl).port);
       const linkProofResponse = yield* fetchEffect(linkProofUrl, {
         method: "POST",
@@ -1762,10 +1717,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           challenge: "relay-link-challenge",
           relayIssuer: "https://relay.example.test",
           endpoint: {
-            httpBaseUrl: linkProofUrl.replace("/api/cloud/link-proof", ""),
+            httpBaseUrl: linkProofUrl.replace("/api/connect/link-proof", ""),
             wsBaseUrl: linkProofUrl
               .replace("http://", "ws://")
-              .replace("/api/cloud/link-proof", "/ws"),
+              .replace("/api/connect/link-proof", "/ws"),
             providerKind: "manual",
           },
           origin: {
@@ -1789,9 +1744,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const linkProofUrl = yield* getHttpServerUrl("/api/cloud/link-proof");
+      const linkProofUrl = yield* getHttpServerUrl("/api/connect/link-proof");
       const serverPort = Number(new URL(linkProofUrl).port);
-      const linkProofResponse = yield* HttpClient.post("/api/cloud/link-proof", {
+      const linkProofResponse = yield* HttpClient.post("/api/connect/link-proof", {
         headers: {
           cookie: yield* getAuthenticatedSessionCookieHeader(),
           "content-type": "application/json",
@@ -1833,9 +1788,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       Effect.gen(function* () {
         yield* buildAppUnderTest();
 
-        const linkProofUrl = yield* getHttpServerUrl("/api/cloud/link-proof");
+        const linkProofUrl = yield* getHttpServerUrl("/api/connect/link-proof");
         const serverPort = Number(new URL(linkProofUrl).port);
-        const linkProofResponse = yield* HttpClient.post("/api/cloud/link-proof", {
+        const linkProofResponse = yield* HttpClient.post("/api/connect/link-proof", {
           headers: {
             cookie: yield* getAuthenticatedSessionCookieHeader(),
             "content-type": "application/json",
@@ -1875,9 +1830,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const linkProofUrl = yield* getHttpServerUrl("/api/cloud/link-proof");
+      const linkProofUrl = yield* getHttpServerUrl("/api/connect/link-proof");
       const serverPort = Number(new URL(linkProofUrl).port);
-      const linkProofResponse = yield* HttpClient.post("/api/cloud/link-proof", {
+      const linkProofResponse = yield* HttpClient.post("/api/connect/link-proof", {
         headers: {
           cookie: yield* getAuthenticatedSessionCookieHeader(),
           "content-type": "application/json",
@@ -1918,7 +1873,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* buildAppUnderTest();
 
       const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-      const linkProofUrl = yield* getHttpServerUrl("/api/cloud/link-proof");
+      const linkProofUrl = yield* getHttpServerUrl("/api/connect/link-proof");
       const serverPort = Number(new URL(linkProofUrl).port);
       const linkProofResponse = yield* fetchEffect(linkProofUrl, {
         method: "POST",
@@ -1962,7 +1917,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       });
       const credential = (yield* credentialResponse.json) as { readonly credential: string };
       const pairedCookie = yield* getAuthenticatedSessionCookieHeader(credential.credential);
-      const linkStateUrl = yield* getHttpServerUrl("/api/cloud/link-state");
+      const linkStateUrl = yield* getHttpServerUrl("/api/connect/link-state");
       const response = yield* fetchEffect(linkStateUrl, {
         headers: { cookie: pairedCookie },
       });
@@ -2028,7 +1983,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* buildAppUnderTest();
 
       const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-      const preferencesUrl = yield* getHttpServerUrl("/api/cloud/preferences");
+      const preferencesUrl = yield* getHttpServerUrl("/api/connect/preferences");
       const ownerResponse = yield* fetchEffect(preferencesUrl, {
         method: "POST",
         headers: {
@@ -2072,7 +2027,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* buildAppUnderTest();
 
       const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-      const relayConfigUrl = yield* getHttpServerUrl("/api/cloud/relay-config");
+      const relayConfigUrl = yield* getHttpServerUrl("/api/connect/relay-config");
       const relayConfigResponse = yield* fetchEffect(relayConfigUrl, {
         method: "POST",
         headers: {
@@ -2107,7 +2062,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
       const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-      const relayConfigUrl = yield* getHttpServerUrl("/api/cloud/relay-config");
+      const relayConfigUrl = yield* getHttpServerUrl("/api/connect/relay-config");
       const postRelayConfig = (body: {
         readonly relayUrl: string;
         readonly relayIssuer?: string;
@@ -2184,7 +2139,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
       const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-      const relayConfigUrl = yield* getHttpServerUrl("/api/cloud/relay-config");
+      const relayConfigUrl = yield* getHttpServerUrl("/api/connect/relay-config");
       const postRelayConfig = (cloudUserId: string, environmentCredential: string) =>
         fetchEffect(relayConfigUrl, {
           method: "POST",
@@ -2227,8 +2182,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
       const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-      const linkStateUrl = yield* getHttpServerUrl("/api/cloud/link-state");
-      const relayConfigUrl = yield* getHttpServerUrl("/api/cloud/relay-config");
+      const linkStateUrl = yield* getHttpServerUrl("/api/connect/link-state");
+      const relayConfigUrl = yield* getHttpServerUrl("/api/connect/relay-config");
 
       const initialResponse = yield* fetchEffect(linkStateUrl, {
         headers: {
@@ -2284,7 +2239,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const reconcileUrl = yield* getHttpServerUrl("/api/cloud/reconcile");
+      const reconcileUrl = yield* getHttpServerUrl("/api/connect/reconcile");
       const response = yield* fetchEffect(reconcileUrl, {
         method: "POST",
       });
@@ -2321,9 +2276,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
       const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-      const relayConfigUrl = yield* getHttpServerUrl("/api/cloud/relay-config");
-      const unlinkUrl = yield* getHttpServerUrl("/api/cloud/unlink");
-      const linkStateUrl = yield* getHttpServerUrl("/api/cloud/link-state");
+      const relayConfigUrl = yield* getHttpServerUrl("/api/connect/relay-config");
+      const unlinkUrl = yield* getHttpServerUrl("/api/connect/unlink");
+      const linkStateUrl = yield* getHttpServerUrl("/api/connect/link-state");
 
       const relayConfigResponse = yield* fetchEffect(relayConfigUrl, {
         method: "POST",
@@ -2398,7 +2353,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
       const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-      const relayConfigUrl = yield* getHttpServerUrl("/api/cloud/relay-config");
+      const relayConfigUrl = yield* getHttpServerUrl("/api/connect/relay-config");
       const relayConfigResponse = yield* fetchEffect(relayConfigUrl, {
         method: "POST",
         headers: {
@@ -2424,7 +2379,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         issuedAt: DateTime.formatIso(now),
         expiresAt: DateTime.formatIso(DateTime.add(now, { minutes: 5 })),
       });
-      const mintUrl = yield* getHttpServerUrl("/api/cloud/mint-credential");
+      const mintUrl = yield* getHttpServerUrl("/api/connect/mint-credential");
       const postMint = () =>
         fetchEffect(mintUrl, {
           method: "POST",
@@ -2448,7 +2403,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("serves the documented T3 Cloud mint credential endpoint", () =>
+  it.effect("serves the documented T3 Connect mint credential endpoint", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
@@ -2457,7 +2412,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
       const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-      const relayConfigUrl = yield* getHttpServerUrl("/api/cloud/relay-config");
+      const relayConfigUrl = yield* getHttpServerUrl("/api/connect/relay-config");
       const relayConfigResponse = yield* fetchEffect(relayConfigUrl, {
         method: "POST",
         headers: {
@@ -2484,7 +2439,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         issuedAt: DateTime.formatIso(now),
         expiresAt: DateTime.formatIso(DateTime.add(now, { minutes: 5 })),
       });
-      const mintUrl = yield* getHttpServerUrl("/api/t3-cloud/mint-credential");
+      const mintUrl = yield* getHttpServerUrl("/api/t3-connect/mint-credential");
       const response = yield* fetchEffect(mintUrl, {
         method: "POST",
         headers: {
@@ -2507,7 +2462,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("serves signed T3 Cloud environment health checks", () =>
+  it.effect("serves signed T3 Connect environment health checks", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
@@ -2516,7 +2471,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
       const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-      const relayConfigUrl = yield* getHttpServerUrl("/api/cloud/relay-config");
+      const relayConfigUrl = yield* getHttpServerUrl("/api/connect/relay-config");
       const relayConfigResponse = yield* fetchEffect(relayConfigUrl, {
         method: "POST",
         headers: {
@@ -2542,7 +2497,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         issuedAt: DateTime.formatIso(now),
         expiresAt: DateTime.formatIso(DateTime.add(now, { minutes: 5 })),
       });
-      const healthUrl = yield* getHttpServerUrl("/api/t3-cloud/health");
+      const healthUrl = yield* getHttpServerUrl("/api/t3-connect/health");
       const response = yield* fetchEffect(healthUrl, {
         method: "POST",
         headers: {
@@ -2576,7 +2531,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
       const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-      const relayConfigUrl = yield* getHttpServerUrl("/api/cloud/relay-config");
+      const relayConfigUrl = yield* getHttpServerUrl("/api/connect/relay-config");
       const relayConfigResponse = yield* fetchEffect(relayConfigUrl, {
         method: "POST",
         headers: {
@@ -2602,7 +2557,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         issuedAt: DateTime.formatIso(now),
         expiresAt: DateTime.formatIso(DateTime.add(now, { minutes: 5 })),
       });
-      const healthUrl = yield* getHttpServerUrl("/api/t3-cloud/health");
+      const healthUrl = yield* getHttpServerUrl("/api/t3-connect/health");
       const postHealth = () =>
         fetchEffect(healthUrl, {
           method: "POST",
@@ -2637,7 +2592,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           publicKeyEncoding: { format: "pem", type: "spki" },
         });
         const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-        const relayConfigUrl = yield* getHttpServerUrl("/api/cloud/relay-config");
+        const relayConfigUrl = yield* getHttpServerUrl("/api/connect/relay-config");
         const relayConfigResponse = yield* fetchEffect(relayConfigUrl, {
           method: "POST",
           headers: {
@@ -2656,7 +2611,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.equal(relayConfigResponse.status, 200);
 
         const now = yield* DateTime.now;
-        const mintUrl = yield* getHttpServerUrl("/api/t3-cloud/mint-credential");
+        const mintUrl = yield* getHttpServerUrl("/api/t3-connect/mint-credential");
         const postMint = (request: ReturnType<typeof makeCloudMintCredentialRequest>) =>
           fetchEffect(mintUrl, {
             method: "POST",
@@ -2717,7 +2672,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
       const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-      const relayConfigUrl = yield* getHttpServerUrl("/api/cloud/relay-config");
+      const relayConfigUrl = yield* getHttpServerUrl("/api/connect/relay-config");
       const relayConfigResponse = yield* fetchEffect(relayConfigUrl, {
         method: "POST",
         headers: {
@@ -2756,7 +2711,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         issuedAt: DateTime.formatIso(now),
         expiresAt: DateTime.formatIso(DateTime.add(now, { minutes: 5 })),
       });
-      const healthUrl = yield* getHttpServerUrl("/api/t3-cloud/health");
+      const healthUrl = yield* getHttpServerUrl("/api/t3-connect/health");
       const healthResponse = yield* fetchEffect(healthUrl, {
         method: "POST",
         headers: {
@@ -2786,7 +2741,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
       const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-      const relayConfigUrl = yield* getHttpServerUrl("/api/cloud/relay-config");
+      const relayConfigUrl = yield* getHttpServerUrl("/api/connect/relay-config");
       const relayConfigResponse = yield* fetchEffect(relayConfigUrl, {
         method: "POST",
         headers: {
@@ -2804,7 +2759,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(relayConfigResponse.status, 200);
 
       const now = yield* DateTime.now;
-      const mintUrl = yield* getHttpServerUrl("/api/cloud/mint-credential");
+      const mintUrl = yield* getHttpServerUrl("/api/connect/mint-credential");
       const postMint = (request: ReturnType<typeof makeCloudMintCredentialRequest>) =>
         fetchEffect(mintUrl, {
           method: "POST",
@@ -2853,7 +2808,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
       const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-      const relayConfigUrl = yield* getHttpServerUrl("/api/cloud/relay-config");
+      const relayConfigUrl = yield* getHttpServerUrl("/api/connect/relay-config");
       const relayConfigResponse = yield* fetchEffect(relayConfigUrl, {
         method: "POST",
         headers: {
@@ -2871,7 +2826,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(relayConfigResponse.status, 200);
 
       const now = yield* DateTime.now;
-      const mintUrl = yield* getHttpServerUrl("/api/t3-cloud/mint-credential");
+      const mintUrl = yield* getHttpServerUrl("/api/t3-connect/mint-credential");
       const response = yield* fetchEffect(mintUrl, {
         method: "POST",
         headers: {
@@ -2904,7 +2859,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
       const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-      const relayConfigUrl = yield* getHttpServerUrl("/api/cloud/relay-config");
+      const relayConfigUrl = yield* getHttpServerUrl("/api/connect/relay-config");
       const relayConfigResponse = yield* fetchEffect(relayConfigUrl, {
         method: "POST",
         headers: {
@@ -2922,7 +2877,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(relayConfigResponse.status, 200);
 
       const now = yield* DateTime.now;
-      const mintUrl = yield* getHttpServerUrl("/api/t3-cloud/mint-credential");
+      const mintUrl = yield* getHttpServerUrl("/api/t3-connect/mint-credential");
       const response = yield* fetchEffect(mintUrl, {
         method: "POST",
         headers: {
@@ -2955,7 +2910,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
       const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-      const relayConfigUrl = yield* getHttpServerUrl("/api/cloud/relay-config");
+      const relayConfigUrl = yield* getHttpServerUrl("/api/connect/relay-config");
       const relayConfigResponse = yield* fetchEffect(relayConfigUrl, {
         method: "POST",
         headers: {
@@ -2973,7 +2928,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(relayConfigResponse.status, 200);
 
       const now = yield* DateTime.now;
-      const healthUrl = yield* getHttpServerUrl("/api/t3-cloud/health");
+      const healthUrl = yield* getHttpServerUrl("/api/t3-connect/health");
       const postHealth = (request: ReturnType<typeof makeCloudEnvironmentHealthRequest>) =>
         fetchEffect(healthUrl, {
           method: "POST",
@@ -3020,7 +2975,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
       const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-      const relayConfigUrl = yield* getHttpServerUrl("/api/cloud/relay-config");
+      const relayConfigUrl = yield* getHttpServerUrl("/api/connect/relay-config");
       const relayConfigResponse = yield* fetchEffect(relayConfigUrl, {
         method: "POST",
         headers: {
@@ -3038,7 +2993,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(relayConfigResponse.status, 200);
 
       const now = yield* DateTime.now;
-      const healthUrl = yield* getHttpServerUrl("/api/t3-cloud/health");
+      const healthUrl = yield* getHttpServerUrl("/api/t3-connect/health");
       const response = yield* fetchEffect(healthUrl, {
         method: "POST",
         headers: {
@@ -3070,7 +3025,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
       const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-      const relayConfigUrl = yield* getHttpServerUrl("/api/cloud/relay-config");
+      const relayConfigUrl = yield* getHttpServerUrl("/api/connect/relay-config");
       const relayConfigResponse = yield* fetchEffect(relayConfigUrl, {
         method: "POST",
         headers: {
@@ -3088,7 +3043,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(relayConfigResponse.status, 200);
 
       const now = yield* DateTime.now;
-      const healthUrl = yield* getHttpServerUrl("/api/t3-cloud/health");
+      const healthUrl = yield* getHttpServerUrl("/api/t3-connect/health");
       const response = yield* fetchEffect(healthUrl, {
         method: "POST",
         headers: {
@@ -3168,28 +3123,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         },
       });
       const wsTicketBody = (yield* wsTicketResponse.json) as { readonly ticket: string };
-      const faviconResponse = yield* HttpClient.get("/api/project-favicon?cwd=/tmp", {
-        headers: {
-          authorization: `Bearer ${tokenBody.access_token ?? ""}`,
-        },
-      });
-      const faviconBody = (yield* faviconResponse.json) as {
-        readonly _tag: string;
-        readonly code: string;
-        readonly requiredScope: string;
-        readonly traceId: string;
-      };
-
       assert.equal(overbroadPairingResponse.status, 403);
       assert.equal(overbroadPairingBody.requiredScope, "orchestration:read");
       assert.equal(pairingResponse.status, 200);
       assert.equal(wsTicketResponse.status, 200);
-      assert.equal(faviconResponse.status, 403);
-      assert.equal(faviconBody._tag, "EnvironmentScopeRequiredError");
-      assert.equal(faviconBody.code, "insufficient_scope");
-      assert.equal(faviconBody.requiredScope, "orchestration:read");
-      assert.equal(typeof faviconBody.traceId, "string");
-
       const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(wsTicketBody.ticket)}`;
       const rpcError = yield* Effect.flip(
         Effect.scoped(withWsRpcClient(wsUrl, (client) => client[WS_METHODS.serverGetConfig]({}))),
@@ -3280,7 +3217,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         config: { devUrl: new URL(crossOriginClientOrigin) },
       });
 
-      const linkProofUrl = yield* getHttpServerUrl("/api/cloud/link-proof");
+      const linkProofUrl = yield* getHttpServerUrl("/api/connect/link-proof");
       const response = yield* fetchEffect(linkProofUrl, {
         method: "OPTIONS",
         headers: {
@@ -3297,6 +3234,32 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
+
+  for (const desktopOrigin of ["t3code://app", "t3code-dev://app"]) {
+    it.effect(`allows credentialed preflights from ${desktopOrigin} in development`, () =>
+      Effect.gen(function* () {
+        yield* buildAppUnderTest({
+          config: { devUrl: new URL(crossOriginClientOrigin) },
+        });
+
+        const sessionUrl = yield* getHttpServerUrl("/api/auth/session");
+        const response = yield* fetchEffect(sessionUrl, {
+          method: "OPTIONS",
+          headers: {
+            origin: desktopOrigin,
+            "access-control-request-method": "GET",
+            "access-control-request-headers": "content-type",
+          },
+        });
+
+        assert.equal(response.status, 204);
+        assertBrowserApiCorsPreflightHeaders(response.headers, {
+          origin: desktopOrigin,
+          credentials: true,
+        });
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+    );
+  }
 
   it.effect("includes CORS headers on remote websocket-ticket auth failures", () =>
     Effect.gen(function* () {
@@ -3718,42 +3681,20 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("rejects reusing the same bootstrap credential after it has been exchanged", () =>
+  it.effect("allows reusing the desktop bootstrap credential", () =>
     Effect.gen(function* () {
+      // The desktop-bootstrap grant is delivered over trusted IPC at
+      // backend launch and needs to stay claimable after a renderer
+      // refresh, so it's intentionally reusable (unlike user-facing
+      // one-time pairing credentials).
       yield* buildAppUnderTest();
 
       const first = yield* bootstrapBrowserSession();
       const second = yield* bootstrapBrowserSession();
 
       assert.equal(first.response.status, 200);
-      assert.equal(second.response.status, 401);
-      assert.equal((second.body as { readonly _tag?: string })._tag, "EnvironmentAuthInvalidError");
-      assert.equal((second.body as { readonly code?: string }).code, "auth_invalid");
-      assert.equal((second.body as { readonly reason?: string }).reason, "invalid_credential");
+      assert.equal(second.response.status, 200);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
-  it.effect(
-    "does not accept session tokens via query parameters on authenticated HTTP routes",
-    () =>
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const projectDir = yield* fileSystem.makeTempDirectoryScoped({
-          prefix: "t3-router-project-favicon-query-token-",
-        });
-
-        yield* buildAppUnderTest();
-
-        const { cookie } = yield* bootstrapBrowserSession();
-        assert.isDefined(cookie);
-        const sessionToken = extractSessionTokenFromSetCookie(cookie ?? "");
-
-        const response = yield* HttpClient.get(
-          `/api/project-favicon?cwd=${encodeURIComponent(projectDir)}&token=${encodeURIComponent(sessionToken)}`,
-        );
-
-        assert.equal(response.status, 401);
-      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("accepts websocket rpc handshake with a bootstrapped browser session cookie", () =>
@@ -3824,60 +3765,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.equal(response.environment.environmentId, testEnvironmentDescriptor.environmentId);
         assert.equal(response.auth.policy, "desktop-managed-local");
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
-  it.effect("serves attachment files from state dir", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const attachmentId = "thread-11111111-1111-4111-8111-111111111111";
-
-      const config = yield* buildAppUnderTest();
-      const attachmentPath = resolveAttachmentRelativePath({
-        attachmentsDir: config.attachmentsDir,
-        relativePath: `${attachmentId}.bin`,
-      });
-      assert.isNotNull(attachmentPath, "Attachment path should be resolvable");
-
-      yield* fileSystem.makeDirectory(path.dirname(attachmentPath), { recursive: true });
-      yield* fileSystem.writeFileString(attachmentPath, "attachment-ok");
-
-      const response = yield* HttpClient.get(`/attachments/${attachmentId}`, {
-        headers: {
-          cookie: yield* getAuthenticatedSessionCookieHeader(),
-        },
-      });
-      assert.equal(response.status, 200);
-      assert.equal(yield* response.text, "attachment-ok");
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
-  it.effect("serves attachment files for URL-encoded paths", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-
-      const config = yield* buildAppUnderTest();
-      const attachmentPath = resolveAttachmentRelativePath({
-        attachmentsDir: config.attachmentsDir,
-        relativePath: "thread%20folder/message%20folder/file%20name.png",
-      });
-      assert.isNotNull(attachmentPath, "Attachment path should be resolvable");
-
-      yield* fileSystem.makeDirectory(path.dirname(attachmentPath), { recursive: true });
-      yield* fileSystem.writeFileString(attachmentPath, "attachment-encoded-ok");
-
-      const response = yield* HttpClient.get(
-        "/attachments/thread%20folder/message%20folder/file%20name.png",
-        {
-          headers: {
-            cookie: yield* getAuthenticatedSessionCookieHeader(),
-          },
-        },
-      );
-      assert.equal(response.status, 200);
-      assert.equal(yield* response.text, "attachment-encoded-ok");
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("proxies browser OTLP trace exports through the server", () =>
@@ -4169,22 +4056,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("returns 404 for missing attachment id lookups", () =>
-    Effect.gen(function* () {
-      yield* buildAppUnderTest();
-
-      const response = yield* HttpClient.get(
-        "/attachments/missing-11111111-1111-4111-8111-111111111111",
-        {
-          headers: {
-            cookie: yield* getAuthenticatedSessionCookieHeader(),
-          },
-        },
-      );
-      assert.equal(response.status, 404);
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
   it.effect("routes websocket rpc server.upsertKeybinding", () =>
     Effect.gen(function* () {
       const rule: KeybindingRule = {
@@ -4255,6 +4126,46 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.deepEqual(response.issues, []);
       assert.deepEqual(response.keybindings, [resolved]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("shares one preview automation broker across websocket sessions", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* buildAppUnderTest();
+
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const firstConnected = yield* Deferred.make<string>();
+        const firstClosed = yield* Deferred.make<void>();
+        const host = {
+          clientId: "shared-preview-host",
+          environmentId: testEnvironmentDescriptor.environmentId,
+        } as const;
+
+        yield* withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.previewAutomationConnect](host).pipe(
+            Stream.tap((event) =>
+              event.type === "connected"
+                ? Deferred.succeed(firstConnected, event.connectionId)
+                : Effect.void,
+            ),
+            Stream.runDrain,
+            Effect.ensuring(Deferred.succeed(firstClosed, undefined)),
+          ),
+        ).pipe(Effect.forkScoped);
+
+        const firstConnectionId = yield* Deferred.await(firstConnected);
+        const replacementEvent = yield* withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.previewAutomationConnect](host).pipe(Stream.runHead),
+        ).pipe(Effect.map(Option.getOrThrow));
+        const firstStreamClosed = yield* Deferred.await(firstClosed).pipe(
+          Effect.timeoutOption("2 seconds"),
+        );
+
+        assert.equal(replacementEvent.type, "connected");
+        assert.notEqual(replacementEvent.connectionId, firstConnectionId);
+        assert.isTrue(Option.isSome(firstStreamClosed));
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("rejects websocket rpc handshake when session authentication is missing", () =>
@@ -4493,7 +4404,43 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.isAtLeast(response.entries.length, 1);
       assert.isTrue(response.entries.some((entry) => entry.path === "needle-file.ts"));
       assert.equal(response.truncated, false);
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+  );
+
+  it.effect("routes websocket rpc projects.listEntries and projects.readFile", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-files-" });
+      yield* fs.makeDirectory(path.join(workspaceDir, "src"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(workspaceDir, "src", "index.ts"),
+        "export const answer = 42;\n",
+      );
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.all({
+            listing: client[WS_METHODS.projectsListEntries]({ cwd: workspaceDir }),
+            file: client[WS_METHODS.projectsReadFile]({
+              cwd: workspaceDir,
+              relativePath: "src/index.ts",
+            }),
+          }),
+        ),
+      );
+
+      assert.isTrue(response.listing.entries.some((entry) => entry.path === "src/index.ts"));
+      assert.deepEqual(response.file, {
+        relativePath: "src/index.ts",
+        contents: "export const answer = 42;\n",
+        byteLength: 26,
+        truncated: false,
+      });
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 
   it.effect("routes websocket rpc projects.searchEntries excludes gitignored files", () =>
@@ -4550,30 +4497,150 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.equal(response.entries.length, 0);
       assert.equal(response.truncated, false);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+  );
+
+  it.effect("preserves structured workspace rpc failures", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-ws-workspace-errors-",
+      });
+      const outsideDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-ws-workspace-errors-outside-",
+      });
+      const outsideFile = path.join(outsideDir, "outside.txt");
+      yield* fs.writeFileString(outsideFile, "outside\n");
+      yield* fs.symlink(outsideFile, path.join(workspaceDir, "linked-outside.txt"));
+      const resolvedOutsideFile = yield* fs.realPath(outsideFile);
+
+      yield* buildAppUnderTest();
+
+      const invalidWorkspace = path.join(workspaceDir, "missing-workspace");
+      const missingBrowseParent = path.join(workspaceDir, "missing-browse");
+      const sensitiveQuery = "authorization: Bearer secret-token";
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const results = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.all({
+            search: client[WS_METHODS.projectsSearchEntries]({
+              cwd: invalidWorkspace,
+              query: sensitiveQuery,
+              limit: 10,
+            }).pipe(Effect.result),
+            list: client[WS_METHODS.projectsListEntries]({ cwd: invalidWorkspace }).pipe(
+              Effect.result,
+            ),
+            read: client[WS_METHODS.projectsReadFile]({
+              cwd: workspaceDir,
+              relativePath: "linked-outside.txt",
+            }).pipe(Effect.result),
+            browse: client[WS_METHODS.filesystemBrowse]({
+              cwd: workspaceDir,
+              partialPath: "./missing-browse/child",
+            }).pipe(Effect.result),
+          }),
+        ),
+      );
+
+      if (
+        results.search._tag !== "Failure" ||
+        results.search.failure._tag !== "ProjectSearchEntriesError"
+      ) {
+        assert.fail("Expected a ProjectSearchEntriesError");
+      }
+      const searchError = results.search.failure;
+      assert.equal(
+        searchError.message,
+        `Failed to search workspace entries in '${invalidWorkspace}'.`,
+      );
+      assert.equal(searchError.cwd, invalidWorkspace);
+      assert.equal(searchError.queryLength, sensitiveQuery.length);
+      assert.notProperty(searchError, "query");
+      assert.notInclude(searchError.message, "Bearer");
+      assert.notInclude(searchError.message, "secret-token");
+      assert.equal(searchError.limit, 10);
+      assert.equal(searchError.failure, "workspace_root_not_found");
+      assert.equal(searchError.normalizedCwd, invalidWorkspace);
+      assert.isDefined(searchError.cause);
+
+      if (
+        results.list._tag !== "Failure" ||
+        results.list.failure._tag !== "ProjectListEntriesError"
+      ) {
+        assert.fail("Expected a ProjectListEntriesError");
+      }
+      const listError = results.list.failure;
+      assert.equal(listError.message, `Failed to list workspace entries in '${invalidWorkspace}'.`);
+      assert.equal(listError.cwd, invalidWorkspace);
+      assert.equal(listError.failure, "workspace_root_not_found");
+      assert.equal(listError.normalizedCwd, invalidWorkspace);
+      assert.isDefined(listError.cause);
+
+      if (results.read._tag !== "Failure" || results.read.failure._tag !== "ProjectReadFileError") {
+        assert.fail("Expected a ProjectReadFileError");
+      }
+      const readError = results.read.failure;
+      assert.equal(
+        readError.message,
+        `Failed to read workspace file 'linked-outside.txt' in '${workspaceDir}'.`,
+      );
+      assert.equal(readError.cwd, workspaceDir);
+      assert.equal(readError.relativePath, "linked-outside.txt");
+      assert.equal(readError.failure, "resolved_path_outside_root");
+      assert.equal(readError.resolvedPath, resolvedOutsideFile);
+      assert.isDefined(readError.cause);
+
+      if (
+        results.browse._tag !== "Failure" ||
+        results.browse.failure._tag !== "FilesystemBrowseError"
+      ) {
+        assert.fail("Expected a FilesystemBrowseError");
+      }
+      const browseError = results.browse.failure;
+      assert.equal(
+        browseError.message,
+        `Failed to browse filesystem path './missing-browse/child' from '${workspaceDir}'.`,
+      );
+      assert.equal(browseError.cwd, workspaceDir);
+      assert.equal(browseError.partialPath, "./missing-browse/child");
+      assert.equal(browseError.failure, "read_directory_failed");
+      assert.equal(browseError.parentPath, missingBrowseParent);
+      assert.isDefined(browseError.cause);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("routes websocket rpc projects.searchEntries errors", () =>
+  it.effect("reports workspace root stat failures without relabeling them as missing", () =>
     Effect.gen(function* () {
-      yield* buildAppUnderTest();
+      if ((yield* HostProcessPlatform) === "win32") return;
 
-      const wsUrl = yield* getWsServerUrl("/ws");
-      const result = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.projectsSearchEntries]({
-            cwd: "/definitely/not/a/real/workspace/path",
-            query: "needle",
-            limit: 10,
-          }),
-        ).pipe(Effect.result),
-      );
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const blockedRoot = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-ws-workspace-stat-error-",
+      });
+      const workspaceRoot = path.join(blockedRoot, "workspace");
+      yield* fs.makeDirectory(workspaceRoot);
+      yield* fs.chmod(blockedRoot, 0o000);
 
-      assertTrue(result._tag === "Failure");
-      assertTrue(result.failure._tag === "ProjectSearchEntriesError");
-      assertInclude(
-        result.failure.message,
-        "Workspace root does not exist: /definitely/not/a/real/workspace/path",
-      );
+      const result = yield* Effect.gen(function* () {
+        yield* buildAppUnderTest();
+        const wsUrl = yield* getWsServerUrl("/ws");
+        return yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.projectsListEntries]({ cwd: workspaceRoot }).pipe(Effect.result),
+          ),
+        );
+      }).pipe(Effect.ensuring(fs.chmod(blockedRoot, 0o700).pipe(Effect.ignore)));
+
+      if (result._tag !== "Failure" || result.failure._tag !== "ProjectListEntriesError") {
+        assert.fail("Expected a ProjectListEntriesError");
+      }
+      const error = result.failure;
+      assert.equal(error.failure, "workspace_root_stat_failed");
+      assert.equal(error.normalizedCwd, workspaceRoot);
+      assert.equal(error.detail, "validate-existing");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -4654,12 +4721,19 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ).pipe(Effect.result),
       );
 
-      assertTrue(result._tag === "Failure");
-      assertTrue(result.failure._tag === "ProjectWriteFileError");
+      if (result._tag !== "Failure" || result.failure._tag !== "ProjectWriteFileError") {
+        assert.fail("Expected a ProjectWriteFileError");
+      }
+      const writeError = result.failure;
       assert.equal(
-        result.failure.message,
-        "Workspace file path must stay within the project root.",
+        writeError.message,
+        `Failed to write workspace file '../escape.txt' in '${workspaceDir}'.`,
       );
+      assert.equal(writeError.cwd, workspaceDir);
+      assert.equal(writeError.relativePath, "../escape.txt");
+      assert.equal(writeError.failure, "workspace_path_outside_root");
+      assert.isDefined(writeError.cause);
+      assert.notProperty(writeError, "contents");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -4693,8 +4767,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
   it.effect("routes websocket rpc shell.openInEditor errors", () =>
     Effect.gen(function* () {
-      const externalLauncherError = new ExternalLauncherError({
-        message: "Editor command not found: cursor",
+      const externalLauncherError = new ExternalLauncherCommandNotFoundError({
+        editor: "cursor",
+        command: "cursor",
       });
       yield* buildAppUnderTest({
         layers: {
@@ -6020,6 +6095,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     () =>
       Effect.gen(function* () {
         const dispatchedCommands: Array<OrchestrationCommand> = [];
+        const bootstrapGitOperations: string[] = [];
         const refreshStatus = vi.fn((_: string) =>
           Effect.succeed({
             isRepo: true,
@@ -6038,17 +6114,41 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             pr: null,
           }),
         );
+        const fetchRemote = vi.fn(
+          (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["fetchRemote"]>[0]) =>
+            Effect.sync(() => {
+              bootstrapGitOperations.push("fetch");
+            }),
+        );
+        const fetchedOriginCommit = "0123456789abcdef0123456789abcdef01234567";
+        const resolveRemoteTrackingCommit = vi.fn(
+          (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["resolveRemoteTrackingCommit"]>[0]) =>
+            Effect.sync(() => {
+              bootstrapGitOperations.push("resolve-remote-commit");
+              return {
+                commitSha: fetchedOriginCommit,
+                remoteRefName: "origin/main",
+              };
+            }),
+        );
         const createWorktree = vi.fn(
-          (_: Parameters<GitVcsDriver.GitVcsDriverShape["createWorktree"]>[0]) =>
-            Effect.succeed({
-              worktree: {
-                refName: "t3code/bootstrap-refName",
-                path: "/tmp/bootstrap-worktree",
-              },
+          (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[0]) =>
+            Effect.sync(() => {
+              bootstrapGitOperations.push("create-worktree");
+              return {
+                worktree: {
+                  refName: "t3code/bootstrap-refName",
+                  path: "/tmp/bootstrap-worktree",
+                },
+              };
             }),
         );
         const runForThread = vi.fn(
-          (_: Parameters<ProjectSetupScriptRunnerShape["runForThread"]>[0]) =>
+          (
+            _: Parameters<
+              ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]["runForThread"]
+            >[0],
+          ) =>
             Effect.succeed({
               status: "started" as const,
               scriptId: "setup",
@@ -6061,6 +6161,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         yield* buildAppUnderTest({
           layers: {
             gitVcsDriver: {
+              fetchRemote,
+              resolveRemoteTrackingCommit,
               createWorktree,
             },
             vcsStatusBroadcaster: {
@@ -6112,6 +6214,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   projectCwd: "/tmp/project",
                   baseBranch: "main",
                   branch: "t3code/bootstrap-refName",
+                  startFromOrigin: true,
                 },
                 runSetupScript: true,
               },
@@ -6133,10 +6236,25 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         );
         assert.deepEqual(createWorktree.mock.calls[0]?.[0], {
           cwd: "/tmp/project",
-          refName: "main",
+          refName: fetchedOriginCommit,
           newRefName: "t3code/bootstrap-refName",
+          baseRefName: "main",
           path: null,
         });
+        assert.deepEqual(fetchRemote.mock.calls[0]?.[0], {
+          cwd: "/tmp/project",
+          remoteName: "origin",
+        });
+        assert.deepEqual(resolveRemoteTrackingCommit.mock.calls[0]?.[0], {
+          cwd: "/tmp/project",
+          refName: "main",
+          fallbackRemoteName: "origin",
+        });
+        assert.deepEqual(bootstrapGitOperations, [
+          "fetch",
+          "resolve-remote-commit",
+          "create-worktree",
+        ]);
         assert.deepEqual(runForThread.mock.calls[0]?.[0], {
           threadId: ThreadId.make("thread-bootstrap"),
           projectId: defaultProjectId,
@@ -6165,7 +6283,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       const dispatchedCommands: Array<OrchestrationCommand> = [];
       const createWorktree = vi.fn(
-        (_: Parameters<GitVcsDriver.GitVcsDriverShape["createWorktree"]>[0]) =>
+        (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[0]) =>
           Effect.succeed({
             worktree: {
               refName: "t3code/bootstrap-refName",
@@ -6174,8 +6292,19 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           }),
       );
       const runForThread = vi.fn(
-        (_: Parameters<ProjectSetupScriptRunnerShape["runForThread"]>[0]) =>
-          Effect.fail(new ProjectSetupScriptRunnerError({ message: "pty unavailable" })),
+        (
+          input: Parameters<
+            ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]["runForThread"]
+          >[0],
+        ) =>
+          Effect.fail(
+            new ProjectSetupScriptRunner.ProjectSetupScriptOperationError({
+              threadId: input.threadId,
+              worktreePath: input.worktreePath,
+              operation: "openTerminal",
+              cause: { message: "pty unavailable" },
+            }),
+          ),
       );
 
       yield* buildAppUnderTest({
@@ -6259,7 +6388,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       const dispatchedCommands: Array<OrchestrationCommand> = [];
       const createWorktree = vi.fn(
-        (_: Parameters<GitVcsDriver.GitVcsDriverShape["createWorktree"]>[0]) =>
+        (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[0]) =>
           Effect.succeed({
             worktree: {
               refName: "t3code/bootstrap-refName",
@@ -6268,7 +6397,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           }),
       );
       const runForThread = vi.fn(
-        (_: Parameters<ProjectSetupScriptRunnerShape["runForThread"]>[0]) =>
+        (
+          _: Parameters<
+            ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]["runForThread"]
+          >[0],
+        ) =>
           Effect.succeed({
             status: "started" as const,
             scriptId: "setup",
@@ -6378,7 +6511,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       const dispatchedCommands: Array<OrchestrationCommand> = [];
       const createWorktree = vi.fn(
-        (_: Parameters<GitVcsDriver.GitVcsDriverShape["createWorktree"]>[0]) =>
+        (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[0]) =>
           Effect.die(new Error("worktree exploded")),
       );
 

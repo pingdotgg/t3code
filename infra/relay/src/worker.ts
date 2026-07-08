@@ -42,7 +42,7 @@ import * as EnvironmentCredentials from "./environments/EnvironmentCredentials.t
 import * as EnvironmentLinks from "./environments/EnvironmentLinks.ts";
 import * as ManagedEndpointAllocations from "./environments/ManagedEndpointAllocations.ts";
 import * as LiveActivities from "./agentActivity/LiveActivities.ts";
-import { RelayDb, RelayHyperdrive } from "./db.ts";
+import * as RelayDb from "./db.ts";
 import { RelayApnsDeliveryDeadLetterQueue, RelayApnsDeliveryQueue } from "./queues.ts";
 import * as RelayConfiguration from "./Config.ts";
 import * as AgentActivityPublisher from "./agentActivity/AgentActivityPublisher.ts";
@@ -129,7 +129,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
     const apnsDeliveryQueueSender = yield* Cloudflare.QueueBinding.bind(apnsDeliveryQueue);
 
     const axiomDatasetName = yield* observability.traces.name;
-    const axiomIngestToken = yield* observability.ingestToken.token;
+    const axiomIngestToken = yield* observability.workerIngestToken.token;
     const axiomTracesEndpoint = yield* observability.traces.otelTracesEndpoint;
 
     const clerkSecretKey = yield* Config.redacted("CLERK_SECRET_KEY");
@@ -138,7 +138,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
 
     const cloudMintPrivateKey = yield* cloudMintKeyPair.privateKey;
     const cloudMintPublicKey = yield* cloudMintKeyPair.publicKey;
-    const hyperdrive = yield* Cloudflare.Hyperdrive.bind(yield* RelayHyperdrive);
+    const hyperdrive = yield* Cloudflare.Hyperdrive.bind(yield* RelayDb.RelayHyperdrive);
     const db = yield* Drizzle.postgres(hyperdrive.connectionString);
 
     const managedEndpointTunnelBinding = yield* Cloudflare.TunnelReadWrite.bind();
@@ -203,16 +203,11 @@ export default class Api extends Cloudflare.Worker<Api>()(
       Layer.provideMerge(AgentActivityRows.layer),
       Layer.provideMerge(Devices.layer),
       Layer.provideMerge(EnvironmentCredentials.layer),
-      Layer.provideMerge(
-        Layer.mergeAll(
-          EnvironmentLinks.layer,
-          ManagedEndpointAllocations.ManagedEndpointAllocations.layer,
-        ),
-      ),
+      Layer.provideMerge(Layer.mergeAll(EnvironmentLinks.layer, ManagedEndpointAllocations.layer)),
       Layer.provideMerge(LiveActivities.layer),
       Layer.provideMerge(DeliveryAttempts.layer),
       Layer.provideMerge(RelayTokens.layer),
-      Layer.provideMerge(Layer.succeed(RelayDb, db)),
+      Layer.provideMerge(Layer.succeed(RelayDb.RelayDb, db)),
       Layer.provideMerge(Layer.effect(RelayConfiguration.RelayConfiguration, loadSettings)),
       Layer.provideMerge(webcryptoLayer),
     );

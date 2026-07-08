@@ -30,7 +30,7 @@ vi.mock("@clerk/backend", () => ({
   verifyToken: vi.fn(),
 }));
 
-const relaySettings: RelayConfiguration.RelayConfigurationShape = {
+const relaySettings: RelayConfiguration.RelayConfiguration["Service"] = {
   relayIssuer: "https://relay.example.test",
   apns: {
     teamId: "apns-team",
@@ -108,9 +108,10 @@ describe("relay client authentication", () => {
 describe("relay environment authentication", () => {
   it.effect("preserves credential lookup persistence failures as internal errors", () => {
     const failure = new EnvironmentCredentials.EnvironmentCredentialAuthenticatePersistenceError({
+      stage: "lookup-credential",
       cause: "database unavailable",
     });
-    const credentials: EnvironmentCredentials.EnvironmentCredentialsShape = {
+    const credentials: EnvironmentCredentials.EnvironmentCredentials["Service"] = {
       create: () => Effect.die("unused create"),
       authenticate: () => Effect.fail(failure),
       revokeForEnvironmentPublicKey: () => Effect.die("unused revoke"),
@@ -181,6 +182,10 @@ describe("relay request tracing", () => {
         const request = HttpServerRequest.fromWeb(
           new Request("https://relay.test/v1/mobile/devices?client=mobile", {
             method: "POST",
+            headers: {
+              authorization: "Bearer secret",
+              dpop: "signed-proof",
+            },
           }),
         );
 
@@ -192,6 +197,8 @@ describe("relay request tracing", () => {
         expect(spans[0]?.kind).toBe("server");
         expect(spans[0]?.attributes.get("url.path")).toBe("/v1/mobile/devices");
         expect(spans[0]?.attributes.get("http.response.status_code")).toBe(204);
+        expect(spans[0]?.attributes.get("http.request.header.authorization")).toBe("<redacted>");
+        expect(spans[0]?.attributes.get("http.request.header.dpop")).toBe("<redacted>");
         expect(Option.isNone(spans[0]!.parent)).toBe(true);
         expect(Option.getOrUndefined(spans[1]!.parent)?.spanId).toBe(spans[0]?.spanId);
       }),

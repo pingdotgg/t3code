@@ -24,12 +24,14 @@ import {
   AuthWebSocketTicketResult,
   ServerAuthSessionMethod,
 } from "./auth.ts";
-import { AuthSessionId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { AuthSessionId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import {
   ClientOrchestrationCommand,
   DispatchResult,
   OrchestrationReadModel,
+  OrchestrationShellSnapshot,
+  OrchestrationThreadDetailSnapshot,
 } from "./orchestration.ts";
 import {
   RelayCloudEnvironmentHealthRequest,
@@ -80,6 +82,7 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "client_sessions_load_failed",
   "client_session_revoke_failed",
   "orchestration_snapshot_failed",
+  "orchestration_thread_snapshot_failed",
   "orchestration_dispatch_failed",
   "internal_error",
 ]);
@@ -155,11 +158,29 @@ export class EnvironmentInternalError extends Schema.TaggedErrorClass<Environmen
   }
 }
 
+export const EnvironmentResourceNotFoundReason = Schema.Literals(["thread_not_found"]);
+export type EnvironmentResourceNotFoundReason = typeof EnvironmentResourceNotFoundReason.Type;
+
+export class EnvironmentResourceNotFoundError extends Schema.TaggedErrorClass<EnvironmentResourceNotFoundError>()(
+  "EnvironmentResourceNotFoundError",
+  {
+    code: Schema.Literal("not_found"),
+    reason: EnvironmentResourceNotFoundReason,
+    traceId: TrimmedNonEmptyString,
+  },
+  { httpApiStatus: 404 },
+) {
+  [HttpServerRespondable.symbol]() {
+    return HttpServerResponse.schemaJson(EnvironmentResourceNotFoundError)(this, { status: 404 });
+  }
+}
+
 export const EnvironmentHttpCommonError = Schema.Union([
   EnvironmentRequestInvalidError,
   EnvironmentAuthInvalidError,
   EnvironmentScopeRequiredError,
   EnvironmentOperationForbiddenError,
+  EnvironmentResourceNotFoundError,
   EnvironmentInternalError,
 ]);
 export type EnvironmentHttpCommonError = typeof EnvironmentHttpCommonError.Type;
@@ -267,6 +288,11 @@ const EnvironmentSessionRevokeErrors = [
 ] as const;
 const EnvironmentOrchestrationSnapshotErrors = [
   EnvironmentScopeRequiredError,
+  EnvironmentInternalError,
+] as const;
+const EnvironmentOrchestrationThreadSnapshotErrors = [
+  EnvironmentScopeRequiredError,
+  EnvironmentResourceNotFoundError,
   EnvironmentInternalError,
 ] as const;
 const EnvironmentOrchestrationDispatchErrors = [
@@ -422,12 +448,31 @@ export class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
+const EnvironmentOrchestrationThreadSnapshotParams = Schema.Struct({
+  threadId: ThreadId,
+});
+
 export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
   .add(
     HttpApiEndpoint.get("snapshot", "/api/orchestration/snapshot", {
       headers: OptionalBearerHeaders,
       success: OrchestrationReadModel,
       error: EnvironmentOrchestrationSnapshotErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("shellSnapshot", "/api/orchestration/shell", {
+      headers: OptionalBearerHeaders,
+      success: OrchestrationShellSnapshot,
+      error: EnvironmentOrchestrationSnapshotErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("threadSnapshot", "/api/orchestration/threads/:threadId", {
+      headers: OptionalBearerHeaders,
+      params: EnvironmentOrchestrationThreadSnapshotParams,
+      success: OrchestrationThreadDetailSnapshot,
+      error: EnvironmentOrchestrationThreadSnapshotErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
@@ -439,9 +484,9 @@ export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestr
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
-export class EnvironmentCloudHttpApi extends HttpApiGroup.make("cloud")
+export class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
   .add(
-    HttpApiEndpoint.post("linkProof", "/api/cloud/link-proof", {
+    HttpApiEndpoint.post("linkProof", "/api/connect/link-proof", {
       headers: OptionalBearerHeaders,
       payload: RelayLinkProofRequest,
       success: RelayEnvironmentLinkProof,
@@ -449,7 +494,7 @@ export class EnvironmentCloudHttpApi extends HttpApiGroup.make("cloud")
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
-    HttpApiEndpoint.post("relayConfig", "/api/cloud/relay-config", {
+    HttpApiEndpoint.post("relayConfig", "/api/connect/relay-config", {
       headers: OptionalBearerHeaders,
       payload: RelayEnvironmentConfigRequest,
       success: EnvironmentCloudRelayConfigResult,
@@ -457,21 +502,21 @@ export class EnvironmentCloudHttpApi extends HttpApiGroup.make("cloud")
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
-    HttpApiEndpoint.get("linkState", "/api/cloud/link-state", {
+    HttpApiEndpoint.get("linkState", "/api/connect/link-state", {
       headers: OptionalBearerHeaders,
       success: EnvironmentCloudLinkStateResult,
       error: EnvironmentHttpCloudErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
-    HttpApiEndpoint.post("unlink", "/api/cloud/unlink", {
+    HttpApiEndpoint.post("unlink", "/api/connect/unlink", {
       headers: OptionalBearerHeaders,
       success: EnvironmentCloudRelayConfigResult,
       error: EnvironmentHttpCloudErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
-    HttpApiEndpoint.post("preferences", "/api/cloud/preferences", {
+    HttpApiEndpoint.post("preferences", "/api/connect/preferences", {
       headers: OptionalBearerHeaders,
       payload: EnvironmentCloudPreferencesRequest,
       success: EnvironmentCloudLinkStateResult,
@@ -479,21 +524,21 @@ export class EnvironmentCloudHttpApi extends HttpApiGroup.make("cloud")
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
-    HttpApiEndpoint.post("health", "/api/t3-cloud/health", {
+    HttpApiEndpoint.post("health", "/api/t3-connect/health", {
       payload: RelayCloudEnvironmentHealthRequest,
       success: RelayEnvironmentHealthResponse,
       error: EnvironmentHttpCloudErrors,
     }),
   )
   .add(
-    HttpApiEndpoint.post("mintCredential", "/api/cloud/mint-credential", {
+    HttpApiEndpoint.post("mintCredential", "/api/connect/mint-credential", {
       payload: RelayCloudMintCredentialRequest,
       success: RelayEnvironmentMintResponse,
       error: EnvironmentHttpCloudErrors,
     }),
   )
   .add(
-    HttpApiEndpoint.post("t3MintCredential", "/api/t3-cloud/mint-credential", {
+    HttpApiEndpoint.post("t3MintCredential", "/api/t3-connect/mint-credential", {
       payload: RelayCloudMintCredentialRequest,
       success: RelayEnvironmentMintResponse,
       error: EnvironmentHttpCloudErrors,
@@ -504,4 +549,4 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
-  .add(EnvironmentCloudHttpApi) {}
+  .add(EnvironmentConnectHttpApi) {}
