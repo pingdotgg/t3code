@@ -1,3 +1,4 @@
+import { Effect } from "effect";
 import * as Schema from "effect/Schema";
 import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { SourceControlProviderInfo } from "./sourceControl.ts";
@@ -119,7 +120,9 @@ const VcsStatusRemoteShape = {
   hasUpstream: Schema.Boolean,
   aheadCount: NonNegativeInt,
   behindCount: NonNegativeInt,
-  aheadOfDefaultCount: Schema.optional(NonNegativeInt),
+  aheadOfDefaultCount: Schema.optionalKey(NonNegativeInt).pipe(
+    Schema.withDecodingDefault(Effect.succeed(0)),
+  ),
   pr: Schema.NullOr(VcsStatusChangeRequest),
 };
 

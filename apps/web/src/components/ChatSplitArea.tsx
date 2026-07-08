@@ -11,12 +11,29 @@ import {
   useState,
 } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { ColumnsIcon, Maximize2Icon, Minimize2Icon, RowsIcon, XIcon } from "lucide-react";
+import {
+  ColumnsIcon,
+  ListTreeIcon,
+  Maximize2Icon,
+  MessageSquarePlusIcon,
+  Minimize2Icon,
+  RowsIcon,
+  XIcon,
+} from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 
 import ChatView from "./ChatView";
+import { threadHasStarted } from "./ChatView.logic";
 import { BrowserPreviewHost } from "./BrowserPreviewHost";
 import { Button } from "./ui/button";
+import { scopeProjectRef } from "@t3tools/client-runtime";
+import { DraftId, useComposerDraftStore, type DraftThreadEnvMode } from "../composerDraftStore";
+import { newDraftId, newThreadId } from "../lib/utils";
+import { useStore } from "../store";
+import {
+  createThreadSelectorAcrossEnvironments,
+  createThreadSelectorByRef,
+} from "../storeSelectors";
 import {
   type ChatSplitDropPlacement,
   type ChatSplitFocusDirection,
@@ -38,6 +55,7 @@ import {
   buildThreadRouteParams,
   threadRouteTargetsEqual,
 } from "../threadRoutes";
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import { CHAT_SPLIT_THREAD_DRAG_MIME, decodeChatSplitThreadDragPayload } from "../chatSplitDrag";
 import { cn } from "~/lib/utils";
 
@@ -117,7 +135,9 @@ export function resolveChatPaneRenderMode(params: {
   isFocused: boolean;
   target: ThreadRouteTarget;
 }): "live" | "empty" {
-  if (params.target.kind !== "server") {
+  // Both server threads and (client-only) draft threads render a live chat
+  // surface; drafts promote to server threads in place on first send.
+  if (params.target.kind !== "server" && params.target.kind !== "draft") {
     return "empty";
   }
   return "live";
@@ -278,11 +298,10 @@ export function ChatSplitArea(props: ChatSplitAreaProps) {
       });
       return;
     }
-    void navigate({
-      to: "/draft/$draftId",
-      params: { draftId: currentTarget.draftId },
-      replace: true,
-    });
+    // Draft leaves are a client-only, in-pane state. The split workspace only
+    // mounts on the server-thread route, so navigating to `/draft/:id` here
+    // would unmount the whole split. We keep the URL on the last server thread;
+    // the draft leaf swaps itself to a server target once it promotes on send.
   }, [focusedLeafDiff, focusedLeafTarget, navigate, routeDiffSearch, routeTarget]);
 
   if (!layoutFrame.rootId) {
@@ -715,8 +734,14 @@ function ChatPaneLeaf(props: ChatPaneLeafProps) {
 
   if (!leafView) return null;
   const { target, diff, isFocused } = leafView;
+  // Only server leaves defer to the URL as source of truth. Draft leaves are a
+  // client-only in-pane state that the URL never represents (see the focused-leaf
+  // navigation effect), so a draft leaf always renders its own target.
   const displayTarget =
-    target && isFocused && !threadRouteTargetsEqual(target, props.routeTarget)
+    target &&
+    target.kind === "server" &&
+    isFocused &&
+    !threadRouteTargetsEqual(target, props.routeTarget)
       ? props.routeTarget
       : target;
   const displayDiff = displayTarget === props.routeTarget ? (props.routeDiffSearch ?? {}) : diff;
@@ -728,42 +753,44 @@ function ChatPaneLeaf(props: ChatPaneLeafProps) {
       ? "ring-1 ring-inset ring-primary/25"
       : "ring-1 ring-inset ring-transparent";
 
+  const paneDragProps = {
+    onPointerDownCapture: handlePointerDownCapture,
+    onDragEnter: handleDragEnter,
+    onDragOver: handleDragOver,
+    onDragLeave: handleDragLeave,
+    onDrop: handleDrop,
+  };
+
   if (!displayTarget) {
     return (
       <div
-        onPointerDownCapture={handlePointerDownCapture}
-        onDragEnter={handleDragEnter}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
+        {...paneDragProps}
         className={cn("relative flex min-h-0 min-w-0 flex-1 flex-col bg-background", focusRing)}
       >
         <div className="drag-region flex h-13 shrink-0 items-center justify-end border-b border-border/40 px-2">
           <div className="no-drag">{paneActions}</div>
         </div>
-        <div className="flex min-h-0 flex-1 items-center justify-center p-6 text-center">
-          <p className="max-w-64 text-sm text-muted-foreground">
-            Click or drag another chat you would like to split with
-          </p>
-        </div>
+        <ChatSplitEmptyPane
+          leafId={leafId}
+          sourceThreadRef={props.routeTarget.kind === "server" ? props.routeTarget.threadRef : null}
+        />
         {dropPlacement ? <ChatSplitBlankDropOverlay /> : null}
       </div>
     );
   }
 
-  // Drafts are rendered by their own dedicated single-pane route; if a persisted layout ever
-  // surfaces a draft leaf here, fall back to an empty pane rather than mounting ChatView with
-  // synthetic ids. Splitting is therefore a server-thread feature for v1.
-  if (displayTarget.kind !== "server") {
+  if (displayTarget.kind === "draft") {
     return (
       <div
-        onPointerDownCapture={handlePointerDownCapture}
-        onDragEnter={handleDragEnter}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
+        {...paneDragProps}
         className={cn("relative flex min-h-0 min-w-0 flex-1 flex-col bg-background", focusRing)}
       >
+        <ChatSplitDraftPane
+          leafId={leafId}
+          draftId={displayTarget.draftId}
+          isFocused={isFocused}
+          paneActions={paneActions}
+        />
         {dropPlacement ? <ChatSplitDropOverlay placement={dropPlacement} /> : null}
       </div>
     );
@@ -773,11 +800,7 @@ function ChatPaneLeaf(props: ChatPaneLeafProps) {
 
   return (
     <div
-      onPointerDownCapture={handlePointerDownCapture}
-      onDragEnter={handleDragEnter}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
+      {...paneDragProps}
       className={cn("relative flex min-h-0 min-w-0 flex-1 flex-col bg-background", focusRing)}
     >
       <ChatView
@@ -795,6 +818,147 @@ function ChatPaneLeaf(props: ChatPaneLeafProps) {
       />
       {dropPlacement ? <ChatSplitDropOverlay placement={dropPlacement} /> : null}
     </div>
+  );
+}
+
+/**
+ * Renders the empty-pane placeholder plus quick actions to spawn a fresh chat
+ * or a nested subchat directly into this leaf. Both inherit the split-from
+ * thread's worktree and model selection; a subchat also nests under it once
+ * promoted on first send.
+ */
+function ChatSplitEmptyPane(props: {
+  leafId: ChatSplitNodeId;
+  sourceThreadRef: ScopedThreadRef | null;
+}) {
+  const sourceThread = useStore(
+    useMemo(() => createThreadSelectorByRef(props.sourceThreadRef), [props.sourceThreadRef]),
+  );
+  const createDetachedDraftSession = useComposerDraftStore(
+    (state) => state.createDetachedDraftSession,
+  );
+  const applyStickyState = useComposerDraftStore((state) => state.applyStickyState);
+  const setModelSelection = useComposerDraftStore((state) => state.setModelSelection);
+  const replaceLeafTarget = useChatSplitLayoutStore((state) => state.replaceLeafTarget);
+  const focusLeaf = useChatSplitLayoutStore((state) => state.focusLeaf);
+
+  const createDraftInPane = useCallback(
+    (asSubchat: boolean) => {
+      if (!sourceThread) {
+        return;
+      }
+      const draftId = newDraftId();
+      const threadId = newThreadId();
+      const envMode: DraftThreadEnvMode = sourceThread.worktreePath ? "worktree" : "local";
+      createDetachedDraftSession(
+        scopeProjectRef(sourceThread.environmentId, sourceThread.projectId),
+        draftId,
+        {
+          threadId,
+          parentThreadId: asSubchat ? sourceThread.id : null,
+          branch: sourceThread.branch,
+          worktreePath: sourceThread.worktreePath,
+          envMode,
+        },
+      );
+      applyStickyState(draftId);
+      setModelSelection(draftId, sourceThread.modelSelection);
+      replaceLeafTarget(props.leafId, { kind: "draft", draftId });
+      focusLeaf(props.leafId);
+    },
+    [
+      applyStickyState,
+      createDetachedDraftSession,
+      focusLeaf,
+      props.leafId,
+      replaceLeafTarget,
+      setModelSelection,
+      sourceThread,
+    ],
+  );
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 p-6 text-center">
+      <p className="max-w-64 text-sm text-muted-foreground">
+        Click or drag another chat you would like to split with
+      </p>
+      <div className="no-drag flex w-52 flex-col items-stretch gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={!sourceThread}
+          onClick={() => createDraftInPane(false)}
+        >
+          <MessageSquarePlusIcon className="size-3.5" aria-hidden="true" />
+          New chat
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={!sourceThread}
+          onClick={() => createDraftInPane(true)}
+        >
+          <ListTreeIcon className="size-3.5" aria-hidden="true" />
+          New subchat
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Renders a draft (pre-send) chat inside a split leaf. Once the draft promotes
+ * to a real server thread on first send, the leaf swaps to that server target
+ * in place so the URL and sidebar catch up without unmounting the split.
+ */
+function ChatSplitDraftPane(props: {
+  leafId: ChatSplitNodeId;
+  draftId: DraftId;
+  isFocused: boolean;
+  paneActions: ReactNode;
+}) {
+  const replaceLeafTarget = useChatSplitLayoutStore((state) => state.replaceLeafTarget);
+  const draftSession = useComposerDraftStore(
+    (state) => state.draftThreadsByThreadKey[props.draftId] ?? null,
+  );
+  const promotedThreadId = draftSession?.threadId ?? null;
+  const promotedThread = useStore(
+    useMemo(() => createThreadSelectorAcrossEnvironments(promotedThreadId), [promotedThreadId]),
+  );
+  const promotedThreadStarted = threadHasStarted(promotedThread);
+
+  useEffect(() => {
+    if (!promotedThread || !promotedThreadStarted) {
+      return;
+    }
+    replaceLeafTarget(props.leafId, {
+      kind: "server",
+      threadRef: {
+        environmentId: promotedThread.environmentId,
+        threadId: promotedThread.id,
+      },
+    });
+  }, [promotedThread, promotedThreadStarted, props.leafId, replaceLeafTarget]);
+
+  if (!draftSession) {
+    return (
+      <div className="flex min-h-0 flex-1 items-center justify-center p-6 text-center">
+        <p className="max-w-64 text-sm text-muted-foreground">This draft is no longer available.</p>
+      </div>
+    );
+  }
+
+  return (
+    <ChatView
+      routeKind="draft"
+      draftId={props.draftId}
+      environmentId={draftSession.environmentId}
+      threadId={draftSession.threadId}
+      isPaneFocused={props.isFocused}
+      paneActions={props.paneActions}
+    />
   );
 }
 

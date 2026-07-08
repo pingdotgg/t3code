@@ -169,7 +169,13 @@ import {
   ReviewDiffPreviewInput,
   ReviewDiffPreviewResult,
 } from "./review.ts";
-import { WorkflowRunError, WorkflowRunInput, WorkflowRunResult } from "./agentWorkflows.ts";
+import {
+  WorkflowListRunsInput,
+  WorkflowListRunsResult,
+  WorkflowRunError,
+  WorkflowRunInput,
+  WorkflowRunResult,
+} from "./agentWorkflows.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -237,6 +243,7 @@ export const WS_METHODS = {
 
   // Workflow methods
   workflowRun: "workflow.run",
+  workflowListRuns: "workflow.listRuns",
 
   // Terminal methods
   terminalOpen: "terminal.open",
@@ -740,6 +747,11 @@ export const WsWorkflowRunRpc = Rpc.make(WS_METHODS.workflowRun, {
   error: WorkflowRunError,
 });
 
+export const WsWorkflowListRunsRpc = Rpc.make(WS_METHODS.workflowListRuns, {
+  payload: WorkflowListRunsInput,
+  success: WorkflowListRunsResult,
+});
+
 export const WsCloudGetRelayClientStatusRpc = Rpc.make(WS_METHODS.cloudGetRelayClientStatus, {
   payload: Schema.Struct({}),
   success: RelayClientStatusSchema,
@@ -885,6 +897,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSourceControlPublishRepositoryRpc,
   WsReviewGetDiffPreviewRpc,
   WsWorkflowRunRpc,
+  WsWorkflowListRunsRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
   WsTerminalAttachRpc,

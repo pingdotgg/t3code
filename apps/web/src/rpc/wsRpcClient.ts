@@ -117,6 +117,7 @@ export interface WsRpcClient {
   };
   readonly workflow: {
     readonly run: RpcUnaryMethod<typeof WS_METHODS.workflowRun>;
+    readonly listRuns: RpcUnaryMethod<typeof WS_METHODS.workflowListRuns>;
   };
   readonly server: {
     readonly getConfig: RpcUnaryNoArgMethod<typeof WS_METHODS.serverGetConfig>;
@@ -259,6 +260,8 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
     },
     workflow: {
       run: (input) => transport.request((client) => client[WS_METHODS.workflowRun](input)),
+      listRuns: (input) =>
+        transport.request((client) => client[WS_METHODS.workflowListRuns](input)),
     },
     server: {
       getConfig: () => transport.request((client) => client[WS_METHODS.serverGetConfig]({})),

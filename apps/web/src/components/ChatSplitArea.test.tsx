@@ -52,7 +52,7 @@ describe("resolveChatPaneRenderMode", () => {
     ).toBe("live");
   });
 
-  it("keeps unsupported draft targets out of the live split surface", () => {
+  it("renders draft targets live so they can be composed in place", () => {
     expect(
       resolveChatPaneRenderMode({
         isFocused: true,
@@ -61,7 +61,7 @@ describe("resolveChatPaneRenderMode", () => {
           draftId: DraftId.make("draft-a"),
         },
       }),
-    ).toBe("empty");
+    ).toBe("live");
   });
 });
 

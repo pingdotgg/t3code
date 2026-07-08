@@ -6,6 +6,7 @@ import type {
   UnifiedSettings,
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import type { Project, ThreadShell } from "../../types";
 
 export function buildProviderInstanceUpdatePatch(input: {
   readonly settings: Pick<ServerSettings, "providers" | "providerInstances">;
@@ -40,4 +41,32 @@ export function buildProviderInstanceUpdatePatch(input: {
       ? { textGenerationModelSelection: input.textGenerationModelSelection }
       : {}),
   };
+}
+
+export interface ArchivedThreadGroup {
+  readonly project: Project;
+  readonly threads: readonly ThreadShell[];
+}
+
+export function buildArchivedThreadGroups(input: {
+  readonly projects: readonly Project[];
+  readonly threads: readonly ThreadShell[];
+}): readonly ArchivedThreadGroup[] {
+  return input.projects
+    .map((project) => ({
+      project,
+      threads: input.threads
+        .filter(
+          (thread) =>
+            thread.environmentId === project.environmentId &&
+            thread.projectId === project.id &&
+            thread.archivedAt !== null,
+        )
+        .toSorted((left, right) => {
+          const leftKey = left.archivedAt ?? left.createdAt;
+          const rightKey = right.archivedAt ?? right.createdAt;
+          return rightKey.localeCompare(leftKey) || right.id.localeCompare(left.id);
+        }),
+    }))
+    .filter((group) => group.threads.length > 0);
 }

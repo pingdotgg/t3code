@@ -174,6 +174,7 @@ const PersistedDraftThreadState = Schema.Struct({
   threadId: ThreadId,
   environmentId: Schema.String,
   projectId: ProjectId,
+  parentThreadId: Schema.optionalKey(Schema.NullOr(ThreadId)),
   logicalProjectKey: Schema.optionalKey(Schema.String),
   createdAt: Schema.String,
   runtimeMode: RuntimeMode,
@@ -243,6 +244,12 @@ export interface DraftSessionState {
   threadId: ThreadId;
   environmentId: EnvironmentId;
   projectId: ProjectId;
+  /**
+   * When set, promoting this draft creates a child (nested) thread of the given
+   * parent. Used by split-pane subchats so the promoted thread nests under the
+   * chat it was spawned from.
+   */
+  parentThreadId: ThreadId | null;
   logicalProjectKey: string;
   createdAt: string;
   runtimeMode: RuntimeMode;
@@ -307,6 +314,27 @@ interface ComposerDraftStoreState {
     draftId: DraftId,
     options?: {
       threadId?: ThreadId;
+      parentThreadId?: ThreadId | null;
+      branch?: string | null;
+      worktreePath?: string | null;
+      createdAt?: string;
+      envMode?: DraftThreadEnvMode;
+      runtimeMode?: RuntimeMode;
+      interactionMode?: ProviderInteractionMode;
+    },
+  ) => void;
+  /**
+   * Creates a standalone draft session keyed only by its `DraftId`, without
+   * claiming the single "active draft" slot for its logical project. Used by
+   * split-pane new chats / subchats so multiple independent drafts can coexist
+   * (and so the sidebar "+" resume-draft flow is untouched).
+   */
+  createDetachedDraftSession: (
+    projectRef: ScopedProjectRef,
+    draftId: DraftId,
+    options?: {
+      threadId?: ThreadId;
+      parentThreadId?: ThreadId | null;
       branch?: string | null;
       worktreePath?: string | null;
       createdAt?: string;
@@ -321,6 +349,7 @@ interface ComposerDraftStoreState {
     draftId: DraftId,
     options?: {
       threadId?: ThreadId;
+      parentThreadId?: ThreadId | null;
       branch?: string | null;
       worktreePath?: string | null;
       createdAt?: string;
@@ -1154,6 +1183,7 @@ function createDraftThreadState(
   existingThread: DraftThreadState | undefined,
   options?: {
     threadId?: ThreadId;
+    parentThreadId?: ThreadId | null;
     branch?: string | null;
     worktreePath?: string | null;
     createdAt?: string;
@@ -1182,6 +1212,10 @@ function createDraftThreadState(
     threadId,
     environmentId: projectRef.environmentId,
     projectId: projectRef.projectId,
+    parentThreadId:
+      options?.parentThreadId === undefined
+        ? (existingThread?.parentThreadId ?? null)
+        : (options.parentThreadId ?? null),
     logicalProjectKey,
     createdAt: options?.createdAt ?? existingThread?.createdAt ?? new Date().toISOString(),
     runtimeMode: options?.runtimeMode ?? existingThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
@@ -1220,6 +1254,7 @@ function draftThreadsEqual(left: DraftThreadState | undefined, right: DraftThrea
     left.threadId === right.threadId &&
     left.environmentId === right.environmentId &&
     left.projectId === right.projectId &&
+    left.parentThreadId === right.parentThreadId &&
     left.logicalProjectKey === right.logicalProjectKey &&
     left.createdAt === right.createdAt &&
     left.runtimeMode === right.runtimeMode &&
@@ -1914,6 +1949,7 @@ function toHydratedDraftThreadState(
     threadId: persistedDraftThread.threadId,
     environmentId: persistedDraftThread.environmentId as EnvironmentId,
     projectId: persistedDraftThread.projectId,
+    parentThreadId: persistedDraftThread.parentThreadId ?? null,
     logicalProjectKey:
       persistedDraftThread.logicalProjectKey ??
       projectDraftKey(
@@ -2078,6 +2114,29 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             options,
           );
         },
+        createDetachedDraftSession: (projectRef, draftId, options) => {
+          if (draftId.length === 0) {
+            return;
+          }
+          set((state) => {
+            if (state.draftThreadsByThreadKey[draftId]) {
+              return state;
+            }
+            const nextDraftThread = createDraftThreadState(
+              projectRef,
+              options?.threadId ?? ThreadId.make(draftId),
+              projectDraftKey(projectRef),
+              undefined,
+              options,
+            );
+            return {
+              draftThreadsByThreadKey: {
+                ...state.draftThreadsByThreadKey,
+                [draftId]: nextDraftThread,
+              },
+            };
+          });
+        },
         setDraftThreadContext: (threadRef, options) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
           if (threadKey.length === 0) {
@@ -2117,6 +2176,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               threadId: existing.threadId,
               environmentId: nextProjectRef.environmentId,
               projectId: nextProjectRef.projectId,
+              parentThreadId: existing.parentThreadId ?? null,
               logicalProjectKey: existing.logicalProjectKey,
               createdAt:
                 options.createdAt === undefined

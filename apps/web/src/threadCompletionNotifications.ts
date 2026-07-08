@@ -2,9 +2,19 @@ import type {
   DesktopNotificationRequest,
   DesktopThreadCompletionNotificationStatus,
   EnvironmentId,
+  ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
 import type { EnvironmentState } from "./store";
 import type { ThreadCompletionNotificationMode } from "@t3tools/contracts/settings";
+
+export interface StaleActiveTurnToastRequest {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId;
+  readonly title: string;
+  readonly threadTitle: string;
+}
 
 export interface ThreadCompletionNotificationTracker {
   readonly notifiedTurnKeys: Set<string>;
@@ -82,6 +92,46 @@ export function collectThreadCompletionNotifications(
 
     if (environmentState.bootstrapComplete) {
       input.tracker.bootstrappedEnvironmentIds.add(environmentId as EnvironmentId);
+    }
+  }
+
+  return requests;
+}
+
+export function collectStaleActiveTurnToastRequests(input: {
+  readonly environmentStateById: Readonly<Record<string, EnvironmentState>>;
+  readonly notifiedTurnKeys: Set<string>;
+}): StaleActiveTurnToastRequest[] {
+  const requests: StaleActiveTurnToastRequest[] = [];
+
+  for (const environmentState of Object.values(input.environmentStateById)) {
+    if (!environmentState.bootstrapComplete) {
+      continue;
+    }
+
+    for (const summary of Object.values(environmentState.sidebarThreadSummaryById)) {
+      const latestTurn = summary.latestTurn;
+      const session = summary.session;
+      if (!latestTurn?.completedAt || !session?.activeTurnId) {
+        continue;
+      }
+      if (session.activeTurnId !== latestTurn.turnId) {
+        continue;
+      }
+
+      const turnKey = `${summary.environmentId}:${summary.id}:${latestTurn.turnId}`;
+      if (input.notifiedTurnKeys.has(turnKey)) {
+        continue;
+      }
+
+      input.notifiedTurnKeys.add(turnKey);
+      requests.push({
+        environmentId: summary.environmentId,
+        threadId: summary.id,
+        turnId: latestTurn.turnId,
+        title: "Chat still looked active after completion",
+        threadTitle: summary.title,
+      });
     }
   }
 

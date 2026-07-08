@@ -685,7 +685,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 data-thread-selection-safe
                 data-testid={`thread-archive-confirm-${thread.id}`}
                 aria-label={`Confirm archive ${thread.title}`}
-                className="absolute top-1/2 right-1 inline-flex h-5 -translate-y-1/2 cursor-pointer items-center rounded-full bg-destructive/12 px-2 text-[10px] font-medium text-destructive transition-colors hover:bg-destructive/18 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-destructive/40"
+                className="absolute top-1/2 right-1 inline-flex h-5 -translate-y-1/2 cursor-pointer items-center rounded-full bg-destructive/12 px-2 text-[length:var(--app-sidebar-font-size)] font-medium text-destructive transition-colors hover:bg-destructive/18 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-destructive/40"
                 onPointerDown={stopPropagationOnPointerDown}
                 onClick={handleConfirmArchiveClick}
               >
@@ -802,7 +802,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 )}
                 {jumpLabel ? (
                   <span
-                    className="inline-flex h-5 items-center rounded-full border border-border/80 bg-background/90 px-1.5 font-mono text-[10px] font-medium tracking-tight text-foreground shadow-sm"
+                    className="inline-flex h-5 items-center rounded-full border border-border/80 bg-background/90 px-1.5 font-mono text-[length:var(--app-sidebar-font-size)] font-medium tracking-tight text-foreground shadow-sm"
                     title={jumpLabel}
                   >
                     {jumpLabel}
@@ -814,7 +814,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         ? "text-foreground/72 dark:text-foreground/82"
                         : "text-muted-foreground/40"
                     }`}
-                    style={{ fontSize: "calc(var(--app-sidebar-font-size) * 0.85)" }}
+                    style={{ fontSize: "var(--app-sidebar-font-size)" }}
                   >
                     {formatRelativeTimeLabel(
                       thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
@@ -1035,7 +1035,7 @@ const VisibleSidebarProjectThreadList = memo(function VisibleSidebarProjectThrea
         <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
           <div
             data-thread-selection-safe
-            className="flex h-6 w-full translate-x-0 items-center px-2 text-left text-[10px] text-muted-foreground/60"
+            className="flex h-6 w-full translate-x-0 items-center px-2 text-left text-[length:var(--app-sidebar-font-size)] text-muted-foreground/60"
           >
             <span>No threads yet</span>
           </div>
@@ -1049,7 +1049,7 @@ const VisibleSidebarProjectThreadList = memo(function VisibleSidebarProjectThrea
             render={showMoreButtonRender}
             data-thread-selection-safe
             size="sm"
-            className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 transition-none hover:bg-accent hover:text-muted-foreground/80"
+            className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[length:var(--app-sidebar-font-size)] text-muted-foreground/60 transition-none hover:bg-accent hover:text-muted-foreground/80"
             onClick={() => {
               expandThreadListForProject(projectKey);
             }}
@@ -1067,7 +1067,7 @@ const VisibleSidebarProjectThreadList = memo(function VisibleSidebarProjectThrea
             render={showLessButtonRender}
             data-thread-selection-safe
             size="sm"
-            className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 transition-none hover:bg-accent hover:text-muted-foreground/80"
+            className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[length:var(--app-sidebar-font-size)] text-muted-foreground/60 transition-none hover:bg-accent hover:text-muted-foreground/80"
             onClick={() => {
               collapseThreadListForProject(projectKey);
             }}
@@ -2308,7 +2308,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               {project.displayName}
             </span>
             {project.groupedProjectCount > 1 ? (
-              <span className="shrink-0 text-[10px] text-muted-foreground/60">
+              <span className="shrink-0 text-[length:var(--app-sidebar-font-size)] text-muted-foreground/60">
                 {project.groupedProjectCount} projects
               </span>
             ) : null}
@@ -2462,7 +2462,7 @@ function ProjectSortMenu({
       </Tooltip>
       <MenuPopup align="end" side="bottom" className="min-w-44">
         <MenuGroup>
-          <div className="px-2 py-1 sm:text-xs font-medium text-muted-foreground">
+          <div className="px-2 py-1 font-medium text-[length:var(--app-sidebar-font-size)] text-muted-foreground">
             Sort projects
           </div>
           <MenuRadioGroup
@@ -2473,7 +2473,11 @@ function ProjectSortMenu({
           >
             {(Object.entries(SIDEBAR_SORT_LABELS) as Array<[SidebarProjectSortOrder, string]>).map(
               ([value, label]) => (
-                <MenuRadioItem key={value} value={value} className="min-h-7 py-1 sm:text-xs">
+                <MenuRadioItem
+                  key={value}
+                  value={value}
+                  className="min-h-7 py-1 text-[length:var(--app-sidebar-font-size)]"
+                >
                   {label}
                 </MenuRadioItem>
               ),
@@ -2481,7 +2485,7 @@ function ProjectSortMenu({
           </MenuRadioGroup>
         </MenuGroup>
         <MenuGroup>
-          <div className="px-2 pt-2 pb-1 sm:text-xs font-medium text-muted-foreground">
+          <div className="px-2 pt-2 pb-1 font-medium text-[length:var(--app-sidebar-font-size)] text-muted-foreground">
             Sort threads
           </div>
           <MenuRadioGroup
@@ -2493,7 +2497,11 @@ function ProjectSortMenu({
             {(
               Object.entries(SIDEBAR_THREAD_SORT_LABELS) as Array<[SidebarThreadSortOrder, string]>
             ).map(([value, label]) => (
-              <MenuRadioItem key={value} value={value} className="min-h-7 py-1 sm:text-xs">
+              <MenuRadioItem
+                key={value}
+                value={value}
+                className="min-h-7 py-1 text-[length:var(--app-sidebar-font-size)]"
+              >
                 {label}
               </MenuRadioItem>
             ))}
@@ -2501,7 +2509,7 @@ function ProjectSortMenu({
         </MenuGroup>
         <MenuSeparator />
         <MenuGroup>
-          <div className="px-2 pt-2 pb-1 font-medium text-muted-foreground sm:text-xs">
+          <div className="px-2 pt-2 pb-1 font-medium text-[length:var(--app-sidebar-font-size)] text-muted-foreground">
             Group projects
           </div>
           <MenuRadioGroup
@@ -2517,7 +2525,11 @@ function ProjectSortMenu({
                 [SidebarProjectGroupingMode, string]
               >
             ).map(([value, label]) => (
-              <MenuRadioItem key={value} value={value} className="min-h-7 py-1 sm:text-xs">
+              <MenuRadioItem
+                key={value}
+                value={value}
+                className="min-h-7 py-1 text-[length:var(--app-sidebar-font-size)]"
+              >
                 {label}
               </MenuRadioItem>
             ))}
@@ -2629,11 +2641,11 @@ const SidebarChromeFooter = memo(function SidebarChromeFooter() {
         <SidebarMenuItem>
           <SidebarMenuButton
             size="sm"
-            className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+            className="gap-2 px-2 py-1.5 text-[length:var(--app-sidebar-font-size)] text-muted-foreground/70 hover:bg-accent hover:text-foreground"
             onClick={handleSettingsClick}
           >
             <SettingsIcon className="size-3.5" />
-            <span className="text-xs">Settings</span>
+            <span>Settings</span>
           </SidebarMenuButton>
         </SidebarMenuItem>
       </SidebarMenu>
@@ -2748,15 +2760,15 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
               render={
                 <SidebarMenuButton
                   size="sm"
-                  className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground focus-visible:ring-0"
+                  className="gap-2 px-2 py-1.5 text-[length:var(--app-sidebar-font-size)] text-muted-foreground/70 hover:bg-accent hover:text-foreground focus-visible:ring-0"
                   data-testid="command-palette-trigger"
                 />
               }
             >
               <SearchIcon className="size-3.5" />
-              <span className="flex-1 truncate text-left text-xs">Search</span>
+              <span className="flex-1 truncate text-left">Search</span>
               {commandPaletteShortcutLabel ? (
-                <Kbd className="h-4 min-w-0 rounded-sm px-1.5 text-[10px]">
+                <Kbd className="h-4 min-w-0 rounded-sm px-1.5 text-[length:var(--app-sidebar-font-size)]">
                   {commandPaletteShortcutLabel}
                 </Kbd>
               ) : null}
@@ -2765,11 +2777,11 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
           <SidebarMenuItem>
             <SidebarMenuButton
               size="sm"
-              className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground focus-visible:ring-0"
+              className="gap-2 px-2 py-1.5 text-[length:var(--app-sidebar-font-size)] text-muted-foreground/70 hover:bg-accent hover:text-foreground focus-visible:ring-0"
               onClick={handleSkillsClick}
             >
               <SparklesIcon className="size-3.5" />
-              <span className="flex-1 truncate text-left text-xs">Skills</span>
+              <span className="flex-1 truncate text-left">Skills</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
@@ -2799,7 +2811,9 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
       ) : null}
       <SidebarGroup className="p-2">
         <div className="mb-1 flex items-center justify-between pl-2 pr-1.5">
-          <span className="text-[11px] font-medium text-muted-foreground/60">Projects</span>
+          <span className="font-medium text-[length:var(--app-sidebar-font-size)] text-muted-foreground/60">
+            Projects
+          </span>
           <div className="flex items-center gap-1">
             <ProjectSortMenu
               projectSortOrder={projectSortOrder}
@@ -2900,7 +2914,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
         )}
 
         {projectsLength === 0 && (
-          <div className="px-2 pt-4 text-center text-xs text-muted-foreground/60">
+          <div className="px-2 pt-4 text-center text-[length:var(--app-sidebar-font-size)] text-muted-foreground/60">
             No projects yet
           </div>
         )}

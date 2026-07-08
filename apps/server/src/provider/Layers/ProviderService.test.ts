@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import type {
   ProviderApprovalDecision,
@@ -36,12 +37,15 @@ import {
   ProviderAdapterRegistry,
   type ProviderAdapterRegistryShape,
 } from "../Services/ProviderAdapterRegistry.ts";
+import { CopilotAdapter } from "../Services/CopilotAdapter.ts";
 import { ProviderService } from "../Services/ProviderService.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
+import { makeCopilotAdapterLive } from "./CopilotAdapter.ts";
 import { makeProviderServiceLive } from "./ProviderService.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
 import { ProviderSessionDirectoryLive } from "./ProviderSessionDirectory.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { ServerConfig } from "../../config.ts";
 import { ProviderSessionRuntimeRepositoryLive } from "../../persistence/Layers/ProviderSessionRuntime.ts";
 import { ProviderSessionRuntimeRepository } from "../../persistence/Services/ProviderSessionRuntime.ts";
 import {
@@ -63,6 +67,105 @@ const claudeAgentInstanceId = ProviderInstanceId.make("claudeAgent");
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER = ProviderDriverKind.make("cursor");
+const COPILOT_DRIVER = ProviderDriverKind.make("copilot");
+const copilotInstanceId = ProviderInstanceId.make("copilot");
+const COPILOT_GPT_5_4_MINI_MODEL = "gpt-5.4-mini";
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const mockCopilotAgentPath = path.join(__dirname, "../../../scripts/acp-mock-agent.ts");
+
+const isolateCopilotHome = Effect.fn("isolateCopilotHome")(function* () {
+  const previousHome = process.env.HOME;
+  const temporaryHome = fs.mkdtempSync(path.join(os.tmpdir(), "provider-service-copilot-home-"));
+  process.env.HOME = temporaryHome;
+  yield* Effect.addFinalizer(() =>
+    Effect.sync(() => {
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+    }),
+  );
+  return temporaryHome;
+});
+
+function makeMockCopilotWrapper(extraEnv: Record<string, string>) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "provider-service-copilot-acp-"));
+  const wrapperPath = path.join(dir, "fake-copilot.sh");
+  const envExports = Object.entries({
+    T3_ACP_AUTH_METHODS: "copilot-login",
+    ...extraEnv,
+  })
+    .map(([key, value]) => `export ${key}=${JSON.stringify(value)}`)
+    .join("\n");
+  fs.writeFileSync(
+    wrapperPath,
+    `#!/bin/sh
+${envExports}
+exec bun ${JSON.stringify(mockCopilotAgentPath)} "$@"
+`,
+    "utf8",
+  );
+  fs.chmodSync(wrapperPath, 0o755);
+  return wrapperPath;
+}
+
+function readJsonLines<T = Record<string, unknown>>(filePath: string): ReadonlyArray<T> {
+  return fs
+    .readFileSync(filePath, "utf8")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.parse(line) as T);
+}
+
+function makeCopilotProviderServiceLayer(wrapperPath: string) {
+  const settingsLayer = ServerSettingsService.layerTest({
+    providers: {
+      copilot: {
+        binaryPath: wrapperPath,
+      },
+    },
+  });
+  const configLayer = ServerConfig.layerTest(process.cwd(), {
+    prefix: "t3-provider-service-copilot-smoke-",
+  });
+  const copilotAdapterLayer = makeCopilotAdapterLive().pipe(
+    Layer.provideMerge(settingsLayer),
+    Layer.provideMerge(configLayer),
+    Layer.provideMerge(NodeServices.layer),
+  );
+  const providerAdapterLayer = Layer.effect(
+    ProviderAdapterRegistry,
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      return makeAdapterRegistryMock({
+        [COPILOT_DRIVER]: adapter,
+      });
+    }),
+  ).pipe(Layer.provide(copilotAdapterLayer));
+  const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
+    Layer.provide(SqlitePersistenceMemory),
+  );
+  const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
+
+  return Layer.mergeAll(
+    makeProviderServiceLive().pipe(
+      Layer.provide(providerAdapterLayer),
+      Layer.provide(directoryLayer),
+      Layer.provide(settingsLayer),
+      Layer.provide(AnalyticsService.layerTest),
+      Layer.provide(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
+    ),
+    directoryLayer,
+    runtimeRepositoryLayer,
+    NodeServices.layer,
+  ) as Layer.Layer<
+    ProviderService | ProviderSessionDirectory | ProviderSessionRuntimeRepository,
+    never,
+    never
+  >;
+}
 
 type LegacyProviderRuntimeEvent = {
   readonly type: string;
@@ -1211,12 +1314,108 @@ routing.layer("ProviderServiceLive routing", (it) => {
           };
           assert.equal(runtimePayload.cwd, session.cwd);
           assert.equal(runtimePayload.model, null);
-          assert.equal(runtimePayload.activeTurnId, `turn-${String(session.threadId)}`);
+          assert.equal(runtimePayload.activeTurnId, null);
           assert.equal(runtimePayload.lastError, null);
           assert.equal(runtimePayload.lastRuntimeEvent, "provider.sendTurn");
         }
       }
     }),
+  );
+
+  it.effect(
+    "runs a Copilot provider session smoke with gpt-5.4-mini and clears runtime state",
+    () =>
+      Effect.gen(function* () {
+        yield* isolateCopilotHome();
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "provider-service-copilot-smoke-"));
+        const requestLogPath = path.join(tempDir, "requests.ndjson");
+        const wrapperPath = makeMockCopilotWrapper({
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+          T3_ACP_PROMPT_RESPONSE_TEXT: "copilot provider smoke output",
+        });
+        const providerLayer = makeCopilotProviderServiceLayer(wrapperPath);
+
+        yield* Effect.gen(function* () {
+          const provider = yield* ProviderService;
+          const runtimeRepository = yield* ProviderSessionRuntimeRepository;
+          const threadId = asThreadId("thread-copilot-provider-smoke");
+          const modelSelection = createModelSelection(
+            copilotInstanceId,
+            COPILOT_GPT_5_4_MINI_MODEL,
+          );
+          const contentDeltaFiber = yield* provider.streamEvents.pipe(
+            Stream.filter((event) => event.type === "content.delta"),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.forkChild,
+          );
+
+          const session = yield* provider.startSession(threadId, {
+            provider: COPILOT_DRIVER,
+            providerInstanceId: copilotInstanceId,
+            threadId,
+            cwd: process.cwd(),
+            runtimeMode: "full-access",
+            modelSelection,
+          });
+          assert.equal(session.provider, "copilot");
+          assert.equal(session.providerInstanceId, copilotInstanceId);
+          assert.equal(session.model, COPILOT_GPT_5_4_MINI_MODEL);
+
+          yield* provider.sendTurn({
+            threadId,
+            input: "test",
+            attachments: [],
+            modelSelection,
+          });
+
+          const contentDelta = Array.from(yield* Fiber.join(contentDeltaFiber))[0];
+          assert.isDefined(contentDelta);
+          if (contentDelta?.type !== "content.delta") {
+            assert.fail("Expected Copilot content.delta output");
+            return;
+          }
+          assert.equal(contentDelta.provider, "copilot");
+          assert.equal(contentDelta.providerInstanceId, copilotInstanceId);
+          assert.equal(contentDelta.payload.delta, "copilot provider smoke output");
+
+          const runtime = yield* runtimeRepository.getByThreadId({ threadId });
+          assert.equal(Option.isSome(runtime), true);
+          if (Option.isSome(runtime)) {
+            const payload = runtime.value.runtimePayload;
+            assert.equal(payload !== null && typeof payload === "object", true);
+            if (payload !== null && typeof payload === "object" && !Array.isArray(payload)) {
+              const runtimePayload = payload as Record<string, unknown>;
+              assert.deepEqual(runtimePayload.modelSelection, modelSelection);
+              assert.equal(runtimePayload.activeTurnId, null);
+              assert.equal(runtimePayload.lastRuntimeEvent, "provider.sendTurn");
+            }
+          }
+
+          const requests = readJsonLines<{
+            readonly method?: string;
+            readonly params?: unknown;
+          }>(requestLogPath);
+          assert.isTrue(
+            requests.some(
+              (request) =>
+                request.method === "session/set_config_option" &&
+                JSON.stringify(request.params).includes(COPILOT_GPT_5_4_MINI_MODEL),
+            ),
+          );
+          assert.isTrue(
+            requests.some(
+              (request) =>
+                request.method === "session/prompt" &&
+                JSON.stringify(request.params).includes("test"),
+            ),
+          );
+
+          yield* provider.stopSession({ threadId });
+          const remaining = yield* provider.listSessions();
+          assert.isFalse(remaining.some((candidate) => candidate.threadId === threadId));
+        }).pipe(Effect.provide(providerLayer));
+      }),
   );
 
   it.effect("reuses persisted resume cursor when startSession is called after a restart", () =>

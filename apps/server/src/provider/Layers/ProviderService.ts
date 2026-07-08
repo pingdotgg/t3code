@@ -740,10 +740,19 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           ...(turn.resumeCursor !== undefined ? { resumeCursor: turn.resumeCursor } : {}),
           runtimePayload: {
             ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
-            activeTurnId: turn.turnId,
+            activeTurnId: null,
             lastRuntimeEvent: "provider.sendTurn",
             lastRuntimeEventAt: new Date().toISOString(),
           },
+        });
+        yield* Effect.logInfo("provider.turn.settled", {
+          provider: routed.adapter.provider,
+          providerInstanceId: routed.instanceId,
+          threadId: input.threadId,
+          turnId: turn.turnId,
+          model: input.modelSelection?.model,
+          persistedActiveTurnId: null,
+          reason: "adapter_send_turn_completed",
         });
         yield* analytics.record("provider.turn.sent", {
           provider: routed.adapter.provider,

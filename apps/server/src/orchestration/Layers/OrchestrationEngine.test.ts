@@ -284,6 +284,23 @@ describe("OrchestrationEngine", () => {
         createdAt,
       }),
     );
+    await system.run(
+      engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-thread-archive-running-session"),
+        threadId: ThreadId.make("thread-archive"),
+        session: {
+          threadId: ThreadId.make("thread-archive"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: asTurnId("turn-stale-running"),
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      }),
+    );
 
     await system.run(
       engine.dispatch({
@@ -310,6 +327,41 @@ describe("OrchestrationEngine", () => {
         (thread) => thread.id === "thread-archive",
       )?.archivedAt,
     ).toBeNull();
+    expect(
+      (await system.run(engine.getReadModel())).threads.find(
+        (thread) => thread.id === "thread-archive",
+      )?.session?.activeTurnId,
+    ).toBeNull();
+
+    await system.run(
+      engine.dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.make("cmd-thread-unarchive-already-active"),
+        threadId: ThreadId.make("thread-archive"),
+      }),
+    );
+    expect(
+      (await system.run(engine.getReadModel())).threads.find(
+        (thread) => thread.id === "thread-archive",
+      )?.archivedAt,
+    ).toBeNull();
+
+    await system.run(
+      engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-thread-start-after-unarchive"),
+        threadId: ThreadId.make("thread-archive"),
+        message: {
+          messageId: asMessageId("msg-start-after-unarchive"),
+          role: "user",
+          text: "continue",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "full-access",
+        createdAt,
+      }),
+    );
 
     await system.dispose();
   });

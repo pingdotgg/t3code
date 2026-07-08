@@ -105,6 +105,25 @@ function classifyDiffSection(input: {
   return { size: "normal", isBinary, hasHiddenBidiChars };
 }
 
+function countUnifiedDiffSectionChanges(section: string): {
+  readonly additions: number;
+  readonly deletions: number;
+} {
+  let additions = 0;
+  let deletions = 0;
+  for (const line of section.split("\n")) {
+    if (line.startsWith("+++") || line.startsWith("---")) {
+      continue;
+    }
+    if (line.startsWith("+")) {
+      additions += 1;
+    } else if (line.startsWith("-")) {
+      deletions += 1;
+    }
+  }
+  return { additions, deletions };
+}
+
 function toDiffFiles(patch: string): ReadonlyArray<DiffFile> {
   if (patch.trim().length === 0) {
     return [];
@@ -128,17 +147,21 @@ function toDiffFiles(patch: string): ReadonlyArray<DiffFile> {
     .toSorted((left, right) => left.path.localeCompare(right.path))
     .map((file) => {
       const section = sectionsByPath.get(file.path) ?? "";
+      const changes =
+        section.length > 0
+          ? countUnifiedDiffSectionChanges(section)
+          : { additions: file.additions, deletions: file.deletions };
       const classification = classifyDiffSection({
         section,
-        additions: file.additions,
-        deletions: file.deletions,
+        additions: changes.additions,
+        deletions: changes.deletions,
       });
       return {
         path: file.path,
         previousPath: null,
         status: "unknown",
-        additions: file.additions,
-        deletions: file.deletions,
+        additions: changes.additions,
+        deletions: changes.deletions,
         hunks: [],
         size: classification.size,
         isBinary: classification.isBinary,
@@ -190,20 +213,22 @@ function toFileDelta(input: {
 const make = Effect.gen(function* () {
   const checkpointDiffQuery = yield* CheckpointDiffQuery;
 
-  const getTurnDiffState: DiffStateQueryShape["getTurnDiffState"] = (input) =>
-    checkpointDiffQuery.getTurnDiff(input).pipe(
-      Effect.map((result) => toReadyDiffState({ result, scope: input.scope })),
+  const getTurnDiffState: DiffStateQueryShape["getTurnDiffState"] = (input) => {
+    const scope = input.scope ?? "snapshot";
+    return checkpointDiffQuery.getTurnDiff({ ...input, scope }).pipe(
+      Effect.map((result) => toReadyDiffState({ result, scope })),
       Effect.catchTag("CheckpointUnavailableError", (error) =>
         Effect.succeed({
           _tag: "unavailable" as const,
           threadId: input.threadId,
           fromTurnCount: input.fromTurnCount,
           toTurnCount: input.toTurnCount,
-          scope: input.scope,
+          scope,
           message: error.detail,
         }),
       ),
     );
+  };
 
   const getFullThreadDiffState: DiffStateQueryShape["getFullThreadDiffState"] = (input) =>
     checkpointDiffQuery.getFullThreadDiff(input).pipe(
@@ -231,7 +256,7 @@ const make = Effect.gen(function* () {
           threadId: input.threadId,
           fromTurnCount: input.fromTurnCount,
           toTurnCount: input.toTurnCount,
-          scope: input.scope,
+          scope: input.scope ?? "snapshot",
           path: input.path,
           file: null,
           metadata: {

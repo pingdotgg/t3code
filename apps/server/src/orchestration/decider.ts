@@ -14,7 +14,6 @@ import {
   requireProject,
   requireProjectAbsent,
   requireThread,
-  requireThreadArchived,
   requireThreadAbsent,
   requireThreadNotArchived,
   requireQueuedTurn,
@@ -493,13 +492,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.unarchive": {
-      yield* requireThreadArchived({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
       const occurredAt = nowIso();
-      return {
+      const unarchivedEvent: PlannedOrchestrationEvent = {
         ...withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -512,6 +511,30 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: occurredAt,
         },
       };
+      if (thread.session?.status === "running" && thread.session.activeTurnId !== null) {
+        return [
+          unarchivedEvent,
+          {
+            ...withEventBase({
+              aggregateKind: "thread",
+              aggregateId: command.threadId,
+              occurredAt,
+              commandId: command.commandId,
+            }),
+            type: "thread.session-set",
+            payload: {
+              threadId: command.threadId,
+              session: {
+                ...thread.session,
+                status: "interrupted",
+                activeTurnId: null,
+                updatedAt: occurredAt,
+              },
+            },
+          },
+        ];
+      }
+      return unarchivedEvent;
     }
 
     case "thread.meta.update": {

@@ -1,5 +1,5 @@
 import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
-import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime";
+import { scopedProjectKey, scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime";
 import {
   Outlet,
   createRootRouteWithContext,
@@ -55,7 +55,10 @@ import {
   resolveInitialServerAuthGateState,
   updatePrimaryEnvironmentDescriptor,
 } from "../environments/primary";
-import { collectThreadCompletionNotifications } from "../threadCompletionNotifications";
+import {
+  collectStaleActiveTurnToastRequests,
+  collectThreadCompletionNotifications,
+} from "../threadCompletionNotifications";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -104,6 +107,7 @@ function RootRouteView() {
         <ServerStateBootstrap />
         <EnvironmentConnectionManagerBootstrap />
         <ThreadCompletionNotificationCoordinator />
+        <StaleActiveTurnToastCoordinator />
         <EventRouter />
         <WebSocketConnectionCoordinator />
         <SlowRpcAckToastCoordinator />
@@ -166,6 +170,36 @@ function ThreadCompletionNotificationCoordinator() {
       });
     }
   }, [environmentStateById, notificationMode, pathname]);
+
+  return null;
+}
+
+function StaleActiveTurnToastCoordinator() {
+  const environmentStateById = useStore((store) => store.environmentStateById);
+  const notifiedTurnKeysRef = useRef(new Set<string>());
+
+  useEffect(() => {
+    const requests = collectStaleActiveTurnToastRequests({
+      environmentStateById,
+      notifiedTurnKeys: notifiedTurnKeysRef.current,
+    });
+
+    for (const request of requests) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "warning",
+          title: request.title,
+          description: `${request.threadTitle} finished, but the provider session still reported that turn as active. Refresh or send another message if the thread still looks stuck.`,
+          timeout: 0,
+          data: {
+            dismissAfterVisibleMs: 12_000,
+            hideCopyButton: true,
+            threadRef: scopeThreadRef(request.environmentId, request.threadId),
+          },
+        }),
+      );
+    }
+  }, [environmentStateById]);
 
   return null;
 }

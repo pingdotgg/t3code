@@ -149,6 +149,10 @@ export function shouldApplyProjectionSnapshot(input: {
     return true;
   }
 
+  if (input.next.snapshotSequence < input.current.sequence) {
+    return true;
+  }
+
   return compareAppliedProjectionVersion(input.current, toAppliedProjectionVersion(input.next)) < 0;
 }
 

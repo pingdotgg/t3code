@@ -1,14 +1,29 @@
 import { type KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
 import { DEFAULT_TERMINAL_ID, type ProjectScript } from "@t3tools/contracts";
-import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
+import {
+  nextTerminalId as nextNumberedTerminalId,
+  resolveTerminalSessionLabel,
+} from "@t3tools/shared/terminalLabels";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 
-export {
-  getTerminalLabel,
-  nextTerminalId,
-  resolveTerminalSessionLabel,
-} from "@t3tools/shared/terminalLabels";
+export { getTerminalLabel, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
+
+const PRIMARY_NUMBERED_TERMINAL_ID = "term-1";
+
+export function nextTerminalId(existingTerminalIds: ReadonlyArray<string>): string {
+  const listed = existingTerminalIds.filter((id) => id.trim().length > 0);
+  const hasPrimary =
+    listed.includes(DEFAULT_TERMINAL_ID) || listed.includes(PRIMARY_NUMBERED_TERMINAL_ID);
+
+  if (!hasPrimary) {
+    return DEFAULT_TERMINAL_ID;
+  }
+
+  return nextNumberedTerminalId(
+    listed.map((id) => (id === DEFAULT_TERMINAL_ID ? PRIMARY_NUMBERED_TERMINAL_ID : id)),
+  );
+}
 
 export interface TerminalMenuSession {
   readonly terminalId: string;

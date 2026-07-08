@@ -5,12 +5,16 @@ import {
   LoaderIcon,
   PlusIcon,
   RefreshCwIcon,
+  Trash2Icon,
 } from "lucide-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DEFAULT_REVIEW_CHANGES_PROMPT_TEMPLATE,
   DEFAULT_REVIEW_CHANGES_SCOPE,
+  type AgentWorkflowDestinationMode,
+  DEFAULT_AGENT_WORKFLOW_AUTOMATION_COOLDOWN_MS,
+  DEFAULT_AGENT_WORKFLOW_MAX_RUNS_PER_THREAD,
   defaultInstanceIdForDriver,
   type DesktopUpdateChannel,
   ProviderDriverKind,
@@ -61,6 +65,7 @@ import {
   setDesktopUpdateStateQueryData,
   useDesktopUpdateState,
 } from "../../lib/desktopUpdateReactQuery";
+import { getPrimaryEnvironmentConnection } from "../../environments/runtime";
 import {
   getCustomModelOptionsByInstance,
   resolveAppModelSelectionState,
@@ -88,7 +93,10 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { getDriverOption } from "./providerDriverMeta";
-import { buildProviderInstanceUpdatePatch } from "./SettingsPanels.logic";
+import {
+  buildArchivedThreadGroups,
+  buildProviderInstanceUpdatePatch,
+} from "./SettingsPanels.logic";
 import {
   SettingResetButton,
   SettingsPageContainer,
@@ -159,6 +167,15 @@ const REVIEW_CHANGES_SCOPE_OPTIONS: ReadonlyArray<{
 }> = [
   { value: "uncommitted", label: "Uncommitted changes" },
   { value: "against-base", label: "Against base branch" },
+];
+
+const WORKFLOW_DESTINATION_OPTIONS: ReadonlyArray<{
+  value: AgentWorkflowDestinationMode;
+  label: string;
+}> = [
+  { value: "same-chat", label: "Same chat" },
+  { value: "new-chat", label: "New chat" },
+  { value: "child-chat", label: "Child chat" },
 ];
 
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
@@ -237,6 +254,10 @@ function isFontSize(value: unknown): value is FontSize {
 
 function isReviewChangesScope(value: unknown): value is ReviewChangesScope {
   return REVIEW_CHANGES_SCOPE_OPTIONS.some((option) => option.value === value);
+}
+
+function isAgentWorkflowDestinationMode(value: unknown): value is AgentWorkflowDestinationMode {
+  return WORKFLOW_DESTINATION_OPTIONS.some((option) => option.value === value);
 }
 
 function ReviewPromptTemplateEditor({
@@ -646,11 +667,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.threadCompletionNotifications
         ? ["Completion notifications"]
         : []),
-      ...(!Equal.equals(
-        settings.agentWorkflows.reviewChanges,
-        DEFAULT_UNIFIED_SETTINGS.agentWorkflows.reviewChanges,
-      )
-        ? ["Review Code workflow"]
+      ...(!Equal.equals(settings.agentWorkflows, DEFAULT_UNIFIED_SETTINGS.agentWorkflows)
+        ? ["Agent workflows"]
         : []),
       ...(isGitWritingModelDirty ? ["Git writing model"] : []),
       ...(areProviderSettingsDirty ? ["Providers"] : []),
@@ -669,7 +687,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.defaultThreadEnvMode,
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
-      settings.agentWorkflows.reviewChanges,
+      settings.agentWorkflows,
       settings.sidebarFontSize,
       settings.sidebarTranslucency,
       settings.threadCompletionNotifications,
@@ -863,21 +881,6 @@ export function GeneralSettingsPanel() {
       });
     },
     [settings.chatExportDetail, updateSettings],
-  );
-
-  const updateReviewChangesWorkflow = useCallback(
-    (patch: Partial<typeof settings.agentWorkflows.reviewChanges>) => {
-      updateSettings({
-        agentWorkflows: {
-          ...settings.agentWorkflows,
-          reviewChanges: {
-            ...settings.agentWorkflows.reviewChanges,
-            ...patch,
-          },
-        },
-      });
-    },
-    [settings.agentWorkflows, updateSettings],
   );
 
   const openKeybindingsError = openPathErrorByTarget.keybindings ?? null;
@@ -1987,100 +1990,6 @@ export function GeneralSettingsPanel() {
         />
       </SettingsSection>
 
-      <SettingsSection title="Agent workflows">
-        <SettingsRow
-          title="Review Code"
-          description="Show the Review Code header action and allow it to create review chats."
-          resetAction={
-            settings.agentWorkflows.reviewChanges.enabled !==
-            DEFAULT_UNIFIED_SETTINGS.agentWorkflows.reviewChanges.enabled ? (
-              <SettingResetButton
-                label="Review Code workflow enabled state"
-                onClick={() =>
-                  updateReviewChangesWorkflow({
-                    enabled: DEFAULT_UNIFIED_SETTINGS.agentWorkflows.reviewChanges.enabled,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.agentWorkflows.reviewChanges.enabled}
-              onCheckedChange={(checked) =>
-                updateReviewChangesWorkflow({ enabled: Boolean(checked) })
-              }
-              aria-label="Enable Review Code workflow"
-            />
-          }
-        />
-
-        <SettingsRow
-          title="Review scope"
-          description="Default scope for the Review Code button. The dropdown can still run either scope."
-          resetAction={
-            settings.agentWorkflows.reviewChanges.defaultScope !== DEFAULT_REVIEW_CHANGES_SCOPE ? (
-              <SettingResetButton
-                label="Review Code default scope"
-                onClick={() =>
-                  updateReviewChangesWorkflow({
-                    defaultScope: DEFAULT_REVIEW_CHANGES_SCOPE,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={settings.agentWorkflows.reviewChanges.defaultScope}
-              onValueChange={(value) => {
-                if (isReviewChangesScope(value)) {
-                  updateReviewChangesWorkflow({ defaultScope: value });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-48" aria-label="Review Code default scope">
-                <SelectValue>
-                  {REVIEW_CHANGES_SCOPE_OPTIONS.find(
-                    (option) => option.value === settings.agentWorkflows.reviewChanges.defaultScope,
-                  )?.label ?? "Uncommitted changes"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {REVIEW_CHANGES_SCOPE_OPTIONS.map((option) => (
-                  <SelectItem hideIndicator key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
-
-        <SettingsRow
-          title="Review prompt"
-          description="Instructions inserted after the fixed scope context. Leave blank to use the built-in default prompt."
-          resetAction={
-            settings.agentWorkflows.reviewChanges.promptTemplate !==
-            DEFAULT_REVIEW_CHANGES_PROMPT_TEMPLATE ? (
-              <SettingResetButton
-                label="Review Code prompt"
-                onClick={() =>
-                  updateReviewChangesWorkflow({
-                    promptTemplate: DEFAULT_REVIEW_CHANGES_PROMPT_TEMPLATE,
-                  })
-                }
-              />
-            ) : null
-          }
-        >
-          <ReviewPromptTemplateEditor
-            value={settings.agentWorkflows.reviewChanges.promptTemplate}
-            onCommit={(promptTemplate) => updateReviewChangesWorkflow({ promptTemplate })}
-          />
-        </SettingsRow>
-      </SettingsSection>
-
       <SettingsSection
         title="Providers"
         headerAction={
@@ -2277,23 +2186,427 @@ export function GeneralSettingsPanel() {
   );
 }
 
+export function AgentWorkflowsSettingsPanel() {
+  const settings = useSettings();
+  const { updateSettings } = useUpdateSettings();
+  const customWorkflows = settings.agentWorkflows.customWorkflows;
+  const workflowRunsQuery = useQuery({
+    queryKey: ["workflow-runs", "recent"],
+    queryFn: () => getPrimaryEnvironmentConnection().client.workflow.listRuns({ limit: 25 }),
+    refetchInterval: 10_000,
+  });
+
+  const updateAgentWorkflows = useCallback(
+    (patch: Partial<typeof settings.agentWorkflows>) => {
+      updateSettings({
+        agentWorkflows: {
+          ...settings.agentWorkflows,
+          ...patch,
+        },
+      });
+    },
+    [settings.agentWorkflows, updateSettings],
+  );
+
+  const updateReviewChangesWorkflow = useCallback(
+    (patch: Partial<typeof settings.agentWorkflows.reviewChanges>) => {
+      updateAgentWorkflows({
+        reviewChanges: {
+          ...settings.agentWorkflows.reviewChanges,
+          ...patch,
+        },
+      });
+    },
+    [settings.agentWorkflows.reviewChanges, updateAgentWorkflows],
+  );
+
+  const updateCustomWorkflows = useCallback(
+    (nextCustomWorkflows: typeof customWorkflows) => {
+      updateAgentWorkflows({ customWorkflows: nextCustomWorkflows });
+    },
+    [customWorkflows, updateAgentWorkflows],
+  );
+
+  const addCustomWorkflow = useCallback(() => {
+    updateCustomWorkflows([
+      ...customWorkflows,
+      {
+        id: `custom-${crypto.randomUUID()}`,
+        enabled: true,
+        name: "New workflow",
+        buttonLabel: "Run",
+        promptTemplate: "",
+        showInHeader: true,
+        destinationMode: "child-chat",
+        automation: {
+          afterAssistantTurnCompletes: false,
+          cooldownMs: DEFAULT_AGENT_WORKFLOW_AUTOMATION_COOLDOWN_MS,
+          maxRunsPerThread: DEFAULT_AGENT_WORKFLOW_MAX_RUNS_PER_THREAD,
+        },
+      },
+    ]);
+  }, [customWorkflows, updateCustomWorkflows]);
+
+  const updateCustomWorkflow = useCallback(
+    (workflowId: string, patch: Partial<(typeof customWorkflows)[number]>) => {
+      updateCustomWorkflows(
+        customWorkflows.map((workflow) =>
+          workflow.id === workflowId ? { ...workflow, ...patch } : workflow,
+        ),
+      );
+    },
+    [customWorkflows, updateCustomWorkflows],
+  );
+
+  const deleteCustomWorkflow = useCallback(
+    (workflowId: string) => {
+      updateCustomWorkflows(customWorkflows.filter((workflow) => workflow.id !== workflowId));
+    },
+    [customWorkflows, updateCustomWorkflows],
+  );
+
+  const commitRequiredCustomText = useCallback(
+    (workflowId: string, key: "name" | "buttonLabel", value: string) => {
+      const trimmed = value.trim();
+      if (trimmed.length === 0) {
+        toastManager.add({
+          type: "warning",
+          title: key === "name" ? "Workflow name is required" : "Button label is required",
+        });
+        return;
+      }
+      updateCustomWorkflow(workflowId, { [key]: trimmed });
+    },
+    [updateCustomWorkflow],
+  );
+
+  return (
+    <SettingsPageContainer>
+      <SettingsSection title="Built-in workflows">
+        <SettingsRow
+          title="Review Code"
+          description="Show the Review Code header action and allow it to create review chats."
+          resetAction={
+            settings.agentWorkflows.reviewChanges.enabled !==
+            DEFAULT_UNIFIED_SETTINGS.agentWorkflows.reviewChanges.enabled ? (
+              <SettingResetButton
+                label="Review Code workflow enabled state"
+                onClick={() =>
+                  updateReviewChangesWorkflow({
+                    enabled: DEFAULT_UNIFIED_SETTINGS.agentWorkflows.reviewChanges.enabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.agentWorkflows.reviewChanges.enabled}
+              onCheckedChange={(checked) =>
+                updateReviewChangesWorkflow({ enabled: Boolean(checked) })
+              }
+              aria-label="Enable Review Code workflow"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Review scope"
+          description="Default scope for the Review Code button. The dropdown can still run either scope."
+          resetAction={
+            settings.agentWorkflows.reviewChanges.defaultScope !== DEFAULT_REVIEW_CHANGES_SCOPE ? (
+              <SettingResetButton
+                label="Review Code default scope"
+                onClick={() =>
+                  updateReviewChangesWorkflow({
+                    defaultScope: DEFAULT_REVIEW_CHANGES_SCOPE,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.agentWorkflows.reviewChanges.defaultScope}
+              onValueChange={(value) => {
+                if (isReviewChangesScope(value)) {
+                  updateReviewChangesWorkflow({ defaultScope: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-48" aria-label="Review Code default scope">
+                <SelectValue>
+                  {REVIEW_CHANGES_SCOPE_OPTIONS.find(
+                    (option) => option.value === settings.agentWorkflows.reviewChanges.defaultScope,
+                  )?.label ?? "Uncommitted changes"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {REVIEW_CHANGES_SCOPE_OPTIONS.map((option) => (
+                  <SelectItem hideIndicator key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Review prompt"
+          description="Instructions inserted after the fixed scope context. Leave blank to use the built-in default prompt."
+          resetAction={
+            settings.agentWorkflows.reviewChanges.promptTemplate !==
+            DEFAULT_REVIEW_CHANGES_PROMPT_TEMPLATE ? (
+              <SettingResetButton
+                label="Review Code prompt"
+                onClick={() =>
+                  updateReviewChangesWorkflow({
+                    promptTemplate: DEFAULT_REVIEW_CHANGES_PROMPT_TEMPLATE,
+                  })
+                }
+              />
+            ) : null
+          }
+        >
+          <ReviewPromptTemplateEditor
+            value={settings.agentWorkflows.reviewChanges.promptTemplate}
+            onCommit={(promptTemplate) => updateReviewChangesWorkflow({ promptTemplate })}
+          />
+        </SettingsRow>
+      </SettingsSection>
+
+      <SettingsSection
+        title="Custom workflows"
+        headerAction={
+          <Button size="xs" variant="outline" onClick={addCustomWorkflow}>
+            <PlusIcon className="size-3.5" />
+            Add workflow
+          </Button>
+        }
+      >
+        {customWorkflows.length === 0 ? (
+          <SettingsRow
+            title="No custom workflows"
+            description="Create a prompt-only workflow to show it in the chat header."
+          />
+        ) : (
+          customWorkflows.map((workflow) => (
+            <div key={workflow.id} className="border-t border-border/60 first:border-t-0">
+              <SettingsRow
+                title={workflow.name}
+                description="Configure the workflow display, destination, and prompt."
+                control={
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      checked={workflow.enabled}
+                      onCheckedChange={(checked) =>
+                        updateCustomWorkflow(workflow.id, { enabled: Boolean(checked) })
+                      }
+                      aria-label={`Enable ${workflow.name}`}
+                    />
+                    <Button
+                      size="icon-xs"
+                      variant="ghost"
+                      className="size-6 text-muted-foreground hover:text-destructive"
+                      aria-label={`Delete ${workflow.name}`}
+                      onClick={() => deleteCustomWorkflow(workflow.id)}
+                    >
+                      <Trash2Icon className="size-3.5" />
+                    </Button>
+                  </div>
+                }
+              >
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <DraftInput
+                    value={workflow.name}
+                    onCommit={(value) => commitRequiredCustomText(workflow.id, "name", value)}
+                    placeholder="Workflow name"
+                    aria-label={`${workflow.name} workflow name`}
+                  />
+                  <DraftInput
+                    value={workflow.buttonLabel}
+                    onCommit={(value) =>
+                      commitRequiredCustomText(workflow.id, "buttonLabel", value)
+                    }
+                    placeholder="Button label"
+                    aria-label={`${workflow.name} button label`}
+                  />
+                  <div className="flex items-center justify-between rounded-lg border px-3 py-2">
+                    <span className="text-xs text-muted-foreground">Show in chat header</span>
+                    <Switch
+                      checked={workflow.showInHeader}
+                      onCheckedChange={(checked) =>
+                        updateCustomWorkflow(workflow.id, { showInHeader: Boolean(checked) })
+                      }
+                      aria-label={`Show ${workflow.name} in header`}
+                    />
+                  </div>
+                  <Select
+                    value={workflow.destinationMode}
+                    onValueChange={(value) => {
+                      if (isAgentWorkflowDestinationMode(value)) {
+                        updateCustomWorkflow(workflow.id, { destinationMode: value });
+                      }
+                    }}
+                  >
+                    <SelectTrigger aria-label={`${workflow.name} destination`}>
+                      <SelectValue>
+                        {WORKFLOW_DESTINATION_OPTIONS.find(
+                          (option) => option.value === workflow.destinationMode,
+                        )?.label ?? "Child chat"}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectPopup align="end" alignItemWithTrigger={false}>
+                      {WORKFLOW_DESTINATION_OPTIONS.map((option) => (
+                        <SelectItem hideIndicator key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectPopup>
+                  </Select>
+                  <div className="flex items-center justify-between rounded-lg border px-3 py-2">
+                    <span className="text-xs text-muted-foreground">
+                      Run after assistant completes
+                    </span>
+                    <Switch
+                      checked={workflow.automation.afterAssistantTurnCompletes}
+                      onCheckedChange={(checked) =>
+                        updateCustomWorkflow(workflow.id, {
+                          automation: {
+                            ...workflow.automation,
+                            afterAssistantTurnCompletes: Boolean(checked),
+                          },
+                        })
+                      }
+                      aria-label={`Run ${workflow.name} after assistant completes`}
+                    />
+                  </div>
+                  <label className="grid gap-1 text-xs text-muted-foreground">
+                    Cooldown seconds
+                    <DraftInput
+                      value={String(Math.round(workflow.automation.cooldownMs / 1000))}
+                      inputMode="numeric"
+                      onCommit={(value) => {
+                        const seconds = Number.parseInt(value.trim(), 10);
+                        if (!Number.isFinite(seconds) || seconds < 0) {
+                          toastManager.add({
+                            type: "warning",
+                            title: "Cooldown must be zero or greater",
+                          });
+                          return;
+                        }
+                        updateCustomWorkflow(workflow.id, {
+                          automation: {
+                            ...workflow.automation,
+                            cooldownMs: seconds * 1000,
+                          },
+                        });
+                      }}
+                      aria-label={`${workflow.name} automation cooldown seconds`}
+                    />
+                  </label>
+                  <label className="grid gap-1 text-xs text-muted-foreground">
+                    Max runs per thread
+                    <DraftInput
+                      value={String(workflow.automation.maxRunsPerThread)}
+                      inputMode="numeric"
+                      onCommit={(value) => {
+                        const maxRunsPerThread = Number.parseInt(value.trim(), 10);
+                        if (!Number.isFinite(maxRunsPerThread) || maxRunsPerThread < 0) {
+                          toastManager.add({
+                            type: "warning",
+                            title: "Max runs must be zero or greater",
+                          });
+                          return;
+                        }
+                        updateCustomWorkflow(workflow.id, {
+                          automation: {
+                            ...workflow.automation,
+                            maxRunsPerThread,
+                          },
+                        });
+                      }}
+                      aria-label={`${workflow.name} automation max runs per thread`}
+                    />
+                  </label>
+                </div>
+                <ReviewPromptTemplateEditor
+                  value={workflow.promptTemplate}
+                  onCommit={(promptTemplate) =>
+                    updateCustomWorkflow(workflow.id, { promptTemplate })
+                  }
+                />
+              </SettingsRow>
+            </div>
+          ))
+        )}
+      </SettingsSection>
+      <SettingsSection
+        title="Recent workflow runs"
+        headerAction={
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={workflowRunsQuery.isFetching}
+            onClick={() => void workflowRunsQuery.refetch()}
+          >
+            <RefreshCwIcon className="size-3.5" />
+            Refresh
+          </Button>
+        }
+      >
+        {workflowRunsQuery.isError ? (
+          <SettingsRow
+            title="Unable to load workflow runs"
+            description={
+              workflowRunsQuery.error instanceof Error
+                ? workflowRunsQuery.error.message
+                : "Recent workflow runs could not be loaded."
+            }
+          />
+        ) : (workflowRunsQuery.data?.runs.length ?? 0) === 0 ? (
+          <SettingsRow
+            title="No workflow runs yet"
+            description="Manual and automatic runs appear here."
+          />
+        ) : (
+          <div className="divide-y divide-border/60">
+            {workflowRunsQuery.data?.runs.map((run) => (
+              <div key={run.runId} className="grid gap-1 py-3 text-sm sm:grid-cols-[1fr_auto]">
+                <div>
+                  <div className="font-medium text-foreground">
+                    {run.workflowName}{" "}
+                    <span className="text-xs font-normal text-muted-foreground">
+                      {run.trigger === "manual" ? "manual" : "after assistant completes"}
+                    </span>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {run.message ??
+                      (run.targetThreadId
+                        ? `Started in ${run.targetThreadId}`
+                        : `Requested from ${run.requestedThreadId}`)}
+                  </div>
+                </div>
+                <div className="text-left text-xs text-muted-foreground sm:text-right">
+                  <div className="capitalize">{run.status.replace("-", " ")}</div>
+                  <div>{formatRelativeTimeLabel(run.createdAt)}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </SettingsSection>
+    </SettingsPageContainer>
+  );
+}
+
 export function ArchivedThreadsPanel() {
   const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
   const threads = useStore(useShallow(selectThreadShellsAcrossEnvironments));
   const { unarchiveThread, confirmAndDeleteThread } = useThreadActions();
   const archivedGroups = useMemo(() => {
-    return projects
-      .map((project) => ({
-        project,
-        threads: threads
-          .filter((thread) => thread.projectId === project.id && thread.archivedAt !== null)
-          .toSorted((left, right) => {
-            const leftKey = left.archivedAt ?? left.createdAt;
-            const rightKey = right.archivedAt ?? right.createdAt;
-            return rightKey.localeCompare(leftKey) || right.id.localeCompare(left.id);
-          }),
-      }))
-      .filter((group) => group.threads.length > 0);
+    return buildArchivedThreadGroups({ projects, threads });
   }, [projects, threads]);
 
   const handleArchivedThreadContextMenu = useCallback(
@@ -2347,7 +2660,7 @@ export function ArchivedThreadsPanel() {
       ) : (
         archivedGroups.map(({ project, threads: projectThreads }) => (
           <SettingsSection
-            key={project.id}
+            key={`${project.environmentId}:${project.id}`}
             title={project.name}
             icon={<ProjectFavicon environmentId={project.environmentId} cwd={project.cwd} />}
           >
