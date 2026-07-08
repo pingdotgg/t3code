@@ -11,9 +11,15 @@ import SwiftUI
 /// file preview pane.
 struct PanScrollView<Content: View>: NSViewRepresentable {
     private let content: Content
+    private let onMagnify: ((CGFloat) -> Void)?
 
-    init(@ViewBuilder content: () -> Content) {
+    init(onMagnify: ((CGFloat) -> Void)? = nil, @ViewBuilder content: () -> Content) {
+        self.onMagnify = onMagnify
         self.content = content()
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onMagnify: onMagnify)
     }
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -22,6 +28,14 @@ struct PanScrollView<Content: View>: NSViewRepresentable {
         scroll.hasHorizontalScroller = true
         scroll.autohidesScrollers = true
         scroll.drawsBackground = false
+
+        if onMagnify != nil {
+            let magnification = NSMagnificationGestureRecognizer(
+                target: context.coordinator,
+                action: #selector(Coordinator.handleMagnification(_:))
+            )
+            scroll.addGestureRecognizer(magnification)
+        }
 
         let hosting = NSHostingView(rootView: content)
         hosting.sizingOptions = .intrinsicContentSize
@@ -39,7 +53,24 @@ struct PanScrollView<Content: View>: NSViewRepresentable {
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
+        context.coordinator.onMagnify = onMagnify
         guard let hosting = scroll.documentView as? NSHostingView<Content> else { return }
         hosting.rootView = content
+    }
+
+    final class Coordinator: NSObject {
+        var onMagnify: ((CGFloat) -> Void)?
+
+        init(onMagnify: ((CGFloat) -> Void)?) {
+            self.onMagnify = onMagnify
+        }
+
+        @MainActor @objc func handleMagnification(_ recognizer: NSMagnificationGestureRecognizer) {
+            guard let onMagnify else { return }
+            let magnification = recognizer.magnification
+            guard magnification != 0 else { return }
+            onMagnify(magnification)
+            recognizer.magnification = 0
+        }
     }
 }

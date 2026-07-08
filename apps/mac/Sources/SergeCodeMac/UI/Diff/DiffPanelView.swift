@@ -5,10 +5,43 @@ import SwiftUI
 // (the diff text itself) stay opaque per the Liquid Glass rules — only the
 // header bar is glass chrome.
 
+private enum DiffZoom {
+    static let minFactor = 0.6
+    static let maxFactor = 2.0
+    static let defaultFactor = 1.0
+    static let step = 0.1
+
+    private static let contentBaseSize: CGFloat = 13
+    private static let captionBaseSize: CGFloat = 10
+    private static let gutterBaseWidth: CGFloat = 40
+
+    static func clamp(_ factor: Double) -> Double {
+        min(maxFactor, max(minFactor, factor))
+    }
+
+    static func stepped(_ factor: Double, by delta: Double) -> Double {
+        let next = ((factor + delta) / step).rounded() * step
+        return clamp(next)
+    }
+
+    static func contentFont(for factor: Double) -> Font {
+        .system(size: contentBaseSize * CGFloat(clamp(factor)), design: .monospaced)
+    }
+
+    static func captionFont(for factor: Double) -> Font {
+        .system(size: captionBaseSize * CGFloat(clamp(factor)), design: .monospaced)
+    }
+
+    static func gutterWidth(for factor: Double) -> CGFloat {
+        gutterBaseWidth * CGFloat(clamp(factor))
+    }
+}
+
 public struct DiffPanelView: View {
     private let model: AppModel
     private let threadID: String
 
+    @AppStorage("diffPanelZoomFactor") private var zoomFactor = DiffZoom.defaultFactor
     @UIState private var selectedPath: String?
 
     public init(model: AppModel, threadID: String) {
@@ -25,6 +58,14 @@ public struct DiffPanelView: View {
             return match
         }
         return files.first
+    }
+
+    private var effectiveZoomFactor: Double {
+        DiffZoom.clamp(zoomFactor)
+    }
+
+    private var zoomPercentText: String {
+        "\(Int((effectiveZoomFactor * 100).rounded()))%"
     }
 
     public var body: some View {
@@ -49,6 +90,7 @@ public struct DiffPanelView: View {
         }
         .animation(Motion.settle, value: files.isEmpty)
         .animation(Motion.settle, value: selectedFile?.path)
+        .onAppear(perform: normalizeZoomFactor)
         .task(id: threadID) {
             await model.refreshDiff(threadID: threadID)
         }
@@ -68,6 +110,9 @@ public struct DiffPanelView: View {
                     .transition(.opacity)
             }
             Spacer()
+            if !files.isEmpty {
+                zoomControls
+            }
             Button {
                 Task { await model.refreshDiff(threadID: threadID) }
             } label: {
@@ -81,6 +126,51 @@ public struct DiffPanelView: View {
         .padding(.vertical, 8)
         .glassEffect(.regular, in: .rect(cornerRadius: 12))
         .padding(8)
+    }
+
+    private var zoomControls: some View {
+        HStack(spacing: 4) {
+            Button(action: zoomOut) {
+                Label("Zoom out", systemImage: "minus")
+                    .labelStyle(.iconOnly)
+            }
+            .keyboardShortcut("-", modifiers: .command)
+            .disabled(effectiveZoomFactor <= DiffZoom.minFactor)
+            .help("Zoom out")
+
+            Button(action: resetZoom) {
+                Text(zoomPercentText)
+                    .font(.caption.monospacedDigit())
+                    .frame(minWidth: 38)
+            }
+            .keyboardShortcut("0", modifiers: .command)
+            .help("Reset diff zoom")
+
+            Button(action: zoomIn) {
+                Label("Zoom in", systemImage: "plus")
+                    .labelStyle(.iconOnly)
+            }
+            .keyboardShortcut("=", modifiers: .command)
+            .disabled(effectiveZoomFactor >= DiffZoom.maxFactor)
+            .help("Zoom in")
+
+            Button(action: zoomIn) {
+                EmptyView()
+            }
+            .keyboardShortcut("+", modifiers: .command)
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
+
+            Button(action: zoomIn) {
+                EmptyView()
+            }
+            .keyboardShortcut("=", modifiers: [.command, .shift])
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
+        }
+        .font(.caption)
+        .buttonStyle(.glass)
+        .controlSize(.small)
     }
 
     // MARK: - File list
@@ -155,17 +245,23 @@ public struct DiffPanelView: View {
     @ViewBuilder
     private var diffDetail: some View {
         if let file = selectedFile {
+            let zoom = effectiveZoomFactor
+            let gutterWidth = DiffZoom.gutterWidth(for: zoom)
             // NSScrollView, not SwiftUI's two-axis ScrollView: the SwiftUI
             // one doesn't reliably engage horizontal panning on macOS (and a
             // scroll wheel can never reach it), so long lines were
             // unreachable. AppKit gives native both-axis trackpad panning
             // plus a real horizontal scroller.
-            PanScrollView {
+            PanScrollView(onMagnify: applyMagnification) {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(file.hunks) { hunk in
-                        hunkHeaderView(hunk.header)
+                        hunkHeaderView(hunk.header, zoomFactor: zoom)
                         ForEach(hunk.lines) { line in
-                            DiffLineRowView(line: line)
+                            DiffLineRowView(
+                                line: line,
+                                zoomFactor: zoom,
+                                gutterWidth: gutterWidth
+                            )
                         }
                     }
                 }
@@ -180,14 +276,39 @@ public struct DiffPanelView: View {
         }
     }
 
-    private func hunkHeaderView(_ header: String) -> some View {
+    private func hunkHeaderView(_ header: String, zoomFactor: Double) -> some View {
         Text(header)
-            .font(.system(.caption, design: .monospaced))
+            .font(DiffZoom.captionFont(for: zoomFactor))
             .foregroundStyle(.secondary)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color.secondary.opacity(0.12))
+    }
+
+    private func zoomIn() {
+        setZoomFactor(DiffZoom.stepped(effectiveZoomFactor, by: DiffZoom.step))
+    }
+
+    private func zoomOut() {
+        setZoomFactor(DiffZoom.stepped(effectiveZoomFactor, by: -DiffZoom.step))
+    }
+
+    private func resetZoom() {
+        setZoomFactor(DiffZoom.defaultFactor)
+    }
+
+    private func applyMagnification(_ magnification: CGFloat) {
+        let scale = max(0.1, 1 + Double(magnification))
+        setZoomFactor(effectiveZoomFactor * scale)
+    }
+
+    private func normalizeZoomFactor() {
+        setZoomFactor(effectiveZoomFactor)
+    }
+
+    private func setZoomFactor(_ factor: Double) {
+        zoomFactor = DiffZoom.clamp(factor)
     }
 
     // MARK: - Empty state
@@ -206,13 +327,15 @@ public struct DiffPanelView: View {
 
 private struct DiffLineRowView: View {
     let line: DiffLine
+    let zoomFactor: Double
+    let gutterWidth: CGFloat
 
     var body: some View {
         HStack(spacing: 0) {
             gutter(line.oldNumber)
             gutter(line.newNumber)
             Text(marker + " " + line.text)
-                .font(.system(.body, design: .monospaced))
+                .font(DiffZoom.contentFont(for: zoomFactor))
                 .fixedSize(horizontal: true, vertical: false)
                 .padding(.leading, 6)
             Spacer(minLength: 12)
@@ -242,9 +365,9 @@ private struct DiffLineRowView: View {
 
     private func gutter(_ number: Int?) -> some View {
         Text(number.map(String.init) ?? "")
-            .font(.system(.caption, design: .monospaced))
+            .font(DiffZoom.captionFont(for: zoomFactor))
             .foregroundStyle(.secondary)
-            .frame(width: 40, alignment: .trailing)
+            .frame(width: gutterWidth, alignment: .trailing)
     }
 }
 
