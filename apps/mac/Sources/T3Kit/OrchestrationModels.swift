@@ -1289,6 +1289,22 @@ public struct ThreadTurnDiff: Decodable, Sendable {
     public var diff: String
 }
 
+public struct OrchestrationGetThreadLivenessInput: Encodable, Sendable {
+    public var threadId: String
+
+    public init(threadId: String) {
+        self.threadId = threadId
+    }
+}
+
+public struct OrchestrationThreadLiveness: Decodable, Sendable {
+    public var threadId: String
+    public var hasLiveSession: Bool
+    public var hasActiveTurn: Bool
+    public var activeTurnId: String?
+    public var checkedAt: String
+}
+
 public struct OrchestrationReplayEventsInput: Encodable, Sendable {
     public var fromSequenceExclusive: Int
 

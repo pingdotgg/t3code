@@ -52,6 +52,7 @@ import {
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetSnapshotError,
+  OrchestrationGetThreadLivenessInput,
   OrchestrationGetTurnDiffError,
   OrchestrationGetTurnDiffInput,
   OrchestrationReplayEventsError,
@@ -614,6 +615,15 @@ export const WsOrchestrationGetFullThreadDiffRpc = Rpc.make(
   },
 );
 
+export const WsOrchestrationGetThreadLivenessRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.getThreadLiveness,
+  {
+    payload: OrchestrationGetThreadLivenessInput,
+    success: OrchestrationRpcSchemas.getThreadLiveness.output,
+    error: Schema.Union([OrchestrationGetSnapshotError, EnvironmentAuthorizationError]),
+  },
+);
+
 export const WsOrchestrationReplayEventsRpc = Rpc.make(ORCHESTRATION_WS_METHODS.replayEvents, {
   payload: OrchestrationReplayEventsInput,
   success: OrchestrationRpcSchemas.replayEvents.output,
@@ -746,6 +756,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationGetTurnDiffRpc,
   WsOrchestrationGetFullThreadDiffRpc,
+  WsOrchestrationGetThreadLivenessRpc,
   WsOrchestrationReplayEventsRpc,
   WsOrchestrationGetArchivedShellSnapshotRpc,
   WsOrchestrationSubscribeShellRpc,

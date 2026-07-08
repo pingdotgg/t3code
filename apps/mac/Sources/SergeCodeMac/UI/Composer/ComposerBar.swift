@@ -146,8 +146,11 @@ public struct ComposerBar: View {
                         showFileImporter = true
                     } label: {
                         Image(systemName: "paperclip")
+                            .foregroundStyle(.secondary)
+                            .alpineIconLabel()
                     }
                     .buttonStyle(.glass)
+                    .buttonBorderShape(.circle)
                     .disabled(attachments.count >= Self.maxAttachments)
                     .help("Attach images")
 
@@ -171,6 +174,7 @@ public struct ComposerBar: View {
                                     .transition(.opacity)
                             }
                         }
+                        .padding(.vertical, 4)
                         .onChange(of: draft) { _, newValue in
                             updateMentionSearch(for: newValue)
                         }
@@ -210,8 +214,10 @@ public struct ComposerBar: View {
                             queue()
                         } label: {
                             Image(systemName: "tray.and.arrow.down")
+                                .alpineIconLabel()
                         }
                         .buttonStyle(.glass)
+                        .buttonBorderShape(.circle)
                         .keyboardShortcut(.return, modifiers: .option)
                         .help("Queue for next turn (Option-Return)")
                         .transition(Motion.materialize)
@@ -226,39 +232,22 @@ public struct ComposerBar: View {
                             Task { await model.cancelCurrentTurn() }
                         } label: {
                             Image(systemName: "stop.fill")
+                                .alpineIconLabel()
                         }
                         .buttonStyle(.glass)
+                        .buttonBorderShape(.circle)
                         .tint(.red)
                         .keyboardShortcut(".", modifiers: .command)
                         .help("Stop the current turn")
                         .transition(Motion.materialize)
                     }
 
-                    Button {
-                        if showsStop {
-                            Task { await model.cancelCurrentTurn() }
-                        } else {
-                            send()
-                        }
-                    } label: {
-                        Image(systemName: sendIconName)
-                            .contentTransition(.symbolEffect(.replace))
-                            .scaleEffect(showsStop || canSend ? 1.0 : 0.9)
-                            .opacity(showsStop || canSend ? 1.0 : 0.55)
-                    }
-                    .buttonStyle(.glass)
-                    .tint(showsStop ? .red : (canSend ? (isThreadRunning ? .orange : Color.accentColor) : nil))
-                    .disabled(!showsStop && !canSend)
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .help(sendHelp)
-                    .animation(Motion.snap, value: canSend)
-                    .animation(Motion.snap, value: showsStop)
-                    .animation(Motion.snap, value: isThreadRunning)
+                    smartSendStopButton
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, 10)
                 .padding(.vertical, 10)
             }
-            .glassEffect(.regular, in: .rect(cornerRadius: 16))
+            .glassEffect(.regular, in: .rect(cornerRadius: 25))
         }
         // One animation domain for the whole composer: draft edits drive the
         // editor's height growth and suggestion filtering; the other keys
@@ -307,6 +296,45 @@ public struct ComposerBar: View {
         }
     }
 
+    @ViewBuilder
+    private var smartSendStopButton: some View {
+        styledSmartSendStopButton(active: showsStop || canSend)
+            .disabled(!showsStop && !canSend)
+            .keyboardShortcut(.return, modifiers: .command)
+            .help(sendHelp)
+            .animation(Motion.snap, value: canSend)
+            .animation(Motion.snap, value: showsStop)
+            .animation(Motion.snap, value: isThreadRunning)
+    }
+
+    @ViewBuilder
+    private func styledSmartSendStopButton(active: Bool) -> some View {
+        if active {
+            smartSendStopBaseButton
+                .buttonStyle(.glassProminent)
+                .tint(showsStop ? .red : (isThreadRunning ? .orange : AlpineTheme.accent))
+        } else {
+            smartSendStopBaseButton
+                .foregroundStyle(.secondary)
+                .buttonStyle(.glass)
+        }
+    }
+
+    private var smartSendStopBaseButton: some View {
+        Button {
+            if showsStop {
+                Task { await model.cancelCurrentTurn() }
+            } else {
+                send()
+            }
+        } label: {
+            Image(systemName: sendIconName)
+                .contentTransition(.symbolEffect(.replace))
+                .alpineIconLabel()
+        }
+        .buttonBorderShape(.circle)
+    }
+
     // MARK: - Dictation
 
     private var isRecording: Bool {
@@ -328,27 +356,42 @@ public struct ComposerBar: View {
                 break
             }
         } label: {
-            switch (dictation.state, dictation.modelStatus) {
-            case (_, .downloading(let fraction)):
-                ProgressView(value: fraction)
-                    .progressViewStyle(.circular)
-                    .controlSize(.small)
-            case (.processing, _):
-                ProgressView()
-                    .controlSize(.small)
-            default:
-                Image(systemName: isRecording ? "mic.fill" : "mic")
-                    .contentTransition(.symbolEffect(.replace))
-                    .symbolEffect(.pulse, isActive: isRecording && !Motion.reduceMotion)
+            Group {
+                switch (dictation.state, dictation.modelStatus) {
+                case (_, .downloading(let fraction)):
+                    ProgressView(value: fraction)
+                        .progressViewStyle(.circular)
+                        .controlSize(.small)
+                case (.processing, _):
+                    ProgressView()
+                        .controlSize(.small)
+                default:
+                    dictationMicIcon
+                        .contentTransition(.symbolEffect(.replace))
+                        .symbolEffect(.pulse, isActive: isRecording && !Motion.reduceMotion)
+                }
             }
+            .alpineIconLabel()
         }
         .buttonStyle(.glass)
+        .buttonBorderShape(.circle)
         .tint(isRecording ? .red : nil)
         .disabled(
             dictation.state == .processing || dictation.modelStatus.isDownloading
         )
         .help(dictationHelp)
         .animation(Motion.snap, value: isRecording)
+    }
+
+    @ViewBuilder
+    private var dictationMicIcon: some View {
+        if isRecording {
+            Image(systemName: "mic.fill")
+                .foregroundStyle(.red)
+        } else {
+            Image(systemName: "mic")
+                .foregroundStyle(.secondary)
+        }
     }
 
     private var dictationHelp: String {

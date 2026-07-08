@@ -100,8 +100,8 @@ struct ChatFollowUpBar: View {
                 Task { await model.send(text: Self.createPRPrompt) }
             } label: {
                 Label("Create PR", systemImage: "arrow.triangle.pull")
-                    .font(.callout)
             }
+            .buttonStyle(BrightPillButtonStyle())
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
@@ -122,8 +122,8 @@ struct ChatFollowUpBar: View {
                 Task { await model.send(text: Self.fixReviewCommentsPrompt) }
             } label: {
                 Label("Fix Reviews", systemImage: "text.bubble")
-                    .font(.callout)
             }
+            .buttonStyle(BrightPillButtonStyle())
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
@@ -134,5 +134,20 @@ struct ChatFollowUpBar: View {
             if case .assistantMessage(_, _, let isStreaming, _) = $0 { return !isStreaming }
             return false
         }
+    }
+}
+
+private struct BrightPillButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.callout.weight(.medium))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 5)
+            .background {
+                Capsule()
+                    .fill(.white.opacity(configuration.isPressed ? 0.75 : 0.92))
+            }
+            .foregroundStyle(.black)
+            .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
     }
 }
