@@ -121,11 +121,19 @@ function latestTurnFailedWithUsageLimit(thread: OrchestrationThread): boolean {
   if (latestTurn?.state !== "error") {
     return false;
   }
-  return thread.activities.some(
-    (activity) =>
-      activity.kind === "usage-limit.reached" &&
-      (activity.turnId === latestTurn.turnId || activity.turnId === null),
-  );
+  const latestTurnRequestedAt = Date.parse(latestTurn.requestedAt);
+  return thread.activities.some((activity) => {
+    if (activity.kind !== "usage-limit.reached") {
+      return false;
+    }
+    if (activity.turnId === latestTurn.turnId) {
+      return true;
+    }
+    if (activity.turnId !== null) {
+      return false;
+    }
+    return Date.parse(activity.createdAt) >= latestTurnRequestedAt;
+  });
 }
 
 function findProviderAdapterRequestError(

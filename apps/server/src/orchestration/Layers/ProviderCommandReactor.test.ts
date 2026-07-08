@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
+  CheckpointRef,
   ModelSelection,
   ProviderRuntimeEvent,
   ProviderSession,
@@ -427,6 +428,111 @@ describe("ProviderCommandReactor", () => {
       stateDir,
       drain,
     };
+  }
+
+  type Harness = Awaited<ReturnType<typeof createHarness>>;
+
+  async function appendUsageLimitActivity(
+    harness: Harness,
+    input: {
+      readonly commandId: string;
+      readonly activityId: string;
+      readonly turnId: TurnId | null;
+      readonly createdAt: string;
+    },
+  ) {
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.activity.append",
+        commandId: CommandId.make(input.commandId),
+        threadId: ThreadId.make("thread-1"),
+        activity: {
+          id: EventId.make(input.activityId),
+          tone: "error",
+          kind: "usage-limit.reached",
+          summary: "Usage limit reached",
+          payload: {
+            message: "Usage limit reached",
+            provider: "codex",
+            source: "session-exit",
+          },
+          turnId: input.turnId,
+          createdAt: input.createdAt,
+        },
+        createdAt: input.createdAt,
+      }),
+    );
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      return (
+        thread?.activities.some((activity) => activity.id === EventId.make(input.activityId)) ??
+        false
+      );
+    });
+  }
+
+  async function settleLatestTurnAsError(
+    harness: Harness,
+    input: {
+      readonly turnId: TurnId;
+      readonly requestedAt: string;
+      readonly completedAt: string;
+    },
+  ) {
+    const threadId = ThreadId.make("thread-1");
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.make(`cmd-turn-diff-error-${input.turnId}`),
+        threadId,
+        turnId: input.turnId,
+        checkpointTurnCount: 1,
+        checkpointRef: CheckpointRef.make(`checkpoint-${input.turnId}`),
+        status: "error",
+        files: [],
+        completedAt: input.requestedAt,
+        createdAt: input.completedAt,
+      }),
+    );
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      return (
+        thread?.latestTurn?.turnId === input.turnId &&
+        thread.latestTurn.state === "error" &&
+        thread.latestTurn.requestedAt === input.requestedAt
+      );
+    });
+  }
+
+  async function dispatchUserTurn(
+    harness: Harness,
+    input: {
+      readonly commandId: string;
+      readonly messageId: string;
+      readonly text: string;
+      readonly createdAt: string;
+      readonly modelSelection?: ModelSelection;
+    },
+  ) {
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make(input.commandId),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId(input.messageId),
+          role: "user",
+          text: input.text,
+          attachments: [],
+        },
+        ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: input.createdAt,
+      }),
+    );
   }
 
   it("reacts to thread.turn.start by ensuring session and sending provider turn", async () => {
@@ -967,6 +1073,111 @@ describe("ProviderCommandReactor", () => {
         });
       }),
   );
+
+  it("does not allow model changes after a stale null-turn usage limit activity", async () => {
+    const harness = await createHarness({ requiresNewThreadForModelChange: true });
+
+    await dispatchUserTurn(harness, {
+      commandId: "cmd-turn-start-stale-usage-1",
+      messageId: "user-message-stale-usage-1",
+      text: "first",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await appendUsageLimitActivity(harness, {
+      commandId: "cmd-stale-null-usage-limit",
+      activityId: "activity-stale-null-usage-limit",
+      turnId: null,
+      createdAt: "2026-01-01T00:30:00.000Z",
+    });
+    await settleLatestTurnAsError(harness, {
+      turnId: asTurnId("turn-later-error"),
+      requestedAt: "2026-01-01T01:00:00.000Z",
+      completedAt: "2026-01-01T01:10:00.000Z",
+    });
+
+    await dispatchUserTurn(harness, {
+      commandId: "cmd-turn-start-stale-usage-2",
+      messageId: "user-message-stale-usage-2",
+      text: "second",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.1-codex",
+      },
+      createdAt: "2026-01-01T01:20:00.000Z",
+    });
+
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      return (
+        thread?.activities.some((activity) => activity.kind === "provider.turn.start.failed") ??
+        false
+      );
+    });
+
+    expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(
+      thread?.activities.find((activity) => activity.kind === "provider.turn.start.failed"),
+    ).toMatchObject({
+      payload: {
+        detail: expect.stringContaining("cannot switch models after the conversation has started"),
+      },
+    });
+  });
+
+  it("allows model changes after a latest-turn null usage limit activity", async () => {
+    const harness = await createHarness({ requiresNewThreadForModelChange: true });
+
+    await dispatchUserTurn(harness, {
+      commandId: "cmd-turn-start-current-usage-1",
+      messageId: "user-message-current-usage-1",
+      text: "first",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await settleLatestTurnAsError(harness, {
+      turnId: asTurnId("turn-current-error"),
+      requestedAt: "2026-01-01T01:00:00.000Z",
+      completedAt: "2026-01-01T01:10:00.000Z",
+    });
+    await appendUsageLimitActivity(harness, {
+      commandId: "cmd-current-null-usage-limit",
+      activityId: "activity-current-null-usage-limit",
+      turnId: null,
+      createdAt: "2026-01-01T01:05:00.000Z",
+    });
+
+    await dispatchUserTurn(harness, {
+      commandId: "cmd-turn-start-current-usage-2",
+      messageId: "user-message-current-usage-2",
+      text: "second",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.1-codex",
+      },
+      createdAt: "2026-01-01T01:20:00.000Z",
+    });
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+
+    expect(harness.sendTurn.mock.calls[1]?.[0]).toMatchObject({
+      threadId: ThreadId.make("thread-1"),
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.1-codex",
+      },
+    });
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(
+      thread?.activities.find((activity) => activity.kind === "provider.turn.start.failed"),
+    ).toBeUndefined();
+  });
 
   it("starts a first turn on the requested provider instance even when it differs from the thread model", async () => {
     const harness = await createHarness({
