@@ -140,7 +140,7 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
   [CODEX_DRIVER_KIND]: DEFAULT_MODEL,
   [CLAUDE_DRIVER_KIND]: "claude-sonnet-5",
   [CURSOR_DRIVER_KIND]: "auto",
-  [GROK_DRIVER_KIND]: "grok-build",
+  [GROK_DRIVER_KIND]: "grok-4.5",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
 };
 
@@ -196,6 +196,9 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
     "sonnet-4.6": "claude-sonnet-4-6",
     "opus-4.5-thinking": "claude-opus-4-5",
     "opus-4.5": "claude-opus-4-5",
+  },
+  [GROK_DRIVER_KIND]: {
+    "grok-4-5": "grok-4.5",
   },
   [OPENCODE_DRIVER_KIND]: {},
 };

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ProviderInstanceId, type ModelCapabilities } from "@t3tools/contracts";
+import {
+  DEFAULT_MODEL_BY_PROVIDER,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ModelCapabilities,
+} from "@t3tools/contracts";
 
 import {
   buildProviderOptionSelectionsFromDescriptors,
@@ -10,6 +15,8 @@ import {
   getProviderOptionDescriptors,
   getProviderOptionBooleanSelectionValue,
   getProviderOptionStringSelectionValue,
+  normalizeModelSlug,
+  resolveModelSlugForProvider,
 } from "./model.ts";
 
 const codexCaps: ModelCapabilities = createModelCapabilities({
@@ -30,6 +37,19 @@ const codexCaps: ModelCapabilities = createModelCapabilities({
       type: "boolean",
     },
   ],
+});
+
+describe("normalizeModelSlug", () => {
+  it("normalizes Grok 4.5 dash aliases", () => {
+    expect(normalizeModelSlug("grok-4-5", ProviderDriverKind.make("grok"))).toBe("grok-4.5");
+    expect(normalizeModelSlug("grok-4.5", ProviderDriverKind.make("grok"))).toBe("grok-4.5");
+  });
+
+  it("uses Grok 4.5 as the provider default", () => {
+    const grok = ProviderDriverKind.make("grok");
+    expect(DEFAULT_MODEL_BY_PROVIDER[grok]).toBe("grok-4.5");
+    expect(resolveModelSlugForProvider(grok, undefined)).toBe("grok-4.5");
+  });
 });
 
 const claudeCaps: ModelCapabilities = createModelCapabilities({

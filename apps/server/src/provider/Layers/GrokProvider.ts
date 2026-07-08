@@ -2,6 +2,8 @@ import {
   type GrokSettings,
   type ModelCapabilities,
   ProviderDriverKind,
+  type ProviderOptionChoice,
+  type ProviderOptionDescriptor,
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
@@ -41,11 +43,32 @@ const PROVIDER = ProviderDriverKind.make("grok");
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
 });
+const GROK_45_CAPABILITIES: ModelCapabilities = createModelCapabilities({
+  optionDescriptors: [
+    {
+      id: "reasoningEffort",
+      label: "Reasoning",
+      type: "select",
+      options: [
+        { id: "low", label: "Low" },
+        { id: "medium", label: "Medium" },
+        { id: "high", label: "High", isDefault: true },
+      ],
+      currentValue: "high",
+    },
+  ],
+});
 
 const VERSION_PROBE_TIMEOUT_MS = 4_000;
 const GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
 
 const GROK_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
+  {
+    slug: "grok-4.5",
+    name: "Grok 4.5",
+    isCustom: false,
+    capabilities: GROK_45_CAPABILITIES,
+  },
   {
     slug: "grok-build",
     name: "Grok Build",
@@ -105,13 +128,17 @@ function grokModelsFromSettings(
   );
 }
 
-function buildGrokDiscoveredModelsFromSessionModelState(
+export function buildGrokDiscoveredModelsFromSessionModelState(
   modelState: EffectAcpSchema.SessionModelState | null | undefined,
+  builtInModels: ReadonlyArray<ServerProviderModel> = GROK_BUILT_IN_MODELS,
 ): ReadonlyArray<ServerProviderModel> {
   if (!modelState || modelState.availableModels.length === 0) {
     return [];
   }
   const seen = new Set<string>();
+  const builtInCapabilitiesBySlug = new Map(
+    builtInModels.map((model) => [model.slug, model.capabilities] as const),
+  );
   return modelState.availableModels
     .map((model): ServerProviderModel | undefined => {
       const slug = resolveGrokAcpBaseModelId(model.modelId);
@@ -119,14 +146,83 @@ function buildGrokDiscoveredModelsFromSessionModelState(
         return undefined;
       }
       seen.add(slug);
+      const capabilities =
+        buildGrokModelCapabilitiesFromMeta(model) ??
+        builtInCapabilitiesBySlug.get(slug) ??
+        EMPTY_CAPABILITIES;
       return {
         slug,
         name: model.name.trim() || slug,
         isCustom: false,
-        capabilities: EMPTY_CAPABILITIES,
+        capabilities,
       };
     })
     .filter((model): model is ServerProviderModel => model !== undefined);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function grokReasoningEffortLabel(rawLabel: string | undefined, value: string): string {
+  const label = rawLabel ?? value;
+  return label.endsWith(" Effort") ? label.slice(0, -" Effort".length) : label;
+}
+
+function buildGrokReasoningEffortDescriptor(
+  meta: Record<string, unknown>,
+): ProviderOptionDescriptor | undefined {
+  if (meta.supportsReasoningEffort !== true || !Array.isArray(meta.reasoningEfforts)) {
+    return undefined;
+  }
+
+  const options: ProviderOptionChoice[] = [];
+  const seen = new Set<string>();
+  for (const raw of meta.reasoningEfforts) {
+    if (!isRecord(raw)) continue;
+    const id = nonEmptyString(raw.value) ?? nonEmptyString(raw.id);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const label = grokReasoningEffortLabel(nonEmptyString(raw.label), id);
+    options.push({
+      id,
+      label,
+      ...(raw.default === true ? { isDefault: true } : {}),
+    });
+  }
+
+  if (options.length === 0) {
+    return undefined;
+  }
+
+  const currentValue = nonEmptyString(meta.reasoningEffort);
+  return {
+    id: "reasoningEffort",
+    label: "Reasoning",
+    type: "select",
+    options,
+    ...(currentValue ? { currentValue } : {}),
+  };
+}
+
+function buildGrokModelCapabilitiesFromMeta(
+  model: EffectAcpSchema.ModelInfo,
+): ModelCapabilities | undefined {
+  const meta = (model as { readonly _meta?: unknown })._meta;
+  if (!isRecord(meta)) {
+    return undefined;
+  }
+  const reasoningDescriptor = buildGrokReasoningEffortDescriptor(meta);
+  if (!reasoningDescriptor) {
+    return undefined;
+  }
+  return createModelCapabilities({ optionDescriptors: [reasoningDescriptor] });
 }
 
 const discoverGrokModelsViaAcp = (
