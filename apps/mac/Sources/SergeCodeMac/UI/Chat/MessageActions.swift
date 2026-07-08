@@ -49,3 +49,24 @@ struct CopyActionButton: View {
         .contentTransition(.symbolEffect(.replace))
     }
 }
+
+/// Compact material backing for action buttons that float over message
+/// content. The buttons stay visually consistent without reserving row height.
+struct MessageActionChip<Content: View>: View {
+    let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        HStack(spacing: 2) {
+            content
+        }
+        .padding(.horizontal, 3)
+        .padding(.vertical, 2)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(.separator.opacity(0.7), lineWidth: 1))
+        .shadow(color: .black.opacity(0.08), radius: 5, y: 2)
+    }
+}

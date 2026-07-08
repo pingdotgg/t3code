@@ -75,8 +75,8 @@ func parseMarkdownSegments(_ markdown: String) -> [MarkdownSegment] {
 }
 
 /// Full-width assistant message body: parsed markdown segments plus a
-/// streaming indicator. Always rendered on an opaque background — never
-/// glass, this is long-form reading content.
+/// streaming indicator. Content stays unframed and opaque for long-form
+/// reading; only the hover action chip floats above it.
 struct AssistantMarkdownView: View {
     let markdown: String
     let isStreaming: Bool
@@ -99,14 +99,23 @@ struct AssistantMarkdownView: View {
                     .foregroundStyle(.secondary)
                     .accessibilityLabel("Assistant is responding")
                     .transition(.opacity)
-            } else {
-                // Copies the raw markdown, not the rendered text — pasted
-                // content survives round-trips into editors and issues.
-                CopyActionButton(text: markdown)
-                    .opacity(isHovering ? 1 : 0)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(alignment: .topTrailing) {
+            if !isStreaming {
+                // Copies the raw markdown, not the rendered text — pasted
+                // content survives round-trips into editors and issues.
+                MessageActionChip {
+                    CopyActionButton(text: markdown)
+                }
+                .opacity(isHovering ? 1 : 0)
+                .allowsHitTesting(isHovering)
+                .accessibilityHidden(!isHovering)
+                .padding(.top, 2)
+                .padding(.trailing, 2)
+            }
+        }
         .onHover { isHovering = $0 }
         .animation(Motion.fade, value: isHovering)
         .animation(Motion.fade, value: isStreaming)
@@ -118,12 +127,9 @@ struct AssistantMarkdownView: View {
 
 // MARK: - Prose blocks
 
-// SwiftUI `Text` renders inline markdown attributes but ignores
-// `PresentationIntent` entirely — feeding a whole prose section through
-// `AttributedString(markdown:, .full)` collapses paragraphs, headings and
-// lists into one run-on blob. So prose is split into block-level pieces here
-// and each block is laid out as its own view, with only the inline syntax
-// (bold/italic/code/links) handed to AttributedString.
+// SwiftUI text selection is scoped to a single `Text` view. To make drag
+// selection work across a full prose run, prose is still parsed into block
+// pieces for styling, then stitched back into one `AttributedString`.
 
 enum MarkdownBlock: Equatable {
     case paragraph(String)
@@ -248,75 +254,98 @@ private func inlineAttributed(_ text: String) -> AttributedString {
 private struct MarkdownProseText: View {
     // Parsed once per view value, not per body evaluation — body re-runs on
     // every timeline mutation while this view's `raw` is unchanged.
-    private let blocks: [MarkdownBlock]
+    private let attributed: AttributedString
 
     init(_ raw: String) {
-        self.blocks = parseMarkdownBlocks(raw)
+        self.attributed = attributedMarkdownProse(parseMarkdownBlocks(raw))
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            // Position-keyed ids: content-hash ids collide on repeated blocks
-            // (two rules, duplicate bullets), and positions are append-stable
-            // while a message streams.
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                blockView(block)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    @ViewBuilder
-    private func blockView(_ block: MarkdownBlock) -> some View {
-        switch block {
-        case .paragraph(let text):
-            Text(inlineAttributed(text))
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        case .heading(let level, let text):
-            Text(inlineAttributed(text))
-                .font(headingFont(level))
-                .textSelection(.enabled)
-                .padding(.top, 4)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        case .bulletItem(let indent, let text):
-            listRow(marker: "•", text: text, indent: indent)
-        case .orderedItem(let number, let text):
-            listRow(marker: "\(number).", text: text, indent: 0)
-        case .quote(let text):
-            HStack(alignment: .top, spacing: 8) {
-                RoundedRectangle(cornerRadius: 1.5)
-                    .fill(.quaternary)
-                    .frame(width: 3)
-                Text(inlineAttributed(text))
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-            }
+        Text(attributed)
+            .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
-        case .rule:
-            Divider()
+    }
+}
+
+private func attributedMarkdownProse(_ blocks: [MarkdownBlock]) -> AttributedString {
+    var result = AttributedString()
+
+    for (index, block) in blocks.enumerated() {
+        if index > 0 {
+            result.append(AttributedString(blockSeparator(after: blocks[index - 1], before: block)))
         }
+        result.append(attributedBlock(block))
     }
 
-    private func listRow(marker: String, text: String, indent: Int) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 7) {
-            Text(marker)
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-            Text(inlineAttributed(text))
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(.leading, CGFloat(indent) * 16 + 2)
-    }
+    return result
+}
 
-    private func headingFont(_ level: Int) -> Font {
-        switch level {
-        case 1: .title2.weight(.bold)
-        case 2: .title3.weight(.semibold)
-        case 3: .headline
-        default: .subheadline.weight(.semibold)
-        }
+private func blockSeparator(after previous: MarkdownBlock, before next: MarkdownBlock) -> String {
+    switch (previous, next) {
+    case (.bulletItem(_, _), .bulletItem(_, _)),
+         (.orderedItem(_, _), .orderedItem(_, _)),
+         (.quote(_), .quote(_)):
+        "\n"
+    default:
+        "\n\n"
+    }
+}
+
+private func attributedBlock(_ block: MarkdownBlock) -> AttributedString {
+    switch block {
+    case .paragraph(let text):
+        inlineAttributed(text)
+    case .heading(let level, let text):
+        styled(inlineAttributed(text), font: headingFont(level))
+    case .bulletItem(let indent, let text):
+        listAttributed(marker: "•", text: text, indent: indent)
+    case .orderedItem(let number, let text):
+        listAttributed(marker: "\(number).", text: text, indent: 0)
+    case .quote(let text):
+        styled(inlineAttributed(quoteText(text)), foregroundColor: .secondary)
+    case .rule:
+        styled(AttributedString(String(repeating: "-", count: 24)), foregroundColor: .secondary)
+    }
+}
+
+private func listAttributed(marker: String, text: String, indent: Int) -> AttributedString {
+    let indentPrefix = String(repeating: "  ", count: indent)
+    let markerPrefix = "\(indentPrefix)\(marker) "
+    let continuationPrefix = String(repeating: " ", count: markerPrefix.count)
+    let continuationAlignedText = text.replacingOccurrences(of: "\n", with: "\n\(continuationPrefix)")
+
+    var attributed = styled(AttributedString(markerPrefix), foregroundColor: .secondary)
+    attributed.append(inlineAttributed(continuationAlignedText))
+    return attributed
+}
+
+private func quoteText(_ text: String) -> String {
+    text.split(separator: "\n", omittingEmptySubsequences: false)
+        .map { "> \($0)" }
+        .joined(separator: "\n")
+}
+
+private func styled(
+    _ attributed: AttributedString,
+    font: Font? = nil,
+    foregroundColor: Color? = nil
+) -> AttributedString {
+    var copy = attributed
+    if let font {
+        copy.font = font
+    }
+    if let foregroundColor {
+        copy.foregroundColor = foregroundColor
+    }
+    return copy
+}
+
+private func headingFont(_ level: Int) -> Font {
+    switch level {
+    case 1: .title2.weight(.bold)
+    case 2: .title3.weight(.semibold)
+    case 3: .headline
+    default: .subheadline.weight(.semibold)
     }
 }
 
