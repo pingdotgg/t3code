@@ -1008,7 +1008,8 @@ public actor LiveBackend: BackendService {
         }
         let thread = ChatThread(
             id: threadID, projectID: projectID, title: title, provider: provider, status: .idle,
-            updatedAt: Date(), modelInstanceID: selection.instanceId, modelID: selection.model)
+            updatedAt: Date(), modelInstanceID: selection.instanceId, modelID: selection.model,
+            reasoningEffort: Self.effortValue(of: selection))
         threadsByID[threadID] = thread
         modelSelectionsByThread[threadID] = selection
         titleSeedsByThread[threadID] = title
@@ -1311,14 +1312,14 @@ public actor LiveBackend: BackendService {
         else {
             throw LiveBackendError.noEffortOption(selection.model)
         }
-        // Replace any prior effort selection, keep unrelated options.
-        var options = selection.canonicalOptions ?? []
-        options.removeAll { Self.effortOptionIDs.contains($0.id) }
-        options.append(ProviderOptionSelection(id: descriptor.id, value: .string(value)))
-        let updated = ModelSelection(
-            instanceId: selection.instanceId, model: selection.model, canonicalOptions: options)
+        let updated = Self.modelSelection(selection, settingEffort: value, descriptorID: descriptor.id)
         _ = try await client.updateThreadMeta(threadId: threadID, modelSelection: updated)
         modelSelectionsByThread[threadID] = updated
+        if let instance = providersByInstanceId[selection.instanceId],
+            let provider = providerKind(fromDriver: instance.driver)
+        {
+            rememberReasoningEffort(value, for: provider)
+        }
         updateCachedThread(threadID) { $0.reasoningEffort = value }
     }
 
@@ -1881,7 +1882,9 @@ public actor LiveBackend: BackendService {
     private func modelSelection(for provider: ProviderKind) -> ModelSelection? {
         // Prefer the model the user last picked for this provider kind, so a
         // new thread doesn't silently reset to the instance's first model.
-        if let remembered = lastUsedModelSelection(for: provider) { return remembered }
+        if let remembered = lastUsedModelSelection(for: provider) {
+            return applyingLastUsedEffort(to: remembered, for: provider)
+        }
         // Same bar as the provider list UI (`availability(for:)`): an
         // uninstalled/unauthenticated instance, or one with no models, can't
         // run a thread — returning nil surfaces `noProviderForKind` instead
@@ -1892,19 +1895,65 @@ public actor LiveBackend: BackendService {
                 && !$0.models.isEmpty
         }
         guard let chosen, let model = chosen.models.first?.slug else { return nil }
-        return ModelSelection(instanceId: chosen.instanceId, model: model)
+        return applyingLastUsedEffort(
+            to: ModelSelection(instanceId: chosen.instanceId, model: model), for: provider)
     }
 
-    // MARK: - Last-used model memory
+    private static func modelSelection(
+        _ selection: ModelSelection, settingEffort effort: String, descriptorID: String
+    ) -> ModelSelection {
+        // Replace any prior effort selection, keep unrelated options.
+        var options = selection.canonicalOptions ?? []
+        options.removeAll { Self.effortOptionIDs.contains($0.id) }
+        options.append(ProviderOptionSelection(id: descriptorID, value: .string(effort)))
+        return ModelSelection(
+            instanceId: selection.instanceId, model: selection.model, canonicalOptions: options)
+    }
+
+    private func applyingLastUsedEffort(
+        to selection: ModelSelection, for provider: ProviderKind
+    ) -> ModelSelection {
+        guard
+            let instance = providersByInstanceId[selection.instanceId],
+            let model = instance.models.first(where: { $0.slug == selection.model }),
+            let descriptor = Self.effortDescriptor(of: model),
+            let effort = resolvedLastUsedEffort(for: provider, descriptor: descriptor)
+        else { return selection }
+        return Self.modelSelection(selection, settingEffort: effort, descriptorID: descriptor.id)
+    }
+
+    private func resolvedLastUsedEffort(
+        for provider: ProviderKind, descriptor: SelectProviderOptionDescriptor
+    ) -> String? {
+        guard let remembered = lastUsedReasoningEffort(for: provider) else { return nil }
+        if descriptor.options.contains(where: { $0.id == remembered }) {
+            return remembered
+        }
+        return descriptor.options.first(where: { $0.isDefault == true })?.id
+    }
+
+    // MARK: - Last-used model/effort memory
 
     private static func lastUsedModelKey(for provider: ProviderKind) -> String {
         "lastUsedModel.\(provider.rawValue)"
+    }
+
+    private static func lastUsedEffortKey(for provider: ProviderKind) -> String {
+        "lastUsedEffort.\(provider.rawValue)"
     }
 
     private func rememberModelSelection(_ selection: ModelSelection, for provider: ProviderKind) {
         UserDefaults.standard.set(
             "\(selection.instanceId)\t\(selection.model)",
             forKey: Self.lastUsedModelKey(for: provider))
+    }
+
+    private func rememberReasoningEffort(_ value: String, for provider: ProviderKind) {
+        UserDefaults.standard.set(value, forKey: Self.lastUsedEffortKey(for: provider))
+    }
+
+    private func lastUsedReasoningEffort(for provider: ProviderKind) -> String? {
+        UserDefaults.standard.string(forKey: Self.lastUsedEffortKey(for: provider))
     }
 
     /// The remembered selection, only while it still points at an available
