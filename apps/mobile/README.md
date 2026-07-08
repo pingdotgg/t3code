@@ -28,6 +28,46 @@ Start Metro for the dev client:
 vp run dev:client
 ```
 
+### Android
+
+Local Android builds require Android Studio, JDK 17, and an Android SDK. On an Apple Silicon Mac,
+the following setup installs the API 36.1 emulator used to exercise promoted ongoing notifications
+(Android Live Updates):
+
+```bash
+brew install --cask android-studio android-commandlinetools
+brew install openjdk@17
+
+export JAVA_HOME="/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home"
+export ANDROID_HOME="$HOME/Library/Android/sdk"
+export ANDROID_SDK_ROOT="$ANDROID_HOME"
+export PATH="$JAVA_HOME/bin:$ANDROID_HOME/emulator:$ANDROID_HOME/platform-tools:$PATH"
+
+yes | sdkmanager --sdk_root="$ANDROID_HOME" --licenses
+sdkmanager --sdk_root="$ANDROID_HOME" \
+  "platform-tools" \
+  "emulator" \
+  "platforms;android-36" \
+  "build-tools;36.0.0" \
+  "system-images;android-36.1;google_apis;arm64-v8a"
+
+echo no | avdmanager create avd \
+  --name T3Code_API_36_1 \
+  --package "system-images;android-36.1;google_apis;arm64-v8a" \
+  --device pixel_9
+```
+
+Add the four exports to your shell profile, start `T3Code_API_36_1` from Android Studio's Device
+Manager, then build and run the development client:
+
+```bash
+vp run android:dev
+```
+
+The first native build may need roughly 20 GB of free space for SDK, NDK, Gradle, and emulator
+caches. In a development build on Android, Settings includes an **Android Live Update · Mock**
+section for exercising the active-agents and needs-attention states without the relay.
+
 Build and run the local iOS dev client:
 
 ```bash
