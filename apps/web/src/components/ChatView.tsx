@@ -4119,13 +4119,23 @@ function ChatViewContent(props: ChatViewProps) {
     );
 
     let failure: AtomCommandResult<unknown, unknown> | null = null;
-    // Auto-title from first message
+    // Auto-title from first message. When an existing worktree was picked but
+    // its metadata update may still be in flight (optimistic override present
+    // while the thread's own worktreePath is still null), persist the branch +
+    // worktree path in this same *awaited* round-trip so the server binds the
+    // chosen worktree before startThreadTurn runs, instead of racing the
+    // fire-and-forget update and starting the turn with a null path.
+    const pendingWorktreeSync =
+      isFirstMessage && !activeThread.worktreePath && effectiveActiveWorktreePath
+        ? { branch: activeThreadBranch, worktreePath: effectiveActiveWorktreePath }
+        : {};
     if (isFirstMessage && isServerThread) {
       const titleResult = await updateThreadMetadata({
         environmentId,
         input: {
           threadId: threadIdForSend,
           title,
+          ...pendingWorktreeSync,
         },
       });
       if (titleResult._tag === "Failure") {
@@ -4862,6 +4872,11 @@ function ChatViewContent(props: ChatViewProps) {
     (mode: DraftThreadEnvMode) => {
       if (canOverrideServerThreadEnvMode) {
         setPendingServerThreadEnvMode(mode);
+        // Drop any optimistic existing-worktree pick: switching to Current
+        // checkout or New worktree abandons it. onSelectExistingWorktree calls
+        // onEnvModeChange("worktree") and then immediately re-sets the path
+        // override, so an actual existing-worktree pick is preserved.
+        setPendingServerThreadWorktreePath(undefined);
         scheduleComposerFocus();
         return;
       }
@@ -4884,6 +4899,7 @@ function ChatViewContent(props: ChatViewProps) {
       isLocalDraftThread,
       settings.newWorktreesStartFromOrigin,
       setPendingServerThreadEnvMode,
+      setPendingServerThreadWorktreePath,
       scheduleComposerFocus,
       setDraftThreadContext,
     ],
