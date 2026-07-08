@@ -12,7 +12,7 @@
       /* Card / surface */
       --color-card: #ffffff;
       --color-card-alt: #f5f5f5;
-      --color-card-translucent: rgba(255, 255, 255, 0.94);
+      --color-card-translucent: rgba(255, 255, 255, 0.8);
 
       /* Text */
       --color-foreground: #262626;
@@ -105,7 +105,7 @@
       /* Card / surface */
       --color-card: #171717;
       --color-card-alt: #1c1c1c;
-      --color-card-translucent: rgba(17, 17, 17, 0.94);
+      --color-card-translucent: rgba(17, 17, 17, 0.8);
 
       /* Text */
       --color-foreground: #f5f5f5;

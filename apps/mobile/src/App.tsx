@@ -4,6 +4,7 @@ import {
   DMSans_700Bold,
   useFonts,
 } from "@expo-google-fonts/dm-sans";
+import { BlurTargetView } from "expo-blur";
 import * as Linking from "expo-linking";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar, useColorScheme } from "react-native";
@@ -19,6 +20,7 @@ import { CloudAuthProvider } from "./features/cloud/CloudAuthProvider";
 import { AppearancePreferencesProvider } from "./features/settings/appearance/AppearancePreferencesProvider";
 import { RootStack } from "./Stack";
 import { appAtomRegistry } from "./state/atom-registry";
+import { appBlurTargetRef } from "./lib/appBlurTarget";
 import { useThemeColor } from "./lib/useThemeColor";
 
 import "../global.css";
@@ -64,11 +66,14 @@ export default function App() {
                     this, React Navigation defaults to its light theme and every native
                     header (glass buttons, title, materials) is forced light even when
                     the system is in dark mode. */}
-                <Navigation
-                  linking={appLinking}
-                  theme={colorScheme === "dark" ? DarkTheme : DefaultTheme}
-                />
-                <ConfirmDialogHost />
+                {/* Blur target for Android dropdown backdrops — see appBlurTarget.ts. */}
+                <BlurTargetView ref={appBlurTargetRef} style={{ flex: 1 }}>
+                  <Navigation
+                    linking={appLinking}
+                    theme={colorScheme === "dark" ? DarkTheme : DefaultTheme}
+                  />
+                  <ConfirmDialogHost />
+                </BlurTargetView>
               </SafeAreaProvider>
             </KeyboardProvider>
           </GestureHandlerRootView>

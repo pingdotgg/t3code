@@ -1,10 +1,21 @@
 import type { MenuAction, MenuComponentProps } from "@react-native-menu/menu";
+import { BlurView } from "expo-blur";
 import type { ReactNode } from "react";
 import { useCallback, useRef, useState } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
-import { Dimensions, Modal, Pressable, ScrollView, StatusBar, View } from "react-native";
+import {
+  Dimensions,
+  Modal,
+  Pressable,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  useColorScheme,
+  View,
+} from "react-native";
 import Animated, { FadeIn } from "react-native-reanimated";
 
+import { appBlurTargetRef } from "../lib/appBlurTarget";
 import { useThemeColor } from "../lib/useThemeColor";
 import { cn } from "../lib/cn";
 import { type AppSymbolName, SymbolView } from "./AppSymbol";
@@ -58,6 +69,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
   const [rootHeight, setRootHeight] = useState<number | null>(null);
   const anchorRef = useRef<View>(null);
 
+  const isDarkMode = useColorScheme() === "dark";
   const rippleColor = useThemeColor("--color-subtle");
   const iconColor = useThemeColor("--color-icon");
   const iconSubtleColor = useThemeColor("--color-icon-subtle");
@@ -158,7 +170,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
           {anchor === null || !placeable ? null : (
             <Animated.View
               entering={FadeIn.duration(120)}
-              className="absolute overflow-hidden rounded-[12px] border border-border bg-card"
+              className="absolute overflow-hidden rounded-[12px] border border-border"
               style={{
                 width: MENU_WIDTH,
                 left,
@@ -170,6 +182,16 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
                   : { bottom: (rootHeight ?? 0) - anchor.y + ANCHOR_GAP }),
               }}
             >
+              {/* Frosted backdrop: blur of the app content behind the menu,
+                  washed with the translucent card tone so rows keep contrast. */}
+              <BlurView
+                blurMethod="dimezisBlurView"
+                blurTarget={appBlurTargetRef}
+                intensity={40}
+                tint={isDarkMode ? "dark" : "light"}
+                style={StyleSheet.absoluteFill}
+              />
+              <View className="absolute inset-0 bg-card-translucent" />
               <ScrollView bounces={false} showsVerticalScrollIndicator={false}>
                 {parent !== null ? (
                   // Muted parent title as the submenu header; tapping it
