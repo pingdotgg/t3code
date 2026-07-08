@@ -15,7 +15,7 @@ const ClaudeJsonSchema = Schema.Struct({
 
 class IdentifyUserError extends Schema.TaggedErrorClass<IdentifyUserError>()("IdentifyUserError", {
   message: Schema.String,
-  cause: Schema.optional(Schema.Defect),
+  cause: Schema.optional(Schema.Unknown),
 }) {}
 
 const hash = (value: string) =>

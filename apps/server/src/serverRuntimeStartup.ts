@@ -35,12 +35,16 @@ import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { ServerAuth } from "./auth/Services/ServerAuth.ts";
 import { ProviderSessionReaper } from "./provider/Services/ProviderSessionReaper.ts";
+import { readCliDesiredCloudLink } from "./cloud/CliState.ts";
+import { reconcileDesiredCloudLink } from "./cloud/http.ts";
+import { AgentAwarenessRelay } from "./relay/AgentAwarenessRelay.ts";
 import {
   formatHeadlessServeOutput,
   formatHostForUrl,
   isWildcardHost,
   issueHeadlessServeAccessInfo,
 } from "./startupAccess.ts";
+import { HttpServer } from "effect/unstable/http";
 
 export class ServerRuntimeStartupError extends Data.TaggedError("ServerRuntimeStartupError")<{
   readonly message: string;
@@ -274,6 +278,40 @@ const maybeOpenBrowser = (target: string) =>
     );
   });
 
+const resolveListeningLocalOrigin = Effect.gen(function* () {
+  const server = yield* HttpServer.HttpServer;
+  const serverConfig = yield* ServerConfig;
+  const address = server.address;
+  const port =
+    typeof address === "string" || !("port" in address) ? serverConfig.port : address.port;
+  return `http://localhost:${port}`;
+});
+
+const reconcileDesiredConnectLink = Effect.gen(function* () {
+  const desiredLink = yield* (
+    readCliDesiredCloudLink as Effect.Effect<boolean, unknown, never>
+  ).pipe(
+    Effect.catch((cause) =>
+      Effect.logWarning("failed to read desired T3 Connect link state", { cause }).pipe(
+        Effect.as(false),
+      ),
+    ),
+  );
+  if (!desiredLink) {
+    return;
+  }
+
+  const localOrigin = yield* resolveListeningLocalOrigin;
+  yield* (reconcileDesiredCloudLink(localOrigin) as Effect.Effect<unknown, unknown, never>).pipe(
+    Effect.catch((cause) =>
+      Effect.logWarning("failed to reconcile desired T3 Connect link", {
+        cause,
+        localOrigin,
+      }),
+    ),
+  );
+});
+
 const runStartupPhase = <A, E, R>(phase: string, effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
     Effect.annotateSpans({ "startup.phase": phase }),
@@ -288,6 +326,7 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
   const lifecycleEvents = yield* ServerLifecycleEvents;
   const serverSettings = yield* ServerSettingsService;
   const serverEnvironment = yield* ServerEnvironment;
+  const agentAwarenessRelay = yield* AgentAwarenessRelay;
 
   const commandGate = yield* makeCommandGate;
   const httpListening = yield* Deferred.make<void>();
@@ -344,6 +383,7 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* orchestrationReactor.start().pipe(Scope.provide(reactorScope));
         yield* providerSessionReaper.start().pipe(Scope.provide(reactorScope));
+        yield* agentAwarenessRelay.start().pipe(Scope.provide(reactorScope));
       }),
     );
 
@@ -429,6 +469,7 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
       yield* commandGate.signalCommandReady;
       yield* Effect.logDebug("startup phase: waiting for http listener");
       yield* runStartupPhase("http.wait", Deferred.await(httpListening));
+      yield* Effect.forkScoped(runStartupPhase("connect.reconcile", reconcileDesiredConnectLink));
       yield* Effect.logDebug("startup phase: publishing ready event");
       yield* runStartupPhase(
         "ready.publish",

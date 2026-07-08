@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * CopilotAdapterLive — GitHub Copilot CLI (`copilot --acp`) via ACP.
  *

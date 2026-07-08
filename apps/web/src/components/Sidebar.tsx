@@ -197,6 +197,18 @@ const SIDEBAR_LIST_ANIMATION_OPTIONS = {
   easing: "ease-out",
 } as const;
 const EMPTY_THREAD_JUMP_LABELS = new Map<string, string>();
+type ContextMenuPosition = { x: number; y: number };
+
+function resolveContextMenuPosition(event: React.MouseEvent): ContextMenuPosition | undefined {
+  if (window.desktopBridge) {
+    return undefined;
+  }
+
+  return {
+    x: event.clientX,
+    y: event.clientY,
+  };
+}
 
 function formatProjectMemberActionLabel(
   member: SidebarProjectGroupMember,
@@ -266,10 +278,10 @@ interface SidebarThreadRowProps {
     orderedProjectThreadKeys: readonly string[],
   ) => void;
   navigateToThread: (threadRef: ScopedThreadRef) => void;
-  handleMultiSelectContextMenu: (position: { x: number; y: number }) => Promise<void>;
+  handleMultiSelectContextMenu: (position?: ContextMenuPosition) => Promise<void>;
   handleThreadContextMenu: (
     threadRef: ScopedThreadRef,
-    position: { x: number; y: number },
+    position?: ContextMenuPosition,
   ) => Promise<void>;
   clearSelection: () => void;
   commitRename: (
@@ -425,20 +437,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     (event: React.MouseEvent) => {
       event.preventDefault();
       if (hasSelection && isSelected) {
-        void handleMultiSelectContextMenu({
-          x: event.clientX,
-          y: event.clientY,
-        });
+        void handleMultiSelectContextMenu(resolveContextMenuPosition(event));
         return;
       }
 
       if (hasSelection) {
         clearSelection();
       }
-      void handleThreadContextMenu(threadRef, {
-        x: event.clientX,
-        y: event.clientY,
-      });
+      void handleThreadContextMenu(threadRef, resolveContextMenuPosition(event));
     },
     [
       clearSelection,
@@ -854,10 +860,10 @@ interface SidebarProjectThreadListProps {
     orderedProjectThreadKeys: readonly string[],
   ) => void;
   navigateToThread: (threadRef: ScopedThreadRef) => void;
-  handleMultiSelectContextMenu: (position: { x: number; y: number }) => Promise<void>;
+  handleMultiSelectContextMenu: (position?: ContextMenuPosition) => Promise<void>;
   handleThreadContextMenu: (
     threadRef: ScopedThreadRef,
-    position: { x: number; y: number },
+    position?: ContextMenuPosition,
   ) => Promise<void>;
   clearSelection: () => void;
   commitRename: (
@@ -1779,10 +1785,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               destructive: true,
             }),
           ],
-          {
-            x: event.clientX,
-            y: event.clientY,
-          },
+          resolveContextMenuPosition(event),
         );
 
         if (!clicked) {
@@ -1874,7 +1877,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   );
 
   const handleMultiSelectContextMenu = useCallback(
-    async (position: { x: number; y: number }) => {
+    async (position?: ContextMenuPosition) => {
       const api = readLocalApi();
       if (!api) return;
       const threadKeys = [...useThreadSelectionStore.getState().selectedThreadKeys];
@@ -2002,10 +2005,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             id: member.physicalProjectKey,
             label: formatProjectMemberActionLabel(member, project.groupedProjectCount),
           })),
-          {
-            x: event.clientX,
-            y: event.clientY,
-          },
+          resolveContextMenuPosition(event),
         );
         if (!clicked) {
           return;
@@ -2181,7 +2181,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   ]);
 
   const handleThreadContextMenu = useCallback(
-    async (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
+    async (threadRef: ScopedThreadRef, position?: ContextMenuPosition) => {
       const api = readLocalApi();
       if (!api) return;
       const threadKey = scopedThreadKey(threadRef);
@@ -2272,7 +2272,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           onKeyDown={handleProjectButtonKeyDown}
           onContextMenu={handleProjectButtonContextMenu}
         >
-          {!projectExpanded && projectStatus ? (
+          {!projectExpanded && projectStatus && !projectStatus.pulse ? (
             <span
               aria-hidden="true"
               title={projectStatus.label}
@@ -2297,7 +2297,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           <ProjectFavicon environmentId={project.environmentId} cwd={project.cwd} />
           <span className="flex min-w-0 flex-1 items-center gap-2">
             <span
-              className="truncate font-medium text-foreground/90"
+              className={`truncate font-medium ${
+                !projectExpanded && projectStatus?.pulse
+                  ? "project-title-shimmer"
+                  : "text-foreground/90"
+              }`}
+              title={!projectExpanded && projectStatus?.pulse ? projectStatus.label : undefined}
               style={{ fontSize: "var(--app-sidebar-font-size)" }}
             >
               {project.displayName}

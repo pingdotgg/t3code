@@ -1,7 +1,8 @@
 {
   "cli": {
     "version": ">= 18.4.0",
-    "appVersionSource": "remote"
+    "appVersionSource": "remote",
+    "promptToConfigurePushNotifications": false
   },
   "build": {
     "development": {
@@ -17,13 +18,28 @@
         "APP_VARIANT": "preview"
       },
       "channel": "preview",
+      "environment": "preview",
       "distribution": "internal"
+    },
+    "preview:dev": {
+      "env": {
+        "APP_VARIANT": "preview",
+        "MOBILE_VERSION_POLICY": "fingerprint"
+      },
+      "channel": "preview",
+      "environment": "preview",
+      "developmentClient": true,
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      }
     },
     "production": {
       "env": {
         "APP_VARIANT": "production"
       },
       "channel": "production",
+      "environment": "production",
       "autoIncrement": true
     }
   },

@@ -1,78 +1,92 @@
+import {
+  LegendList,
+  type LegendListRef,
+  type LegendListRenderItemProps,
+} from "@legendapp/list/react-native";
+import {
+  type EnvironmentProject,
+  type EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/shell";
 import type {
-  EnvironmentScopedProjectShell,
-  EnvironmentScopedThreadShell,
-  VcsStatusState,
-} from "@t3tools/client-runtime";
-import { LegendList } from "@legendapp/list/react-native";
-import { SymbolView } from "expo-symbols";
-import { useCallback, useMemo, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, View } from "react-native";
-import * as Arr from "effect/Array";
-import * as Order from "effect/Order";
+  EnvironmentId,
+  SidebarProjectGroupingMode,
+  SidebarThreadSortOrder,
+} from "@t3tools/contracts";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, Platform, View } from "react-native";
+import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
 
-import { AppText as Text } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
-import { ProjectFavicon } from "../../components/ProjectFavicon";
+import type { WorkspaceState } from "../../state/workspaceModel";
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { scopedProjectKey } from "../../lib/scopedEntities";
-import { relativeTime } from "../../lib/time";
-import type { RemoteCatalogState } from "../../state/use-remote-catalog";
-import { useVcsStatus } from "../../state/use-vcs-status";
-import { threadStatusTone } from "../threads/threadPresentation";
+import type { PendingNewTask } from "../../state/use-pending-new-tasks";
+import {
+  PendingTaskListRow,
+  ThreadListGroupHeader,
+  ThreadListRow,
+  ThreadListShowMoreRow,
+} from "../threads/thread-list-items";
+import type { HomeListFilterMenuEnvironment } from "./home-list-filter-menu";
+import {
+  buildHomeListLayout,
+  DEFAULT_GROUP_DISPLAY_STATE,
+  homeListItemsAreEqual,
+  nextGroupDisplayState,
+  type HomeGroupDisplayAction,
+  type HomeGroupDisplayState,
+  type HomeListItem,
+} from "./homeListItems";
+import { buildHomeThreadGroups, type HomeProjectSortOrder } from "./homeThreadList";
+import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-swipe-actions";
+import { WorkspaceConnectionStatus } from "./WorkspaceConnectionStatus";
+import { shouldShowWorkspaceConnectionStatus } from "./workspace-connection-status";
 
 /* ─── Types ──────────────────────────────────────────────────────────── */
 
 interface HomeScreenProps {
-  readonly projects: ReadonlyArray<EnvironmentScopedProjectShell>;
-  readonly threads: ReadonlyArray<EnvironmentScopedThreadShell>;
-  readonly catalogState: RemoteCatalogState;
+  readonly projects: ReadonlyArray<EnvironmentProject>;
+  readonly threads: ReadonlyArray<EnvironmentThreadShell>;
+  readonly pendingTasks: ReadonlyArray<PendingNewTask>;
+  readonly catalogState: WorkspaceState;
   readonly savedConnectionsById: Readonly<Record<string, SavedRemoteConnection>>;
+  readonly environments: ReadonlyArray<HomeListFilterMenuEnvironment>;
   readonly searchQuery: string;
+  readonly selectedEnvironmentId: EnvironmentId | null;
+  readonly projectSortOrder: HomeProjectSortOrder;
+  readonly threadSortOrder: SidebarThreadSortOrder;
+  readonly projectGroupingMode: SidebarProjectGroupingMode;
+  readonly onSearchQueryChange: (query: string) => void;
+  readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
+  readonly onProjectSortOrderChange: (sortOrder: HomeProjectSortOrder) => void;
+  readonly onThreadSortOrderChange: (sortOrder: SidebarThreadSortOrder) => void;
+  readonly onProjectGroupingModeChange: (mode: SidebarProjectGroupingMode) => void;
   readonly onAddConnection: () => void;
-  readonly onSelectThread: (thread: EnvironmentScopedThreadShell) => void;
+  readonly onOpenEnvironments: () => void;
+  readonly onOpenSettings: () => void;
+  readonly onStartNewTask: () => void;
+  readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
+  readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
+  readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
+  readonly onSelectPendingTask: (pendingTask: PendingNewTask) => void;
+  readonly onDeletePendingTask: (pendingTask: PendingNewTask) => void;
+  readonly onNewThreadInProject: (project: EnvironmentProject) => void;
 }
 
-interface ProjectGroup {
-  readonly key: string;
-  readonly project: EnvironmentScopedProjectShell;
-  readonly threads: ReadonlyArray<EnvironmentScopedThreadShell>;
-}
+/* ─── Layout constants ───────────────────────────────────────────────── */
 
-const projectGroupActivityOrder = Order.mapInput(
-  Order.Struct({
-    activityAt: Order.flip(Order.Number),
-  }),
-  (group: ProjectGroup) => ({
-    activityAt: new Date(group.threads[0]!.updatedAt ?? group.threads[0]!.createdAt).getTime(),
-  }),
-);
-
-/* ─── Status indicator colors ────────────────────────────────────────── */
-
-function statusColors(thread: EnvironmentScopedThreadShell): { bg: string; fg: string } {
-  switch (thread.session?.status) {
-    case "running":
-      return { bg: "rgba(249,115,22,0.14)", fg: "#f97316" };
-    case "ready":
-      return { bg: "rgba(34,197,94,0.14)", fg: "#22c55e" };
-    case "starting":
-      return { bg: "rgba(59,130,246,0.14)", fg: "#3b82f6" };
-    case "error":
-      return { bg: "rgba(239,68,68,0.14)", fg: "#ef4444" };
-    default:
-      return { bg: "rgba(163,163,163,0.10)", fg: "#a3a3a3" };
-  }
-}
-
-const COLLAPSED_THREAD_LIMIT = 6;
+const ESTIMATED_THREAD_ROW_HEIGHT = 72;
+/** Height of the floating custom header on non-iOS platforms. */
+const CUSTOM_HEADER_HEIGHT = 78;
 
 function deriveEmptyState(props: {
-  readonly catalogState: RemoteCatalogState;
+  readonly catalogState: WorkspaceState;
   readonly projectCount: number;
 }): { readonly title: string; readonly detail: string; readonly loading: boolean } {
   const { catalogState } = props;
-  if (catalogState.isLoadingSavedConnections) {
+  if (catalogState.isLoadingConnections) {
     return {
       title: "Loading environments",
       detail: "Checking saved environments on this device.",
@@ -80,7 +94,7 @@ function deriveEmptyState(props: {
     };
   }
 
-  if (!catalogState.hasSavedConnections) {
+  if (!catalogState.hasConnections) {
     return {
       title: "No environments connected",
       detail: "Add an environment to load projects and start coding sessions.",
@@ -88,7 +102,12 @@ function deriveEmptyState(props: {
     };
   }
 
-  if (catalogState.connectionState === "disconnected" && !catalogState.hasLoadedShellSnapshot) {
+  if (
+    (catalogState.connectionState === "available" ||
+      catalogState.connectionState === "offline" ||
+      catalogState.connectionState === "error") &&
+    !catalogState.hasLoadedShellSnapshot
+  ) {
     return {
       title: "Environment unavailable",
       detail:
@@ -125,341 +144,311 @@ function deriveEmptyState(props: {
   };
 }
 
-/* ─── Project group header ───────────────────────────────────────────── */
-
-function ProjectGroupLabel(props: {
-  readonly project: EnvironmentScopedProjectShell;
-  readonly totalThreadCount: number;
-  readonly httpBaseUrl: string | null;
-  readonly bearerToken: string | null;
-  readonly isExpanded: boolean;
-  readonly onToggleExpand: () => void;
-}) {
-  const hiddenCount = props.totalThreadCount - COLLAPSED_THREAD_LIMIT;
-
-  return (
-    <View className="flex-row items-center gap-2.5 px-1 pb-2">
-      <ProjectFavicon
-        size={18}
-        projectTitle={props.project.title}
-        httpBaseUrl={props.httpBaseUrl}
-        workspaceRoot={props.project.workspaceRoot}
-        bearerToken={props.bearerToken}
-      />
-      <Text
-        className="flex-1 text-[13px] font-t3-bold uppercase text-foreground-muted"
-        style={{ letterSpacing: 0.6 }}
-        numberOfLines={1}
-      >
-        {props.project.title}
-      </Text>
-
-      {hiddenCount > 0 ? (
-        <Pressable onPress={props.onToggleExpand} hitSlop={8}>
-          <Text
-            className="text-[13px] font-t3-bold text-foreground-muted"
-            style={{ letterSpacing: 0.6 }}
-          >
-            {props.isExpanded ? "Show less" : `${hiddenCount} more`}
-          </Text>
-        </Pressable>
-      ) : null}
-    </View>
-  );
-}
-
-/* ─── Git summary line ──────────────────────────────────────────────── */
-
-function gitSummaryParts(gitStatus: VcsStatusState): ReadonlyArray<string> {
-  if (!gitStatus.data) return [];
-  const { data } = gitStatus;
-  const parts: string[] = [];
-  if (data.hasWorkingTreeChanges) {
-    parts.push(`${data.workingTree.files.length} changed`);
-  }
-  if (data.aheadCount > 0) parts.push(`${data.aheadCount} ahead`);
-  if (data.behindCount > 0) parts.push(`${data.behindCount} behind`);
-  if (data.pr?.state === "open") parts.push(`PR #${data.pr.number}`);
-  return parts;
-}
-
-/* ─── Thread row ─────────────────────────────────────────────────────── */
-
-function ThreadRow(props: {
-  readonly thread: EnvironmentScopedThreadShell;
-  readonly projectCwd: string | null;
-  readonly onPress: () => void;
-  readonly isLast: boolean;
-}) {
-  const separatorColor = useThemeColor("--color-separator");
-  const { bg, fg } = statusColors(props.thread);
-  const tone = threadStatusTone(props.thread);
-  const timestamp = relativeTime(props.thread.updatedAt ?? props.thread.createdAt);
-  const branch = props.thread.branch;
-
-  // Subscribe to live git status — only when thread has a branch set.
-  // Threads sharing the same cwd share one WS subscription via ref-counting.
-  const cwd = branch ? (props.thread.worktreePath ?? props.projectCwd) : null;
-  const gitStatus = useVcsStatus({
-    environmentId: cwd ? props.thread.environmentId : null,
-    cwd,
-  });
-  const gitParts = gitSummaryParts(gitStatus);
-
-  return (
-    <Pressable onPress={props.onPress} style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}>
-      <View
-        style={{
-          flexDirection: "row",
-          paddingLeft: 16,
-          paddingRight: 16,
-          paddingVertical: 10,
-          gap: 12,
-          borderBottomWidth: props.isLast ? 0 : 1,
-          borderBottomColor: separatorColor,
-        }}
-      >
-        {/* Git status indicator */}
-        <View
-          style={{
-            width: 30,
-            height: 30,
-            borderRadius: 9,
-            backgroundColor: bg,
-            alignItems: "center",
-            justifyContent: "center",
-            marginTop: 2,
-          }}
-        >
-          <SymbolView name="arrow.triangle.branch" size={13} tintColor={fg} type="monochrome" />
-        </View>
-
-        {/* Content */}
-        <View style={{ flex: 1, gap: 3 }}>
-          {/* Title + Status + Timestamp */}
-          <View className="flex-row items-center justify-between gap-2">
-            <Text
-              className="flex-1 text-[15px] font-t3-bold leading-[20px] text-foreground"
-              numberOfLines={1}
-            >
-              {props.thread.title}
-            </Text>
-            <View className="flex-row items-center gap-2">
-              <View
-                className={tone.pillClassName}
-                style={{ borderRadius: 99, paddingHorizontal: 6, paddingVertical: 2 }}
-              >
-                <Text className={`text-[10px] font-t3-bold ${tone.textClassName}`}>
-                  {tone.label}
-                </Text>
-              </View>
-              <Text
-                className="text-[12px] text-foreground-tertiary"
-                style={{ fontVariant: ["tabular-nums"] }}
-              >
-                {timestamp}
-              </Text>
-            </View>
-          </View>
-
-          {/* Branch + git info */}
-          {branch ? (
-            <View className="flex-row items-center gap-1.5" style={{ marginTop: 1 }}>
-              <SymbolView
-                name="arrow.triangle.branch"
-                size={10}
-                tintColor="#737373"
-                type="monochrome"
-              />
-              <Text
-                className="text-[11px] text-foreground-tertiary"
-                numberOfLines={1}
-                style={{ fontFamily: "monospace" }}
-              >
-                {branch}
-              </Text>
-              {gitParts.length > 0 ? (
-                <Text className="text-[11px] text-foreground-tertiary">
-                  {" · " + gitParts.join(" · ")}
-                </Text>
-              ) : null}
-            </View>
-          ) : null}
-        </View>
-      </View>
-    </Pressable>
-  );
-}
-
-function ProjectGroupCard(props: {
-  readonly group: ProjectGroup;
-  readonly connection: SavedRemoteConnection | undefined;
-  readonly isExpanded: boolean;
-  readonly onToggleExpand: (key: string) => void;
-  readonly onSelectThread: (thread: EnvironmentScopedThreadShell) => void;
-}) {
-  const visibleThreads = props.isExpanded
-    ? props.group.threads
-    : props.group.threads.slice(0, COLLAPSED_THREAD_LIMIT);
-
-  return (
-    <View>
-      <ProjectGroupLabel
-        project={props.group.project}
-        totalThreadCount={props.group.threads.length}
-        httpBaseUrl={props.connection?.httpBaseUrl ?? null}
-        bearerToken={props.connection?.bearerToken ?? null}
-        isExpanded={props.isExpanded}
-        onToggleExpand={() => props.onToggleExpand(props.group.key)}
-      />
-      <View
-        className="overflow-hidden rounded-[20px] bg-card"
-        style={{ borderCurve: "continuous" }}
-      >
-        {visibleThreads.map((thread, i) => (
-          <ThreadRow
-            key={`${thread.environmentId}:${thread.id}`}
-            thread={thread}
-            projectCwd={props.group.project.workspaceRoot}
-            onPress={() => props.onSelectThread(thread)}
-            isLast={i === visibleThreads.length - 1}
-          />
-        ))}
-      </View>
-    </View>
-  );
+function HomeTopContentSpacer(props: { readonly topInset: number }) {
+  return <View style={{ height: props.topInset + CUSTOM_HEADER_HEIGHT }} />;
 }
 
 /* ─── Main screen ────────────────────────────────────────────────────── */
 
 export function HomeScreen(props: HomeScreenProps) {
-  const [expandedProjects, setExpandedProjects] = useState<Set<string>>(() => new Set());
+  const [groupDisplayStates, setGroupDisplayStates] = useState<
+    ReadonlyMap<string, HomeGroupDisplayState>
+  >(() => new Map());
+  const openSwipeableRef = useRef<SwipeableMethods | null>(null);
+  const listRef = useRef<LegendListRef | null>(null);
+  const insets = useSafeAreaInsets();
   const accentColor = useThemeColor("--color-icon-muted");
 
-  const toggleExpanded = useCallback((key: string) => {
-    setExpandedProjects((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
+  const updateGroupDisplay = useCallback((key: string, action: HomeGroupDisplayAction) => {
+    setGroupDisplayStates((previous) => {
+      const next = new Map(previous);
+      next.set(
+        key,
+        nextGroupDisplayState(previous.get(key) ?? DEFAULT_GROUP_DISPLAY_STATE, action),
+      );
       return next;
     });
   }, []);
 
-  /* Build project title lookup for search */
-  const projectTitleByKey = useMemo(() => {
+  const handleSwipeableWillOpen = useCallback((methods: SwipeableMethods) => {
+    if (openSwipeableRef.current !== methods) {
+      openSwipeableRef.current?.close();
+      openSwipeableRef.current = methods;
+    }
+  }, []);
+
+  const handleSwipeableClose = useCallback((methods: SwipeableMethods) => {
+    if (openSwipeableRef.current === methods) {
+      openSwipeableRef.current = null;
+    }
+  }, []);
+
+  const handleScrollBeginDrag = useCallback(() => {
+    openSwipeableRef.current?.close();
+  }, []);
+  const { swipeEnabled, scrollGateHandlers } = useSwipeableScrollGate({
+    onScrollBeginDrag: handleScrollBeginDrag,
+  });
+
+  const projectGroups = useMemo(
+    () =>
+      buildHomeThreadGroups({
+        projects: props.projects,
+        threads: props.threads,
+        pendingTasks: props.pendingTasks,
+        environmentId: props.selectedEnvironmentId,
+        searchQuery: props.searchQuery,
+        projectSortOrder: props.projectSortOrder,
+        threadSortOrder: props.threadSortOrder,
+        projectGroupingMode: props.projectGroupingMode,
+      }),
+    [
+      props.pendingTasks,
+      props.projectGroupingMode,
+      props.projects,
+      props.projectSortOrder,
+      props.searchQuery,
+      props.selectedEnvironmentId,
+      props.threadSortOrder,
+      props.threads,
+    ],
+  );
+
+  const hasSearchQuery = props.searchQuery.trim().length > 0;
+  const listLayout = useMemo(
+    () =>
+      buildHomeListLayout({
+        groups: projectGroups,
+        displayStates: groupDisplayStates,
+        showAllThreads: hasSearchQuery,
+      }),
+    [projectGroups, groupDisplayStates, hasSearchQuery],
+  );
+
+  const projectCwdByKey = useMemo(() => {
     const map = new Map<string, string>();
-    for (const p of props.projects) {
-      map.set(scopedProjectKey(p.environmentId, p.id), p.title);
+    for (const project of props.projects) {
+      map.set(scopedProjectKey(project.environmentId, project.id), project.workspaceRoot);
     }
     return map;
   }, [props.projects]);
 
-  /* Filter threads by search query */
-  const filteredThreads = useMemo(() => {
-    const q = props.searchQuery.trim().toLowerCase();
-    if (!q) return props.threads;
-    return props.threads.filter((t) => {
-      if (t.title.toLowerCase().includes(q)) return true;
-      const key = scopedProjectKey(t.environmentId, t.projectId);
-      return projectTitleByKey.get(key)?.toLowerCase().includes(q) ?? false;
-    });
-  }, [props.threads, props.searchQuery, projectTitleByKey]);
+  const extraData = useMemo(
+    () => ({ savedConnectionsById: props.savedConnectionsById, projectCwdByKey }),
+    [props.savedConnectionsById, projectCwdByKey],
+  );
 
-  /* Group filtered threads by project */
-  const projectGroups = useMemo<ReadonlyArray<ProjectGroup>>(() => {
-    const byProject = new Map<string, EnvironmentScopedThreadShell[]>();
-    for (const thread of filteredThreads) {
-      const key = scopedProjectKey(thread.environmentId, thread.projectId);
-      const existing = byProject.get(key);
-      if (existing) existing.push(thread);
-      else byProject.set(key, [thread]);
-    }
-
-    const groups: ProjectGroup[] = [];
-    for (const project of props.projects) {
-      const key = scopedProjectKey(project.environmentId, project.id);
-      const threads = byProject.get(key);
-      if (threads && threads.length > 0) {
-        groups.push({ key, project, threads });
+  const renderItem = useCallback(
+    ({ item }: LegendListRenderItemProps<HomeListItem>) => {
+      switch (item.type) {
+        case "header":
+          return (
+            <ThreadListGroupHeader
+              variant="compact"
+              collapsed={item.collapsed}
+              isFirst={item.isFirst}
+              groupKey={item.group.key}
+              onGroupAction={updateGroupDisplay}
+              // Aggregated groups (same repo across machines) have no single
+              // target project, and `pending-project:` groups hold a placeholder
+              // built from queued-task metadata rather than a real project shell,
+              // so the quick new-thread button is single-real-project only.
+              newThreadTarget={item.group.newThreadTarget}
+              onNewThread={props.onNewThreadInProject}
+              project={item.group.representative}
+              threadCount={item.group.threads.length + item.group.pendingTasks.length}
+              title={item.group.title}
+            />
+          );
+        case "pending-task":
+          return (
+            <PendingTaskListRow
+              variant="compact"
+              pendingTask={item.pendingTask}
+              environmentLabel={
+                props.savedConnectionsById[item.pendingTask.message.environmentId]
+                  ?.environmentLabel ?? null
+              }
+              isLast={item.isLast}
+              onSelectPendingTask={props.onSelectPendingTask}
+              onDeletePendingTask={props.onDeletePendingTask}
+            />
+          );
+        case "thread": {
+          const thread = item.thread;
+          return (
+            <ThreadListRow
+              variant="compact"
+              thread={thread}
+              environmentLabel={
+                props.savedConnectionsById[thread.environmentId]?.environmentLabel ?? null
+              }
+              projectCwd={
+                projectCwdByKey.get(scopedProjectKey(thread.environmentId, thread.projectId)) ??
+                null
+              }
+              isLast={item.isLast}
+              onArchiveThread={props.onArchiveThread}
+              onDeleteThread={props.onDeleteThread}
+              onSelectThread={props.onSelectThread}
+              onSwipeableClose={handleSwipeableClose}
+              onSwipeableWillOpen={handleSwipeableWillOpen}
+            />
+          );
+        }
+        case "show-more":
+          return (
+            <ThreadListShowMoreRow
+              variant="compact"
+              hiddenCount={item.hiddenCount}
+              canShowLess={item.canShowLess}
+              groupKey={item.groupKey}
+              onGroupAction={updateGroupDisplay}
+            />
+          );
       }
-    }
+    },
+    [
+      handleSwipeableClose,
+      handleSwipeableWillOpen,
+      projectCwdByKey,
+      props.onArchiveThread,
+      props.onDeletePendingTask,
+      props.onDeleteThread,
+      props.onNewThreadInProject,
+      props.onSelectPendingTask,
+      props.onSelectThread,
+      props.savedConnectionsById,
+      updateGroupDisplay,
+    ],
+  );
 
-    return Arr.sort(groups, projectGroupActivityOrder);
-  }, [props.projects, filteredThreads]);
+  const keyExtractor = useCallback((item: HomeListItem) => item.key, []);
 
   /* Empty states */
-  const hasAnyThreads = props.threads.length > 0;
-  const hasResults = filteredThreads.length > 0;
+  const hasAnyThreads =
+    props.threads.some((thread) => thread.archivedAt === null) || props.pendingTasks.length > 0;
+  const hasResults = projectGroups.length > 0;
+  const selectedEnvironmentLabel =
+    props.selectedEnvironmentId === null
+      ? null
+      : (props.savedConnectionsById[props.selectedEnvironmentId]?.environmentLabel ??
+        "this environment");
+  const shouldShowConnectionStatus = shouldShowWorkspaceConnectionStatus(props.catalogState);
   const emptyState = deriveEmptyState({
     catalogState: props.catalogState,
     projectCount: props.projects.length,
   });
-  const renderProjectGroup = useCallback(
-    ({ item: group }: { readonly item: ProjectGroup }) => (
-      <ProjectGroupCard
-        group={group}
-        connection={props.savedConnectionsById[group.project.environmentId]}
-        isExpanded={expandedProjects.has(group.key)}
-        onToggleExpand={toggleExpanded}
-        onSelectThread={props.onSelectThread}
-      />
-    ),
-    [expandedProjects, props.onSelectThread, props.savedConnectionsById, toggleExpanded],
-  );
+  const connectionStatus =
+    shouldShowConnectionStatus && Platform.OS !== "ios" ? (
+      <View
+        className="absolute left-0 right-0 items-center"
+        style={{ bottom: Math.max(insets.bottom, 18) + 76 }}
+      >
+        <WorkspaceConnectionStatus state={props.catalogState} onPress={props.onOpenEnvironments} />
+      </View>
+    ) : null;
 
-  if (hasAnyThreads && hasResults) {
+  if (!hasAnyThreads) {
     return (
-      <LegendList
-        data={projectGroups as ProjectGroup[]}
-        renderItem={renderProjectGroup}
-        keyExtractor={(group) => group.key}
-        estimatedItemSize={360}
-        contentInsetAdjustmentBehavior="automatic"
-        showsVerticalScrollIndicator={false}
-        keyboardDismissMode="on-drag"
-        keyboardShouldPersistTaps="handled"
-        className="flex-1 bg-screen"
-        contentContainerStyle={{
-          paddingHorizontal: 16,
-          paddingTop: 8,
-          paddingBottom: 24,
-          gap: 20,
+      <View
+        className="flex-1 items-center justify-center bg-screen px-8"
+        style={{
+          paddingBottom: Math.max(insets.bottom, 24),
+          paddingTop: Platform.OS === "ios" ? insets.top + 72 : insets.top,
         }}
-      />
-    );
-  }
-
-  return (
-    <ScrollView
-      contentInsetAdjustmentBehavior="automatic"
-      showsVerticalScrollIndicator={false}
-      keyboardDismissMode="on-drag"
-      keyboardShouldPersistTaps="handled"
-      className="flex-1 bg-screen"
-      contentContainerStyle={{
-        paddingHorizontal: 16,
-        paddingTop: 8,
-        paddingBottom: 24,
-        gap: 20,
-      }}
-    >
-      {!hasAnyThreads ? (
-        <View>
+      >
+        <View className="w-full max-w-[430px]">
           <EmptyState
             title={emptyState.title}
             detail={emptyState.detail}
             actionLabel={!props.catalogState.hasReadyEnvironment ? "Add environment" : undefined}
             onAction={!props.catalogState.hasReadyEnvironment ? props.onAddConnection : undefined}
+            variant="plain"
           />
           {emptyState.loading ? (
-            <View className="absolute right-5 top-5">
+            <View className="mt-4 items-center">
               <ActivityIndicator color={accentColor} />
             </View>
           ) : null}
         </View>
-      ) : (
-        <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />
-      )}
-    </ScrollView>
+        {connectionStatus}
+      </View>
+    );
+  }
+
+  const listHeader = (
+    <>
+      {Platform.OS === "ios" ? null : <HomeTopContentSpacer topInset={insets.top} />}
+
+      {shouldShowConnectionStatus && Platform.OS === "ios" ? (
+        <View style={{ paddingBottom: 16 }}>
+          <WorkspaceConnectionStatus
+            state={props.catalogState}
+            onPress={props.onOpenEnvironments}
+            variant="sidebar"
+          />
+        </View>
+      ) : null}
+    </>
+  );
+
+  const listEmpty = !hasResults ? (
+    hasSearchQuery ? (
+      <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />
+    ) : selectedEnvironmentLabel ? (
+      <EmptyState
+        title={`No threads in ${selectedEnvironmentLabel}`}
+        detail="Choose another environment or create a new task."
+      />
+    ) : (
+      <EmptyState title="No threads yet" detail="Create a task to start a new coding session." />
+    )
+  ) : null;
+
+  return (
+    <View className="flex-1 bg-screen">
+      {/* Sticky headers are deliberately not wired up: LegendList's JS sticky
+          implementation mispositions pinned headers at mount under iOS
+          automatic content insets (headers render one nav-inset too low until
+          the first scroll event) and blanks non-pinned headers after
+          collapse/expand data changes. The flattened layout still exposes
+          `stickyHeaderIndices` if this gets revisited. */}
+      <SwipeableScrollGateProvider enabled={swipeEnabled}>
+        <LegendList
+          ref={listRef}
+          data={listLayout.items}
+          renderItem={renderItem}
+          keyExtractor={keyExtractor}
+          itemsAreEqual={homeListItemsAreEqual}
+          drawDistance={500}
+          estimatedItemSize={ESTIMATED_THREAD_ROW_HEIGHT}
+          extraData={extraData}
+          ListHeaderComponent={listHeader}
+          ListEmptyComponent={listEmpty}
+          style={{ flex: 1 }}
+          automaticallyAdjustsScrollIndicatorInsets={Platform.OS === "ios"}
+          contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
+          showsVerticalScrollIndicator={false}
+          keyboardDismissMode="on-drag"
+          keyboardShouldPersistTaps="handled"
+          {...scrollGateHandlers}
+          recycleItems
+          scrollEventThrottle={16}
+          contentContainerStyle={{
+            paddingBottom: Platform.OS === "ios" ? Math.max(insets.bottom, 24) + 24 : 24,
+          }}
+          scrollIndicatorInsets={
+            Platform.OS === "ios"
+              ? {
+                  bottom: Math.max(insets.bottom, 16) + 24,
+                  top: 0,
+                }
+              : undefined
+          }
+        />
+      </SwipeableScrollGateProvider>
+      {connectionStatus}
+    </View>
   );
 }

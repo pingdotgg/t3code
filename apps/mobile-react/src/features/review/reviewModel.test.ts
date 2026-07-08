@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   MessageId,
@@ -25,8 +25,6 @@ function makeCheckpoint(
     checkpointRef: `refs/t3/checkpoints/thread/${input.checkpointTurnCount}` as any,
     status: "ready",
     files: [],
-    agentTouchedPaths: [],
-    turnFiles: [],
     assistantMessageId: MessageId.make(`msg-${input.checkpointTurnCount}`),
     ...input,
   };

@@ -5,21 +5,42 @@ packages:
   - packages/*
   - scripts
 
+supportedArchitectures:
+  os:
+    - current
+    - linux
+  cpu:
+    - current
+    - x64
+  libc:
+    - current
+    - glibc
+
 catalog:
-  "@effect/atom-react": 4.0.0-beta.73
+  "@clerk/backend": 3.8.4
+  "@clerk/clerk-js": 6.22.0
+  "@clerk/electron": 0.0.5
+  "@clerk/electron-passkeys": 0.0.3
+  "@clerk/expo": 3.6.2
+  "@clerk/react": 6.11.1
+  "@clerk/shared": 4.22.0
+  "@effect/atom-react": 4.0.0-beta.78
   "@effect/language-service": 0.84.2
-  "@effect/openapi-generator": 4.0.0-beta.73
-  "@effect/platform-bun": 4.0.0-beta.73
-  "@effect/platform-node": 4.0.0-beta.73
-  "@effect/platform-node-shared": 4.0.0-beta.73
-  "@effect/sql-sqlite-bun": 4.0.0-beta.73
+  "@effect/openapi-generator": 4.0.0-beta.78
+  "@effect/platform-bun": 4.0.0-beta.78
+  "@effect/platform-node": 4.0.0-beta.78
+  "@effect/platform-node-shared": 4.0.0-beta.78
+  "@effect/sql-sqlite-bun": 4.0.0-beta.78
   "@effect/tsgo": 0.13.2
-  "@effect/vitest": 4.0.0-beta.73
-  "@pierre/diffs": 1.1.20
+  "@effect/vitest": 4.0.0-beta.78
+  "@noble/curves": 1.9.1
+  "@noble/hashes": 1.8.0
+  "@pierre/diffs": 1.3.0-beta.5
   "@types/bun": ^1.3.11
   "@types/node": ^24.10.13
   "@typescript/native-preview": 7.0.0-dev.20260604.1
-  effect: 4.0.0-beta.73
+  effect: 4.0.0-beta.78
+  jose: 6.2.2
   typescript: ~6.0.3
   vite: npm:@voidzero-dev/vite-plus-core@0.2.1
   vite-plus: 0.2.1
@@ -37,6 +58,19 @@ onlyBuiltDependencies:
   - sharp
 
 overrides:
+  "@clerk/backend": "catalog:"
+  "@clerk/clerk-js": "catalog:"
+  "@clerk/clerk-js>@base-org/account": "-"
+  "@clerk/clerk-js>@coinbase/wallet-sdk": "-"
+  "@clerk/clerk-js>@solana/wallet-adapter-base": "-"
+  "@clerk/clerk-js>@solana/wallet-adapter-react": "-"
+  "@clerk/clerk-js>@solana/wallet-standard": "-"
+  "@clerk/clerk-js>@wallet-standard/core": "-"
+  "@clerk/electron": "catalog:"
+  "@clerk/electron-passkeys": "catalog:"
+  "@clerk/expo": "catalog:"
+  "@clerk/react": "catalog:"
+  "@clerk/shared": "catalog:"
   "@effect/atom-react": "catalog:"
   "@effect/platform-bun": "catalog:"
   "@effect/platform-node": "catalog:"
@@ -44,7 +78,11 @@ overrides:
   "@effect/sql-sqlite-bun": "catalog:"
   "@effect/vitest": "catalog:"
   "@effect/vitest>vitest": "-"
+  "@expo/metro-config": 56.0.14
+  "@types/node": "catalog:"
   effect: "catalog:"
+  jose: "catalog:"
+  expo-modules-jsi: 56.0.10
   vite: "catalog:"
   yaml: "catalog:"
 
@@ -60,10 +98,20 @@ packageExtensions:
       vite: "catalog:"
 
 patchedDependencies:
-  "@effect/vitest@4.0.0-beta.73": patches/@effect__vitest@4.0.0-beta.73.patch
-  "@pierre/diffs@1.1.20": patches/@pierre%2Fdiffs@1.1.20.patch
-  effect@4.0.0-beta.73: patches/effect@4.0.0-beta.73.patch
+  "@effect/vitest@4.0.0-beta.78": patches/@effect__vitest@4.0.0-beta.78.patch
+  "@expo/metro-config@56.0.14": patches/@expo%2Fmetro-config@56.0.14.patch
+  "@ff-labs/fff-node@0.9.4": patches/@ff-labs__fff-node@0.9.4.patch
+  "@pierre/diffs@1.3.0-beta.5": patches/@pierre%2Fdiffs@1.3.0-beta.5.patch
+  "@react-native-menu/menu@2.0.0": patches/@react-native-menu__menu@2.0.0.patch
+  "@react-navigation/native-stack@7.17.6": patches/@react-navigation%2Fnative-stack@7.17.6.patch
+  effect@4.0.0-beta.78: patches/effect@4.0.0-beta.78.patch
+  expo-modules-jsi@56.0.10: patches/expo-modules-jsi@56.0.10.patch
+  react-native-gesture-handler@2.31.2: patches/react-native-gesture-handler@2.31.2.patch
+  react-native-nitro-modules@0.35.9: patches/react-native-nitro-modules@0.35.9.patch
+  react-native-screens@4.25.2: patches/react-native-screens@4.25.2.patch
 
 peerDependencyRules:
   allowAny:
     - vite
+  allowedVersions:
+    vite: "*"

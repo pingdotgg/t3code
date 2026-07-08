@@ -46,20 +46,20 @@ export const nowIso = (): string => new Date().toISOString();
 
 export class CliPayloadError extends Schema.TaggedErrorClass<CliPayloadError>()("CliPayloadError", {
   message: Schema.String,
-  cause: Schema.optional(Schema.Defect),
+  cause: Schema.optional(Schema.Unknown),
 }) {}
 
 export class CliLiveTargetError extends Schema.TaggedErrorClass<CliLiveTargetError>()(
   "CliLiveTargetError",
   {
     message: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Unknown),
   },
 ) {}
 
 export class CliRpcError extends Schema.TaggedErrorClass<CliRpcError>()("CliRpcError", {
   message: Schema.String,
-  cause: Schema.optional(Schema.Defect),
+  cause: Schema.optional(Schema.Unknown),
 }) {}
 
 const JsonRecord = Schema.Record(Schema.String, Schema.Unknown);

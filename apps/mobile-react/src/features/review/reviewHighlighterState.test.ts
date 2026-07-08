@@ -1,4 +1,4 @@
-import { assert, beforeEach, it } from "vitest";
+import { assert, beforeEach, it } from "vite-plus/test";
 import { AtomRegistry } from "effect/unstable/reactivity";
 
 import {
@@ -53,11 +53,12 @@ it("initializes review highlighter state once", async () => {
 });
 
 it("stores initialization failures in atom state", async () => {
+  const cause = new Error("load failed");
   const manager = createReviewHighlighterManager({
     getRegistry: () => registry,
     loader: {
       prepare: async () => {
-        throw new Error("load failed");
+        throw cause;
       },
       prepareLanguages: async () => undefined,
       getEngine: async () => "javascript",
@@ -67,9 +68,23 @@ it("stores initialization failures in atom state", async () => {
   void manager.initialize();
   await flushAsyncWork();
 
-  assert.deepStrictEqual(manager.getSnapshot(), {
-    engine: null,
-    error: "load failed",
-    status: "error",
-  });
+  const snapshot = manager.getSnapshot();
+  assert.strictEqual(snapshot.engine, null);
+  assert.strictEqual(snapshot.status, "error");
+  assert.strictEqual(snapshot.error?._tag, "ReviewHighlighterManagerError");
+  assert.strictEqual(snapshot.error?.operation, "prepare");
+  assert.deepStrictEqual(snapshot.error?.languages, [
+    "typescript",
+    "tsx",
+    "javascript",
+    "jsx",
+    "json",
+    "yaml",
+    "bash",
+  ]);
+  assert.strictEqual(snapshot.error?.cause, cause);
+  assert.strictEqual(
+    snapshot.error?.message,
+    "Review highlighter operation prepare failed for languages typescript, tsx, javascript, jsx, json, yaml, bash.",
+  );
 });

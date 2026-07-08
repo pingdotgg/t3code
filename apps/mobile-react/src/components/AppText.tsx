@@ -1,4 +1,3 @@
-import type { Ref } from "react";
 import {
   Text as RNText,
   TextInput as RNTextInput,
@@ -21,7 +20,7 @@ export function AppText({ className, ...props }: AppTextProps) {
 
 export type AppTextInputProps = RNTextInputProps & {
   readonly className?: string;
-  readonly ref?: Ref<RNTextInput>;
+  readonly ref?: React.Ref<RNTextInput>;
 };
 
 /**
@@ -40,7 +39,7 @@ export function AppTextInput({
     <RNTextInput
       ref={ref}
       className={cn(
-        "min-h-[54px] rounded-2xl border border-input-border bg-input px-3.5 py-3 font-sans text-[15px] text-foreground",
+        "min-h-13.5 rounded-2xl border border-input-border bg-input px-3.5 py-3 font-sans text-base text-foreground",
         className,
       )}
       placeholderTextColor={placeholderTextColor ?? placeholderColor}

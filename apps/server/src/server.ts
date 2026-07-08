@@ -58,6 +58,7 @@ import {
   authClientsRevokeOthersRouteLayer,
   authClientsRevokeRouteLayer,
   authClientsRouteLayer,
+  environmentAuthenticatedAuthLayer,
   authPairingLinksRevokeRouteLayer,
   authPairingLinksRouteLayer,
   authPairingCredentialRouteLayer,
@@ -77,8 +78,15 @@ import {
   orchestrationSnapshotRouteLayer,
 } from "./orchestration/http.ts";
 import { NetService } from "@t3tools/shared/Net";
+import * as RelayClient from "@t3tools/shared/relayClient";
 import { mobileRouteLayer } from "./mobileProtocol.ts";
 import { PreviewManagerLive } from "./preview/Manager.ts";
+import * as CloudEnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import * as CloudServerSecretStore from "./auth/ServerSecretStore.ts";
+import * as CliTokenManager from "./cloud/CliTokenManager.ts";
+import * as ManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts";
+import { connectHttpApiLayer } from "./cloud/http.ts";
+import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 
 const PtyAdapterLive = Layer.unwrap(
   Effect.gen(function* () {
@@ -200,12 +208,53 @@ const AuthLayerLive = ServerAuthLive.pipe(
   Layer.provide(ServerSecretStoreLive),
 );
 
+const CloudRelayClientLayerLive = Layer.unwrap(
+  Effect.gen(function* () {
+    const config = yield* ServerConfig;
+    return RelayClient.layerCloudflared({
+      baseDir: config.baseDir,
+    }) as Layer.Layer<RelayClient.RelayClient>;
+  }),
+);
+
+type CloudRuntimeServices =
+  | CloudServerSecretStore.ServerSecretStore
+  | CloudEnvironmentAuth.EnvironmentAuth
+  | CliTokenManager.CloudCliTokenManager
+  | RelayClient.RelayClient
+  | ManagedEndpointRuntime.CloudManagedEndpointRuntime
+  | AgentAwarenessRelay.AgentAwarenessRelay;
+
+type CloudHttpRuntimeServices = Exclude<
+  CloudRuntimeServices,
+  AgentAwarenessRelay.AgentAwarenessRelay
+>;
+
+const CloudBaseLayerLive = Layer.mergeAll(
+  CloudServerSecretStore.layer,
+  CloudEnvironmentAuth.runtimeLayer,
+  CloudRelayClientLayerLive,
+);
+
+export const CloudHttpRuntimeLayerLive = Layer.mergeAll(
+  CloudBaseLayerLive,
+  CliTokenManager.layer.pipe(Layer.provide(CloudBaseLayerLive)),
+  ManagedEndpointRuntime.layer.pipe(Layer.provide(CloudBaseLayerLive)),
+) as unknown as Layer.Layer<CloudHttpRuntimeServices>;
+
+export const CloudRuntimeLayerLive = AgentAwarenessRelay.layer.pipe(
+  Layer.provide(CloudBaseLayerLive),
+  Layer.provideMerge(CloudHttpRuntimeLayerLive),
+) as unknown as Layer.Layer<CloudRuntimeServices>;
+
+const ConnectHttpApiLayerLive = connectHttpApiLayer as unknown as Layer.Layer<never>;
+
 const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
   Layer.provideMerge(ProviderLayerLive),
   Layer.provideMerge(OrchestrationLayerLive),
 );
 
-const RuntimeDependenciesLive = ReactorLayerLive.pipe(
+const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // Core Services
   Layer.provideMerge(CheckpointingLayerLive),
   Layer.provideMerge(GitLayerLive),
@@ -238,7 +287,10 @@ const RuntimeDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(RepositoryIdentityResolverLive),
   Layer.provideMerge(ServerEnvironmentLive),
   Layer.provideMerge(AuthLayerLive),
+  Layer.provideMerge(CloudRuntimeLayerLive),
+);
 
+const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   // Misc.
   Layer.provideMerge(AnalyticsServiceLayerLive),
   Layer.provideMerge(OpenLive),
@@ -264,13 +316,14 @@ export const makeRoutesLayer = Layer.mergeAll(
   attachmentsRouteLayer,
   orchestrationDispatchRouteLayer,
   orchestrationSnapshotRouteLayer,
+  ConnectHttpApiLayerLive,
   mobileRouteLayer,
   otlpTracesProxyRouteLayer,
   projectFaviconRouteLayer,
   serverEnvironmentRouteLayer,
   staticAndDevRouteLayer,
   websocketRpcRouteLayer,
-).pipe(Layer.provide(browserApiCorsLayer));
+).pipe(Layer.provideMerge(environmentAuthenticatedAuthLayer), Layer.provide(browserApiCorsLayer));
 
 export const makeServerLayer = Layer.unwrap(
   Effect.gen(function* () {

@@ -332,7 +332,8 @@ export function createVcsActionManager(config: VcsActionManagerConfig) {
       operation: "switch_ref",
       label: options?.label ?? "Switching branch",
       client,
-      execute: (resolved) => resolved.switchRef({ cwd: target.cwd!, ...input }),
+      execute: (resolved) =>
+        resolved.switchRef({ cwd: target.cwd!, ...input } as VcsSwitchRefInput),
     });
   }
 
@@ -346,7 +347,8 @@ export function createVcsActionManager(config: VcsActionManagerConfig) {
       operation: "create_ref",
       label: options?.label ?? "Creating branch",
       client,
-      execute: (resolved) => resolved.createRef({ cwd: target.cwd!, ...input }),
+      execute: (resolved) =>
+        resolved.createRef({ cwd: target.cwd!, ...input } as VcsCreateRefInput),
     });
   }
 
@@ -360,7 +362,8 @@ export function createVcsActionManager(config: VcsActionManagerConfig) {
       operation: "create_worktree",
       label: options?.label ?? "Creating worktree",
       client,
-      execute: (resolved) => resolved.createWorktree({ cwd: target.cwd!, ...input }),
+      execute: (resolved) =>
+        resolved.createWorktree({ cwd: target.cwd!, ...input } as VcsCreateWorktreeInput),
     });
   }
 

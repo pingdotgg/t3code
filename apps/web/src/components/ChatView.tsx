@@ -105,7 +105,7 @@ import { useTheme } from "../hooks/useTheme";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
-import { buildReviewChangesPrompt } from "@t3tools/shared/workflows/reviewChanges";
+import { REVIEW_CHANGES_WORKFLOW_ID } from "@t3tools/shared/workflows/reviewChanges";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import { BranchToolbar } from "./BranchToolbar";
@@ -3758,87 +3758,37 @@ function ChatViewBody(
         sendCtx?.selectedModelSelection ??
         activeProject.defaultModelSelection ??
         activeThread.modelSelection;
-      const createdAt = new Date().toISOString();
-      const nextThreadId = newThreadId();
 
       setIsStartingReviewThread(true);
-      void api.git
-        .resolveReviewChangesContext({
+      void api.workflow
+        .run({
+          workflowId: REVIEW_CHANGES_WORKFLOW_ID,
+          threadId: activeThread.id,
+          projectId: activeProject.id,
           cwd: gitCwd,
-          scope: requestedScope,
+          input: { scope: requestedScope },
+          destinationMode: "child-chat",
+          trigger: "manual",
+          idempotencyKey: crypto.randomUUID(),
+          modelSelection,
+          runtimeMode: DEFAULT_RUNTIME_MODE,
+          interactionMode: DEFAULT_INTERACTION_MODE,
         })
-        .then(async (reviewContext) => {
-          if (!reviewContext.hasReviewableChanges) {
+        .then(async (result) => {
+          if (result.status === "skipped") {
             toastManager.add({
               type: "warning",
-              title:
-                reviewContext.scope === "against-base"
-                  ? "No changes against base branch"
-                  : "No uncommitted changes",
+              title: result.message,
             });
             return;
           }
 
-          const title =
-            reviewContext.scope === "against-base"
-              ? `Review changes against ${reviewContext.baseBranch}`
-              : "Review uncommitted changes";
-          const prompt = buildReviewChangesPrompt({
-            context:
-              reviewContext.scope === "against-base"
-                ? {
-                    scope: "against-base",
-                    baseBranch: reviewContext.baseBranch,
-                    mergeBaseSha: reviewContext.mergeBaseSha,
-                  }
-                : { scope: "uncommitted" },
-            settings: workflowSettings,
-          });
-          const outgoingPrompt = sendCtx
-            ? formatOutgoingPrompt({
-                provider: sendCtx.selectedProvider,
-                model: sendCtx.selectedModel,
-                models: sendCtx.selectedProviderModels,
-                effort: sendCtx.selectedPromptEffort,
-                text: prompt,
-              })
-            : prompt;
-
-          await api.orchestration.dispatchCommand({
-            type: "thread.turn.start",
-            commandId: newCommandId(),
-            threadId: nextThreadId,
-            message: {
-              messageId: newMessageId(),
-              role: "user",
-              text: outgoingPrompt,
-              attachments: [],
-            },
-            modelSelection,
-            titleSeed: title,
-            runtimeMode: DEFAULT_RUNTIME_MODE,
-            interactionMode: DEFAULT_INTERACTION_MODE,
-            bootstrap: {
-              createThread: {
-                projectId: activeProject.id,
-                parentThreadId: activeThread.id,
-                title,
-                modelSelection,
-                runtimeMode: DEFAULT_RUNTIME_MODE,
-                interactionMode: DEFAULT_INTERACTION_MODE,
-                branch: reviewContext.branch,
-                worktreePath: gitCwd === activeProject.cwd ? null : gitCwd,
-                createdAt,
-              },
-            },
-            createdAt,
-          });
-          await waitForStartedServerThread(scopeThreadRef(environmentId, nextThreadId));
+          await waitForStartedServerThread(scopeThreadRef(environmentId, result.threadId));
           await navigate({
             to: "/$environmentId/$threadId",
             params: {
               environmentId,
-              threadId: nextThreadId,
+              threadId: result.threadId,
             },
           });
         })

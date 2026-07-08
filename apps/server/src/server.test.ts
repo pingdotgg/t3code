@@ -59,7 +59,7 @@ import { vi } from "vitest";
 
 import type { ServerConfigShape } from "./config.ts";
 import { deriveServerPaths, ServerConfig } from "./config.ts";
-import { makeRoutesLayer } from "./server.ts";
+import { CloudHttpRuntimeLayerLive, makeRoutesLayer } from "./server.ts";
 import { resolveAttachmentRelativePath } from "./attachmentPaths.ts";
 import {
   CheckpointDiffQuery,
@@ -644,6 +644,7 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provideMerge(authTestLayer),
+      Layer.provideMerge(CloudHttpRuntimeLayerLive.pipe(Layer.provide(authTestLayer))),
       Layer.provide(_workspaceAndProjectServicesLayer),
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provide(layerConfig),

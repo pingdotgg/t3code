@@ -1,11 +1,25 @@
-import { useLocalSearchParams } from "expo-router";
-import { useMemo } from "react";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { useRoute, type RouteProp } from "@react-navigation/native";
+import { useMemo, useRef } from "react";
+import {
+  EnvironmentId,
+  type OrchestrationThread,
+  ThreadId,
+  type ScopedProjectRef,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import * as Option from "effect/Option";
 
-import { EnvironmentScopedThreadShell } from "@t3tools/client-runtime";
-import { EnvironmentScopedProjectShell } from "@t3tools/client-runtime";
-import { useRemoteCatalog } from "./use-remote-catalog";
-import { useRemoteEnvironmentState } from "./use-remote-environment-registry";
+import { useProject, useThreadShell } from "../state/entities";
+import { useEnvironmentThread } from "../state/threads";
+import {
+  useRemoteEnvironmentRuntime,
+  useSavedRemoteConnection,
+} from "./use-remote-environment-registry";
+type ThreadSelectionRouteParams = {
+  readonly environmentId?: string | string[];
+  readonly threadId?: string | string[];
+};
 
 function firstRouteParam(value: string | string[] | undefined): string | null {
   if (Array.isArray(value)) {
@@ -15,50 +29,48 @@ function firstRouteParam(value: string | string[] | undefined): string | null {
   return value ?? null;
 }
 
-function deriveSelectedThread(
-  selectedThreadRef: { readonly environmentId: EnvironmentId; readonly threadId: ThreadId } | null,
-  threads: ReadonlyArray<EnvironmentScopedThreadShell>,
-): EnvironmentScopedThreadShell | null {
-  if (!selectedThreadRef) {
-    return null;
+function latestUserMessageAt(thread: OrchestrationThread): OrchestrationThread["updatedAt"] | null {
+  for (let index = thread.messages.length - 1; index >= 0; index -= 1) {
+    const message = thread.messages[index];
+    if (message?.role === "user") {
+      return message.createdAt;
+    }
   }
 
-  return (
-    threads.find(
-      (thread) =>
-        thread.environmentId === selectedThreadRef.environmentId &&
-        thread.id === selectedThreadRef.threadId,
-    ) ?? null
-  );
+  return null;
 }
 
-function deriveSelectedThreadProject(
-  selectedThread: EnvironmentScopedThreadShell | null,
-  projects: ReadonlyArray<EnvironmentScopedProjectShell>,
-): EnvironmentScopedProjectShell | null {
-  if (!selectedThread) {
-    return null;
-  }
-
-  return (
-    projects.find(
-      (project) =>
-        project.environmentId === selectedThread.environmentId &&
-        project.id === selectedThread.projectId,
-    ) ?? null
-  );
+function threadDetailToShell(
+  environmentId: EnvironmentId,
+  thread: OrchestrationThread,
+): EnvironmentThreadShell {
+  return {
+    environmentId,
+    id: thread.id,
+    projectId: thread.projectId,
+    title: thread.title,
+    modelSelection: thread.modelSelection,
+    runtimeMode: thread.runtimeMode,
+    interactionMode: thread.interactionMode,
+    branch: thread.branch,
+    worktreePath: thread.worktreePath,
+    latestTurn: thread.latestTurn,
+    createdAt: thread.createdAt,
+    updatedAt: thread.updatedAt,
+    archivedAt: thread.archivedAt,
+    session: thread.session,
+    latestUserMessageAt: latestUserMessageAt(thread),
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    hasActionableProposedPlan: false,
+  };
 }
 
-export function useThreadSelection() {
-  const { projects, threads } = useRemoteCatalog();
-  const { environmentStateById, savedConnectionsById } = useRemoteEnvironmentState();
-  const params = useLocalSearchParams<{
-    environmentId?: string | string[];
-    threadId?: string | string[];
-  }>();
-  const selectedThreadRef = useMemo(() => {
-    const environmentId = firstRouteParam(params.environmentId);
-    const threadId = firstRouteParam(params.threadId);
+function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefined) {
+  const routeParams = params ?? {};
+  const routeThreadRef = useMemo<ScopedThreadRef | null>(() => {
+    const environmentId = firstRouteParam(routeParams.environmentId);
+    const threadId = firstRouteParam(routeParams.threadId);
     if (!environmentId || !threadId) {
       return null;
     }
@@ -67,29 +79,62 @@ export function useThreadSelection() {
       environmentId: EnvironmentId.make(environmentId),
       threadId: ThreadId.make(threadId),
     };
-  }, [params.environmentId, params.threadId]);
+  }, [routeParams.environmentId, routeParams.threadId]);
+  const lastRouteThreadRef = useRef<ScopedThreadRef | null>(null);
+  if (routeThreadRef !== null) {
+    lastRouteThreadRef.current = routeThreadRef;
+  }
+  const selectedThreadRef = routeThreadRef ?? lastRouteThreadRef.current;
+  const selectedThreadShell = useThreadShell(selectedThreadRef);
+  const selectedThreadDetailState = useEnvironmentThread(
+    selectedThreadRef?.environmentId ?? null,
+    selectedThreadRef?.threadId ?? null,
+  );
+  const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
   const selectedThread = useMemo(
-    () => deriveSelectedThread(selectedThreadRef, threads),
-    [selectedThreadRef, threads],
+    () =>
+      selectedThreadShell ??
+      (selectedThreadRef !== null && selectedThreadDetail !== null
+        ? threadDetailToShell(selectedThreadRef.environmentId, selectedThreadDetail)
+        : null),
+    [selectedThreadDetail, selectedThreadRef, selectedThreadShell],
   );
-
-  const selectedThreadProject = useMemo(
-    () => deriveSelectedThreadProject(selectedThread, projects),
-    [projects, selectedThread],
+  const selectedProjectRef = useMemo<ScopedProjectRef | null>(
+    () =>
+      selectedThread === null
+        ? null
+        : {
+            environmentId: selectedThread.environmentId,
+            projectId: selectedThread.projectId,
+          },
+    [selectedThread],
   );
+  const selectedThreadProject = useProject(selectedProjectRef);
+  const selectedEnvironmentId = selectedThread?.environmentId ?? null;
+  const selectedEnvironmentConnection = useSavedRemoteConnection(selectedEnvironmentId);
+  const selectedEnvironmentRuntime = useRemoteEnvironmentRuntime(selectedEnvironmentId);
 
-  const selectedEnvironmentConnection = selectedThread
-    ? (savedConnectionsById[selectedThread.environmentId] ?? null)
-    : null;
-  const selectedEnvironmentRuntime = selectedThread
-    ? (environmentStateById[selectedThread.environmentId] ?? null)
-    : null;
+  return useMemo(
+    () => ({
+      selectedThreadRef,
+      selectedThread,
+      selectedThreadProject,
+      selectedEnvironmentConnection,
+      selectedEnvironmentRuntime,
+    }),
+    [
+      selectedEnvironmentConnection,
+      selectedEnvironmentRuntime,
+      selectedThread,
+      selectedThreadProject,
+      selectedThreadRef,
+    ],
+  );
+}
 
-  return {
-    selectedThreadRef,
-    selectedThread,
-    selectedThreadProject,
-    selectedEnvironmentConnection,
-    selectedEnvironmentRuntime,
-  };
+type ThreadSelectionState = ReturnType<typeof useResolvedThreadSelection>;
+
+export function useThreadSelection(): ThreadSelectionState {
+  const route = useRoute<RouteProp<Record<string, ThreadSelectionRouteParams | undefined>>>();
+  return useResolvedThreadSelection(route.params);
 }

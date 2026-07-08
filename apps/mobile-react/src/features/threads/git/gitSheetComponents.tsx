@@ -56,7 +56,7 @@ export function SheetActionButton(props: {
     >
       <SymbolView name={props.icon} size={16} tintColor={colors.textColor} type="monochrome" />
       <Text
-        className="text-[12px] font-t3-bold uppercase"
+        className="text-xs font-t3-bold uppercase"
         style={{ color: colors.textColor, letterSpacing: 0.9 }}
       >
         {props.label}
@@ -69,12 +69,12 @@ export function MetaCard(props: { readonly label: string; readonly value: string
   return (
     <View className="rounded-[18px] border border-border bg-card px-4 py-3">
       <Text
-        className="text-foreground-muted text-[11px] font-t3-bold uppercase"
+        className="text-foreground-muted text-2xs font-t3-bold uppercase"
         style={{ letterSpacing: 0.9 }}
       >
         {props.label}
       </Text>
-      <Text selectable className="text-foreground text-[13px] font-medium" numberOfLines={1}>
+      <Text selectable className="text-foreground text-sm font-medium" numberOfLines={1}>
         {props.value}
       </Text>
     </View>
@@ -102,9 +102,9 @@ export function SheetListRow(props: {
         <SymbolView name={props.icon} size={16} tintColor={iconColor} type="monochrome" />
       </View>
       <View className="flex-1 gap-0.5">
-        <Text className="text-foreground text-[16px] font-t3-bold">{props.title}</Text>
+        <Text className="text-foreground text-base font-t3-bold">{props.title}</Text>
         {props.subtitle ? (
-          <Text className="text-foreground-muted text-[12px] leading-[17px]">{props.subtitle}</Text>
+          <Text className="text-foreground-muted text-xs leading-snug">{props.subtitle}</Text>
         ) : null}
       </View>
       <SymbolView name="chevron.right" size={13} tintColor={iconSubtleColor} type="monochrome" />

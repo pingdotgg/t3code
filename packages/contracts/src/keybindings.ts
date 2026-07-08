@@ -154,7 +154,7 @@ export class KeybindingsConfigError extends Schema.TaggedErrorClass<KeybindingsC
   {
     configPath: Schema.String,
     detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Unknown),
   },
 ) {
   override get message(): string {
