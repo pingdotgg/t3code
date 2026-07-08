@@ -39,6 +39,10 @@ public struct ComposerBar: View {
         (!trimmedDraft.isEmpty || !attachments.isEmpty) && model.connection == .ready
     }
 
+    private var canQueue: Bool {
+        isThreadRunning && canSend
+    }
+
     private var isThreadRunning: Bool {
         model.selectedThread?.status == .running
     }
@@ -48,6 +52,16 @@ public struct ComposerBar: View {
     /// a grayed-out send button otherwise.
     private var showsStop: Bool {
         isThreadRunning && trimmedDraft.isEmpty && attachments.isEmpty
+    }
+
+    private var sendIconName: String {
+        if showsStop { return "stop.fill" }
+        return isThreadRunning ? "arrow.up.right.circle.fill" : "paperplane.fill"
+    }
+
+    private var sendHelp: String {
+        if showsStop { return "Stop the current turn" }
+        return isThreadRunning ? "Send now - steers the running agent" : "Send message"
     }
 
     /// Provider slash commands + mode built-ins, filtered by the `/token`
@@ -87,6 +101,16 @@ public struct ComposerBar: View {
                     ) { insertMention(entry, replacing: query) }
                 })
                 .transition(Motion.pop(from: .bottomLeading))
+            }
+
+            if !model.selectedQueuedMessages.isEmpty {
+                QueuedMessagesStrip(
+                    messages: model.selectedQueuedMessages,
+                    onEdit: editQueuedMessage,
+                    onSendNow: sendQueuedMessageNow,
+                    onRemove: removeQueuedMessage
+                )
+                .transition(Motion.bannerDrop)
             }
 
             if let thread = model.selectedThread {
@@ -155,12 +179,19 @@ public struct ComposerBar: View {
                             updateMentionSearch(for: newValue)
                         }
                         // Enter sends (or accepts the top suggestion while a
-                        // list is open); Shift/Option+Enter fall through to
-                        // the editor and insert a newline.
+                        // list is open); Option+Enter queues while a turn is
+                        // running; Shift+Enter falls through to insert a newline.
                         .onKeyPress(keys: [.return]) { press in
                             // Caps Lock and keypad Enter report as modifiers
                             // but don't change intent — plain Enter still sends.
                             let semantic = press.modifiers.subtracting([.capsLock, .numericPad])
+                            if semantic == .option {
+                                if canQueue {
+                                    queue()
+                                    return .handled
+                                }
+                                return .ignored
+                            }
                             guard semantic.isEmpty else { return .ignored }
                             if let first = slashMatches?.first {
                                 applySlashCommand(first)
@@ -177,6 +208,20 @@ public struct ComposerBar: View {
                         }
 
                     dictationButton
+
+                    if canQueue {
+                        Button {
+                            queue()
+                        } label: {
+                            Image(systemName: "tray.and.arrow.down")
+                                .alpineIconLabel()
+                        }
+                        .buttonStyle(.glass)
+                        .buttonBorderShape(.circle)
+                        .keyboardShortcut(.return, modifiers: .option)
+                        .help("Queue for next turn (Option-Return)")
+                        .transition(Motion.materialize)
+                    }
 
                     // While a draft claims the smart button for sending, stop
                     // stays reachable as its own compact control — a running
@@ -210,6 +255,7 @@ public struct ComposerBar: View {
         .animation(Motion.settle, value: draft)
         .animation(Motion.enter, value: mentionResults.map(\.id))
         .animation(Motion.enter, value: attachments.map(\.id))
+        .animation(Motion.enter, value: model.selectedQueuedMessages.map(\.id))
         .animation(Motion.enter, value: attachmentError)
         .animation(Motion.enter, value: model.dictation.lastError)
         .animation(Motion.snap, value: isThreadRunning)
@@ -255,9 +301,10 @@ public struct ComposerBar: View {
         styledSmartSendStopButton(active: showsStop || canSend)
             .disabled(!showsStop && !canSend)
             .keyboardShortcut(.return, modifiers: .command)
-            .help(showsStop ? "Stop the current turn" : "Send message")
+            .help(sendHelp)
             .animation(Motion.snap, value: canSend)
             .animation(Motion.snap, value: showsStop)
+            .animation(Motion.snap, value: isThreadRunning)
     }
 
     @ViewBuilder
@@ -265,7 +312,7 @@ public struct ComposerBar: View {
         if active {
             smartSendStopBaseButton
                 .buttonStyle(.glassProminent)
-                .tint(showsStop ? .red : AlpineTheme.accent)
+                .tint(showsStop ? .red : (isThreadRunning ? .orange : AlpineTheme.accent))
         } else {
             smartSendStopBaseButton
                 .foregroundStyle(.secondary)
@@ -281,7 +328,7 @@ public struct ComposerBar: View {
                 send()
             }
         } label: {
-            Image(systemName: showsStop ? "stop.fill" : "paperplane.fill")
+            Image(systemName: sendIconName)
                 .contentTransition(.symbolEffect(.replace))
                 .alpineIconLabel()
         }
@@ -385,12 +432,46 @@ public struct ComposerBar: View {
         guard canSend else { return }
         let text = trimmedDraft
         let outgoing = attachments
+        clearSubmittedDraft()
+        Task { await model.send(text: text, attachments: outgoing) }
+    }
+
+    private func queue() {
+        guard canQueue else { return }
+        let text = trimmedDraft
+        let outgoing = attachments
+        clearSubmittedDraft()
+        model.enqueueMessage(text: text, attachments: outgoing)
+    }
+
+    private func editQueuedMessage(_ message: QueuedOutgoingMessage) {
+        guard let threadID = model.selectedThreadID,
+            let queued = model.takeQueuedMessage(id: message.id, from: threadID)
+        else { return }
+        draft = queued.text
+        attachments = queued.attachments
+        attachmentError = nil
+        mentionQuery = nil
+        mentionResults = []
+        editorFocused = true
+    }
+
+    private func sendQueuedMessageNow(_ message: QueuedOutgoingMessage) {
+        guard let threadID = model.selectedThreadID else { return }
+        Task { await model.sendQueuedMessageNow(id: message.id, from: threadID) }
+    }
+
+    private func removeQueuedMessage(_ message: QueuedOutgoingMessage) {
+        guard let threadID = model.selectedThreadID else { return }
+        model.removeQueuedMessage(id: message.id, from: threadID)
+    }
+
+    private func clearSubmittedDraft() {
         draft = ""
         attachments = []
         attachmentError = nil
         mentionQuery = nil
         mentionResults = []
-        Task { await model.send(text: text, attachments: outgoing) }
     }
 
     // MARK: - Slash commands
@@ -536,6 +617,104 @@ private struct SuggestionList: View {
         }
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(.quaternary, lineWidth: 1))
+    }
+}
+
+/// Per-thread outgoing queue, shown above the composer input.
+private struct QueuedMessagesStrip: View {
+    let messages: [QueuedOutgoingMessage]
+    let onEdit: (QueuedOutgoingMessage) -> Void
+    let onSendNow: (QueuedOutgoingMessage) -> Void
+    let onRemove: (QueuedOutgoingMessage) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: "tray.and.arrow.down")
+                    .font(.callout)
+                    .foregroundStyle(Color.accentColor)
+                Text("Queued for next turn")
+                    .font(.callout.weight(.semibold))
+                Text("\(messages.count)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .contentTransition(.numericText())
+                Spacer(minLength: 8)
+            }
+
+            ForEach(messages) { message in
+                QueuedMessageRow(
+                    message: message,
+                    onEdit: { onEdit(message) },
+                    onSendNow: { onSendNow(message) },
+                    onRemove: { onRemove(message) })
+            }
+        }
+        .padding(10)
+        .glassEffect(.regular, in: .rect(cornerRadius: 16))
+        .accessibilityIdentifier("queued-messages-strip")
+    }
+}
+
+private struct QueuedMessageRow: View {
+    let message: QueuedOutgoingMessage
+    let onEdit: () -> Void
+    let onSendNow: () -> Void
+    let onRemove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "clock")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+
+            Button(action: onEdit) {
+                HStack(spacing: 6) {
+                    Text(summary)
+                        .font(.callout)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    if !message.attachments.isEmpty {
+                        Label("\(message.attachments.count)", systemImage: "photo")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Edit queued message")
+
+            Button(action: onSendNow) {
+                Image(systemName: "arrow.up.right.circle.fill")
+            }
+            .buttonStyle(.plain)
+            .help("Send now - steers the running agent")
+
+            Button(action: onRemove) {
+                Image(systemName: "xmark.circle.fill")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Remove queued message")
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(Color(nsColor: .textBackgroundColor).opacity(0.9), in: RoundedRectangle(cornerRadius: 8))
+        .transition(Motion.rise)
+    }
+
+    private var summary: String {
+        let compact = message.text
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !compact.isEmpty { return compact }
+        if message.attachments.count == 1, let attachment = message.attachments.first {
+            return attachment.name
+        }
+        return "\(message.attachments.count) attachments"
     }
 }
 
