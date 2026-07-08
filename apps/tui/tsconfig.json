@@ -1,6 +1,18 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        // The TUI is a Node/Bun-native terminal app: it shells out for $EDITOR,
+        // reads temp files, and renders wall-clock timestamps directly.
+        "diagnosticSeverity": {
+          "nodeBuiltinImport": "off",
+          "globalDate": "off",
+          "globalTimers": "off"
+        }
+      }
+    ],
     "types": ["node", "bun"],
     "lib": ["ESNext", "esnext.disposable", "DOM", "DOM.Iterable"],
     "jsx": "react-jsx",
