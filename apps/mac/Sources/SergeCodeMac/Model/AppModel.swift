@@ -52,6 +52,7 @@ public final class AppModel {
 
     public struct ComposerPrefill: Equatable, Sendable {
         public let id: UUID
+        public let threadID: String
         public let text: String
     }
 
@@ -130,6 +131,35 @@ public final class AppModel {
 
     public var selectedQueuedMessages: [QueuedOutgoingMessage] {
         selectedThreadID.flatMap { queuedMessagesByThread[$0] } ?? []
+    }
+
+    public func composerDraft(for threadID: String) -> ComposerDraft {
+        threadStates[threadID]?.composerDraft ?? ComposerDraft()
+    }
+
+    public func setComposerDraftText(_ text: String, for threadID: String) {
+        state(creating: threadID).composerDraft.text = text
+    }
+
+    public func setComposerDraftAttachments(
+        _ attachments: [OutgoingAttachment], for threadID: String
+    ) {
+        state(creating: threadID).composerDraft.attachments = attachments
+    }
+
+    public func clearComposerDraft(for threadID: String) {
+        guard let threadState = threadStates[threadID] else { return }
+        threadState.composerDraft = ComposerDraft()
+    }
+
+    /// Restores a failed submission unless the user has started a new draft.
+    @discardableResult
+    public func restoreComposerDraft(_ draft: ComposerDraft, for threadID: String) -> Bool {
+        guard let threadState = threadStates[threadID], threadState.composerDraft.isEmpty else {
+            return false
+        }
+        threadState.composerDraft = draft
+        return true
     }
 
     // MARK: - Lifecycle
@@ -335,6 +365,8 @@ public final class AppModel {
             }
         case .threadRemoved(let id):
             threads.removeAll { $0.id == id }
+            // ThreadState owns the in-memory composer draft, so removing the
+            // child also drops that thread's text and staged attachments.
             threadStates[id] = nil
             effectiveUpdatedAt[id] = nil
             recentlySelected.removeAll { $0 == id }
@@ -342,6 +374,7 @@ public final class AppModel {
             queuedMessagesByThread[id] = nil
             queuedSendInFlightThreadIDs.remove(id)
             queuedRetryTokensByThread[id] = nil
+            if composerPrefill?.threadID == id { composerPrefill = nil }
             TimelineDisplayCache.evict(threadID: id)
             if selectedThreadID == id { selectedThreadID = nil }
         case .approvalRequested, .userInputRequested:
@@ -505,7 +538,9 @@ public final class AppModel {
 
     /// Stages `text` for the composer (Edit action on a sent message).
     public func stageComposerText(_ text: String) {
-        composerPrefill = ComposerPrefill(id: UUID(), text: text)
+        guard let threadID = selectedThreadID else { return }
+        setComposerDraftText(text, for: threadID)
+        composerPrefill = ComposerPrefill(id: UUID(), threadID: threadID, text: text)
     }
 
     /// Marks the staged prefill consumed. Returns it, or nil if already taken.
@@ -538,8 +573,16 @@ public final class AppModel {
         await sendQueuedMessage(message, threadID: threadID)
     }
 
-    public func send(text: String, attachments: [OutgoingAttachment] = []) async {
-        guard let threadID = selectedThreadID else { return }
+    @discardableResult
+    public func send(text: String, attachments: [OutgoingAttachment] = []) async -> Bool {
+        guard let threadID = selectedThreadID else { return false }
+        return await send(threadID: threadID, text: text, attachments: attachments)
+    }
+
+    @discardableResult
+    public func send(
+        threadID: String, text: String, attachments: [OutgoingAttachment] = []
+    ) async -> Bool {
         await sendAndReport(threadID: threadID, text: text, attachments: attachments)
     }
 
@@ -603,11 +646,13 @@ public final class AppModel {
 
     private func sendAndReport(
         threadID: String, text: String, attachments: [OutgoingAttachment]
-    ) async {
+    ) async -> Bool {
         do {
             try await sendMessage(threadID: threadID, text: text, attachments: attachments)
+            return true
         } catch {
             lastError = String(describing: error)
+            return false
         }
     }
 
