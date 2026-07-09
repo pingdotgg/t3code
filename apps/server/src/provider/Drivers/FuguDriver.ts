@@ -5,7 +5,14 @@
  *
  * @module provider/Drivers/FuguDriver
  */
-import { FuguSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+import {
+  FuguSettings,
+  type ModelCapabilities,
+  ProviderDriverKind,
+  type ProviderOptionDescriptor,
+  type ServerProvider,
+  type ServerProviderModel,
+} from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -18,6 +25,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { makeCodexTextGeneration } from "../../textGeneration/CodexTextGeneration.ts";
 import { ServerConfig } from "../../config.ts";
+import { createModelCapabilities } from "@t3tools/shared/model";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeCodexAdapter } from "../Layers/CodexAdapter.ts";
@@ -52,6 +60,16 @@ const decodeFuguSettings = Schema.decodeSync(FuguSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("fugu");
 const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
+export const FUGU_ALLOWED_REASONING_EFFORTS = ["high", "xhigh", "max"] as const;
+const FUGU_REASONING_CHOICES = [
+  { id: "high", label: "High" },
+  { id: "xhigh", label: "Extra High" },
+  { id: "max", label: "Max" },
+] satisfies ReadonlyArray<{
+  readonly id: (typeof FUGU_ALLOWED_REASONING_EFFORTS)[number];
+  readonly label: string;
+}>;
+const FUGU_ALLOWED_REASONING_EFFORT_IDS = new Set<string>(FUGU_ALLOWED_REASONING_EFFORTS);
 const UPDATE = makeStaticProviderMaintenanceResolver(
   makeManualOnlyProviderMaintenanceCapabilities({
     provider: DRIVER_KIND,
@@ -70,6 +88,61 @@ const FUGU_IDENTITY: CodexProviderIdentity = {
   unauthenticatedMessage:
     "Fugu is not authenticated. Set the SAKANA_API_KEY environment variable and try again.",
 };
+
+type SelectProviderOptionDescriptor = Extract<
+  ProviderOptionDescriptor,
+  { readonly type: "select" }
+>;
+
+function isFuguReasoningDescriptor(
+  descriptor: ProviderOptionDescriptor,
+): descriptor is SelectProviderOptionDescriptor {
+  return descriptor.type === "select" && descriptor.id === "reasoningEffort";
+}
+
+function defaultFuguReasoningEffort(model: ServerProviderModel): string {
+  const reasoningDescriptor =
+    model.capabilities?.optionDescriptors?.find(isFuguReasoningDescriptor);
+  const current = reasoningDescriptor?.currentValue;
+  if (current && FUGU_ALLOWED_REASONING_EFFORT_IDS.has(current)) {
+    return current;
+  }
+  const catalogDefault = reasoningDescriptor?.options.find((option) => option.isDefault)?.id;
+  if (catalogDefault && FUGU_ALLOWED_REASONING_EFFORT_IDS.has(catalogDefault)) {
+    return catalogDefault;
+  }
+  return model.slug.includes("ultra") ? "xhigh" : "high";
+}
+
+export function normalizeFuguModelCapabilities(model: ServerProviderModel): ModelCapabilities {
+  const defaultReasoning = defaultFuguReasoningEffort(model);
+  const existingDescriptors = model.capabilities?.optionDescriptors ?? [];
+  return createModelCapabilities({
+    optionDescriptors: [
+      {
+        id: "reasoningEffort",
+        label: "Reasoning",
+        type: "select",
+        options: FUGU_REASONING_CHOICES.map((choice) => ({
+          ...choice,
+          ...(choice.id === defaultReasoning ? { isDefault: true } : {}),
+        })),
+        currentValue: defaultReasoning,
+      },
+      ...existingDescriptors.filter((descriptor) => !isFuguReasoningDescriptor(descriptor)),
+    ],
+  });
+}
+
+function normalizeFuguProviderSnapshot(snapshot: ServerProviderDraft): ServerProviderDraft {
+  return {
+    ...snapshot,
+    models: snapshot.models.map((model) => ({
+      ...model,
+      capabilities: normalizeFuguModelCapabilities(model),
+    })),
+  };
+}
 
 /**
  * Services the driver needs to materialize an instance. Surfaced as the
@@ -149,12 +222,15 @@ export const FuguDriver: ProviderDriver<FuguSettings, FuguDriverEnv> = {
       const adapter = yield* makeCodexAdapter(effectiveConfig, {
         instanceId,
         driverKind: DRIVER_KIND,
+        defaultReasoningEffort: "high",
+        allowedReasoningEfforts: FUGU_ALLOWED_REASONING_EFFORTS,
         environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       });
-      // Fugu models only accept high/xhigh reasoning efforts.
+      // Fugu models only accept high/xhigh/max reasoning efforts.
       const textGeneration = yield* makeCodexTextGeneration(effectiveConfig, processEnv, {
         defaultReasoningEffort: "high",
+        allowedReasoningEfforts: FUGU_ALLOWED_REASONING_EFFORTS,
         displayName: "Fugu",
       });
 
@@ -188,7 +264,7 @@ export const FuguDriver: ProviderDriver<FuguSettings, FuguDriverEnv> = {
           undefined,
           processEnv,
           FUGU_IDENTITY,
-        );
+        ).pipe(Effect.map(normalizeFuguProviderSnapshot));
       }).pipe(
         Effect.map(stampIdentity),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),

@@ -261,6 +261,33 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
     ),
   );
 
+  it.effect("falls back from disallowed Fugu text-generation effort to high", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({
+          subject: "Add important change",
+          body: "",
+        }),
+        requireReasoningEffort: "high",
+      },
+      (textGeneration) =>
+        textGeneration.generateCommitMessage({
+          cwd: process.cwd(),
+          branch: "feature/fugu-effort",
+          stagedSummary: "M README.md",
+          stagedPatch: "diff --git a/README.md b/README.md",
+          modelSelection: createModelSelection(ProviderInstanceId.make("fugu"), "fugu", [
+            { id: "reasoningEffort", value: "medium" },
+          ]),
+        }),
+      {
+        defaultReasoningEffort: "high",
+        allowedReasoningEfforts: ["high", "xhigh", "max"],
+        displayName: "Fugu",
+      },
+    ),
+  );
+
   it.effect("generates commit message with branch when includeBranch is true", () =>
     withFakeCodexEnv(
       {

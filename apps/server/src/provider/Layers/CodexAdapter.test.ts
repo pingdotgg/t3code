@@ -323,6 +323,68 @@ validationLayer("CodexAdapterLive validation", (it) => {
       );
     }).pipe(Effect.provide(fuguLayer));
   });
+
+  it.effect("uses the alternate driver default for missing or disallowed reasoning effort", () => {
+    const fuguRuntimeFactory = makeRuntimeFactory();
+    const fuguLayer = Layer.effect(
+      CodexAdapter,
+      Effect.gen(function* () {
+        const codexConfig = decodeCodexSettings({});
+        return yield* makeCodexAdapter(codexConfig, {
+          driverKind: ProviderDriverKind.make("fugu"),
+          instanceId: ProviderInstanceId.make("fugu"),
+          defaultReasoningEffort: "high",
+          allowedReasoningEfforts: ["high", "xhigh", "max"],
+          makeRuntime: fuguRuntimeFactory.factory,
+        });
+      }),
+    ).pipe(
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("fugu"),
+        threadId: asThreadId("thread-fugu-effort"),
+        runtimeMode: "full-access",
+      });
+      const runtime = fuguRuntimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+
+      yield* adapter.sendTurn({
+        threadId: asThreadId("thread-fugu-effort"),
+        input: "hello",
+        modelSelection: createModelSelection(ProviderInstanceId.make("fugu"), "fugu", [
+          { id: "reasoningEffort", value: "medium" },
+        ]),
+        attachments: [],
+      });
+
+      yield* adapter.sendTurn({
+        threadId: asThreadId("thread-fugu-effort"),
+        input: "again",
+        modelSelection: createModelSelection(ProviderInstanceId.make("fugu"), "fugu", [
+          { id: "reasoningEffort", value: "max" },
+        ]),
+        attachments: [],
+      });
+
+      NodeAssert.deepStrictEqual(runtime.sendTurnImpl.mock.calls[0]?.[0], {
+        input: "hello",
+        model: "fugu",
+        effort: "high",
+      });
+      NodeAssert.deepStrictEqual(runtime.sendTurnImpl.mock.calls[1]?.[0], {
+        input: "again",
+        model: "fugu",
+        effort: "max",
+      });
+    }).pipe(Effect.provide(fuguLayer));
+  });
 });
 
 const sessionRuntimeFactory = makeRuntimeFactory();
