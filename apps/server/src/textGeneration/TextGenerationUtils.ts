@@ -63,6 +63,92 @@ export function sanitizeThreadTitle(raw: string): string {
   return `${normalized.slice(0, 47).trimEnd()}...`;
 }
 
+const SCENERY_TIME_OF_DAY = new Set(["dawn", "day", "dusk", "night"]);
+const SCENERY_SEASON = new Set(["spring", "summer", "autumn", "winter"]);
+
+/** Compact place name for scenery thread seeds. */
+export function sanitizeSceneName(raw: string): string {
+  const normalized = raw
+    .trim()
+    .split(/\r?\n/g)[0]
+    ?.trim()
+    .replace(/^['"`]+|['"`]+$/g, "")
+    .replace(/\s+/g, " ");
+
+  if (!normalized || normalized.length === 0) {
+    return "";
+  }
+  if (normalized.length <= 48) {
+    return normalized;
+  }
+  return `${normalized.slice(0, 45).trimEnd()}...`;
+}
+
+/**
+ * Normalise model scenery-set output: unique non-empty scene names and
+ * non-empty queries with optional valid tags.
+ */
+export function sanitizeScenerySetResult(input: {
+  sceneNames: ReadonlyArray<string>;
+  queries: ReadonlyArray<{
+    text: string;
+    timeOfDay?: string | undefined;
+    season?: string | undefined;
+  }>;
+}): {
+  sceneNames: string[];
+  queries: Array<{
+    text: string;
+    timeOfDay?: "dawn" | "day" | "dusk" | "night" | undefined;
+    season?: "spring" | "summer" | "autumn" | "winter" | undefined;
+  }>;
+} {
+  const seenNames = new Set<string>();
+  const sceneNames: string[] = [];
+  for (const raw of input.sceneNames) {
+    const name = sanitizeSceneName(raw);
+    if (!name) continue;
+    const key = name.toLowerCase();
+    if (seenNames.has(key)) continue;
+    seenNames.add(key);
+    sceneNames.push(name);
+    if (sceneNames.length >= 40) break;
+  }
+
+  const seenQueries = new Set<string>();
+  const queries: Array<{
+    text: string;
+    timeOfDay?: "dawn" | "day" | "dusk" | "night" | undefined;
+    season?: "spring" | "summer" | "autumn" | "winter" | undefined;
+  }> = [];
+
+  for (const raw of input.queries) {
+    const text = raw.text.trim().replace(/\s+/g, " ");
+    if (!text) continue;
+    const key = text.toLowerCase();
+    if (seenQueries.has(key)) continue;
+    seenQueries.add(key);
+
+    const timeOfDay =
+      raw.timeOfDay && SCENERY_TIME_OF_DAY.has(raw.timeOfDay)
+        ? (raw.timeOfDay as "dawn" | "day" | "dusk" | "night")
+        : undefined;
+    const season =
+      raw.season && SCENERY_SEASON.has(raw.season)
+        ? (raw.season as "spring" | "summer" | "autumn" | "winter")
+        : undefined;
+
+    queries.push({
+      text,
+      ...(timeOfDay ? { timeOfDay } : {}),
+      ...(season ? { season } : {}),
+    });
+    if (queries.length >= 12) break;
+  }
+
+  return { sceneNames, queries };
+}
+
 /** CLI name to human-readable label, e.g. "codex" → "Codex CLI (`codex`)" */
 function cliLabel(cliName: string): string {
   const capitalized = cliName.charAt(0).toUpperCase() + cliName.slice(1);

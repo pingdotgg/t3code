@@ -67,6 +67,30 @@ export interface ThreadTitleGenerationResult {
   title: string;
 }
 
+export type SceneryTimeOfDay = "dawn" | "day" | "dusk" | "night";
+export type ScenerySeason = "spring" | "summer" | "autumn" | "winter";
+
+export interface ScenerySetQueryGeneration {
+  text: string;
+  timeOfDay?: SceneryTimeOfDay | undefined;
+  season?: ScenerySeason | undefined;
+}
+
+export interface ScenerySetGenerationInput {
+  cwd: string;
+  /** User-typed location name, e.g. "Kyoto" or "Norwegian Fjords". */
+  location: string;
+  /** What model and provider to use for generation. */
+  modelSelection: ModelSelection;
+}
+
+export interface ScenerySetGenerationResult {
+  /** ~30 real place/viewpoint names for the location. */
+  sceneNames: string[];
+  /** 6-10 Unsplash search queries, mix of untagged + tagged variants. */
+  queries: ScenerySetQueryGeneration[];
+}
+
 export interface TextGenerationService {
   generateCommitMessage(
     input: CommitMessageGenerationInput,
@@ -74,6 +98,7 @@ export interface TextGenerationService {
   generatePrContent(input: PrContentGenerationInput): Promise<PrContentGenerationResult>;
   generateBranchName(input: BranchNameGenerationInput): Promise<BranchNameGenerationResult>;
   generateThreadTitle(input: ThreadTitleGenerationInput): Promise<ThreadTitleGenerationResult>;
+  generateScenerySet(input: ScenerySetGenerationInput): Promise<ScenerySetGenerationResult>;
 }
 
 /**
@@ -109,6 +134,14 @@ export class TextGeneration extends Context.Service<
     readonly generateThreadTitle: (
       input: ThreadTitleGenerationInput,
     ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
+
+    /**
+     * Generate curated scene names + Unsplash search queries for a location
+     * photo set (mac scenery personalization).
+     */
+    readonly generateScenerySet: (
+      input: ScenerySetGenerationInput,
+    ) => Effect.Effect<ScenerySetGenerationResult, TextGenerationError>;
   }
 >()("t3/textGeneration/TextGeneration") {}
 
@@ -119,7 +152,8 @@ type TextGenerationOp =
   | "generateCommitMessage"
   | "generatePrContent"
   | "generateBranchName"
-  | "generateThreadTitle";
+  | "generateThreadTitle"
+  | "generateScenerySet";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -158,6 +192,10 @@ export const makeTextGenerationFromRegistry = (
     generateThreadTitle: (input) =>
       resolveInstance(registry, "generateThreadTitle", input.modelSelection.instanceId).pipe(
         Effect.flatMap((textGeneration) => textGeneration.generateThreadTitle(input)),
+      ),
+    generateScenerySet: (input) =>
+      resolveInstance(registry, "generateScenerySet", input.modelSelection.instanceId).pipe(
+        Effect.flatMap((textGeneration) => textGeneration.generateScenerySet(input)),
       ),
   });
 

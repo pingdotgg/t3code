@@ -93,6 +93,21 @@ interface FakeGitTextGeneration {
     message: string;
     modelSelection: ModelSelection;
   }) => Effect.Effect<{ title: string }, TextGenerationError>;
+  generateScenerySet: (input: {
+    cwd: string;
+    location: string;
+    modelSelection: ModelSelection;
+  }) => Effect.Effect<
+    {
+      sceneNames: string[];
+      queries: Array<{
+        text: string;
+        timeOfDay?: "dawn" | "day" | "dusk" | "night" | undefined;
+        season?: "spring" | "summer" | "autumn" | "winter" | undefined;
+      }>;
+    },
+    TextGenerationError
+  >;
 }
 
 type FakePullRequest = NonNullable<FakeGhScenario["pullRequest"]>;
@@ -314,6 +329,11 @@ function createTextGeneration(
       Effect.succeed({
         title: "Update workflow",
       }),
+    generateScenerySet: () =>
+      Effect.succeed({
+        sceneNames: ["Viewpoint"],
+        queries: [{ text: "landscape" }],
+      }),
     ...overrides,
   };
 
@@ -357,6 +377,17 @@ function createTextGeneration(
           (cause) =>
             new TextGenerationError({
               operation: "generateThreadTitle",
+              detail: "fake text generation failed",
+              ...(cause !== undefined ? { cause } : {}),
+            }),
+        ),
+      ),
+    generateScenerySet: (input) =>
+      implementation.generateScenerySet(input).pipe(
+        Effect.mapError(
+          (cause) =>
+            new TextGenerationError({
+              operation: "generateScenerySet",
               detail: "fake text generation failed",
               ...(cause !== undefined ? { cause } : {}),
             }),

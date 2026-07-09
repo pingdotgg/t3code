@@ -14,11 +14,13 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildScenerySetPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import {
   sanitizeCommitSubject,
   sanitizePrTitle,
+  sanitizeScenerySetResult,
   sanitizeThreadTitle,
 } from "./TextGenerationUtils.ts";
 import {
@@ -52,7 +54,8 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateScenerySet";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -253,10 +256,40 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 
+  const generateScenerySet: TextGeneration.TextGeneration["Service"]["generateScenerySet"] =
+    Effect.fn("CursorTextGeneration.generateScenerySet")(function* (input) {
+      const location = input.location.trim();
+      if (location.length === 0) {
+        return yield* new TextGenerationError({
+          operation: "generateScenerySet",
+          detail: "Location must not be empty.",
+        });
+      }
+
+      const { prompt, outputSchema } = buildScenerySetPrompt({ location });
+      const generated = yield* runCursorJson({
+        operation: "generateScenerySet",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+
+      const sanitized = sanitizeScenerySetResult(generated);
+      if (sanitized.sceneNames.length === 0 || sanitized.queries.length === 0) {
+        return yield* new TextGenerationError({
+          operation: "generateScenerySet",
+          detail: "Cursor returned an empty scenery set.",
+        });
+      }
+      return sanitized;
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateScenerySet,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

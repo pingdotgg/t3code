@@ -216,3 +216,54 @@ export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
 
   return { prompt, outputSchema };
 }
+
+// ---------------------------------------------------------------------------
+// Scenery set (location photo pack)
+// ---------------------------------------------------------------------------
+
+export interface ScenerySetPromptInput {
+  location: string;
+}
+
+const SceneryTimeOfDaySchema = Schema.Literals(["dawn", "day", "dusk", "night"]);
+const ScenerySeasonSchema = Schema.Literals(["spring", "summer", "autumn", "winter"]);
+
+/**
+ * Prompt for AI-curated scenery packs: ~30 real place names + 6-10 Unsplash
+ * search queries tuned for scenic landscape wallpapers.
+ */
+export function buildScenerySetPrompt(input: ScenerySetPromptInput) {
+  const location = input.location.trim();
+  const prompt = [
+    "You curate scenic landscape photo sets for a coding app wallpaper system.",
+    "Given a location name, return real places and Unsplash search queries.",
+    "Return a JSON object with keys: sceneNames, queries.",
+    "Rules:",
+    "- sceneNames: about 30 short, evocative place or viewpoint names at/near the location",
+    "- Prefer real named peaks, lakes, valleys, passes, temples, viewpoints, trails",
+    "- Style like: 'Tre Cime', 'Lago di Braies', 'Fushimi Inari', 'Trolltunga' — specific, short, no country suffixes",
+    "- No duplicates; no generic labels like 'Mountain 1' or 'Beautiful View'",
+    "- queries: 6 to 10 Unsplash photo search strings for scenic landscape wallpapers",
+    "- Mix untagged general queries with tagged variants (timeOfDay and/or season)",
+    "- Query text should include the location plus scenic terms (mountains, coast, meadow, temple, etc.)",
+    "- timeOfDay if set must be one of: dawn, day, dusk, night",
+    "- season if set must be one of: spring, summer, autumn, winter",
+    "- Omit timeOfDay/season when the query is intentionally untagged (anytime)",
+    "- Optimize for high-quality landscape photography, not people or urban street snaps",
+    "",
+    `Location: ${location}`,
+  ].join("\n");
+
+  const outputSchema = Schema.Struct({
+    sceneNames: Schema.Array(Schema.String),
+    queries: Schema.Array(
+      Schema.Struct({
+        text: Schema.String,
+        timeOfDay: Schema.optional(SceneryTimeOfDaySchema),
+        season: Schema.optional(ScenerySeasonSchema),
+      }),
+    ),
+  });
+
+  return { prompt, outputSchema };
+}

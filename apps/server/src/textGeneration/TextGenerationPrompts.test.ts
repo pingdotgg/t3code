@@ -4,9 +4,14 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildScenerySetPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
-import { normalizeCliError, sanitizeThreadTitle } from "./TextGenerationUtils.ts";
+import {
+  normalizeCliError,
+  sanitizeScenerySetResult,
+  sanitizeThreadTitle,
+} from "./TextGenerationUtils.ts";
 import { TextGenerationError } from "@t3tools/contracts";
 
 describe("buildCommitMessagePrompt", () => {
@@ -143,6 +148,38 @@ describe("sanitizeThreadTitle", () => {
         '  "Reconnect failures after restart because the session state does not recover"  ',
       ),
     ).toBe("Reconnect failures after restart because the se...");
+  });
+});
+
+describe("buildScenerySetPrompt", () => {
+  it("includes the location and scenery output rules", () => {
+    const result = buildScenerySetPrompt({ location: "Kyoto" });
+
+    expect(result.prompt).toContain("Location: Kyoto");
+    expect(result.prompt).toContain("sceneNames");
+    expect(result.prompt).toContain("queries");
+    expect(result.prompt).toContain("dawn");
+    expect(result.prompt).toContain("Unsplash");
+  });
+});
+
+describe("sanitizeScenerySetResult", () => {
+  it("dedupes names/queries and drops invalid tags", () => {
+    const result = sanitizeScenerySetResult({
+      sceneNames: [" Fushimi Inari ", "fushimi inari", "Arashiyama", ""],
+      queries: [
+        { text: " kyoto temples ", timeOfDay: "dawn", season: "spring" },
+        { text: "kyoto temples", timeOfDay: "midday", season: "fall" },
+        { text: "  ", timeOfDay: "day" },
+        { text: "kyoto winter mountains", season: "winter" },
+      ],
+    });
+
+    expect(result.sceneNames).toEqual(["Fushimi Inari", "Arashiyama"]);
+    expect(result.queries).toEqual([
+      { text: "kyoto temples", timeOfDay: "dawn", season: "spring" },
+      { text: "kyoto winter mountains", season: "winter" },
+    ]);
   });
 });
 

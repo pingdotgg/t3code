@@ -23,12 +23,14 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildScenerySetPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import {
   normalizeCliError,
   sanitizeCommitSubject,
   sanitizePrTitle,
+  sanitizeScenerySetResult,
   sanitizeThreadTitle,
   toJsonSchemaObject,
 } from "./TextGenerationUtils.ts";
@@ -80,12 +82,15 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       ),
     );
 
+  type ClaudeTextGenerationOp =
+    | "generateCommitMessage"
+    | "generatePrContent"
+    | "generateBranchName"
+    | "generateThreadTitle"
+    | "generateScenerySet";
+
   const encodeJsonForOperation = (
-    operation:
-      | "generateCommitMessage"
-      | "generatePrContent"
-      | "generateBranchName"
-      | "generateThreadTitle",
+    operation: ClaudeTextGenerationOp,
     value: unknown,
     detail: string,
   ): Effect.Effect<string, TextGenerationError> =>
@@ -111,11 +116,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     outputSchemaJson,
     modelSelection,
   }: {
-    operation:
-      | "generateCommitMessage"
-      | "generatePrContent"
-      | "generateBranchName"
-      | "generateThreadTitle";
+    operation: ClaudeTextGenerationOp;
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -355,10 +356,40 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       };
     });
 
+  const generateScenerySet: TextGeneration.TextGeneration["Service"]["generateScenerySet"] =
+    Effect.fn("ClaudeTextGeneration.generateScenerySet")(function* (input) {
+      const location = input.location.trim();
+      if (location.length === 0) {
+        return yield* new TextGenerationError({
+          operation: "generateScenerySet",
+          detail: "Location must not be empty.",
+        });
+      }
+
+      const { prompt, outputSchema } = buildScenerySetPrompt({ location });
+      const generated = yield* runClaudeJson({
+        operation: "generateScenerySet",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+
+      const sanitized = sanitizeScenerySetResult(generated);
+      if (sanitized.sceneNames.length === 0 || sanitized.queries.length === 0) {
+        return yield* new TextGenerationError({
+          operation: "generateScenerySet",
+          detail: "Claude returned an empty scenery set.",
+        });
+      }
+      return sanitized;
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateScenerySet,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

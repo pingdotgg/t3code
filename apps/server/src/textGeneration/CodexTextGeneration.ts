@@ -21,12 +21,14 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildScenerySetPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import {
   normalizeCliError,
   sanitizeCommitSubject,
   sanitizePrTitle,
+  sanitizeScenerySetResult,
   sanitizeThreadTitle,
   toJsonSchemaObject,
 } from "./TextGenerationUtils.ts";
@@ -128,12 +130,15 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
   const safeUnlink = (filePath: string): Effect.Effect<void, never> =>
     fileSystem.remove(filePath).pipe(Effect.catch(() => Effect.void));
 
+  type CodexTextGenerationOp =
+    | "generateCommitMessage"
+    | "generatePrContent"
+    | "generateBranchName"
+    | "generateThreadTitle"
+    | "generateScenerySet";
+
   const encodeJsonForOperation = (
-    operation:
-      | "generateCommitMessage"
-      | "generatePrContent"
-      | "generateBranchName"
-      | "generateThreadTitle",
+    operation: CodexTextGenerationOp,
     value: unknown,
   ): Effect.Effect<string, TextGenerationError> =>
     encodeJsonString(value).pipe(
@@ -148,11 +153,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     );
 
   const materializeImageAttachments = Effect.fn("materializeImageAttachments")(function* (
-    _operation:
-      | "generateCommitMessage"
-      | "generatePrContent"
-      | "generateBranchName"
-      | "generateThreadTitle",
+    _operation: CodexTextGenerationOp,
     attachments: TextGeneration.BranchNameGenerationInput["attachments"],
   ): Effect.fn.Return<MaterializedImageAttachments, TextGenerationError> {
     if (!attachments || attachments.length === 0) {
@@ -190,11 +191,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     cleanupPaths = [],
     modelSelection,
   }: {
-    operation:
-      | "generateCommitMessage"
-      | "generatePrContent"
-      | "generateBranchName"
-      | "generateThreadTitle";
+    operation: CodexTextGenerationOp;
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -454,10 +451,40 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 
+  const generateScenerySet: TextGeneration.TextGeneration["Service"]["generateScenerySet"] =
+    Effect.fn("CodexTextGeneration.generateScenerySet")(function* (input) {
+      const location = input.location.trim();
+      if (location.length === 0) {
+        return yield* new TextGenerationError({
+          operation: "generateScenerySet",
+          detail: "Location must not be empty.",
+        });
+      }
+
+      const { prompt, outputSchema } = buildScenerySetPrompt({ location });
+      const generated = yield* runCodexJson({
+        operation: "generateScenerySet",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+
+      const sanitized = sanitizeScenerySetResult(generated);
+      if (sanitized.sceneNames.length === 0 || sanitized.queries.length === 0) {
+        return yield* new TextGenerationError({
+          operation: "generateScenerySet",
+          detail: "Codex returned an empty scenery set.",
+        });
+      }
+      return sanitized;
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateScenerySet,
   } satisfies TextGeneration.TextGeneration["Service"];
 });
