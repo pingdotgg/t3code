@@ -890,22 +890,27 @@ export function createStageWorkspaceConfig(input: {
   const { platform, arch, allowBuilds, patchedDependencies, overrides } = input;
   const hostOs = platform === "mac" ? "darwin" : platform === "win" ? "win32" : "linux";
   const hostCpu = arch === "universal" ? ["arm64", "x64"] : [arch];
-  // Windows artifacts also bundle the same-architecture WSL Linux backend, which loads
-  // Linux-native optional deps at runtime (e.g. @yuuang/ffi-rs-linux-x64-gnu).
-  // Pull the Linux (glibc) variants in addition to the host platform's so
-  // they ship in the asar; without them the WSL backend crash-loops on require
-  // ("Cannot find module '@yuuang/ffi-rs-linux-x64-gnu'").
+  // Linux AppImages and Windows WSL backends both execute a Linux/glibc Node
+  // process that loads Linux-native optional deps at runtime (e.g.
+  // @yuuang/ffi-rs-linux-x64-gnu). Keep libc explicit so pnpm includes those
+  // optional packages in the staged production install.
   const supportedArchitectures =
-    platform === "win"
+    platform === "linux"
       ? {
-          os: Array.from(new Set([hostOs, "linux"])),
+          os: [hostOs],
           cpu: hostCpu,
           libc: ["glibc"],
         }
-      : {
-          os: [hostOs],
-          cpu: hostCpu,
-        };
+      : platform === "win"
+        ? {
+            os: Array.from(new Set([hostOs, "linux"])),
+            cpu: hostCpu,
+            libc: ["glibc"],
+          }
+        : {
+            os: [hostOs],
+            cpu: hostCpu,
+          };
 
   return {
     supportedArchitectures,
@@ -1337,6 +1342,19 @@ export function resolveDesktopBuildIconAssets(version: string): DesktopBuildIcon
 
 export function resolveMockUpdateServerUrl(mockUpdateServerPort: number | undefined): string {
   return `http://localhost:${mockUpdateServerPort ?? 3000}`;
+}
+
+// Electron Builder detects pnpm from npm_config_user_agent, whose value uses
+// user-agent syntax (pnpm/11.10.0) rather than packageManager syntax
+// (pnpm@11.10.0).
+export function resolvePackageManagerUserAgent(packageManager: string): string {
+  const trimmed = packageManager.trim();
+  const versionSeparator = trimmed.lastIndexOf("@");
+  if (versionSeparator <= 0 || versionSeparator === trimmed.length - 1) {
+    return trimmed;
+  }
+
+  return `${trimmed.slice(0, versionSeparator)}/${trimmed.slice(versionSeparator + 1)}`;
 }
 
 export function resolveDesktopProductName(version: string): string {
@@ -1799,6 +1817,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const buildEnv: NodeJS.ProcessEnv = {
     ...process.env,
   };
+  buildEnv.npm_config_user_agent = resolvePackageManagerUserAgent(rootPackageJson.packageManager);
   for (const [key, value] of Object.entries(buildEnv)) {
     if (value === "") {
       delete buildEnv[key];
