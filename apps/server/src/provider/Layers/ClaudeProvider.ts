@@ -45,6 +45,13 @@ const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabili
 
 const PROVIDER = ProviderDriverKind.make("claudeAgent");
 
+/**
+ * Presentation and messaging identity for a Claude-backed provider.
+ *
+ * Lets Claude-backed drivers (the stock Claude provider and forks such as
+ * Claude Synthero) share the probe/snapshot logic while customizing their
+ * driver kind, display name, and status/error messages.
+ */
 export interface ClaudeProviderIdentity {
   readonly provider: ProviderDriverKind;
   readonly displayName: string;
@@ -72,6 +79,13 @@ const CLAUDE_IDENTITY: ClaudeProviderIdentity = {
   authUnknownMessage: "Could not verify Claude authentication status from initialization result.",
 };
 
+/**
+ * Derive the server-provider presentation block (display name and
+ * interaction-mode toggle) from a {@link ClaudeProviderIdentity}.
+ *
+ * @param identity - The Claude provider identity to project.
+ * @returns The presentation fields consumed by `buildServerProvider`.
+ */
 const presentationFromIdentity = (identity: ClaudeProviderIdentity) => ({
   displayName: identity.displayName,
   showInteractionModeToggle: identity.showInteractionModeToggle ?? true,
@@ -679,6 +693,19 @@ const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
   return yield* spawnAndCollect(claudeSettings.binaryPath, command);
 });
 
+/**
+ * Probe a Claude-backed provider and build its server-provider snapshot.
+ *
+ * `identity` customizes provider kind, display name, and status messages so
+ * shared Claude probing can be reused by the stock Claude provider and
+ * independent Claude-backed providers such as Claude Synthero.
+ *
+ * @param claudeSettings - Effective Claude runtime settings.
+ * @param resolveCapabilities - Optional account/slash-command capability probe.
+ * @param environment - Process environment for Claude CLI/SDK probes.
+ * @param identity - Provider identity to stamp onto models, auth, and messages.
+ * @returns A server provider draft describing install/auth/model status.
+ */
 export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(function* (
   claudeSettings: ClaudeSettings,
   resolveCapabilities?: (
@@ -853,6 +880,14 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
+/**
+ * Build the initial pending snapshot for a Claude-backed provider before its
+ * health/auth probe has completed.
+ *
+ * @param claudeSettings - Effective Claude runtime settings.
+ * @param identity - Provider identity to stamp onto presentation and models.
+ * @returns A pending server provider draft.
+ */
 export const makePendingClaudeProvider = (
   claudeSettings: ClaudeSettings,
   identity: ClaudeProviderIdentity = CLAUDE_IDENTITY,

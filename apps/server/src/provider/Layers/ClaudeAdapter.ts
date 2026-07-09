@@ -1281,6 +1281,18 @@ function buildClaudeImageContentBlock(input: {
   };
 }
 
+/**
+ * Build a Claude SDK user message from canonical send-turn input.
+ *
+ * The provider dependency is threaded in so validation/read failures are
+ * stamped with the active Claude-backed driver (`claudeAgent`,
+ * `claude-synthero`, etc.) instead of always reporting the stock Claude
+ * provider.
+ *
+ * @param input - Canonical send-turn payload from the provider service.
+ * @param dependencies - File, attachment, instance, and provider context.
+ * @returns A Claude SDK user message containing text and supported images.
+ */
 const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
   input: ProviderSendTurnInput,
   dependencies: {
@@ -1536,6 +1548,15 @@ function toolResultBlocksFromUserMessage(message: SDKMessage): Array<{
   return blocks;
 }
 
+/**
+ * Convert SDK/session failures that imply a missing or closed session into
+ * typed provider-adapter session errors for the active Claude-backed driver.
+ *
+ * @param provider - Driver kind to stamp onto the returned error.
+ * @param threadId - Thread whose session operation failed.
+ * @param cause - Unknown SDK/runtime failure cause.
+ * @returns A typed session error when recognized, otherwise `undefined`.
+ */
 function toSessionError(
   provider: ProviderDriverKind,
   threadId: ThreadId,
@@ -1559,6 +1580,18 @@ function toSessionError(
   return undefined;
 }
 
+/**
+ * Convert an unknown Claude SDK failure into a typed provider adapter error.
+ *
+ * Session-not-found/closed causes are preserved as session errors; all other
+ * failures become request errors stamped with the active Claude-backed driver.
+ *
+ * @param provider - Driver kind to stamp onto the error.
+ * @param threadId - Thread whose request failed.
+ * @param method - Logical adapter method/operation name.
+ * @param cause - Unknown SDK/runtime failure cause.
+ * @returns A typed provider adapter error.
+ */
 function toRequestError(
   provider: ProviderDriverKind,
   threadId: ThreadId,
@@ -1688,6 +1721,18 @@ function sdkNativeItemId(message: SDKMessage): string | undefined {
   return undefined;
 }
 
+/**
+ * Construct a scoped Claude adapter instance.
+ *
+ * The optional `driverKind` lets first-class Claude-backed providers reuse
+ * the adapter while stamping sessions, events, logs, and errors with their
+ * own provider kind.
+ *
+ * @param claudeSettings - Effective Claude runtime settings for this instance.
+ * @param options - Instance id, driver identity, environment, query factory,
+ * and native event logging overrides.
+ * @returns A provider adapter backed by the Claude Agent SDK.
+ */
 export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   claudeSettings: ClaudeSettings,
   options?: ClaudeAdapterLiveOptions,

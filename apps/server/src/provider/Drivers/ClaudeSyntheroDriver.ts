@@ -73,6 +73,14 @@ const ANTHROPIC_AUTH_TOKEN_ENV = "ANTHROPIC_AUTH_TOKEN";
 
 const decodeClaudeSyntheroSettings = Schema.decodeSync(ClaudeSyntheroSettings);
 
+/**
+ * Detect whether a resolved command path points at a natively-installed
+ * Claude Code binary (as opposed to an npm/Homebrew-managed one), so the
+ * maintenance resolver can pick the correct update strategy.
+ *
+ * @param commandPath - Resolved path to the `claude` executable.
+ * @returns `true` when the path matches Claude's native install locations.
+ */
 function isClaudeNativeCommandPath(commandPath: string): boolean {
   const normalized = normalizeCommandPath(commandPath);
   return (
@@ -118,6 +126,14 @@ export type ClaudeSyntheroDriverEnv =
   | ServerConfig
   | ServerSettingsService;
 
+/**
+ * Read a provider-scoped environment variable by name from a provider
+ * instance environment list, trimming surrounding whitespace.
+ *
+ * @param environment - Provider instance environment variables.
+ * @param name - Environment variable name to look up.
+ * @returns The trimmed value, or `undefined` when the variable is absent.
+ */
 function resolveProviderScopedEnv(
   environment: ProviderInstanceEnvironment,
   name: string,
@@ -125,6 +141,19 @@ function resolveProviderScopedEnv(
   return environment.find((variable) => variable.name === name)?.value.trim();
 }
 
+/**
+ * Resolve the effective Synthero auth token for a Claude Synthero instance.
+ *
+ * Resolution order: the explicit `authToken` setting, then a provider-scoped
+ * `SYNTHERO_AUTH_TOKEN` / `ANTHROPIC_AUTH_TOKEN`, then a process-level
+ * `SYNTHERO_AUTH_TOKEN`. Returns an empty string when the provider is
+ * disabled or no token is configured, so a real key is never hardcoded.
+ *
+ * @param settings - Synthero settings subset carrying `authToken`/`enabled`.
+ * @param providerEnvironment - Provider-scoped environment variables.
+ * @param processEnv - Process environment used as the final fallback.
+ * @returns The resolved token, or an empty string when none is available.
+ */
 export function resolveClaudeSyntheroAuthToken(
   settings: Pick<ClaudeSyntheroSettingsType, "authToken" | "enabled">,
   providerEnvironment: ProviderInstanceEnvironment,
@@ -142,11 +171,26 @@ export function resolveClaudeSyntheroAuthToken(
   return processEnv[SYNTHERO_AUTH_TOKEN_ENV]?.trim() ?? "";
 }
 
+/**
+ * Resolve the Synthero base URL for a Claude Synthero instance, falling back
+ * to the default Anthropic-compatible endpoint when unset.
+ *
+ * @param settings - Synthero settings subset carrying `baseURL`.
+ * @returns The configured base URL, or the Synthero default.
+ */
 function resolveClaudeSyntheroBaseURL(settings: Pick<ClaudeSyntheroSettingsType, "baseURL">) {
   const configured = settings.baseURL.trim();
   return configured.length > 0 ? configured : DEFAULT_SYNTHERO_BASE_URL;
 }
 
+/**
+ * Project Synthero settings onto the base {@link ClaudeSettings} shape so the
+ * shared Claude adapter, provider probe, and text generation can be reused
+ * without knowing about Synthero-specific fields.
+ *
+ * @param config - The full Claude Synthero settings.
+ * @returns Equivalent base Claude settings for the shared Claude runtime.
+ */
 function toClaudeSettings(config: ClaudeSyntheroSettingsType): ClaudeSettings {
   return {
     enabled: config.enabled,
@@ -157,6 +201,19 @@ function toClaudeSettings(config: ClaudeSyntheroSettingsType): ClaudeSettings {
   } satisfies ClaudeSettings;
 }
 
+/**
+ * Build the process environment for a Claude Synthero session.
+ *
+ * Starts from `baseEnv` with any inherited normal-Claude `ANTHROPIC_AUTH_TOKEN`
+ * removed, then layers Synthero's Anthropic-compatible endpoint, the resolved
+ * Synthero auth token (only when present), and the Claude Code privacy flags.
+ * This keeps the user's normal Claude login/setup isolated from Synthero.
+ *
+ * @param input.settings - The effective Claude Synthero settings.
+ * @param input.providerEnvironment - Provider-scoped environment variables.
+ * @param input.baseEnv - Base process environment to derive from.
+ * @returns A process environment scoped to this Synthero instance.
+ */
 export function makeClaudeSyntheroEnvironment(input: {
   readonly settings: ClaudeSyntheroSettingsType;
   readonly providerEnvironment: ProviderInstanceEnvironment;
@@ -178,6 +235,13 @@ export function makeClaudeSyntheroEnvironment(input: {
   };
 }
 
+/**
+ * Build a pending provider snapshot flagged as needing authentication, used
+ * when Claude Synthero is enabled but no auth token could be resolved.
+ *
+ * @param config - The effective Claude Synthero settings.
+ * @returns A draft snapshot in an unauthenticated error state when enabled.
+ */
 function makeMissingAuthProvider(
   config: ClaudeSyntheroSettingsType,
 ): Effect.Effect<ServerProviderDraft> {
@@ -197,6 +261,17 @@ function makeMissingAuthProvider(
   );
 }
 
+/**
+ * Curried snapshot transformer that stamps a provider draft with the
+ * Claude Synthero driver kind plus the instance-specific id, display name,
+ * accent color, and continuation group key.
+ *
+ * @param input.instanceId - The provider instance id to stamp.
+ * @param input.displayName - Optional instance display name override.
+ * @param input.accentColor - Optional instance accent color.
+ * @param input.continuationGroupKey - Continuation grouping key for the instance.
+ * @returns A function mapping a {@link ServerProviderDraft} to a stamped {@link ServerProvider}.
+ */
 const withInstanceIdentity =
   (input: {
     readonly instanceId: ProviderInstance["instanceId"];
@@ -213,6 +288,16 @@ const withInstanceIdentity =
     continuation: { groupKey: input.continuationGroupKey },
   });
 
+/**
+ * Provider driver for Claude Synthero.
+ *
+ * Reuses the shared Claude adapter, provider probe, and text generation while
+ * running under the `claude-synthero` driver kind with a Synthero-scoped
+ * environment. `create` materializes one instance: it builds the isolated
+ * process environment, resolves the auth token, wires the snapshot/adapter/
+ * text-generation closures, and reports a missing-auth snapshot when enabled
+ * without a token.
+ */
 export const ClaudeSyntheroDriver: ProviderDriver<
   ClaudeSyntheroSettingsType,
   ClaudeSyntheroDriverEnv
