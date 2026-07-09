@@ -9,8 +9,7 @@ struct ComposerControlsRow: View {
     var body: some View {
         HStack(spacing: 10) {
             ModelEffortTierGroup(thread: thread, model: model)
-            RuntimeModeMenu(thread: thread, model: model)
-            PlanModeToggle(thread: thread, model: model)
+            RuntimePlanModeGroup(thread: thread, model: model)
             Spacer()
             if let status = model.threadState(thread.id)?.contextWindow {
                 ContextMeterView(status: status)
@@ -71,15 +70,20 @@ private struct ComposerSegmentLabel: View {
     let icon: String
     let title: String
     var isHovering: Bool = false
+    /// When true, icon + title use the accent color (e.g. plan mode on).
+    var isAccented: Bool = false
+    /// When true, icon changes animate with a symbol replace transition.
+    var animateSymbol: Bool = false
 
     var body: some View {
         HStack(spacing: 4) {
             Image(systemName: icon)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(isAccented ? Color.accentColor : Color.secondary)
+                .contentTransition(animateSymbol ? .symbolEffect(.replace) : .identity)
             Text(title)
                 .font(.caption.weight(.medium))
-                .foregroundStyle(.primary)
+                .foregroundStyle(isAccented ? Color.accentColor : Color.primary)
                 .lineLimit(1)
         }
         .padding(.horizontal, 8)
@@ -91,6 +95,28 @@ private struct ComposerSegmentLabel: View {
                     .fill(.fill.secondary)
             }
         }
+    }
+}
+
+/// Visually grouped runtime-mode menu + plan-mode toggle as a single capsule.
+private struct RuntimePlanModeGroup: View {
+    let thread: ChatThread
+    let model: AppModel
+
+    var body: some View {
+        HStack(spacing: 0) {
+            RuntimeModeMenu(thread: thread, model: model)
+            segmentDivider
+            PlanModeToggle(thread: thread, model: model)
+        }
+        .background(.fill.tertiary, in: Capsule())
+    }
+
+    private var segmentDivider: some View {
+        Rectangle()
+            .fill(.separator)
+            .frame(width: 1, height: 12)
+            .padding(.horizontal, 1)
     }
 }
 
@@ -204,6 +230,8 @@ private struct RuntimeModeMenu: View {
     let thread: ChatThread
     let model: AppModel
 
+    @UIState private var isHovering = false
+
     var body: some View {
         Menu {
             ForEach(ThreadRuntimeMode.allCases) { mode in
@@ -218,12 +246,15 @@ private struct RuntimeModeMenu: View {
                 }
             }
         } label: {
-            Label(thread.runtimeMode.displayName, systemImage: thread.runtimeMode.symbolName)
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.primary)
+            ComposerSegmentLabel(
+                icon: thread.runtimeMode.symbolName,
+                title: thread.runtimeMode.displayName,
+                isHovering: isHovering
+            )
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
+        .onHover { isHovering = $0 }
     }
 }
 
@@ -232,20 +263,26 @@ private struct PlanModeToggle: View {
     let thread: ChatThread
     let model: AppModel
 
+    @UIState private var isHovering = false
+
     private var isPlan: Bool { thread.interactionMode == .plan }
 
     var body: some View {
         Button {
             Task { await model.setInteractionMode(isPlan ? .normal : .plan) }
         } label: {
-            Label("Plan", systemImage: isPlan ? "list.clipboard.fill" : "list.clipboard")
-                .font(.caption.weight(.medium))
-                .contentTransition(.symbolEffect(.replace))
+            ComposerSegmentLabel(
+                icon: isPlan ? "list.clipboard.fill" : "list.clipboard",
+                title: "Plan",
+                isHovering: isHovering,
+                isAccented: isPlan,
+                animateSymbol: true
+            )
         }
         .buttonStyle(.plain)
-        .foregroundStyle(isPlan ? Color.accentColor : Color.primary)
         .animation(Motion.snap, value: isPlan)
         .help(isPlan ? "Plan mode on — the agent proposes a plan instead of editing" : "Turn on plan mode")
+        .onHover { isHovering = $0 }
     }
 }
 
