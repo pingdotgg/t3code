@@ -38,6 +38,7 @@ import * as CodexErrors from "effect-codex-app-server/errors";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import { extractProviderErrorMessage } from "@t3tools/shared/providerError";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 
@@ -764,7 +765,8 @@ function mapToRuntimeEvents(
     if (!payload) {
       return [];
     }
-    const errorMessage = trimText(payload.turn.error?.message);
+    const rawErrorMessage = trimText(payload.turn.error?.message);
+    const errorMessage = rawErrorMessage ? extractProviderErrorMessage(rawErrorMessage) : undefined;
     return [
       {
         ...runtimeEventBase(event, canonicalThreadId),
@@ -1241,7 +1243,9 @@ function mapToRuntimeEvents(
 
   if (event.method === "error") {
     const payload = readPayload(EffectCodexSchema.V2ErrorNotification, event.payload);
-    const message = payload?.error.message ?? event.message ?? "Provider runtime error";
+    const message = extractProviderErrorMessage(
+      payload?.error.message ?? event.message ?? "Provider runtime error",
+    );
     const willRetry = payload?.willRetry === true;
     return [
       {

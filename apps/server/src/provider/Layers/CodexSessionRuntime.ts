@@ -18,6 +18,7 @@ import {
 } from "@t3tools/contracts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { normalizeModelSlug } from "@t3tools/shared/model";
+import { extractProviderErrorMessage } from "@t3tools/shared/providerError";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -921,7 +922,7 @@ export const makeCodexSessionRuntime = (
           }
           const lastError =
             payload.turn.status === "failed" && "error" in payload.turn && payload.turn.error
-              ? payload.turn.error.message
+              ? extractProviderErrorMessage(payload.turn.error.message)
               : undefined;
           return updateSession(sessionRef, {
             status: payload.turn.status === "failed" ? "error" : "ready",
@@ -939,7 +940,7 @@ export const makeCodexSessionRuntime = (
           if (providerThreadId && payloadThreadId && payloadThreadId !== providerThreadId) {
             return Effect.void;
           }
-          const errorMessage = payload.error.message;
+          const errorMessage = extractProviderErrorMessage(payload.error.message);
           const willRetry = payload.willRetry;
           return updateSession(sessionRef, {
             status: willRetry ? "running" : "error",
