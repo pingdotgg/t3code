@@ -177,6 +177,11 @@ public final class SceneryStore {
         availableSets.first { $0.id == id }
     }
 
+    /// Photos currently registered for a set (may be empty before first fetch).
+    public func photos(forSetId setId: String) -> [SceneryPhoto] {
+        pools[setId] ?? []
+    }
+
     /// Palette for a resolved set. An explicit set id wins; otherwise the
     /// photo's owning set and then the global default are used.
     public func palette(for photo: SceneryPhoto?, setId: String? = nil) -> SceneryPalette? {

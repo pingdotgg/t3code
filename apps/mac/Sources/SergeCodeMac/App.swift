@@ -53,7 +53,7 @@ struct SergeCodeApp: App {
                     model.start()
                     appDelegate.backend = SergeCodeApp.backend
                     #if DEBUG
-                        UIProbe.runIfRequested(model: model)
+                        UIProbe.runIfRequested(model: model, scenery: scenery)
                     #endif
                 }
                 .task { await scenery.start() }
@@ -72,7 +72,10 @@ struct SergeCodeApp: App {
         .defaultSize(width: 1100, height: 720)
 
         Settings {
-            SettingsScene(model: model)
+            SettingsScene(
+                model: model,
+                scenery: scenery,
+                backend: SergeCodeApp.backend)
         }
     }
 

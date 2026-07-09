@@ -3,18 +3,28 @@ import SwiftUI
 /// Settings tab identifiers — public so debug harnesses (UIProbe) can open
 /// the window on a specific tab.
 public enum SettingsTab: Hashable {
-    case general, providers, dictation, archive, iphone, connection
+    case general, providers, dictation, archive, scenery, iphone, connection
 }
 
-// Settings window content: `Settings { SettingsScene(model: model) }` in App.swift.
+// Settings window content: `Settings { SettingsScene(...) }` in App.swift.
 // Standard macOS Form-based settings — glass is not used here (this is a
 // utility window, not a chrome surface over long-form content).
 public struct SettingsScene: View {
     private let model: AppModel
+    private let scenery: SceneryStore
+    /// Mounted here (not at app root): Phase 5 Create Set flow only.
+    private let sceneSetComposer: SceneSetComposer
     @UIState private var selectedTab: SettingsTab
 
-    public init(model: AppModel, initialTab: SettingsTab = .general) {
+    public init(
+        model: AppModel,
+        scenery: SceneryStore,
+        backend: any BackendService,
+        initialTab: SettingsTab = .general
+    ) {
         self.model = model
+        self.scenery = scenery
+        self.sceneSetComposer = SceneSetComposer(store: scenery, backend: backend)
         _selectedTab = UIState(initialValue: initialTab)
     }
 
@@ -35,6 +45,10 @@ public struct SettingsScene: View {
             ArchiveSettingsTab(model: model)
                 .tabItem { Label("Archive", systemImage: "archivebox") }
                 .tag(SettingsTab.archive)
+
+            ScenerySettingsTab(model: model, scenery: scenery, composer: sceneSetComposer)
+                .tabItem { Label("Scenery", systemImage: "photo.on.rectangle.angled") }
+                .tag(SettingsTab.scenery)
 
             PhoneSettingsTab(model: model)
                 .tabItem { Label("iPhone", systemImage: "iphone") }

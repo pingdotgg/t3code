@@ -15,6 +15,14 @@ enum AlpineTheme {
             Color(red: red, green: green, blue: blue)
         }
 
+        /// `#RRGGBB` for persistence (project prefs, palette manifests).
+        var hexString: String {
+            let r = min(255, max(0, Int((red * 255).rounded())))
+            let g = min(255, max(0, Int((green * 255).rounded())))
+            let b = min(255, max(0, Int((blue * 255).rounded())))
+            return String(format: "#%02X%02X%02X", r, g, b)
+        }
+
         init(red: Double, green: Double, blue: Double) {
             self.red = red
             self.green = green

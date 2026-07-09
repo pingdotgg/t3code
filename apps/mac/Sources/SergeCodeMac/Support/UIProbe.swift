@@ -10,14 +10,14 @@
     /// scrollable geometry to stdout, and quits.
     @MainActor
     enum UIProbe {
-        static func runIfRequested(model: AppModel) {
+        static func runIfRequested(model: AppModel, scenery: SceneryStore) {
             guard let dir = ProcessInfo.processInfo.environment["SERGECODE_UI_PROBE"],
                 !dir.isEmpty
             else { return }
-            Task { await run(model: model, dir: dir) }
+            Task { await run(model: model, scenery: scenery, dir: dir) }
         }
 
-        private static func run(model: AppModel, dir: String) async {
+        private static func run(model: AppModel, scenery: SceneryStore, dir: String) async {
             try? FileManager.default.createDirectory(
                 atPath: dir, withIntermediateDirectories: true)
 
@@ -142,12 +142,18 @@
                 let previousMobileAccess = MobileAccessPreference.isEnabled
                 MobileAccessPreference.setEnabled(true)
                 await snapshotSettings(
-                    tab: .iphone, name: "9-settings-iphone", model: model, dir: dir)
+                    tab: .iphone, name: "9-settings-iphone", model: model, scenery: scenery,
+                    dir: dir)
                 await snapshotSettings(
-                    tab: .connection, name: "10-settings-connection", model: model, dir: dir)
+                    tab: .connection, name: "10-settings-connection", model: model,
+                    scenery: scenery, dir: dir)
                 MobileAccessPreference.setEnabled(previousMobileAccess)
                 await snapshotSettings(
-                    tab: .dictation, name: "11-settings-dictation", model: model, dir: dir)
+                    tab: .dictation, name: "11-settings-dictation", model: model, scenery: scenery,
+                    dir: dir)
+                await snapshotSettings(
+                    tab: .scenery, name: "12-settings-scenery", model: model, scenery: scenery,
+                    dir: dir)
             } else {
                 print("UIProbe: skipping settings snapshots (live backend run)")
             }
@@ -181,10 +187,14 @@
         /// the real Settings scene can't be opened programmatically without
         /// the menu, and this exercises the identical view tree.
         private static func snapshotSettings(
-            tab: SettingsTab, name: String, model: AppModel, dir: String
+            tab: SettingsTab, name: String, model: AppModel, scenery: SceneryStore, dir: String
         ) async {
             let hosting = NSHostingView(
-                rootView: SettingsScene(model: model, initialTab: tab))
+                rootView: SettingsScene(
+                    model: model,
+                    scenery: scenery,
+                    backend: MockBackend(),
+                    initialTab: tab))
             let window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 560, height: 420),
                 styleMask: [.titled], backing: .buffered, defer: false)
