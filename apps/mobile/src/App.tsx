@@ -1,4 +1,6 @@
 import * as Linking from "expo-linking";
+import * as SplashScreen from "expo-splash-screen";
+import { useEffect } from "react";
 import { StatusBar, useColorScheme } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
@@ -23,6 +25,10 @@ const Navigation = createStaticNavigation(RootStack);
 export default function App() {
   const colorScheme = useColorScheme();
   const statusBarBg = useThemeColor("--color-status-bar");
+
+  useEffect(() => {
+    SplashScreen.hide();
+  }, []);
 
   return (
     <RegistryContext.Provider value={appAtomRegistry}>
