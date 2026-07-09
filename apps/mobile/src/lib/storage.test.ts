@@ -230,4 +230,27 @@ describe("mobile connection storage", () => {
     expect(JSON.parse(mocks.getPreferencesJson() ?? "")).toEqual({ baseFontSize: 21 });
     expect(mocks.getStoredValue("t3code.preferences.fallback")).toBeNull();
   });
+
+  it("ignores an invalid fallback even when it has a newer timestamp", async () => {
+    mocks.setPreferencesJson(JSON.stringify({ baseFontSize: 21 }), 30);
+    await mocks.setItemAsync(
+      "t3code.preferences.fallback",
+      JSON.stringify({ payload: "{", updatedAt: 40 }),
+    );
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await expect(loadPreferences()).resolves.toEqual({ baseFontSize: 21 });
+    expect(JSON.parse(mocks.getPreferencesJson() ?? "")).toEqual({ baseFontSize: 21 });
+    expect(mocks.getStoredValue("t3code.preferences.fallback")).toBeNull();
+
+    warn.mockRestore();
+  });
+
+  it("keeps SQLite authoritative when stale legacy preferences remain", async () => {
+    mocks.setPreferencesJson(JSON.stringify({ baseFontSize: 21 }), 30);
+    await mocks.setItemAsync("t3code.preferences", JSON.stringify({ baseFontSize: 19 }));
+
+    await expect(loadPreferences()).resolves.toEqual({ baseFontSize: 21 });
+    expect(JSON.parse(mocks.getPreferencesJson() ?? "")).toEqual({ baseFontSize: 21 });
+  });
 });

@@ -182,6 +182,7 @@ export async function clearSavedConnection(environmentId: EnvironmentId): Promis
 interface PreferencesFallback {
   readonly payload: string;
   readonly updatedAt: number;
+  readonly preferences: Preferences;
 }
 
 let lastPreferencesUpdatedAt = 0;
@@ -189,6 +190,14 @@ let lastPreferencesUpdatedAt = 0;
 function nextPreferencesUpdatedAt(): number {
   lastPreferencesUpdatedAt = Math.max(Date.now(), lastPreferencesUpdatedAt + 1);
   return lastPreferencesUpdatedAt;
+}
+
+function parsePreferencesPayload(raw: string | null): Preferences | null {
+  if (raw === null) return null;
+  const parsed = parseJsonStorageItem<unknown>(PREFERENCES_KEY, raw);
+  return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+    ? (parsed as Preferences)
+    : null;
 }
 
 function parsePreferencesFallback(raw: string | null): PreferencesFallback | null {
@@ -204,7 +213,10 @@ function parsePreferencesFallback(raw: string | null): PreferencesFallback | nul
   ) {
     return null;
   }
-  return { payload: parsed.payload, updatedAt: parsed.updatedAt };
+  const preferences = parsePreferencesPayload(parsed.payload);
+  return preferences === null
+    ? null
+    : { payload: parsed.payload, updatedAt: parsed.updatedAt, preferences };
 }
 
 async function savePreferencesJson(
@@ -249,31 +261,36 @@ export async function loadPreferences(): Promise<Preferences> {
     return null;
   });
   const fallback = parsePreferencesFallback(fallbackJson);
+  const storedPreferences = Option.isSome(storedJson)
+    ? parsePreferencesPayload(storedJson.value.payload)
+    : null;
   const fallbackIsNewer =
     fallback !== null &&
-    (Option.isNone(storedJson) || fallback.updatedAt > storedJson.value.updatedAt);
+    (storedPreferences === null ||
+      (Option.isSome(storedJson) && fallback.updatedAt > storedJson.value.updatedAt));
 
-  let selectedJson: string | null = null;
+  let parsed: Preferences | null = null;
   if (fallbackIsNewer) {
-    selectedJson = fallback.payload;
+    parsed = fallback.preferences;
     lastPreferencesUpdatedAt = Math.max(lastPreferencesUpdatedAt, fallback.updatedAt);
     if (databaseAvailable) {
       await savePreferencesJson(fallback.payload, fallback.updatedAt);
     }
-  } else if (Option.isSome(storedJson)) {
-    selectedJson = storedJson.value.payload;
+  } else if (storedPreferences !== null && Option.isSome(storedJson)) {
+    parsed = storedPreferences;
     lastPreferencesUpdatedAt = Math.max(lastPreferencesUpdatedAt, storedJson.value.updatedAt);
-    if (fallback !== null) {
+    if (fallbackJson !== null) {
       await deleteStorageItem(PREFERENCES_FALLBACK_KEY).catch((cause) => {
         console.warn("[mobile-storage] could not remove stale preferences fallback", cause);
       });
     }
   }
 
-  if (selectedJson === null) {
+  if (parsed === null) {
     const legacyJson = await readStorageItem(PREFERENCES_KEY);
-    selectedJson = legacyJson;
-    if (legacyJson !== null && databaseAvailable) {
+    const legacyPreferences = parsePreferencesPayload(legacyJson);
+    parsed = legacyPreferences;
+    if (legacyJson !== null && legacyPreferences !== null && databaseAvailable) {
       await savePreferencesJson(legacyJson);
       await deleteStorageItem(PREFERENCES_KEY).catch((cause) => {
         console.warn("[mobile-storage] could not remove migrated preferences", cause);
@@ -281,10 +298,7 @@ export async function loadPreferences(): Promise<Preferences> {
     }
   }
 
-  const parsed =
-    selectedJson === null ? null : parseJsonStorageItem<Preferences>(PREFERENCES_KEY, selectedJson);
-
-  if (!parsed || typeof parsed !== "object") {
+  if (parsed === null) {
     return {};
   }
 
