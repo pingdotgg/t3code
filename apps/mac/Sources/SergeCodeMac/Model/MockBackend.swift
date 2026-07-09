@@ -468,6 +468,22 @@ private actor MockState {
                     EffortChoice(id: "medium", label: "Medium", isDefault: false),
                     EffortChoice(id: "high", label: "High", isDefault: true),
                 ]),
+            ModelOption(
+                instanceID: "provider-fugu", modelID: "fugu",
+                displayName: "Fugu", provider: .fugu, isDefault: true,
+                effortOptionID: "reasoningEffort",
+                effortChoices: [
+                    EffortChoice(id: "high", label: "High", isDefault: true),
+                    EffortChoice(id: "xhigh", label: "Extra High", isDefault: false),
+                ]),
+            ModelOption(
+                instanceID: "provider-fugu", modelID: "fugu-ultra",
+                displayName: "Fugu Ultra", provider: .fugu, isDefault: false,
+                effortOptionID: "reasoningEffort",
+                effortChoices: [
+                    EffortChoice(id: "high", label: "High", isDefault: true),
+                    EffortChoice(id: "xhigh", label: "Extra High", isDefault: false),
+                ]),
         ]
     }
 
@@ -674,6 +690,7 @@ private actor MockState {
             ProviderInstance(id: "provider-codex", kind: .codex, availability: .available, version: "0.9.0"),
             ProviderInstance(id: "provider-cursor", kind: .cursor, availability: .authRequired, version: nil),
             ProviderInstance(id: "provider-grok", kind: .grok, availability: .available, version: "0.2.91"),
+            ProviderInstance(id: "provider-fugu", kind: .fugu, availability: .available, version: "0.1.0"),
             ProviderInstance(id: "provider-opencode", kind: .opencode, availability: .missing, version: nil),
         ]
 
@@ -718,8 +735,16 @@ private actor MockState {
             status: .idle,
             updatedAt: now.addingTimeInterval(-10_800)
         )
+        let thread6 = ChatThread(
+            id: "thread-6",
+            projectID: projectA.id,
+            title: "Surface Fugu provider",
+            provider: .fugu,
+            status: .idle,
+            updatedAt: now.addingTimeInterval(-14_400)
+        )
 
-        for thread in [thread1, thread2, thread3, thread4, thread5] {
+        for thread in [thread1, thread2, thread3, thread4, thread5, thread6] {
             threadsByID[thread.id] = thread
         }
 

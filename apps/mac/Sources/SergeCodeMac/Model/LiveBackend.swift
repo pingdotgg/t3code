@@ -34,7 +34,7 @@ import T3Kit
 //
 // ── Mapping decisions (wire -> UI) — best-effort, documented, never silent ────
 //  * ProviderKind: derived from ServerProvider.driver by substring match
-//    (claude/codex/cursor/grok/opencode). Drivers with no ProviderKind
+//    (claude/codex/cursor/grok/fugu/opencode). Drivers with no ProviderKind
 //    equivalent are dropped from providers() — ProviderKind is a closed enum
 //    with no `.other`. See `providerKind(fromDriver:)`.
 //  * A thread's ProviderKind is resolved from its modelSelection.instanceId via
@@ -2208,6 +2208,7 @@ public actor LiveBackend: BackendService {
         if lowered.contains("codex") { return .codex }
         if lowered.contains("cursor") { return .cursor }
         if lowered.contains("grok") { return .grok }
+        if lowered.contains("fugu") { return .fugu }
         if lowered.contains("opencode") { return .opencode }
         return nil
     }

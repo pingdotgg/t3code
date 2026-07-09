@@ -7,14 +7,15 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-import { type CodexSettings, type ModelSelection } from "@t3tools/contracts";
+import { type ModelSelection } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
-import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { isCommandAvailable, resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import { TextGenerationError } from "@t3tools/contracts";
+import type { CodexAppServerSettings } from "../provider/Layers/CodexProvider.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
@@ -35,19 +36,39 @@ import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
 const CODEX_GIT_TEXT_GENERATION_REASONING_EFFORT = "low";
 const CODEX_TIMEOUT_MS = 180_000;
 const encodeJsonString = Schema.encodeEffect(Schema.UnknownFromJsonString);
+
+export type CodexTextGenerationOptions = {
+  /**
+   * Default `model_reasoning_effort` when the model selection has none.
+   * Codex git helpers use `low`; Fugu models only accept `high`/`xhigh`.
+   */
+  readonly defaultReasoningEffort?: string;
+  /**
+   * Display name in user-facing CLI error messages (default `"Codex"`).
+   * Fugu passes `"Fugu"`.
+   */
+  readonly displayName?: string;
+};
+
 /**
- * Build a Codex text-generation closure bound to a specific `CodexSettings`
- * payload. See `makeCodexAdapter` for the overall per-instance rationale.
+ * Build a Codex text-generation closure bound to a specific Codex app-server
+ * settings payload. See `makeCodexAdapter` for the overall per-instance rationale.
  */
 export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(function* (
-  codexConfig: CodexSettings,
+  codexConfig: CodexAppServerSettings,
   environment?: NodeJS.ProcessEnv,
+  options?: CodexTextGenerationOptions,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const serverConfig = yield* Effect.service(ServerConfig.ServerConfig);
   const resolvedEnvironment = environment ?? process.env;
+  const defaultReasoningEffort =
+    options?.defaultReasoningEffort ?? CODEX_GIT_TEXT_GENERATION_REASONING_EFFORT;
+  const displayName = options?.displayName ?? "Codex";
+  const binaryPath = codexConfig.binaryPath.trim() || "codex";
+  const errorProviderKey = path.basename(binaryPath).toLowerCase();
 
   type MaterializedImageAttachments = {
     readonly imagePaths: ReadonlyArray<string>;
@@ -64,7 +85,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         (acc, chunk) => acc + chunk,
       ),
       Effect.mapError((cause) =>
-        normalizeCliError("codex", operation, cause, "Failed to collect process output"),
+        normalizeCliError(errorProviderKey, operation, cause, "Failed to collect process output"),
       ),
     );
 
@@ -176,10 +197,20 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     const runCodexCommand = Effect.fn("runCodexJson.runCodexCommand")(function* () {
       const reasoningEffort =
         getModelSelectionStringOptionValue(modelSelection, "reasoningEffort") ??
-        CODEX_GIT_TEXT_GENERATION_REASONING_EFFORT;
+        defaultReasoningEffort;
       const serviceTier = getCodexServiceTierOptionValue(modelSelection);
+      const commandAvailable = yield* isCommandAvailable(binaryPath, { env: resolvedEnvironment });
+      if (!commandAvailable) {
+        return yield* normalizeCliError(
+          errorProviderKey,
+          operation,
+          new Error(`Command not found: ${errorProviderKey}`),
+          `Failed to spawn ${displayName} CLI process`,
+        );
+      }
+
       const spawnCommand = yield* resolveSpawnCommand(
-        codexConfig.binaryPath || "codex",
+        binaryPath,
         [
           "exec",
           "--ephemeral",
@@ -216,7 +247,12 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         .spawn(command)
         .pipe(
           Effect.mapError((cause) =>
-            normalizeCliError("codex", operation, cause, "Failed to spawn Codex CLI process"),
+            normalizeCliError(
+              errorProviderKey,
+              operation,
+              cause,
+              `Failed to spawn ${displayName} CLI process`,
+            ),
           ),
         );
 
@@ -226,7 +262,12 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           readStreamAsString(operation, child.stderr),
           child.exitCode.pipe(
             Effect.mapError((cause) =>
-              normalizeCliError("codex", operation, cause, "Failed to read Codex CLI exit code"),
+              normalizeCliError(
+                errorProviderKey,
+                operation,
+                cause,
+                `Failed to read ${displayName} CLI exit code`,
+              ),
             ),
           ),
         ],
@@ -241,8 +282,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           operation,
           detail:
             detail.length > 0
-              ? `Codex CLI command failed: ${detail}`
-              : `Codex CLI command failed with code ${exitCode}.`,
+              ? `${displayName} CLI command failed: ${detail}`
+              : `${displayName} CLI command failed with code ${exitCode}.`,
         });
       }
     });
@@ -262,7 +303,10 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           Option.match({
             onNone: () =>
               Effect.fail(
-                new TextGenerationError({ operation, detail: "Codex CLI request timed out." }),
+                new TextGenerationError({
+                  operation,
+                  detail: `${displayName} CLI request timed out.`,
+                }),
               ),
             onSome: () => Effect.void,
           }),
@@ -276,7 +320,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           (cause) =>
             new TextGenerationError({
               operation,
-              detail: "Failed to read Codex output file.",
+              detail: `Failed to read ${displayName} output file.`,
               cause,
             }),
         ),
@@ -286,7 +330,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
             Effect.fail(
               new TextGenerationError({
                 operation,
-                detail: "Codex returned invalid structured output.",
+                detail: `${displayName} returned invalid structured output.`,
                 cause,
               }),
             ),

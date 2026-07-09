@@ -191,6 +191,44 @@ describe("normalizeCliError", () => {
     expect(result.detail).toBe("fallback");
   });
 
+  it("detects unavailable CLIs from non-Error spawn messages", () => {
+    const result = normalizeCliError(
+      "codex",
+      "generateCommitMessage",
+      "spawn codex ENOENT",
+      "fallback",
+    );
+
+    expect(result).toBeInstanceOf(TextGenerationError);
+    expect(result.detail).toContain("Codex CLI");
+    expect(result.detail).toContain("not available on PATH");
+  });
+
+  it("detects unavailable CLIs from absolute-path spawn messages", () => {
+    const result = normalizeCliError(
+      "codex",
+      "generateCommitMessage",
+      "spawn /opt/homebrew/bin/codex ENOENT",
+      "fallback",
+    );
+
+    expect(result).toBeInstanceOf(TextGenerationError);
+    expect(result.detail).toContain("Codex CLI");
+    expect(result.detail).toContain("not available on PATH");
+  });
+
+  it("does not classify unrelated ENOENT messages as missing CLIs", () => {
+    const result = normalizeCliError(
+      "codex",
+      "generateCommitMessage",
+      { message: "ENOENT: no such file or directory, open '/tmp/t3code-codex-output.json'" },
+      "Failed to read output file",
+    );
+
+    expect(result).toBeInstanceOf(TextGenerationError);
+    expect(result.detail).toBe("Failed to read output file");
+  });
+
   it("does not expose CLI failure details in the public error message", () => {
     const result = normalizeCliError(
       "codex",

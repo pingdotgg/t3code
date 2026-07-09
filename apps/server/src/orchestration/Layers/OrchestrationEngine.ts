@@ -104,9 +104,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
     readonly pubsub: PubSub.PubSub<OrchestrationEvent>;
     readonly refCount: number;
   };
-  const threadEventBuses = yield* SynchronizedRef.make(
-    new Map<ThreadId, ThreadEventBusEntry>(),
-  );
+  const threadEventBuses = yield* SynchronizedRef.make(new Map<ThreadId, ThreadEventBusEntry>());
 
   const acquireThreadEventBus = (threadId: ThreadId) =>
     SynchronizedRef.modifyEffect(threadEventBuses, (buses) => {
@@ -134,9 +132,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       if (entry.refCount <= 1) {
         const next = new Map(buses);
         next.delete(threadId);
-        return PubSub.shutdown(entry.pubsub).pipe(
-          Effect.as([undefined as void, next] as const),
-        );
+        return PubSub.shutdown(entry.pubsub).pipe(Effect.as([undefined as void, next] as const));
       }
       const next = new Map(buses);
       next.set(threadId, { pubsub: entry.pubsub, refCount: entry.refCount - 1 });
@@ -151,9 +147,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       }
       const next = new Map(buses);
       next.delete(threadId);
-      return PubSub.shutdown(entry.pubsub).pipe(
-        Effect.as([undefined as void, next] as const),
-      );
+      return PubSub.shutdown(entry.pubsub).pipe(Effect.as([undefined as void, next] as const));
     });
 
   /**

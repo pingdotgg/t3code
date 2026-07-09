@@ -69,6 +69,38 @@ function cliLabel(cliName: string): string {
   return `${capitalized} CLI (\`${cliName}\`)`;
 }
 
+function unknownErrorMessage(error: unknown): string | null {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  if (typeof error === "object" && error !== null && "message" in error) {
+    const message = error.message;
+    return typeof message === "string" ? message : null;
+  }
+  return null;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function messageReferencesCliExecutable(message: string, cliName: string): boolean {
+  const escapedCliName = escapeRegExp(cliName);
+  return new RegExp(`(?:^|[\\s:/\\\\])${escapedCliName}(?:$|[\\s:/\\\\.]|\\.exe\\b)`).test(message);
+}
+
+function isCliUnavailableMessage(message: string, cliName: string): boolean {
+  const lower = message.toLowerCase();
+  const lowerCliName = cliName.toLowerCase();
+  return (
+    lower.includes(`command not found: ${lowerCliName}`) ||
+    (lower.includes("spawn") && messageReferencesCliExecutable(lower, lowerCliName))
+  );
+}
+
 /**
  * Normalize an unknown error from a CLI text generation process into a
  * typed `TextGenerationError`. Parameterized by CLI name so both Codex
@@ -84,19 +116,16 @@ export function normalizeCliError(
     return error;
   }
 
+  const message = unknownErrorMessage(error);
+  if (message && isCliUnavailableMessage(message, cliName)) {
+    return new TextGenerationError({
+      operation,
+      detail: `${cliLabel(cliName)} is required but not available on PATH.`,
+      cause: error,
+    });
+  }
+
   if (error instanceof Error) {
-    const lower = error.message.toLowerCase();
-    if (
-      error.message.includes(`Command not found: ${cliName}`) ||
-      lower.includes(`spawn ${cliName}`) ||
-      lower.includes("enoent")
-    ) {
-      return new TextGenerationError({
-        operation,
-        detail: `${cliLabel(cliName)} is required but not available on PATH.`,
-        cause: error,
-      });
-    }
     return new TextGenerationError({
       operation,
       detail: fallback,

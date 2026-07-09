@@ -14,7 +14,6 @@ import * as CodexSchema from "effect-codex-app-server/schema";
 import * as CodexErrors from "effect-codex-app-server/errors";
 
 import type {
-  CodexSettings,
   ServerProvider,
   ServerProviderState,
   ModelCapabilities,
@@ -30,6 +29,7 @@ import {
   AUTH_PROBE_TIMEOUT_MS,
   buildServerProvider,
   type ServerProviderDraft,
+  type ServerProviderPresentation,
 } from "../providerSnapshot.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import packageJson from "../../../package.json" with { type: "json" };
@@ -37,10 +37,29 @@ const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnErro
 
 const CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER = "2 seconds" as const;
 
-const CODEX_PRESENTATION = {
-  displayName: "Codex",
-  showInteractionModeToggle: true,
-} as const;
+/** Settings surface shared by Codex and Codex-backed drivers (e.g. Fugu). */
+export type CodexAppServerSettings = {
+  readonly enabled: boolean;
+  readonly binaryPath: string;
+  readonly homePath: string;
+  readonly customModels: ReadonlyArray<string>;
+};
+
+export type CodexProviderIdentity = {
+  readonly presentation: ServerProviderPresentation;
+  /** Short label used in probe/status messages (e.g. "Codex", "Fugu"). */
+  readonly label: string;
+  readonly notInstalledMessage?: string;
+  readonly unauthenticatedMessage?: string;
+};
+
+const CODEX_IDENTITY: CodexProviderIdentity = {
+  presentation: {
+    displayName: "Codex",
+    showInteractionModeToggle: true,
+  },
+  label: "Codex",
+};
 
 export interface CodexAppServerProviderSnapshot {
   readonly account: CodexSchema.V2GetAccountResponse;
@@ -373,7 +392,9 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   } satisfies CodexAppServerProviderSnapshot;
 });
 
-const emptyCodexModelsFromSettings = (codexSettings: CodexSettings): ServerProvider["models"] => {
+const emptyCodexModelsFromSettings = (
+  codexSettings: CodexAppServerSettings,
+): ServerProvider["models"] => {
   const models = new Set<string>();
   for (const model of codexSettings.customModels) {
     const trimmed = model.trim();
@@ -390,15 +411,17 @@ const emptyCodexModelsFromSettings = (codexSettings: CodexSettings): ServerProvi
 };
 
 const makePendingCodexProvider = (
-  codexSettings: CodexSettings,
+  codexSettings: CodexAppServerSettings,
+  identity: CodexProviderIdentity = CODEX_IDENTITY,
 ): Effect.Effect<ServerProviderDraft> =>
   Effect.gen(function* () {
     const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
     const models = emptyCodexModelsFromSettings(codexSettings);
+    const { presentation, label } = identity;
 
     if (!codexSettings.enabled) {
       return buildServerProvider({
-        presentation: CODEX_PRESENTATION,
+        presentation,
         enabled: false,
         checkedAt,
         models,
@@ -408,13 +431,13 @@ const makePendingCodexProvider = (
           version: null,
           status: "warning",
           auth: { status: "unknown" },
-          message: "Codex is disabled in T3 Code settings.",
+          message: `${label} is disabled in T3 Code settings.`,
         },
       });
     }
 
     return buildServerProvider({
-      presentation: CODEX_PRESENTATION,
+      presentation,
       enabled: true,
       checkedAt,
       models,
@@ -424,12 +447,15 @@ const makePendingCodexProvider = (
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Codex provider status has not been checked in this session yet.",
+        message: `${label} provider status has not been checked in this session yet.`,
       },
     });
   });
 
-function accountProbeStatus(account: CodexAppServerProviderSnapshot["account"]): {
+function accountProbeStatus(
+  account: CodexAppServerProviderSnapshot["account"],
+  identity: CodexProviderIdentity = CODEX_IDENTITY,
+): {
   readonly status: Exclude<ServerProviderState, "disabled">;
   readonly auth: ServerProvider["auth"];
   readonly message?: string;
@@ -451,7 +477,9 @@ function accountProbeStatus(account: CodexAppServerProviderSnapshot["account"]):
     return {
       status: "error",
       auth: { status: "unauthenticated" },
-      message: "Codex CLI is not authenticated. Run `codex login` and try again.",
+      message:
+        identity.unauthenticatedMessage ??
+        "Codex CLI is not authenticated. Run `codex login` and try again.",
     };
   }
 
@@ -459,7 +487,7 @@ function accountProbeStatus(account: CodexAppServerProviderSnapshot["account"]):
 }
 
 export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(function* (
-  codexSettings: CodexSettings,
+  codexSettings: CodexAppServerSettings,
   probe: (input: {
     readonly binaryPath: string;
     readonly homePath?: string;
@@ -472,6 +500,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     ChildProcessSpawner.ChildProcessSpawner | Scope.Scope
   > = probeCodexAppServerProvider,
   environment?: NodeJS.ProcessEnv,
+  identity: CodexProviderIdentity = CODEX_IDENTITY,
 ): Effect.fn.Return<
   ServerProviderDraft,
   ServerSettingsError,
@@ -480,10 +509,11 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const emptyModels = emptyCodexModelsFromSettings(codexSettings);
+  const { presentation, label } = identity;
 
   if (!codexSettings.enabled) {
     return buildServerProvider({
-      presentation: CODEX_PRESENTATION,
+      presentation,
       enabled: false,
       checkedAt,
       models: emptyModels,
@@ -493,7 +523,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Codex is disabled in T3 Code settings.",
+        message: `${label} is disabled in T3 Code settings.`,
       },
     });
   }
@@ -514,7 +544,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     const error = probeResult.failure;
     const installed = !isCodexAppServerSpawnError(error);
     return buildServerProvider({
-      presentation: CODEX_PRESENTATION,
+      presentation,
       enabled: codexSettings.enabled,
       checkedAt,
       models: emptyModels,
@@ -525,15 +555,16 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         status: "error",
         auth: { status: "unknown" },
         message: installed
-          ? `Codex app-server provider probe failed: ${error.message}.`
-          : "Codex CLI (`codex`) is not installed or not on PATH.",
+          ? `${label} app-server provider probe failed: ${error.message}.`
+          : (identity.notInstalledMessage ??
+            "Codex CLI (`codex`) is not installed or not on PATH."),
       },
     });
   }
 
   if (Option.isNone(probeResult.success)) {
     return buildServerProvider({
-      presentation: CODEX_PRESENTATION,
+      presentation,
       enabled: codexSettings.enabled,
       checkedAt,
       models: emptyModels,
@@ -543,16 +574,16 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         version: null,
         status: "error",
         auth: { status: "unknown" },
-        message: "Timed out while checking Codex app-server provider status.",
+        message: `Timed out while checking ${label} app-server provider status.`,
       },
     });
   }
 
   const snapshot = probeResult.success.value;
-  const accountStatus = accountProbeStatus(snapshot.account);
+  const accountStatus = accountProbeStatus(snapshot.account, identity);
 
   return buildServerProvider({
-    presentation: CODEX_PRESENTATION,
+    presentation,
     enabled: codexSettings.enabled,
     checkedAt,
     models: snapshot.models,

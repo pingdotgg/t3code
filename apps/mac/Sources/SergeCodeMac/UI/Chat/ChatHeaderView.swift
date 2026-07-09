@@ -55,6 +55,7 @@ private struct ProviderBadge: View {
         case .codex: "chevron.left.forwardslash.chevron.right"
         case .cursor: "cursorarrow"
         case .grok: "bolt"
+        case .fugu: "fish"
         case .opencode: "shippingbox"
         }
     }

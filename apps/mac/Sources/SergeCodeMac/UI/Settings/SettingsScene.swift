@@ -444,6 +444,7 @@ private extension ProviderKind {
         case .codex: "chevron.left.forwardslash.chevron.right"
         case .cursor: "cursorarrow"
         case .grok: "bolt"
+        case .fugu: "fish"
         case .opencode: "curlybraces"
         }
     }
@@ -454,6 +455,7 @@ private extension ProviderKind {
         case .codex: "codex"
         case .cursor: "cursor-agent"
         case .grok: "grok"
+        case .fugu: "codex"
         case .opencode: "opencode"
         }
     }

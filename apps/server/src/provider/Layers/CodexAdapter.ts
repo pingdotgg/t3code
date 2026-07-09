@@ -10,7 +10,6 @@
 import {
   type CanonicalItemType,
   type CanonicalRequestType,
-  type CodexSettings,
   EventId,
   ProviderDriverKind,
   type ProviderEvent,
@@ -63,6 +62,7 @@ import {
   type CodexSessionRuntimeOptions,
   type CodexSessionRuntimeShape,
 } from "./CodexSessionRuntime.ts";
+import type { CodexAppServerSettings } from "./CodexProvider.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 const isCodexAppServerProcessExitedError = Schema.is(CodexErrors.CodexAppServerProcessExitedError);
 const isCodexAppServerTransportError = Schema.is(CodexErrors.CodexAppServerTransportError);
@@ -71,10 +71,12 @@ const isCodexSessionRuntimeThreadIdMissingError = Schema.is(
 );
 const isCodexResumeCursorSchema = Schema.is(CodexResumeCursorSchema);
 
-const PROVIDER = ProviderDriverKind.make("codex");
+const DEFAULT_CODEX_DRIVER_KIND = ProviderDriverKind.make("codex");
 
 export interface CodexAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
+  /** Driver kind stamped on adapter events/errors. Defaults to `codex`. */
+  readonly driverKind?: ProviderDriverKind;
   readonly environment?: NodeJS.ProcessEnv;
   readonly makeRuntime?: (
     options: CodexSessionRuntimeOptions,
@@ -96,13 +98,14 @@ interface CodexAdapterSessionContext {
 }
 
 function mapCodexRuntimeError(
+  provider: ProviderDriverKind,
   threadId: ThreadId,
   method: string,
   error: CodexSessionRuntimeError,
 ): ProviderAdapterError {
   if (isCodexAppServerProcessExitedError(error) || isCodexAppServerTransportError(error)) {
     return new ProviderAdapterSessionClosedError({
-      provider: PROVIDER,
+      provider,
       threadId,
       cause: error,
     });
@@ -110,14 +113,14 @@ function mapCodexRuntimeError(
 
   if (isCodexSessionRuntimeThreadIdMissingError(error)) {
     return new ProviderAdapterSessionNotFoundError({
-      provider: PROVIDER,
+      provider,
       threadId,
       cause: error,
     });
   }
 
   return new ProviderAdapterRequestError({
-    provider: PROVIDER,
+    provider,
     method,
     detail: error.message,
     cause: error,
@@ -1471,9 +1474,10 @@ function mapToRuntimeEvents(
  * instances with different `homePath`s cannot step on each other.
  */
 export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
-  codexConfig: CodexSettings,
+  codexConfig: CodexAppServerSettings,
   options?: CodexAdapterLiveOptions,
 ) {
+  const PROVIDER = options?.driverKind ?? DEFAULT_CODEX_DRIVER_KIND;
   const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("codex");
   const fileSystem = yield* FileSystem.FileSystem;
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -1695,7 +1699,11 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
         ...(codexAttachments.length > 0 ? { attachments: codexAttachments } : {}),
       })
-      .pipe(Effect.mapError((cause) => mapCodexRuntimeError(input.threadId, "turn/start", cause)));
+      .pipe(
+        Effect.mapError((cause) =>
+          mapCodexRuntimeError(PROVIDER, input.threadId, "turn/start", cause),
+        ),
+      );
   });
 
   const requireSession = Effect.fn("requireSession")(function* (threadId: ThreadId) {
@@ -1715,7 +1723,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       Effect.mapError((cause) =>
         cause._tag === "ProviderAdapterSessionNotFoundError"
           ? cause
-          : mapCodexRuntimeError(threadId, "turn/interrupt", cause),
+          : mapCodexRuntimeError(PROVIDER, threadId, "turn/interrupt", cause),
       ),
     );
 
@@ -1725,7 +1733,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       Effect.mapError((cause) =>
         cause._tag === "ProviderAdapterSessionNotFoundError"
           ? cause
-          : mapCodexRuntimeError(threadId, "thread/read", cause),
+          : mapCodexRuntimeError(PROVIDER, threadId, "thread/read", cause),
       ),
       Effect.map((snapshot) => ({
         threadId,
@@ -1749,7 +1757,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       Effect.mapError((cause) =>
         cause._tag === "ProviderAdapterSessionNotFoundError"
           ? cause
-          : mapCodexRuntimeError(threadId, "thread/rollback", cause),
+          : mapCodexRuntimeError(PROVIDER, threadId, "thread/rollback", cause),
       ),
       Effect.map((snapshot) => ({
         threadId,
@@ -1764,7 +1772,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       Effect.mapError((cause) =>
         cause._tag === "ProviderAdapterSessionNotFoundError"
           ? cause
-          : mapCodexRuntimeError(threadId, "item/requestApproval/decision", cause),
+          : mapCodexRuntimeError(PROVIDER, threadId, "item/requestApproval/decision", cause),
       ),
     );
 
@@ -1778,7 +1786,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       Effect.mapError((cause) =>
         cause._tag === "ProviderAdapterSessionNotFoundError"
           ? cause
-          : mapCodexRuntimeError(threadId, "item/tool/requestUserInput", cause),
+          : mapCodexRuntimeError(PROVIDER, threadId, "item/tool/requestUserInput", cause),
       ),
     );
 
