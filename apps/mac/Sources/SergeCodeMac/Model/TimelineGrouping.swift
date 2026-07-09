@@ -54,7 +54,7 @@ extension Array where Element == TimelineItem {
             defer { run.removeAll() }
             guard !run.isEmpty else { return }
             let tools = run.compactMap { item -> ToolCall? in
-                guard case .toolEvent(_, _, let detail, let kind, let status, _) = item else {
+                guard case .toolEvent(_, _, let detail, let kind, let status, _, _, _) = item else {
                     return nil
                 }
                 return ToolCall(detail: detail, kind: kind, status: status)

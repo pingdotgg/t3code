@@ -4,10 +4,27 @@ public enum T3SubagentTaskState: String, Sendable, Equatable {
     case running, completed, failed, stopped
 }
 
+/// One progress update for a subagent task. Consecutive identical
+/// (toolName, text) pairs are dropped by the aggregator.
+public struct T3SubagentTaskProgressEntry: Sendable, Equatable {
+    public var at: Date
+    public var toolName: String?
+    public var text: String
+
+    public init(at: Date, toolName: String?, text: String) {
+        self.at = at
+        self.toolName = toolName
+        self.text = text
+    }
+}
+
 /// Aggregated view of Claude Agent SDK task lifecycle telemetry. One item is
 /// keyed by `taskId`; start/progress/completion events update that item in
 /// place so UIs can keep the row anchored at the original spawn position.
 public struct T3SubagentTaskItem: Sendable, Equatable {
+    /// Soft cap on retained progress entries; oldest dropped first.
+    public static let maxProgressLogEntries = 200
+
     public var taskId: String
     public var taskType: String?
     public var description: String?
@@ -17,12 +34,39 @@ public struct T3SubagentTaskItem: Sendable, Equatable {
     public var startedAt: Date
     public var completedAt: Date?
     public var completionSummary: String?
+    /// Ordered progress updates (oldest first). Rebuild replays events in
+    /// sequence so this matches incremental apply.
+    public var progressLog: [T3SubagentTaskProgressEntry]
 
     public var id: String { "subagent-task:\(taskId)" }
 
     public var duration: TimeInterval? {
         guard let completedAt else { return nil }
         return max(0, completedAt.timeIntervalSince(startedAt))
+    }
+
+    public init(
+        taskId: String,
+        taskType: String?,
+        description: String?,
+        state: T3SubagentTaskState,
+        latestProgress: String?,
+        lastToolName: String?,
+        startedAt: Date,
+        completedAt: Date?,
+        completionSummary: String?,
+        progressLog: [T3SubagentTaskProgressEntry] = []
+    ) {
+        self.taskId = taskId
+        self.taskType = taskType
+        self.description = description
+        self.state = state
+        self.latestProgress = latestProgress
+        self.lastToolName = lastToolName
+        self.startedAt = startedAt
+        self.completedAt = completedAt
+        self.completionSummary = completionSummary
+        self.progressLog = progressLog
     }
 }
 
@@ -91,6 +135,11 @@ public struct T3SubagentTaskActivityState: Sendable, Equatable {
                 progressLine(lastToolName: payload?.lastToolName, summary: payload?.summary)
                 ?? nonEmpty(payload?.detail)
                 ?? item.latestProgress
+            appendProgress(
+                to: &item,
+                at: at,
+                toolName: payload?.lastToolName,
+                text: nonEmpty(payload?.summary) ?? nonEmpty(payload?.detail))
             if item.completedAt == nil {
                 item.state = .running
             }
@@ -111,6 +160,17 @@ public struct T3SubagentTaskActivityState: Sendable, Equatable {
             item.completionSummary =
                 nonEmpty(payload?.summary) ?? nonEmpty(payload?.detail) ?? item.completionSummary
             item.latestProgress = item.completionSummary ?? item.latestProgress
+            // Completion summary is task-level (unbadged unless payload carries lastToolName).
+            // Dedupe by text alone so a prior tool-badged line with the same text is not repeated.
+            let completionText = nonEmpty(item.completionSummary)
+            let lastLogText = item.progressLog.last.map(\.text)
+            if completionText != nil, completionText != lastLogText {
+                appendProgress(
+                    to: &item,
+                    at: at,
+                    toolName: payload?.lastToolName,
+                    text: item.completionSummary)
+            }
             item.completedAt = at
             item.state = state(forStatus: payload?.status)
             store(item)
@@ -140,7 +200,7 @@ public struct T3SubagentTaskActivityState: Sendable, Equatable {
         return T3SubagentTaskItem(
             taskId: taskId, taskType: nil, description: nil, state: .running,
             latestProgress: nil, lastToolName: nil, startedAt: at, completedAt: nil,
-            completionSummary: nil)
+            completionSummary: nil, progressLog: [])
     }
 
     private mutating func store(_ item: T3SubagentTaskItem) {
@@ -166,6 +226,27 @@ public struct T3SubagentTaskActivityState: Sendable, Equatable {
         let rhsDate = WireDate.parse(rhs.createdAt) ?? .distantPast
         if lhsDate != rhsDate { return lhsDate < rhsDate }
         return (lhs.sequence ?? 0) < (rhs.sequence ?? 0)
+    }
+}
+
+/// Append a progress entry when text is non-empty and differs from the last
+/// entry's (toolName, text) pair. Caps at `maxProgressLogEntries`.
+private func appendProgress(
+    to item: inout T3SubagentTaskItem,
+    at: Date,
+    toolName: String?,
+    text: String?
+) {
+    guard let text = nonEmpty(text) else { return }
+    let tool = nonEmpty(toolName)
+    if let last = item.progressLog.last, last.toolName == tool, last.text == text {
+        return
+    }
+    item.progressLog.append(
+        T3SubagentTaskProgressEntry(at: at, toolName: tool, text: text))
+    let max = T3SubagentTaskItem.maxProgressLogEntries
+    if item.progressLog.count > max {
+        item.progressLog.removeFirst(item.progressLog.count - max)
     }
 }
 
