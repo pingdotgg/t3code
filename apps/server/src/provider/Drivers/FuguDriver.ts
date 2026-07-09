@@ -269,7 +269,6 @@ export const FuguDriver: ProviderDriver<FuguSettings, FuguDriverEnv> = {
           const pending = yield* makePendingCodexProvider(effectiveConfig, FUGU_IDENTITY);
           return {
             ...pending,
-            installed: true,
             status: "error" as const,
             auth: { status: "unauthenticated" as const },
             message: FUGU_IDENTITY.unauthenticatedMessage,

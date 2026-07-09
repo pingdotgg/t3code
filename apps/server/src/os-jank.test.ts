@@ -1,46 +1,75 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { hydratePosixProviderAuthEnvironment } from "./os-jank.ts";
+import { hydratePosixProcessEnvironment, hydratePosixProviderAuthEnvironment } from "./os-jank.ts";
 
 describe("hydratePosixProviderAuthEnvironment", () => {
-  it("hydrates missing Sakana API key from the login shell", () => {
+  it("hydrates missing Sakana API key from captured shell environment", () => {
     const env: NodeJS.ProcessEnv = { PATH: "/usr/bin" };
-    const readEnvironment = vi.fn(() => ({ SAKANA_API_KEY: "sk-sakana-test" }));
-
-    hydratePosixProviderAuthEnvironment(env, "darwin", {
-      readEnvironment,
-      shellCandidates: ["/bin/zsh"],
-    });
+    hydratePosixProviderAuthEnvironment(env, { SAKANA_API_KEY: "sk-sakana-test" });
 
     expect(env.SAKANA_API_KEY).toBe("sk-sakana-test");
-    expect(readEnvironment).toHaveBeenCalledWith("/bin/zsh", ["SAKANA_API_KEY"]);
   });
 
-  it("preserves an inherited Sakana API key without shell probing", () => {
+  it("preserves an inherited Sakana API key", () => {
     const env: NodeJS.ProcessEnv = {
       PATH: "/usr/bin",
       SAKANA_API_KEY: "already-present",
     };
-    const readEnvironment = vi.fn(() => ({ SAKANA_API_KEY: "from-shell" }));
+    hydratePosixProviderAuthEnvironment(env, { SAKANA_API_KEY: "from-shell" });
 
-    hydratePosixProviderAuthEnvironment(env, "darwin", {
+    expect(env.SAKANA_API_KEY).toBe("already-present");
+  });
+});
+
+describe("hydratePosixProcessEnvironment", () => {
+  it("captures PATH and Sakana API key in one login shell probe", () => {
+    const env: NodeJS.ProcessEnv = { PATH: "/usr/bin" };
+    const readEnvironment = vi.fn(() => ({
+      PATH: "/opt/homebrew/bin:/usr/local/bin",
+      SAKANA_API_KEY: "sk-sakana-test",
+    }));
+
+    hydratePosixProcessEnvironment(env, "darwin", {
       readEnvironment,
       shellCandidates: ["/bin/zsh"],
     });
 
+    expect(env.PATH).toBe("/opt/homebrew/bin:/usr/local/bin:/usr/bin");
+    expect(env.SAKANA_API_KEY).toBe("sk-sakana-test");
+    expect(readEnvironment).toHaveBeenCalledTimes(1);
+    expect(readEnvironment).toHaveBeenCalledWith("/bin/zsh", ["PATH", "SAKANA_API_KEY"]);
+  });
+
+  it("preserves inherited Sakana API key while hydrating PATH", () => {
+    const env: NodeJS.ProcessEnv = {
+      PATH: "/usr/bin",
+      SAKANA_API_KEY: "already-present",
+    };
+    const readEnvironment = vi.fn(() => ({ PATH: "/opt/homebrew/bin" }));
+
+    hydratePosixProcessEnvironment(env, "darwin", {
+      readEnvironment,
+      shellCandidates: ["/bin/zsh"],
+    });
+
+    expect(env.PATH).toBe("/opt/homebrew/bin:/usr/bin");
     expect(env.SAKANA_API_KEY).toBe("already-present");
-    expect(readEnvironment).not.toHaveBeenCalled();
+    expect(readEnvironment).toHaveBeenCalledWith("/bin/zsh", ["PATH"]);
   });
 
   it("ignores non-posix platforms", () => {
     const env: NodeJS.ProcessEnv = { PATH: "C:\\Windows\\System32" };
-    const readEnvironment = vi.fn(() => ({ SAKANA_API_KEY: "from-shell" }));
+    const readEnvironment = vi.fn(() => ({
+      PATH: "/opt/homebrew/bin",
+      SAKANA_API_KEY: "from-shell",
+    }));
 
-    hydratePosixProviderAuthEnvironment(env, "win32", {
+    hydratePosixProcessEnvironment(env, "win32", {
       readEnvironment,
       shellCandidates: ["powershell.exe"],
     });
 
+    expect(env.PATH).toBe("C:\\Windows\\System32");
     expect(env.SAKANA_API_KEY).toBeUndefined();
     expect(readEnvironment).not.toHaveBeenCalled();
   });
