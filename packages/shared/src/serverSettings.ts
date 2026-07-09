@@ -83,6 +83,11 @@ export function applyServerSettingsPatch(
     ...(patch.providerInstances !== undefined
       ? { providerInstances: patch.providerInstances }
       : {}),
+    // Whole-map replacement so sending an empty map clears stale team overrides
+    // (deepMerge would otherwise keep removed keys).
+    ...(patch.linear?.stateMappingByTeam !== undefined
+      ? { linear: { ...next.linear, stateMappingByTeam: patch.linear.stateMappingByTeam } }
+      : {}),
     ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
   };
   if (!selectionPatch) {

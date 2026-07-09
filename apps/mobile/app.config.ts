@@ -63,6 +63,14 @@ function resolveAppVariant(value: string | undefined): AppVariant {
 
 const variant = VARIANT_CONFIG[APP_VARIANT];
 
+// Account-specific overrides so a fork can build/submit under its own Apple +
+// Expo account (e.g. for a personal TestFlight) without editing this file.
+// All default to the upstream T3 Tools values.
+const iosBundleIdentifier = process.env.T3CODE_IOS_BUNDLE_ID ?? variant.iosBundleIdentifier;
+const easProjectId = process.env.EAS_PROJECT_ID ?? "d763fcb8-d37c-41ea-a773-b54a0ab4a454";
+const appleTeamId = process.env.APPLE_TEAM_ID ?? "ARK85ZXQ4Z";
+const expoOwner = process.env.EXPO_OWNER ?? "pingdotgg";
+
 const config: ExpoConfig = {
   name: variant.appName,
   slug: "t3-code",
@@ -81,18 +89,19 @@ const config: ExpoConfig = {
   userInterfaceStyle: "automatic",
   updates: {
     enabled: true,
-    url: "https://u.expo.dev/d763fcb8-d37c-41ea-a773-b54a0ab4a454",
+    url: `https://u.expo.dev/${easProjectId}`,
     checkAutomatically: "ON_LOAD",
     fallbackToCacheTimeout: 0,
   },
   ios: {
     icon: variant.iosIcon,
     supportsTablet: true,
-    bundleIdentifier: variant.iosBundleIdentifier,
+    bundleIdentifier: iosBundleIdentifier,
     // Pin code signing to the T3 Tools team so non-interactive `expo run:ios`
     // does not fall back to a personal team (which cannot sign app groups,
-    // Sign in with Apple, or push notification entitlements).
-    appleTeamId: "ARK85ZXQ4Z",
+    // Sign in with Apple, or push notification entitlements). Override with
+    // APPLE_TEAM_ID for a fork build under a different Apple account.
+    appleTeamId,
     associatedDomains: [
       `applinks:${variant.relyingParty}`,
       `webcredentials:${variant.relyingParty}`,
@@ -168,8 +177,8 @@ const config: ExpoConfig = {
     [
       "expo-widgets",
       {
-        bundleIdentifier: `${variant.iosBundleIdentifier}.widgets`,
-        groupIdentifier: `group.${variant.iosBundleIdentifier}`,
+        bundleIdentifier: `${iosBundleIdentifier}.widgets`,
+        groupIdentifier: `group.${iosBundleIdentifier}`,
         enablePushNotifications: true,
         // Agent activity can update many times an hour; without the
         // frequent-updates entitlement iOS throttles the update budget sooner.
@@ -211,10 +220,10 @@ const config: ExpoConfig = {
       tracesToken: repoEnv.EXPO_PUBLIC_OTLP_TRACES_TOKEN ?? null,
     },
     eas: {
-      projectId: "d763fcb8-d37c-41ea-a773-b54a0ab4a454",
+      projectId: easProjectId,
     },
   },
-  owner: "pingdotgg",
+  owner: expoOwner,
 };
 
 export default config;

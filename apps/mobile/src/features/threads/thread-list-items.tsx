@@ -16,6 +16,8 @@ import { relativeTime } from "../../lib/time";
 import { useThemeColor } from "../../lib/useThemeColor";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useThreadPr } from "../../state/use-thread-pr";
+import { linearEnvironment } from "../../state/linear";
+import { useAtomCommand } from "../../state/use-atom-command";
 import type { HomeGroupDisplayAction } from "../home/homeListItems";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { resolveThreadStatus } from "./threadPresentation";
@@ -446,6 +448,24 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
 
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
   const handleArchive = useCallback(() => onArchiveThread(thread), [onArchiveThread, thread]);
+  const completeLinearIssue = useAtomCommand(linearEnvironment.completeThreadIssue, {
+    reportFailure: false,
+  });
+  const linearIssue = thread.linearIssue ?? null;
+  const menuActions = useMemo<MenuAction[]>(
+    () =>
+      linearIssue
+        ? [
+            {
+              id: "linear-done",
+              title: `Mark ${linearIssue.identifier} done`,
+              image: "checkmark.circle",
+            },
+            ...THREAD_ROW_MENU_ACTIONS,
+          ]
+        : THREAD_ROW_MENU_ACTIONS,
+    [linearIssue],
+  );
   const primaryAction = useMemo(
     () => ({
       accessibilityLabel: `Archive ${thread.title}`,
@@ -459,8 +479,14 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
       if (nativeEvent.event === "archive") handleArchive();
       if (nativeEvent.event === "delete") handleDelete();
+      if (nativeEvent.event === "linear-done") {
+        void completeLinearIssue({
+          environmentId: thread.environmentId,
+          input: { threadId: thread.id },
+        });
+      }
     },
-    [handleArchive, handleDelete],
+    [handleArchive, handleDelete, completeLinearIssue, thread.environmentId, thread.id],
   );
 
   const statusPill = effectiveStatus ? (
@@ -470,6 +496,19 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
     >
       <Text className={`text-3xs font-t3-bold ${effectiveStatus.textClassName}`}>
         {effectiveStatus.label}
+      </Text>
+    </View>
+  ) : null;
+
+  const linearBadge = linearIssue ? (
+    <View
+      className={selected ? "bg-white/20" : "bg-subtle"}
+      style={{ borderRadius: 99, paddingHorizontal: 6, paddingVertical: 2 }}
+    >
+      <Text
+        className={`text-3xs font-t3-bold ${selected ? "text-white" : "text-foreground-muted"}`}
+      >
+        {linearIssue.identifier}
       </Text>
     </View>
   ) : null;
@@ -539,6 +578,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
                 {thread.title}
               </Text>
               <View className="flex-row items-center gap-2">
+                {linearBadge}
                 {statusPill}
                 <Text
                   className="text-base text-foreground-tertiary"
@@ -594,6 +634,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
               {thread.title}
             </Text>
             <View className="flex-row items-center gap-2">
+              {linearBadge}
               {statusPill}
               <Text
                 className="text-xs"
@@ -633,7 +674,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
         // the interaction is hosted by the component view and the underlying
         // UIButton passes touches through, so row taps keep working.
         <ControlPillMenu
-          actions={THREAD_ROW_MENU_ACTIONS}
+          actions={menuActions}
           onPressAction={handleMenuAction}
           shouldOpenOnLongPress
         >

@@ -2,6 +2,7 @@ import {
   CommandId,
   MessageId,
   ThreadId,
+  type LinearIssueLink,
   type ModelSelection,
   type ProjectId,
   type ProviderInteractionMode,
@@ -38,6 +39,8 @@ export interface ProjectThreadStartTurnSpec {
   readonly startFromOrigin: boolean;
   /** Generated temp branch for worktree mode; unused for local mode. */
   readonly worktreeBranchName: string;
+  /** Linear issue this thread is imported from, if any. */
+  readonly linearIssue?: LinearIssueLink | null;
 }
 
 /**
@@ -70,6 +73,7 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
         interactionMode: spec.interactionMode,
         branch: spec.branch,
         worktreePath: isWorktree ? null : spec.worktreePath,
+        ...(spec.linearIssue ? { linearIssue: spec.linearIssue } : {}),
         createdAt: spec.createdAt,
       },
       ...(isWorktree

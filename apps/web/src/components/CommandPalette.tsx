@@ -108,7 +108,7 @@ import {
 } from "./CommandPalette.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { CommandPaletteResults } from "./CommandPaletteResults";
-import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "./Icons";
+import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon, LinearIcon } from "./Icons";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
 import { primaryServerKeybindingsAtom } from "../state/server";
@@ -1027,6 +1027,17 @@ function OpenCommandPaletteDialog(props: {
     keepOpen: true,
     run: async () => {
       openAddProjectFlow();
+    },
+  });
+
+  actionItems.push({
+    kind: "action",
+    value: "action:linear-browse",
+    searchTerms: ["linear", "issues", "tickets", "browse", "import"],
+    title: "Browse Linear issues",
+    icon: <LinearIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      await navigate({ to: "/linear" });
     },
   });
 

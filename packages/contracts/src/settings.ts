@@ -361,6 +361,26 @@ export const ObservabilitySettings = Schema.Struct({
 });
 export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
+/** Per-team override mapping lifecycle stages → specific Linear workflow-state ids. */
+export const LinearTeamStateMapping = Schema.Struct({
+  started: Schema.optional(TrimmedNonEmptyString),
+  review: Schema.optional(TrimmedNonEmptyString),
+  done: Schema.optional(TrimmedNonEmptyString),
+});
+export type LinearTeamStateMapping = typeof LinearTeamStateMapping.Type;
+
+export const LinearSyncSettings = Schema.Struct({
+  autoSync: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  transitionOnStart: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  transitionOnPrOpen: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  transitionOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  postComments: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  stateMappingByTeam: Schema.Record(TrimmedNonEmptyString, LinearTeamStateMapping).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+});
+export type LinearSyncSettings = typeof LinearSyncSettings.Type;
+
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 
 export const ServerSettings = Schema.Struct({
@@ -409,6 +429,7 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  linear: LinearSyncSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -530,6 +551,18 @@ export const ServerSettingsPatch = Schema.Struct({
   // patches risk leaving driver-specific config in a half-merged state.
   // The web UI sends a fully-formed map every time it edits this field.
   providerInstances: Schema.optionalKey(Schema.Record(ProviderInstanceId, ProviderInstanceConfig)),
+  linear: Schema.optionalKey(
+    Schema.Struct({
+      autoSync: Schema.optionalKey(Schema.Boolean),
+      transitionOnStart: Schema.optionalKey(Schema.Boolean),
+      transitionOnPrOpen: Schema.optionalKey(Schema.Boolean),
+      transitionOnMerge: Schema.optionalKey(Schema.Boolean),
+      postComments: Schema.optionalKey(Schema.Boolean),
+      stateMappingByTeam: Schema.optionalKey(
+        Schema.Record(TrimmedNonEmptyString, LinearTeamStateMapping),
+      ),
+    }),
+  ),
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 

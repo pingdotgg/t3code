@@ -40,7 +40,9 @@ import { AddProjectSourceRoute } from "./features/projects/AddProjectSourceRoute
 import { NewTaskDraftRouteScreen } from "./features/threads/NewTaskDraftRouteScreen";
 import { NewTaskFlowProvider } from "./features/threads/new-task-flow-provider";
 import { NewTaskRouteScreen } from "./features/threads/NewTaskRouteScreen";
+import { LinearImportRouteScreen } from "./features/linear/LinearImportRouteScreen";
 import { SettingsAppearanceRouteScreen } from "./features/settings/SettingsAppearanceRouteScreen";
+import { SettingsLinearRouteScreen } from "./features/settings/SettingsLinearRouteScreen";
 import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteScreen";
 import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnvironmentsRouteScreen";
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
@@ -145,6 +147,13 @@ const SettingsSheetStack = createNativeStackNavigator({
       linking: "appearance",
       options: {
         title: "Appearance",
+      },
+    }),
+    SettingsLinear: createNativeStackScreen({
+      screen: SettingsLinearRouteScreen,
+      linking: "linear",
+      options: {
+        title: "Linear",
       },
     }),
     SettingsAuth: createNativeStackScreen({
@@ -447,6 +456,16 @@ export const RootStack = createNativeStackNavigator({
       options: {
         presentation: "formSheet",
         sheetAllowedDetents: [0.55, 0.7],
+        sheetGrabberVisible: true,
+      },
+    }),
+    LinearImport: createNativeStackScreen({
+      screen: LinearImportRouteScreen,
+      linking: "linear-import",
+      options: {
+        title: "Import from Linear",
+        presentation: "formSheet",
+        sheetAllowedDetents: [0.7, 0.92],
         sheetGrabberVisible: true,
       },
     }),

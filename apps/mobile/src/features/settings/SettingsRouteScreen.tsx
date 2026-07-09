@@ -113,6 +113,10 @@ function LocalSettingsRouteScreen() {
           <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
         </SettingsSection>
 
+        <SettingsSection title="Integrations">
+          <SettingsRow icon="checklist" label="Linear" target="SettingsLinear" />
+        </SettingsSection>
+
         <ArchivedThreadsSettingsSection />
 
         <AppSettingsSection />
@@ -456,6 +460,10 @@ function ConfiguredSettingsRouteScreen() {
 
         <SettingsSection title="Appearance">
           <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
+        </SettingsSection>
+
+        <SettingsSection title="Integrations">
+          <SettingsRow icon="checklist" label="Linear" target="SettingsLinear" />
         </SettingsSection>
 
         <ArchivedThreadsSettingsSection />

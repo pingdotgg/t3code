@@ -143,6 +143,30 @@ import {
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
+import {
+  LinearAuthError,
+  LinearAuthStatus,
+  LinearCompleteIssueInput,
+  LinearCreateAttachmentInput,
+  LinearCreateCommentInput,
+  LinearFetchIssuesInput,
+  LinearFetchIssuesResult,
+  LinearListIssuesInput,
+  LinearListIssuesResult,
+  LinearListLabelsResult,
+  LinearListProjectsResult,
+  LinearListTeamsResult,
+  LinearListUsersResult,
+  LinearListWorkflowStatesInput,
+  LinearListWorkflowStatesResult,
+  LinearMutationResult,
+  LinearRequestError,
+  LinearSearchIssuesInput,
+  LinearSearchIssuesResult,
+  LinearSetTokenInput,
+  LinearTokenStoreError,
+  LinearUpdateIssueStateInput,
+} from "./linear.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -222,6 +246,23 @@ export const WS_METHODS = {
   sourceControlLookupRepository: "sourceControl.lookupRepository",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
   sourceControlPublishRepository: "sourceControl.publishRepository",
+
+  // Linear methods
+  linearAuthStatus: "linear.authStatus",
+  linearSearchIssues: "linear.searchIssues",
+  linearFetchIssues: "linear.fetchIssues",
+  linearListIssues: "linear.listIssues",
+  linearListTeams: "linear.listTeams",
+  linearListWorkflowStates: "linear.listWorkflowStates",
+  linearListProjects: "linear.listProjects",
+  linearListLabels: "linear.listLabels",
+  linearListUsers: "linear.listUsers",
+  linearUpdateIssueState: "linear.updateIssueState",
+  linearCreateComment: "linear.createComment",
+  linearCreateAttachment: "linear.createAttachment",
+  linearCompleteThreadIssue: "linear.completeThreadIssue",
+  linearSetToken: "linear.setToken",
+  linearClearToken: "linear.clearToken",
 
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
@@ -353,6 +394,113 @@ export const WsSourceControlPublishRepositoryRpc = Rpc.make(
     error: Schema.Union([SourceControlRepositoryError, EnvironmentAuthorizationError]),
   },
 );
+
+export const WsLinearAuthStatusRpc = Rpc.make(WS_METHODS.linearAuthStatus, {
+  payload: Schema.Struct({}),
+  success: LinearAuthStatus,
+  error: Schema.Union([LinearRequestError, LinearTokenStoreError, EnvironmentAuthorizationError]),
+});
+
+export const WsLinearSearchIssuesRpc = Rpc.make(WS_METHODS.linearSearchIssues, {
+  payload: LinearSearchIssuesInput,
+  success: LinearSearchIssuesResult,
+  error: Schema.Union([
+    LinearAuthError,
+    LinearRequestError,
+    LinearTokenStoreError,
+    EnvironmentAuthorizationError,
+  ]),
+});
+
+export const WsLinearFetchIssuesRpc = Rpc.make(WS_METHODS.linearFetchIssues, {
+  payload: LinearFetchIssuesInput,
+  success: LinearFetchIssuesResult,
+  error: Schema.Union([
+    LinearAuthError,
+    LinearRequestError,
+    LinearTokenStoreError,
+    EnvironmentAuthorizationError,
+  ]),
+});
+
+export const WsLinearSetTokenRpc = Rpc.make(WS_METHODS.linearSetToken, {
+  payload: LinearSetTokenInput,
+  success: LinearAuthStatus,
+  error: Schema.Union([LinearRequestError, LinearTokenStoreError, EnvironmentAuthorizationError]),
+});
+
+export const WsLinearClearTokenRpc = Rpc.make(WS_METHODS.linearClearToken, {
+  payload: Schema.Struct({}),
+  success: LinearAuthStatus,
+  error: Schema.Union([LinearTokenStoreError, EnvironmentAuthorizationError]),
+});
+
+const LinearReadError = Schema.Union([
+  LinearAuthError,
+  LinearRequestError,
+  LinearTokenStoreError,
+  EnvironmentAuthorizationError,
+]);
+
+export const WsLinearListIssuesRpc = Rpc.make(WS_METHODS.linearListIssues, {
+  payload: LinearListIssuesInput,
+  success: LinearListIssuesResult,
+  error: LinearReadError,
+});
+
+export const WsLinearListTeamsRpc = Rpc.make(WS_METHODS.linearListTeams, {
+  payload: Schema.Struct({}),
+  success: LinearListTeamsResult,
+  error: LinearReadError,
+});
+
+export const WsLinearListWorkflowStatesRpc = Rpc.make(WS_METHODS.linearListWorkflowStates, {
+  payload: LinearListWorkflowStatesInput,
+  success: LinearListWorkflowStatesResult,
+  error: LinearReadError,
+});
+
+export const WsLinearListProjectsRpc = Rpc.make(WS_METHODS.linearListProjects, {
+  payload: Schema.Struct({}),
+  success: LinearListProjectsResult,
+  error: LinearReadError,
+});
+
+export const WsLinearListLabelsRpc = Rpc.make(WS_METHODS.linearListLabels, {
+  payload: Schema.Struct({}),
+  success: LinearListLabelsResult,
+  error: LinearReadError,
+});
+
+export const WsLinearListUsersRpc = Rpc.make(WS_METHODS.linearListUsers, {
+  payload: Schema.Struct({}),
+  success: LinearListUsersResult,
+  error: LinearReadError,
+});
+
+export const WsLinearUpdateIssueStateRpc = Rpc.make(WS_METHODS.linearUpdateIssueState, {
+  payload: LinearUpdateIssueStateInput,
+  success: LinearMutationResult,
+  error: LinearReadError,
+});
+
+export const WsLinearCreateCommentRpc = Rpc.make(WS_METHODS.linearCreateComment, {
+  payload: LinearCreateCommentInput,
+  success: LinearMutationResult,
+  error: LinearReadError,
+});
+
+export const WsLinearCreateAttachmentRpc = Rpc.make(WS_METHODS.linearCreateAttachment, {
+  payload: LinearCreateAttachmentInput,
+  success: LinearMutationResult,
+  error: LinearReadError,
+});
+
+export const WsLinearCompleteThreadIssueRpc = Rpc.make(WS_METHODS.linearCompleteThreadIssue, {
+  payload: LinearCompleteIssueInput,
+  success: LinearMutationResult,
+  error: LinearReadError,
+});
 
 export const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntries, {
   payload: ProjectSearchEntriesInput,
@@ -699,6 +847,21 @@ export const WsRpcGroup = RpcGroup.make(
   WsSourceControlLookupRepositoryRpc,
   WsSourceControlCloneRepositoryRpc,
   WsSourceControlPublishRepositoryRpc,
+  WsLinearAuthStatusRpc,
+  WsLinearSearchIssuesRpc,
+  WsLinearFetchIssuesRpc,
+  WsLinearListIssuesRpc,
+  WsLinearListTeamsRpc,
+  WsLinearListWorkflowStatesRpc,
+  WsLinearListProjectsRpc,
+  WsLinearListLabelsRpc,
+  WsLinearListUsersRpc,
+  WsLinearUpdateIssueStateRpc,
+  WsLinearCreateCommentRpc,
+  WsLinearCreateAttachmentRpc,
+  WsLinearCompleteThreadIssueRpc,
+  WsLinearSetTokenRpc,
+  WsLinearClearTokenRpc,
   WsProjectsListEntriesRpc,
   WsProjectsReadFileRpc,
   WsProjectsSearchEntriesRpc,

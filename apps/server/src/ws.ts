@@ -58,7 +58,9 @@ import {
   type TerminalMetadataStreamEvent,
   WS_METHODS,
   WsRpcGroup,
+  LinearRequestError,
 } from "@t3tools/contracts";
+import { resolveTargetStateId } from "./linear/linearStateMapping.ts";
 import { clamp } from "effect/Number";
 import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
@@ -101,6 +103,7 @@ import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
+import * as LinearApi from "./linear/LinearApi.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
@@ -301,6 +304,21 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.sourceControlLookupRepository, AuthOrchestrationReadScope],
   [WS_METHODS.sourceControlCloneRepository, AuthOrchestrationOperateScope],
   [WS_METHODS.sourceControlPublishRepository, AuthOrchestrationOperateScope],
+  [WS_METHODS.linearAuthStatus, AuthOrchestrationReadScope],
+  [WS_METHODS.linearSearchIssues, AuthOrchestrationReadScope],
+  [WS_METHODS.linearFetchIssues, AuthOrchestrationReadScope],
+  [WS_METHODS.linearListIssues, AuthOrchestrationReadScope],
+  [WS_METHODS.linearListTeams, AuthOrchestrationReadScope],
+  [WS_METHODS.linearListWorkflowStates, AuthOrchestrationReadScope],
+  [WS_METHODS.linearListProjects, AuthOrchestrationReadScope],
+  [WS_METHODS.linearListLabels, AuthOrchestrationReadScope],
+  [WS_METHODS.linearListUsers, AuthOrchestrationReadScope],
+  [WS_METHODS.linearUpdateIssueState, AuthOrchestrationOperateScope],
+  [WS_METHODS.linearCreateComment, AuthOrchestrationOperateScope],
+  [WS_METHODS.linearCreateAttachment, AuthOrchestrationOperateScope],
+  [WS_METHODS.linearCompleteThreadIssue, AuthOrchestrationOperateScope],
+  [WS_METHODS.linearSetToken, AuthOrchestrationOperateScope],
+  [WS_METHODS.linearClearToken, AuthOrchestrationOperateScope],
   [WS_METHODS.projectsListEntries, AuthOrchestrationReadScope],
   [WS_METHODS.projectsReadFile, AuthOrchestrationReadScope],
   [WS_METHODS.projectsSearchEntries, AuthOrchestrationReadScope],
@@ -421,6 +439,7 @@ const makeWsRpcLayer = (
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
       const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
+      const linear = yield* LinearApi.LinearApi;
       const automaticGitFetchInterval = serverSettings.getSettings.pipe(
         Effect.map((settings) => settings.automaticGitFetchInterval),
         Effect.catch((cause) =>
@@ -511,6 +530,81 @@ const makeWsRpcLayer = (
       const serverEventId = randomUUID.pipe(Effect.map(EventId.make));
       const serverCommandId = (tag: string) =>
         randomUUID.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
+
+      // Mark the Linear issue linked to a thread as done: resolve the team's
+      // completed state, write it back, and reflect the new state on the thread
+      // so its badge updates live. Non-Linear failures map to LinearRequestError.
+      const completeLinearThreadIssue = (input: { readonly threadId: ThreadId }) =>
+        Effect.gen(function* () {
+          const shell = yield* projectionSnapshotQuery.getThreadShellById(input.threadId).pipe(
+            Effect.mapError(
+              (cause) =>
+                new LinearRequestError({
+                  operation: "updateIssueState",
+                  detail: "Failed to read the thread.",
+                  cause,
+                }),
+            ),
+          );
+          const issue = Option.isSome(shell) ? shell.value.linearIssue : null;
+          if (issue === null || issue === undefined || issue.teamId === undefined) {
+            return { success: false };
+          }
+          const settings = yield* serverSettings.getSettings.pipe(
+            Effect.mapError(
+              (cause) =>
+                new LinearRequestError({
+                  operation: "updateIssueState",
+                  detail: "Failed to read settings.",
+                  cause,
+                }),
+            ),
+          );
+          const states = yield* linear.listWorkflowStates({ teamId: issue.teamId });
+          const stateId = resolveTargetStateId(
+            states,
+            settings.linear.stateMappingByTeam[issue.teamId],
+            "done",
+          );
+          if (stateId === undefined) {
+            return { success: false };
+          }
+          const result = yield* linear.updateIssueState({ issueId: issue.id, stateId });
+          if (!result.success) {
+            return { success: false };
+          }
+          const nextState = states.find((state) => state.id === stateId);
+          if (nextState !== undefined) {
+            const commandId = yield* serverCommandId("linear-complete").pipe(
+              Effect.mapError(
+                (cause) =>
+                  new LinearRequestError({
+                    operation: "updateIssueState",
+                    detail: "Failed to reflect the completed state.",
+                    cause,
+                  }),
+              ),
+            );
+            yield* orchestrationEngine
+              .dispatch({
+                type: "thread.meta.update",
+                commandId,
+                threadId: input.threadId,
+                linearIssue: { ...issue, stateName: nextState.name, stateType: nextState.type },
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new LinearRequestError({
+                      operation: "updateIssueState",
+                      detail: "Failed to reflect the completed state.",
+                      cause,
+                    }),
+                ),
+              );
+          }
+          return { success: true };
+        });
 
       const loadAuthAccessSnapshot = () =>
         Effect.all({
@@ -830,6 +924,9 @@ const makeWsRpcLayer = (
                 interactionMode: bootstrap.createThread.interactionMode,
                 branch: bootstrap.createThread.branch,
                 worktreePath: bootstrap.createThread.worktreePath,
+                ...(bootstrap.createThread.linearIssue !== undefined
+                  ? { linearIssue: bootstrap.createThread.linearIssue }
+                  : {}),
                 createdAt: bootstrap.createThread.createdAt,
               });
               createdThread = true;
@@ -1391,6 +1488,78 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "source-control",
             },
           ),
+        [WS_METHODS.linearAuthStatus]: (_input) =>
+          observeRpcEffect(WS_METHODS.linearAuthStatus, linear.probeAuth, {
+            "rpc.aggregate": "linear",
+          }),
+        [WS_METHODS.linearSearchIssues]: (input) =>
+          observeRpcEffect(WS_METHODS.linearSearchIssues, linear.searchIssues(input), {
+            "rpc.aggregate": "linear",
+          }),
+        [WS_METHODS.linearFetchIssues]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.linearFetchIssues,
+            linear.fetchIssues(input).pipe(Effect.map((issues) => ({ issues }))),
+            { "rpc.aggregate": "linear" },
+          ),
+        [WS_METHODS.linearListIssues]: (input) =>
+          observeRpcEffect(WS_METHODS.linearListIssues, linear.listIssues(input), {
+            "rpc.aggregate": "linear",
+          }),
+        [WS_METHODS.linearListTeams]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.linearListTeams,
+            linear.listTeams.pipe(Effect.map((teams) => ({ teams }))),
+            { "rpc.aggregate": "linear" },
+          ),
+        [WS_METHODS.linearListWorkflowStates]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.linearListWorkflowStates,
+            linear.listWorkflowStates(input).pipe(Effect.map((states) => ({ states }))),
+            { "rpc.aggregate": "linear" },
+          ),
+        [WS_METHODS.linearListProjects]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.linearListProjects,
+            linear.listProjects.pipe(Effect.map((projects) => ({ projects }))),
+            { "rpc.aggregate": "linear" },
+          ),
+        [WS_METHODS.linearListLabels]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.linearListLabels,
+            linear.listLabels.pipe(Effect.map((labels) => ({ labels }))),
+            { "rpc.aggregate": "linear" },
+          ),
+        [WS_METHODS.linearListUsers]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.linearListUsers,
+            linear.listUsers.pipe(Effect.map((users) => ({ users }))),
+            { "rpc.aggregate": "linear" },
+          ),
+        [WS_METHODS.linearUpdateIssueState]: (input) =>
+          observeRpcEffect(WS_METHODS.linearUpdateIssueState, linear.updateIssueState(input), {
+            "rpc.aggregate": "linear",
+          }),
+        [WS_METHODS.linearCreateComment]: (input) =>
+          observeRpcEffect(WS_METHODS.linearCreateComment, linear.createComment(input), {
+            "rpc.aggregate": "linear",
+          }),
+        [WS_METHODS.linearCreateAttachment]: (input) =>
+          observeRpcEffect(WS_METHODS.linearCreateAttachment, linear.createAttachment(input), {
+            "rpc.aggregate": "linear",
+          }),
+        [WS_METHODS.linearCompleteThreadIssue]: (input) =>
+          observeRpcEffect(WS_METHODS.linearCompleteThreadIssue, completeLinearThreadIssue(input), {
+            "rpc.aggregate": "linear",
+          }),
+        [WS_METHODS.linearSetToken]: (input) =>
+          observeRpcEffect(WS_METHODS.linearSetToken, linear.setToken(input.token), {
+            "rpc.aggregate": "linear",
+          }),
+        [WS_METHODS.linearClearToken]: (_input) =>
+          observeRpcEffect(WS_METHODS.linearClearToken, linear.clearToken, {
+            "rpc.aggregate": "linear",
+          }),
         [WS_METHODS.projectsSearchEntries]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsSearchEntries,
@@ -1884,6 +2053,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
             makeWsRpcLayer(session, previewAutomationBroker).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(ProviderMaintenanceRunner.layer),
+              Layer.provide(LinearApi.layer),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(

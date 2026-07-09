@@ -1,1 +1,5 @@
-export type SettingsSheetTarget = "SettingsEnvironments" | "SettingsArchive" | "SettingsAppearance";
+export type SettingsSheetTarget =
+  | "SettingsEnvironments"
+  | "SettingsArchive"
+  | "SettingsAppearance"
+  | "SettingsLinear";
