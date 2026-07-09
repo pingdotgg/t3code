@@ -82,6 +82,9 @@ public final class AppModel {
 
     @ObservationIgnored private var pendingEvents: [BackendEvent] = []
     @ObservationIgnored private var flushScheduled = false
+    /// threadID → latest review-diff load; older in-flight loads must not
+    /// commit results (see loadReviewDiff).
+    @ObservationIgnored private var reviewDiffLoadTokens: [String: UUID] = [:]
     /// threadID → (messageID, index) of the actively streaming assistant
     /// message, so per-token appends skip the O(n) timeline scan. Entries
     /// are validated against the array before use — a stale index costs one
@@ -521,6 +524,8 @@ public final class AppModel {
 
     public func closeReview(threadID: String) {
         guard let ts = threadStates[threadID] else { return }
+        // Orphan any in-flight load so a late response can't repopulate state.
+        reviewDiffLoadTokens.removeValue(forKey: threadID)
         ts.isReviewing = false
         ts.reviewScope = nil
         ts.reviewSelectedPath = nil
@@ -543,6 +548,11 @@ public final class AppModel {
             ts.isLoadingReviewDiff = false
             return
         }
+        // Loads can overlap (openReview vs. diffInvalidated) and the same
+        // scope can be re-requested, so a scope check alone can't tell an old
+        // response from the latest — only the newest token may commit.
+        let token = UUID()
+        reviewDiffLoadTokens[threadID] = token
         ts.isLoadingReviewDiff = true
         do {
             let files: [DiffFile]
@@ -553,8 +563,7 @@ public final class AppModel {
                 files = try await backend.diff(
                     threadID: threadID, fromTurn: fromTurn, toTurn: toTurn)
             }
-            // Scope may have changed while the request was in flight.
-            guard ts.reviewScope == scope else { return }
+            guard reviewDiffLoadTokens[threadID] == token, ts.reviewScope == scope else { return }
             ts.reviewDiff = files
             if let path = ts.reviewSelectedPath,
                 files.contains(where: { $0.path == path })
@@ -564,12 +573,13 @@ public final class AppModel {
                 ts.reviewSelectedPath = files.first?.path
             }
         } catch {
+            guard reviewDiffLoadTokens[threadID] == token, ts.reviewScope == scope else { return }
             lastError = String(describing: error)
-            if ts.reviewScope == scope {
-                ts.reviewDiff = []
-            }
+            ts.reviewDiff = []
         }
-        ts.isLoadingReviewDiff = false
+        if reviewDiffLoadTokens[threadID] == token {
+            ts.isLoadingReviewDiff = false
+        }
     }
 
     // MARK: - Commands

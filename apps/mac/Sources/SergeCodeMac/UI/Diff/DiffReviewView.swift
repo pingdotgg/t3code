@@ -372,7 +372,9 @@ public struct DiffReviewView: View {
             let unified = DiffPresentation.buildUnifiedRows(for: captured)
             let sbs = DiffPresentation.buildSideBySideRows(for: captured)
             await MainActor.run {
-                // Still the same file?
+                // Still the same file? Only the task that applies rows may
+                // clear the loading flag — a stale task must not blank the
+                // spinner for a newer selection still preparing.
                 if model.threadState(threadID)?.reviewSelectedPath == path
                     || (model.threadState(threadID)?.reviewSelectedPath == nil
                         && files.first?.path == path)
@@ -380,8 +382,8 @@ public struct DiffReviewView: View {
                     unifiedRows = unified
                     sideBySideRows = sbs
                     preparedPath = path
+                    isPreparing = false
                 }
-                isPreparing = false
             }
         }
     }

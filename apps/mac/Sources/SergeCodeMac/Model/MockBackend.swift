@@ -320,6 +320,8 @@ private actor MockState {
     }
 
     func diff(threadID: String, fromTurn: Int, toTurn: Int) -> [DiffFile] {
+        // Mirror LiveBackend: invalid ranges have no diff.
+        guard toTurn > 0, toTurn > fromTurn else { return [] }
         let key = "\(threadID):\(fromTurn):\(toTurn)"
         if let scoped = scopedDiffs[key] { return scoped }
         // Fallback: filter full diff by paths touched by the checkpoint at toTurn.
@@ -613,9 +615,31 @@ private actor MockState {
     }
 
     func restoreCheckpoint(threadID: String, turnCount: Int) {
-        let checkpoint = (checkpointsByThread[threadID] ?? [])
-            .first(where: { $0.turnCount == turnCount })
+        let checkpoints = checkpointsByThread[threadID] ?? []
+        let checkpoint = checkpoints.first(where: { $0.turnCount == turnCount })
         let label = checkpoint?.label ?? "Turn \(turnCount)"
+
+        // Rewind mock state before invalidating, so the refresh the
+        // invalidation triggers reads post-restore data: checkpoints beyond
+        // the turn disappear, and the full diff drops files only they touched.
+        let kept = checkpoints.filter { $0.turnCount <= turnCount }
+        let keptPaths = Set(kept.flatMap { $0.files.map(\.path) })
+        let removedPaths = Set(
+            checkpoints.filter { $0.turnCount > turnCount }.flatMap { $0.files.map(\.path) }
+        ).subtracting(keptPaths)
+        checkpointsByThread[threadID] = kept
+        if !removedPaths.isEmpty {
+            diffsByThread[threadID] = (diffsByThread[threadID] ?? [])
+                .filter { !removedPaths.contains($0.path) }
+        }
+        for key in scopedDiffs.keys where key.hasPrefix("\(threadID):") {
+            if let toTurn = key.split(separator: ":").last.flatMap({ Int($0) }),
+                toTurn > turnCount
+            {
+                scopedDiffs[key] = nil
+            }
+        }
+
         let notice = TimelineItem.notice(
             id: nextID("notice"),
             text: "Restored checkpoint “\(label)”.",

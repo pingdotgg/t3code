@@ -59,6 +59,20 @@ struct MockBackendDiffTests {
         let backend = MockBackend()
         await backend.start()
         try await backend.restoreCheckpoint(threadID: "thread-1", turnCount: 1)
-        // Should not throw; mock emits a notice via events stream.
+
+        // State rewinds: later checkpoints disappear and the full diff drops
+        // files only they touched (turn 2 -> Constants, turn 3 -> Colors).
+        let checkpoints = try await backend.checkpoints(threadID: "thread-1")
+        #expect(!checkpoints.isEmpty)
+        #expect(checkpoints.allSatisfy { $0.turnCount <= 1 })
+
+        let files = try await backend.diff(threadID: "thread-1")
+        #expect(files.contains(where: { $0.path.contains("SidebarView") }))
+        #expect(files.allSatisfy { !$0.path.contains("Constants.swift") })
+        #expect(files.allSatisfy { !$0.path.contains("Colors.swift") })
+
+        // Scoped diffs beyond the restored turn are gone too.
+        let stale = try await backend.diff(threadID: "thread-1", fromTurn: 2, toTurn: 3)
+        #expect(stale.isEmpty)
     }
 }

@@ -901,16 +901,7 @@ public actor LiveBackend: BackendService {
             // the diff turn cursor) beyond it no longer exist server-side.
             // Leaving them tracked would keep stale restore points visible
             // and make `diff()` query a turn count that was reverted away.
-            currentTurnCount[threadID] = payload.turnCount
-            checkpointsByThread[threadID]?.removeAll { checkpoint in
-                guard let route = checkpointRoutes[checkpoint.id] else { return false }
-                return route.turnCount > payload.turnCount
-            }
-            for (ref, route) in checkpointRoutes
-            where route.threadID == threadID && route.turnCount > payload.turnCount {
-                checkpointRoutes[ref] = nil
-                seenCheckpointRefs[threadID]?.remove(ref)
-            }
+            applyRevertProjection(threadID: threadID, turnCount: payload.turnCount)
             emitOrdered(threadID: threadID, event: .diffInvalidated(threadID: threadID))
             emitOrdered(
                 threadID: threadID,
@@ -1644,7 +1635,27 @@ public actor LiveBackend: BackendService {
     public func restoreCheckpoint(threadID: String, turnCount: Int) async throws {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
         _ = try await client.revertCheckpoint(threadId: threadID, turnCount: turnCount)
+        // Project the revert locally before invalidating: the refresh the
+        // invalidation triggers would otherwise query the pre-revert turn
+        // cursor and list pruned checkpoints until threadReverted arrives
+        // (whose handler is idempotent over this projection).
+        applyRevertProjection(threadID: threadID, turnCount: turnCount)
         emitOrdered(threadID: threadID, event: .diffInvalidated(threadID: threadID))
+    }
+
+    /// Rewind local projection to `turnCount`: turn cursor back, checkpoints
+    /// and routes beyond it dropped — mirrors the server-side revert.
+    private func applyRevertProjection(threadID: String, turnCount: Int) {
+        currentTurnCount[threadID] = turnCount
+        checkpointsByThread[threadID]?.removeAll { checkpoint in
+            guard let route = checkpointRoutes[checkpoint.id] else { return false }
+            return route.turnCount > turnCount
+        }
+        for (ref, route) in checkpointRoutes
+        where route.threadID == threadID && route.turnCount > turnCount {
+            checkpointRoutes[ref] = nil
+            seenCheckpointRefs[threadID]?.remove(ref)
+        }
     }
 
     public func addProject(path: String) async throws -> Project {
