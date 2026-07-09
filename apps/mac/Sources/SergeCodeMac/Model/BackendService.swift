@@ -100,6 +100,10 @@ public protocol BackendService: Sendable {
     func diff(threadID: String) async throws -> [DiffFile]
     func checkpoints(threadID: String) async throws -> [Checkpoint]
     func restoreCheckpoint(id: String) async throws
+    /// Rewind a thread to `turnCount` completed turns (0 = empty thread).
+    /// Server emits `thread.reverted`; backends should surface a truncated
+    /// timeline (via `timelineReset`) so the UI matches server state.
+    func revertThread(threadID: String, turnCount: Int) async throws
 
     func addProject(path: String) async throws -> Project
     /// Renames a project (its display title; the workspace path is unchanged).

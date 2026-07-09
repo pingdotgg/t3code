@@ -129,6 +129,11 @@ public actor LiveBackend: BackendService {
     private var latestTimeline: [String: [TimelineItem]] = [:]
     /// Callers awaiting a thread's first snapshot before `timeline` can return.
     private var snapshotWaiters: [String: [CheckedContinuation<[TimelineItem], Error>]] = [:]
+    /// Callers awaiting `thread.reverted` after dispatching a checkpoint
+    /// revert — the RPC returns when the command is accepted, but the
+    /// timeline (and provider conversation) only rewinds when the event
+    /// lands. Edit-resend must not start a new turn until then.
+    private var revertWaiters: [String: [CheckedContinuation<Void, Error>]] = [:]
 
     /// Per-thread dedup + delta-tracking, seeded from each snapshot.
     private var seenMessageIDs: [String: Set<String>] = [:]
@@ -271,6 +276,7 @@ public actor LiveBackend: BackendService {
         }
 
         failAllSnapshotWaiters(error: LiveBackendError.notConnected)
+        failAllRevertWaiters(error: LiveBackendError.notConnected)
         continuation.finish()
     }
 
@@ -538,8 +544,11 @@ public actor LiveBackend: BackendService {
                 }
                 await self.failSnapshotWaiters(
                     threadID: threadID, error: LiveBackendError.notConnected)
+                await self.failRevertWaiters(
+                    threadID: threadID, error: LiveBackendError.notConnected)
             } catch {
                 await self.failSnapshotWaiters(threadID: threadID, error: error)
+                await self.failRevertWaiters(threadID: threadID, error: error)
             }
         }
         threadSubscriptions[threadID] = task
@@ -720,7 +729,8 @@ public actor LiveBackend: BackendService {
             checkpoints.append(
                 Checkpoint(
                     id: summary.checkpointRef, threadID: threadID,
-                    label: "Turn \(summary.checkpointTurnCount)", createdAt: at))
+                    label: "Turn \(summary.checkpointTurnCount)", createdAt: at,
+                    turnCount: summary.checkpointTurnCount))
             maxTurn = max(maxTurn, summary.checkpointTurnCount)
         }
         checkpointsByThread[threadID] = checkpoints
@@ -892,7 +902,8 @@ public actor LiveBackend: BackendService {
             let at = WireDate.parse(payload.completedAt) ?? Date()
             let checkpoint = Checkpoint(
                 id: payload.checkpointRef, threadID: threadID,
-                label: "Turn \(payload.checkpointTurnCount)", createdAt: at)
+                label: "Turn \(payload.checkpointTurnCount)", createdAt: at,
+                turnCount: payload.checkpointTurnCount)
             checkpointsByThread[threadID, default: []].append(checkpoint)
             emitOrdered(
                 threadID: threadID,
@@ -904,9 +915,14 @@ public actor LiveBackend: BackendService {
             // the diff turn cursor) beyond it no longer exist server-side.
             // Leaving them tracked would keep stale restore points visible
             // and make `diff()` query a turn count that was reverted away.
+            // The subscribeThread stream does not re-emit a full snapshot on
+            // revert, so rebuild the local timeline by retaining the first
+            // `turnCount` user turns (server projector parity).
             currentTurnCount[threadID] = payload.turnCount
             checkpointsByThread[threadID]?.removeAll { checkpoint in
-                guard let route = checkpointRoutes[checkpoint.id] else { return false }
+                guard let route = checkpointRoutes[checkpoint.id] else {
+                    return checkpoint.turnCount > payload.turnCount
+                }
                 return route.turnCount > payload.turnCount
             }
             for (ref, route) in checkpointRoutes
@@ -914,6 +930,49 @@ public actor LiveBackend: BackendService {
                 checkpointRoutes[ref] = nil
                 seenCheckpointRefs[threadID]?.remove(ref)
             }
+            let retained = Self.timelineRetaining(
+                turnCount: payload.turnCount, from: latestTimeline[threadID] ?? [])
+            latestTimeline[threadID] = retained
+            // Rebuild dedup sets from the truncated timeline so a later live
+            // event for a dropped message can reappear cleanly after resend.
+            var retainedMessageIDs: Set<String> = []
+            var retainedActivityIDs: Set<String> = []
+            var retainedPlanIDs: Set<String> = []
+            var retainedCheckpointRefs: Set<String> = []
+            for item in retained {
+                switch item {
+                case .userMessage(let id, _, _), .assistantMessage(let id, _, _, _):
+                    retainedMessageIDs.insert(id)
+                case .toolEvent(let id, _, _, _, _, _, _, _),
+                    .reasoning(let id, _, _),
+                    .notice(let id, _, _):
+                    retainedActivityIDs.insert(id)
+                case .subagentTask(let task):
+                    retainedActivityIDs.insert(task.id)
+                case .plan(let plan):
+                    retainedPlanIDs.insert(plan.id)
+                case .checkpoint(let checkpoint):
+                    retainedCheckpointRefs.insert(checkpoint.id)
+                case .approval(let request):
+                    retainedActivityIDs.insert(request.id)
+                case .userInput(let request):
+                    retainedActivityIDs.insert(request.id)
+                case .usageLimit(let notice):
+                    retainedActivityIDs.insert(notice.id)
+                }
+            }
+            seenMessageIDs[threadID] = retainedMessageIDs
+            seenActivityIDs[threadID] = retainedActivityIDs
+            seenPlanIDs[threadID] = retainedPlanIDs
+            seenCheckpointRefs[threadID] = retainedCheckpointRefs
+            if var assistantText = assistantTextByMessage[threadID] {
+                assistantText = assistantText.filter { retainedMessageIDs.contains($0.key) }
+                assistantTextByMessage[threadID] = assistantText
+            }
+            pendingAssistantDeltas[threadID] = nil
+            emitOrdered(
+                threadID: threadID,
+                event: .timelineReset(threadID: threadID, items: retained))
             emitOrdered(threadID: threadID, event: .diffInvalidated(threadID: threadID))
             emitOrdered(
                 threadID: threadID,
@@ -922,6 +981,7 @@ public actor LiveBackend: BackendService {
                     item: .notice(
                         id: "revert-\(event.eventId)",
                         text: "Reverted to turn \(payload.turnCount).", at: Date())))
+            resolveRevertWaiters(threadID: threadID)
 
         // Status is projected from the shell subscription; the remaining events
         // (session-set, meta-updated, turn-start/interrupt requests, user-input,
@@ -1182,8 +1242,10 @@ public actor LiveBackend: BackendService {
         seenPlanIDs[threadID] = nil
         pendingAssistantDeltas[threadID] = nil
 
-        // Fail any waiter still blocked on the first snapshot.
+        // Fail any waiter still blocked on the first snapshot or a pending
+        // checkpoint revert for this thread.
         failSnapshotWaiters(threadID: threadID, error: LiveBackendError.notConnected)
+        failRevertWaiters(threadID: threadID, error: LiveBackendError.notConnected)
 
         // Tear down VCS watch so watchVcsStatus can re-establish after prune
         // (it guards on vcsSubscriptions[threadID] == nil).
@@ -1637,12 +1699,77 @@ public actor LiveBackend: BackendService {
     }
 
     public func restoreCheckpoint(id: String) async throws {
-        guard let client = currentClient else { throw LiveBackendError.notConnected }
         guard let route = checkpointRoutes[id] else {
             throw LiveBackendError.unresolvedCheckpoint(id)
         }
-        _ = try await client.revertCheckpoint(threadId: route.threadID, turnCount: route.turnCount)
-        emitOrdered(threadID: route.threadID, event: .diffInvalidated(threadID: route.threadID))
+        try await revertThread(threadID: route.threadID, turnCount: route.turnCount)
+    }
+
+    public func revertThread(threadID: String, turnCount: Int) async throws {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        // Wait for the domain event, not just dispatch acceptance: the server
+        // accepts `thread.checkpoint.revert` immediately and finishes the
+        // rewind asynchronously. Edit-resend must only start the replacement
+        // turn after the projection (and provider conversation) has rewound.
+        //
+        // Register the waiter synchronously in the continuation body (same
+        // pattern as `snapshotWaiters`), then kick the RPC from a child task
+        // so a fast `thread.reverted` cannot race past registration.
+        try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<Void, Error>) in
+            revertWaiters[threadID, default: []].append(continuation)
+            Task {
+                do {
+                    _ = try await client.revertCheckpoint(
+                        threadId: threadID, turnCount: turnCount)
+                    // Optimistic diff invalidation; timeline truncation lands
+                    // with `thread.reverted` and resolves the waiter above.
+                    await self.emitOrdered(
+                        threadID: threadID, event: .diffInvalidated(threadID: threadID))
+                } catch {
+                    await self.failRevertWaiters(threadID: threadID, error: error)
+                }
+            }
+        }
+    }
+
+    private func resolveRevertWaiters(threadID: String) {
+        let waiters = revertWaiters.removeValue(forKey: threadID) ?? []
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
+    private func failRevertWaiters(threadID: String, error: Error) {
+        let waiters = revertWaiters.removeValue(forKey: threadID) ?? []
+        for waiter in waiters {
+            waiter.resume(throwing: error)
+        }
+    }
+
+    private func failAllRevertWaiters(error: Error) {
+        for waiters in revertWaiters.values {
+            for waiter in waiters {
+                waiter.resume(throwing: error)
+            }
+        }
+        revertWaiters.removeAll()
+    }
+
+    /// Retains the first `turnCount` user turns (and the work that follows
+    /// each until the next user message). `turnCount == 0` clears the thread.
+    static func timelineRetaining(turnCount: Int, from items: [TimelineItem]) -> [TimelineItem] {
+        guard turnCount > 0 else { return [] }
+        var userCount = 0
+        var retained: [TimelineItem] = []
+        for item in items {
+            if case .userMessage = item {
+                userCount += 1
+                if userCount > turnCount { break }
+            }
+            retained.append(item)
+        }
+        return retained
     }
 
     public func addProject(path: String) async throws -> Project {
@@ -1958,7 +2085,41 @@ public actor LiveBackend: BackendService {
     /// and `timelineReset`). Deltas themselves go through `bufferAssistantDelta`.
     private func emitOrdered(threadID: String, event: BackendEvent) {
         flushDeltas(for: threadID)
+        // Keep `latestTimeline` current so `thread.reverted` can truncate a
+        // live-updated cache (not just the last snapshot).
+        mirrorTimelineCache(threadID: threadID, event: event)
         emit(event)
+    }
+
+    private func mirrorTimelineCache(threadID: String, event: BackendEvent) {
+        switch event {
+        case .timelineAppended(_, let item):
+            latestTimeline[threadID, default: []].upsertTimelineItem(item)
+        case .timelineReset(_, let items):
+            latestTimeline[threadID] = items
+        case .assistantCompleted(_, let messageID, let markdown):
+            guard var items = latestTimeline[threadID] else { return }
+            if let index = items.firstIndex(where: {
+                if case .assistantMessage(let id, _, _, _) = $0 { return id == messageID }
+                return false
+            }), case .assistantMessage(let id, _, _, let at) = items[index] {
+                items[index] = .assistantMessage(
+                    id: id, markdown: markdown, isStreaming: false, at: at)
+                latestTimeline[threadID] = items
+            }
+        case .assistantDelta(_, let messageID, let delta):
+            guard var items = latestTimeline[threadID] else { return }
+            if let index = items.firstIndex(where: {
+                if case .assistantMessage(let id, _, _, _) = $0 { return id == messageID }
+                return false
+            }), case .assistantMessage(let id, let markdown, _, let at) = items[index] {
+                items[index] = .assistantMessage(
+                    id: id, markdown: markdown + delta, isStreaming: true, at: at)
+                latestTimeline[threadID] = items
+            }
+        default:
+            break
+        }
     }
 
     private func emit(_ event: BackendEvent) {
@@ -2114,7 +2275,8 @@ public actor LiveBackend: BackendService {
             return .checkpoint(
                 Checkpoint(
                     id: summary.checkpointRef, threadID: threadID,
-                    label: "Turn \(summary.checkpointTurnCount)", createdAt: at))
+                    label: "Turn \(summary.checkpointTurnCount)", createdAt: at,
+                    turnCount: summary.checkpointTurnCount))
         case let .proposedPlan(plan, at):
             return .plan(
                 ProposedPlan(

@@ -21,6 +21,12 @@ public struct ComposerBar: View {
     @UIState private var mentionQuery: String?
     @UIState private var mentionSearchTask: Task<Void, Never>?
 
+    /// When set, the next send rewinds the origin thread to just before this
+    /// message. Cleared on send, draft clear, or thread switch — ComposerBar
+    /// is not keyed per thread and would otherwise truncate the wrong one.
+    @UIState private var editedMessageID: String?
+    @UIState private var editedMessageThreadID: String?
+
     @UIState private var showDictationDownloadPrompt = false
     @FocusState private var editorFocused: Bool
 
@@ -284,7 +290,24 @@ public struct ComposerBar: View {
         .onChange(of: model.composerPrefill) { _, prefill in
             guard prefill != nil, let staged = model.takeComposerPrefill() else { return }
             draft = staged.text
+            editedMessageID = staged.editedMessageID
+            editedMessageThreadID = staged.editedMessageThreadID
             editorFocused = true
+        }
+        // ComposerBar stays mounted across thread switches; drop any staged
+        // edit context and draft so a send on the new thread can't rewind
+        // the previous one.
+        .onChange(of: model.selectedThreadID) { _, _ in
+            clearSubmittedDraft()
+            model.clearComposerPrefill()
+        }
+        // User wiped the draft: drop edit identity so a later unrelated
+        // send is a normal append.
+        .onChange(of: draft) { _, newValue in
+            if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                editedMessageID = nil
+                editedMessageThreadID = nil
+            }
         }
         .fileImporter(
             isPresented: $showFileImporter, allowedContentTypes: [.image],
@@ -432,14 +455,23 @@ public struct ComposerBar: View {
         guard canSend else { return }
         let text = trimmedDraft
         let outgoing = attachments
+        let replacingID = editedMessageID
+        let replacingThreadID = editedMessageThreadID
         clearSubmittedDraft()
-        Task { await model.send(text: text, attachments: outgoing) }
+        Task {
+            await model.send(
+                text: text, attachments: outgoing,
+                replacingMessageID: replacingID,
+                replacingMessageThreadID: replacingThreadID)
+        }
     }
 
     private func queue() {
         guard canQueue else { return }
         let text = trimmedDraft
         let outgoing = attachments
+        // Queued sends are deferred; an edit-resend must not silently become
+        // an append later — drop the edit identity when queueing.
         clearSubmittedDraft()
         model.enqueueMessage(text: text, attachments: outgoing)
     }
@@ -453,6 +485,9 @@ public struct ComposerBar: View {
         attachmentError = nil
         mentionQuery = nil
         mentionResults = []
+        // Queued messages are not yet on the server timeline — no revert.
+        editedMessageID = nil
+        editedMessageThreadID = nil
         editorFocused = true
     }
 
@@ -472,6 +507,8 @@ public struct ComposerBar: View {
         attachmentError = nil
         mentionQuery = nil
         mentionResults = []
+        editedMessageID = nil
+        editedMessageThreadID = nil
     }
 
     // MARK: - Slash commands

@@ -529,12 +529,18 @@ public struct Checkpoint: Identifiable, Hashable, Sendable {
     public var threadID: String
     public var label: String
     public var createdAt: Date
+    /// Server checkpoint turn count (1-based). `0` when unknown (e.g. mock seed
+    /// labels that predate turn indexing).
+    public var turnCount: Int
 
-    public init(id: String, threadID: String, label: String, createdAt: Date) {
+    public init(
+        id: String, threadID: String, label: String, createdAt: Date, turnCount: Int = 0
+    ) {
         self.id = id
         self.threadID = threadID
         self.label = label
         self.createdAt = createdAt
+        self.turnCount = turnCount
     }
 }
 

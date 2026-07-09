@@ -200,6 +200,10 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         await state.restoreCheckpoint(id: id)
     }
 
+    public func revertThread(threadID: String, turnCount: Int) async throws {
+        await state.revertThread(threadID: threadID, turnCount: turnCount)
+    }
+
     public func addProject(path: String) async throws -> Project {
         await state.addProject(path: path)
     }
@@ -593,15 +597,62 @@ private actor MockState {
     }
 
     func restoreCheckpoint(id: String) {
-        guard let checkpoint = checkpointsByThread.values.flatMap({ $0 }).first(where: { $0.id == id }) else { return }
+        guard let checkpoint = checkpointsByThread.values.flatMap({ $0 }).first(where: {
+            $0.id == id
+        }) else { return }
+        // Prefer the explicit turn count; fall back to list position so seed
+        // checkpoints without turn metadata still restore something sensible.
+        let turnCount: Int
+        if checkpoint.turnCount > 0 {
+            turnCount = checkpoint.turnCount
+        } else if let list = checkpointsByThread[checkpoint.threadID],
+            let index = list.firstIndex(where: { $0.id == id })
+        {
+            turnCount = index + 1
+        } else {
+            turnCount = 1
+        }
+        revertThread(threadID: checkpoint.threadID, turnCount: turnCount)
+    }
+
+    /// Truncates the mock timeline to the first `turnCount` user turns and
+    /// emits a full `timelineReset` so AppModel replaces its cache wholesale
+    /// (same shape LiveBackend uses for `thread.reverted`).
+    func revertThread(threadID: String, turnCount: Int) {
+        let current = timelinesByThread[threadID] ?? []
+        let retained = Self.timelineRetaining(turnCount: turnCount, from: current)
+        timelinesByThread[threadID] = retained
+        if var checkpoints = checkpointsByThread[threadID] {
+            if turnCount <= 0 {
+                checkpoints = []
+            } else {
+                checkpoints = Array(checkpoints.prefix(turnCount))
+            }
+            checkpointsByThread[threadID] = checkpoints
+        }
+        emit(.timelineReset(threadID: threadID, items: retained))
+        emit(.diffInvalidated(threadID: threadID))
         let notice = TimelineItem.notice(
             id: nextID("notice"),
-            text: "Restored checkpoint “\(checkpoint.label)”.",
+            text: "Reverted to turn \(turnCount).",
             at: Date()
         )
-        timelinesByThread[checkpoint.threadID, default: []].append(notice)
-        emit(.timelineAppended(threadID: checkpoint.threadID, item: notice))
-        emit(.diffInvalidated(threadID: checkpoint.threadID))
+        timelinesByThread[threadID, default: []].append(notice)
+        emit(.timelineAppended(threadID: threadID, item: notice))
+    }
+
+    static func timelineRetaining(turnCount: Int, from items: [TimelineItem]) -> [TimelineItem] {
+        guard turnCount > 0 else { return [] }
+        var userCount = 0
+        var retained: [TimelineItem] = []
+        for item in items {
+            if case .userMessage = item {
+                userCount += 1
+                if userCount > turnCount { break }
+            }
+            retained.append(item)
+        }
+        return retained
     }
 
     func addProject(path: String) -> Project {
