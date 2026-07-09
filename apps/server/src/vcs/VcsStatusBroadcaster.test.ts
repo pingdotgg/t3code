@@ -723,13 +723,17 @@ describe("VcsStatusBroadcaster", () => {
     };
 
     return Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
       const gate = yield* Deferred.make<void>();
       const testLayer = VcsStatusBroadcaster.layer.pipe(
         Layer.provideMerge(NodeServices.layer),
         Layer.provide(
           Layer.mock(GitWorkflowService.GitWorkflowService)({
             localStatus: () =>
-              Deferred.await(gate).pipe(
+              // Signal that refreshStatusCore has started (in-flight entry
+              // already inserted), then hold until the gate opens.
+              Deferred.succeed(started, undefined).pipe(
+                Effect.andThen(Deferred.await(gate)),
                 Effect.map(() => {
                   state.localStatusCalls += 1;
                   return baseLocalStatus;
@@ -749,12 +753,17 @@ describe("VcsStatusBroadcaster", () => {
       yield* Effect.gen(function* () {
         const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
 
-        // Both callers start while the first refresh is held open by the
-        // gate; the second must join the in-flight refresh instead of
-        // running its own git status + fetch pair.
+        // Fork first, wait until core refresh is held on the gate (in-flight
+        // entry exists), then fork second. Yield so fiber2 enters the dedupe
+        // modifyEffect before the gate opens — forkChild only schedules, so
+        // opening immediately can let fiber1 finish and delete the entry
+        // before fiber2 joins.
         const first = yield* broadcaster.refreshStatus("/repo").pipe(Effect.forkChild);
+        yield* Deferred.await(started);
         const second = yield* broadcaster.refreshStatus("/repo").pipe(Effect.forkChild);
-        yield* Effect.yieldNow;
+        for (let i = 0; i < 20; i++) {
+          yield* Effect.yieldNow;
+        }
         yield* Deferred.succeed(gate, undefined);
 
         const firstResult = yield* Fiber.join(first);
