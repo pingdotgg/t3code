@@ -7,8 +7,12 @@ import * as Layer from "effect/Layer";
 import { HttpClient } from "effect/unstable/http";
 
 import type { SavedRemoteConnection } from "../../lib/connection";
+import { MobilePreferencesStore } from "../../persistence/mobile-preferences";
 import { MobileStorage } from "../../persistence/mobile-storage";
-import { linkEnvironmentToCloudWithPreference } from "../cloud/linkEnvironment";
+import {
+  CloudEnvironmentLinkError,
+  linkEnvironmentToCloudWithPreference,
+} from "../cloud/linkEnvironment";
 import { setLiveActivityUpdatesEnabled } from "./liveActivityPreferences";
 import { updateAgentAwarenessRegistrationPreferences } from "./remoteRegistration";
 
@@ -42,6 +46,14 @@ const connection: SavedRemoteConnection = {
 
 const testLayer = Layer.mergeAll(
   Layer.succeed(ManagedRelay.ManagedRelayClient, null as never),
+  Layer.succeed(
+    MobilePreferencesStore,
+    MobilePreferencesStore.of({
+      load: Effect.succeed({ liveActivitiesEnabled: true }),
+      savePatch: () => Effect.die("unexpected preference write"),
+      update: () => Effect.die("unexpected preference update"),
+    }),
+  ),
   Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make(() => Effect.die("unexpected HTTP request")),
@@ -134,6 +146,40 @@ describe("liveActivityPreferences", () => {
 
       expect(linkEnvironmentToCloudWithPreference).toHaveBeenCalledTimes(1);
       expect(linkEnvironmentToCloudWithPreference).toHaveBeenCalledWith({
+        clerkToken: "clerk-token",
+        connection,
+        liveActivitiesEnabled: true,
+      });
+    }).pipe(Effect.provide(testLayer));
+  });
+
+  it.effect("restores relay preferences when an environment update fails", () => {
+    vi.mocked(linkEnvironmentToCloudWithPreference).mockImplementationOnce(() =>
+      Effect.fail(new CloudEnvironmentLinkError({ message: "environment update failed" })),
+    );
+
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        setLiveActivityUpdatesEnabled({
+          enabled: false,
+          clerkToken: "clerk-token",
+          connections: [connection],
+        }),
+      );
+
+      expect(exit._tag).toBe("Failure");
+      expect(updateAgentAwarenessRegistrationPreferences).toHaveBeenNthCalledWith(1, {
+        liveActivitiesEnabled: false,
+      });
+      expect(updateAgentAwarenessRegistrationPreferences).toHaveBeenNthCalledWith(2, {
+        liveActivitiesEnabled: true,
+      });
+      expect(linkEnvironmentToCloudWithPreference).toHaveBeenNthCalledWith(1, {
+        clerkToken: "clerk-token",
+        connection,
+        liveActivitiesEnabled: false,
+      });
+      expect(linkEnvironmentToCloudWithPreference).toHaveBeenNthCalledWith(2, {
         clerkToken: "clerk-token",
         connection,
         liveActivitiesEnabled: true,
