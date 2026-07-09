@@ -3,7 +3,7 @@ import { BlurView } from "expo-blur";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
-import { BackHandler, Pressable, ScrollView, StyleSheet, useColorScheme, View } from "react-native";
+import { BackHandler, Pressable, ScrollView, useColorScheme, View } from "react-native";
 import { useKeyboardState } from "react-native-keyboard-controller";
 import Animated, { FadeIn } from "react-native-reanimated";
 
@@ -42,6 +42,7 @@ export type AndroidAnchoredMenuProps = {
   readonly title?: string;
   readonly onPressAction?: MenuComponentProps["onPressAction"];
   /** Applied to the anchor wrapper — call sites flex these to fill toolbars. */
+  readonly className?: string;
   readonly style?: StyleProp<ViewStyle>;
   /**
    * Plain children open the menu on tap (the wrapper owns the press). A
@@ -182,13 +183,14 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
   return (
     <>
       {typeof props.children === "function" ? (
-        <View ref={anchorRef} collapsable={false} style={props.style}>
+        <View ref={anchorRef} collapsable={false} className={props.className} style={props.style}>
           {props.children(open)}
         </View>
       ) : (
         <Pressable
           ref={anchorRef}
           accessibilityRole="button"
+          className={props.className}
           collapsable={false}
           style={props.style}
           onPress={open}
@@ -201,20 +203,17 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
           <View
             ref={overlayRef}
             collapsable={false}
-            style={StyleSheet.absoluteFill}
+            className="absolute inset-0"
             onLayout={measureOverlay}
           >
             <Pressable accessible={false} className="absolute inset-0" onPress={close} />
             {!placeable || local === null ? null : (
               <Animated.View
                 entering={FadeIn.duration(120)}
-                className="absolute overflow-hidden rounded-[12px] border border-border"
+                className="absolute w-[250px] overflow-hidden rounded-[12px] border border-border shadow-2xl"
                 style={{
-                  width: MENU_WIDTH,
                   left,
                   maxHeight,
-                  elevation: 16,
-                  shadowColor: "#000000",
                   ...(opensDown
                     ? { top: local.y + local.height + ANCHOR_GAP }
                     : { bottom: (rootHeight ?? 0) - local.y + ANCHOR_GAP }),
@@ -227,7 +226,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
                   blurTarget={appBlurTargetRef}
                   intensity={40}
                   tint={isDarkMode ? "dark" : "light"}
-                  style={StyleSheet.absoluteFill}
+                  className="absolute inset-0"
                 />
                 <View className="absolute inset-0 bg-card-translucent" />
                 {/* keyboardShouldPersistTaps: the menu often opens over an
@@ -268,8 +267,10 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
                         key={action.id ?? `${index}-${action.title}`}
                         android_ripple={{ color: rippleColor }}
                         disabled={disabled}
-                        className="min-h-11 flex-row items-center gap-2.5 px-3.5 py-2.5"
-                        style={{ opacity: disabled ? 0.45 : 1 }}
+                        className={cn(
+                          "min-h-11 flex-row items-center gap-2.5 px-3.5 py-2.5",
+                          disabled && "opacity-45",
+                        )}
                         onPress={() => onPressItem(action)}
                       >
                         <View className="flex-1 gap-0.5">

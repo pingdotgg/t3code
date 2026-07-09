@@ -87,7 +87,6 @@ const ESTIMATED_THREAD_ROW_HEIGHT = 72;
  * already consumes the top safe-area inset, so the list only needs breathing
  * room here.
  */
-const ANDROID_LIST_TOP_PADDING = 16;
 
 function deriveEmptyState(props: {
   readonly catalogState: WorkspaceState;
@@ -153,7 +152,7 @@ function deriveEmptyState(props: {
 }
 
 function HomeTopContentSpacer() {
-  return <View style={{ height: ANDROID_LIST_TOP_PADDING }} />;
+  return <View className="h-4" />;
 }
 
 /* ─── Main screen ────────────────────────────────────────────────────── */

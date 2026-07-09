@@ -148,6 +148,7 @@ export function ComposerToolbarButton(props: {
   readonly showChevron?: boolean;
   readonly textTransform?: "none" | "uppercase";
   readonly variant?: "default" | "primary" | "danger";
+  readonly className?: string;
   readonly style?: StyleProp<ViewStyle>;
 }) {
   const isDarkMode = useColorScheme() === "dark";
@@ -192,6 +193,7 @@ export function ComposerToolbarButton(props: {
             : props.active
               ? "bg-subtle-strong"
               : "bg-subtle",
+        props.className,
       )}
       style={({ pressed }) => [
         {

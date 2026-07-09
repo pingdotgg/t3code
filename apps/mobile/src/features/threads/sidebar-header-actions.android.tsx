@@ -5,7 +5,7 @@ import type { SidebarHeaderActionsProps } from "./sidebar-header-actions";
 
 export function SidebarHeaderActions(props: SidebarHeaderActionsProps) {
   return (
-    <View style={{ height: 44, flexDirection: "row", gap: 4 }}>
+    <View className="h-11 flex-row gap-1">
       <T3HeaderButton
         accessibilityLabel="Open settings"
         icon="gearshape"

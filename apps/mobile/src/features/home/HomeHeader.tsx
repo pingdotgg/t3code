@@ -10,11 +10,9 @@ import { Platform, Pressable, Text as RNText, TextInput, View } from "react-nati
 import type { SearchBarCommands } from "react-native-screens";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { SymbolView } from "../../components/AppSymbol";
 import { T3Wordmark } from "../../components/T3Wordmark";
-import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
@@ -32,7 +30,6 @@ import {
 } from "./home-list-options";
 
 export type HomeHeaderEnvironment = HomeListFilterMenuEnvironment;
-const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 
 export function HomeHeader(props: {
   readonly environments: ReadonlyArray<HomeHeaderEnvironment>;
@@ -66,12 +63,6 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
   const insets = useSafeAreaInsets();
   const iconColor = useThemeColor("--color-icon");
   const mutedColor = useThemeColor("--color-foreground-muted");
-  const subtleColor = useThemeColor("--color-subtle");
-  const headerColor = useThemeColor("--color-header");
-  const headerBorderColor = useThemeColor("--color-header-border");
-  const inputColor = useThemeColor("--color-input");
-  const inputBorderColor = useThemeColor("--color-input-border");
-  const placeholderColor = useThemeColor("--color-placeholder");
   const hasCustomListOptions = hasCustomHomeListOptions(props);
   const menuActions = useMemo<MenuAction[]>(
     () => [
@@ -174,48 +165,21 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
     <>
       <NativeStackScreenOptions options={{ headerShown: false }} />
       <View
+        className="border-b border-header-border bg-header px-4 pb-3"
         style={{
-          backgroundColor: headerColor,
-          borderBottomColor: headerBorderColor,
-          borderBottomWidth: 1,
           paddingTop: Math.max(insets.top, 12),
-          paddingBottom: 12,
-          paddingHorizontal: 16,
         }}
       >
-        <View style={{ alignSelf: "center", gap: 12, maxWidth: 720, width: "100%" }}>
-          <View style={{ alignItems: "center", flexDirection: "row", gap: 10 }}>
-            <View style={{ alignItems: "center", flexDirection: "row", flex: 1, gap: 8 }}>
+        <View className="w-full max-w-[720px] self-center gap-3">
+          <View className="flex-row items-center gap-2.5">
+            <View className="flex-1 flex-row items-center gap-2">
               {/* Mirrors the desktop SidebarBrand: T3 mark + muted "Code". */}
               <T3Wordmark color={iconColor} height={15} />
-              <RNText
-                style={{
-                  color: mutedColor,
-                  fontFamily: "DMSans_500Medium",
-                  fontSize: MOBILE_TYPOGRAPHY.title.fontSize,
-                  letterSpacing: -0.5,
-                  marginLeft: -2,
-                }}
-              >
+              <RNText className="-ml-0.5 text-[21px] font-t3-medium tracking-[-0.5px] text-foreground-muted">
                 Code
               </RNText>
-              <View
-                style={{
-                  backgroundColor: subtleColor,
-                  borderRadius: 99,
-                  paddingHorizontal: 8,
-                  paddingVertical: 3,
-                }}
-              >
-                <RNText
-                  style={{
-                    color: mutedColor,
-                    fontFamily: "DMSans_700Bold",
-                    fontSize: MOBILE_TYPOGRAPHY.micro.fontSize,
-                    letterSpacing: 1.1,
-                    textTransform: "uppercase",
-                  }}
-                >
+              <View className="rounded-full bg-subtle px-2 py-0.75">
+                <RNText className="text-[11px] font-t3-bold tracking-[1.1px] text-foreground-muted uppercase">
                   Alpha
                 </RNText>
               </View>
@@ -229,14 +193,7 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
               <Pressable
                 accessibilityLabel="Filter and sort threads"
                 accessibilityRole="button"
-                style={{
-                  alignItems: "center",
-                  backgroundColor: subtleColor,
-                  borderRadius: 99,
-                  height: 44,
-                  justifyContent: "center",
-                  width: 44,
-                }}
+                className="size-11 items-center justify-center rounded-full bg-subtle"
               >
                 <SymbolView
                   name={
@@ -257,46 +214,21 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
               accessibilityLabel="Open settings"
               accessibilityRole="button"
               onPress={props.onOpenSettings}
-              style={{
-                alignItems: "center",
-                backgroundColor: subtleColor,
-                borderRadius: 99,
-                height: 44,
-                justifyContent: "center",
-                width: 44,
-              }}
+              className="size-11 items-center justify-center rounded-full bg-subtle"
             >
               <SymbolView name="gearshape" size={18} tintColor={iconColor} type="monochrome" />
             </Pressable>
           </View>
 
-          <View
-            style={{
-              alignItems: "center",
-              backgroundColor: inputColor,
-              borderColor: inputBorderColor,
-              borderRadius: 16,
-              borderWidth: 1,
-              flexDirection: "row",
-              gap: 10,
-              minHeight: 48,
-              paddingHorizontal: 14,
-            }}
-          >
+          <View className="min-h-12 flex-row items-center gap-2.5 rounded-2xl border border-input-border bg-input px-3.5">
             <SymbolView name="magnifyingglass" size={17} tintColor={mutedColor} type="monochrome" />
             <TextInput
               accessibilityLabel="Search threads"
               autoCapitalize="none"
               onChangeText={props.onSearchQueryChange}
               placeholder="Search threads"
-              placeholderTextColor={placeholderColor}
-              style={{
-                color: iconColor,
-                flex: 1,
-                fontFamily: "DMSans_400Regular",
-                fontSize: MOBILE_TYPOGRAPHY.body.fontSize,
-                paddingVertical: 10,
-              }}
+              placeholderTextColorClassName="accent-placeholder"
+              className="flex-1 py-2.5 text-base font-sans text-foreground"
               value={props.searchQuery}
             />
             {props.searchQuery.length > 0 ? (

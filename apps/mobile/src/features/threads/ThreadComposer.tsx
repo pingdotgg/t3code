@@ -867,7 +867,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               showChevron={false}
             />
             <ControlPillMenu
-              style={{ flex: 1, minWidth: 0 }}
+              className="min-w-0 flex-1"
               actions={modelMenuActions}
               onPressAction={({ nativeEvent }) => handleModelMenuAction(nativeEvent.event)}
             >
@@ -875,13 +875,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 accessibilityLabel="Model"
                 iconNode={<ProviderIcon provider={currentModelOption?.providerDriver} size={16} />}
                 label={currentModelOption?.label ?? currentModelSelection.model}
-                style={{ maxWidth: "100%", width: "100%" }}
+                className="w-full max-w-full"
               />
             </ControlPillMenu>
             <ControlPillMenu
               // The reasoning/config label runs longer than most model names,
               // so it gets a larger share of the row.
-              style={{ flex: 1.4, minWidth: 0 }}
+              className="min-w-0 flex-[1.4]"
               actions={optionsMenuActions}
               onPressAction={({ nativeEvent }) => handleOptionsMenuAction(nativeEvent.event)}
             >
@@ -889,7 +889,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 accessibilityLabel="Configuration"
                 icon="slider.horizontal.3"
                 label={configurationLabel}
-                style={{ maxWidth: "100%", width: "100%" }}
+                className="w-full max-w-full"
               />
             </ControlPillMenu>
           </ComposerToolbarRow>

@@ -33,12 +33,7 @@ import {
   useReviewCommentTarget,
 } from "./reviewCommentSelection";
 import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";
-import {
-  changeTone,
-  DiffTokenText,
-  REVIEW_MONO_FONT_FAMILY,
-  ReviewChangeBar,
-} from "./reviewDiffRendering";
+import { changeTone, DiffTokenText, ReviewChangeBar } from "./reviewDiffRendering";
 import {
   highlightReviewSelectedLines,
   type ReviewDiffTheme,
@@ -239,10 +234,7 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
                             style={{ height: codeSurface.rowHeight }}
                           >
                             <ReviewChangeBar change={line.change} height={codeSurface.rowHeight} />
-                            <Text
-                              className="w-9 py-1 pr-1 text-right text-2xs font-t3-medium text-foreground-muted"
-                              style={{ fontFamily: REVIEW_MONO_FONT_FAMILY }}
-                            >
+                            <Text className="w-9 py-1 pr-1 text-right text-2xs font-mono text-foreground-muted">
                               {lineNumber ?? ""}
                             </Text>
                             <View className="min-w-0 flex-1 shrink-0 px-1 py-1">
@@ -321,8 +313,8 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
       </KeyboardAvoidingView>
       {isAndroid && target ? (
         <KeyboardStickyView
+          className="absolute inset-x-0 bottom-0"
           offset={{ closed: 0, opened: 0 }}
-          style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
         >
           <View
             className="flex-row items-center gap-3 border-t border-border bg-sheet px-5 pt-2"

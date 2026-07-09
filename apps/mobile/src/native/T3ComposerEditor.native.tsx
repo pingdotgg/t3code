@@ -15,6 +15,7 @@ import { Image, StyleSheet } from "react-native";
 import { markdownFileIconSource } from "@t3tools/mobile-markdown-text/file-icons";
 import { resolveMarkdownFileIcon } from "@t3tools/mobile-markdown-text/links";
 import { MOBILE_TYPOGRAPHY } from "../lib/typography";
+import { useFontFamily } from "../lib/useFontFamily";
 import { useThemeColor } from "../lib/useThemeColor";
 import {
   acknowledgeComposerNativeEvent,
@@ -105,7 +106,8 @@ export function ComposerEditor({
   const nativeEventSnapshotsRef = useRef<ComposerNativeEventSnapshot[]>([
     { eventCount: 0, value: props.value, selection: selection ?? null },
   ]);
-  const confirmedTokensRef = useRef(collectComposerInlineTokens(props.value));
+  const [initialConfirmedTokens] = useState(() => collectComposerInlineTokens(props.value));
+  const confirmedTokensRef = useRef(initialConfirmedTokens);
   const textColor = useThemeColor("--color-foreground");
   const placeholderColor = useThemeColor("--color-placeholder");
   const chipBackground = useThemeColor("--color-subtle");
@@ -217,6 +219,7 @@ export function ComposerEditor({
     fileTint: String(fileTint),
   });
   const resolvedTextStyle = StyleSheet.flatten(textStyle) ?? {};
+  const regularFontFamily = useFontFamily("regular");
   return (
     <NativeView
       ref={nativeRef}
@@ -226,7 +229,7 @@ export function ComposerEditor({
       fontFamily={
         typeof resolvedTextStyle.fontFamily === "string"
           ? resolvedTextStyle.fontFamily
-          : "DMSans_400Regular"
+          : regularFontFamily
       }
       fontSize={
         typeof resolvedTextStyle.fontSize === "number"

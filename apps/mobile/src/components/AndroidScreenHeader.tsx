@@ -1,9 +1,10 @@
 import type { ReactNode } from "react";
-import { Pressable, Text as RNText, View } from "react-native";
+import { Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView, type AppSymbolName } from "./AppSymbol";
-import { MOBILE_TYPOGRAPHY } from "../lib/typography";
+import { AppText as Text } from "./AppText";
+import { cn } from "../lib/cn";
 import { useThemeColor } from "../lib/useThemeColor";
 
 export interface AndroidHeaderAction {
@@ -20,7 +21,6 @@ export function AndroidHeaderIconButton(props: {
   readonly disabled?: boolean;
 }) {
   const foregroundColor = useThemeColor("--color-foreground");
-  const subtleColor = useThemeColor("--color-subtle");
   const disabledColor = useThemeColor("--color-icon-subtle");
 
   return (
@@ -30,15 +30,10 @@ export function AndroidHeaderIconButton(props: {
       disabled={props.disabled}
       hitSlop={8}
       onPress={props.onPress}
-      style={{
-        alignItems: "center",
-        backgroundColor: subtleColor,
-        borderRadius: 22,
-        height: 44,
-        justifyContent: "center",
-        opacity: props.disabled ? 0.55 : 1,
-        width: 44,
-      }}
+      className={cn(
+        "size-11 items-center justify-center rounded-full bg-subtle",
+        props.disabled && "opacity-55",
+      )}
     >
       <SymbolView
         name={props.icon}
@@ -58,42 +53,23 @@ export function AndroidScreenHeader(props: {
   readonly onBack?: () => void;
 }) {
   const insets = useSafeAreaInsets();
-  const backgroundColor = useThemeColor("--color-header");
-  const borderColor = useThemeColor("--color-header-border");
   const foregroundColor = useThemeColor("--color-foreground");
-  const mutedColor = useThemeColor("--color-foreground-muted");
 
   return (
     <View
+      className="border-b border-header-border bg-header px-3 pb-2.5"
       style={{
-        backgroundColor,
-        borderBottomColor: borderColor,
-        borderBottomWidth: 1,
         paddingTop: Math.max(insets.top, 12),
-        paddingBottom: 10,
-        paddingHorizontal: 12,
       }}
     >
-      <View
-        style={{
-          alignItems: "center",
-          flexDirection: "row",
-          gap: 8,
-          minHeight: 48,
-        }}
-      >
+      <View className="min-h-12 flex-row items-center gap-2">
         {props.onBack ? (
           <Pressable
             accessibilityLabel="Navigate up"
             accessibilityRole="button"
             hitSlop={8}
             onPress={props.onBack}
-            style={{
-              alignItems: "center",
-              height: 44,
-              justifyContent: "center",
-              width: 44,
-            }}
+            className="size-11 items-center justify-center"
           >
             <SymbolView
               name="chevron.left"
@@ -104,29 +80,17 @@ export function AndroidScreenHeader(props: {
           </Pressable>
         ) : null}
 
-        <View style={{ flex: 1, minWidth: 0, paddingLeft: props.onBack ? 0 : 4 }}>
-          <RNText
-            numberOfLines={1}
-            style={{
-              color: foregroundColor,
-              fontFamily: "DMSans_700Bold",
-              fontSize: MOBILE_TYPOGRAPHY.headline.fontSize,
-            }}
-          >
+        <View className={cn("min-w-0 flex-1", !props.onBack && "pl-1")}>
+          <Text numberOfLines={1} className="text-lg font-t3-bold text-foreground">
             {props.title}
-          </RNText>
+          </Text>
           {props.subtitle ? (
-            <RNText
+            <Text
               numberOfLines={1}
-              style={{
-                color: mutedColor,
-                fontFamily: "DMSans_500Medium",
-                fontSize: MOBILE_TYPOGRAPHY.label.fontSize,
-                marginTop: 1,
-              }}
+              className="mt-px text-[13px] font-t3-medium text-foreground-muted"
             >
               {props.subtitle}
-            </RNText>
+            </Text>
           ) : null}
         </View>
 

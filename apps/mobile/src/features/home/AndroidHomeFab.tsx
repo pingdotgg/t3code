@@ -25,27 +25,18 @@ function AndroidHomeFab(props: {
   readonly children: ReactNode;
 }) {
   const insets = useSafeAreaInsets();
-  const primaryColor = useThemeColor("--color-primary");
   const primaryForegroundColor = useThemeColor("--color-primary-foreground");
 
   return (
-    <View style={{ flex: 1 }}>
+    <View className="flex-1">
       {props.children}
       <Pressable
         accessibilityLabel="New task"
         accessibilityRole="button"
         onPress={props.onStartNewTask}
+        className="absolute right-5 size-14 items-center justify-center rounded-full bg-primary shadow-lg"
         style={{
-          alignItems: "center",
-          backgroundColor: primaryColor,
-          borderRadius: 28,
           bottom: Math.max(insets.bottom, 16) + 16,
-          elevation: 6,
-          height: 56,
-          justifyContent: "center",
-          position: "absolute",
-          right: 20,
-          width: 56,
         }}
       >
         <SymbolView

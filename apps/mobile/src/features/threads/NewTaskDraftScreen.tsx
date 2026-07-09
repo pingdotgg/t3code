@@ -5,6 +5,7 @@ import { Alert, InteractionManager, Platform, View, useColorScheme } from "react
 import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
+import { useFontFamily } from "../../lib/useFontFamily";
 
 import { EnvironmentId } from "@t3tools/contracts";
 import {
@@ -116,6 +117,7 @@ export function NewTaskDraftScreen(props: {
   }, [props.pendingTaskId, cancelEditingPendingTask]);
 
   const foregroundColor = useThemeColor("--color-foreground");
+  const regularFontFamily = useFontFamily("regular");
   const bodyText = useScaledTextRole("body");
   const headlineText = useScaledTextRole("headline");
   const sheetFadeOpaque = colorScheme === "dark" ? "rgba(14,14,14,0.98)" : "rgba(242,242,247,0.98)";
@@ -647,7 +649,7 @@ export function NewTaskDraftScreen(props: {
       }
       textStyle={
         isAndroid
-          ? { ...bodyText, color: foregroundColor, fontFamily: "DMSans_400Regular" }
+          ? { ...bodyText, color: foregroundColor, fontFamily: regularFontFamily }
           : headlineText
       }
     />
@@ -725,13 +727,12 @@ export function NewTaskDraftScreen(props: {
         <NativeStackScreenOptions options={{ headerShown: false }} />
         <AndroidScreenHeader title="New Thread" onBack={() => navigation.goBack()} />
 
-        <KeyboardAvoidingView automaticOffset behavior="padding" style={{ flex: 1 }}>
-          <View style={{ flex: 1 }} />
+        <KeyboardAvoidingView automaticOffset behavior="padding" className="flex-1">
+          <View className="flex-1" />
 
           <View
+            className="px-4 pt-2"
             style={{
-              paddingHorizontal: 16,
-              paddingTop: 8,
               paddingBottom: controlsBottomPadding,
               experimental_backgroundImage: isDarkMode
                 ? "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.85) 40%, rgba(0,0,0,0.95) 100%)"
@@ -760,14 +761,14 @@ export function NewTaskDraftScreen(props: {
               }
             >
               {isExpanded && flow.attachments.length > 0 ? (
-                <View style={{ paddingBottom: 10 }}>
+                <View className="pb-2.5">
                   <ComposerAttachmentStrip
                     attachments={flow.attachments}
                     onRemove={flow.removeAttachment}
                   />
                 </View>
               ) : null}
-              <View style={isExpanded ? undefined : { flex: 1, minWidth: 0 }}>{promptEditor}</View>
+              <View className={isExpanded ? undefined : "min-w-0 flex-1"}>{promptEditor}</View>
               {!isExpanded ? (
                 <ControlPill
                   icon="arrow.up"

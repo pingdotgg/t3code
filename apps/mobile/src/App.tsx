@@ -43,7 +43,7 @@ export default function App() {
     <RegistryContext.Provider value={appAtomRegistry}>
       <CloudAuthProvider>
         <AppearancePreferencesProvider>
-          <GestureHandlerRootView style={{ flex: 1 }}>
+          <GestureHandlerRootView className="flex-1">
             <KeyboardProvider statusBarTranslucent>
               <SafeAreaProvider>
                 <StatusBar

@@ -89,6 +89,7 @@ export function ControlPill(props: {
 export function ControlPillMenu(
   props: Omit<ComponentProps<typeof MenuView>, "children" | "themeVariant"> & {
     readonly children: ReactNode;
+    readonly className?: string;
   },
 ) {
   const isDarkMode = useColorScheme() === "dark";
@@ -102,6 +103,7 @@ export function ControlPillMenu(
       return (
         <AndroidAnchoredMenu
           actions={props.actions}
+          className={props.className}
           title={props.title}
           style={props.style}
           onPressAction={props.onPressAction}
@@ -120,6 +122,7 @@ export function ControlPillMenu(
     return (
       <AndroidAnchoredMenu
         actions={props.actions}
+        className={props.className}
         title={props.title}
         style={props.style}
         onPressAction={props.onPressAction}
@@ -129,9 +132,10 @@ export function ControlPillMenu(
     );
   }
 
+  const { className: _className, ...menuProps } = props;
   return (
-    <MenuView {...props} themeVariant={isDarkMode ? "dark" : "light"}>
-      {props.children}
+    <MenuView {...menuProps} themeVariant={isDarkMode ? "dark" : "light"}>
+      {menuProps.children}
     </MenuView>
   );
 }

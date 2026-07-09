@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { StyleSheet, View } from "react-native";
+import { View } from "react-native";
 
 // Minimal in-tree portal for Android overlays. AndroidAnchoredMenu projects
 // its dropdown here instead of into an RN Modal: a Modal is a separate native
@@ -49,7 +49,6 @@ export function OverlayPortalHost() {
 
   useEffect(() => {
     listeners.add(setCurrent);
-    setCurrent(new Map(entries));
     return () => {
       listeners.delete(setCurrent);
     };
@@ -59,9 +58,9 @@ export function OverlayPortalHost() {
     return null;
   }
   return (
-    <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+    <View pointerEvents="box-none" className="absolute inset-0">
       {[...current.entries()].map(([key, node]) => (
-        <View key={key} pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+        <View key={key} pointerEvents="box-none" className="absolute inset-0">
           {node}
         </View>
       ))}
