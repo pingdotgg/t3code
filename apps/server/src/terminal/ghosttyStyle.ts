@@ -217,9 +217,9 @@ export const loadGhosttyTerminalStyle: Effect.Effect<
   ];
   const configSources: Array<string> = [];
   for (const dir of configDirs) {
-    // Read both file names when they coexist so a stale empty `config` does
-    // not shadow a populated `config.ghostty` alongside it.
-    for (const candidate of [path.join(dir, "config"), path.join(dir, "config.ghostty")]) {
+    // Read both file names when they coexist so neither shadows the other;
+    // Ghostty loads config.ghostty before config, so config wins conflicts.
+    for (const candidate of [path.join(dir, "config.ghostty"), path.join(dir, "config")]) {
       const source = yield* readFirstExisting([candidate]);
       if (source !== undefined) configSources.push(source);
     }

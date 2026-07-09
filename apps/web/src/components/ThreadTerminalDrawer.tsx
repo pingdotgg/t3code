@@ -121,6 +121,8 @@ function writeTerminalBuffer(terminal: Terminal, buffer: string): void {
   }
 }
 
+const TERMINAL_SCROLLBACK_LIMIT = 5_000;
+
 // ghostty-web snaps the viewport to the bottom on every write, unlike
 // xterm.js which keeps a scrolled-back viewport anchored. Restore the anchor
 // by advancing viewportY by however many lines the write pushed into
@@ -133,7 +135,16 @@ function writePreservingScrollback(terminal: Terminal, data: string): void {
   }
   const scrollbackBefore = terminal.getScrollbackLength();
   terminal.write(data);
-  const scrollbackAdded = terminal.getScrollbackLength() - scrollbackBefore;
+  const scrollbackAfter = terminal.getScrollbackLength();
+  const measuredGrowth = scrollbackAfter - scrollbackBefore;
+  // At the scrollback limit the length stops growing even though each new
+  // line still evicts the oldest, so measured growth alone would let the
+  // anchor drift toward the live tail. Fall back to counting written
+  // newlines — approximate (ignores soft wraps) but drift-free.
+  const scrollbackAdded =
+    scrollbackAfter >= TERMINAL_SCROLLBACK_LIMIT
+      ? Math.max(measuredGrowth, data.split("\n").length - 1)
+      : measuredGrowth;
   terminal.scrollToLine(Math.round(viewportY) + scrollbackAdded);
 }
 
@@ -539,7 +550,7 @@ export function TerminalViewport({
         // Ghostty font-size is in points; treat it as CSS px, which reads
         // slightly smaller in the drawer than in Ghostty itself.
         fontSize: style?.fontSize ?? DEFAULT_TERMINAL_FONT_SIZE,
-        scrollback: 5_000,
+        scrollback: TERMINAL_SCROLLBACK_LIMIT,
         fontFamily: resolveTerminalFontFamily(style),
         theme: initialTheme,
       });
