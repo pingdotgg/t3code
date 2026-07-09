@@ -11,8 +11,8 @@ import SwiftUI
 /// - `assignments.json` — global thread → { photoID, setId? }
 /// - `settings.json` — `{ defaultSetId }`
 /// - `project-prefs.json` — projectPath → `{ setId?, accentHex?, sfSymbol? }`
-/// - `sets/<setId>/` — manifest.json, pool.json, names.json,
-///   registered-downloads.json, images/
+/// - `sets/<setId>/` — manifest.json, pool.json, photo-tags.json,
+///   names.json, registered-downloads.json, images/
 ///
 /// Everything degrades gracefully without a key or network: `photo(for:)`
 /// returns nil and the views fall back to `AlpineTheme.gradient(seed:)`.
@@ -36,6 +36,8 @@ public final class SceneryStore {
     private var namesBySet: [String: [String: String]] = [:]
     /// setId → photo pool.
     private var pools: [String: [SceneryPhoto]] = [:]
+    /// setId → (photoID → query tags), stored outside mobile-shared pool.json.
+    private var photoTagsBySet: [String: [String: SceneryPhotoTags]] = [:]
     /// setId → last successful pool fetch time.
     private var poolFetchedAt: [String: Date] = [:]
     /// setId → photos whose download_location was already pinged.
@@ -50,6 +52,11 @@ public final class SceneryStore {
 
     private let client: UnsplashClient?
     private let root: URL
+
+    /// Updated only on activation/day-change notifications. This makes
+    /// rotation observable without polling or per-frame date reads.
+    public private(set) var rotationBucket: SceneryBucket
+    private var rotationDayKey: String
 
     /// Pixel width heroes are fetched and cached at: the widest attached
     /// screen's pixel width (so full-screen never upscales), capped to keep
@@ -67,6 +74,10 @@ public final class SceneryStore {
 
     public init(client: UnsplashClient? = UnsplashClient(), root: URL? = nil) {
         self.client = client
+        let now = Date()
+        let calendar = Calendar.autoupdatingCurrent
+        rotationBucket = SceneryBucket.compute(for: now, calendar: calendar)
+        rotationDayKey = Self.dayKey(for: now, calendar: calendar)
         let widestScreen =
             NSScreen.screens
             .map { $0.frame.width * $0.backingScaleFactor }
@@ -109,6 +120,21 @@ public final class SceneryStore {
             }
         }
         await startTask?.value
+    }
+
+    /// Refreshes the cached local bucket. The app calls this on activation and
+    /// NSCalendarDayChanged; tests can inject a fixed date/calendar.
+    public func reevaluateRotation(
+        at date: Date = Date(), calendar: Calendar = .autoupdatingCurrent
+    ) {
+        rotationBucket = SceneryBucket.compute(for: date, calendar: calendar)
+        rotationDayKey = Self.dayKey(for: date, calendar: calendar)
+    }
+
+    private static func dayKey(for date: Date, calendar: Calendar) -> String {
+        let parts = calendar.dateComponents([.year, .day], from: date)
+        let ordinal = calendar.ordinality(of: .day, in: .year, for: date) ?? 0
+        return "\(parts.year ?? 0)-\(ordinal)"
     }
 
     // MARK: - Set resolution
@@ -180,17 +206,21 @@ public final class SceneryStore {
         return setPool[AlpineTheme.stableIndex(threadID, setPool.count)]
     }
 
-    /// The scene the next created thread will get: the least-used pool photo
-    /// in the resolved set (pool order breaks ties). Pure — safe for previews.
+    /// The scene the next created thread will get. The preview and subsequent
+    /// assignment use the same cached bucket and deterministic FNV seed.
     public func peekNextScene(projectPath: String? = nil) -> SceneryPhoto? {
         let setId = resolvedSetId(projectPath: projectPath)
         let setPool = pools[setId] ?? []
-        guard !setPool.isEmpty else { return nil }
-        var useCount: [String: Int] = [:]
-        for assignment in assignments.values where assignment.resolvedSetId == setId {
-            useCount[assignment.photoID, default: 0] += 1
-        }
-        return setPool.min { (useCount[$0.id] ?? 0) < (useCount[$1.id] ?? 0) }
+        let assignmentCount = assignments.values.count { $0.resolvedSetId == setId }
+        let seed = [
+            "next", setId, projectPath ?? "", String(assignmentCount),
+            rotationBucket.timeOfDay.rawValue, rotationBucket.season.rawValue,
+        ].joined(separator: "|")
+        return SceneryPhotoSelection.select(
+            photos: setPool,
+            tagsByPhotoID: photoTagsBySet[setId] ?? [:],
+            bucket: rotationBucket,
+            seed: seed)
     }
 
     /// Thread title for a scene: the plain place name, even when reused.
@@ -283,13 +313,20 @@ public final class SceneryStore {
         return (2...9).contains(lap)
     }
 
-    /// Empty-state hero: rotates daily through the default set's pool.
+    /// Empty-state hero: rotates by day and current time/season bucket through
+    /// the default set's preferred subset.
     public func dailyFeatured() -> SceneryPhoto? {
         let setId = resolvedSetId(projectPath: nil)
         let setPool = pools[setId] ?? []
-        guard !setPool.isEmpty else { return nil }
-        let day = Calendar.current.ordinality(of: .day, in: .year, for: Date()) ?? 0
-        return setPool[day % setPool.count]
+        let seed = [
+            "daily", setId, rotationDayKey, rotationBucket.timeOfDay.rawValue,
+            rotationBucket.season.rawValue,
+        ].joined(separator: "|")
+        return SceneryPhotoSelection.select(
+            photos: setPool,
+            tagsByPhotoID: photoTagsBySet[setId] ?? [:],
+            bucket: rotationBucket,
+            seed: seed)
     }
 
     // MARK: - Images
@@ -466,21 +503,24 @@ public final class SceneryStore {
     private func refreshPool(for setId: String) async {
         guard let client else { return }
         guard let set = set(id: setId) else { return }
-        var fetched: [UnsplashClient.APIPhoto] = []
+        var fetched: [(photo: UnsplashClient.APIPhoto, tags: SceneryPhotoTags?)] = []
         for query in set.queries {
             let take = max(1, query.take)
             guard let results = try? await client.searchPhotos(query: query.text, count: take)
             else { continue }
-            fetched.append(contentsOf: results)
+            let tags = SceneryPhotoTags(query: query)
+            fetched.append(contentsOf: results.map { (photo: $0, tags: tags) })
         }
         var seen: Set<String> = []
-        let unique = fetched.filter { seen.insert($0.id).inserted }.prefix(Self.poolCap)
+        let unique = Array(
+            fetched.filter { seen.insert($0.photo.id).inserted }.prefix(Self.poolCap))
         guard !unique.isEmpty else { return }
 
         let sceneNames = set.sceneNames.isEmpty
             ? ScenerySet.makeBuiltinDolomites().sceneNames
             : set.sceneNames
-        let refreshed = unique.enumerated().map { index, photo in
+        let refreshed = unique.enumerated().map { index, entry in
+            let photo = entry.photo
             let base = sceneNames[index % sceneNames.count]
             return SceneryPhoto(
                 id: photo.id,
@@ -503,9 +543,23 @@ public final class SceneryStore {
                 .map(\.photoID))
         let previous = pools[setId] ?? []
         let kept = previous.filter { assignedIDs.contains($0.id) && !refreshedIDs.contains($0.id) }
+        let previousTags = photoTagsBySet[setId] ?? [:]
+        var refreshedTags: [String: SceneryPhotoTags] = [:]
+        for entry in unique {
+            if let tags = entry.tags {
+                refreshedTags[entry.photo.id] = tags
+            }
+        }
+        for photo in kept {
+            if let tags = previousTags[photo.id] {
+                refreshedTags[photo.id] = tags
+            }
+        }
         pools[setId] = refreshed + kept
+        photoTagsBySet[setId] = refreshedTags
         poolFetchedAt[setId] = Date()
         savePool(for: setId)
+        savePhotoTags(for: setId)
         // Drop stale decoded images for this set from a previous pool.
         let prefix = "\(setId)/"
         images = images.filter { !$0.key.hasPrefix(prefix) }
@@ -614,6 +668,15 @@ public final class SceneryStore {
             pools[setId] = pools[setId] ?? []
         }
 
+        let photoTagsURL = dir.appendingPathComponent("photo-tags.json")
+        if let data = try? Data(contentsOf: photoTagsURL),
+            let tags = try? JSONDecoder().decode([String: SceneryPhotoTags].self, from: data)
+        {
+            photoTagsBySet[setId] = tags.filter { !$0.value.isUntagged }
+        } else {
+            photoTagsBySet[setId] = photoTagsBySet[setId] ?? [:]
+        }
+
         let namesURL = dir.appendingPathComponent("names.json")
         if let data = try? Data(contentsOf: namesURL),
             let map = try? JSONDecoder().decode([String: String].self, from: data)
@@ -709,6 +772,20 @@ public final class SceneryStore {
         }
     }
 
+    private func savePhotoTags(for setId: String) {
+        let poolIDs = Set((pools[setId] ?? []).map(\.id))
+        let tags = (photoTagsBySet[setId] ?? [:]).filter {
+            poolIDs.contains($0.key) && !$0.value.isUntagged
+        }
+        photoTagsBySet[setId] = tags
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let url = setDirectory(setId).appendingPathComponent("photo-tags.json")
+        if let data = try? encoder.encode(tags) {
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+
     private func saveAssignments() {
         if let data = try? JSONEncoder().encode(assignments) {
             try? data.write(to: assignmentsURL, options: .atomic)
@@ -749,7 +826,11 @@ public final class SceneryStore {
     /// Installs a set manifest into the registry (disk + memory).
     /// When `pool` is non-empty it is persisted; otherwise the pool stays empty
     /// until a later refresh. Custom sets are sorted after the builtin.
-    public func registerSet(_ set: ScenerySet, pool: [SceneryPhoto] = []) {
+    public func registerSet(
+        _ set: ScenerySet,
+        pool: [SceneryPhoto] = [],
+        photoTags: [String: SceneryPhotoTags]? = nil
+    ) {
         if let idx = availableSets.firstIndex(where: { $0.id == set.id }) {
             availableSets[idx] = set
         } else {
@@ -765,18 +846,30 @@ public final class SceneryStore {
             at: setDirectory(set.id).appendingPathComponent("images", isDirectory: true),
             withIntermediateDirectories: true)
         pools[set.id] = pool
+        if let photoTags {
+            photoTagsBySet[set.id] = photoTags
+        } else {
+            photoTagsBySet[set.id] = photoTagsBySet[set.id] ?? [:]
+        }
         namesBySet[set.id] = namesBySet[set.id] ?? [:]
         registeredBySet[set.id] = registeredBySet[set.id] ?? []
         if !pool.isEmpty {
             poolFetchedAt[set.id] = Date()
             savePool(for: set.id)
+            if photoTags != nil {
+                savePhotoTags(for: set.id)
+            }
         }
         syncDefaultPool()
     }
 
     /// Test alias for `registerSet`.
-    public func registerSetForTesting(_ set: ScenerySet, pool: [SceneryPhoto] = []) {
-        registerSet(set, pool: pool)
+    public func registerSetForTesting(
+        _ set: ScenerySet,
+        pool: [SceneryPhoto] = [],
+        photoTags: [String: SceneryPhotoTags]? = nil
+    ) {
+        registerSet(set, pool: pool, photoTags: photoTags)
     }
 
     public enum DeleteSetError: Error, LocalizedError, Equatable {
@@ -800,6 +893,7 @@ public final class SceneryStore {
         availableSets.removeAll { $0.id == id }
         paletteExtractionSetIDs.remove(id)
         pools[id] = nil
+        photoTagsBySet[id] = nil
         poolFetchedAt[id] = nil
         namesBySet[id] = nil
         registeredBySet[id] = nil
@@ -841,11 +935,16 @@ public final class SceneryStore {
         assignments = [:]
         namesBySet = [:]
         pools = [:]
+        photoTagsBySet = [:]
         poolFetchedAt = [:]
         registeredBySet = [:]
         images = [:]
         paletteExtractionSetIDs = []
         loadFromDisk()
+    }
+
+    func photoTagsForTesting(setId: String) -> [String: SceneryPhotoTags] {
+        photoTagsBySet[setId] ?? [:]
     }
 }
 

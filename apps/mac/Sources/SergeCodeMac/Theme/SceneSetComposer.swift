@@ -124,7 +124,7 @@ public final class SceneSetComposer {
         var sceneNames = Self.normalizeSceneNames(generated.sceneNames)
 
         do {
-            let (photos, metaNames) = try await fetchPool(
+            let (photos, metaNames, photoTags) = try await fetchPool(
                 queries: queries,
                 sceneNames: sceneNames,
                 location: location)
@@ -154,7 +154,7 @@ public final class SceneSetComposer {
                 return copy
             }
 
-            store.registerSet(set, pool: namedPhotos)
+            store.registerSet(set, pool: namedPhotos, photoTags: photoTags)
             await store.generatePaletteIfNeeded(for: setId, downloadSamples: true)
             try Task.checkCancellation()
             state = .finished(setId: setId)
@@ -171,10 +171,14 @@ public final class SceneSetComposer {
         queries: [SceneryQuery],
         sceneNames: [String],
         location: String
-    ) async throws -> (photos: [SceneryPhoto], metaNames: [String]) {
+    ) async throws -> (
+        photos: [SceneryPhoto],
+        metaNames: [String],
+        photoTags: [String: SceneryPhotoTags]
+    ) {
         guard let client else { throw SceneSetComposerError.missingUnsplashKey }
 
-        var fetched: [UnsplashClient.APIPhoto] = []
+        var fetched: [(photo: UnsplashClient.APIPhoto, tags: SceneryPhotoTags?)] = []
         var metaNames: [String] = []
         let total = queries.count
         state = .fetchingPhotos(completed: 0, total: total)
@@ -183,8 +187,9 @@ public final class SceneSetComposer {
             try Task.checkCancellation()
             let take = max(1, query.take)
             if let results = try? await client.searchPhotos(query: query.text, count: take) {
+                let tags = SceneryPhotoTags(query: query)
                 for photo in results {
-                    fetched.append(photo)
+                    fetched.append((photo: photo, tags: tags))
                     if let name = photo.suggestedSceneName {
                         metaNames.append(name)
                     }
@@ -194,14 +199,15 @@ public final class SceneSetComposer {
         }
 
         var seen: Set<String> = []
-        let unique = fetched.filter { seen.insert($0.id).inserted }.prefix(24)
+        let unique = Array(fetched.filter { seen.insert($0.photo.id).inserted }.prefix(24))
         guard !unique.isEmpty else { throw SceneSetComposerError.noPhotosFound }
 
         let names =
             sceneNames.isEmpty
             ? Self.numberedNames(location: location, count: unique.count)
             : sceneNames
-        let photos = unique.enumerated().map { index, photo in
+        let photos = unique.enumerated().map { index, entry in
+            let photo = entry.photo
             let base = names[index % names.count]
             return SceneryPhoto(
                 id: photo.id,
@@ -214,7 +220,12 @@ public final class SceneSetComposer {
                 photographerName: photo.user.name,
                 photographerProfileURL: photo.user.links?.html)
         }
-        return (photos, metaNames)
+        let photoTags = Dictionary(
+            unique.compactMap { entry in
+                entry.tags.map { (entry.photo.id, $0) }
+            },
+            uniquingKeysWith: { first, _ in first })
+        return (photos, metaNames, photoTags)
     }
 
     // MARK: - Pure helpers (unit-tested)

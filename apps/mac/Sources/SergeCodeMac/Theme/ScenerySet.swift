@@ -10,6 +10,109 @@ public enum ScenerySeason: String, Codable, Hashable, Sendable {
     case spring, summer, autumn, winter
 }
 
+/// The query tags that caused a photo to enter a set's pool. Persisted in
+/// `photo-tags.json`, separate from the mobile-shared `pool.json` schema.
+public struct SceneryPhotoTags: Codable, Hashable, Sendable {
+    public var timeOfDay: SceneryTimeOfDay?
+    public var season: ScenerySeason?
+
+    public init(timeOfDay: SceneryTimeOfDay? = nil, season: ScenerySeason? = nil) {
+        self.timeOfDay = timeOfDay
+        self.season = season
+    }
+
+    init?(query: SceneryQuery) {
+        guard query.timeOfDay != nil || query.season != nil else { return nil }
+        self.init(timeOfDay: query.timeOfDay, season: query.season)
+    }
+
+    var isUntagged: Bool {
+        timeOfDay == nil && season == nil
+    }
+
+    func matches(_ bucket: SceneryBucket) -> Bool {
+        guard !isUntagged else { return false }
+        if let timeOfDay, timeOfDay != bucket.timeOfDay { return false }
+        if let season, season != bucket.season { return false }
+        return true
+    }
+}
+
+/// Clock-based local scenery bucket. Seasons use the northern hemisphere's
+/// meteorological month groupings.
+public struct SceneryBucket: Equatable, Hashable, Sendable {
+    public var timeOfDay: SceneryTimeOfDay
+    public var season: ScenerySeason
+
+    public init(timeOfDay: SceneryTimeOfDay, season: ScenerySeason) {
+        self.timeOfDay = timeOfDay
+        self.season = season
+    }
+
+    /// Pure and unit-testable: callers inject both the instant and calendar.
+    public static func compute(for date: Date, calendar: Calendar) -> SceneryBucket {
+        let components = calendar.dateComponents([.hour, .minute, .month], from: date)
+        let minuteOfDay = (components.hour ?? 0) * 60 + (components.minute ?? 0)
+        let timeOfDay: SceneryTimeOfDay
+        switch minuteOfDay {
+        case (5 * 60 + 30)..<(8 * 60):
+            timeOfDay = .dawn
+        case (8 * 60)..<(17 * 60):
+            timeOfDay = .day
+        case (17 * 60)..<(20 * 60 + 30):
+            timeOfDay = .dusk
+        default:
+            timeOfDay = .night
+        }
+
+        let season: ScenerySeason
+        switch components.month ?? 1 {
+        case 3...5:
+            season = .spring
+        case 6...8:
+            season = .summer
+        case 9...11:
+            season = .autumn
+        default:
+            season = .winter
+        }
+        return SceneryBucket(timeOfDay: timeOfDay, season: season)
+    }
+}
+
+enum SceneryPhotoSelection {
+    /// Preference order: matching tagged photos, untagged photos, then the
+    /// complete pool when neither preferred subset has any candidates.
+    static func preferredCandidates(
+        photos: [SceneryPhoto],
+        tagsByPhotoID: [String: SceneryPhotoTags],
+        bucket: SceneryBucket
+    ) -> [SceneryPhoto] {
+        let matching = photos.filter { tagsByPhotoID[$0.id]?.matches(bucket) == true }
+        if !matching.isEmpty { return matching }
+
+        let untagged = photos.filter {
+            guard let tags = tagsByPhotoID[$0.id] else { return true }
+            return tags.isUntagged
+        }
+        return untagged.isEmpty ? photos : untagged
+    }
+
+    static func select(
+        photos: [SceneryPhoto],
+        tagsByPhotoID: [String: SceneryPhotoTags],
+        bucket: SceneryBucket,
+        seed: String
+    ) -> SceneryPhoto? {
+        let candidates = preferredCandidates(
+            photos: photos,
+            tagsByPhotoID: tagsByPhotoID,
+            bucket: bucket)
+        guard !candidates.isEmpty else { return nil }
+        return candidates[AlpineTheme.stableIndex(seed, candidates.count)]
+    }
+}
+
 /// Whether a set ships with the app or was created by the user.
 public enum ScenerySetOrigin: String, Codable, Hashable, Sendable {
     case builtin, custom

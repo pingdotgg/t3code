@@ -57,6 +57,17 @@ struct SergeCodeApp: App {
                     #endif
                 }
                 .task { await scenery.start() }
+                .onReceive(
+                    NotificationCenter.default.publisher(
+                        for: NSApplication.didBecomeActiveNotification)
+                ) { _ in
+                    scenery.reevaluateRotation()
+                }
+                .onReceive(
+                    NotificationCenter.default.publisher(for: .NSCalendarDayChanged)
+                ) { _ in
+                    scenery.reevaluateRotation()
+                }
         }
         .defaultSize(width: 1100, height: 720)
 
