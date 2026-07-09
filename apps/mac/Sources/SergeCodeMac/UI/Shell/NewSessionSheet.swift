@@ -79,7 +79,10 @@ struct NewSessionSheet: View {
             .transition(Motion.paneSwap)
 
             Picker("Provider", selection: $provider) {
-                ForEach(ProviderKind.allCases) { kind in
+                if runnableProviderKinds.isEmpty {
+                    Text("No available providers").tag(provider)
+                }
+                ForEach(runnableProviderKinds) { kind in
                     Text(kind.displayName).tag(kind)
                 }
             }
@@ -106,6 +109,10 @@ struct NewSessionSheet: View {
             if model.settings == nil {
                 await model.loadSettings()
             }
+            syncProviderSelection()
+        }
+        .onChange(of: model.runnableProviderKinds) {
+            syncProviderSelection()
         }
     }
 
@@ -133,29 +140,44 @@ struct NewSessionSheet: View {
     }
 
     private var canCreate: Bool {
+        guard runnableProviderKinds.contains(provider) else { return false }
         switch mode {
-        case .existing: selectedProjectID != nil
-        case .new: !newProjectPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .existing: return selectedProjectID != nil
+        case .new: return !newProjectPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    private var runnableProviderKinds: [ProviderKind] {
+        model.runnableProviderKinds
+    }
+
+    private func syncProviderSelection() {
+        guard !runnableProviderKinds.isEmpty else { return }
+        if !runnableProviderKinds.contains(provider), let first = runnableProviderKinds.first {
+            provider = first
         }
     }
 
     private func create() async {
         isBusy = true
         defer { isBusy = false }
+        var createdThread: ChatThread?
         switch mode {
         case .existing:
             guard let projectID = selectedProjectID else { return }
-            await model.createSceneThread(
+            createdThread = await model.createSceneThread(
                 projectID: projectID, provider: provider, scenery: scenery)
         case .new:
             let path = newProjectPath.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !path.isEmpty else { return }
             await model.addProject(path: path)
             if let project = model.projects.first(where: { $0.path == path }) {
-                await model.createSceneThread(
+                createdThread = await model.createSceneThread(
                     projectID: project.id, provider: provider, scenery: scenery)
             }
         }
-        isPresented = false
+        if createdThread != nil {
+            isPresented = false
+        }
     }
 }

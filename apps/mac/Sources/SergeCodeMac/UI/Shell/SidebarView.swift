@@ -45,6 +45,7 @@ struct SidebarView: View {
                 } header: {
                     ProjectSectionHeader(
                         project: project,
+                        runnableProviderKinds: model.runnableProviderKinds,
                         onNewSession: { provider in
                             Task {
                                 await model.createSceneThread(
@@ -117,6 +118,7 @@ struct SidebarView: View {
 /// the chosen provider, and a context menu for rename/delete.
 private struct ProjectSectionHeader: View {
     let project: Project
+    let runnableProviderKinds: [ProviderKind]
     let onNewSession: (ProviderKind) -> Void
     let onRename: () -> Void
     let onDelete: () -> Void
@@ -126,7 +128,10 @@ private struct ProjectSectionHeader: View {
             Text(project.name)
             Spacer()
             Menu {
-                ForEach(ProviderKind.allCases) { provider in
+                if runnableProviderKinds.isEmpty {
+                    Text("No available providers")
+                }
+                ForEach(runnableProviderKinds) { provider in
                     Button(provider.displayName) { onNewSession(provider) }
                 }
             } label: {
@@ -139,7 +144,10 @@ private struct ProjectSectionHeader: View {
         }
         .contextMenu {
             Menu("New Session") {
-                ForEach(ProviderKind.allCases) { provider in
+                if runnableProviderKinds.isEmpty {
+                    Text("No available providers")
+                }
+                ForEach(runnableProviderKinds) { provider in
                     Button(provider.displayName) { onNewSession(provider) }
                 }
             }
