@@ -97,9 +97,17 @@ public protocol BackendService: Sendable {
     /// Start an implementation turn from a proposed plan (plan-mode follow-up).
     func implementPlan(threadID: String, planID: String) async throws
 
+    /// Full-thread diff up to the latest completed turn.
     func diff(threadID: String) async throws -> [DiffFile]
+    /// Turn-range diff (`fromTurn` exclusive lower bound, `toTurn` inclusive).
+    func diff(threadID: String, fromTurn: Int, toTurn: Int) async throws -> [DiffFile]
     func checkpoints(threadID: String) async throws -> [Checkpoint]
-    func restoreCheckpoint(id: String) async throws
+    /// Rewind the thread (workspace + history) to `turnCount` completed
+    /// turns (0 = empty thread). The server emits `thread.reverted`;
+    /// backends must surface a truncated timeline (via `timelineReset`)
+    /// and only return once the rewind has been applied, so callers such
+    /// as edit-resend can sequence a follow-up send after it.
+    func restoreCheckpoint(threadID: String, turnCount: Int) async throws
 
     func addProject(path: String) async throws -> Project
     /// Renames a project (its display title; the workspace path is unchanged).

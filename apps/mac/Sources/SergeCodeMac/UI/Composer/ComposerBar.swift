@@ -20,6 +20,12 @@ public struct ComposerBar: View {
     @UIState private var mentionQuery: String?
     @UIState private var mentionSearchTask: Task<Void, Never>?
 
+    /// When set, the next send rewinds the origin thread to just before this
+    /// message. Cleared on send, draft clear, or thread switch because edit
+    /// identity is transient UI state and must never truncate the wrong thread.
+    @UIState private var editedMessageID: String?
+    @UIState private var editedMessageThreadID: String?
+
     @UIState private var showDictationDownloadPrompt = false
     @FocusState private var editorFocused: Bool
 
@@ -290,9 +296,6 @@ public struct ComposerBar: View {
                 appendDictated(text)
             }
         }
-        .onChange(of: model.selectedThreadID) { _, _ in
-            resetTransientState()
-        }
         .alert("Download dictation model?", isPresented: $showDictationDownloadPrompt) {
             Button("Download") { model.dictation.downloadModel() }
             Button("Cancel", role: .cancel) {}
@@ -312,8 +315,24 @@ public struct ComposerBar: View {
         // to compose from the old message.
         .onChange(of: model.composerPrefill) { _, prefill in
             guard prefill != nil, let staged = model.takeComposerPrefill() else { return }
+            editedMessageID = staged.editedMessageID
+            editedMessageThreadID = staged.editedMessageThreadID
             if model.selectedThreadID == staged.threadID {
                 editorFocused = true
+            }
+        }
+        // Drafts persist per-thread. ComposerBar stays mounted across thread
+        // switches, so only staged edit context and transient UI state drop.
+        .onChange(of: model.selectedThreadID) { _, _ in
+            resetTransientState()
+            model.clearComposerPrefill()
+        }
+        // User wiped the draft: drop edit identity so a later unrelated
+        // send is a normal append.
+        .onChange(of: draft) { _, newValue in
+            if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                editedMessageID = nil
+                editedMessageThreadID = nil
             }
         }
         .fileImporter(
@@ -464,12 +483,16 @@ public struct ComposerBar: View {
         guard canSend, let threadID = model.selectedThreadID else { return }
         let submittedDraft = ComposerDraft(text: draft, attachments: attachments)
         let outgoingText = trimmedDraft
+        let replacingID = editedMessageID
+        let replacingThreadID = editedMessageThreadID
         model.clearComposerDraft(for: threadID)
         resetTransientState()
         Task {
             let sent = await model.send(
                 threadID: threadID, text: outgoingText,
-                attachments: submittedDraft.attachments)
+                attachments: submittedDraft.attachments,
+                replacingMessageID: replacingID,
+                replacingMessageThreadID: replacingThreadID)
             if !sent {
                 model.restoreComposerDraft(submittedDraft, for: threadID)
             }
@@ -480,6 +503,8 @@ public struct ComposerBar: View {
         guard canQueue else { return }
         let text = trimmedDraft
         let outgoing = attachments
+        // Queued sends are deferred; an edit-resend must not silently become
+        // an append later — drop the edit identity when queueing.
         clearSubmittedDraft()
         model.enqueueMessage(text: text, attachments: outgoing)
     }
@@ -493,6 +518,9 @@ public struct ComposerBar: View {
         attachmentError = nil
         mentionQuery = nil
         mentionResults = []
+        // Queued messages are not yet on the server timeline — no revert.
+        editedMessageID = nil
+        editedMessageThreadID = nil
         editorFocused = true
     }
 
@@ -521,6 +549,8 @@ public struct ComposerBar: View {
         fileImporterThreadID = nil
         attachmentError = nil
         showDictationDownloadPrompt = false
+        editedMessageID = nil
+        editedMessageThreadID = nil
     }
 
     // MARK: - Slash commands

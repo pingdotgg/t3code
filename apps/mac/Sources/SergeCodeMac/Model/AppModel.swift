@@ -54,6 +54,24 @@ public final class AppModel {
         public let id: UUID
         public let threadID: String
         public let text: String
+        /// When set, the next send rewinds the thread to just before this
+        /// message (server revert) and the edited text replaces it.
+        public let editedMessageID: String?
+        /// Thread the edited message belongs to — discarded if the send
+        /// targets a different thread, so edit-resend cannot rewind another
+        /// thread even though composer drafts themselves are per-thread.
+        public let editedMessageThreadID: String?
+
+        public init(
+            id: UUID, threadID: String, text: String, editedMessageID: String? = nil,
+            editedMessageThreadID: String? = nil
+        ) {
+            self.id = id
+            self.threadID = threadID
+            self.text = text
+            self.editedMessageID = editedMessageID
+            self.editedMessageThreadID = editedMessageThreadID
+        }
     }
 
     private let backend: any BackendService
@@ -83,6 +101,9 @@ public final class AppModel {
 
     @ObservationIgnored private var pendingEvents: [BackendEvent] = []
     @ObservationIgnored private var flushScheduled = false
+    /// threadID → latest review-diff load; older in-flight loads must not
+    /// commit results (see loadReviewDiff).
+    @ObservationIgnored private var reviewDiffLoadTokens: [String: UUID] = [:]
     /// threadID → (messageID, index) of the actively streaming assistant
     /// message, so per-token appends skip the O(n) timeline scan. Entries
     /// are validated against the array before use — a stale index costs one
@@ -382,10 +403,13 @@ public final class AppModel {
         case .diffInvalidated(let threadID):
             // Diff invalidation always coincides with a checkpoint change
             // (new checkpoint completed, or a revert pruned some), so refresh
-            // both — an open Checkpoints inspector stays current.
+            // both — and reload review mode if it's open for this thread.
             Task {
                 await refreshDiff(threadID: threadID)
                 await refreshCheckpoints(threadID: threadID)
+                if threadState(threadID)?.isReviewing == true {
+                    await loadReviewDiff(threadID: threadID)
+                }
             }
         case .providersChanged(let list):
             providers = list
@@ -534,19 +558,107 @@ public final class AppModel {
         }
     }
 
+    // MARK: - Diff review mode
+
+    /// Enter main-area review for a scope, optionally focusing a file path.
+    public func openReview(
+        threadID: String, scope: ReviewScope, focusPath: String? = nil
+    ) {
+        let ts = state(creating: threadID)
+        ts.reviewScope = scope
+        ts.reviewSelectedPath = focusPath
+        ts.isReviewing = true
+        ts.reviewDiff = nil
+        ts.isLoadingReviewDiff = true
+        Task { await loadReviewDiff(threadID: threadID) }
+    }
+
+    public func closeReview(threadID: String) {
+        guard let ts = threadStates[threadID] else { return }
+        // Orphan any in-flight load so a late response can't repopulate state.
+        reviewDiffLoadTokens.removeValue(forKey: threadID)
+        ts.isReviewing = false
+        ts.reviewScope = nil
+        ts.reviewSelectedPath = nil
+        ts.reviewDiff = nil
+        ts.isLoadingReviewDiff = false
+    }
+
+    public func closeReview() {
+        guard let threadID = selectedThreadID else { return }
+        closeReview(threadID: threadID)
+    }
+
+    public func selectReviewFile(threadID: String, path: String?) {
+        state(creating: threadID).reviewSelectedPath = path
+    }
+
+    public func loadReviewDiff(threadID: String) async {
+        let ts = state(creating: threadID)
+        guard let scope = ts.reviewScope else {
+            ts.isLoadingReviewDiff = false
+            return
+        }
+        // Loads can overlap (openReview vs. diffInvalidated) and the same
+        // scope can be re-requested, so a scope check alone can't tell an old
+        // response from the latest — only the newest token may commit.
+        let token = UUID()
+        reviewDiffLoadTokens[threadID] = token
+        ts.isLoadingReviewDiff = true
+        do {
+            let files: [DiffFile]
+            switch scope {
+            case .allChanges:
+                files = try await backend.diff(threadID: threadID)
+            case .checkpoint(let fromTurn, let toTurn, _):
+                files = try await backend.diff(
+                    threadID: threadID, fromTurn: fromTurn, toTurn: toTurn)
+            }
+            guard reviewDiffLoadTokens[threadID] == token, ts.reviewScope == scope else { return }
+            ts.reviewDiff = files
+            if let path = ts.reviewSelectedPath,
+                files.contains(where: { $0.path == path })
+            {
+                // Keep focused path.
+            } else {
+                ts.reviewSelectedPath = files.first?.path
+            }
+        } catch {
+            guard reviewDiffLoadTokens[threadID] == token, ts.reviewScope == scope else { return }
+            lastError = String(describing: error)
+            ts.reviewDiff = []
+        }
+        if reviewDiffLoadTokens[threadID] == token {
+            ts.isLoadingReviewDiff = false
+        }
+    }
+
     // MARK: - Commands
 
     /// Stages `text` for the composer (Edit action on a sent message).
-    public func stageComposerText(_ text: String) {
+    /// When `editedMessageID` is set, a subsequent send rewinds the thread
+    /// so the edited text replaces that message instead of appending.
+    public func stageComposerText(_ text: String, editedMessageID: String? = nil) {
         guard let threadID = selectedThreadID else { return }
         setComposerDraftText(text, for: threadID)
-        composerPrefill = ComposerPrefill(id: UUID(), threadID: threadID, text: text)
+        composerPrefill = ComposerPrefill(
+            id: UUID(),
+            threadID: threadID,
+            text: text,
+            editedMessageID: editedMessageID,
+            editedMessageThreadID: editedMessageID != nil ? threadID : nil
+        )
     }
 
     /// Marks the staged prefill consumed. Returns it, or nil if already taken.
     public func takeComposerPrefill() -> ComposerPrefill? {
         defer { composerPrefill = nil }
         return composerPrefill
+    }
+
+    /// Drops any unconsumed edit prefill (thread switch / composer clear).
+    public func clearComposerPrefill() {
+        composerPrefill = nil
     }
 
     public func enqueueMessage(text: String, attachments: [OutgoingAttachment] = []) {
@@ -574,16 +686,31 @@ public final class AppModel {
     }
 
     @discardableResult
-    public func send(text: String, attachments: [OutgoingAttachment] = []) async -> Bool {
+    public func send(
+        text: String,
+        attachments: [OutgoingAttachment] = [],
+        replacingMessageID: String? = nil,
+        replacingMessageThreadID: String? = nil
+    ) async -> Bool {
         guard let threadID = selectedThreadID else { return false }
-        return await send(threadID: threadID, text: text, attachments: attachments)
+        return await send(
+            threadID: threadID, text: text, attachments: attachments,
+            replacingMessageID: replacingMessageID,
+            replacingMessageThreadID: replacingMessageThreadID)
     }
 
     @discardableResult
     public func send(
-        threadID: String, text: String, attachments: [OutgoingAttachment] = []
+        threadID: String,
+        text: String,
+        attachments: [OutgoingAttachment] = [],
+        replacingMessageID: String? = nil,
+        replacingMessageThreadID: String? = nil
     ) async -> Bool {
-        await sendAndReport(threadID: threadID, text: text, attachments: attachments)
+        await sendAndReport(
+            threadID: threadID, text: text, attachments: attachments,
+            replacingMessageID: replacingMessageID,
+            replacingMessageThreadID: replacingMessageThreadID)
     }
 
     private func enqueueMessage(
@@ -645,10 +772,14 @@ public final class AppModel {
     }
 
     private func sendAndReport(
-        threadID: String, text: String, attachments: [OutgoingAttachment]
+        threadID: String, text: String, attachments: [OutgoingAttachment],
+        replacingMessageID: String? = nil, replacingMessageThreadID: String? = nil
     ) async -> Bool {
         do {
-            try await sendMessage(threadID: threadID, text: text, attachments: attachments)
+            try await sendMessage(
+                threadID: threadID, text: text, attachments: attachments,
+                replacingMessageID: replacingMessageID,
+                replacingMessageThreadID: replacingMessageThreadID)
             return true
         } catch {
             lastError = String(describing: error)
@@ -657,10 +788,65 @@ public final class AppModel {
     }
 
     private func sendMessage(
-        threadID: String, text: String, attachments: [OutgoingAttachment]
+        threadID: String, text: String, attachments: [OutgoingAttachment],
+        replacingMessageID: String? = nil, replacingMessageThreadID: String? = nil
     ) async throws {
         guard !(text.isEmpty && attachments.isEmpty) else { return }
+        // Edit/resend: only revert when the staged message belongs to the
+        // thread we're about to send on. A cross-thread send must not truncate.
+        if let messageID = replacingMessageID,
+            let originThreadID = replacingMessageThreadID,
+            originThreadID == threadID
+        {
+            let timeline = threadStates[threadID]?.timeline ?? []
+            if let turnCount = Self.revertTurnCount(forUserMessageID: messageID, in: timeline) {
+                try await backend.restoreCheckpoint(threadID: threadID, turnCount: turnCount)
+            }
+        }
         try await backend.sendMessage(threadID: threadID, text: text, attachments: attachments)
+    }
+
+    /// Maps a user message to the checkpoint turn count the server should
+    /// retain before that message — web-client parity (`ChatView.tsx`
+    /// `revertTurnCountByUserMessageId`):
+    /// 1. Walk forward from the user message to the next checkpoint that
+    ///    belongs to the turn it started (`max(0, checkpoint.turnCount - 1)`).
+    /// 2. Stop at the next user message if no checkpoint is found.
+    /// 3. Fallback: 0-based index among user messages (covers incomplete /
+    ///    cancelled turns that never produced a checkpoint).
+    static func revertTurnCount(forUserMessageID messageID: String, in timeline: [TimelineItem])
+        -> Int?
+    {
+        guard
+            let start = timeline.firstIndex(where: {
+                if case .userMessage(let id, _, _) = $0 { return id == messageID }
+                return false
+            })
+        else { return nil }
+
+        var index = start + 1
+        while index < timeline.count {
+            switch timeline[index] {
+            case .userMessage:
+                return userMessageIndex(of: messageID, in: timeline)
+            case .checkpoint(let checkpoint) where checkpoint.turnCount > 0:
+                return max(0, checkpoint.turnCount - 1)
+            default:
+                index += 1
+            }
+        }
+        return userMessageIndex(of: messageID, in: timeline)
+    }
+
+    private static func userMessageIndex(of messageID: String, in timeline: [TimelineItem]) -> Int?
+    {
+        var index = 0
+        for item in timeline {
+            guard case .userMessage(let id, _, _) = item else { continue }
+            if id == messageID { return index }
+            index += 1
+        }
+        return nil
     }
 
     private func threadStatus(for threadID: String) -> ThreadStatus? {
@@ -932,7 +1118,8 @@ public final class AppModel {
 
     public func restoreCheckpoint(_ checkpoint: Checkpoint) async {
         do {
-            try await backend.restoreCheckpoint(id: checkpoint.id)
+            try await backend.restoreCheckpoint(
+                threadID: checkpoint.threadID, turnCount: checkpoint.turnCount)
         } catch {
             lastError = String(describing: error)
         }
@@ -1052,8 +1239,9 @@ public final class AppModel {
         }
     }
 
-    public func openInEditor(subpath: String?, editor: ExternalEditor) async {
-        guard let threadID = selectedThreadID else { return }
+    public func openInEditor(
+        threadID: String, subpath: String?, editor: ExternalEditor
+    ) async {
         do {
             try await backend.openInEditor(threadID: threadID, subpath: subpath, editor: editor)
         } catch {
