@@ -76,6 +76,7 @@ const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
   high: "High",
   xhigh: "Extra High",
   max: "Max",
+  ultra: "Ultra",
 };
 
 const DEFAULT_SERVICE_TIER_ID = "default";
