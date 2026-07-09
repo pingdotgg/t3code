@@ -69,7 +69,7 @@ const CLAUDE_IDENTITY: ClaudeProviderIdentity = {
   provider: PROVIDER,
   displayName: "Claude",
   showInteractionModeToggle: true,
-  disabledMessage: "Claude is disabled in T3 Code settings.",
+  disabledMessage: "Claude is disabled in SergeCode settings.",
   uncheckedMessage: "Claude provider status has not been checked in this session yet.",
   commandMissingMessage: "Claude Agent CLI (`claude`) is not installed or not on PATH.",
   healthCheckFailedMessage: "Failed to execute Claude Agent CLI health check.",
@@ -738,7 +738,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: identity.disabledMessage ?? "Claude is disabled in T3 Code settings.",
+        message: identity.disabledMessage ?? "Claude is disabled in SergeCode settings.",
       },
     });
   }
@@ -912,7 +912,7 @@ export const makePendingClaudeProvider = (
           version: null,
           status: "warning",
           auth: { status: "unknown" },
-          message: identity.disabledMessage ?? "Claude is disabled in T3 Code settings.",
+          message: identity.disabledMessage ?? "Claude is disabled in SergeCode settings.",
         },
       });
     }

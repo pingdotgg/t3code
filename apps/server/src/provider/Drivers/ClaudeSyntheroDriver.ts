@@ -19,15 +19,17 @@ import {
   type ClaudeSyntheroSettings as ClaudeSyntheroSettingsType,
   ProviderDriverKind,
   type ProviderInstanceEnvironment,
+  type ProviderInstanceId,
   type ServerProvider,
+  type ServerSettings,
 } from "@t3tools/contracts";
-import * as Cache from "effect/Cache";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -59,19 +61,18 @@ import {
 } from "../providerMaintenance.ts";
 import {
   haveProviderSnapshotSettingsChanged,
-  makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
-import { makeClaudeCapabilitiesCacheKey, makeClaudeContinuationGroupKey } from "./ClaudeHome.ts";
+import { makeClaudeContinuationGroupKey } from "./ClaudeHome.ts";
 
 const DRIVER_KIND = ProviderDriverKind.make("claude-synthero");
 const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
-const CAPABILITIES_PROBE_TTL = Duration.minutes(5);
 const DEFAULT_SYNTHERO_BASE_URL = "https://api.synterolink.com";
 const SYNTHERO_AUTH_TOKEN_ENV = "SYNTHERO_AUTH_TOKEN";
 const ANTHROPIC_AUTH_TOKEN_ENV = "ANTHROPIC_AUTH_TOKEN";
 
 const decodeClaudeSyntheroSettings = Schema.decodeSync(ClaudeSyntheroSettings);
+const decodeClaudeSyntheroSettingsEffect = Schema.decodeUnknownEffect(ClaudeSyntheroSettings);
 
 /**
  * Detect whether a resolved command path points at a natively-installed
@@ -202,6 +203,43 @@ function toClaudeSettings(config: ClaudeSyntheroSettingsType): ClaudeSettings {
 }
 
 /**
+ * Resolve the latest Claude Synthero settings for this instance from the
+ * current server settings snapshot.
+ *
+ * `ProviderInstanceRegistry` rebuilds instances when configs change, but
+ * `makeManagedServerProvider` can also apply settings streams in-place. This
+ * helper keeps provider status refreshes from using the token/base URL that
+ * happened to be captured when `create()` originally ran.
+ *
+ * @param input.settings - Current server settings snapshot.
+ * @param input.instanceId - Provider instance id for this materialized driver.
+ * @param input.fallbackConfig - Last known-good config to use if an in-flight
+ * provider instance config cannot be decoded.
+ * @returns The latest effective Claude Synthero settings for this instance.
+ */
+export function resolveCurrentClaudeSyntheroSettings(input: {
+  readonly settings: ServerSettings;
+  readonly instanceId: ProviderInstanceId;
+  readonly fallbackConfig: ClaudeSyntheroSettingsType;
+}): Effect.Effect<ClaudeSyntheroSettingsType> {
+  const providerInstance = input.settings.providerInstances[input.instanceId];
+  if (providerInstance?.driver === DRIVER_KIND) {
+    return decodeClaudeSyntheroSettingsEffect(providerInstance.config ?? {}).pipe(
+      Effect.map(
+        (decoded) =>
+          ({
+            ...decoded,
+            enabled: providerInstance.enabled ?? decoded.enabled,
+          }) satisfies ClaudeSyntheroSettingsType,
+      ),
+      Effect.orElseSucceed(() => input.fallbackConfig),
+    );
+  }
+
+  return Effect.succeed(input.settings.providers["claude-synthero"]);
+}
+
+/**
  * Build the process environment for a Claude Synthero session.
  *
  * Starts from `baseEnv` with any inherited normal-Claude `ANTHROPIC_AUTH_TOKEN`
@@ -324,7 +362,6 @@ export const ClaudeSyntheroDriver: ProviderDriver<
         providerEnvironment: environment,
         baseEnv,
       });
-      const authToken = resolveClaudeSyntheroAuthToken(effectiveConfig, environment, baseEnv);
       const fallbackContinuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
         instanceId,
@@ -349,38 +386,78 @@ export const ClaudeSyntheroDriver: ProviderDriver<
       });
       const textGeneration = yield* makeClaudeTextGeneration(claudeSettings, processEnv);
 
-      const capabilitiesProbeCache = yield* Cache.make({
-        capacity: 1,
-        timeToLive: CAPABILITIES_PROBE_TTL,
-        lookup: () =>
-          probeClaudeCapabilities(claudeSettings, processEnv).pipe(
-            Effect.provideService(Path.Path, path),
+      const currentSnapshotSettings = serverSettings.getSettings.pipe(
+        Effect.flatMap((settings) =>
+          resolveCurrentClaudeSyntheroSettings({
+            settings,
+            instanceId,
+            fallbackConfig: effectiveConfig,
+          }).pipe(
+            Effect.map(
+              (provider) =>
+                ({
+                  provider,
+                  enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+                }) satisfies ProviderSnapshotSettings<ClaudeSyntheroSettingsType>,
+            ),
           ),
-      });
-      const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(claudeSettings);
+        ),
+      );
+      const streamSnapshotSettings = serverSettings.streamChanges.pipe(
+        Stream.mapEffect((settings) =>
+          resolveCurrentClaudeSyntheroSettings({
+            settings,
+            instanceId,
+            fallbackConfig: effectiveConfig,
+          }).pipe(
+            Effect.map(
+              (provider) =>
+                ({
+                  provider,
+                  enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+                }) satisfies ProviderSnapshotSettings<ClaudeSyntheroSettingsType>,
+            ),
+          ),
+        ),
+      );
 
-      const checkProvider = (
-        authToken.length === 0 && effectiveConfig.enabled
-          ? makeMissingAuthProvider(effectiveConfig)
-          : checkClaudeProviderStatus(
-              claudeSettings,
-              () => Cache.get(capabilitiesProbeCache, capabilitiesCacheKey),
-              processEnv,
-              CLAUDE_SYNTHERO_IDENTITY,
-            )
-      ).pipe(
+      const checkProvider = currentSnapshotSettings.pipe(
+        Effect.flatMap((settings) => {
+          const currentConfig = settings.provider;
+          const currentClaudeSettings = toClaudeSettings(currentConfig);
+          const currentProcessEnv = makeClaudeSyntheroEnvironment({
+            settings: currentConfig,
+            providerEnvironment: environment,
+            baseEnv,
+          });
+          const currentAuthToken = resolveClaudeSyntheroAuthToken(
+            currentConfig,
+            environment,
+            baseEnv,
+          );
+          return currentAuthToken.length === 0 && currentConfig.enabled
+            ? makeMissingAuthProvider(currentConfig)
+            : checkClaudeProviderStatus(
+                currentClaudeSettings,
+                () =>
+                  probeClaudeCapabilities(currentClaudeSettings, currentProcessEnv).pipe(
+                    Effect.provideService(Path.Path, path),
+                  ),
+                currentProcessEnv,
+                CLAUDE_SYNTHERO_IDENTITY,
+              );
+        }),
         Effect.map(stampIdentity),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(Path.Path, path),
       );
 
-      const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
       const snapshot = yield* makeManagedServerProvider<
         ProviderSnapshotSettings<ClaudeSyntheroSettingsType>
       >({
         maintenanceCapabilities,
-        getSettings: snapshotSettings.getSettings,
-        streamSettings: snapshotSettings.streamSettings,
+        getSettings: currentSnapshotSettings,
+        streamSettings: streamSnapshotSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
         initialSnapshot: (settings) =>
           makePendingClaudeProvider(
