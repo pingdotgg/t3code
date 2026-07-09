@@ -524,23 +524,66 @@ public struct ProposedPlan: Identifiable, Hashable, Sendable {
     }
 }
 
+/// UI mirror of wire `OrchestrationCheckpointStatus`.
+public enum CheckpointStatus: String, Sendable, Hashable {
+    case ready, missing, error
+}
+
+/// One file touched by a checkpoint (from `OrchestrationCheckpointFile`).
+public struct CheckpointFile: Identifiable, Hashable, Sendable {
+    public var path: String
+    /// Wire kind string (`added` / `modified` / `deleted` / `renamed`, etc.).
+    public var kind: String
+    public var additions: Int
+    public var deletions: Int
+
+    public var id: String { path }
+
+    public init(path: String, kind: String, additions: Int, deletions: Int) {
+        self.path = path
+        self.kind = kind
+        self.additions = additions
+        self.deletions = deletions
+    }
+}
+
 public struct Checkpoint: Identifiable, Hashable, Sendable {
     public var id: String
     public var threadID: String
     public var label: String
     public var createdAt: Date
-    /// Server checkpoint turn count (1-based). `0` when unknown (e.g. mock seed
-    /// labels that predate turn indexing).
+    /// Server turn count used for restore and scoped turn-diff queries.
     public var turnCount: Int
+    public var status: CheckpointStatus
+    public var files: [CheckpointFile]
+    public var assistantMessageId: String?
 
     public init(
-        id: String, threadID: String, label: String, createdAt: Date, turnCount: Int = 0
+        id: String, threadID: String, label: String, createdAt: Date,
+        turnCount: Int = 0, status: CheckpointStatus = .ready,
+        files: [CheckpointFile] = [], assistantMessageId: String? = nil
     ) {
         self.id = id
         self.threadID = threadID
         self.label = label
         self.createdAt = createdAt
         self.turnCount = turnCount
+        self.status = status
+        self.files = files
+        self.assistantMessageId = assistantMessageId
+    }
+}
+
+/// Scope of the main-area diff review mode.
+public enum ReviewScope: Equatable, Hashable, Sendable {
+    case allChanges
+    case checkpoint(fromTurn: Int, toTurn: Int, label: String)
+
+    public var title: String {
+        switch self {
+        case .allChanges: "All Changes"
+        case .checkpoint(_, _, let label): label
+        }
     }
 }
 

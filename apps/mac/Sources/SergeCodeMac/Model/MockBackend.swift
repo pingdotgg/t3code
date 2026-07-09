@@ -192,16 +192,16 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         await state.diff(threadID: threadID)
     }
 
+    public func diff(threadID: String, fromTurn: Int, toTurn: Int) async throws -> [DiffFile] {
+        await state.diff(threadID: threadID, fromTurn: fromTurn, toTurn: toTurn)
+    }
+
     public func checkpoints(threadID: String) async throws -> [Checkpoint] {
         await state.checkpoints(threadID: threadID)
     }
 
-    public func restoreCheckpoint(id: String) async throws {
-        await state.restoreCheckpoint(id: id)
-    }
-
-    public func revertThread(threadID: String, turnCount: Int) async throws {
-        await state.revertThread(threadID: threadID, turnCount: turnCount)
+    public func restoreCheckpoint(threadID: String, turnCount: Int) async throws {
+        await state.restoreCheckpoint(threadID: threadID, turnCount: turnCount)
     }
 
     public func addProject(path: String) async throws -> Project {
@@ -226,6 +226,8 @@ private actor MockState {
     private var threadsByID: [String: ChatThread] = [:]
     private var timelinesByThread: [String: [TimelineItem]] = [:]
     private var diffsByThread: [String: [DiffFile]] = [:]
+    /// Scoped turn-range diffs keyed by `"threadID:from:to"`.
+    private var scopedDiffs: [String: [DiffFile]] = [:]
     private var checkpointsByThread: [String: [Checkpoint]] = [:]
     private var approvalsByID: [String: ApprovalRequest] = [:]
     private var providerList: [ProviderInstance] = []
@@ -246,6 +248,7 @@ private actor MockState {
         self.threadsByID = seed.threads
         self.timelinesByThread = seed.timelines
         self.diffsByThread = seed.diffs
+        self.scopedDiffs = seed.scopedDiffs
         self.checkpointsByThread = seed.checkpoints
         self.approvalsByID = seed.approvals
         self.providerList = seed.providers
@@ -314,6 +317,21 @@ private actor MockState {
 
     func diff(threadID: String) -> [DiffFile] {
         diffsByThread[threadID] ?? []
+    }
+
+    func diff(threadID: String, fromTurn: Int, toTurn: Int) -> [DiffFile] {
+        // Mirror LiveBackend: invalid ranges have no diff.
+        guard toTurn > 0, toTurn > fromTurn else { return [] }
+        let key = "\(threadID):\(fromTurn):\(toTurn)"
+        if let scoped = scopedDiffs[key] { return scoped }
+        // Fallback: filter full diff by paths touched by the checkpoint at toTurn.
+        let checkpoints = checkpointsByThread[threadID] ?? []
+        guard let target = checkpoints.first(where: { $0.turnCount == toTurn }) else {
+            return []
+        }
+        let paths = Set(target.files.map(\.path))
+        if paths.isEmpty { return diffsByThread[threadID] ?? [] }
+        return (diffsByThread[threadID] ?? []).filter { paths.contains($0.path) }
     }
 
     func checkpoints(threadID: String) -> [Checkpoint] {
@@ -596,49 +614,50 @@ private actor MockState {
         }
     }
 
-    func restoreCheckpoint(id: String) {
-        guard let checkpoint = checkpointsByThread.values.flatMap({ $0 }).first(where: {
-            $0.id == id
-        }) else { return }
-        // Prefer the explicit turn count; fall back to list position so seed
-        // checkpoints without turn metadata still restore something sensible.
-        let turnCount: Int
-        if checkpoint.turnCount > 0 {
-            turnCount = checkpoint.turnCount
-        } else if let list = checkpointsByThread[checkpoint.threadID],
-            let index = list.firstIndex(where: { $0.id == id })
-        {
-            turnCount = index + 1
-        } else {
-            turnCount = 1
-        }
-        revertThread(threadID: checkpoint.threadID, turnCount: turnCount)
-    }
+    /// Rewinds mock state to `turnCount` and emits a full `timelineReset`,
+    /// mirroring LiveBackend's `thread.reverted` handling: the timeline keeps
+    /// only the first `turnCount` user turns, checkpoints beyond the turn
+    /// disappear, and the full diff drops files only they touched.
+    func restoreCheckpoint(threadID: String, turnCount: Int) {
+        let checkpoints = checkpointsByThread[threadID] ?? []
+        let checkpoint = checkpoints.first(where: { $0.turnCount == turnCount })
+        let label = checkpoint?.label ?? "Turn \(turnCount)"
 
-    /// Truncates the mock timeline to the first `turnCount` user turns and
-    /// emits a full `timelineReset` so AppModel replaces its cache wholesale
-    /// (same shape LiveBackend uses for `thread.reverted`).
-    func revertThread(threadID: String, turnCount: Int) {
-        let current = timelinesByThread[threadID] ?? []
-        let retained = Self.timelineRetaining(turnCount: turnCount, from: current)
-        timelinesByThread[threadID] = retained
-        if var checkpoints = checkpointsByThread[threadID] {
-            if turnCount <= 0 {
-                checkpoints = []
-            } else {
-                checkpoints = Array(checkpoints.prefix(turnCount))
-            }
-            checkpointsByThread[threadID] = checkpoints
+        // Rewind mock state before invalidating, so the refresh the
+        // invalidation triggers reads post-restore data.
+        let kept = checkpoints.filter { $0.turnCount <= turnCount }
+        let keptPaths = Set(kept.flatMap { $0.files.map(\.path) })
+        let removedPaths = Set(
+            checkpoints.filter { $0.turnCount > turnCount }.flatMap { $0.files.map(\.path) }
+        ).subtracting(keptPaths)
+        checkpointsByThread[threadID] = kept
+        if !removedPaths.isEmpty {
+            diffsByThread[threadID] = (diffsByThread[threadID] ?? [])
+                .filter { !removedPaths.contains($0.path) }
         }
+        for key in scopedDiffs.keys where key.hasPrefix("\(threadID):") {
+            if let toTurn = key.split(separator: ":").last.flatMap({ Int($0) }),
+                toTurn > turnCount
+            {
+                scopedDiffs[key] = nil
+            }
+        }
+
+        // Truncate the timeline and reset wholesale so AppModel replaces its
+        // cache (same event shape LiveBackend uses for `thread.reverted`).
+        let retained = Self.timelineRetaining(
+            turnCount: turnCount, from: timelinesByThread[threadID] ?? [])
+        timelinesByThread[threadID] = retained
         emit(.timelineReset(threadID: threadID, items: retained))
-        emit(.diffInvalidated(threadID: threadID))
+
         let notice = TimelineItem.notice(
             id: nextID("notice"),
-            text: "Reverted to turn \(turnCount).",
+            text: "Restored checkpoint “\(label)”.",
             at: Date()
         )
         timelinesByThread[threadID, default: []].append(notice)
         emit(.timelineAppended(threadID: threadID, item: notice))
+        emit(.diffInvalidated(threadID: threadID))
     }
 
     static func timelineRetaining(turnCount: Int, from items: [TimelineItem]) -> [TimelineItem] {
@@ -739,6 +758,7 @@ private actor MockState {
         var threads: [String: ChatThread]
         var timelines: [String: [TimelineItem]]
         var diffs: [String: [DiffFile]]
+        var scopedDiffs: [String: [DiffFile]]
         var checkpoints: [String: [Checkpoint]]
         var approvals: [String: ApprovalRequest]
         var providers: [ProviderInstance]
@@ -751,6 +771,7 @@ private actor MockState {
         var threadsByID: [String: ChatThread] = [:]
         var timelinesByThread: [String: [TimelineItem]] = [:]
         var diffsByThread: [String: [DiffFile]] = [:]
+        var scopedDiffs: [String: [DiffFile]] = [:]
         var checkpointsByThread: [String: [Checkpoint]] = [:]
         var approvalsByID: [String: ApprovalRequest] = [:]
 
@@ -830,20 +851,88 @@ private actor MockState {
         timelinesByThread[thread3.id] = MockState.timelineForPricingThread(at: now)
         timelinesByThread[thread4.id] = MockState.timelineForErrorThread(at: now)
 
-        diffsByThread[thread1.id] = MockState.diffForSidebarThread()
+        let sidebarDiff = MockState.diffForSidebarThread()
+        let longLineDiff = MockState.diffForLongLineFile()
+        let pairedDiff = MockState.diffForPairedIntraline()
+        // Full thread-1 diff: multi-file including long lines + paired changes.
+        diffsByThread[thread1.id] = sidebarDiff + longLineDiff + pairedDiff
         diffsByThread[thread2.id] = MockState.diffForMockBackendThread()
         diffsByThread[thread3.id] = MockState.diffForPricingThread()
         diffsByThread[thread4.id] = MockState.diffForErrorThread()
 
+        // Scoped subsets for turn-range review.
+        scopedDiffs["\(thread1.id):0:1"] = Array(sidebarDiff.prefix(1))
+        scopedDiffs["\(thread1.id):1:2"] = Array(sidebarDiff.dropFirst()) + longLineDiff
+        scopedDiffs["\(thread1.id):2:3"] = pairedDiff
+        scopedDiffs["\(thread2.id):0:1"] = MockState.diffForMockBackendThread()
+        scopedDiffs["\(thread3.id):0:1"] = MockState.diffForPricingThread()
+
         checkpointsByThread[thread1.id] = [
-            Checkpoint(id: "ckpt-1a", threadID: thread1.id, label: "Before scroll refactor", createdAt: now.addingTimeInterval(-600)),
-            Checkpoint(id: "ckpt-1b", threadID: thread1.id, label: "After ScrollView fix", createdAt: now.addingTimeInterval(-120)),
+            Checkpoint(
+                id: "ckpt-1a", threadID: thread1.id, label: "Before scroll refactor",
+                createdAt: now.addingTimeInterval(-600), turnCount: 1, status: .ready,
+                files: [
+                    CheckpointFile(
+                        path: "Sources/SergeCodeMac/Views/SidebarView.swift",
+                        kind: "modified", additions: 2, deletions: 1),
+                ],
+                assistantMessageId: "t1-a1"),
+            Checkpoint(
+                id: "ckpt-1b", threadID: thread1.id, label: "After ScrollView fix",
+                createdAt: now.addingTimeInterval(-120), turnCount: 2, status: .ready,
+                files: [
+                    CheckpointFile(
+                        path: "Sources/SergeCodeMac/Model/AppModel.swift",
+                        kind: "modified", additions: 1, deletions: 0),
+                    CheckpointFile(
+                        path: "Sources/SergeCodeMac/Support/Constants.swift",
+                        kind: "modified", additions: 1, deletions: 1),
+                ]),
+            Checkpoint(
+                id: "ckpt-1c", threadID: thread1.id, label: "Intraline polish",
+                createdAt: now.addingTimeInterval(-30), turnCount: 3, status: .missing,
+                files: [
+                    CheckpointFile(
+                        path: "Sources/SergeCodeMac/UI/Theme/Colors.swift",
+                        kind: "modified", additions: 1, deletions: 1),
+                    CheckpointFile(
+                        path: "Sources/SergeCodeMac/UI/Shell/RootChrome.swift", kind: "added",
+                        additions: 4, deletions: 0),
+                    CheckpointFile(
+                        path: "Sources/SergeCodeMac/UI/Shell/SidebarChrome.swift", kind: "modified",
+                        additions: 2, deletions: 1),
+                    CheckpointFile(
+                        path: "Sources/SergeCodeMac/UI/Chat/BubbleStyle.swift", kind: "modified",
+                        additions: 1, deletions: 1),
+                    CheckpointFile(
+                        path: "Sources/SergeCodeMac/UI/Composer/DraftStore.swift", kind: "modified",
+                        additions: 3, deletions: 2),
+                    CheckpointFile(
+                        path: "Sources/SergeCodeMac/Model/Entities.swift", kind: "modified",
+                        additions: 5, deletions: 1),
+                    CheckpointFile(
+                        path: "Sources/SergeCodeMac/Model/ThreadState.swift", kind: "modified",
+                        additions: 2, deletions: 0),
+                ]),
         ]
         checkpointsByThread[thread2.id] = [
-            Checkpoint(id: "ckpt-2a", threadID: thread2.id, label: "Initial MockBackend skeleton", createdAt: now.addingTimeInterval(-900)),
+            Checkpoint(
+                id: "ckpt-2a", threadID: thread2.id, label: "Initial MockBackend skeleton",
+                createdAt: now.addingTimeInterval(-900), turnCount: 1, status: .ready,
+                files: [
+                    CheckpointFile(
+                        path: "Sources/SergeCodeMac/Model/MockBackend.swift",
+                        kind: "added", additions: 5, deletions: 0),
+                ]),
         ]
         checkpointsByThread[thread3.id] = [
-            Checkpoint(id: "ckpt-3a", threadID: thread3.id, label: "First pricing draft", createdAt: now.addingTimeInterval(-4_000)),
+            Checkpoint(
+                id: "ckpt-3a", threadID: thread3.id, label: "First pricing draft",
+                createdAt: now.addingTimeInterval(-4_000), turnCount: 1, status: .error,
+                files: [
+                    CheckpointFile(
+                        path: "src/pages/pricing.tsx", kind: "modified", additions: 1, deletions: 1),
+                ]),
         ]
         checkpointsByThread[thread4.id] = []
 
@@ -862,6 +951,7 @@ private actor MockState {
             threads: threadsByID,
             timelines: timelinesByThread,
             diffs: diffsByThread,
+            scopedDiffs: scopedDiffs,
             checkpoints: checkpointsByThread,
             approvals: approvalsByID,
             providers: providerList
@@ -904,7 +994,10 @@ private actor MockState {
                 detail: "Sources/SergeCodeMac/Model/AppModel.swift", kind: .fileChange,
                 status: .succeeded, at: now.addingTimeInterval(-200),
                 output: nil, outputIsError: false),
-            .checkpoint(Checkpoint(id: "ckpt-1a", threadID: "thread-1", label: "Before scroll refactor", createdAt: now.addingTimeInterval(-600))),
+            .checkpoint(
+                Checkpoint(
+                    id: "ckpt-1a", threadID: "thread-1", label: "Before scroll refactor",
+                    createdAt: now.addingTimeInterval(-600), turnCount: 1)),
             .userMessage(id: "t1-u2", text: "Nice, that feels a lot smoother now.", at: now.addingTimeInterval(-90)),
             .plan(ProposedPlan(
                 id: "t1-plan1",
@@ -954,7 +1047,10 @@ private actor MockState {
                 detail: "Sources/SergeCodeMac/Model/MockBackend.swift", kind: .fileChange,
                 status: .succeeded, at: now.addingTimeInterval(-890),
                 output: nil, outputIsError: false),
-            .checkpoint(Checkpoint(id: "ckpt-2a", threadID: "thread-2", label: "Initial MockBackend skeleton", createdAt: now.addingTimeInterval(-900))),
+            .checkpoint(
+                Checkpoint(
+                    id: "ckpt-2a", threadID: "thread-2", label: "Initial MockBackend skeleton",
+                    createdAt: now.addingTimeInterval(-900), turnCount: 1)),
             .approval(ApprovalRequest(
                 id: "approval-1",
                 threadID: "thread-2",
@@ -982,7 +1078,10 @@ private actor MockState {
                 id: "t3-tool1", name: "edit_file", detail: "src/pages/pricing.tsx",
                 kind: .fileChange, status: .succeeded, at: now.addingTimeInterval(-4_050),
                 output: nil, outputIsError: false),
-            .checkpoint(Checkpoint(id: "ckpt-3a", threadID: "thread-3", label: "First pricing draft", createdAt: now.addingTimeInterval(-4_000))),
+            .checkpoint(
+                Checkpoint(
+                    id: "ckpt-3a", threadID: "thread-3", label: "First pricing draft",
+                    createdAt: now.addingTimeInterval(-4_000), turnCount: 1, status: .error)),
             .notice(id: "t3-n1", text: "Thread idle for 1 hour.", at: now.addingTimeInterval(-3_600)),
         ]
     }
@@ -1040,6 +1139,46 @@ private actor MockState {
                         DiffLine(kind: .context, text: "                threads[index] = thread", oldNumber: 64, newNumber: 64),
                         DiffLine(kind: .addition, text: "                threads.sort { $0.updatedAt > $1.updatedAt }", oldNumber: nil, newNumber: 65),
                         DiffLine(kind: .context, text: "            } else {", oldNumber: 65, newNumber: 66),
+                    ]),
+                ]
+            ),
+        ]
+    }
+
+    /// Very long lines to exercise soft-wrap in review mode.
+    private static func diffForLongLineFile() -> [DiffFile] {
+        let longOld =
+            "    let message = \"This is an intentionally very long string constant that used to force horizontal scrolling in the narrow inspector and should now soft-wrap at word boundaries with a hanging indent past the gutter in the full-width review mode without ever breaking mid-word.\""
+        let longNew =
+            "    let message = \"This is an intentionally very long string constant that soft-wraps at word boundaries with a hanging indent past the gutter in full-width review mode, never breaking mid-word, and never requiring horizontal panning.\""
+        return [
+            DiffFile(
+                path: "Sources/SergeCodeMac/Support/Constants.swift",
+                status: .modified,
+                hunks: [
+                    DiffHunk(header: "@@ -1,5 +1,5 @@", lines: [
+                        DiffLine(kind: .context, text: "enum Constants {", oldNumber: 1, newNumber: 1),
+                        DiffLine(kind: .deletion, text: longOld, oldNumber: 2, newNumber: nil),
+                        DiffLine(kind: .addition, text: longNew, oldNumber: nil, newNumber: 2),
+                        DiffLine(kind: .context, text: "}", oldNumber: 3, newNumber: 3),
+                    ]),
+                ]
+            ),
+        ]
+    }
+
+    /// Paired deletion/addition for intraline highlight exercise.
+    private static func diffForPairedIntraline() -> [DiffFile] {
+        [
+            DiffFile(
+                path: "Sources/SergeCodeMac/UI/Theme/Colors.swift",
+                status: .modified,
+                hunks: [
+                    DiffHunk(header: "@@ -10,7 +10,7 @@ enum Colors", lines: [
+                        DiffLine(kind: .context, text: "    static let accent = Color.blue", oldNumber: 10, newNumber: 10),
+                        DiffLine(kind: .deletion, text: "    static let danger = Color.red", oldNumber: 11, newNumber: nil),
+                        DiffLine(kind: .addition, text: "    static let danger = Color.orange", oldNumber: nil, newNumber: 11),
+                        DiffLine(kind: .context, text: "    static let muted = Color.gray", oldNumber: 12, newNumber: 12),
                     ]),
                 ]
             ),

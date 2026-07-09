@@ -15,6 +15,15 @@ public final class ThreadState {
     public internal(set) var diff: [DiffFile]?
     public internal(set) var checkpoints: [Checkpoint]?
 
+    /// Main-area review mode: when true, chat is swapped for DiffReviewView.
+    public internal(set) var isReviewing = false
+    public internal(set) var reviewScope: ReviewScope?
+    public internal(set) var reviewSelectedPath: String?
+    /// Diff files loaded for the active review scope (may differ from `diff`,
+    /// which always holds the full-thread snapshot for the timeline rail).
+    public internal(set) var reviewDiff: [DiffFile]?
+    public internal(set) var isLoadingReviewDiff = false
+
     /// Monotonic version bumped on every timeline write. Grouped-display
     /// memo caches key on this so body re-evals without a timeline mutation
     /// reuse prior work. Ignored by Observation — readers go through

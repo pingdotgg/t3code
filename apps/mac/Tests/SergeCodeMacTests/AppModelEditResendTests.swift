@@ -202,7 +202,7 @@ struct AppModelEditResendTests {
         let before = try await backend.timeline(threadID: thread.id)
         #expect(userTexts(before).count == 2)
 
-        try await backend.revertThread(threadID: thread.id, turnCount: 1)
+        try await backend.restoreCheckpoint(threadID: thread.id, turnCount: 1)
         let after = try await backend.timeline(threadID: thread.id)
         #expect(userTexts(after) == ["first"])
         #expect(!userTexts(after).contains("second"))
@@ -292,10 +292,10 @@ private final class RecordingBackend: BackendService, @unchecked Sendable {
     func setServiceTier(threadID: String, value: String) async throws {}
     func implementPlan(threadID: String, planID: String) async throws {}
     func diff(threadID: String) async throws -> [DiffFile] { [] }
+    func diff(threadID: String, fromTurn: Int, toTurn: Int) async throws -> [DiffFile] { [] }
     func checkpoints(threadID: String) async throws -> [Checkpoint] { [] }
-    func restoreCheckpoint(id: String) async throws {}
 
-    func revertThread(threadID: String, turnCount: Int) async throws {
+    func restoreCheckpoint(threadID: String, turnCount: Int) async throws {
         revertCalls.append((threadID, turnCount))
         let retained = timelineRetaining(turnCount: turnCount, from: timelines[threadID] ?? [])
         timelines[threadID] = retained
