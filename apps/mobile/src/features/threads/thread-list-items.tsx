@@ -517,7 +517,9 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
         ) : null}
         {pr !== null ? (
           <View
+            accessible
             accessibilityLabel={pr.accessibilityLabel}
+            accessibilityRole="text"
             className="flex-row items-center gap-0.5"
           >
             <PullRequestIcon
