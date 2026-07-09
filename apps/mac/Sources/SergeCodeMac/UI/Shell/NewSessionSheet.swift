@@ -14,6 +14,7 @@ struct NewSessionSheet: View {
     @UIState private var provider: ProviderKind = .claude
     @UIState private var newProjectPath: String = ""
     @UIState private var isBusy = false
+    @UIState private var errorMessage: String?
 
     private enum Mode: String, CaseIterable, Identifiable {
         case existing = "Existing Project"
@@ -51,7 +52,10 @@ struct NewSessionSheet: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .onChange(of: mode) { selectedProjectID = nil }
+            .onChange(of: mode) {
+                selectedProjectID = nil
+                clearError()
+            }
 
             Group {
                 switch mode {
@@ -61,6 +65,9 @@ struct NewSessionSheet: View {
                         ForEach(model.projects) { project in
                             Text(project.name).tag(Optional(project.id))
                         }
+                    }
+                    .onChange(of: selectedProjectID) {
+                        clearError()
                     }
                 case .new:
                     HStack(spacing: 8) {
@@ -72,6 +79,9 @@ struct NewSessionSheet: View {
                             Label("Browse…", systemImage: "folder")
                         }
                         .buttonStyle(.glass)
+                    }
+                    .onChange(of: newProjectPath) {
+                        clearError()
                     }
                 }
             }
@@ -85,6 +95,17 @@ struct NewSessionSheet: View {
                 ForEach(runnableProviderKinds) { kind in
                     Text(kind.displayName).tag(kind)
                 }
+            }
+            .onChange(of: provider) {
+                clearError()
+            }
+
+            if let errorMessage {
+                Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .transition(.opacity)
             }
 
             HStack {
@@ -103,6 +124,7 @@ struct NewSessionSheet: View {
         .frame(width: 420)
         .glassEffect(.regular, in: .rect(cornerRadius: 20))
         .animation(Motion.settle, value: mode)
+        .animation(Motion.fade, value: errorMessage == nil)
         .task {
             // Warm the settings so the folder picker can open at the
             // configured default projects directory.
@@ -158,7 +180,12 @@ struct NewSessionSheet: View {
         }
     }
 
+    private func clearError() {
+        errorMessage = nil
+    }
+
     private func create() async {
+        clearError()
         isBusy = true
         defer { isBusy = false }
         var createdThread: ChatThread?
@@ -178,6 +205,10 @@ struct NewSessionSheet: View {
         }
         if createdThread != nil {
             isPresented = false
+        } else {
+            errorMessage =
+                model.lastError
+                ?? "Couldn't create a new \(provider.displayName) session. Check provider settings and try again."
         }
     }
 }
