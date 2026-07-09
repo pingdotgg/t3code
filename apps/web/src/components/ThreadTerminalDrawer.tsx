@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { FitAddon } from "@xterm/addon-fit";
+import { FitAddon, Terminal, init as initGhostty, type ITheme } from "ghostty-web";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -15,10 +15,10 @@ import {
 import {
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
+  type ServerTerminalStyle,
   type ThreadId,
 } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
-import { Terminal, type ITheme } from "@xterm/xterm";
 import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
@@ -70,6 +70,28 @@ import { useAtomCommand } from "../state/use-atom-command";
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
 const MULTI_CLICK_SELECTION_ACTION_DELAY_MS = 260;
+
+// ghostty-web needs its WASM module loaded once before any Terminal is constructed.
+let ghosttyReadyPromise: Promise<void> | null = null;
+function ensureGhosttyReady(): Promise<void> {
+  ghosttyReadyPromise ??= initGhostty();
+  return ghosttyReadyPromise;
+}
+
+// ghostty-web registers built-in OSC8/URL link providers on open() whose activate()
+// calls window.open directly, bypassing the app's preview/editor flow. There is no
+// public API to remove them, so clear the provider list before installing ours.
+function clearBuiltInLinkProviders(terminal: Terminal): void {
+  const detector = (terminal as unknown as { linkDetector?: { providers?: unknown[] } })
+    .linkDetector;
+  detector?.providers?.splice(0);
+}
+
+function isScrolledToBottom(terminal: Terminal): boolean {
+  // ghostty-web viewportY counts lines scrolled back from the bottom (0 = bottom),
+  // unlike xterm.js where viewportY >= baseY meant "at bottom".
+  return terminal.getViewportY() <= 0;
+}
 
 function maxDrawerHeight(): number {
   if (typeof window === "undefined") return DEFAULT_THREAD_TERMINAL_HEIGHT;
@@ -149,9 +171,6 @@ function terminalThemeFromApp(mountElement?: HTMLElement | null): ITheme {
       foreground,
       cursor: "rgb(180, 203, 255)",
       selectionBackground: "rgba(180, 203, 255, 0.25)",
-      scrollbarSliderBackground: "rgba(255, 255, 255, 0.1)",
-      scrollbarSliderHoverBackground: "rgba(255, 255, 255, 0.18)",
-      scrollbarSliderActiveBackground: "rgba(255, 255, 255, 0.22)",
       black: "rgb(24, 30, 38)",
       red: "rgb(255, 122, 142)",
       green: "rgb(134, 231, 149)",
@@ -176,9 +195,6 @@ function terminalThemeFromApp(mountElement?: HTMLElement | null): ITheme {
     foreground,
     cursor: "rgb(38, 56, 78)",
     selectionBackground: "rgba(37, 63, 99, 0.2)",
-    scrollbarSliderBackground: "rgba(0, 0, 0, 0.15)",
-    scrollbarSliderHoverBackground: "rgba(0, 0, 0, 0.25)",
-    scrollbarSliderActiveBackground: "rgba(0, 0, 0, 0.3)",
     black: "rgb(44, 53, 66)",
     red: "rgb(191, 70, 87)",
     green: "rgb(60, 126, 86)",
@@ -196,6 +212,72 @@ function terminalThemeFromApp(mountElement?: HTMLElement | null): ITheme {
     brightCyan: "rgb(70, 149, 164)",
     brightWhite: "rgb(236, 240, 246)",
   };
+}
+
+const TERMINAL_PALETTE_KEYS = [
+  "black",
+  "red",
+  "green",
+  "yellow",
+  "blue",
+  "magenta",
+  "cyan",
+  "white",
+  "brightBlack",
+  "brightRed",
+  "brightGreen",
+  "brightYellow",
+  "brightBlue",
+  "brightMagenta",
+  "brightCyan",
+  "brightWhite",
+] as const;
+
+// Nerd Font fallbacks resolve private-use-area glyphs (powerline segments,
+// devicons) from whichever patched font is installed locally. Ghostty embeds
+// its own symbols fallback, but the browser canvas only walks this list.
+const NERD_FONT_FALLBACK_STACK =
+  '"Symbols Nerd Font Mono", "Symbols Nerd Font", "MesloLGS NF", "FiraCode Nerd Font Mono", "JetBrainsMono Nerd Font Mono", "Hack Nerd Font Mono"';
+const DEFAULT_TERMINAL_FONT_STACK = `"SF Mono", "SFMono-Regular", "JetBrains Mono", Consolas, "Liberation Mono", Menlo, ${NERD_FONT_FALLBACK_STACK}, monospace`;
+const DEFAULT_TERMINAL_FONT_SIZE = 12;
+
+function quoteFontFamily(family: string): string {
+  return family.includes('"') ? family : `"${family}"`;
+}
+
+function resolveTerminalFontFamily(style: ServerTerminalStyle | undefined): string {
+  const configured = (style?.fontFamily ?? []).map(quoteFontFamily);
+  return configured.length > 0
+    ? `${configured.join(", ")}, ${DEFAULT_TERMINAL_FONT_STACK}`
+    : DEFAULT_TERMINAL_FONT_STACK;
+}
+
+/**
+ * App theme colors, overridden by the user's Ghostty theme when the server
+ * found one. Ghostty light/dark variants follow the app's active mode.
+ */
+function resolveTerminalTheme(
+  mountElement: HTMLElement | null | undefined,
+  style: ServerTerminalStyle | undefined,
+): ITheme {
+  const base = terminalThemeFromApp(mountElement);
+  const isDark = document.documentElement.classList.contains("dark");
+  const colors = isDark ? (style?.dark ?? style?.light) : (style?.light ?? style?.dark);
+  if (!colors) return base;
+
+  const theme: ITheme = { ...base };
+  if (colors.background) theme.background = colors.background;
+  if (colors.foreground) theme.foreground = colors.foreground;
+  if (colors.cursor) theme.cursor = colors.cursor;
+  if (colors.selectionBackground) theme.selectionBackground = colors.selectionBackground;
+  if (colors.selectionForeground) theme.selectionForeground = colors.selectionForeground;
+  colors.palette?.forEach((hex, index) => {
+    const key = TERMINAL_PALETTE_KEYS[index];
+    if (hex && key) {
+      theme[key] = hex;
+    }
+  });
+  return theme;
 }
 
 function getTerminalSelectionRect(mountElement: HTMLElement): DOMRect | null {
@@ -313,6 +395,9 @@ export function TerminalViewport({
   const fitAddonRef = useRef<FitAddon | null>(null);
   const environmentId = threadRef.environmentId;
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const terminalStyle = serverConfig?.terminalStyle;
+  const terminalStyleKey = useMemo(() => JSON.stringify(terminalStyle ?? null), [terminalStyle]);
+  const readTerminalStyle = useEffectEvent(() => terminalStyle);
   const openInPreferredEditor = useOpenInPreferredEditor(
     environmentId,
     serverConfig?.availableEditors ?? [],
@@ -374,367 +459,407 @@ export function TerminalViewport({
     status: terminalStatus,
     version: terminalVersion,
   });
+  const readSessionSnapshot = useEffectEvent(() => ({
+    buffer: terminalBuffer,
+    error: terminalError,
+    status: terminalStatus,
+    version: terminalVersion,
+  }));
 
   useEffect(() => {
     keybindingsRef.current = keybindings;
   }, [keybindings]);
 
   useEffect(() => {
-    const mount = containerRef.current;
-    if (!mount) return;
+    const mountElement = containerRef.current;
+    if (!mountElement) return;
 
-    const localApi = readLocalApi();
+    let effectDisposed = false;
+    let teardown: (() => void) | undefined;
 
-    const fitAddon = new FitAddon();
-    const terminal = new Terminal({
-      cursorBlink: true,
-      lineHeight: 1,
-      fontSize: 12,
-      scrollback: 5_000,
-      fontFamily:
-        '"SF Mono", "SFMono-Regular", "JetBrains Mono", Consolas, "Liberation Mono", Menlo, monospace',
-      theme: terminalThemeFromApp(mount),
-    });
-    terminal.loadAddon(fitAddon);
-    terminal.open(mount);
-    fitTerminalSafely(fitAddon);
+    const setUpTerminal = (mount: HTMLDivElement): (() => void) => {
+      const localApi = readLocalApi();
 
-    terminalRef.current = terminal;
-    fitAddonRef.current = fitAddon;
-    previousSessionRef.current = {
-      buffer: "",
-      status: "closed",
-      error: null,
-      version: 0,
-    };
-
-    const clearSelectionAction = () => {
-      selectionActionRequestIdRef.current += 1;
-      if (selectionActionTimerRef.current !== null) {
-        window.clearTimeout(selectionActionTimerRef.current);
-        selectionActionTimerRef.current = null;
-      }
-    };
-
-    const readSelectionAction = (): {
-      position: { x: number; y: number };
-      clipboardText: string;
-      selection: TerminalContextSelection;
-    } | null => {
-      const activeTerminal = terminalRef.current;
-      const mountElement = containerRef.current;
-      if (!activeTerminal || !mountElement || !activeTerminal.hasSelection()) {
-        return null;
-      }
-      const selectionText = activeTerminal.getSelection();
-      const selectionPosition = activeTerminal.getSelectionPosition();
-      const normalizedText = selectionText.replace(/\r\n/g, "\n").replace(/^\n+|\n+$/g, "");
-      if (!selectionPosition || normalizedText.length === 0) {
-        return null;
-      }
-      const lineStart = selectionPosition.start.y + 1;
-      const lineCount = normalizedText.split("\n").length;
-      const lineEnd = Math.max(lineStart, lineStart + lineCount - 1);
-      const bounds = mountElement.getBoundingClientRect();
-      const selectionRect = getTerminalSelectionRect(mountElement);
-      const position = resolveTerminalSelectionActionPosition({
-        bounds,
-        selectionRect:
-          selectionRect === null
-            ? null
-            : { right: selectionRect.right, bottom: selectionRect.bottom },
-        pointer: selectionPointerRef.current,
+      const style = readTerminalStyle();
+      const initialTheme = resolveTerminalTheme(mount, style);
+      // The canvas is sized to whole cells, so paint the leftover fringe of the
+      // container in the terminal background color instead of the app surface.
+      const applyMountBackground = (theme: ITheme) => {
+        mount.style.backgroundColor = theme.background ?? "";
+      };
+      applyMountBackground(initialTheme);
+      const fitAddon = new FitAddon();
+      const terminal = new Terminal({
+        cursorBlink: true,
+        // Ghostty font-size is in points; treat it as CSS px, which reads
+        // slightly smaller in the drawer than in Ghostty itself.
+        fontSize: style?.fontSize ?? DEFAULT_TERMINAL_FONT_SIZE,
+        scrollback: 5_000,
+        fontFamily: resolveTerminalFontFamily(style),
+        theme: initialTheme,
       });
-      return {
-        position,
-        clipboardText: selectionText,
-        selection: {
-          terminalId,
-          terminalLabel: readTerminalLabel(),
-          lineStart,
-          lineEnd,
-          text: normalizedText,
+      terminal.loadAddon(fitAddon);
+      terminal.open(mount);
+      clearBuiltInLinkProviders(terminal);
+      fitTerminalSafely(fitAddon);
+
+      terminalRef.current = terminal;
+      fitAddonRef.current = fitAddon;
+      const initialSession = readSessionSnapshot();
+      if (initialSession.version > 0 && initialSession.buffer.length > 0) {
+        writeTerminalBuffer(terminal, initialSession.buffer);
+      }
+      previousSessionRef.current = initialSession;
+
+      const clearSelectionAction = () => {
+        selectionActionRequestIdRef.current += 1;
+        if (selectionActionTimerRef.current !== null) {
+          window.clearTimeout(selectionActionTimerRef.current);
+          selectionActionTimerRef.current = null;
+        }
+      };
+
+      const readSelectionAction = (): {
+        position: { x: number; y: number };
+        clipboardText: string;
+        selection: TerminalContextSelection;
+      } | null => {
+        const activeTerminal = terminalRef.current;
+        const mountElement = containerRef.current;
+        if (!activeTerminal || !mountElement || !activeTerminal.hasSelection()) {
+          return null;
+        }
+        const selectionText = activeTerminal.getSelection();
+        const selectionPosition = activeTerminal.getSelectionPosition();
+        const normalizedText = selectionText.replace(/\r\n/g, "\n").replace(/^\n+|\n+$/g, "");
+        if (!selectionPosition || normalizedText.length === 0) {
+          return null;
+        }
+        const lineStart = selectionPosition.start.y + 1;
+        const lineCount = normalizedText.split("\n").length;
+        const lineEnd = Math.max(lineStart, lineStart + lineCount - 1);
+        const bounds = mountElement.getBoundingClientRect();
+        const selectionRect = getTerminalSelectionRect(mountElement);
+        const position = resolveTerminalSelectionActionPosition({
+          bounds,
+          selectionRect:
+            selectionRect === null
+              ? null
+              : { right: selectionRect.right, bottom: selectionRect.bottom },
+          pointer: selectionPointerRef.current,
+        });
+        return {
+          position,
+          clipboardText: selectionText,
+          selection: {
+            terminalId,
+            terminalLabel: readTerminalLabel(),
+            lineStart,
+            lineEnd,
+            text: normalizedText,
+          },
+        };
+      };
+
+      const showSelectionAction = async () => {
+        if (!localApi) {
+          clearSelectionAction();
+          return;
+        }
+        if (selectionActionMenuOpenRef.current) {
+          return;
+        }
+        const nextAction = readSelectionAction();
+        if (!nextAction) {
+          clearSelectionAction();
+          return;
+        }
+        const requestId = ++selectionActionRequestIdRef.current;
+        selectionActionMenuOpenRef.current = true;
+        const clicked = await localApi.contextMenu
+          .show(
+            [
+              { id: "add-to-chat", label: "Add to chat" },
+              { id: "copy", label: "Copy" },
+            ],
+            nextAction.position,
+          )
+          .finally(() => {
+            selectionActionMenuOpenRef.current = false;
+          });
+        if (requestId !== selectionActionRequestIdRef.current || clicked === null) {
+          return;
+        }
+        switch (clicked) {
+          case "add-to-chat":
+            handleAddTerminalContext(nextAction.selection);
+            terminalRef.current?.clearSelection();
+            terminalRef.current?.focus();
+            return;
+          case "copy":
+            try {
+              await writeTextToClipboard(nextAction.clipboardText, "terminal selection");
+            } catch (error) {
+              if (requestId !== selectionActionRequestIdRef.current) {
+                return;
+              }
+              const activeTerminal = terminalRef.current;
+              if (activeTerminal) {
+                writeSystemMessage(
+                  activeTerminal,
+                  error instanceof Error ? error.message : "Unable to copy terminal selection",
+                );
+              }
+            }
+            if (requestId === selectionActionRequestIdRef.current) {
+              terminalRef.current?.focus();
+            }
+            return;
+        }
+      };
+
+      const sendTerminalInput = async (data: string, fallbackError: string) => {
+        const activeTerminal = terminalRef.current;
+        if (!activeTerminal) return;
+        const result = await writeTerminal(data);
+        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          writeSystemMessage(
+            activeTerminal,
+            error instanceof Error ? error.message : fallbackError,
+          );
+        }
+      };
+
+      // ghostty-web's custom key handler semantics are inverted from xterm.js:
+      // returning true means "consumed, do not process as terminal input",
+      // returning false lets the terminal handle the key normally.
+      terminal.attachCustomKeyEventHandler((event) => {
+        const currentKeybindings = keybindingsRef.current;
+        const options = { context: { terminalFocus: true, terminalOpen: true } };
+        if (
+          isTerminalToggleShortcut(event, currentKeybindings, options) ||
+          isTerminalSplitShortcut(event, currentKeybindings, options) ||
+          isTerminalSplitVerticalShortcut(event, currentKeybindings, options) ||
+          isTerminalNewShortcut(event, currentKeybindings, options) ||
+          isTerminalCloseShortcut(event, currentKeybindings, options) ||
+          isDiffToggleShortcut(event, currentKeybindings, options)
+        ) {
+          return true;
+        }
+
+        const navigationData = terminalNavigationShortcutData(event);
+        if (navigationData !== null) {
+          event.preventDefault();
+          event.stopPropagation();
+          void sendTerminalInput(navigationData, "Failed to move cursor");
+          return true;
+        }
+
+        const deleteData = terminalDeleteShortcutData(event);
+        if (deleteData !== null) {
+          event.preventDefault();
+          event.stopPropagation();
+          void sendTerminalInput(deleteData, "Failed to delete terminal input");
+          return true;
+        }
+
+        if (!isTerminalClearShortcut(event)) return false;
+        event.preventDefault();
+        event.stopPropagation();
+        void sendTerminalInput("\u000c", "Failed to clear terminal");
+        return true;
+      });
+
+      // ghostty-web rows are 0-based; the terminal-links helpers use xterm's 1-based
+      // convention, so convert on the way in and out.
+      terminal.registerLinkProvider({
+        provideLinks: (bufferRow, callback) => {
+          const bufferLineNumber = bufferRow + 1;
+          const activeTerminal = terminalRef.current;
+          if (!activeTerminal) {
+            callback(undefined);
+            return;
+          }
+
+          const wrappedLine = collectWrappedTerminalLinkLine(bufferLineNumber, (bufferLineIndex) =>
+            activeTerminal.buffer.active.getLine(bufferLineIndex),
+          );
+          if (!wrappedLine) {
+            callback(undefined);
+            return;
+          }
+
+          const links = extractTerminalLinks(wrappedLine.text)
+            .map((match) => ({
+              match,
+              range: resolveWrappedTerminalLinkRange(wrappedLine, match),
+            }))
+            .filter(({ range }) =>
+              wrappedTerminalLinkRangeIntersectsBufferLine(range, bufferLineNumber),
+            );
+          if (links.length === 0) {
+            callback(undefined);
+            return;
+          }
+
+          callback(
+            links.map(({ match, range }) => ({
+              text: match.text,
+              range: {
+                start: { x: range.start.x - 1, y: range.start.y - 1 },
+                end: { x: range.end.x - 1, y: range.end.y - 1 },
+              },
+              activate: (event: MouseEvent) => {
+                if (!isTerminalLinkActivation(event)) return;
+
+                const latestTerminal = terminalRef.current;
+                if (!latestTerminal) return;
+
+                if (match.kind === "url") {
+                  if (!localApi) {
+                    writeSystemMessage(
+                      latestTerminal,
+                      "Opening links is unavailable in this browser.",
+                    );
+                    return;
+                  }
+                  const fallbackToBrowser = () => {
+                    void localApi.shell.openExternal(match.text).catch((error: unknown) => {
+                      writeSystemMessage(
+                        latestTerminal,
+                        error instanceof Error ? error.message : "Unable to open link",
+                      );
+                    });
+                  };
+                  void openTerminalLinkInPreview({
+                    url: match.text,
+                    position: { x: event.clientX, y: event.clientY },
+                    threadRef,
+                    openPreview,
+                    localApi,
+                    fallbackToBrowser,
+                  });
+                  return;
+                }
+
+                const target = resolvePathLinkTarget(match.text, cwd);
+                void (async () => {
+                  const result = await openTerminalPath(target);
+                  if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
+                    return;
+                  }
+                  const error = squashAtomCommandFailure(result);
+                  writeSystemMessage(
+                    latestTerminal,
+                    error instanceof Error ? error.message : "Unable to open path",
+                  );
+                })();
+              },
+            })),
+          );
         },
+      });
+
+      const inputDisposable = terminal.onData((data) => {
+        void (async () => {
+          const result = await writeTerminal(data);
+          if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
+            return;
+          }
+          const error = squashAtomCommandFailure(result);
+          writeSystemMessage(
+            terminal,
+            error instanceof Error ? error.message : "Terminal write failed",
+          );
+        })();
+      });
+
+      const selectionDisposable = terminal.onSelectionChange(() => {
+        if (terminalRef.current?.hasSelection()) {
+          return;
+        }
+        clearSelectionAction();
+      });
+
+      const handleMouseUp = (event: MouseEvent) => {
+        const shouldHandle = shouldHandleTerminalSelectionMouseUp(
+          selectionGestureActiveRef.current,
+          event.button,
+        );
+        selectionGestureActiveRef.current = false;
+        if (!shouldHandle) {
+          return;
+        }
+        selectionPointerRef.current = { x: event.clientX, y: event.clientY };
+        const delay = terminalSelectionActionDelayForClickCount(event.detail);
+        selectionActionTimerRef.current = window.setTimeout(() => {
+          selectionActionTimerRef.current = null;
+          window.requestAnimationFrame(() => {
+            void showSelectionAction();
+          });
+        }, delay);
+      };
+      const handlePointerDown = (event: PointerEvent) => {
+        clearSelectionAction();
+        selectionGestureActiveRef.current = event.button === 0;
+      };
+      window.addEventListener("mouseup", handleMouseUp);
+      mount.addEventListener("pointerdown", handlePointerDown);
+
+      const themeObserver = new MutationObserver(() => {
+        const activeTerminal = terminalRef.current;
+        if (!activeTerminal) return;
+        // ghostty-web bakes cell colors in WASM at write time, so already-rendered
+        // content keeps its colors; this only updates default fg/bg/cursor.
+        const nextTheme = resolveTerminalTheme(containerRef.current, readTerminalStyle());
+        applyMountBackground(nextTheme);
+        activeTerminal.renderer?.setTheme(nextTheme);
+      });
+      themeObserver.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ["class", "style"],
+      });
+
+      const fitTimer = window.setTimeout(() => {
+        const activeTerminal = terminalRef.current;
+        const activeFitAddon = fitAddonRef.current;
+        if (!activeTerminal || !activeFitAddon) return;
+        const wasAtBottom = isScrolledToBottom(activeTerminal);
+        fitTerminalSafely(activeFitAddon);
+        if (wasAtBottom) {
+          activeTerminal.scrollToBottom();
+        }
+        void resizeTerminal(activeTerminal.cols, activeTerminal.rows);
+      }, 30);
+
+      return () => {
+        window.clearTimeout(fitTimer);
+        inputDisposable.dispose();
+        selectionDisposable.dispose();
+        if (selectionActionTimerRef.current !== null) {
+          window.clearTimeout(selectionActionTimerRef.current);
+        }
+        window.removeEventListener("mouseup", handleMouseUp);
+        mount.removeEventListener("pointerdown", handlePointerDown);
+        themeObserver.disconnect();
+        mount.style.backgroundColor = "";
+        terminalRef.current = null;
+        fitAddonRef.current = null;
+        terminal.dispose();
       };
     };
 
-    const showSelectionAction = async () => {
-      if (!localApi) {
-        clearSelectionAction();
-        return;
-      }
-      if (selectionActionMenuOpenRef.current) {
-        return;
-      }
-      const nextAction = readSelectionAction();
-      if (!nextAction) {
-        clearSelectionAction();
-        return;
-      }
-      const requestId = ++selectionActionRequestIdRef.current;
-      selectionActionMenuOpenRef.current = true;
-      const clicked = await localApi.contextMenu
-        .show(
-          [
-            { id: "add-to-chat", label: "Add to chat" },
-            { id: "copy", label: "Copy" },
-          ],
-          nextAction.position,
-        )
-        .finally(() => {
-          selectionActionMenuOpenRef.current = false;
-        });
-      if (requestId !== selectionActionRequestIdRef.current || clicked === null) {
-        return;
-      }
-      switch (clicked) {
-        case "add-to-chat":
-          handleAddTerminalContext(nextAction.selection);
-          terminalRef.current?.clearSelection();
-          terminalRef.current?.focus();
-          return;
-        case "copy":
-          try {
-            await writeTextToClipboard(nextAction.clipboardText, "terminal selection");
-          } catch (error) {
-            if (requestId !== selectionActionRequestIdRef.current) {
-              return;
-            }
-            const activeTerminal = terminalRef.current;
-            if (activeTerminal) {
-              writeSystemMessage(
-                activeTerminal,
-                error instanceof Error ? error.message : "Unable to copy terminal selection",
-              );
-            }
-          }
-          if (requestId === selectionActionRequestIdRef.current) {
-            terminalRef.current?.focus();
-          }
-          return;
-      }
-    };
-
-    const sendTerminalInput = async (data: string, fallbackError: string) => {
-      const activeTerminal = terminalRef.current;
-      if (!activeTerminal) return;
-      const result = await writeTerminal(data);
-      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        writeSystemMessage(activeTerminal, error instanceof Error ? error.message : fallbackError);
-      }
-    };
-
-    terminal.attachCustomKeyEventHandler((event) => {
-      const currentKeybindings = keybindingsRef.current;
-      const options = { context: { terminalFocus: true, terminalOpen: true } };
-      if (
-        isTerminalToggleShortcut(event, currentKeybindings, options) ||
-        isTerminalSplitShortcut(event, currentKeybindings, options) ||
-        isTerminalSplitVerticalShortcut(event, currentKeybindings, options) ||
-        isTerminalNewShortcut(event, currentKeybindings, options) ||
-        isTerminalCloseShortcut(event, currentKeybindings, options) ||
-        isDiffToggleShortcut(event, currentKeybindings, options)
-      ) {
-        return false;
-      }
-
-      const navigationData = terminalNavigationShortcutData(event);
-      if (navigationData !== null) {
-        event.preventDefault();
-        event.stopPropagation();
-        void sendTerminalInput(navigationData, "Failed to move cursor");
-        return false;
-      }
-
-      const deleteData = terminalDeleteShortcutData(event);
-      if (deleteData !== null) {
-        event.preventDefault();
-        event.stopPropagation();
-        void sendTerminalInput(deleteData, "Failed to delete terminal input");
-        return false;
-      }
-
-      if (!isTerminalClearShortcut(event)) return true;
-      event.preventDefault();
-      event.stopPropagation();
-      void sendTerminalInput("\u000c", "Failed to clear terminal");
-      return false;
+    void ensureGhosttyReady().then(() => {
+      if (effectDisposed || containerRef.current !== mountElement) return;
+      teardown = setUpTerminal(mountElement);
     });
-
-    const terminalLinksDisposable = terminal.registerLinkProvider({
-      provideLinks: (bufferLineNumber, callback) => {
-        const activeTerminal = terminalRef.current;
-        if (!activeTerminal) {
-          callback(undefined);
-          return;
-        }
-
-        const wrappedLine = collectWrappedTerminalLinkLine(bufferLineNumber, (bufferLineIndex) =>
-          activeTerminal.buffer.active.getLine(bufferLineIndex),
-        );
-        if (!wrappedLine) {
-          callback(undefined);
-          return;
-        }
-
-        const links = extractTerminalLinks(wrappedLine.text)
-          .map((match) => ({
-            match,
-            range: resolveWrappedTerminalLinkRange(wrappedLine, match),
-          }))
-          .filter(({ range }) =>
-            wrappedTerminalLinkRangeIntersectsBufferLine(range, bufferLineNumber),
-          );
-        if (links.length === 0) {
-          callback(undefined);
-          return;
-        }
-
-        callback(
-          links.map(({ match, range }) => ({
-            text: match.text,
-            range,
-            activate: (event: MouseEvent) => {
-              if (!isTerminalLinkActivation(event)) return;
-
-              const latestTerminal = terminalRef.current;
-              if (!latestTerminal) return;
-
-              if (match.kind === "url") {
-                if (!localApi) {
-                  writeSystemMessage(
-                    latestTerminal,
-                    "Opening links is unavailable in this browser.",
-                  );
-                  return;
-                }
-                const fallbackToBrowser = () => {
-                  void localApi.shell.openExternal(match.text).catch((error: unknown) => {
-                    writeSystemMessage(
-                      latestTerminal,
-                      error instanceof Error ? error.message : "Unable to open link",
-                    );
-                  });
-                };
-                void openTerminalLinkInPreview({
-                  url: match.text,
-                  position: { x: event.clientX, y: event.clientY },
-                  threadRef,
-                  openPreview,
-                  localApi,
-                  fallbackToBrowser,
-                });
-                return;
-              }
-
-              const target = resolvePathLinkTarget(match.text, cwd);
-              void (async () => {
-                const result = await openTerminalPath(target);
-                if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
-                  return;
-                }
-                const error = squashAtomCommandFailure(result);
-                writeSystemMessage(
-                  latestTerminal,
-                  error instanceof Error ? error.message : "Unable to open path",
-                );
-              })();
-            },
-          })),
-        );
-      },
-    });
-
-    const inputDisposable = terminal.onData((data) => {
-      void (async () => {
-        const result = await writeTerminal(data);
-        if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
-          return;
-        }
-        const error = squashAtomCommandFailure(result);
-        writeSystemMessage(
-          terminal,
-          error instanceof Error ? error.message : "Terminal write failed",
-        );
-      })();
-    });
-
-    const selectionDisposable = terminal.onSelectionChange(() => {
-      if (terminalRef.current?.hasSelection()) {
-        return;
-      }
-      clearSelectionAction();
-    });
-
-    const handleMouseUp = (event: MouseEvent) => {
-      const shouldHandle = shouldHandleTerminalSelectionMouseUp(
-        selectionGestureActiveRef.current,
-        event.button,
-      );
-      selectionGestureActiveRef.current = false;
-      if (!shouldHandle) {
-        return;
-      }
-      selectionPointerRef.current = { x: event.clientX, y: event.clientY };
-      const delay = terminalSelectionActionDelayForClickCount(event.detail);
-      selectionActionTimerRef.current = window.setTimeout(() => {
-        selectionActionTimerRef.current = null;
-        window.requestAnimationFrame(() => {
-          void showSelectionAction();
-        });
-      }, delay);
-    };
-    const handlePointerDown = (event: PointerEvent) => {
-      clearSelectionAction();
-      selectionGestureActiveRef.current = event.button === 0;
-    };
-    window.addEventListener("mouseup", handleMouseUp);
-    mount.addEventListener("pointerdown", handlePointerDown);
-
-    const themeObserver = new MutationObserver(() => {
-      const activeTerminal = terminalRef.current;
-      if (!activeTerminal) return;
-      activeTerminal.options.theme = terminalThemeFromApp(containerRef.current);
-      activeTerminal.refresh(0, activeTerminal.rows - 1);
-    });
-    themeObserver.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["class", "style"],
-    });
-
-    const fitTimer = window.setTimeout(() => {
-      const activeTerminal = terminalRef.current;
-      const activeFitAddon = fitAddonRef.current;
-      if (!activeTerminal || !activeFitAddon) return;
-      const wasAtBottom =
-        activeTerminal.buffer.active.viewportY >= activeTerminal.buffer.active.baseY;
-      fitTerminalSafely(activeFitAddon);
-      if (wasAtBottom) {
-        activeTerminal.scrollToBottom();
-      }
-      void resizeTerminal(activeTerminal.cols, activeTerminal.rows);
-    }, 30);
 
     return () => {
-      window.clearTimeout(fitTimer);
-      inputDisposable.dispose();
-      selectionDisposable.dispose();
-      terminalLinksDisposable.dispose();
-      if (selectionActionTimerRef.current !== null) {
-        window.clearTimeout(selectionActionTimerRef.current);
-      }
-      window.removeEventListener("mouseup", handleMouseUp);
-      mount.removeEventListener("pointerdown", handlePointerDown);
-      themeObserver.disconnect();
-      terminalRef.current = null;
-      fitAddonRef.current = null;
-      terminal.dispose();
+      effectDisposed = true;
+      teardown?.();
     };
-    // autoFocus is intentionally omitted;
-    // it is only read at mount time and must not trigger terminal teardown/recreation.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cwd, environmentId, runtimeEnvKey, terminalId, threadId, worktreePath]);
+  }, [cwd, environmentId, runtimeEnvKey, terminalId, terminalStyleKey, threadId, worktreePath]);
 
   useEffect(() => {
     const terminal = terminalRef.current;
@@ -758,7 +883,12 @@ export function TerminalViewport({
       current.buffer.length >= previous.buffer.length &&
       current.buffer.startsWith(previous.buffer)
     ) {
-      terminal.write(current.buffer.slice(previous.buffer.length));
+      const appended = current.buffer.slice(previous.buffer.length);
+      // ghostty-web 0.4.0 crashes on zero-length writes (alloc(0) returns an
+      // out-of-bounds pointer), so skip no-op updates such as status-only bumps.
+      if (appended.length > 0) {
+        terminal.write(appended);
+      }
     } else {
       writeTerminalBuffer(terminal, current.buffer);
     }
@@ -811,7 +941,7 @@ export function TerminalViewport({
     const terminal = terminalRef.current;
     const fitAddon = fitAddonRef.current;
     if (!terminal || !fitAddon) return;
-    const wasAtBottom = terminal.buffer.active.viewportY >= terminal.buffer.active.baseY;
+    const wasAtBottom = isScrolledToBottom(terminal);
     const frame = window.requestAnimationFrame(() => {
       fitTerminalSafely(fitAddon);
       if (wasAtBottom) {
