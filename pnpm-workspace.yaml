@@ -23,13 +23,13 @@ allowBuilds:
   workerd: false
 
 catalog:
-  "@clerk/backend": 3.11.1
-  "@clerk/clerk-js": 6.25.0
-  "@clerk/electron": 0.0.10
+  "@clerk/backend": 3.11.2
+  "@clerk/clerk-js": 6.25.1
+  "@clerk/electron": 0.0.11
   "@clerk/electron-passkeys": 0.0.3
-  "@clerk/expo": 3.7.1
-  "@clerk/react": 6.12.0
-  "@clerk/shared": 4.25.0
+  "@clerk/expo": 3.7.2
+  "@clerk/react": 6.12.1
+  "@clerk/shared": 4.25.1
   "@effect/atom-react": 4.0.0-beta.78
   "@effect/openapi-generator": 4.0.0-beta.78
   "@effect/platform-bun": 4.0.0-beta.78
@@ -52,12 +52,12 @@ catalog:
   yaml: ^2.9.0
 
 minimumReleaseAgeExclude:
-  - "@clerk/backend@3.11.1"
-  - "@clerk/clerk-js@6.25.0"
-  - "@clerk/electron@0.0.10"
-  - "@clerk/expo@3.7.1"
-  - "@clerk/react@6.12.0"
-  - "@clerk/shared@4.25.0"
+  - "@clerk/backend@3.11.2"
+  - "@clerk/clerk-js@6.25.1"
+  - "@clerk/electron@0.0.11"
+  - "@clerk/expo@3.7.2"
+  - "@clerk/react@6.12.1"
+  - "@clerk/shared@4.25.1"
 
 overrides:
   "@clerk/backend": "catalog:"
