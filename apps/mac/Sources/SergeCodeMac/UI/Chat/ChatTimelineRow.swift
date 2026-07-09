@@ -159,7 +159,14 @@ private struct ToolGroupRow: View {
             Button {
                 // Settle, not snap: expanding can reveal dozens of rows, and
                 // the quick snap curve makes that layout shift feel violent.
-                withAnimation(Motion.settle) { isExpanded.toggle() }
+                // Deferred one runloop turn: rapid clicks mid-animation can
+                // land while the window is in a layout pass, and a state
+                // change that re-vends toolbar items during an in-layout
+                // render trips AppKit's layout-feedback-loop guard on
+                // macOS 26/27 (crash in _postWindowNeedsUpdateConstraints).
+                DispatchQueue.main.async {
+                    withAnimation(Motion.settle) { isExpanded.toggle() }
+                }
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: summary.failedCount > 0
@@ -497,23 +504,6 @@ private struct SubagentTaskRow: View {
         let minutes = Int(duration) / 60
         let seconds = Int(duration) % 60
         return seconds == 0 ? "\(minutes)m" : "\(minutes)m \(seconds)s"
-    }
-}
-
-/// Detail strings are immutable per lifecycle state, so parse results are
-/// cached across row rebuilds. Bounded: cleared wholesale past 512 entries
-/// (a timeline swap's worth) rather than tracking LRU order.
-@MainActor
-private enum ToolDetailParseCache {
-    private static var storage: [String: ParsedToolDetail] = [:]
-
-    static func parsed(detail: String, itemType: String?) -> ParsedToolDetail {
-        let key = (itemType ?? "") + "\u{1F}" + detail
-        if let hit = storage[key] { return hit }
-        let value = ParsedToolDetail.parse(detail: detail, itemType: itemType)
-        if storage.count >= 512 { storage.removeAll(keepingCapacity: true) }
-        storage[key] = value
-        return value
     }
 }
 

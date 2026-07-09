@@ -51,7 +51,7 @@ public struct DiffPanelView: View {
     }
 
     private var files: [DiffFile] {
-        model.diffs[threadID] ?? []
+        model.threadState(threadID)?.diff ?? []
     }
 
     private var selectedFile: DiffFile? {

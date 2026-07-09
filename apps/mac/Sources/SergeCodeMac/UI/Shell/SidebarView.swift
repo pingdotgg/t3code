@@ -15,6 +15,7 @@ struct SidebarView: View {
     @UIState private var deleteTarget: Project?
 
     var body: some View {
+        let threadIDs = model.threads.map(\.id)
         List(selection: Binding(
             get: { model.selectedThreadID },
             set: { model.selectedThreadID = $0 }
@@ -25,7 +26,7 @@ struct SidebarView: View {
                 Section {
                     ForEach(threadsForProject) { thread in
                         SidebarThreadRow(
-                            thread: thread, vcs: model.vcsStatuses[thread.id], scenery: scenery)
+                            thread: thread, vcs: model.threadState(thread.id)?.vcsStatus, scenery: scenery)
                             .tag(thread.id)
                             .contextMenu {
                                 Button("Archive") {
@@ -63,7 +64,7 @@ struct SidebarView: View {
         .navigationTitle("SurgeCode")
         // New/archived/deleted threads and project changes slide the list
         // smoothly rather than snapping the rows into new positions.
-        .animation(Motion.settle, value: model.threads.map(\.id))
+        .animation(Motion.settle, value: threadIDs)
         .animation(Motion.settle, value: model.projects)
         .alert(
             "Rename Project",

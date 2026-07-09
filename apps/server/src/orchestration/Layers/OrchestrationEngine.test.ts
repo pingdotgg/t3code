@@ -476,6 +476,201 @@ describe("OrchestrationEngine", () => {
     await system.dispose();
   });
 
+  it("routes streamThreadEvents only to the matching thread aggregate", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+    const threadA = ThreadId.make("thread-keyed-a");
+    const threadB = ThreadId.make("thread-keyed-b");
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-project-keyed-create"),
+        projectId: asProjectId("project-keyed"),
+        title: "Keyed Project",
+        workspaceRoot: "/tmp/project-keyed",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-keyed-a-create"),
+        threadId: threadA,
+        projectId: asProjectId("project-keyed"),
+        title: "Thread A",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "full-access",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-keyed-b-create"),
+        threadId: threadB,
+        projectId: asProjectId("project-keyed"),
+        title: "Thread B",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "full-access",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+
+    const aTypes: string[] = [];
+    const bTypes: string[] = [];
+    await system.run(
+      Effect.gen(function* () {
+        const aQueue = yield* Queue.unbounded<OrchestrationEvent>();
+        const bQueue = yield* Queue.unbounded<OrchestrationEvent>();
+        yield* Effect.forkScoped(
+          Stream.take(engine.streamThreadEvents(threadA), 1).pipe(
+            Stream.runForEach((event) => Queue.offer(aQueue, event).pipe(Effect.asVoid)),
+          ),
+        );
+        yield* Effect.forkScoped(
+          Stream.take(engine.streamThreadEvents(threadB), 1).pipe(
+            Stream.runForEach((event) => Queue.offer(bQueue, event).pipe(Effect.asVoid)),
+          ),
+        );
+        yield* Effect.sleep("10 millis");
+
+        yield* engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make("cmd-thread-keyed-b-update"),
+          threadId: threadB,
+          title: "Thread B updated",
+        });
+        yield* engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make("cmd-thread-keyed-a-update"),
+          threadId: threadA,
+          title: "Thread A updated",
+        });
+
+        const aEvent = yield* Queue.take(aQueue);
+        const bEvent = yield* Queue.take(bQueue);
+        aTypes.push(aEvent.type);
+        bTypes.push(bEvent.type);
+        expect(aEvent.aggregateId).toBe(threadA);
+        expect(bEvent.aggregateId).toBe(threadB);
+      }).pipe(Effect.scoped),
+    );
+
+    expect(aTypes).toEqual(["thread.meta-updated"]);
+    expect(bTypes).toEqual(["thread.meta-updated"]);
+    await system.dispose();
+  });
+
+  it("cleans up the per-thread event bus when the subscriber scope closes", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+    const threadId = ThreadId.make("thread-bus-cleanup");
+    const engineWithTestAccess = engine as typeof engine & {
+      readonly threadEventBusCount: () => number;
+    };
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-project-bus-cleanup-create"),
+        projectId: asProjectId("project-bus-cleanup"),
+        title: "Bus Cleanup Project",
+        workspaceRoot: "/tmp/project-bus-cleanup",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-bus-cleanup-create"),
+        threadId,
+        projectId: asProjectId("project-bus-cleanup"),
+        title: "Bus cleanup thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "full-access",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+
+    expect(engineWithTestAccess.threadEventBusCount()).toBe(0);
+
+    await system.run(
+      Effect.gen(function* () {
+        const eventQueue = yield* Queue.unbounded<OrchestrationEvent>();
+        yield* Effect.forkScoped(
+          Stream.take(engine.streamThreadEvents(threadId), 1).pipe(
+            Stream.runForEach((event) => Queue.offer(eventQueue, event).pipe(Effect.asVoid)),
+          ),
+        );
+        yield* Effect.sleep("10 millis");
+        expect(engineWithTestAccess.threadEventBusCount()).toBe(1);
+
+        yield* engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make("cmd-thread-bus-cleanup-update"),
+          threadId,
+          title: "updated while subscribed",
+        });
+        expect((yield* Queue.take(eventQueue)).type).toBe("thread.meta-updated");
+      }).pipe(Effect.scoped),
+    );
+
+    expect(engineWithTestAccess.threadEventBusCount()).toBe(0);
+
+    // Fresh subscribe after cleanup still receives subsequent events.
+    await system.run(
+      Effect.gen(function* () {
+        const eventQueue = yield* Queue.unbounded<OrchestrationEvent>();
+        yield* Effect.forkScoped(
+          Stream.take(engine.streamThreadEvents(threadId), 1).pipe(
+            Stream.runForEach((event) => Queue.offer(eventQueue, event).pipe(Effect.asVoid)),
+          ),
+        );
+        yield* Effect.sleep("10 millis");
+        expect(engineWithTestAccess.threadEventBusCount()).toBe(1);
+        yield* engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make("cmd-thread-bus-cleanup-update-2"),
+          threadId,
+          title: "updated after resubscribe",
+        });
+        expect((yield* Queue.take(eventQueue)).type).toBe("thread.meta-updated");
+      }).pipe(Effect.scoped),
+    );
+
+    expect(engineWithTestAccess.threadEventBusCount()).toBe(0);
+    await system.dispose();
+  });
+
   it("records command ack duration using the first committed event type", async () => {
     const system = await createOrchestrationSystem();
     const { engine } = system;

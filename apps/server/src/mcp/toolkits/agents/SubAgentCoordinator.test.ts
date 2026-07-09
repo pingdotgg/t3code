@@ -138,6 +138,7 @@ const makeCoordinator = (options?: {
         return { sequence: dispatched.length };
       }),
     streamDomainEvents: Stream.never,
+    streamThreadEvents: () => Stream.never,
   });
 
   const unused = () => Effect.die("unused in SubAgentCoordinator tests");

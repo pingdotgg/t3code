@@ -11,8 +11,13 @@ Hard rules (build breaks otherwise — no Xcode on this machine, CLT only):
 - `@Observable`, `@Binding`, `@Environment`, `@Bindable`, `@StateObject` are fine.
 - Build/test: `swift build --package-path apps/mac`. Tests need the swift-testing
   macro plugin passed explicitly (CLT keeps it in a subdir the compiler doesn't
-  search): `swift test --package-path apps/mac -Xswiftc -plugin-path -Xswiftc
-/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing`.
+  search) AND two runtime rpaths (Testing.framework + lib*TestingInterop live
+  outside dyld's default search; DYLD*\* env is stripped from the Apple-signed
+  test helper, so they must be linked in):
+  `swift test --package-path apps/mac -Xswiftc -plugin-path -Xswiftc
+/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing
+-Xlinker -rpath -Xlinker /Library/Developer/CommandLineTools/Library/Developer/Frameworks
+-Xlinker -rpath -Xlinker /Library/Developer/CommandLineTools/Library/Developer/usr/lib`.
   App bundle: `apps/mac/scripts/make-app.sh`.
 - Live E2E (spawns real server): prefix with `SERGECODE_LIVE_E2E=1`, filter
   `LiveIntegrationTests`.

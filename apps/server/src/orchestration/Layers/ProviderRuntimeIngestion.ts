@@ -56,6 +56,11 @@ const BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY = 10_000;
 const BUFFERED_PROPOSED_PLAN_BY_ID_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
 const STRICT_PROVIDER_LIFECYCLE_GUARD = process.env.T3CODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
+// tool.updated / task.progress / context-window.updated activities are
+// full-snapshot latest-wins payloads that stream at token-ish rates. Each
+// one used to be its own command (SQLite txn + full subscriber fan-out);
+// they are coalesced per (thread, row) and flushed on this cadence instead.
+const ACTIVITY_COALESCE_FLUSH_INTERVAL = Duration.millis(200);
 
 type TurnStartRequestedDomainEvent = Extract<
   OrchestrationEvent,
@@ -70,7 +75,41 @@ type RuntimeIngestionInput =
   | {
       source: "domain";
       event: TurnStartRequestedDomainEvent;
+    }
+  | {
+      // Periodic tick that drains the coalesced-activity buffer. Routed
+      // through the worker queue so flushes serialize with event processing.
+      source: "flush";
     };
+
+/** A coalescible activity held back for the next flush; latest state wins. */
+interface PendingActivity {
+  readonly threadId: ThreadId;
+  readonly activity: OrchestrationThreadActivity;
+  readonly event: ProviderRuntimeEvent;
+}
+
+/**
+ * Buffer key for activities where only the latest state matters. Anything
+ * returning null dispatches immediately (and in order).
+ */
+function activityCoalesceKey(
+  event: ProviderRuntimeEvent,
+  activity: OrchestrationThreadActivity,
+): string | null {
+  switch (activity.kind) {
+    case "tool.updated":
+      return event.itemId ? `tool:${event.itemId}` : null;
+    case "task.progress": {
+      const taskId = (activity.payload as { readonly taskId?: string } | undefined)?.taskId;
+      return taskId ? `task:${taskId}` : null;
+    }
+    case "context-window.updated":
+      return `ctx:${event.turnId ?? "thread"}`;
+    default:
+      return null;
+  }
+}
 
 function toTurnId(value: TurnId | string | undefined): TurnId | undefined {
   return value === undefined ? undefined : TurnId.make(String(value));
@@ -667,6 +706,38 @@ const make = Effect.gen(function* () {
     crypto.randomUUIDv4.pipe(
       Effect.map((uuid) => CommandId.make(`provider:${event.eventId}:${tag}:${uuid}`)),
     );
+
+  // Coalesced latest-wins activities awaiting flush, keyed thread → row.
+  // Only ever touched from the single worker fiber (event processing and
+  // flush ticks both go through the worker queue), so a plain Map is safe.
+  const pendingActivities = new Map<ThreadId, Map<string, PendingActivity>>();
+
+  const dispatchActivity = (pending: PendingActivity) =>
+    providerCommandId(pending.event, "thread-activity-append").pipe(
+      Effect.flatMap((commandId) =>
+        orchestrationEngine.dispatch({
+          type: "thread.activity.append",
+          commandId,
+          threadId: pending.threadId,
+          activity: pending.activity,
+          createdAt: pending.activity.createdAt,
+        }),
+      ),
+      Effect.asVoid,
+    );
+
+  const flushPendingActivities = (threadId?: ThreadId) =>
+    Effect.gen(function* () {
+      const threadIds = threadId !== undefined ? [threadId] : [...pendingActivities.keys()];
+      for (const id of threadIds) {
+        const entries = pendingActivities.get(id);
+        if (!entries) continue;
+        pendingActivities.delete(id);
+        for (const pending of entries.values()) {
+          yield* dispatchActivity(pending);
+        }
+      }
+    });
 
   const turnMessageIdsByTurnKey = yield* Cache.make<string, Set<MessageId>>({
     capacity: TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY,
@@ -1684,25 +1755,31 @@ const make = Effect.gen(function* () {
       }
 
       const activities = runtimeEventToActivities(event);
-      yield* Effect.forEach(activities, (activity) =>
-        providerCommandId(event, "thread-activity-append").pipe(
-          Effect.flatMap((commandId) =>
-            orchestrationEngine.dispatch({
-              type: "thread.activity.append",
-              commandId,
-              threadId: thread.id,
-              activity,
-              createdAt: activity.createdAt,
-            }),
-          ),
-        ),
-      ).pipe(Effect.asVoid);
+      for (const activity of activities) {
+        const pendingKey = activityCoalesceKey(event, activity);
+        if (pendingKey !== null) {
+          const threadPending =
+            pendingActivities.get(thread.id) ?? new Map<string, PendingActivity>();
+          threadPending.set(pendingKey, { threadId: thread.id, activity, event });
+          pendingActivities.set(thread.id, threadPending);
+          continue;
+        }
+        // Any immediate row flushes the thread's buffer first so the work
+        // log keeps arrival order — only consecutive progress snapshots for
+        // the same row ever collapse.
+        yield* flushPendingActivities(thread.id);
+        yield* dispatchActivity({ threadId: thread.id, activity, event });
+      }
     });
 
   const processDomainEvent = (_event: TurnStartRequestedDomainEvent) => Effect.void;
 
   const processInput = (input: RuntimeIngestionInput) =>
-    input.source === "runtime" ? processRuntimeEvent(input.event) : processDomainEvent(input.event);
+    input.source === "runtime"
+      ? processRuntimeEvent(input.event)
+      : input.source === "domain"
+        ? processDomainEvent(input.event)
+        : flushPendingActivities();
 
   const processInputSafely = (input: RuntimeIngestionInput) =>
     processInput(input).pipe(
@@ -1712,8 +1789,9 @@ const make = Effect.gen(function* () {
         }
         return Effect.logWarning("provider runtime ingestion failed to process event", {
           source: input.source,
-          eventId: input.event.eventId,
-          eventType: input.event.type,
+          ...(input.source !== "flush"
+            ? { eventId: input.event.eventId, eventType: input.event.type }
+            : {}),
           cause: Cause.pretty(cause),
         });
       }),
@@ -1736,11 +1814,32 @@ const make = Effect.gen(function* () {
           return worker.enqueue({ source: "domain", event });
         }),
       );
+      yield* Effect.forkScoped(
+        Effect.sleep(ACTIVITY_COALESCE_FLUSH_INTERVAL).pipe(
+          Effect.andThen(
+            Effect.suspend(() =>
+              pendingActivities.size > 0
+                ? worker.enqueue({ source: "flush" }).pipe(Effect.asVoid)
+                : Effect.void,
+            ),
+          ),
+          Effect.forever,
+        ),
+      );
     });
 
   return {
     start,
-    drain: worker.drain,
+    // Drain must also empty the coalesce buffer: tests (and shutdown paths)
+    // rely on drain() meaning "every observed event's effects are visible".
+    // An event processed after a flush marker can buffer new activities, so
+    // loop until a flush pass leaves pendingActivities empty.
+    drain: Effect.gen(function* () {
+      do {
+        yield* worker.enqueue({ source: "flush" });
+        yield* worker.drain;
+      } while (pendingActivities.size > 0);
+    }),
   } satisfies ProviderRuntimeIngestionShape;
 });
 

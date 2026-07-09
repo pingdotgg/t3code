@@ -11,6 +11,12 @@ struct ChatTimelineScrollView: View {
     /// (animate the scroll) apart from in-place streaming deltas (jump).
     @UIState private var lastItemCount = 0
 
+    /// Coalesces content-size-driven pin-scrolls to at most one per runloop
+    /// turn. Streaming deltas and in-place row remeasures can fire many
+    /// height changes per frame; queuing a single unanimated scrollTo is
+    /// enough to stay glued to the bottom without thrashing layout.
+    @UIState private var scrollQueued = false
+
     /// Thread whose first non-empty timeline render still needs to be anchored
     /// after layout. Uncached thread selection renders an empty LazyVStack
     /// first; scrolling that empty stack can leave the reused scroll view at a
@@ -28,8 +34,15 @@ struct ChatTimelineScrollView: View {
     var body: some View {
         let items = model.selectedTimeline()
         // Finished tool bursts render condensed; grouping is pure render
-        // sugar over the untouched timeline array.
-        let displayItems = items.groupedForDisplay(threadIsSettled: threadIsSettled)
+        // sugar over the untouched timeline array. Memoized on
+        // (threadID, timelineVersion, settled) so body re-evals with an
+        // unchanged timeline reuse the last grouping pass.
+        let threadID = model.selectedThreadID ?? ""
+        let displayItems = TimelineDisplayCache.grouped(
+            items: items,
+            threadID: threadID,
+            version: model.timelineVersion(threadID: threadID),
+            threadIsSettled: threadIsSettled)
 
         ScrollViewReader { proxy in
             ScrollView {
@@ -71,9 +84,10 @@ struct ChatTimelineScrollView: View {
             }
             // Any content growth while pinned — streaming deltas, tool rows
             // updating in place, lazy rows re-measuring — re-anchors to the
-            // bottom instantly. Watching contentSize (not just the last item)
-            // is what keeps the viewport from being shoved up when a row
-            // above the fold changes height.
+            // bottom. Watching contentSize (not just the last item) is what
+            // keeps the viewport from being shoved up when a row above the
+            // fold changes height. Coalesce to one scrollTo per runloop turn
+            // so multi-delta height churn doesn't thrash layout.
             .onScrollGeometryChange(for: CGFloat.self) { geometry in
                 geometry.contentSize.height
             } action: { oldHeight, newHeight in
@@ -85,8 +99,12 @@ struct ChatTimelineScrollView: View {
                     proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
                     return
                 }
-                guard isPinnedToBottom else { return }
-                proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+                guard isPinnedToBottom, newHeight > oldHeight, !scrollQueued else { return }
+                scrollQueued = true
+                DispatchQueue.main.async {
+                    scrollQueued = false
+                    proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+                }
             }
             .onChange(of: items.count) { _, newCount in
                 let appendedRow = newCount > lastItemCount

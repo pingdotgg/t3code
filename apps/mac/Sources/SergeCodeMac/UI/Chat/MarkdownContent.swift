@@ -74,18 +74,43 @@ func parseMarkdownSegments(_ markdown: String) -> [MarkdownSegment] {
     return segments
 }
 
+/// Segment splits are immutable for a given markdown string, so results are
+/// cached across view rebuilds. Bounded: cleared wholesale past 64 entries
+/// rather than tracking LRU order (mirrors ToolDetailParseCache).
+@MainActor
+enum MarkdownSegmentCache {
+    private static var storage: [String: [MarkdownSegment]] = [:]
+
+    static func segments(for markdown: String) -> [MarkdownSegment] {
+        if let hit = storage[markdown] { return hit }
+        let value = parseMarkdownSegments(markdown)
+        if storage.count >= 64 { storage.removeAll(keepingCapacity: true) }
+        storage[markdown] = value
+        return value
+    }
+}
+
 /// Full-width assistant message body: parsed markdown segments plus a
 /// streaming indicator. Content stays unframed and opaque for long-form
 /// reading; only the hover action chip floats above it.
 struct AssistantMarkdownView: View {
     let markdown: String
     let isStreaming: Bool
+    // Parsed once per view value, not per body evaluation — body re-runs on
+    // every timeline mutation while this view's markdown is unchanged.
+    private let segments: [MarkdownSegment]
+
+    init(markdown: String, isStreaming: Bool) {
+        self.markdown = markdown
+        self.isStreaming = isStreaming
+        self.segments = MarkdownSegmentCache.segments(for: markdown)
+    }
 
     @UIState private var isHovering = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(parseMarkdownSegments(markdown)) { segment in
+            ForEach(segments) { segment in
                 switch segment {
                 case .prose(let text):
                     MarkdownProseText(text)

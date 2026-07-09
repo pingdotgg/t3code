@@ -43,6 +43,9 @@ extension Array where Element == TimelineItem {
     /// `threadIsSettled`: providers don't always close every tool's
     /// lifecycle, so once the thread has settled a row still marked running
     /// counts as finished (mirrors ToolEventRow's settled display state).
+    ///
+    /// MainActor: routes file-change parsing through `ToolDetailParseCache`.
+    @MainActor
     public func groupedForDisplay(threadIsSettled: Bool = false) -> [TimelineDisplayItem] {
         var result: [TimelineDisplayItem] = []
         var run: [TimelineItem] = []
@@ -96,13 +99,13 @@ extension Array where Element == TimelineItem {
     /// Distinct files touched by the run's file-change tools, keyed on the
     /// path parsed out of the edit payload so repeated edits to one file
     /// count once. Unparseable payloads (the server truncates long inputs)
-    /// fall back to the raw detail string as the dedup key; details are
-    /// ≤400 chars so parsing per grouping pass stays cheap.
+    /// fall back to the raw detail string as the dedup key.
+    @MainActor
     private static func editedFileCount(of tools: [ToolCall]) -> Int {
         let keys = tools.lazy
             .filter { $0.kind == .fileChange }
             .map { tool -> String in
-                if case .fileChange(let path, _) = ParsedToolDetail.parse(
+                if case .fileChange(let path, _) = ToolDetailParseCache.parsed(
                     detail: tool.detail, itemType: "file_change")
                 {
                     return path
@@ -110,5 +113,42 @@ extension Array where Element == TimelineItem {
                 return tool.detail
             }
         return Set(keys).count
+    }
+}
+
+// MARK: - Grouped-display cache
+
+/// `groupedForDisplay` walks the whole timeline and re-parses file-change
+/// details. Cache keyed on (threadID, version, settled) so body re-evals with
+/// an unchanged timeline reuse the last grouping. One entry per thread —
+/// only the latest key/value pair is kept.
+@MainActor
+enum TimelineDisplayCache {
+    private struct Key: Equatable {
+        var threadID: String
+        var version: Int
+        var threadIsSettled: Bool
+    }
+
+    private static var storage: [String: (key: Key, value: [TimelineDisplayItem])] = [:]
+
+    static func grouped(
+        items: [TimelineItem],
+        threadID: String,
+        version: Int,
+        threadIsSettled: Bool
+    ) -> [TimelineDisplayItem] {
+        let key = Key(threadID: threadID, version: version, threadIsSettled: threadIsSettled)
+        if let entry = storage[threadID], entry.key == key {
+            return entry.value
+        }
+        let value = items.groupedForDisplay(threadIsSettled: threadIsSettled)
+        storage[threadID] = (key, value)
+        return value
+    }
+
+    /// Drop a thread's memo entry (timeline release / eviction / removal).
+    static func evict(threadID: String) {
+        storage.removeValue(forKey: threadID)
     }
 }

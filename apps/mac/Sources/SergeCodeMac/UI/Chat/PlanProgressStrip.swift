@@ -11,7 +11,7 @@ struct PlanProgressStrip: View {
 
     private var progress: PlanProgress? {
         guard let threadID = model.selectedThreadID else { return nil }
-        return model.planProgress[threadID]
+        return model.threadState(threadID)?.planProgress
     }
 
     var body: some View {

@@ -5,6 +5,7 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -753,5 +754,65 @@ describe("VcsStatusBroadcaster", () => {
       yield* Deferred.await(remoteInterrupted);
       assert.isTrue(Option.isSome(yield* Deferred.poll(remoteInterrupted)));
     }).pipe(Effect.provide(testLayer));
+  });
+  it.effect("joins concurrent refreshStatus calls for the same cwd", () => {
+    const state = {
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+    };
+
+    return Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const gate = yield* Deferred.make<void>();
+      const testLayer = VcsStatusBroadcaster.layer.pipe(
+        Layer.provideMerge(NodeServices.layer),
+        Layer.provide(
+          Layer.mock(GitWorkflowService.GitWorkflowService)({
+            localStatus: () =>
+              // Signal that refreshStatusCore has started (in-flight entry
+              // already inserted), then hold until the gate opens.
+              Deferred.succeed(started, undefined).pipe(
+                Effect.andThen(Deferred.await(gate)),
+                Effect.map(() => {
+                  state.localStatusCalls += 1;
+                  return baseLocalStatus;
+                }),
+              ),
+            remoteStatus: () =>
+              Effect.sync(() => {
+                state.remoteStatusCalls += 1;
+                return baseRemoteStatus;
+              }),
+            invalidateLocalStatus: () => Effect.void,
+            invalidateRemoteStatus: () => Effect.void,
+          }),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+
+        // Fork first, wait until core refresh is held on the gate (in-flight
+        // entry exists), then fork second. Yield so fiber2 enters the dedupe
+        // modifyEffect before the gate opens — forkChild only schedules, so
+        // opening immediately can let fiber1 finish and delete the entry
+        // before fiber2 joins.
+        const first = yield* broadcaster.refreshStatus("/repo").pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        const second = yield* broadcaster.refreshStatus("/repo").pipe(Effect.forkChild);
+        for (let i = 0; i < 20; i++) {
+          yield* Effect.yieldNow;
+        }
+        yield* Deferred.succeed(gate, undefined);
+
+        const firstResult = yield* Fiber.join(first);
+        const secondResult = yield* Fiber.join(second);
+
+        assert.deepStrictEqual(firstResult, baseStatus);
+        assert.deepStrictEqual(secondResult, baseStatus);
+        assert.equal(state.localStatusCalls, 1);
+        assert.equal(state.remoteStatusCalls, 1);
+      }).pipe(Effect.provide(testLayer));
+    });
   });
 });

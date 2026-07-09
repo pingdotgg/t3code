@@ -10,6 +10,7 @@ import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import type {
@@ -27,6 +28,10 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 const DEFAULT_VCS_STATUS_REFRESH_INTERVAL = Duration.seconds(30);
 const VCS_STATUS_REFRESH_FAILURE_BASE_DELAY = Duration.seconds(30);
 const VCS_STATUS_REFRESH_FAILURE_MAX_DELAY = Duration.minutes(15);
+// Remote refreshes shell out to `git fetch`; with one poller per watched
+// worktree, N sessions would otherwise run N concurrent fetches on the same
+// 30s tick. Two permits keeps remote status fresh without subprocess bursts.
+const MAX_CONCURRENT_REMOTE_REFRESHES = 2;
 const MAX_FAILURE_DIAGNOSTIC_VALUES = 8;
 const MAX_FAILURE_DIAGNOSTIC_VALUE_LENGTH = 128;
 
@@ -193,6 +198,13 @@ export const make = Effect.gen(function* () {
   );
   const cacheRef = yield* Ref.make(new Map<string, CachedVcsStatus>());
   const pollersRef = yield* SynchronizedRef.make(new Map<string, ActiveRemotePoller>());
+  const remoteFetchSemaphore = yield* Semaphore.make(MAX_CONCURRENT_REMOTE_REFRESHES);
+  // One full refresh per cwd at a time: git-mutating RPC handlers fork a
+  // detached refresh each, so a burst of commands would stack duplicate
+  // `git status` + fetch pairs. Late callers join the in-flight fiber.
+  const inflightRefreshesRef = yield* SynchronizedRef.make(
+    new Map<string, Fiber.Fiber<VcsStatusResult, GitManagerServiceError>>(),
+  );
 
   const getCachedStatus = Effect.fn("VcsStatusBroadcaster.getCachedStatus")(function* (
     cwd: string,
@@ -332,7 +344,9 @@ export const make = Effect.gen(function* () {
     const [local, remote] = yield* Effect.all(
       [
         cached?.local ? Effect.succeed(cached.local.value) : workflow.localStatus({ cwd }),
-        cached?.remote ? Effect.succeed(cached.remote.value) : workflow.remoteStatus({ cwd }),
+        cached?.remote
+          ? Effect.succeed(cached.remote.value)
+          : remoteFetchSemaphore.withPermits(1)(workflow.remoteStatus({ cwd })),
       ],
       { concurrency: "unbounded" },
     );
@@ -361,23 +375,58 @@ export const make = Effect.gen(function* () {
     if (options?.refreshUpstream !== false) {
       yield* workflow.invalidateRemoteStatus(cwd);
     }
-    const remote = yield* workflow.remoteStatus({ cwd }, options);
+    const remote = yield* remoteFetchSemaphore.withPermits(1)(
+      workflow.remoteStatus({ cwd }, options),
+    );
     return yield* updateCachedRemoteStatus(cwd, remote, { publish: true });
+  });
+
+  const refreshStatusCore = Effect.fn("VcsStatusBroadcaster.refreshStatusCore")(function* (
+    cwd: string,
+  ) {
+    yield* Effect.all([workflow.invalidateLocalStatus(cwd), workflow.invalidateRemoteStatus(cwd)], {
+      concurrency: "unbounded",
+      discard: true,
+    });
+    const [local, remote] = yield* Effect.all(
+      [
+        workflow.localStatus({ cwd }),
+        remoteFetchSemaphore.withPermits(1)(workflow.remoteStatus({ cwd })),
+      ],
+      { concurrency: "unbounded" },
+    );
+    return yield* updateCachedStatus(cwd, local, remote, { publish: true });
   });
 
   const refreshStatus: VcsStatusBroadcaster["Service"]["refreshStatus"] = Effect.fn(
     "VcsStatusBroadcaster.refreshStatus",
   )(function* (rawCwd) {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
-    yield* Effect.all([workflow.invalidateLocalStatus(cwd), workflow.invalidateRemoteStatus(cwd)], {
-      concurrency: "unbounded",
-      discard: true,
+    // Join an in-flight refresh for this cwd instead of stacking another.
+    // The refresh runs in the broadcaster scope so an interrupted caller
+    // (e.g. a cancelled RPC) never kills the refresh other callers joined.
+    const fiber = yield* SynchronizedRef.modifyEffect(inflightRefreshesRef, (inflight) => {
+      const existing = inflight.get(cwd);
+      if (existing) {
+        return Effect.succeed([existing, inflight] as const);
+      }
+      return refreshStatusCore(cwd).pipe(
+        Effect.ensuring(
+          SynchronizedRef.update(inflightRefreshesRef, (current) => {
+            const next = new Map(current);
+            next.delete(cwd);
+            return next;
+          }),
+        ),
+        Effect.forkIn(broadcasterScope),
+        Effect.map((forked) => {
+          const next = new Map(inflight);
+          next.set(cwd, forked);
+          return [forked, next] as const;
+        }),
+      );
     });
-    const [local, remote] = yield* Effect.all(
-      [workflow.localStatus({ cwd }), workflow.remoteStatus({ cwd })],
-      { concurrency: "unbounded" },
-    );
-    return yield* updateCachedStatus(cwd, local, remote, { publish: true });
+    return yield* Fiber.join(fiber);
   });
 
   // Recomputes both status parts without a network `git fetch`: divergence

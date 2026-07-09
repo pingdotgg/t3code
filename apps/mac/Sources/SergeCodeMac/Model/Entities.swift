@@ -153,6 +153,21 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
         self.reasoningEffort = reasoningEffort
         self.backgroundAgentCount = backgroundAgentCount
     }
+
+    /// True when every stored property except `updatedAt` matches. Used by
+    /// AppModel to suppress sidebar array rewrites on activity-only bumps.
+    public func displayEquivalent(to other: ChatThread) -> Bool {
+        id == other.id
+            && projectID == other.projectID
+            && title == other.title
+            && provider == other.provider
+            && status == other.status
+            && runtimeMode == other.runtimeMode
+            && interactionMode == other.interactionMode
+            && modelInstanceID == other.modelInstanceID
+            && modelID == other.modelID
+            && reasoningEffort == other.reasoningEffort
+    }
 }
 
 public enum ToolEventStatus: String, Sendable {

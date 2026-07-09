@@ -13,6 +13,15 @@ struct SergeCodeApp: App {
     private let scenery = SceneryStore()
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
+    init() {
+        // macOS 26/27 beta: SwiftUI toolbar re-vends during an in-layout
+        // render can raise NSInternalInconsistencyException from AppKit's
+        // layout-feedback-loop guard. Registered (not set) so a user or
+        // managed default can re-enable crash-on-exception; with this off,
+        // AppKit logs the exception and drops the frame instead of aborting.
+        UserDefaults.standard.register(defaults: ["NSApplicationCrashOnExceptions": false])
+    }
+
     // MockBackend when launched with `--mock` or `SERGECODE_MOCK=1`; otherwise
     // the real sidecar-backed LiveBackend.
     private static func makeBackend() -> any BackendService {

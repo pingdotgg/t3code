@@ -30,6 +30,11 @@ let package = Package(
             path: "Sources/SergeCodeMac"
         ),
         .testTarget(
+            name: "SergeCodeMacTests",
+            dependencies: ["SergeCodeMac"],
+            path: "Tests/SergeCodeMacTests"
+        ),
+        .testTarget(
             name: "T3KitTests",
             dependencies: ["T3Kit"],
             path: "Tests/T3KitTests"

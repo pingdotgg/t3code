@@ -18,7 +18,7 @@ public struct CheckpointListView: View {
     }
 
     private var checkpoints: [Checkpoint] {
-        model.checkpoints[threadID] ?? []
+        model.threadState(threadID)?.checkpoints ?? []
     }
 
     public var body: some View {

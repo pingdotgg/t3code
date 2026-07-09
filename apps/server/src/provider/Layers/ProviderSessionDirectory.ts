@@ -177,7 +177,7 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
         Effect.forEach(
           rows,
           (row) => toRuntimeBinding(row, "ProviderSessionDirectory.listBindings"),
-          { concurrency: "unbounded" },
+          { concurrency: 4 },
         ),
       ),
     );
