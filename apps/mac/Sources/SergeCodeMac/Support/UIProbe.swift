@@ -5,9 +5,8 @@
     /// Debug-only UI verification hook for agent/CI runs without screen
     /// recording or accessibility permissions: `SERGECODE_UI_PROBE=<dir>`
     /// (typically with `--mock`) selects the first thread, self-captures the
-    /// window to PNGs in `<dir>` (in-process bitmap, no TCC prompt), drives
-    /// the diff panel's horizontal scroller programmatically, logs the
-    /// scrollable geometry to stdout, and quits.
+    /// window to PNGs in `<dir>` (in-process bitmap, no TCC prompt), opens
+    /// main-area diff review, logs probe steps to stdout, and quits.
     @MainActor
     enum UIProbe {
         static func runIfRequested(model: AppModel) {
@@ -29,9 +28,9 @@
                 model.selectedThreadID =
                     model.threads.first { $0.id == "thread-1" }?.id ?? model.threads.first?.id
             }
-            // Let the inspector present and the diff refresh land.
+            // Let the inspector timeline present and the diff refresh land.
             try? await Task.sleep(for: .seconds(2))
-            snapshot("1-inspector-diff", dir: dir)
+            snapshot("1-inspector-timeline", dir: dir)
 
             // Plan strip above the composer: expand, snapshot, collapse.
             toggleSection("plan")
@@ -40,12 +39,30 @@
             toggleSection("plan")
             try? await Task.sleep(for: .seconds(1))
 
-            // Checkpoints section under the diff: expand and snapshot.
-            toggleSection("checkpoints")
-            try? await Task.sleep(for: .seconds(1))
-            snapshot("3-checkpoints-expanded", dir: dir)
-            toggleSection("checkpoints")
-            try? await Task.sleep(for: .seconds(1))
+            // Open main-area review (All Changes) via the timeline harness hook.
+            if let threadID = model.selectedThreadID {
+                model.openReview(threadID: threadID, scope: .allChanges)
+            } else {
+                toggleSection("checkpoints")
+            }
+            try? await Task.sleep(for: .seconds(2))
+            snapshot("3-review-all-changes", dir: dir)
+
+            // Checkpoint-scoped review if available.
+            if let threadID = model.selectedThreadID,
+                let ckpt = model.threadState(threadID)?.checkpoints?.first
+            {
+                model.openReview(
+                    threadID: threadID,
+                    scope: .checkpoint(fromTurn: 0, toTurn: ckpt.turnCount, label: ckpt.label)
+                )
+                try? await Task.sleep(for: .seconds(2))
+                snapshot("4-review-checkpoint", dir: dir)
+                model.closeReview(threadID: threadID)
+                try? await Task.sleep(for: .seconds(1))
+            } else {
+                model.closeReview()
+            }
 
             // Service tier control: switch to the seeded codex thread, which
             // exposes Standard/Fast choices, then flip the tier and capture.
@@ -67,25 +84,11 @@
                 }
                 let after = model.threads.first { $0.id == codexThread.id }?.serviceTier
                 print("UIProbe: serviceTier after set=\(after ?? "nil")")
-                snapshot("3b-service-tier", dir: dir)
+                snapshot("4b-service-tier", dir: dir)
                 model.selectedThreadID = previousThreadID
                 try? await Task.sleep(for: .seconds(1))
             } else {
                 print("UIProbe: no codex thread-2 for service tier probe")
-            }
-
-            if let diffScroll = widestScrollView() {
-                let doc = diffScroll.documentView?.frame.width ?? 0
-                let clip = diffScroll.contentView.bounds.width
-                print("UIProbe: diff doc width=\(doc) clip width=\(clip)")
-                let overflow = max(0, doc - clip)
-                diffScroll.contentView.scroll(to: NSPoint(x: overflow, y: 0))
-                diffScroll.reflectScrolledClipView(diffScroll.contentView)
-                print("UIProbe: scrolled to x=\(diffScroll.contentView.bounds.origin.x)")
-                try? await Task.sleep(for: .seconds(1))
-                snapshot("4-diff-hscrolled", dir: dir)
-            } else {
-                print("UIProbe: no horizontally scrollable diff view found")
             }
 
             // Queue while the mock thread is running, then force an idle
@@ -237,29 +240,6 @@
             for subview in view.subviews {
                 if let text = subview as? NSTextView { found.append(text) }
                 found += textViews(in: subview)
-            }
-            return found
-        }
-
-        /// The diff panel's PanScrollView: the scroll view whose document
-        /// extends furthest past its viewport horizontally.
-        private static func widestScrollView() -> NSScrollView? {
-            guard let root = NSApp.windows.first(where: { $0.isVisible })?.contentView
-            else { return nil }
-            return scrollViews(in: root)
-                .filter { ($0.documentView?.frame.width ?? 0) > $0.contentView.bounds.width }
-                .max { a, b in
-                    let overA = (a.documentView?.frame.width ?? 0) - a.contentView.bounds.width
-                    let overB = (b.documentView?.frame.width ?? 0) - b.contentView.bounds.width
-                    return overA < overB
-                }
-        }
-
-        private static func scrollViews(in view: NSView) -> [NSScrollView] {
-            var found: [NSScrollView] = []
-            for subview in view.subviews {
-                if let scroll = subview as? NSScrollView { found.append(scroll) }
-                found += scrollViews(in: subview)
             }
             return found
         }

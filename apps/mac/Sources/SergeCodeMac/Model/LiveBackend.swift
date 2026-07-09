@@ -63,7 +63,8 @@ import T3Kit
 //    return [] (graceful — no diff yet). The unified-diff string is parsed by
 //    UnifiedDiffParser below.
 //  * Checkpoints: OrchestrationCheckpointSummary.checkpointRef is used as the
-//    UI Checkpoint.id; restoreCheckpoint routes id -> (threadId, turnCount).
+//    UI Checkpoint.id; restore uses (threadId, turnCount). Mapping preserves
+//    status/files/assistantMessageId via CheckpointMapping.
 
 public actor LiveBackend: BackendService {
 
@@ -717,10 +718,7 @@ public actor LiveBackend: BackendService {
         for summary in thread.checkpoints {
             checkpointRoutes[summary.checkpointRef] = (threadID, summary.checkpointTurnCount)
             let at = WireDate.parse(summary.completedAt) ?? Date()
-            checkpoints.append(
-                Checkpoint(
-                    id: summary.checkpointRef, threadID: threadID,
-                    label: "Turn \(summary.checkpointTurnCount)", createdAt: at))
+            checkpoints.append(CheckpointMapping.checkpoint(from: summary, threadID: threadID, at: at))
             maxTurn = max(maxTurn, summary.checkpointTurnCount)
         }
         checkpointsByThread[threadID] = checkpoints
@@ -890,9 +888,8 @@ public actor LiveBackend: BackendService {
             }
             seenCheckpointRefs[threadID, default: []].insert(payload.checkpointRef)
             let at = WireDate.parse(payload.completedAt) ?? Date()
-            let checkpoint = Checkpoint(
-                id: payload.checkpointRef, threadID: threadID,
-                label: "Turn \(payload.checkpointTurnCount)", createdAt: at)
+            let checkpoint = CheckpointMapping.checkpoint(
+                from: payload, threadID: threadID, at: at)
             checkpointsByThread[threadID, default: []].append(checkpoint)
             emitOrdered(
                 threadID: threadID,
@@ -904,16 +901,7 @@ public actor LiveBackend: BackendService {
             // the diff turn cursor) beyond it no longer exist server-side.
             // Leaving them tracked would keep stale restore points visible
             // and make `diff()` query a turn count that was reverted away.
-            currentTurnCount[threadID] = payload.turnCount
-            checkpointsByThread[threadID]?.removeAll { checkpoint in
-                guard let route = checkpointRoutes[checkpoint.id] else { return false }
-                return route.turnCount > payload.turnCount
-            }
-            for (ref, route) in checkpointRoutes
-            where route.threadID == threadID && route.turnCount > payload.turnCount {
-                checkpointRoutes[ref] = nil
-                seenCheckpointRefs[threadID]?.remove(ref)
-            }
+            applyRevertProjection(threadID: threadID, turnCount: payload.turnCount)
             emitOrdered(threadID: threadID, event: .diffInvalidated(threadID: threadID))
             emitOrdered(
                 threadID: threadID,
@@ -1632,17 +1620,42 @@ public actor LiveBackend: BackendService {
         return UnifiedDiffParser.parse(result.diff)
     }
 
+    public func diff(threadID: String, fromTurn: Int, toTurn: Int) async throws -> [DiffFile] {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        guard toTurn > 0, toTurn > fromTurn else { return [] }
+        let result = try await client.getTurnDiff(
+            threadId: threadID, fromTurnCount: fromTurn, toTurnCount: toTurn)
+        return UnifiedDiffParser.parse(result.diff)
+    }
+
     public func checkpoints(threadID: String) async throws -> [Checkpoint] {
         checkpointsByThread[threadID] ?? []
     }
 
-    public func restoreCheckpoint(id: String) async throws {
+    public func restoreCheckpoint(threadID: String, turnCount: Int) async throws {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
-        guard let route = checkpointRoutes[id] else {
-            throw LiveBackendError.unresolvedCheckpoint(id)
+        _ = try await client.revertCheckpoint(threadId: threadID, turnCount: turnCount)
+        // Project the revert locally before invalidating: the refresh the
+        // invalidation triggers would otherwise query the pre-revert turn
+        // cursor and list pruned checkpoints until threadReverted arrives
+        // (whose handler is idempotent over this projection).
+        applyRevertProjection(threadID: threadID, turnCount: turnCount)
+        emitOrdered(threadID: threadID, event: .diffInvalidated(threadID: threadID))
+    }
+
+    /// Rewind local projection to `turnCount`: turn cursor back, checkpoints
+    /// and routes beyond it dropped — mirrors the server-side revert.
+    private func applyRevertProjection(threadID: String, turnCount: Int) {
+        currentTurnCount[threadID] = turnCount
+        checkpointsByThread[threadID]?.removeAll { checkpoint in
+            guard let route = checkpointRoutes[checkpoint.id] else { return false }
+            return route.turnCount > turnCount
         }
-        _ = try await client.revertCheckpoint(threadId: route.threadID, turnCount: route.turnCount)
-        emitOrdered(threadID: route.threadID, event: .diffInvalidated(threadID: route.threadID))
+        for (ref, route) in checkpointRoutes
+        where route.threadID == threadID && route.turnCount > turnCount {
+            checkpointRoutes[ref] = nil
+            seenCheckpointRefs[threadID]?.remove(ref)
+        }
     }
 
     public func addProject(path: String) async throws -> Project {
@@ -2112,9 +2125,7 @@ public actor LiveBackend: BackendService {
                     detail: approvalDetail(activity.payload), createdAt: at))
         case let .checkpoint(summary, at):
             return .checkpoint(
-                Checkpoint(
-                    id: summary.checkpointRef, threadID: threadID,
-                    label: "Turn \(summary.checkpointTurnCount)", createdAt: at))
+                CheckpointMapping.checkpoint(from: summary, threadID: threadID, at: at))
         case let .proposedPlan(plan, at):
             return .plan(
                 ProposedPlan(

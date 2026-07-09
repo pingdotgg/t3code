@@ -97,9 +97,13 @@ public protocol BackendService: Sendable {
     /// Start an implementation turn from a proposed plan (plan-mode follow-up).
     func implementPlan(threadID: String, planID: String) async throws
 
+    /// Full-thread diff up to the latest completed turn.
     func diff(threadID: String) async throws -> [DiffFile]
+    /// Turn-range diff (`fromTurn` exclusive lower bound, `toTurn` inclusive).
+    func diff(threadID: String, fromTurn: Int, toTurn: Int) async throws -> [DiffFile]
     func checkpoints(threadID: String) async throws -> [Checkpoint]
-    func restoreCheckpoint(id: String) async throws
+    /// Restore the workspace to the named turn count for this thread.
+    func restoreCheckpoint(threadID: String, turnCount: Int) async throws
 
     func addProject(path: String) async throws -> Project
     /// Renames a project (its display title; the workspace path is unchanged).
