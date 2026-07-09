@@ -1987,7 +1987,7 @@ public actor LiveBackend: BackendService {
     /// stable across one tool call so consumers upsert rather than append.
     private func mapActivity(_ activity: OrchestrationThreadActivity, at: Date) -> TimelineItem? {
         switch ActivityRows.row(for: activity) {
-        case .tool(let id, let title, let detail, let itemType, let phase):
+        case .tool(let id, let title, let detail, let itemType, let phase, let output, let outputIsError):
             let status: ToolEventStatus =
                 switch phase {
                 case .running: .running
@@ -1996,7 +1996,7 @@ public actor LiveBackend: BackendService {
                 }
             return .toolEvent(
                 id: id, name: title, detail: detail, kind: ToolEventKind(itemType: itemType),
-                status: status, at: at)
+                status: status, at: at, output: output, outputIsError: outputIsError)
         case .reasoning(let id, let text):
             return .reasoning(id: id, text: text, at: at)
         case .notice(let id, let text):
@@ -2052,7 +2052,10 @@ public actor LiveBackend: BackendService {
                 taskId: task.taskId, taskType: task.taskType, description: task.description,
                 state: Self.uiSubagentTaskState(task.state),
                 latestProgress: task.completionSummary ?? task.latestProgress,
-                startedAt: task.startedAt, duration: task.duration))
+                startedAt: task.startedAt, duration: task.duration,
+                progressLog: task.progressLog.map {
+                    SubagentTaskProgressEntry(at: $0.at, toolName: $0.toolName, text: $0.text)
+                }))
     }
 
     private static func uiSubagentTaskState(_ state: T3SubagentTaskState) -> SubagentTaskState {

@@ -22,9 +22,10 @@ struct ChatTimelineRowView: View {
             UserMessageBubble(text: text, model: model)
         case .assistantMessage(_, let markdown, let isStreaming, _):
             AssistantMarkdownView(markdown: markdown, isStreaming: isStreaming)
-        case .toolEvent(_, let name, let detail, let kind, let status, _):
+        case .toolEvent(_, let name, let detail, let kind, let status, _, let output, let outputIsError):
             ToolEventRow(
                 name: name, detail: detail, kind: kind, status: status,
+                output: output, outputIsError: outputIsError,
                 threadStatus: model.selectedThread?.status)
         case .subagentTask(let task):
             SubagentTaskRow(task: task)
@@ -206,9 +207,10 @@ private struct ToolGroupRow: View {
     @ViewBuilder
     private func expandedRow(_ item: TimelineItem) -> some View {
         switch item {
-        case .toolEvent(_, let name, let detail, let kind, let status, _):
+        case .toolEvent(_, let name, let detail, let kind, let status, _, let output, let outputIsError):
             ToolEventRow(
                 name: name, detail: detail, kind: kind, status: status,
+                output: output, outputIsError: outputIsError,
                 threadStatus: threadStatus)
         case .reasoning(_, let text, _):
             ReasoningRow(text: text)
@@ -222,12 +224,18 @@ private struct ToolGroupRow: View {
 /// Compact, expandable row for a single tool invocation: status + kind
 /// glyphs, tool title, an inline one-line preview of what ran (the command,
 /// the file path), and a structured disclosure body — a diff for file
-/// changes, a command line for shell runs, monospaced text otherwise.
+/// changes, a command line for shell runs, monospaced text otherwise, plus
+/// tool output when the payload carried one.
 private struct ToolEventRow: View {
+    /// Visible line cap for expanded output; the tail is usually what matters.
+    private static let maxVisibleOutputLines = 40
+
     let name: String
     let detail: String
     let kind: ToolEventKind
     let status: ToolEventStatus
+    let output: String?
+    let outputIsError: Bool
     let threadStatus: ThreadStatus?
 
     @UIState private var isExpanded = false
@@ -262,6 +270,10 @@ private struct ToolEventRow: View {
             case .idle, .archived, .error: return .settled
             }
         }
+    }
+
+    private var hasExpandableContent: Bool {
+        !detail.isEmpty || !(output?.isEmpty ?? true)
     }
 
     private var preview: String? {
@@ -299,7 +311,7 @@ private struct ToolEventRow: View {
                             .truncationMode(.middle)
                     }
                     Spacer(minLength: 8)
-                    if !detail.isEmpty {
+                    if hasExpandableContent {
                         Image(systemName: "chevron.right")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
@@ -311,9 +323,9 @@ private struct ToolEventRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .disabled(detail.isEmpty)
+            .disabled(!hasExpandableContent)
 
-            if isExpanded && !detail.isEmpty {
+            if isExpanded && hasExpandableContent {
                 expandedBody
                     .transition(Motion.unfold)
             }
@@ -326,14 +338,54 @@ private struct ToolEventRow: View {
 
     @ViewBuilder
     private var expandedBody: some View {
-        switch parsed {
-        case .command(let command):
-            monospacedBody(command, foreground: .primary)
-        case .fileChange(let path, let edits):
-            FileChangeDiffView(path: path, edits: edits)
-        case .plain(let text):
-            monospacedBody(text, foreground: .secondary)
+        VStack(alignment: .leading, spacing: 8) {
+            if !detail.isEmpty {
+                switch parsed {
+                case .command(let command):
+                    monospacedBody(command, foreground: .primary)
+                case .fileChange(let path, let edits):
+                    FileChangeDiffView(path: path, edits: edits)
+                case .plain(let text):
+                    monospacedBody(text, foreground: .secondary)
+                }
+            }
+            if let output, !output.isEmpty {
+                outputSection(output)
+            }
         }
+    }
+
+    @ViewBuilder
+    private func outputSection(_ text: String) -> some View {
+        let visible = Self.visibleOutput(text)
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Output")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if let notice = visible.truncationNotice {
+                Text(notice)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            monospacedBody(
+                visible.text,
+                foreground: (displayState == .failed || outputIsError)
+                    ? Color.red.opacity(0.85) : .secondary)
+        }
+    }
+
+    /// Keeps the last N lines — command output tails are usually the signal.
+    private static func visibleOutput(_ text: String) -> (text: String, truncationNotice: String?) {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        guard lines.count > maxVisibleOutputLines else {
+            return (text, nil)
+        }
+        let hidden = lines.count - maxVisibleOutputLines
+        let tail = lines.suffix(maxVisibleOutputLines).joined(separator: "\n")
+        return (
+            tail,
+            "… earlier output truncated (\(hidden) line\(hidden == 1 ? "" : "s"))"
+        )
     }
 
     private func monospacedBody(_ text: String, foreground: Color) -> some View {
@@ -375,54 +427,143 @@ private struct ToolEventRow: View {
 }
 
 private struct SubagentTaskRow: View {
+    /// Expanded log shows the tail; older entries are summarized above.
+    private static let maxVisibleLogEntries = 30
+
     let task: SubagentTaskItem
 
+    @UIState private var isExpanded = false
+
+    private var hasExpandableContent: Bool {
+        !task.progressLog.isEmpty
+    }
+
     var body: some View {
-        HStack(alignment: .top, spacing: 9) {
-            statusIcon
-                .frame(width: 16, height: 16)
-                .padding(.top, 1)
+        VStack(alignment: .leading, spacing: 4) {
+            Button {
+                withAnimation(Motion.snap) { isExpanded.toggle() }
+            } label: {
+                HStack(alignment: .top, spacing: 9) {
+                    statusIcon
+                        .frame(width: 16, height: 16)
+                        .padding(.top, 1)
 
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 7) {
-                    Image(systemName: "person.2")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(width: 14)
-                    if let label = taskTypeLabel {
-                        Text(label)
-                            .font(.caption2.weight(.medium))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(.secondary.opacity(0.12), in: Capsule())
-                    }
-                    Text(title)
-                        .font(.callout.weight(.medium))
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 8)
-                    if let durationText {
-                        Text(durationText)
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack(spacing: 7) {
+                            Image(systemName: "person.2")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .frame(width: 14)
+                            if let label = taskTypeLabel {
+                                Text(label)
+                                    .font(.caption2.weight(.medium))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(.secondary.opacity(0.12), in: Capsule())
+                            }
+                            Text(title)
+                                .font(.callout.weight(.medium))
+                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 8)
+                            durationLabel
+                            if hasExpandableContent {
+                                Image(systemName: "chevron.right")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                            }
+                        }
+
+                        if let subtitle {
+                            Text(subtitle)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                 }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!hasExpandableContent)
 
-                if let subtitle {
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+            if isExpanded && hasExpandableContent {
+                progressLogBody
+                    .transition(Motion.unfold)
             }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
         .background(backgroundTint, in: RoundedRectangle(cornerRadius: 10))
         .animation(Motion.ambient, value: task.state)
+    }
+
+    @ViewBuilder
+    private var durationLabel: some View {
+        if task.state == .running {
+            Text(task.startedAt, style: .timer)
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+        } else if let duration = task.duration {
+            Text(Self.format(duration: duration))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var progressLogBody: some View {
+        let log = task.progressLog
+        let hidden = max(0, log.count - Self.maxVisibleLogEntries)
+        let visible = log.suffix(Self.maxVisibleLogEntries)
+        VStack(alignment: .leading, spacing: 4) {
+            if hidden > 0 {
+                Text("… \(hidden) earlier update\(hidden == 1 ? "" : "s")")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            ForEach(Array(visible.enumerated()), id: \.offset) { index, entry in
+                let isNewest =
+                    task.state == .running
+                    && index == visible.count - 1
+                    && hidden + index == log.count - 1
+                progressLogLine(entry, emphasize: isNewest)
+            }
+        }
+        .padding(.leading, 25)
+        .padding(.top, 2)
+    }
+
+    private func progressLogLine(_ entry: SubagentTaskProgressEntry, emphasize: Bool)
+        -> some View
+    {
+        HStack(alignment: .top, spacing: 6) {
+            Text(Self.relativeOffset(from: task.startedAt, to: entry.at))
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 36, alignment: .trailing)
+            if let tool = entry.toolName?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !tool.isEmpty
+            {
+                Text(tool)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(.secondary.opacity(0.12), in: Capsule())
+            }
+            Text(entry.text)
+                .font(.caption)
+                .foregroundStyle(emphasize ? .primary : .secondary)
+                .lineLimit(2)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private var title: String {
@@ -439,22 +580,36 @@ private struct SubagentTaskRow: View {
     }
 
     private var subtitle: String? {
+        // Completed/failed/stopped: prefer completion summary via latestProgress.
+        if task.state != .running {
+            if let progress = task.latestProgress?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !progress.isEmpty
+            {
+                return progress
+            }
+            switch task.state {
+            case .running: return nil
+            case .completed: return "Completed"
+            case .failed: return "Failed"
+            case .stopped: return "Stopped"
+            }
+        }
+
+        // Running: latest log entry as "tool · summary", else "Working...".
+        if let last = task.progressLog.last {
+            if let tool = last.toolName?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !tool.isEmpty
+            {
+                return "\(tool) · \(last.text)"
+            }
+            return last.text
+        }
         if let progress = task.latestProgress?.trimmingCharacters(in: .whitespacesAndNewlines),
             !progress.isEmpty
         {
             return progress
         }
-        switch task.state {
-        case .running: return "Working..."
-        case .completed: return "Completed"
-        case .failed: return "Failed"
-        case .stopped: return "Stopped"
-        }
-    }
-
-    private var durationText: String? {
-        guard task.state != .running, let duration = task.duration else { return nil }
-        return Self.format(duration: duration)
+        return "Working..."
     }
 
     private var statusIcon: some View {
@@ -489,6 +644,13 @@ private struct SubagentTaskRow: View {
         case .failed: Color.red.opacity(0.08)
         case .stopped: Color.secondary.opacity(0.08)
         }
+    }
+
+    private static func relativeOffset(from start: Date, to date: Date) -> String {
+        let seconds = max(0, Int(date.timeIntervalSince(start)))
+        let minutes = seconds / 60
+        let rem = seconds % 60
+        return String(format: "%d:%02d", minutes, rem)
     }
 
     private static func format(duration: TimeInterval) -> String {

@@ -535,7 +535,11 @@ private actor MockState {
             detail: approve ? "Approved: \(approval.title)" : "Denied: \(approval.title)",
             kind: approval.kind == .command ? .command : .fileChange,
             status: approve ? .succeeded : .failed,
-            at: Date()
+            at: Date(),
+            output: approve && approval.kind == .command
+                ? "Build complete!\nBuilding for debugging...\nBuild complete! (0.42s)"
+                : nil,
+            outputIsError: !approve
         )
         timelinesByThread[approval.threadID, default: []].append(follow)
         emit(.timelineAppended(threadID: approval.threadID, item: follow))
@@ -783,8 +787,17 @@ private actor MockState {
                     description: "Audit subagent timeline and status handling",
                     state: .running, latestProgress: "Starting delegated review...",
                     startedAt: now.addingTimeInterval(-460), duration: nil)),
-            .toolEvent(id: "t1-tool1", name: "read_file", detail: "Sources/SergeCodeMac/Views/SidebarView.swift", kind: .fileRead, status: .succeeded, at: now.addingTimeInterval(-470)),
-            .toolEvent(id: "t1-tool2", name: "edit_file", detail: "Sources/SergeCodeMac/Model/AppModel.swift", kind: .fileChange, status: .succeeded, at: now.addingTimeInterval(-200)),
+            .toolEvent(
+                id: "t1-tool1", name: "read_file",
+                detail: "Sources/SergeCodeMac/Views/SidebarView.swift", kind: .fileRead,
+                status: .succeeded, at: now.addingTimeInterval(-470),
+                output: "struct SidebarView: View {\n    var body: some View { … }\n}",
+                outputIsError: false),
+            .toolEvent(
+                id: "t1-tool2", name: "edit_file",
+                detail: "Sources/SergeCodeMac/Model/AppModel.swift", kind: .fileChange,
+                status: .succeeded, at: now.addingTimeInterval(-200),
+                output: nil, outputIsError: false),
             .checkpoint(Checkpoint(id: "ckpt-1a", threadID: "thread-1", label: "Before scroll refactor", createdAt: now.addingTimeInterval(-600))),
             .userMessage(id: "t1-u2", text: "Nice, that feels a lot smoother now.", at: now.addingTimeInterval(-90)),
             .plan(ProposedPlan(
@@ -830,7 +843,11 @@ private actor MockState {
                 isStreaming: false,
                 at: now.addingTimeInterval(-900)
             ),
-            .toolEvent(id: "t2-tool1", name: "write_file", detail: "Sources/SergeCodeMac/Model/MockBackend.swift", kind: .fileChange, status: .succeeded, at: now.addingTimeInterval(-890)),
+            .toolEvent(
+                id: "t2-tool1", name: "write_file",
+                detail: "Sources/SergeCodeMac/Model/MockBackend.swift", kind: .fileChange,
+                status: .succeeded, at: now.addingTimeInterval(-890),
+                output: nil, outputIsError: false),
             .checkpoint(Checkpoint(id: "ckpt-2a", threadID: "thread-2", label: "Initial MockBackend skeleton", createdAt: now.addingTimeInterval(-900))),
             .approval(ApprovalRequest(
                 id: "approval-1",
@@ -855,7 +872,10 @@ private actor MockState {
                 isStreaming: false,
                 at: now.addingTimeInterval(-4_100)
             ),
-            .toolEvent(id: "t3-tool1", name: "edit_file", detail: "src/pages/pricing.tsx", kind: .fileChange, status: .succeeded, at: now.addingTimeInterval(-4_050)),
+            .toolEvent(
+                id: "t3-tool1", name: "edit_file", detail: "src/pages/pricing.tsx",
+                kind: .fileChange, status: .succeeded, at: now.addingTimeInterval(-4_050),
+                output: nil, outputIsError: false),
             .checkpoint(Checkpoint(id: "ckpt-3a", threadID: "thread-3", label: "First pricing draft", createdAt: now.addingTimeInterval(-4_000))),
             .notice(id: "t3-n1", text: "Thread idle for 1 hour.", at: now.addingTimeInterval(-3_600)),
         ]
@@ -864,7 +884,17 @@ private actor MockState {
     private static func timelineForErrorThread(at now: Date) -> [TimelineItem] {
         [
             .userMessage(id: "t4-u1", text: "The build is failing on CI, can you take a look?", at: now.addingTimeInterval(-7_500)),
-            .toolEvent(id: "t4-tool1", name: "run_command", detail: "npm run build", kind: .command, status: .failed, at: now.addingTimeInterval(-7_400)),
+            .toolEvent(
+                id: "t4-tool1", name: "run_command", detail: "npm run build", kind: .command,
+                status: .failed, at: now.addingTimeInterval(-7_400),
+                output: """
+                Error: Cannot find module '@t3tools/contracts'
+                Require stack:
+                - /workspace/apps/web/src/index.ts
+                npm ERR! code 1
+                npm ERR! Exit status 1
+                """,
+                outputIsError: true),
             .assistantMessage(
                 id: "t4-a1",
                 markdown: """

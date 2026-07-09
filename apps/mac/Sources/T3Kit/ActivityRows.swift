@@ -21,7 +21,12 @@ public enum T3ActivityRow: Sendable, Equatable {
     /// `itemType` is the wire item type ("command_execution", "file_change",
     /// …) when the payload carries one; UIs use it to pick icons and detail
     /// rendering (command vs diff vs plain text).
-    case tool(id: String, title: String, detail: String, itemType: String?, phase: T3ActivityRowPhase)
+    /// `output` is the tool's result text when `payload.data` carries it
+    /// (Claude `result.content`, Codex `item.aggregatedOutput`); nil when
+    /// absent or unusable. `outputIsError` mirrors Claude's `is_error`.
+    case tool(
+        id: String, title: String, detail: String, itemType: String?,
+        phase: T3ActivityRowPhase, output: String?, outputIsError: Bool)
     /// Streaming task/reasoning progress ("what the agent is thinking now");
     /// successive updates of the same task share an id and replace in place.
     case reasoning(id: String, text: String)
@@ -29,6 +34,9 @@ public enum T3ActivityRow: Sendable, Equatable {
 }
 
 public enum ActivityRows {
+    /// Defensive cap so a huge `cat` result doesn't bloat the timeline model.
+    public static let maxStoredOutputChars = 16_384
+
     /// Derives the display row for an activity; nil means the activity is
     /// pure lifecycle noise and gets no timeline row at all.
     public static func row(for activity: OrchestrationThreadActivity) -> T3ActivityRow? {
@@ -74,11 +82,13 @@ public enum ActivityRows {
         case .tool:
             return .tool(
                 id: activity.id, title: nonEmpty(activity.summary) ?? activity.kind,
-                detail: payloadDetail(activity.payload) ?? "", itemType: nil, phase: .succeeded)
+                detail: payloadDetail(activity.payload) ?? "", itemType: nil, phase: .succeeded,
+                output: nil, outputIsError: false)
         case .error:
             return .tool(
                 id: activity.id, title: nonEmpty(activity.summary) ?? "Error",
-                detail: payloadDetail(activity.payload) ?? "", itemType: nil, phase: .failed)
+                detail: payloadDetail(activity.payload) ?? "", itemType: nil, phase: .failed,
+                output: nil, outputIsError: false)
         case .info, .approval:
             // "Checkpoint captured" duplicates the dedicated checkpoint row.
             guard let text = nonEmpty(activity.summary), text != "Checkpoint captured" else {
@@ -107,13 +117,15 @@ public enum ActivityRows {
         default: phase = activity.kind == ActivityKind.toolCompleted ? .succeeded : .running
         }
 
+        let extracted = outputFromData(activity.payload)
+
         // toolCallId (payload.data.toolCallId) correlates every lifecycle
         // event of one tool invocation — sharing it as the row id makes
         // updated -> completed replace the same row.
         let id = toolCallId(in: activity.payload).map { "tool:\($0)" } ?? activity.id
         return .tool(
             id: id, title: title, detail: detail, itemType: nonEmpty(payload?.itemType),
-            phase: phase)
+            phase: phase, output: extracted?.text, outputIsError: extracted?.isError ?? false)
     }
 
     private static func toolCallId(in payload: JSONValue) -> String? {
@@ -154,6 +166,90 @@ public enum ActivityRows {
         default:
             return nil
         }
+    }
+
+    // MARK: - Tool output extraction
+
+    private struct ExtractedOutput: Equatable {
+        var text: String
+        var isError: Bool
+    }
+
+    /// Pulls tool result text out of `payload.data` (provider-shaped, passed
+    /// through verbatim by ProviderRuntimeIngestion). Claude: `result.content`
+    /// (+ `is_error`). Codex: `item.aggregatedOutput` (camelCase wire).
+    private static func outputFromData(_ payload: JSONValue) -> ExtractedOutput? {
+        guard let data = payload.objectValue?["data"]?.objectValue else { return nil }
+
+        // Claude adapter: `{ toolName, input, result }` where result is the
+        // raw tool_result content block.
+        if let result = data["result"]?.objectValue {
+            let isError = isTruthy(result["is_error"])
+            if let text = textFromToolResultContent(result["content"]) {
+                return finalizeOutput(text, isError: isError)
+            }
+        }
+
+        // Codex: `data` is the raw item notification (`{ item: { … } }`);
+        // command executions carry `aggregatedOutput` on the item. Also
+        // accept snake_case / top-level keys for defensive compatibility.
+        if let text = codexOutputString(from: data) {
+            return finalizeOutput(text, isError: false)
+        }
+
+        return nil
+    }
+
+    private static func textFromToolResultContent(_ content: JSONValue?) -> String? {
+        guard let content else { return nil }
+        if let string = content.stringValue {
+            return string
+        }
+        guard let blocks = content.arrayValue else { return nil }
+        let parts: [String] = blocks.compactMap { block in
+            if let string = block.stringValue { return string }
+            guard let object = block.objectValue else { return nil }
+            // Prefer explicit text blocks; still accept any object with `text`.
+            if let type = object["type"]?.stringValue, type != "text", object["text"] == nil {
+                return nil
+            }
+            return object["text"]?.stringValue
+        }
+        let joined = parts.joined(separator: "\n")
+        return joined.isEmpty ? nil : joined
+    }
+
+    private static func codexOutputString(from data: [String: JSONValue]) -> String? {
+        let containers: [[String: JSONValue]] = [data["item"]?.objectValue, data].compactMap { $0 }
+        let keys = [
+            "aggregatedOutput", "aggregated_output",
+            "formattedOutput", "formatted_output",
+            "output",
+        ]
+        for container in containers {
+            for key in keys {
+                if let value = nonEmpty(container[key]?.stringValue) {
+                    return value
+                }
+            }
+        }
+        return nil
+    }
+
+    private static func finalizeOutput(_ raw: String, isError: Bool) -> ExtractedOutput? {
+        var text = stripTrailingExitCode(raw)
+        guard !text.isEmpty else { return nil }
+        if text.count > maxStoredOutputChars {
+            let end = text.index(text.startIndex, offsetBy: maxStoredOutputChars)
+            text = String(text[..<end]) + "\n… output truncated"
+        }
+        return ExtractedOutput(text: text, isError: isError)
+    }
+
+    private static func isTruthy(_ value: JSONValue?) -> Bool {
+        guard let value else { return false }
+        if case .bool(let flag) = value { return flag }
+        return false
     }
 
     /// Best-effort human detail for activities without a typed payload.

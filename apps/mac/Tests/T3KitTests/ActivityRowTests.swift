@@ -77,7 +77,7 @@ struct ActivityRowTests {
         #expect(
             row == .tool(
                 id: "a1", title: "Read", detail: "Sources/App/Main.swift",
-                itemType: "file_read", phase: .running))
+                itemType: "file_read", phase: .running, output: nil, outputIsError: false))
     }
 
     @Test func toolLifecycleSharesRowIdViaToolCallId() {
@@ -98,11 +98,11 @@ struct ActivityRowTests {
         #expect(
             updated == .tool(
                 id: "tool:call-7", title: "Bash", detail: "",
-                itemType: "command_execution", phase: .running))
+                itemType: "command_execution", phase: .running, output: nil, outputIsError: false))
         #expect(
             completed == .tool(
                 id: "tool:call-7", title: "Bash", detail: "",
-                itemType: "command_execution", phase: .succeeded))
+                itemType: "command_execution", phase: .succeeded, output: nil, outputIsError: false))
     }
 
     @Test func toolCompletedStripsExitCodeMarkerAndCompletedSuffix() {
@@ -116,7 +116,7 @@ struct ActivityRowTests {
         #expect(
             row == .tool(
                 id: "a1", title: "Terminal", detail: "swift build",
-                itemType: "command_execution", phase: .succeeded))
+                itemType: "command_execution", phase: .succeeded, output: nil, outputIsError: false))
     }
 
     @Test func toolFailureStatusMapsToFailedPhase() {
@@ -124,7 +124,10 @@ struct ActivityRowTests {
             for: activity(
                 kind: "tool.updated", summary: "Edit",
                 payload: .object(["status": .string("failed")])))
-        #expect(row == .tool(id: "a1", title: "Edit", detail: "", itemType: nil, phase: .failed))
+        #expect(
+            row == .tool(
+                id: "a1", title: "Edit", detail: "", itemType: nil, phase: .failed,
+                output: nil, outputIsError: false))
     }
 
     @Test func emptySummaryFallsBackToHumanizedItemType() {
@@ -135,7 +138,7 @@ struct ActivityRowTests {
         #expect(
             row == .tool(
                 id: "a1", title: "Web search", detail: "", itemType: "web_search",
-                phase: .running))
+                phase: .running, output: nil, outputIsError: false))
     }
 
     @Test func detailDuplicatingTitleIsDropped() {
@@ -143,7 +146,10 @@ struct ActivityRowTests {
             for: activity(
                 kind: "tool.completed", summary: "Read file",
                 payload: .object(["detail": .string("  read   FILE ")])))
-        #expect(row == .tool(id: "a1", title: "Read file", detail: "", itemType: nil, phase: .succeeded))
+        #expect(
+            row == .tool(
+                id: "a1", title: "Read file", detail: "", itemType: nil, phase: .succeeded,
+                output: nil, outputIsError: false))
     }
 
     @Test func planBoundaryToolActivityIsSkipped() {
@@ -179,7 +185,7 @@ struct ActivityRowTests {
         #expect(
             row == .tool(
                 id: "a1", title: "Edit", detail: expectedDetail, itemType: "file_change",
-                phase: .succeeded))
+                phase: .succeeded, output: nil, outputIsError: false))
     }
 
     @Test func commandDetailIsRebuiltFromUntruncatedData() {
@@ -200,7 +206,7 @@ struct ActivityRowTests {
             row == .tool(
                 id: "a1", title: "Bash",
                 detail: "Bash: swift build --package-path apps/mac && swift test",
-                itemType: "command_execution", phase: .succeeded))
+                itemType: "command_execution", phase: .succeeded, output: nil, outputIsError: false))
     }
 
     @Test func dataWithoutInputFallsBackToPayloadDetail() {
@@ -215,7 +221,219 @@ struct ActivityRowTests {
         #expect(
             row == .tool(
                 id: "tool:call-9", title: "Bash", detail: "swift build",
-                itemType: "command_execution", phase: .succeeded))
+                itemType: "command_execution", phase: .succeeded, output: nil, outputIsError: false))
+    }
+
+    // MARK: Tool output extraction
+
+    @Test func claudeStringResultContentIsExtracted() {
+        let row = ActivityRows.row(
+            for: activity(
+                kind: "tool.completed", summary: "Bash",
+                payload: .object([
+                    "itemType": .string("command_execution"),
+                    "data": .object([
+                        "toolName": .string("Bash"),
+                        "input": .object(["command": .string("echo hi")]),
+                        "result": .object([
+                            "type": .string("tool_result"),
+                            "tool_use_id": .string("tu-1"),
+                            "content": .string("hi\n"),
+                        ]),
+                    ]),
+                ])))
+        #expect(
+            row == .tool(
+                id: "a1", title: "Bash", detail: "Bash: echo hi",
+                itemType: "command_execution", phase: .succeeded,
+                output: "hi", outputIsError: false))
+    }
+
+    @Test func claudeArrayOfTextBlocksIsJoined() {
+        let row = ActivityRows.row(
+            for: activity(
+                kind: "tool.completed", summary: "Bash",
+                payload: .object([
+                    "itemType": .string("command_execution"),
+                    "data": .object([
+                        "toolName": .string("Bash"),
+                        "input": .object(["command": .string("ls")]),
+                        "result": .object([
+                            "type": .string("tool_result"),
+                            "tool_use_id": .string("tu-2"),
+                            "content": .array([
+                                .object(["type": .string("text"), "text": .string("a.swift")]),
+                                .object(["type": .string("text"), "text": .string("b.swift")]),
+                            ]),
+                        ]),
+                    ]),
+                ])))
+        guard case .tool(_, _, _, _, _, let output, let isError) = row else {
+            Issue.record("expected tool row")
+            return
+        }
+        #expect(output == "a.swift\nb.swift")
+        #expect(isError == false)
+    }
+
+    @Test func claudeIsErrorFlagIsPropagated() {
+        let row = ActivityRows.row(
+            for: activity(
+                kind: "tool.completed", summary: "Bash",
+                payload: .object([
+                    "itemType": .string("command_execution"),
+                    "status": .string("failed"),
+                    "data": .object([
+                        "toolName": .string("Bash"),
+                        "input": .object(["command": .string("false")]),
+                        "result": .object([
+                            "type": .string("tool_result"),
+                            "tool_use_id": .string("tu-3"),
+                            "content": .string("command failed"),
+                            "is_error": .bool(true),
+                        ]),
+                    ]),
+                ])))
+        guard case .tool(_, _, _, _, let phase, let output, let isError) = row else {
+            Issue.record("expected tool row")
+            return
+        }
+        #expect(phase == .failed)
+        #expect(output == "command failed")
+        #expect(isError == true)
+    }
+
+    @Test func codexAggregatedOutputOnItemIsExtracted() {
+        // Codex mapItemLifecycle puts the raw V2 notification in data:
+        // `{ item: { type: "commandExecution", aggregatedOutput, … } }`.
+        let row = ActivityRows.row(
+            for: activity(
+                kind: "tool.completed", summary: "Ran command",
+                payload: .object([
+                    "itemType": .string("command_execution"),
+                    "detail": .string("swift test"),
+                    "data": .object([
+                        "item": .object([
+                            "type": .string("commandExecution"),
+                            "command": .string("swift test"),
+                            "aggregatedOutput": .string("Test Suite 'All tests' passed\n"),
+                            "exitCode": .int(0),
+                        ]),
+                    ]),
+                ])))
+        guard case .tool(_, _, _, _, _, let output, let isError) = row else {
+            Issue.record("expected tool row")
+            return
+        }
+        #expect(output == "Test Suite 'All tests' passed")
+        #expect(isError == false)
+    }
+
+    @Test func codexSnakeCaseAggregatedOutputIsAccepted() {
+        let row = ActivityRows.row(
+            for: activity(
+                kind: "tool.completed", summary: "Ran command",
+                payload: .object([
+                    "itemType": .string("command_execution"),
+                    "data": .object([
+                        "aggregated_output": .string("ok"),
+                    ]),
+                ])))
+        guard case .tool(_, _, _, _, _, let output, _) = row else {
+            Issue.record("expected tool row")
+            return
+        }
+        #expect(output == "ok")
+    }
+
+    @Test func missingOrGarbageDataYieldsNilOutput() {
+        let noData = ActivityRows.row(
+            for: activity(
+                kind: "tool.completed", summary: "Bash",
+                payload: .object([
+                    "itemType": .string("command_execution"),
+                    "detail": .string("echo hi"),
+                ])))
+        let garbage = ActivityRows.row(
+            for: activity(
+                kind: "tool.completed", summary: "Bash",
+                payload: .object([
+                    "itemType": .string("command_execution"),
+                    "data": .object([
+                        "result": .string("not-an-object"),
+                        "item": .bool(true),
+                    ]),
+                ])))
+        guard case .tool(_, _, _, _, _, let out1, let err1) = noData,
+            case .tool(_, _, _, _, _, let out2, let err2) = garbage
+        else {
+            Issue.record("expected tool rows")
+            return
+        }
+        #expect(out1 == nil)
+        #expect(err1 == false)
+        #expect(out2 == nil)
+        #expect(err2 == false)
+    }
+
+    @Test func outputStripsTrailingExitCodeMarker() {
+        let row = ActivityRows.row(
+            for: activity(
+                kind: "tool.completed", summary: "Bash",
+                payload: .object([
+                    "itemType": .string("command_execution"),
+                    "data": .object([
+                        "result": .object([
+                            "content": .string("built successfully\n\n<exited with exit code 0>"),
+                        ]),
+                    ]),
+                ])))
+        guard case .tool(_, _, _, _, _, let output, _) = row else {
+            Issue.record("expected tool row")
+            return
+        }
+        #expect(output == "built successfully")
+    }
+
+    @Test func largeOutputIsCappedWithMarker() {
+        let big = String(repeating: "x", count: ActivityRows.maxStoredOutputChars + 500)
+        let row = ActivityRows.row(
+            for: activity(
+                kind: "tool.completed", summary: "Bash",
+                payload: .object([
+                    "itemType": .string("command_execution"),
+                    "data": .object([
+                        "result": .object([
+                            "content": .string(big),
+                        ]),
+                    ]),
+                ])))
+        guard case .tool(_, _, _, _, _, let output, _) = row else {
+            Issue.record("expected tool row")
+            return
+        }
+        #expect(output != nil)
+        #expect(output!.hasSuffix("\n… output truncated"))
+        #expect(output!.count == ActivityRows.maxStoredOutputChars + "\n… output truncated".count)
+    }
+
+    @Test func emptyResultContentYieldsNilOutput() {
+        let row = ActivityRows.row(
+            for: activity(
+                kind: "tool.completed", summary: "Bash",
+                payload: .object([
+                    "itemType": .string("command_execution"),
+                    "data": .object([
+                        "result": .object([
+                            "content": .string("   \n  "),
+                        ]),
+                    ]),
+                ])))
+        guard case .tool(_, _, _, _, _, let output, _) = row else {
+            Issue.record("expected tool row")
+            return
+        }
+        #expect(output == nil)
     }
 
     // MARK: Tone fallbacks
@@ -228,7 +446,7 @@ struct ActivityRowTests {
         #expect(
             row == .tool(
                 id: "a1", title: "Turn failed", detail: "provider crashed", itemType: nil,
-                phase: .failed))
+                phase: .failed, output: nil, outputIsError: false))
     }
 
     @Test func infoToneBecomesNotice() {

@@ -239,4 +239,249 @@ struct SubagentTaskActivityStateTests {
         #expect(item.duration == 7)
         #expect(state.activeTaskIDs.isEmpty)
     }
+
+    // MARK: - Progress log
+
+    @Test func progressLogAccumulatesInOrder() throws {
+        let start = activity(
+            id: "act-start", kind: ActivityKind.taskStarted,
+            at: "2026-07-04T10:00:00.000Z",
+            payload: .object([
+                "taskId": .string("task-1"),
+                "description": .string("Investigate"),
+            ]))
+        let p1 = activity(
+            id: "act-p1", kind: ActivityKind.taskProgress,
+            at: "2026-07-04T10:00:02.000Z",
+            payload: .object([
+                "taskId": .string("task-1"),
+                "summary": .string("Reading files"),
+                "lastToolName": .string("Read"),
+            ]))
+        let p2 = activity(
+            id: "act-p2", kind: ActivityKind.taskProgress,
+            at: "2026-07-04T10:00:04.000Z",
+            payload: .object([
+                "taskId": .string("task-1"),
+                "summary": .string("Searching symbols"),
+                "lastToolName": .string("Grep"),
+            ]))
+        let p3 = activity(
+            id: "act-p3", kind: ActivityKind.taskProgress,
+            at: "2026-07-04T10:00:06.000Z",
+            payload: .object([
+                "taskId": .string("task-1"),
+                "detail": .string("Still thinking"),
+            ]))
+
+        var state = T3SubagentTaskActivityState()
+        _ = state.apply(activity: start, at: WireDate.parse(start.createdAt)!)
+        _ = state.apply(activity: p1, at: WireDate.parse(p1.createdAt)!)
+        _ = state.apply(activity: p2, at: WireDate.parse(p2.createdAt)!)
+        let item = state.apply(activity: p3, at: WireDate.parse(p3.createdAt)!)
+
+        let log = try #require(item?.progressLog)
+        #expect(log.count == 3)
+        #expect(log[0].text == "Reading files")
+        #expect(log[0].toolName == "Read")
+        #expect(log[0].at == WireDate.parse(p1.createdAt))
+        #expect(log[1].text == "Searching symbols")
+        #expect(log[1].toolName == "Grep")
+        #expect(log[2].text == "Still thinking")
+        #expect(log[2].toolName == nil)
+    }
+
+    @Test func progressLogDedupesConsecutiveDuplicates() throws {
+        let p1 = activity(
+            id: "act-p1", kind: ActivityKind.taskProgress,
+            at: "2026-07-04T10:00:01.000Z",
+            payload: .object([
+                "taskId": .string("task-1"),
+                "summary": .string("Reading files"),
+                "lastToolName": .string("Read"),
+            ]))
+        // Same tool + text — should be dropped.
+        let p2 = activity(
+            id: "act-p2", kind: ActivityKind.taskProgress,
+            at: "2026-07-04T10:00:02.000Z",
+            payload: .object([
+                "taskId": .string("task-1"),
+                "summary": .string("Reading files"),
+                "lastToolName": .string("Read"),
+            ]))
+        // Same text, different tool — kept.
+        let p3 = activity(
+            id: "act-p3", kind: ActivityKind.taskProgress,
+            at: "2026-07-04T10:00:03.000Z",
+            payload: .object([
+                "taskId": .string("task-1"),
+                "summary": .string("Reading files"),
+                "lastToolName": .string("Grep"),
+            ]))
+        // Whitespace-only — no entry.
+        let p4 = activity(
+            id: "act-p4", kind: ActivityKind.taskProgress,
+            at: "2026-07-04T10:00:04.000Z",
+            payload: .object([
+                "taskId": .string("task-1"),
+                "summary": .string("  "),
+                "lastToolName": .string("Grep"),
+            ]))
+
+        var state = T3SubagentTaskActivityState()
+        _ = state.apply(activity: p1, at: WireDate.parse(p1.createdAt)!)
+        _ = state.apply(activity: p2, at: WireDate.parse(p2.createdAt)!)
+        _ = state.apply(activity: p3, at: WireDate.parse(p3.createdAt)!)
+        let item = state.apply(activity: p4, at: WireDate.parse(p4.createdAt)!)
+
+        let log = try #require(item?.progressLog)
+        #expect(log.count == 2)
+        #expect(log[0].toolName == "Read")
+        #expect(log[1].toolName == "Grep")
+        #expect(log.map(\.text) == ["Reading files", "Reading files"])
+    }
+
+    @Test func progressLogCapsAtMaxEntriesDroppingOldest() throws {
+        var state = T3SubagentTaskActivityState()
+        let max = T3SubagentTaskItem.maxProgressLogEntries
+        let total = max + 25
+        for i in 0..<total {
+            let act = activity(
+                id: "act-p-\(i)", kind: ActivityKind.taskProgress,
+                at: "2026-07-04T10:00:\(String(format: "%02d", i % 60)).000Z",
+                payload: .object([
+                    "taskId": .string("task-1"),
+                    "summary": .string("step-\(i)"),
+                ]),
+                sequence: i)
+            // Spread timestamps so WireDate order stays unique enough with sequence.
+            let at = Date(timeIntervalSince1970: 1_720_000_000 + Double(i))
+            _ = state.apply(activity: act, at: at)
+        }
+
+        let item = try #require(state.items.first)
+        #expect(item.progressLog.count == max)
+        #expect(item.progressLog.first?.text == "step-\(total - max)")
+        #expect(item.progressLog.last?.text == "step-\(total - 1)")
+    }
+
+    @Test func completionAppendsFinalLogEntryWhenNew() throws {
+        let progress = activity(
+            id: "act-progress", kind: ActivityKind.taskProgress,
+            at: "2026-07-04T10:00:03.000Z",
+            payload: .object([
+                "taskId": .string("task-1"),
+                "summary": .string("Reading files"),
+                "lastToolName": .string("Read"),
+            ]))
+        let completed = activity(
+            id: "act-complete", kind: ActivityKind.taskCompleted,
+            at: "2026-07-04T10:00:07.000Z",
+            payload: .object([
+                "taskId": .string("task-1"),
+                "status": .string("completed"),
+                "summary": .string("Mapped the flow"),
+            ]))
+
+        var state = T3SubagentTaskActivityState()
+        _ = state.apply(activity: progress, at: WireDate.parse(progress.createdAt)!)
+        let finished = state.apply(activity: completed, at: WireDate.parse(completed.createdAt)!)
+
+        let log = try #require(finished?.progressLog)
+        #expect(log.count == 2)
+        #expect(log[0].text == "Reading files")
+        #expect(log[1].text == "Mapped the flow")
+        #expect(log[1].at == WireDate.parse(completed.createdAt))
+    }
+
+    @Test func completionDoesNotDuplicateIdenticalFinalEntry() throws {
+        let progress = activity(
+            id: "act-progress", kind: ActivityKind.taskProgress,
+            at: "2026-07-04T10:00:03.000Z",
+            payload: .object([
+                "taskId": .string("task-1"),
+                "summary": .string("Done already"),
+            ]))
+        let completed = activity(
+            id: "act-complete", kind: ActivityKind.taskCompleted,
+            at: "2026-07-04T10:00:07.000Z",
+            payload: .object([
+                "taskId": .string("task-1"),
+                "status": .string("completed"),
+                "summary": .string("Done already"),
+            ]))
+
+        var state = T3SubagentTaskActivityState()
+        _ = state.apply(activity: progress, at: WireDate.parse(progress.createdAt)!)
+        let finished = state.apply(activity: completed, at: WireDate.parse(completed.createdAt)!)
+
+        #expect(finished?.progressLog.count == 1)
+        #expect(finished?.progressLog.first?.text == "Done already")
+    }
+
+    @Test func rebuildProducesSameProgressLogAsIncrementalApply() throws {
+        let activities = [
+            activity(
+                id: "act-start", kind: ActivityKind.taskStarted,
+                at: "2026-07-04T10:00:00.000Z",
+                payload: .object([
+                    "taskId": .string("task-1"),
+                    "taskType": .string("explore"),
+                    "description": .string("Find the mapper"),
+                ]),
+                sequence: 1),
+            activity(
+                id: "act-p1", kind: ActivityKind.taskProgress,
+                at: "2026-07-04T10:00:02.000Z",
+                payload: .object([
+                    "taskId": .string("task-1"),
+                    "summary": .string("Opening files"),
+                    "lastToolName": .string("Read"),
+                ]),
+                sequence: 2),
+            // Duplicate — should be dropped in both paths.
+            activity(
+                id: "act-p1b", kind: ActivityKind.taskProgress,
+                at: "2026-07-04T10:00:02.500Z",
+                payload: .object([
+                    "taskId": .string("task-1"),
+                    "summary": .string("Opening files"),
+                    "lastToolName": .string("Read"),
+                ]),
+                sequence: 3),
+            activity(
+                id: "act-p2", kind: ActivityKind.taskProgress,
+                at: "2026-07-04T10:00:04.000Z",
+                payload: .object([
+                    "taskId": .string("task-1"),
+                    "summary": .string("Grepping"),
+                    "lastToolName": .string("Grep"),
+                ]),
+                sequence: 4),
+            activity(
+                id: "act-complete", kind: ActivityKind.taskCompleted,
+                at: "2026-07-04T10:00:08.000Z",
+                payload: .object([
+                    "taskId": .string("task-1"),
+                    "status": .string("completed"),
+                    "summary": .string("Found it"),
+                ]),
+                sequence: 5),
+        ]
+
+        var incremental = T3SubagentTaskActivityState()
+        for act in activities {
+            _ = incremental.apply(activity: act, at: WireDate.parse(act.createdAt)!)
+        }
+        let rebuilt = T3SubagentTaskActivityState.rebuild(from: activities.shuffled())
+
+        let left = try #require(incremental.items.first)
+        let right = try #require(rebuilt.items.first)
+        #expect(left.progressLog == right.progressLog)
+        #expect(left.progressLog.map(\.text) == ["Opening files", "Grepping", "Found it"])
+        #expect(left.state == right.state)
+        #expect(left.completionSummary == right.completionSummary)
+        #expect(left.latestProgress == right.latestProgress)
+        #expect(left.duration == right.duration)
+    }
 }

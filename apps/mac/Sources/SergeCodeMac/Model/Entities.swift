@@ -183,6 +183,18 @@ public enum SubagentTaskState: String, Sendable {
     case running, completed, failed, stopped
 }
 
+public struct SubagentTaskProgressEntry: Hashable, Sendable {
+    public var at: Date
+    public var toolName: String?
+    public var text: String
+
+    public init(at: Date, toolName: String?, text: String) {
+        self.at = at
+        self.toolName = toolName
+        self.text = text
+    }
+}
+
 public struct SubagentTaskItem: Hashable, Sendable {
     public var taskId: String
     public var taskType: String?
@@ -191,12 +203,16 @@ public struct SubagentTaskItem: Hashable, Sendable {
     public var latestProgress: String?
     public var startedAt: Date
     public var duration: TimeInterval?
+    /// Ordered progress updates (oldest first). Empty when no progress has
+    /// been streamed yet.
+    public var progressLog: [SubagentTaskProgressEntry]
 
     public var id: String { "subagent-task:\(taskId)" }
 
     public init(
         taskId: String, taskType: String?, description: String?, state: SubagentTaskState,
-        latestProgress: String?, startedAt: Date, duration: TimeInterval?
+        latestProgress: String?, startedAt: Date, duration: TimeInterval?,
+        progressLog: [SubagentTaskProgressEntry] = []
     ) {
         self.taskId = taskId
         self.taskType = taskType
@@ -205,6 +221,7 @@ public struct SubagentTaskItem: Hashable, Sendable {
         self.latestProgress = latestProgress
         self.startedAt = startedAt
         self.duration = duration
+        self.progressLog = progressLog
     }
 }
 
@@ -243,9 +260,11 @@ public enum UsageLimitActionState: Equatable, Sendable {
 public enum TimelineItem: Identifiable, Sendable {
     case userMessage(id: String, text: String, at: Date)
     case assistantMessage(id: String, markdown: String, isStreaming: Bool, at: Date)
+    /// `output` is the tool's result text when available (command stdout,
+    /// etc.); `outputIsError` is true for Claude tool_result errors.
     case toolEvent(
         id: String, name: String, detail: String, kind: ToolEventKind,
-        status: ToolEventStatus, at: Date)
+        status: ToolEventStatus, at: Date, output: String?, outputIsError: Bool)
     case approval(ApprovalRequest)
     case userInput(UserInputRequest)
     case usageLimit(UsageLimitNotice)
@@ -261,7 +280,7 @@ public enum TimelineItem: Identifiable, Sendable {
         switch self {
         case .userMessage(let id, _, _): id
         case .assistantMessage(let id, _, _, _): id
-        case .toolEvent(let id, _, _, _, _, _): id
+        case .toolEvent(let id, _, _, _, _, _, _, _): id
         case .approval(let request): request.id
         case .userInput(let request): request.id
         case .usageLimit(let notice): notice.id
@@ -294,13 +313,13 @@ extension Array where Element == TimelineItem {
         // is stuck "running" forever. Bounded at the current turn: crossing
         // a user message (or checkpoint, which marks a turn end) could fold
         // a fresh same-name invocation into a stale row from an old turn.
-        if case .toolEvent(let id, let name, let detail, _, _, _) = item {
+        if case .toolEvent(let id, let name, let detail, _, _, _, _, _) = item {
             search: for index in indices.reversed() {
                 switch self[index] {
                 case .userMessage, .checkpoint:
                     break search
                 case .toolEvent(
-                    let existingID, let existingName, let existingDetail, _, .running, _)
+                    let existingID, let existingName, let existingDetail, _, .running, _, _, _)
                 where existingName == name
                     && (existingDetail == detail
                         || (existingID.hasPrefix("tool:") && !id.hasPrefix("tool:"))):
@@ -318,17 +337,28 @@ extension Array where Element == TimelineItem {
 extension TimelineItem {
     /// Lifecycle replacement keeps what the newer event omits: `tool.completed`
     /// often carries no `payload.detail` (blanking the row would drop the
-    /// command/path shown while running) and tone-fallback events carry no
-    /// `itemType` (which would reset the row's icon to the generic one).
+    /// command/path shown while running), tone-fallback events carry no
+    /// `itemType` (which would reset the row's icon to the generic one), and
+    /// intermediate updates may lack output that only arrives on completion.
     fileprivate func preservingToolMetadata(of existing: TimelineItem) -> TimelineItem {
-        guard case .toolEvent(let id, let name, let detail, let kind, let status, let at) = self,
-            case .toolEvent(_, _, let existingDetail, let existingKind, _, _) = existing
+        guard case .toolEvent(
+            let id, let name, let detail, let kind, let status, let at, let output, let outputIsError)
+            = self,
+            case .toolEvent(
+                _, _, let existingDetail, let existingKind, _, _, let existingOutput,
+                let existingOutputIsError) = existing
         else { return self }
         let mergedDetail = detail.isEmpty ? existingDetail : detail
         let mergedKind = kind == .other ? existingKind : kind
-        guard mergedDetail != detail || mergedKind != kind else { return self }
+        let hasNewOutput = !(output?.isEmpty ?? true)
+        let mergedOutput = hasNewOutput ? output : existingOutput
+        let mergedOutputIsError = hasNewOutput ? outputIsError : existingOutputIsError
+        guard mergedDetail != detail || mergedKind != kind || mergedOutput != output
+            || mergedOutputIsError != outputIsError
+        else { return self }
         return .toolEvent(
-            id: id, name: name, detail: mergedDetail, kind: mergedKind, status: status, at: at)
+            id: id, name: name, detail: mergedDetail, kind: mergedKind, status: status, at: at,
+            output: mergedOutput, outputIsError: mergedOutputIsError)
     }
 }
 
