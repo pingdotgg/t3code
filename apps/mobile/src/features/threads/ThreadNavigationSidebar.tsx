@@ -743,7 +743,7 @@ function ThreadNavigationSidebarPane(
             placeholder="Search"
             placeholderTextColor={placeholderColor}
             returnKeyType="search"
-            className="text-base"
+            className="text-base font-sans"
             style={[styles.searchInput, { color: foregroundColor }]}
             value={props.searchQuery}
           />
@@ -819,7 +819,6 @@ const styles = StyleSheet.create({
     height: 34,
     paddingVertical: 0,
     paddingHorizontal: 0,
-    fontFamily: "DMSans-Regular",
   },
   threadList: {
     flex: 1,

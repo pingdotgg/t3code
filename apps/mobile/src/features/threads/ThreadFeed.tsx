@@ -234,10 +234,6 @@ const markdownLinkStyles = StyleSheet.create({
   favicon: {
     borderRadius: 3,
   },
-  file: {
-    fontFamily: "DMSans-Bold",
-    fontWeight: "700",
-  },
 });
 
 const MarkdownExternalLink = memo(function MarkdownExternalLink(props: {
@@ -250,12 +246,12 @@ const MarkdownExternalLink = memo(function MarkdownExternalLink(props: {
 
   return (
     <NativeText
+      className="font-sans"
       onPress={() => {
         void Linking.openURL(props.href);
       }}
       style={{
         color: props.color,
-        fontFamily: "DMSans-Regular",
         textDecorationLine: "none",
       }}
     >
@@ -428,8 +424,9 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
         if (presentation.kind === "file") {
           return (
             <NativeText
+              className="font-t3-bold"
               onPress={() => onLinkPress(href)}
-              style={[markdownLinkStyles.file, { color: inlineTextColor }]}
+              style={{ color: inlineTextColor }}
             >
               <Image
                 source={markdownFileIconSource(presentation.icon)}
@@ -488,11 +485,11 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
                 }}
               >
                 <NativeText
+                  className="font-sans"
                   style={{
                     width: ordered ? 22 : 12,
                     marginRight: 5,
                     color: inlineTextColor,
-                    fontFamily: "DMSans-Regular",
                     fontSize: markdownFontSizes.m,
                     lineHeight: markdownFontSizes.bodyLineHeight,
                     textAlign: ordered ? "right" : "center",

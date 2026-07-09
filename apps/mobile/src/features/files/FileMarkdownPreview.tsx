@@ -50,6 +50,7 @@ function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
     const renderers: CustomRenderers = {
       link: ({ href, children }) => (
         <NativeText
+          className="font-t3-medium"
           onPress={() => {
             if (href) {
               void tryOpenExternalUrl(href, "markdown-link");
@@ -57,7 +58,6 @@ function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
           }}
           style={{
             color: link,
-            fontFamily: "DMSans-Medium",
             textDecorationLine: "none",
           }}
         >
