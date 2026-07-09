@@ -13,9 +13,9 @@ const pullRequest: NonNullable<VcsStatusResult["pr"]> = {
 };
 
 describe("presentThreadPr", () => {
-  it("uses the compact desktop-style pull request number label", () => {
+  it("uses the compact pull request number label without a hash prefix", () => {
     expect(presentThreadPr(pullRequest, undefined)).toMatchObject({
-      label: "#3774",
+      label: "3774",
       accessibilityLabel: "#3774 pull request merged",
       textClassName: "text-violet-600 dark:text-violet-400",
     });
@@ -29,7 +29,7 @@ describe("presentThreadPr", () => {
         baseUrl: "https://gitlab.com",
       }),
     ).toMatchObject({
-      label: "#3774",
+      label: "3774",
       accessibilityLabel: "#3774 merge request merged",
     });
   });

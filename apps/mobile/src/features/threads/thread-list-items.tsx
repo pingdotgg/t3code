@@ -441,10 +441,8 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   const iconSubtleColor = useThemeColor("--color-icon-subtle");
   const screenColor = useThemeColor("--color-screen");
   const drawerColor = useThemeColor("--color-drawer");
-  const mutedColor = useThemeColor("--color-foreground-muted");
   const pressedBackgroundColor = useThemeColor("--color-subtle");
   const selectedBackgroundColor = useThemeColor("--color-user-bubble");
-  const selectedMutedColor = useThemeColor("--color-user-bubble-foreground-muted");
 
   const { thread, onSelectThread, onArchiveThread, onDeleteThread } = props;
   const status = resolveThreadStatus(thread);
@@ -452,12 +450,12 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   const timestamp = relativeTime(
     thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
   );
+  const threadAccessibilityLabel = pr ? `${thread.title}, ${pr.accessibilityLabel}` : thread.title;
   const subtitleParts = [props.environmentLabel, thread.branch].filter((part): part is string =>
     Boolean(part),
   );
 
   const backgroundColor = compact ? screenColor : drawerColor;
-  const effectiveMuted = selected ? selectedMutedColor : mutedColor;
   const effectivePressedBackground = selected ? "rgba(255,255,255,0.16)" : pressedBackgroundColor;
   const effectiveStatus =
     selected && status
@@ -496,12 +494,6 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
       <View className="mt-px flex-row items-center gap-1.5">
         {subtitleParts.length > 0 ? (
           <>
-            <SymbolView
-              name="arrow.triangle.branch"
-              size={10}
-              tintColor={compact ? iconSubtleColor : effectiveMuted}
-              type="monochrome"
-            />
             <Text
               className={cn(
                 "shrink",
@@ -516,10 +508,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
           </>
         ) : null}
         {pr !== null ? (
-          <View
-            accessibilityLabel={pr.accessibilityLabel}
-            className="flex-row items-center gap-0.5"
-          >
+          <View className="flex-row items-center gap-0.5">
             <PullRequestIcon
               size={compact ? 13 : 11}
               color={selected ? "#ffffff" : pullRequestTintColor(pr.state, colorScheme)}
@@ -540,7 +529,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
     compact ? (
       <Pressable
         accessibilityHint="Swipe left for archive and delete actions"
-        accessibilityLabel={thread.title}
+        accessibilityLabel={threadAccessibilityLabel}
         accessibilityRole="button"
         className="bg-screen"
         onPress={() => {
@@ -586,7 +575,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
     ) : (
       <Pressable
         accessibilityHint="Opens the thread"
-        accessibilityLabel={thread.title}
+        accessibilityLabel={threadAccessibilityLabel}
         accessibilityRole="button"
         accessibilityState={{ selected }}
         onHoverIn={() => setHovered(true)}
