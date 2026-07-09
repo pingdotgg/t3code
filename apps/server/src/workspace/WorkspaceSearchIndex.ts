@@ -1,3 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import type * as NodeFS from "node:fs";
+import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
+
 import type { FileFinder, MixedItem, MixedSearchResult } from "@ff-labs/fff-node";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -17,6 +22,7 @@ const WORKSPACE_INDEX_PAGE_SIZE = WORKSPACE_INDEX_MAX_ENTRIES + 2;
 const WORKSPACE_INDEX_SCAN_TIMEOUT = "15 seconds";
 const WORKSPACE_INDEX_IDLE_TTL = "15 minutes";
 const WORKSPACE_INDEX_SCAN_POLL_INTERVAL = "50 millis";
+const FALLBACK_EXCLUDED_DIRECTORIES = new Set([".git", ".convex", "node_modules"]);
 
 export class WorkspaceSearchIndexCreateFailed extends Schema.TaggedErrorClass<WorkspaceSearchIndexCreateFailed>()(
   "WorkspaceSearchIndexCreateFailed",
@@ -174,6 +180,163 @@ function withDirectoryAncestors(entries: ReadonlyArray<ProjectEntry>): ProjectEn
   return [...entryByPath.values()];
 }
 
+function isFuzzySubsequence(query: string, candidate: string): boolean {
+  let queryIndex = 0;
+  for (const char of candidate) {
+    if (char === query[queryIndex]) {
+      queryIndex++;
+      if (queryIndex === query.length) return true;
+    }
+  }
+  return query.length === 0;
+}
+
+function boundedEditDistance(left: string, right: string, maxDistance: number): number {
+  if (Math.abs(left.length - right.length) > maxDistance) return maxDistance + 1;
+
+  let previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let leftIndex = 1; leftIndex <= left.length; leftIndex++) {
+    const current = [leftIndex];
+    let rowMin = current[0] ?? 0;
+    for (let rightIndex = 1; rightIndex <= right.length; rightIndex++) {
+      const substitutionCost = left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1;
+      const value = Math.min(
+        (previous[rightIndex] ?? 0) + 1,
+        (current[rightIndex - 1] ?? 0) + 1,
+        (previous[rightIndex - 1] ?? 0) + substitutionCost,
+      );
+      current[rightIndex] = value;
+      rowMin = Math.min(rowMin, value);
+    }
+    if (rowMin > maxDistance) return maxDistance + 1;
+    previous = current;
+  }
+  return previous[right.length] ?? maxDistance + 1;
+}
+
+function fallbackSearchScore(entry: ProjectEntry, query: string): number | null {
+  if (query.length === 0) return 0;
+
+  const path = entry.path.toLowerCase();
+  const basename = NodePath.posix.basename(path);
+  if (basename === query) return 0;
+  if (basename.startsWith(query)) return 10;
+  if (basename.includes(query)) return 20;
+  if (path.includes(query)) return 30;
+  if (isFuzzySubsequence(query, basename)) return 40;
+  if (isFuzzySubsequence(query, path)) return 50;
+
+  const maxTypoDistance = Math.min(2, Math.max(1, Math.floor(query.length / 4)));
+  if (boundedEditDistance(query, basename, maxTypoDistance) <= maxTypoDistance) return 60;
+  return null;
+}
+
+async function buildFallbackEntries(cwd: string): Promise<{
+  readonly entries: ProjectEntry[];
+  readonly truncated: boolean;
+}> {
+  const entries: ProjectEntry[] = [];
+  const directories = [""];
+
+  for (let index = 0; index < directories.length; index++) {
+    const relativeDirectory = directories[index] ?? "";
+    const absoluteDirectory = relativeDirectory ? NodePath.join(cwd, relativeDirectory) : cwd;
+    let dirents: NodeFS.Dirent[];
+    try {
+      dirents = await NodeFSP.readdir(absoluteDirectory, { withFileTypes: true });
+    } catch (cause) {
+      if (relativeDirectory === "") throw cause;
+      continue;
+    }
+
+    dirents.sort((left, right) => left.name.localeCompare(right.name));
+    for (const dirent of dirents) {
+      if (dirent.isDirectory() && FALLBACK_EXCLUDED_DIRECTORIES.has(dirent.name)) {
+        continue;
+      }
+      if (!dirent.isDirectory() && !dirent.isFile()) {
+        continue;
+      }
+
+      const relativePath = toPosixPath(
+        relativeDirectory ? NodePath.join(relativeDirectory, dirent.name) : dirent.name,
+      );
+      entries.push({
+        path: relativePath,
+        kind: dirent.isDirectory() ? "directory" : "file",
+      });
+      if (entries.length > WORKSPACE_INDEX_MAX_ENTRIES) {
+        return { entries: entries.slice(0, WORKSPACE_INDEX_MAX_ENTRIES), truncated: true };
+      }
+      if (dirent.isDirectory()) {
+        directories.push(relativePath);
+      }
+    }
+  }
+
+  return { entries, truncated: false };
+}
+
+const makeFallbackIndex = Effect.fn("WorkspaceSearchIndex.makeFallbackIndex")(function* (
+  cwd: string,
+  cause: WorkspaceSearchIndexCreateFailed | WorkspaceSearchIndexScanTimedOut,
+) {
+  yield* Effect.logWarning("Falling back to JS workspace search index", { cwd, cause });
+  let fallbackIndex = yield* Effect.tryPromise({
+    try: () => buildFallbackEntries(cwd),
+    catch: (fallbackCause) =>
+      new WorkspaceSearchIndexCreateFailed({
+        cwd,
+        reason: "Fallback workspace search index creation failed.",
+        cause: fallbackCause,
+      }),
+  });
+
+  const list: WorkspaceSearchIndex["Service"]["list"] = () =>
+    Effect.succeed({
+      entries: fallbackIndex.entries,
+      truncated: fallbackIndex.truncated,
+    });
+
+  const search: WorkspaceSearchIndex["Service"]["search"] = (query, limit) =>
+    Effect.sync(() => {
+      const normalizedQuery = query.toLowerCase();
+      const scoredEntries = fallbackIndex.entries
+        .map((entry) => ({ entry, score: fallbackSearchScore(entry, normalizedQuery) }))
+        .filter(
+          (item): item is { readonly entry: ProjectEntry; readonly score: number } =>
+            item.score !== null,
+        )
+        .sort(
+          (left, right) =>
+            left.score - right.score || left.entry.path.localeCompare(right.entry.path),
+        );
+      const entries = withDirectoryAncestors(
+        scoredEntries.slice(0, limit).map((item) => item.entry),
+      );
+      return {
+        entries,
+        truncated: fallbackIndex.truncated || scoredEntries.length > limit,
+      };
+    });
+
+  const refresh: WorkspaceSearchIndex["Service"]["refresh"] = Effect.fn(
+    "WorkspaceSearchIndex.fallbackRefresh",
+  )(function* () {
+    fallbackIndex = yield* Effect.tryPromise({
+      try: () => buildFallbackEntries(cwd),
+      catch: (refreshCause) =>
+        new WorkspaceSearchIndexRefreshFailed({
+          cwd,
+          reason: "Fallback workspace search index refresh failed.",
+          cause: refreshCause,
+        }),
+    });
+  });
+
+  return WorkspaceSearchIndex.of({ list, refresh, search });
+});
+
 const createFinder = Effect.fn("WorkspaceSearchIndex.createFinder")(function* (
   cwd: string,
   loadModule: FileFinderModuleLoader,
@@ -228,9 +391,9 @@ const waitForScan = <E>(cwd: string, finder: FileFinder, onFailure: (cause: unkn
     Effect.withSpan("WorkspaceSearchIndex.waitForScan"),
   );
 
-export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
+const makeNativeIndex = Effect.fn("WorkspaceSearchIndex.makeNativeIndex")(function* (
   cwd: string,
-  loadModule: FileFinderModuleLoader = loadFileFinderModule,
+  loadModule: FileFinderModuleLoader,
 ) {
   const finder = yield* Effect.acquireRelease(createFinder(cwd, loadModule), (finder) =>
     Effect.try({
@@ -328,6 +491,15 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   });
 
   return WorkspaceSearchIndex.of({ list, refresh, search });
+});
+
+export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
+  cwd: string,
+  loadModule: FileFinderModuleLoader = loadFileFinderModule,
+) {
+  return yield* makeNativeIndex(cwd, loadModule).pipe(
+    Effect.catch((cause) => makeFallbackIndex(cwd, cause)),
+  );
 });
 
 /**

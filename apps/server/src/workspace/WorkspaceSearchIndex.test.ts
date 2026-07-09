@@ -1,3 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import type { FileFinder } from "@ff-labs/fff-node";
 import { afterEach, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
@@ -11,8 +16,17 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it.effect("preserves unexpected FileFinder creation failures", () =>
+async function makeFallbackWorkspace() {
+  const cwd = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3code-search-fallback-"));
+  await NodeFSP.mkdir(NodePath.join(cwd, "src", "components"), { recursive: true });
+  await NodeFSP.writeFile(NodePath.join(cwd, "src", "components", "Composer.tsx"), "");
+  await NodeFSP.writeFile(NodePath.join(cwd, "README.md"), "");
+  return cwd;
+}
+
+it.effect("falls back when FileFinder creation throws unexpectedly", () =>
   Effect.gen(function* () {
+    const cwd = yield* Effect.promise(makeFallbackWorkspace);
     const cause = new Error("native initialization failed");
     const FileFinder = {
       create: vi.fn(() => {
@@ -20,46 +34,41 @@ it.effect("preserves unexpected FileFinder creation failures", () =>
       }),
     };
 
-    const error = yield* Effect.flip(
-      Effect.scoped(
-        WorkspaceSearchIndex.make("/workspace/project", () =>
-          Promise.resolve({
-            FileFinder: FileFinder as never,
-          }),
-        ),
+    const searchIndex = yield* Effect.scoped(
+      WorkspaceSearchIndex.make(cwd, () =>
+        Promise.resolve({
+          FileFinder: FileFinder as never,
+        }),
       ),
     );
+    const result = yield* searchIndex.search("composer", 10);
 
-    expect(error).toMatchObject({
-      _tag: "WorkspaceSearchIndexCreateFailed",
-      cwd: "/workspace/project",
-      reason: "FileFinder.create threw unexpectedly.",
-      cause,
-    });
+    expect(FileFinder.create).toHaveBeenCalledTimes(1);
+    expect(result.entries).toEqual(
+      expect.arrayContaining([{ path: "src/components/Composer.tsx", kind: "file" }]),
+    );
   }),
 );
 
-it.effect("preserves native module load failures as index creation failures", () =>
+it.effect("falls back when the native module cannot load", () =>
   Effect.gen(function* () {
+    const cwd = yield* Effect.promise(makeFallbackWorkspace);
     const cause = new Error("ERR_DLOPEN_FAILED: GLIBC_2.27 not found");
 
-    const error = yield* Effect.flip(
-      Effect.scoped(
-        WorkspaceSearchIndex.make("/workspace/project", () => Promise.reject(cause)),
-      ),
+    const searchIndex = yield* Effect.scoped(
+      WorkspaceSearchIndex.make(cwd, () => Promise.reject(cause)),
     );
+    const result = yield* searchIndex.list();
 
-    expect(error).toMatchObject({
-      _tag: "WorkspaceSearchIndexCreateFailed",
-      cwd: "/workspace/project",
-      reason: "Failed to load @ff-labs/fff-node native search module.",
-      cause,
-    });
+    expect(result.entries).toEqual(
+      expect.arrayContaining([{ path: "src/components/Composer.tsx", kind: "file" }]),
+    );
   }),
 );
 
-it.effect("keeps returned FileFinder creation diagnostics out of the cause chain", () =>
+it.effect("falls back when FileFinder returns creation diagnostics", () =>
   Effect.gen(function* () {
+    const cwd = yield* Effect.promise(makeFallbackWorkspace);
     const FileFinder = {
       create: vi.fn(() => ({
         ok: false,
@@ -67,22 +76,16 @@ it.effect("keeps returned FileFinder creation diagnostics out of the cause chain
       })),
     };
 
-    const error = yield* Effect.flip(
-      Effect.scoped(
-        WorkspaceSearchIndex.make("/workspace/project", () =>
-          Promise.resolve({
-            FileFinder: FileFinder as never,
-          }),
-        ),
+    const searchIndex = yield* Effect.scoped(
+      WorkspaceSearchIndex.make(cwd, () =>
+        Promise.resolve({
+          FileFinder: FileFinder as never,
+        }),
       ),
     );
+    const result = yield* searchIndex.search("readme", 10);
 
-    expect(error).toMatchObject({
-      _tag: "WorkspaceSearchIndexCreateFailed",
-      cwd: "/workspace/project",
-      reason: "native index rejected the directory",
-    });
-    expect(error.cause).toBeUndefined();
+    expect(result.entries).toEqual(expect.arrayContaining([{ path: "README.md", kind: "file" }]));
   }),
 );
 
