@@ -1857,9 +1857,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           ),
         ),
       ).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logError("shell event broadcaster crashed", { cause }),
-        ),
+        Effect.catchCause((cause) => Effect.logError("shell event broadcaster crashed", { cause })),
         Effect.forever,
       ),
     );
