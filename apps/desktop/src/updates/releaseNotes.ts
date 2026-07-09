@@ -20,16 +20,23 @@ const HTML_ENTITY_REPLACEMENTS: Readonly<Record<string, string>> = {
   quot: '"',
 };
 
+function decodeCodePoint(codePoint: number, entity: string): string {
+  // String.fromCodePoint throws RangeError outside the valid Unicode range, and
+  // Number.isFinite alone lets oversized values (e.g. &#9999999999;) through.
+  if (!Number.isInteger(codePoint) || codePoint < 0 || codePoint > 0x10ffff) {
+    return `&${entity};`;
+  }
+  return String.fromCodePoint(codePoint);
+}
+
 function decodeHtmlEntity(entity: string): string {
   const named = HTML_ENTITY_REPLACEMENTS[entity];
   if (named) return named;
   if (entity.startsWith("#x")) {
-    const codePoint = Number.parseInt(entity.slice(2), 16);
-    return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : `&${entity};`;
+    return decodeCodePoint(Number.parseInt(entity.slice(2), 16), entity);
   }
   if (entity.startsWith("#")) {
-    const codePoint = Number.parseInt(entity.slice(1), 10);
-    return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : `&${entity};`;
+    return decodeCodePoint(Number.parseInt(entity.slice(1), 10), entity);
   }
   return `&${entity};`;
 }
