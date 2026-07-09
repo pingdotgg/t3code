@@ -83,13 +83,21 @@ function unknownErrorMessage(error: unknown): string | null {
   return null;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function messageReferencesCliExecutable(message: string, cliName: string): boolean {
+  const escapedCliName = escapeRegExp(cliName);
+  return new RegExp(`(?:^|[\\s:/\\\\])${escapedCliName}(?:$|[\\s:/\\\\.]|\\.exe\\b)`).test(message);
+}
+
 function isCliUnavailableMessage(message: string, cliName: string): boolean {
   const lower = message.toLowerCase();
   const lowerCliName = cliName.toLowerCase();
   return (
     lower.includes(`command not found: ${lowerCliName}`) ||
-    lower.includes(`spawn ${lowerCliName}`) ||
-    lower.includes("enoent")
+    (lower.includes("spawn") && messageReferencesCliExecutable(lower, lowerCliName))
   );
 }
 
