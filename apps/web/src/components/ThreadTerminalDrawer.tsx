@@ -74,7 +74,12 @@ const MULTI_CLICK_SELECTION_ACTION_DELAY_MS = 260;
 // ghostty-web needs its WASM module loaded once before any Terminal is constructed.
 let ghosttyReadyPromise: Promise<void> | null = null;
 function ensureGhosttyReady(): Promise<void> {
-  ghosttyReadyPromise ??= initGhostty();
+  // Drop a failed init from the cache so a later mount can retry instead of
+  // reusing the rejected promise until the page reloads.
+  ghosttyReadyPromise ??= initGhostty().catch((error: unknown) => {
+    ghosttyReadyPromise = null;
+    throw error;
+  });
   return ghosttyReadyPromise;
 }
 
@@ -241,7 +246,23 @@ const NERD_FONT_FALLBACK_STACK =
 const DEFAULT_TERMINAL_FONT_STACK = `"SF Mono", "SFMono-Regular", "JetBrains Mono", Consolas, "Liberation Mono", Menlo, ${NERD_FONT_FALLBACK_STACK}, monospace`;
 const DEFAULT_TERMINAL_FONT_SIZE = 12;
 
+const CSS_GENERIC_FONT_FAMILIES = new Set([
+  "serif",
+  "sans-serif",
+  "monospace",
+  "cursive",
+  "fantasy",
+  "system-ui",
+  "ui-serif",
+  "ui-sans-serif",
+  "ui-monospace",
+  "ui-rounded",
+]);
+
 function quoteFontFamily(family: string): string {
+  // Generic families must stay unquoted; quoting turns them into literal font
+  // name lookups (e.g. a font named "monospace") instead of CSS keywords.
+  if (CSS_GENERIC_FONT_FAMILIES.has(family.toLowerCase())) return family;
   return family.includes('"') ? family : `"${family}"`;
 }
 
@@ -427,6 +448,7 @@ export function TerminalViewport({
     onAddTerminalContext(selection);
   });
   const readTerminalLabel = useEffectEvent(() => terminalLabel);
+  const readAutoFocus = useEffectEvent(() => autoFocus);
   const terminalSession = useAttachedTerminalSession({
     environmentId,
     terminal: {
@@ -502,6 +524,13 @@ export function TerminalViewport({
       terminal.open(mount);
       clearBuiltInLinkProviders(terminal);
       fitTerminalSafely(fitAddon);
+      // ghostty-web's open() focuses unconditionally; in split view the
+      // last-mounted terminal would steal focus from the active one.
+      if (readAutoFocus()) {
+        terminal.focus();
+      } else {
+        terminal.blur();
+      }
 
       terminalRef.current = terminal;
       fitAddonRef.current = fitAddon;
@@ -509,7 +538,15 @@ export function TerminalViewport({
       if (initialSession.version > 0 && initialSession.buffer.length > 0) {
         writeTerminalBuffer(terminal, initialSession.buffer);
       }
-      previousSessionRef.current = initialSession;
+      // Seed with version 0 and a closed status (keeping the already-written
+      // buffer) so the sync effect still surfaces an exited/errored session
+      // that predates the mount instead of early-returning on equal versions.
+      previousSessionRef.current = {
+        buffer: initialSession.buffer,
+        error: null,
+        status: "closed",
+        version: 0,
+      };
 
       const clearSelectionAction = () => {
         selectionActionRequestIdRef.current += 1;

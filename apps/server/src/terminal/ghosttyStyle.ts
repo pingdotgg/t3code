@@ -166,7 +166,13 @@ function toThemeColors(colors: MutableThemeColors): ServerTerminalThemeColors | 
   };
 }
 
-const GHOSTTY_MACOS_APP_THEME_DIR = "/Applications/Ghostty.app/Contents/Resources/ghostty/themes";
+// Bundled theme locations by platform: the macOS app bundle and the
+// Linux system resource dirs documented by Ghostty.
+const GHOSTTY_SYSTEM_THEME_DIRS = [
+  "/Applications/Ghostty.app/Contents/Resources/ghostty/themes",
+  "/usr/share/ghostty/themes",
+  "/usr/local/share/ghostty/themes",
+];
 
 /**
  * Load terminal font and theme colors from the user's local Ghostty config.
@@ -208,7 +214,7 @@ export const loadGhosttyTerminalStyle: Effect.Effect<
     Effect.gen(function* () {
       const themeSource = yield* readFirstExisting([
         path.join(xdgConfigHome, "ghostty", "themes", themeName),
-        GHOSTTY_MACOS_APP_THEME_DIR + "/" + themeName,
+        ...GHOSTTY_SYSTEM_THEME_DIRS.map((dir) => dir + "/" + themeName),
       ]);
       if (themeSource === undefined) return emptyColors();
       return parseGhosttyConfig(themeSource).colors;
