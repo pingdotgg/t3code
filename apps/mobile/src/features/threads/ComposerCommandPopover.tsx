@@ -154,23 +154,11 @@ const CommandRow = memo(function CommandRow(props: {
       ) : iconName ? (
         <SymbolView name={iconName} size={14} tintColor={iconColor} type="monochrome" />
       ) : null}
-      <Text
-        className="text-base font-t3-medium text-foreground"
-        numberOfLines={1}
-        style={{ flexShrink: 0 }}
-      >
+      <Text className="shrink-0 text-base font-t3-medium text-foreground" numberOfLines={1}>
         {props.item.label}
       </Text>
       {props.item.description ? (
-        <Text
-          className="text-xs"
-          numberOfLines={1}
-          style={{
-            flex: 1,
-            minWidth: 0,
-            color: "#a1a1aa",
-          }}
-        >
+        <Text className="min-w-0 flex-1 text-xs text-zinc-400" numberOfLines={1}>
           {props.item.description}
         </Text>
       ) : null}
@@ -187,18 +175,15 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
   return (
     <PopoverSurface isDarkMode={isDarkMode}>
       {label ? (
-        <View style={{ paddingHorizontal: 14, paddingTop: 10, paddingBottom: 4 }}>
-          <Text
-            className="text-3xs font-t3-bold text-foreground-muted"
-            style={{ letterSpacing: 0.8, textTransform: "uppercase" }}
-          >
+        <View className="px-3.5 pt-2.5 pb-1">
+          <Text className="text-3xs font-t3-bold tracking-[0.8px] uppercase text-foreground-muted">
             {label}
           </Text>
         </View>
       ) : null}
       {props.items.length > 0 ? (
         <ScrollView
-          style={{ maxHeight: 180 }}
+          className="max-h-[180px]"
           keyboardShouldPersistTaps="always"
           showsVerticalScrollIndicator={false}
         >
@@ -212,7 +197,7 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
           ))}
         </ScrollView>
       ) : (
-        <View style={{ paddingHorizontal: 14, paddingVertical: 10 }}>
+        <View className="px-3.5 py-2.5">
           <Text className="text-xs text-foreground-tertiary">
             {emptyText(props.triggerKind, props.isLoading)}
           </Text>

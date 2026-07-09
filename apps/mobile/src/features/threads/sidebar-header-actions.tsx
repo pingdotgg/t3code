@@ -24,17 +24,18 @@ function FallbackHeaderButton(props: {
 
   return (
     <Pressable
+      className="h-11 w-[50px] items-center justify-center rounded-[22px]"
       accessibilityLabel={props.accessibilityLabel}
       accessibilityRole="button"
       hitSlop={4}
       onPress={props.onPress}
       style={({ pressed }) => [
-        styles.button,
         props.grouped
           ? { backgroundColor: pressed ? pressedBackgroundColor : "transparent", borderWidth: 0 }
           : {
               backgroundColor: pressed ? pressedBackgroundColor : idleBackgroundColor,
               borderColor,
+              borderWidth: StyleSheet.hairlineWidth,
             },
       ]}
     >
@@ -45,7 +46,7 @@ function FallbackHeaderButton(props: {
 
 export function SidebarHeaderActions(props: SidebarHeaderActionsProps) {
   return (
-    <View style={styles.actions}>
+    <View className="flex-row items-center gap-0.5">
       <FallbackHeaderButton
         accessibilityLabel="Open settings"
         grouped={props.grouped}
@@ -55,20 +56,3 @@ export function SidebarHeaderActions(props: SidebarHeaderActionsProps) {
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  actions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 2,
-  },
-  button: {
-    // Match the native glass UIBarButtonItem group metrics.
-    width: 50,
-    height: 44,
-    borderRadius: 22,
-    borderWidth: StyleSheet.hairlineWidth,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-});

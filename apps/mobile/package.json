@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "expo start --clear",
     "dev:client": "APP_VARIANT=development expo start --dev-client --scheme t3code-dev --clear",
+    "dev:client:preview": "eas env:exec preview 'EXPO_NO_DOTENV=1 APP_VARIANT=preview expo start --dev-client --scheme t3code-preview --clear --lan'",
     "start": "expo start",
     "start:dev": "APP_VARIANT=development expo start",
     "start:preview": "APP_VARIANT=preview expo start",
@@ -79,6 +80,7 @@
     "expo-font": "~56.0.7",
     "expo-glass-effect": "~56.0.4",
     "expo-haptics": "~56.0.3",
+    "expo-image": "~56.0.11",
     "expo-image-picker": "~56.0.18",
     "expo-linking": "~56.0.14",
     "expo-network": "~56.0.5",
@@ -86,6 +88,7 @@
     "expo-paste-input": "^0.1.15",
     "expo-secure-store": "~56.0.4",
     "expo-splash-screen": "~56.0.10",
+    "expo-sqlite": "~56.0.5",
     "expo-symbols": "~56.0.6",
     "expo-updates": "~56.0.19",
     "expo-web-browser": "~56.0.5",

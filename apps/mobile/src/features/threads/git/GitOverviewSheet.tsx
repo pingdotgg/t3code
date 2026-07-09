@@ -47,7 +47,6 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
   const gitActions = useSelectedThreadGitActions();
 
   const iconColor = useThemeColor("--color-icon");
-  const borderColor = useThemeColor("--color-border");
   const foregroundColor = String(useThemeColor("--color-foreground"));
   const sheetColor = String(useThemeColor("--color-sheet"));
 
@@ -205,9 +204,9 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
 
   const content = (
     <ScrollView
+      className="flex-1 bg-screen"
       contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
       showsVerticalScrollIndicator={false}
-      style={{ flex: 1, backgroundColor: sheetColor }}
       contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
       contentContainerStyle={{
         paddingHorizontal: isInspector ? 12 : 20,
@@ -227,9 +226,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
       >
         {sheetMenuItems.map(({ item, disabledReason }, index) => (
           <View key={`${item.id}-${item.label}`}>
-            {index > 0 ? (
-              <View className="ml-12 h-px" style={{ backgroundColor: borderColor }} />
-            ) : null}
+            {index > 0 ? <View className="ml-12 h-px bg-border" /> : null}
             <SheetListRow
               icon={menuItemIconName(item.icon)}
               title={item.label}
@@ -241,7 +238,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
         ))}
         {behindCount > 0 ? (
           <>
-            <View className="ml-12 h-px" style={{ backgroundColor: borderColor }} />
+            <View className="ml-12 h-px bg-border" />
             <SheetListRow
               icon="arrow.down.circle"
               title="Pull latest"
@@ -251,7 +248,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
             />
           </>
         ) : null}
-        <View className="ml-12 h-px" style={{ backgroundColor: borderColor }} />
+        <View className="ml-12 h-px bg-border" />
         <SheetListRow
           icon="text.bubble"
           title="Review changes"
@@ -259,7 +256,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
           disabled={busy || !isRepo}
           onPress={() => navigation.navigate("ThreadReview", { environmentId, threadId })}
         />
-        <View className="ml-12 h-px" style={{ backgroundColor: borderColor }} />
+        <View className="ml-12 h-px bg-border" />
         <SheetListRow
           icon="point.topleft.down.curvedto.point.bottomright.up"
           title="Branches & worktrees"
@@ -365,8 +362,11 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
         }
       >
         <Pressable
-          className="absolute right-3 top-4 h-9 w-9 items-center justify-center rounded-full bg-subtle"
-          style={{ zIndex: 1, opacity: busy ? 0.45 : 1 }}
+          className={
+            busy
+              ? "absolute right-3 top-4 z-[1] h-9 w-9 items-center justify-center rounded-full bg-subtle opacity-[0.45]"
+              : "absolute right-3 top-4 z-[1] h-9 w-9 items-center justify-center rounded-full bg-subtle"
+          }
           disabled={busy}
           onPress={() => void gitActions.refreshSelectedThreadGitStatus()}
         >
@@ -378,10 +378,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
             weight="medium"
           />
         </Pressable>
-        <Text
-          className="text-xs font-t3-bold uppercase text-foreground-muted"
-          style={{ letterSpacing: 1 }}
-        >
+        <Text className="text-xs font-t3-bold tracking-[1px] uppercase text-foreground-muted">
           {isInspector ? "Repository" : "Branch"}
         </Text>
         <Text className={isInspector ? "pr-10 text-xl font-t3-bold" : "text-3xl font-t3-bold"}>
