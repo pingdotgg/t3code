@@ -2,10 +2,17 @@ import AppKit
 import Observation
 import SwiftUI
 
-/// Owns the app's alpine identity photos: a small pool of Dolomites
-/// photographs fetched once from Unsplash and cached on disk, a stable
-/// thread → photo assignment (each thread keeps "its" scene and the name
-/// derived from it), and an in-memory NSImage cache for the views.
+/// Owns the app's alpine identity photos: one or more location photo sets
+/// (builtin Dolomites + future custom sets), a stable thread → photo
+/// assignment (each thread keeps "its" scene and the name derived from it),
+/// and an in-memory NSImage cache for the views.
+///
+/// Disk layout (`~/Library/Application Support/SergeCode/scenery/`):
+/// - `assignments.json` — global thread → { photoID, setId? }
+/// - `settings.json` — `{ defaultSetId }`
+/// - `project-prefs.json` — projectPath → `{ setId?, accentHex?, sfSymbol? }`
+/// - `sets/<setId>/` — manifest.json, pool.json, names.json,
+///   registered-downloads.json, images/
 ///
 /// Everything degrades gracefully without a key or network: `photo(for:)`
 /// returns nil and the views fall back to `AlpineTheme.gradient(seed:)`.
@@ -17,17 +24,28 @@ public final class SceneryStore {
         case thumb  // urls.thumb (~200w) — sidebar rows
     }
 
+    /// Default set's pool (kept for observation / source compatibility).
+    /// Prefer `photo(for:)` which resolves the correct per-thread set.
     public private(set) var pool: [SceneryPhoto] = []
-    private var assignments: [String: String] = [:]  // threadID -> photoID
-    /// threadID -> scene display name committed at creation ("Seceda").
-    /// Kept locally because the server title becomes the AI-generated thread
-    /// description after the first turn (see LiveBackend's titleSeed).
-    private var names: [String: String] = [:]
-    private var images: [String: NSImage] = [:]  // "photoID/variant" -> image
+    /// Loaded set manifests (builtin + custom).
+    public private(set) var availableSets: [ScenerySet] = []
+
+    /// threadID → assignment (photo + owning set).
+    private var assignments: [String: SceneryAssignment] = [:]
+    /// setId → (threadID → scene display name committed at creation).
+    private var namesBySet: [String: [String: String]] = [:]
+    /// setId → photo pool.
+    private var pools: [String: [SceneryPhoto]] = [:]
+    /// setId → last successful pool fetch time.
+    private var poolFetchedAt: [String: Date] = [:]
+    /// setId → photos whose download_location was already pinged.
+    private var registeredBySet: [String: Set<String>] = [:]
+
+    private var images: [String: NSImage] = [:]  // "setId/photoID/variant" -> image
     private var loadingKeys: Set<String> = []
-    /// Photos whose download_location was already pinged (persisted so the
-    /// guideline ping happens once per photo, not once per launch).
-    private var registeredDownloads: Set<String> = []
+
+    private var settings = ScenerySettingsFile()
+    private var projectPrefs: [String: ProjectSceneryPrefs] = [:]
 
     private let client: UnsplashClient?
     private let root: URL
@@ -38,63 +56,88 @@ public final class SceneryStore {
     /// blurry the moment it stretches across a retina display.
     private let heroPixelWidth: Int
 
-    /// Search queries the pool is built from, most-wanted first.
-    private static let queries: [(query: String, take: Int)] = [
-        ("dolomites italy mountains", 12),
-        ("alpine meadow dolomites", 8),
-        ("italian alps grass field", 6),
-    ]
     private static let poolCap = 24
     private static let poolMaxAge: TimeInterval = 14 * 24 * 3600
 
-    /// Dolomites place names paired with pool photos in fetch order. Curated
-    /// because Unsplash alt text ("green grass field near mountain…") makes a
-    /// poor thread title.
-    private static let sceneNames: [String] = [
-        "Tre Cime", "Seceda", "Alpe di Siusi", "Lago di Braies", "Marmolada",
-        "Sassolungo", "Cadini di Misurina", "Passo Giau", "Cinque Torri",
-        "Val Gardena", "Croda da Lago", "Odle Ridge", "Fanes Meadow",
-        "Puez Alm", "Sciliar", "Latemar", "Catinaccio", "Passo Pordoi",
-        "Sella Towers", "Passo Falzarego", "Val di Funes", "Monte Paterno",
-        "Croda Rossa", "Piz Boè", "Sass de Putia", "Vajolet Towers",
-        "Passo Rolle", "Pale di San Martino", "Brenta Ridge", "Piz Duleda",
-    ]
+    /// Optional lookup: threadID → project workspace path. Wired from
+    /// AppModel so set resolution can read `project-prefs.json`.
+    @ObservationIgnored
+    public var projectPathForThread: ((String) -> String?)?
 
-    public init(client: UnsplashClient? = UnsplashClient()) {
+    public init(client: UnsplashClient? = UnsplashClient(), root: URL? = nil) {
         self.client = client
         let widestScreen =
             NSScreen.screens
             .map { $0.frame.width * $0.backingScaleFactor }
             .max() ?? 2560
         heroPixelWidth = min(Int(widestScreen.rounded()), 3840)
-        let support =
-            FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
-            .first ?? FileManager.default.temporaryDirectory
-        root = support.appendingPathComponent("SergeCode/scenery", isDirectory: true)
-        try? FileManager.default.createDirectory(
-            at: root.appendingPathComponent("images"), withIntermediateDirectories: true)
+        if let root {
+            self.root = root
+        } else {
+            let support =
+                FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+                .first ?? FileManager.default.temporaryDirectory
+            self.root = support.appendingPathComponent("SergeCode/scenery", isDirectory: true)
+        }
+        try? FileManager.default.createDirectory(at: self.root, withIntermediateDirectories: true)
     }
 
     // MARK: - Lifecycle
 
     private var startTask: Task<Void, Never>?
 
-    /// Load the cached pool, then refresh from the API when empty or stale.
-    /// Idempotent: concurrent callers share one load, so code that needs the
-    /// pool (scene-thread creation on first launch) can await readiness by
-    /// calling this again.
+    /// Load sets + caches from disk, then refresh each set from the API when
+    /// empty or stale. Idempotent: concurrent callers share one load.
     public func start() async {
         if startTask == nil {
             startTask = Task {
                 loadFromDisk()
-                let stale =
-                    poolFetchedAt.map { Date().timeIntervalSince($0) > Self.poolMaxAge } ?? true
-                if pool.isEmpty || stale {
-                    await refreshPool()
+                for set in availableSets {
+                    let fetchedAt = poolFetchedAt[set.id]
+                    let stale =
+                        fetchedAt.map { Date().timeIntervalSince($0) > Self.poolMaxAge } ?? true
+                    let empty = (pools[set.id] ?? []).isEmpty
+                    if empty || stale {
+                        await refreshPool(for: set.id)
+                    }
                 }
+                syncDefaultPool()
             }
         }
         await startTask?.value
+    }
+
+    // MARK: - Set resolution
+
+    /// Resolves which set applies for a project path (or the global default).
+    public func resolvedSetId(projectPath: String?) -> String {
+        ScenerySetResolution.resolveSetId(
+            projectPath: projectPath,
+            projectPrefs: projectPrefs,
+            defaultSetId: settings.defaultSetId,
+            knownSetIds: Set(availableSets.map(\.id)))
+    }
+
+    /// Resolves the set for a thread via its project path (when wired) and
+    /// assignment fallback.
+    public func resolvedSetId(forThread threadID: String) -> String {
+        if let assignment = assignments[threadID] {
+            return assignment.resolvedSetId
+        }
+        let path = projectPathForThread?(threadID)
+        return resolvedSetId(projectPath: path)
+    }
+
+    public func set(id: String) -> ScenerySet? {
+        availableSets.first { $0.id == id }
+    }
+
+    public var defaultSetId: String {
+        settings.defaultSetId
+    }
+
+    public func projectPrefs(for path: String) -> ProjectSceneryPrefs? {
+        projectPrefs[path]
     }
 
     // MARK: - Assignment & naming
@@ -103,47 +146,80 @@ public final class SceneryStore {
     /// created in-app); stable hash fallback for threads that predate the
     /// scenery system or were created elsewhere.
     public func photo(for threadID: String) -> SceneryPhoto? {
-        guard !pool.isEmpty else { return nil }
-        if let photoID = assignments[threadID], let photo = pool.first(where: { $0.id == photoID }) {
-            return photo
+        let setId = resolvedSetId(forThread: threadID)
+        let setPool = pools[setId] ?? []
+        if let assignment = assignments[threadID] {
+            // Prefer the assignment's set pool; fall back to scanning all pools
+            // so a renamed/missing set never blanks an existing photo.
+            if let photo = pools[assignment.resolvedSetId]?.first(where: {
+                $0.id == assignment.photoID
+            }) {
+                return photo
+            }
+            for pool in pools.values {
+                if let photo = pool.first(where: { $0.id == assignment.photoID }) {
+                    return photo
+                }
+            }
         }
-        return pool[AlpineTheme.stableIndex(threadID, pool.count)]
+        guard !setPool.isEmpty else { return nil }
+        return setPool[AlpineTheme.stableIndex(threadID, setPool.count)]
     }
 
     /// The scene the next created thread will get: the least-used pool photo
-    /// (pool order breaks ties), so backgrounds spread out before repeating.
-    /// Pure — safe to call for previews; `assign` commits it.
-    public func peekNextScene() -> SceneryPhoto? {
-        guard !pool.isEmpty else { return nil }
+    /// in the resolved set (pool order breaks ties). Pure — safe for previews.
+    public func peekNextScene(projectPath: String? = nil) -> SceneryPhoto? {
+        let setId = resolvedSetId(projectPath: projectPath)
+        let setPool = pools[setId] ?? []
+        guard !setPool.isEmpty else { return nil }
         var useCount: [String: Int] = [:]
-        for photoID in assignments.values {
-            useCount[photoID, default: 0] += 1
+        for assignment in assignments.values where assignment.resolvedSetId == setId {
+            useCount[assignment.photoID, default: 0] += 1
         }
-        return pool.min { (useCount[$0.id] ?? 0) < (useCount[$1.id] ?? 0) }
+        return setPool.min { (useCount[$0.id] ?? 0) < (useCount[$1.id] ?? 0) }
     }
 
     /// Thread title for a scene: the plain place name, even when reused.
     public func threadTitle(for photo: SceneryPhoto) -> String {
-        Self.baseSceneName(photo.name)
+        baseSceneName(photo.name, setId: setIdContaining(photoID: photo.id))
     }
 
     /// Commit a thread → photo binding (after the backend confirmed create),
     /// remembering the scene display name the thread was created under.
-    public func assign(photoID: String, name: String, to threadID: String) {
-        assignments[threadID] = photoID
-        names[threadID] = Self.baseSceneName(name)
+    public func assign(
+        photoID: String, name: String, to threadID: String, projectPath: String? = nil
+    ) {
+        let setId =
+            setIdContaining(photoID: photoID)
+            ?? resolvedSetId(projectPath: projectPath)
+        let base = baseSceneName(name, setId: setId)
+        assignments[threadID] = SceneryAssignment(
+            photoID: photoID,
+            setId: setId == ScenerySet.dolomitesID ? nil : setId)
+        var names = namesBySet[setId] ?? [:]
+        names[threadID] = base
+        namesBySet[setId] = names
         saveAssignments()
-        saveNames()
+        saveNames(for: setId)
     }
 
     /// Stable scene name for a thread ("Seceda"). Falls back to the
     /// assigned/hashed photo's base name for threads that predate the name map
     /// or were created by another client.
     public func sceneName(for threadID: String) -> String? {
-        if let name = names[threadID] {
-            return Self.baseSceneName(name)
+        let setId = resolvedSetId(forThread: threadID)
+        if let name = namesBySet[setId]?[threadID] {
+            return baseSceneName(name, setId: setId)
         }
-        return photo(for: threadID).map { Self.baseSceneName($0.name) }
+        // Scan other sets' name maps (legacy threads after migration).
+        for (otherSetId, names) in namesBySet {
+            if let name = names[threadID] {
+                return baseSceneName(name, setId: otherSetId)
+            }
+        }
+        return photo(for: threadID).map {
+            baseSceneName($0.name, setId: setIdContaining(photoID: $0.id) ?? setId)
+        }
     }
 
     /// Two-line naming for a thread: the scene place name as the stable
@@ -164,9 +240,12 @@ public final class SceneryStore {
         return (scene, title)
     }
 
-    private static func baseSceneName(_ name: String) -> String {
+    private func baseSceneName(_ name: String, setId: String?) -> String {
+        let sceneNames =
+            setId.flatMap { set(id: $0)?.sceneNames }
+            ?? ScenerySet.makeBuiltinDolomites().sceneNames
         for base in sceneNames.sorted(by: { $0.count > $1.count }) {
-            if name == base || isLegacyNumberedSceneTitle(name, base: base) {
+            if name == base || Self.isLegacyNumberedSceneTitle(name, base: base) {
                 return base
             }
         }
@@ -190,11 +269,13 @@ public final class SceneryStore {
         return (2...9).contains(lap)
     }
 
-    /// Empty-state hero: rotates daily through the pool.
+    /// Empty-state hero: rotates daily through the default set's pool.
     public func dailyFeatured() -> SceneryPhoto? {
-        guard !pool.isEmpty else { return nil }
+        let setId = resolvedSetId(projectPath: nil)
+        let setPool = pools[setId] ?? []
+        guard !setPool.isEmpty else { return nil }
         let day = Calendar.current.ordinality(of: .day, in: .year, for: Date()) ?? 0
-        return pool[day % pool.count]
+        return setPool[day % setPool.count]
     }
 
     // MARK: - Images
@@ -202,28 +283,38 @@ public final class SceneryStore {
     /// Cached image, if already decoded this session. Views pair this with
     /// `ensureImage` in a `.task`.
     public func image(_ photo: SceneryPhoto, variant: ImageVariant) -> NSImage? {
-        images[cacheKey(photo.id, variant)]
+        let setId = setIdContaining(photoID: photo.id) ?? ScenerySet.dolomitesID
+        return images[cacheKey(setId, photo.id, variant)]
     }
 
     /// Load a photo's image into the in-memory cache: disk first, CDN on
     /// miss (writing back to disk). Safe to call repeatedly.
     public func ensureImage(_ photo: SceneryPhoto?, variant: ImageVariant) async {
         guard let photo else { return }
-        let key = cacheKey(photo.id, variant)
+        let setId = setIdContaining(photoID: photo.id) ?? ScenerySet.dolomitesID
+        let key = cacheKey(setId, photo.id, variant)
         guard images[key] == nil, !loadingKeys.contains(key) else { return }
         loadingKeys.insert(key)
         defer { loadingKeys.remove(key) }
 
-        let fileURL = root.appendingPathComponent("images/\(fileName(photo.id, variant))")
+        let fileURL = setDirectory(setId)
+            .appendingPathComponent("images/\(fileName(photo.id, variant))")
         var data = await Task.detached { try? Data(contentsOf: fileURL) }.value
         if data == nil, let client {
             let remote = remoteURL(for: photo, variant: variant)
             data = try? await client.fetchImageData(from: remote)
             if let data {
-                await Task.detached { try? data.write(to: fileURL, options: .atomic) }.value
-                if let ping = photo.downloadLocationURL, !registeredDownloads.contains(photo.id) {
-                    registeredDownloads.insert(photo.id)
-                    saveRegisteredDownloads()
+                await Task.detached {
+                    try? FileManager.default.createDirectory(
+                        at: fileURL.deletingLastPathComponent(),
+                        withIntermediateDirectories: true)
+                    try? data.write(to: fileURL, options: .atomic)
+                }.value
+                var registered = registeredBySet[setId] ?? []
+                if let ping = photo.downloadLocationURL, !registered.contains(photo.id) {
+                    registered.insert(photo.id)
+                    registeredBySet[setId] = registered
+                    saveRegisteredDownloads(for: setId)
                     await client.registerDownload(ping)
                 }
             }
@@ -233,8 +324,8 @@ public final class SceneryStore {
         }
     }
 
-    private func cacheKey(_ photoID: String, _ variant: ImageVariant) -> String {
-        "\(photoID)/\(variant.rawValue)"
+    private func cacheKey(_ setId: String, _ photoID: String, _ variant: ImageVariant) -> String {
+        "\(setId)/\(photoID)/\(variant.rawValue)"
     }
 
     /// Disk name for a cached render. Heroes carry their pixel width so a
@@ -283,11 +374,13 @@ public final class SceneryStore {
 
     // MARK: - Pool refresh
 
-    private func refreshPool() async {
+    private func refreshPool(for setId: String) async {
         guard let client else { return }
+        guard let set = set(id: setId) else { return }
         var fetched: [UnsplashClient.APIPhoto] = []
-        for (query, take) in Self.queries {
-            guard let results = try? await client.searchPhotos(query: query, count: take)
+        for query in set.queries {
+            let take = max(1, query.take)
+            guard let results = try? await client.searchPhotos(query: query.text, count: take)
             else { continue }
             fetched.append(contentsOf: results)
         }
@@ -295,8 +388,11 @@ public final class SceneryStore {
         let unique = fetched.filter { seen.insert($0.id).inserted }.prefix(Self.poolCap)
         guard !unique.isEmpty else { return }
 
+        let sceneNames = set.sceneNames.isEmpty
+            ? ScenerySet.makeBuiltinDolomites().sceneNames
+            : set.sceneNames
         let refreshed = unique.enumerated().map { index, photo in
-            let base = Self.sceneNames[index % Self.sceneNames.count]
+            let base = sceneNames[index % sceneNames.count]
             return SceneryPhoto(
                 id: photo.id,
                 name: base,
@@ -312,58 +408,215 @@ public final class SceneryStore {
         // results, so a refresh never swaps an existing thread's scene out from
         // under its scene-derived title.
         let refreshedIDs = Set(refreshed.map(\.id))
-        let assignedIDs = Set(assignments.values)
-        let kept = pool.filter { assignedIDs.contains($0.id) && !refreshedIDs.contains($0.id) }
-        pool = refreshed + kept
-        poolFetchedAt = Date()
-        savePool()
-        // Drop stale decoded images from a previous pool.
-        images = [:]
+        let assignedIDs = Set(
+            assignments.values
+                .filter { $0.resolvedSetId == setId }
+                .map(\.photoID))
+        let previous = pools[setId] ?? []
+        let kept = previous.filter { assignedIDs.contains($0.id) && !refreshedIDs.contains($0.id) }
+        pools[setId] = refreshed + kept
+        poolFetchedAt[setId] = Date()
+        savePool(for: setId)
+        // Drop stale decoded images for this set from a previous pool.
+        let prefix = "\(setId)/"
+        images = images.filter { !$0.key.hasPrefix(prefix) }
+        if setId == settings.defaultSetId || setId == ScenerySet.dolomitesID {
+            syncDefaultPool()
+        }
     }
 
-    // MARK: - Persistence
+    private func syncDefaultPool() {
+        let setId = resolvedSetId(projectPath: nil)
+        pool = pools[setId] ?? []
+    }
 
-    private var poolFetchedAt: Date?
+    private func setIdContaining(photoID: String) -> String? {
+        for (setId, setPool) in pools {
+            if setPool.contains(where: { $0.id == photoID }) {
+                return setId
+            }
+        }
+        return nil
+    }
+
+    // MARK: - Paths
+
+    private func setsDirectory() -> URL {
+        root.appendingPathComponent("sets", isDirectory: true)
+    }
+
+    private func setDirectory(_ setId: String) -> URL {
+        setsDirectory().appendingPathComponent(setId, isDirectory: true)
+    }
+
+    private var assignmentsURL: URL { root.appendingPathComponent("assignments.json") }
+    private var settingsURL: URL { root.appendingPathComponent("settings.json") }
+    private var projectPrefsURL: URL { root.appendingPathComponent("project-prefs.json") }
+
+    // MARK: - Persistence
 
     private struct PoolFile: Codable {
         var fetchedAt: Date
         var photos: [SceneryPhoto]
     }
 
-    private var poolURL: URL { root.appendingPathComponent("pool.json") }
-    private var assignmentsURL: URL { root.appendingPathComponent("assignments.json") }
-    private var namesURL: URL { root.appendingPathComponent("names.json") }
-    private var registeredURL: URL { root.appendingPathComponent("registered-downloads.json") }
-
     private func loadFromDisk() {
+        _ = try? SceneryLayoutMigration.migrateIfNeeded(root: root)
+        loadSettings()
+        loadProjectPrefs()
+        loadAssignments()
+        loadSetRegistry()
+        for set in availableSets {
+            loadSetData(set.id)
+        }
+        // Ensure builtin dolomites is always present even on empty disk.
+        if !availableSets.contains(where: { $0.id == ScenerySet.dolomitesID }) {
+            let builtin = ScenerySet.makeBuiltinDolomites()
+            availableSets.append(builtin)
+            saveManifest(builtin)
+            loadSetData(builtin.id)
+        }
+        syncDefaultPool()
+    }
+
+    private func loadSetRegistry() {
+        let setsDir = setsDirectory()
+        let fm = FileManager.default
+        guard
+            let contents = try? fm.contentsOfDirectory(
+                at: setsDir, includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles])
+        else {
+            availableSets = []
+            return
+        }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        var loaded: [ScenerySet] = []
+        for dir in contents {
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: dir.path, isDirectory: &isDir), isDir.boolValue else {
+                continue
+            }
+            let manifestURL = dir.appendingPathComponent("manifest.json")
+            guard let data = try? Data(contentsOf: manifestURL),
+                let manifest = try? decoder.decode(ScenerySet.self, from: data)
+            else { continue }
+            loaded.append(manifest)
+        }
+        // Builtin first for stable UI ordering later.
+        loaded.sort { lhs, rhs in
+            if lhs.id == ScenerySet.dolomitesID { return true }
+            if rhs.id == ScenerySet.dolomitesID { return false }
+            return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+        }
+        availableSets = loaded
+    }
+
+    private func loadSetData(_ setId: String) {
+        let dir = setDirectory(setId)
+        let poolURL = dir.appendingPathComponent("pool.json")
         if let data = try? Data(contentsOf: poolURL),
             let file = try? JSONDecoder().decode(PoolFile.self, from: data)
         {
-            pool = file.photos
-            poolFetchedAt = file.fetchedAt
+            pools[setId] = file.photos
+            poolFetchedAt[setId] = file.fetchedAt
+        } else {
+            pools[setId] = pools[setId] ?? []
         }
-        if let data = try? Data(contentsOf: assignmentsURL),
-            let map = try? JSONDecoder().decode([String: String].self, from: data)
-        {
-            assignments = map
-        }
+
+        let namesURL = dir.appendingPathComponent("names.json")
         if let data = try? Data(contentsOf: namesURL),
             let map = try? JSONDecoder().decode([String: String].self, from: data)
         {
-            names = map
+            namesBySet[setId] = map
+        } else {
+            namesBySet[setId] = namesBySet[setId] ?? [:]
         }
+
+        let registeredURL = dir.appendingPathComponent("registered-downloads.json")
         if let data = try? Data(contentsOf: registeredURL),
             let ids = try? JSONDecoder().decode(Set<String>.self, from: data)
         {
-            registeredDownloads = ids
+            registeredBySet[setId] = ids
+        } else {
+            registeredBySet[setId] = registeredBySet[setId] ?? []
+        }
+
+        try? FileManager.default.createDirectory(
+            at: dir.appendingPathComponent("images", isDirectory: true),
+            withIntermediateDirectories: true)
+    }
+
+    private func loadSettings() {
+        if let data = try? Data(contentsOf: settingsURL),
+            let file = try? JSONDecoder().decode(ScenerySettingsFile.self, from: data)
+        {
+            settings = file
+        } else {
+            settings = ScenerySettingsFile()
+            saveSettings()
         }
     }
 
-    private func savePool() {
-        guard let fetchedAt = poolFetchedAt else { return }
-        let file = PoolFile(fetchedAt: fetchedAt, photos: pool)
+    private func loadProjectPrefs() {
+        if let data = try? Data(contentsOf: projectPrefsURL),
+            let map = try? JSONDecoder().decode([String: ProjectSceneryPrefs].self, from: data)
+        {
+            projectPrefs = map
+        } else {
+            projectPrefs = [:]
+        }
+    }
+
+    private func loadAssignments() {
+        guard let data = try? Data(contentsOf: assignmentsURL) else {
+            assignments = [:]
+            return
+        }
+        // New format: [String: SceneryAssignment] (string or object values).
+        if let map = try? JSONDecoder().decode([String: SceneryAssignment].self, from: data) {
+            assignments = map
+            return
+        }
+        // Extremely defensive: plain [String: String] without custom decode path.
+        if let map = try? JSONDecoder().decode([String: String].self, from: data) {
+            assignments = map.mapValues { SceneryAssignment(photoID: $0, setId: nil) }
+            return
+        }
+        assignments = [:]
+    }
+
+    private func saveSettings() {
+        if let data = try? JSONEncoder().encode(settings) {
+            try? data.write(to: settingsURL, options: .atomic)
+        }
+    }
+
+    private func saveProjectPrefs() {
+        if let data = try? JSONEncoder().encode(projectPrefs) {
+            try? data.write(to: projectPrefsURL, options: .atomic)
+        }
+    }
+
+    private func saveManifest(_ set: ScenerySet) {
+        let dir = setDirectory(set.id)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        let url = dir.appendingPathComponent("manifest.json")
+        if let data = try? encoder.encode(set) {
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+
+    private func savePool(for setId: String) {
+        guard let fetchedAt = poolFetchedAt[setId], let photos = pools[setId] else { return }
+        let file = PoolFile(fetchedAt: fetchedAt, photos: photos)
+        let url = setDirectory(setId).appendingPathComponent("pool.json")
         if let data = try? JSONEncoder().encode(file) {
-            try? data.write(to: poolURL, options: .atomic)
+            try? data.write(to: url, options: .atomic)
         }
     }
 
@@ -373,22 +626,74 @@ public final class SceneryStore {
         }
     }
 
-    private func saveNames() {
-        if let data = try? JSONEncoder().encode(names) {
-            try? data.write(to: namesURL, options: .atomic)
+    private func saveNames(for setId: String) {
+        let map = namesBySet[setId] ?? [:]
+        let url = setDirectory(setId).appendingPathComponent("names.json")
+        if let data = try? JSONEncoder().encode(map) {
+            try? data.write(to: url, options: .atomic)
         }
     }
 
-    private func saveRegisteredDownloads() {
-        if let data = try? JSONEncoder().encode(registeredDownloads) {
-            try? data.write(to: registeredURL, options: .atomic)
+    private func saveRegisteredDownloads(for setId: String) {
+        let ids = registeredBySet[setId] ?? []
+        let url = setDirectory(setId).appendingPathComponent("registered-downloads.json")
+        if let data = try? JSONEncoder().encode(ids) {
+            try? data.write(to: url, options: .atomic)
         }
+    }
+
+    // MARK: - Test / Phase 2 hooks
+
+    /// Writes project-prefs (used by Phase 5 UI; available now for tests).
+    public func setProjectPrefs(_ prefs: ProjectSceneryPrefs, forProjectPath path: String) {
+        projectPrefs[path] = prefs
+        saveProjectPrefs()
+    }
+
+    /// Updates the global default set id.
+    public func setDefaultSetId(_ setId: String) {
+        settings.defaultSetId = setId
+        saveSettings()
+        syncDefaultPool()
+    }
+
+    /// Installs a set manifest into the registry (disk + memory) without fetching.
+    public func registerSetForTesting(_ set: ScenerySet, pool: [SceneryPhoto] = []) {
+        if let idx = availableSets.firstIndex(where: { $0.id == set.id }) {
+            availableSets[idx] = set
+        } else {
+            availableSets.append(set)
+        }
+        saveManifest(set)
+        pools[set.id] = pool
+        namesBySet[set.id] = namesBySet[set.id] ?? [:]
+        registeredBySet[set.id] = registeredBySet[set.id] ?? []
+        if !pool.isEmpty {
+            poolFetchedAt[set.id] = Date()
+            savePool(for: set.id)
+        }
+        syncDefaultPool()
+    }
+
+    /// Forces a disk reload (migration + registry) without network refresh.
+    public func reloadFromDiskForTesting() {
+        startTask = nil
+        pool = []
+        availableSets = []
+        assignments = [:]
+        namesBySet = [:]
+        pools = [:]
+        poolFetchedAt = [:]
+        registeredBySet = [:]
+        images = [:]
+        loadFromDisk()
     }
 }
 
 extension AppModel {
-    /// Scene-aware thread creation: reserves the next pool photo, names the
-    /// thread after it, and commits the assignment once the backend confirms.
+    /// Scene-aware thread creation: reserves the next pool photo from the
+    /// project's resolved set, names the thread after it, and commits the
+    /// assignment once the backend confirms.
     @discardableResult
     public func createSceneThread(
         projectID: String, provider: ProviderKind, scenery: SceneryStore
@@ -396,12 +701,14 @@ extension AppModel {
         // First launch races the initial pool fetch; start() is idempotent and
         // waits for it, so early threads still get a scene name + assignment.
         await scenery.start()
-        let scene = scenery.peekNextScene()
+        let projectPath = projects.first(where: { $0.id == projectID })?.path
+        let scene = scenery.peekNextScene(projectPath: projectPath)
         let sceneTitle = scene.map { scenery.threadTitle(for: $0) }
         let thread = await createThread(
             projectID: projectID, provider: provider, title: sceneTitle)
         if let thread, let scene, let sceneTitle {
-            scenery.assign(photoID: scene.id, name: sceneTitle, to: thread.id)
+            scenery.assign(
+                photoID: scene.id, name: sceneTitle, to: thread.id, projectPath: projectPath)
         }
         return thread
     }

@@ -42,6 +42,14 @@ struct SergeCodeApp: App {
                 .tint(AlpineTheme.accent)
                 .containerBackground(.thinMaterial, for: .window)
                 .onAppear {
+                    // Thread → project path so scenery set resolution can read
+                    // per-project prefs (Phase 1 multi-set).
+                    scenery.projectPathForThread = { [model] threadID in
+                        guard let thread = model.threads.first(where: { $0.id == threadID }),
+                            let project = model.projects.first(where: { $0.id == thread.projectID })
+                        else { return nil }
+                        return project.path
+                    }
                     model.start()
                     appDelegate.backend = SergeCodeApp.backend
                     #if DEBUG
