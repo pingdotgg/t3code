@@ -26,20 +26,33 @@ const appLinking = {
   prefixes: [Linking.createURL("/"), "t3code://", "t3code-dev://", "t3code-preview://"],
 };
 
+// Keep the native splash up until fonts resolve; without this Expo
+// auto-hides it on first render and the font gate shows a blank screen.
+SplashScreen.preventAutoHideAsync().catch(() => undefined);
+
 const Navigation = createStaticNavigation(RootStack);
 
 export default function App() {
-  const [fontsLoaded] = useFonts({
+  const [fontsLoaded, fontError] = useFonts({
     DMSans_400Regular,
     DMSans_500Medium,
     DMSans_700Bold,
   });
   const colorScheme = useColorScheme();
   const statusBarBg = useThemeColor("--color-status-bar");
+  const fontsResolved = fontsLoaded || fontError !== null;
 
   useEffect(() => {
-    if (fontsLoaded) SplashScreen.hide();
-  }, [fontsLoaded]);
+    if (fontsResolved) SplashScreen.hide();
+  }, [fontsResolved]);
+
+  // Text measured with the fallback font keeps its stale width when the
+  // custom font swaps in, clipping trailing glyphs. Hold rendering (behind
+  // the splash screen) until fonts resolve; on load failure, proceed with
+  // the system font rather than blocking the app.
+  if (!fontsResolved) {
+    return null;
+  }
 
   return (
     <RegistryContext.Provider value={appAtomRegistry}>
