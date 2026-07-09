@@ -24,6 +24,7 @@ interface PendingXAiPromptCompletion {
 
 const completedXAiPromptIdLimit = 128;
 const xAiStopReasonMissingMetaKey = "xAiStopReasonMissing";
+const xAiPromptCompletionCancelTimeout = "5 seconds";
 
 const XAiAskUserQuestionOption = Schema.Struct({
   label: Schema.String,
@@ -259,7 +260,16 @@ export const makeXAiPromptCompletionRuntime = Effect.fn("makeXAiPromptCompletion
           ).pipe(
             Effect.tap(() =>
               Ref.get(fallbackWon).pipe(
-                Effect.flatMap((won) => (won ? runtime.cancel.pipe(Effect.ignore) : Effect.void)),
+                Effect.flatMap((won) =>
+                  won
+                    ? runtime.cancel.pipe(
+                        Effect.timeout(xAiPromptCompletionCancelTimeout),
+                        Effect.ignore,
+                        Effect.forkDetach,
+                        Effect.asVoid,
+                      )
+                    : Effect.void,
+                ),
               ),
             ),
             Effect.tap((response) =>

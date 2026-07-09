@@ -3,6 +3,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Deferred from "effect/Deferred";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -20,7 +21,10 @@ import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
 
-const makePromptCompletionRuntime = (env: NodeJS.ProcessEnv) =>
+const makePromptCompletionRuntime = (
+  env: NodeJS.ProcessEnv,
+  overrides: Partial<Pick<AcpSessionRuntime.AcpSessionRuntime["Service"], "cancel">> = {},
+) =>
   Effect.gen(function* () {
     const runtime = yield* AcpSessionRuntime.make({
       spawn: {
@@ -32,7 +36,7 @@ const makePromptCompletionRuntime = (env: NodeJS.ProcessEnv) =>
       clientInfo: { name: "t3-test", version: "0.0.0" },
       authMethodId: "test",
     });
-    return yield* makeXAiPromptCompletionRuntime(runtime);
+    return yield* makeXAiPromptCompletionRuntime({ ...runtime, ...overrides });
   });
 
 const decodeXAiAskUserQuestionRequest = Schema.decodeUnknownSync(XAiAskUserQuestionRequest);
@@ -312,6 +316,35 @@ describe("XAiAcpExtension", () => {
       });
 
       expect(promptResult.stopReason).toBe("end_turn");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("returns the xAI fallback without waiting for cancellation", () =>
+    Effect.gen(function* () {
+      const cancelStarted = yield* Deferred.make<void>();
+      const cancelGate = yield* Deferred.make<void>();
+      const runtime = yield* makePromptCompletionRuntime(
+        {
+          T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG: "1",
+        },
+        {
+          cancel: Effect.gen(function* () {
+            yield* Deferred.succeed(cancelStarted, undefined);
+            yield* Deferred.await(cancelGate);
+          }),
+        },
+      );
+      yield* runtime.start();
+
+      const promptResult = yield* runtime
+        .prompt({
+          prompt: [{ type: "text", text: "hi" }],
+        })
+        .pipe(Effect.timeout("500 millis"));
+
+      expect(promptResult.stopReason).toBe("end_turn");
+      yield* Deferred.await(cancelStarted).pipe(Effect.timeout("500 millis"));
+      yield* Deferred.succeed(cancelGate, undefined);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
