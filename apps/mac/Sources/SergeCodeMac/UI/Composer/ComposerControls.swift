@@ -54,7 +54,7 @@ private struct ModelEffortTierGroup: View {
                 ServiceTierMenu(thread: thread, model: model)
             }
         }
-        .background(.fill.tertiary, in: Capsule())
+        .glassEffect(.regular, in: Capsule())
     }
 
     private var segmentDivider: some View {
@@ -109,7 +109,7 @@ private struct RuntimePlanModeGroup: View {
             segmentDivider
             PlanModeToggle(thread: thread, model: model)
         }
-        .background(.fill.tertiary, in: Capsule())
+        .glassEffect(.regular, in: Capsule())
     }
 
     private var segmentDivider: some View {

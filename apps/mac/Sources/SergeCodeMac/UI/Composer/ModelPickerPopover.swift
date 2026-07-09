@@ -222,7 +222,7 @@ private struct ModelPickerPopoverContent: View {
 
     private func selectFirstVisibleMatch() {
         guard !query.isEmpty else { return }
-        guard let first = filteredModels.first else { return }
+        guard let first = groupedSections.first?.options.first else { return }
         Task { await model.setModel(first) }
         isPresented = false
     }
