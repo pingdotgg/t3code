@@ -4,7 +4,7 @@ import Foundation
 // them. Keep UI code independent of wire-shape churn.
 
 public enum ProviderKind: String, Codable, CaseIterable, Sendable, Identifiable {
-    case claude, codex, cursor, grok, opencode
+    case claude, codex, cursor, grok, fugu, opencode
     public var id: String { rawValue }
 
     public var displayName: String {
@@ -13,6 +13,7 @@ public enum ProviderKind: String, Codable, CaseIterable, Sendable, Identifiable 
         case .codex: "Codex"
         case .cursor: "Cursor"
         case .grok: "Grok"
+        case .fugu: "Fugu"
         case .opencode: "OpenCode"
         }
     }
