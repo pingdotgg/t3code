@@ -119,6 +119,15 @@
             print("UIProbe: edit prefill in composer=\(staged) consumed=\(model.composerPrefill == nil)")
             snapshot("7-composer-prefill", dir: dir)
 
+            // Model picker popover: open via the toggle hook and capture every
+            // visible window — the popover hosts in its own NSWindow, so the
+            // main-window snapshot alone would miss it.
+            toggleSection("model-picker")
+            try? await Task.sleep(for: .seconds(1))
+            snapshotAllWindows("7b-model-picker", dir: dir)
+            toggleSection("model-picker")
+            try? await Task.sleep(for: .seconds(1))
+
             // Retry: resending an existing user message appends a new user
             // row to the timeline (mock backend echoes sends).
             let before = userMessageCount(model)
@@ -262,6 +271,14 @@
                 found += scrollViews(in: subview)
             }
             return found
+        }
+
+        private static func snapshotAllWindows(_ name: String, dir: String) {
+            let visible = NSApp.windows.filter(\.isVisible)
+            print("UIProbe: \(name) visible windows=\(visible.count)")
+            for (index, window) in visible.enumerated() {
+                snapshot("\(name)-w\(index)", window: window, dir: dir)
+            }
         }
 
         private static func snapshot(_ name: String, dir: String) {

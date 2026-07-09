@@ -40,6 +40,11 @@ struct ModelPickerMenu: View {
         .disabled(model.models.isEmpty)
         .help("Model")
         .onHover { isHovering = $0 }
+        // UIProbe (DEBUG runs) opens the popover through the section-toggle
+        // hook — same-process AX can't press SwiftUI buttons.
+        .onReceive(NotificationCenter.default.publisher(for: .uiProbeToggleSection)) { note in
+            if note.object as? String == "model-picker" { isPresented.toggle() }
+        }
         .popover(isPresented: $isPresented, arrowEdge: .top) {
             ModelPickerPopoverContent(
                 thread: thread,
