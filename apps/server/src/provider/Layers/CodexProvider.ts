@@ -75,6 +75,7 @@ const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
   medium: "Medium",
   high: "High",
   xhigh: "Extra High",
+  max: "Max",
 };
 
 const DEFAULT_SERVICE_TIER_ID = "default";

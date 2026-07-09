@@ -77,6 +77,10 @@ export interface CodexAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
   /** Driver kind stamped on adapter events/errors. Defaults to `codex`. */
   readonly driverKind?: ProviderDriverKind;
+  /** Default turn reasoning effort when the request carries none or a disallowed value. */
+  readonly defaultReasoningEffort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
+  /** Optional allow-list for Codex-backed providers with a constrained effort set. */
+  readonly allowedReasoningEfforts?: ReadonlyArray<EffectCodexSchema.V2TurnStartParams__ReasoningEffort>;
   readonly environment?: NodeJS.ProcessEnv;
   readonly makeRuntime?: (
     options: CodexSessionRuntimeOptions,
@@ -1494,6 +1498,21 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
   const sessions = new Map<ThreadId, CodexAdapterSessionContext>();
+  const allowedReasoningEfforts =
+    options?.allowedReasoningEfforts !== undefined
+      ? new Set(options.allowedReasoningEfforts)
+      : undefined;
+  const resolveReasoningEffort = (
+    raw: string | undefined,
+  ): EffectCodexSchema.V2TurnStartParams__ReasoningEffort | undefined => {
+    if (!raw) {
+      return options?.defaultReasoningEffort;
+    }
+    if (allowedReasoningEfforts && !allowedReasoningEfforts.has(raw)) {
+      return options?.defaultReasoningEffort;
+    }
+    return raw;
+  };
 
   const startSession: CodexAdapterShape["startSession"] = (input) =>
     Effect.scoped(
@@ -1532,6 +1551,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             ? { model: input.modelSelection.model }
             : {}),
           ...(serviceTier ? { serviceTier } : {}),
+          ...(options?.defaultReasoningEffort
+            ? { defaultReasoningEffort: options.defaultReasoningEffort }
+            : {}),
           ...(mcpSession
             ? {
                 environment: {
@@ -1677,10 +1699,11 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     );
 
     const session = yield* requireSession(input.threadId);
-    const reasoningEffort =
+    const rawReasoningEffort =
       input.modelSelection?.instanceId === boundInstanceId
         ? getModelSelectionStringOptionValue(input.modelSelection, "reasoningEffort")
         : undefined;
+    const reasoningEffort = resolveReasoningEffort(rawReasoningEffort);
     const serviceTier =
       input.modelSelection?.instanceId === boundInstanceId
         ? getCodexServiceTierOptionValue(input.modelSelection)

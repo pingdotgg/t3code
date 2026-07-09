@@ -40,9 +40,11 @@ const encodeJsonString = Schema.encodeEffect(Schema.UnknownFromJsonString);
 export type CodexTextGenerationOptions = {
   /**
    * Default `model_reasoning_effort` when the model selection has none.
-   * Codex git helpers use `low`; Fugu models only accept `high`/`xhigh`.
+   * Codex git helpers use `low`; Fugu models only accept `high`/`xhigh`/`max`.
    */
   readonly defaultReasoningEffort?: string;
+  /** Optional allow-list for Codex-backed providers with constrained effort sets. */
+  readonly allowedReasoningEfforts?: ReadonlyArray<string>;
   /**
    * Display name in user-facing CLI error messages (default `"Codex"`).
    * Fugu passes `"Fugu"`.
@@ -69,6 +71,19 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
   const displayName = options?.displayName ?? "Codex";
   const binaryPath = codexConfig.binaryPath.trim() || "codex";
   const errorProviderKey = path.basename(binaryPath).toLowerCase();
+  const allowedReasoningEfforts =
+    options?.allowedReasoningEfforts !== undefined
+      ? new Set(options.allowedReasoningEfforts)
+      : undefined;
+  const resolveReasoningEffort = (raw: string | undefined): string => {
+    if (!raw) {
+      return defaultReasoningEffort;
+    }
+    if (allowedReasoningEfforts && !allowedReasoningEfforts.has(raw)) {
+      return defaultReasoningEffort;
+    }
+    return raw;
+  };
 
   type MaterializedImageAttachments = {
     readonly imagePaths: ReadonlyArray<string>;
@@ -195,9 +210,9 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     const outputPath = yield* writeTempFile(operation, "codex-output", "");
 
     const runCodexCommand = Effect.fn("runCodexJson.runCodexCommand")(function* () {
-      const reasoningEffort =
-        getModelSelectionStringOptionValue(modelSelection, "reasoningEffort") ??
-        defaultReasoningEffort;
+      const reasoningEffort = resolveReasoningEffort(
+        getModelSelectionStringOptionValue(modelSelection, "reasoningEffort"),
+      );
       const serviceTier = getCodexServiceTierOptionValue(modelSelection);
       const commandAvailable = yield* isCommandAvailable(binaryPath, { env: resolvedEnvironment });
       if (!commandAvailable) {

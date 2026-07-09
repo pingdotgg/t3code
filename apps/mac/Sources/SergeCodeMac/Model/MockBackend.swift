@@ -475,14 +475,16 @@ private actor MockState {
                 effortChoices: [
                     EffortChoice(id: "high", label: "High", isDefault: true),
                     EffortChoice(id: "xhigh", label: "Extra High", isDefault: false),
+                    EffortChoice(id: "max", label: "Max", isDefault: false),
                 ]),
             ModelOption(
                 instanceID: "provider-fugu", modelID: "fugu-ultra",
                 displayName: "Fugu Ultra", provider: .fugu, isDefault: false,
                 effortOptionID: "reasoningEffort",
                 effortChoices: [
-                    EffortChoice(id: "high", label: "High", isDefault: true),
-                    EffortChoice(id: "xhigh", label: "Extra High", isDefault: false),
+                    EffortChoice(id: "high", label: "High", isDefault: false),
+                    EffortChoice(id: "xhigh", label: "Extra High", isDefault: true),
+                    EffortChoice(id: "max", label: "Max", isDefault: false),
                 ]),
         ]
     }
