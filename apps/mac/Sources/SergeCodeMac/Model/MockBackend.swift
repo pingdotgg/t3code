@@ -180,6 +180,10 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         await state.setReasoningEffort(threadID: threadID, value: value)
     }
 
+    public func setServiceTier(threadID: String, value: String) async throws {
+        await state.setServiceTier(threadID: threadID, value: value)
+    }
+
     public func implementPlan(threadID: String, planID: String) async throws {
         await state.sendMessage(threadID: threadID, text: "Implement the proposed plan.")
     }
@@ -459,6 +463,11 @@ private actor MockState {
                     EffortChoice(id: "medium", label: "Medium", isDefault: true),
                     EffortChoice(id: "high", label: "High", isDefault: false),
                     EffortChoice(id: "xhigh", label: "Extra High", isDefault: false),
+                ],
+                serviceTierOptionID: "serviceTier",
+                serviceTierChoices: [
+                    EffortChoice(id: "default", label: "Standard", isDefault: true),
+                    EffortChoice(id: "priority", label: "Fast", isDefault: false),
                 ]),
             ModelOption(
                 instanceID: "provider-cursor", modelID: "composer-2",
@@ -533,6 +542,7 @@ private actor MockState {
         thread.modelID = model.modelID
         thread.provider = model.provider
         thread.reasoningEffort = nil
+        thread.serviceTier = nil
         threadsByID[threadID] = thread
         emit(.threadUpserted(thread))
     }
@@ -540,6 +550,13 @@ private actor MockState {
     func setReasoningEffort(threadID: String, value: String) {
         guard var thread = threadsByID[threadID] else { return }
         thread.reasoningEffort = value
+        threadsByID[threadID] = thread
+        emit(.threadUpserted(thread))
+    }
+
+    func setServiceTier(threadID: String, value: String) {
+        guard var thread = threadsByID[threadID] else { return }
+        thread.serviceTier = value
         threadsByID[threadID] = thread
         emit(.threadUpserted(thread))
     }
@@ -716,7 +733,9 @@ private actor MockState {
             title: "Wire up MockBackend",
             provider: .codex,
             status: .waitingApproval,
-            updatedAt: now.addingTimeInterval(-300)
+            updatedAt: now.addingTimeInterval(-300),
+            modelInstanceID: "provider-codex",
+            modelID: "gpt-5.2-codex"
         )
         let thread3 = ChatThread(
             id: "thread-3",

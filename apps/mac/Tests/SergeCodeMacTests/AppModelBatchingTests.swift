@@ -171,18 +171,18 @@ struct AppModelBatchingTests {
                 threadID: "t1",
                 item: .toolEvent(
                     id: "tool1", name: "Bash", detail: "ls", kind: .command, status: .running,
-                    at: Date(timeIntervalSince1970: 1))))
+                    at: Date(timeIntervalSince1970: 1), output: nil, outputIsError: false)))
         model.enqueue(
             .timelineAppended(
                 threadID: "t1",
                 item: .toolEvent(
                     id: "tool1", name: "Bash", detail: "ls", kind: .command, status: .succeeded,
-                    at: Date(timeIntervalSince1970: 2))))
+                    at: Date(timeIntervalSince1970: 2), output: nil, outputIsError: false)))
         model.flushPendingEvents()
 
         let items = model.threadState("t1")?.timeline ?? []
         #expect(items.count == 1)
-        guard case .toolEvent(_, _, _, _, let status, _) = items.first else {
+        guard case .toolEvent(_, _, _, _, let status, _, _, _) = items.first else {
             Issue.record("expected tool event, got \(items)")
             return
         }

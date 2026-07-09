@@ -10,6 +10,7 @@ struct ComposerControlsRow: View {
         HStack(spacing: 10) {
             ModelPickerMenu(thread: thread, model: model)
             EffortMenu(thread: thread, model: model)
+            ServiceTierMenu(thread: thread, model: model)
             RuntimeModeMenu(thread: thread, model: model)
             PlanModeToggle(thread: thread, model: model)
             Spacer()
@@ -113,6 +114,52 @@ private struct EffortMenu: View {
     private func currentLabel(of option: ModelOption) -> String {
         let effort = effectiveEffort(of: option)
         return option.effortChoices.first { $0.id == effort }?.label ?? "Effort"
+    }
+}
+
+/// Service-tier picker for the thread's current model (e.g. Standard / Fast).
+/// Hidden when the model exposes no serviceTier option descriptor.
+private struct ServiceTierMenu: View {
+    let thread: ChatThread
+    let model: AppModel
+
+    var body: some View {
+        if let option = currentModelOption, !option.serviceTierChoices.isEmpty {
+            Menu {
+                ForEach(option.serviceTierChoices) { choice in
+                    Button {
+                        Task { await model.setServiceTier(choice.id) }
+                    } label: {
+                        if choice.id == effectiveTier(of: option) {
+                            Label(choice.label, systemImage: "checkmark")
+                        } else {
+                            Text(choice.label)
+                        }
+                    }
+                }
+            } label: {
+                Label(currentLabel(of: option), systemImage: "bolt")
+                    .font(.caption)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("Service tier")
+        }
+    }
+
+    private var currentModelOption: ModelOption? {
+        model.models.first {
+            $0.instanceID == thread.modelInstanceID && $0.modelID == thread.modelID
+        }
+    }
+
+    private func effectiveTier(of option: ModelOption) -> String? {
+        thread.serviceTier ?? option.serviceTierChoices.first(where: \.isDefault)?.id
+    }
+
+    private func currentLabel(of option: ModelOption) -> String {
+        let tier = effectiveTier(of: option)
+        return option.serviceTierChoices.first { $0.id == tier }?.label ?? "Tier"
     }
 }
 
