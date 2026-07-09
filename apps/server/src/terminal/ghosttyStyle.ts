@@ -217,11 +217,12 @@ export const loadGhosttyTerminalStyle: Effect.Effect<
   ];
   const configSources: Array<string> = [];
   for (const dir of configDirs) {
-    const source = yield* readFirstExisting([
-      path.join(dir, "config"),
-      path.join(dir, "config.ghostty"),
-    ]);
-    if (source !== undefined) configSources.push(source);
+    // Read both file names when they coexist so a stale empty `config` does
+    // not shadow a populated `config.ghostty` alongside it.
+    for (const candidate of [path.join(dir, "config"), path.join(dir, "config.ghostty")]) {
+      const source = yield* readFirstExisting([candidate]);
+      if (source !== undefined) configSources.push(source);
+    }
   }
   if (configSources.length === 0) return undefined;
 

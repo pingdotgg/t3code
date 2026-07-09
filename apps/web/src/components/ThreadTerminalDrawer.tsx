@@ -85,7 +85,8 @@ function ensureGhosttyReady(): Promise<void> {
 
 // ghostty-web registers built-in OSC8/URL link providers on open() whose activate()
 // calls window.open directly, bypassing the app's preview/editor flow. There is no
-// public API to remove them, so clear the provider list before installing ours.
+// public API to remove them, so clear the provider list before installing ours,
+// which covers the same URL schemes and routes them through the app.
 function clearBuiltInLinkProviders(terminal: Terminal): void {
   const detector = (terminal as unknown as { linkDetector?: { providers?: unknown[] } })
     .linkDetector;
@@ -118,6 +119,22 @@ function writeTerminalBuffer(terminal: Terminal, buffer: string): void {
   if (buffer.length > 0) {
     terminal.write(buffer);
   }
+}
+
+// ghostty-web snaps the viewport to the bottom on every write, unlike
+// xterm.js which keeps a scrolled-back viewport anchored. Restore the anchor
+// by advancing viewportY by however many lines the write pushed into
+// scrollback (viewportY counts lines back from the bottom).
+function writePreservingScrollback(terminal: Terminal, data: string): void {
+  const viewportY = terminal.getViewportY();
+  if (viewportY <= 0) {
+    terminal.write(data);
+    return;
+  }
+  const scrollbackBefore = terminal.getScrollbackLength();
+  terminal.write(data);
+  const scrollbackAdded = terminal.getScrollbackLength() - scrollbackBefore;
+  terminal.scrollToLine(Math.round(viewportY) + scrollbackAdded);
 }
 
 function fitTerminalSafely(fitAddon: FitAddon): boolean {
@@ -768,7 +785,7 @@ export function TerminalViewport({
                     );
                     return;
                   }
-                  const fallbackToBrowser = () => {
+                  const openExternally = () => {
                     void localApi.shell.openExternal(match.text).catch((error: unknown) => {
                       writeSystemMessage(
                         latestTerminal,
@@ -776,13 +793,19 @@ export function TerminalViewport({
                       );
                     });
                   };
+                  // Only http(s) renders in the preview panel; hand other
+                  // schemes (mailto, ssh, tel, ...) straight to the OS.
+                  if (!/^https?:\/\//i.test(match.text)) {
+                    openExternally();
+                    return;
+                  }
                   void openTerminalLinkInPreview({
                     url: match.text,
                     position: { x: event.clientX, y: event.clientY },
                     threadRef,
                     openPreview,
                     localApi,
-                    fallbackToBrowser,
+                    fallbackToBrowser: openExternally,
                   });
                   return;
                 }
@@ -939,7 +962,7 @@ export function TerminalViewport({
       // ghostty-web 0.4.0 crashes on zero-length writes (alloc(0) returns an
       // out-of-bounds pointer), so skip no-op updates such as status-only bumps.
       if (appended.length > 0) {
-        terminal.write(appended);
+        writePreservingScrollback(terminal, appended);
       }
     } else {
       writeTerminalBuffer(terminal, current.buffer);

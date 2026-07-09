@@ -37,6 +37,24 @@ describe("extractTerminalLinks", () => {
     ]);
   });
 
+  it("finds non-http scheme urls", () => {
+    const line = "email mailto:dev@example.com or clone ssh://git@github.com/t3/t3code.git now";
+    expect(extractTerminalLinks(line)).toEqual([
+      {
+        kind: "url",
+        text: "mailto:dev@example.com",
+        start: 6,
+        end: 28,
+      },
+      {
+        kind: "url",
+        text: "ssh://git@github.com/t3/t3code.git",
+        start: 38,
+        end: 72,
+      },
+    ]);
+  });
+
   it("trims trailing punctuation from links", () => {
     const line = "(https://example.com/docs), ./src/main.ts:12.";
     expect(extractTerminalLinks(line)).toEqual([
