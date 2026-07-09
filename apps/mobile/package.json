@@ -80,6 +80,7 @@
     "expo-font": "~56.0.7",
     "expo-glass-effect": "~56.0.4",
     "expo-haptics": "~56.0.3",
+    "expo-image": "~56.0.11",
     "expo-image-picker": "~56.0.18",
     "expo-linking": "~56.0.14",
     "expo-network": "~56.0.5",
