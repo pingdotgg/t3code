@@ -500,6 +500,8 @@ export function TerminalViewport({
     let teardown: (() => void) | undefined;
 
     const setUpTerminal = (mount: HTMLDivElement): (() => void) => {
+      // Clear any failure message left by an earlier init attempt.
+      mount.textContent = "";
       const localApi = readLocalApi();
 
       const style = readTerminalStyle();
@@ -887,10 +889,18 @@ export function TerminalViewport({
       };
     };
 
-    void ensureGhosttyReady().then(() => {
-      if (effectDisposed || containerRef.current !== mountElement) return;
-      teardown = setUpTerminal(mountElement);
-    });
+    void ensureGhosttyReady().then(
+      () => {
+        if (effectDisposed || containerRef.current !== mountElement) return;
+        teardown = setUpTerminal(mountElement);
+      },
+      (error: unknown) => {
+        if (effectDisposed || containerRef.current !== mountElement) return;
+        console.error("ghostty-web terminal failed to initialize", error);
+        mountElement.textContent =
+          "Terminal failed to initialize. Close and reopen the terminal to retry.";
+      },
+    );
 
     return () => {
       effectDisposed = true;

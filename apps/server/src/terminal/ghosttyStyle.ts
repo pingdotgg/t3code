@@ -187,7 +187,12 @@ export const loadGhosttyTerminalStyle: Effect.Effect<
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const home = NodeOS.homedir();
-  const xdgConfigHome = process.env["XDG_CONFIG_HOME"] ?? path.join(home, ".config");
+  // Per the XDG spec an empty XDG_CONFIG_HOME must be treated as unset.
+  const xdgConfigHomeEnv = process.env["XDG_CONFIG_HOME"];
+  const xdgConfigHome =
+    xdgConfigHomeEnv !== undefined && xdgConfigHomeEnv.length > 0
+      ? xdgConfigHomeEnv
+      : path.join(home, ".config");
 
   const readFirstExisting = (candidates: ReadonlyArray<string>) =>
     Effect.gen(function* () {
