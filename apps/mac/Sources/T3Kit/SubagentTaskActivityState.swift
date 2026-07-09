@@ -160,12 +160,17 @@ public struct T3SubagentTaskActivityState: Sendable, Equatable {
             item.completionSummary =
                 nonEmpty(payload?.summary) ?? nonEmpty(payload?.detail) ?? item.completionSummary
             item.latestProgress = item.completionSummary ?? item.latestProgress
-            // Final log line from completion summary when it adds information.
-            appendProgress(
-                to: &item,
-                at: at,
-                toolName: payload?.lastToolName,
-                text: item.completionSummary)
+            // Completion summary is task-level (unbadged unless payload carries lastToolName).
+            // Dedupe by text alone so a prior tool-badged line with the same text is not repeated.
+            let completionText = nonEmpty(item.completionSummary)
+            let lastLogText = item.progressLog.last.map(\.text)
+            if completionText != nil, completionText != lastLogText {
+                appendProgress(
+                    to: &item,
+                    at: at,
+                    toolName: payload?.lastToolName,
+                    text: item.completionSummary)
+            }
             item.completedAt = at
             item.state = state(forStatus: payload?.status)
             store(item)

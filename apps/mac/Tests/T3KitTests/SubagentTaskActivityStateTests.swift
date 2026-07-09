@@ -419,6 +419,33 @@ struct SubagentTaskActivityStateTests {
         #expect(finished?.progressLog.first?.text == "Done already")
     }
 
+    @Test func completionDoesNotDuplicateIdenticalTextWhenLastEntryHadToolBadge() throws {
+        let progress = activity(
+            id: "act-progress", kind: ActivityKind.taskProgress,
+            at: "2026-07-04T10:00:03.000Z",
+            payload: .object([
+                "taskId": .string("task-1"),
+                "summary": .string("Done already"),
+                "lastToolName": .string("Read"),
+            ]))
+        let completed = activity(
+            id: "act-complete", kind: ActivityKind.taskCompleted,
+            at: "2026-07-04T10:00:07.000Z",
+            payload: .object([
+                "taskId": .string("task-1"),
+                "status": .string("completed"),
+                "summary": .string("Done already"),
+            ]))
+
+        var state = T3SubagentTaskActivityState()
+        _ = state.apply(activity: progress, at: WireDate.parse(progress.createdAt)!)
+        let finished = state.apply(activity: completed, at: WireDate.parse(completed.createdAt)!)
+
+        #expect(finished?.progressLog.count == 1)
+        #expect(finished?.progressLog.first?.text == "Done already")
+        #expect(finished?.progressLog.first?.toolName == "Read")
+    }
+
     @Test func rebuildProducesSameProgressLogAsIncrementalApply() throws {
         let activities = [
             activity(
