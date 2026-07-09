@@ -2512,7 +2512,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       };
 
       expect(
-        matchesBranchHeadContext(
+        GitManager.matchesBranchHeadContext(
           {
             number: 2284,
             title: "Improve branch mismatch warnings",
