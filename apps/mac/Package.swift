@@ -6,6 +6,11 @@ let package = Package(
     platforms: [
         .macOS("26.0")
     ],
+    dependencies: [
+        // Local ASR (Parakeet TDT v3 CoreML) for the dictation feature — the
+        // app's only external dependency; coordinate before adding more.
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.15.0")
+    ],
     targets: [
         .target(
             name: "T3Kit",
@@ -17,7 +22,11 @@ let package = Package(
         ),
         .executableTarget(
             name: "SergeCodeMac",
-            dependencies: ["T3Kit", "SidecarKit"],
+            dependencies: [
+                "T3Kit",
+                "SidecarKit",
+                .product(name: "FluidAudio", package: "FluidAudio"),
+            ],
             path: "Sources/SergeCodeMac"
         ),
         .testTarget(

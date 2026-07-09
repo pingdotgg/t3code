@@ -125,6 +125,63 @@ struct ActivityPayloadTests {
         #expect(payload.maxTokens == nil)
     }
 
+    @Test("task.started decodes Claude SDK task fields")
+    func taskStarted() throws {
+        let activity = try activity(
+            kind: ActivityKind.taskStarted,
+            payloadJSON: """
+                {
+                  "taskId": "task-1",
+                  "taskType": "general-purpose",
+                  "description": "Inspect timeline mapping"
+                }
+                """)
+        let payload = try #require(activity.decodePayload(TaskStartedActivityPayload.self))
+        #expect(payload.taskId == "task-1")
+        #expect(payload.taskType == "general-purpose")
+        #expect(payload.description == "Inspect timeline mapping")
+    }
+
+    @Test("task.progress decodes description, summary, last tool and usage")
+    func taskProgress() throws {
+        let activity = try activity(
+            kind: ActivityKind.taskProgress,
+            payloadJSON: """
+                {
+                  "taskId": "task-1",
+                  "description": "Inspect timeline mapping",
+                  "summary": "Reading the mapper",
+                  "lastToolName": "Read",
+                  "usage": {"input_tokens": 12, "output_tokens": 4}
+                }
+                """)
+        let payload = try #require(activity.decodePayload(TaskProgressActivityPayload.self))
+        #expect(payload.taskId == "task-1")
+        #expect(payload.description == "Inspect timeline mapping")
+        #expect(payload.summary == "Reading the mapper")
+        #expect(payload.lastToolName == "Read")
+        #expect(payload.usage?["input_tokens"]?.intValue == 12)
+    }
+
+    @Test("task.completed decodes status, summary and usage")
+    func taskCompleted() throws {
+        let activity = try activity(
+            kind: ActivityKind.taskCompleted,
+            payloadJSON: """
+                {
+                  "taskId": "task-1",
+                  "status": "completed",
+                  "summary": "Found the right mapping point",
+                  "usage": {"input_tokens": 20}
+                }
+                """)
+        let payload = try #require(activity.decodePayload(TaskCompletedActivityPayload.self))
+        #expect(payload.taskId == "task-1")
+        #expect(payload.status == "completed")
+        #expect(payload.summary == "Found the right mapping point")
+        #expect(payload.usage?["input_tokens"]?.intValue == 20)
+    }
+
     @Test("mismatched payload degrades to nil instead of throwing")
     func mismatchedPayload() throws {
         let activity = try activity(

@@ -63,6 +63,19 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         await state.deleteThread(id: id)
     }
 
+    public func isServerLanReachable() async -> Bool {
+        // The mock pretends the LAN bind is active so the pairing UI is
+        // fully exercisable without a real sidecar.
+        MobileAccessPreference.isEnabled
+    }
+
+    public func mintMobilePairing() async throws -> MobilePairingInfo {
+        MobilePairingInfo(
+            pairingURL: URL(string: "http://192.168.1.42:3773/pair#token=MOCKPAIR2345")!,
+            credential: "MOCKPAIR2345",
+            expiresAt: Date().addingTimeInterval(5 * 60))
+    }
+
     public func settings() async throws -> AppSettings {
         await state.settings
     }
@@ -208,6 +221,7 @@ private actor MockState {
     private var checkpointsByThread: [String: [Checkpoint]] = [:]
     private var approvalsByID: [String: ApprovalRequest] = [:]
     private var providerList: [ProviderInstance] = []
+    private var backgroundAgentsByThread: [String: Int] = [:]
 
     private var started = false
     private var counter = 0
@@ -227,6 +241,10 @@ private actor MockState {
         self.checkpointsByThread = seed.checkpoints
         self.approvalsByID = seed.approvals
         self.providerList = seed.providers
+        self.backgroundAgentsByThread = Dictionary(
+            uniqueKeysWithValues: seed.threads.values.compactMap { thread in
+                thread.backgroundAgentCount > 0 ? (thread.id, thread.backgroundAgentCount) : nil
+            })
     }
 
     private func nextID(_ prefix: String) -> String {
@@ -265,6 +283,7 @@ private actor MockState {
                         PlanStep(id: 2, title: "Verify with 200-thread seed", status: .pending),
                     ],
                     explanation: nil)))
+        Task { await self.runSubagentLifecycleDemo() }
     }
 
     // MARK: Reads
@@ -322,7 +341,8 @@ private actor MockState {
 
     func unarchiveThread(id: String) {
         guard var thread = threadsByID[id], thread.status == .archived else { return }
-        thread.status = .idle
+        thread.status = idleStatus(for: id)
+        thread.backgroundAgentCount = backgroundAgentsByThread[id] ?? 0
         thread.updatedAt = Date()
         threadsByID[id] = thread
         emit(.threadUpserted(thread))
@@ -331,6 +351,7 @@ private actor MockState {
     func deleteThread(id: String) {
         guard threadsByID.removeValue(forKey: id) != nil else { return }
         timelinesByThread[id] = nil
+        backgroundAgentsByThread[id] = nil
         emit(.threadRemoved(id: id))
     }
 
@@ -368,6 +389,7 @@ private actor MockState {
         emit(.timelineAppended(threadID: threadID, item: userItem))
 
         thread.status = .running
+        thread.backgroundAgentCount = backgroundAgentsByThread[threadID] ?? 0
         thread.updatedAt = Date()
         threadsByID[threadID] = thread
         emit(.threadUpserted(thread))
@@ -389,7 +411,8 @@ private actor MockState {
         emit(.assistantCompleted(threadID: threadID, messageID: messageID, markdown: reply))
 
         guard var finishedThread = threadsByID[threadID] else { return }
-        finishedThread.status = .idle
+        finishedThread.status = idleStatus(for: threadID)
+        finishedThread.backgroundAgentCount = backgroundAgentsByThread[threadID] ?? 0
         finishedThread.updatedAt = Date()
         threadsByID[threadID] = finishedThread
         emit(.threadUpserted(finishedThread))
@@ -397,7 +420,8 @@ private actor MockState {
 
     func cancelTurn(threadID: String) {
         guard var thread = threadsByID[threadID] else { return }
-        thread.status = .idle
+        thread.status = idleStatus(for: threadID)
+        thread.backgroundAgentCount = backgroundAgentsByThread[threadID] ?? 0
         thread.updatedAt = Date()
         threadsByID[threadID] = thread
         emit(.threadUpserted(thread))
@@ -435,6 +459,15 @@ private actor MockState {
             ModelOption(
                 instanceID: "provider-cursor", modelID: "composer-2",
                 displayName: "Composer 2", provider: .cursor, isDefault: true),
+            ModelOption(
+                instanceID: "provider-grok", modelID: "grok-4.5",
+                displayName: "Grok 4.5", provider: .grok, isDefault: true,
+                effortOptionID: "reasoningEffort",
+                effortChoices: [
+                    EffortChoice(id: "low", label: "Low", isDefault: false),
+                    EffortChoice(id: "medium", label: "Medium", isDefault: false),
+                    EffortChoice(id: "high", label: "High", isDefault: true),
+                ]),
         ]
     }
 
@@ -494,7 +527,8 @@ private actor MockState {
         emit(.approvalResolved(id: id))
 
         guard var thread = threadsByID[approval.threadID] else { return }
-        thread.status = approve ? .running : .idle
+        thread.status = approve ? .running : idleStatus(for: approval.threadID)
+        thread.backgroundAgentCount = backgroundAgentsByThread[approval.threadID] ?? 0
         thread.updatedAt = Date()
         threadsByID[approval.threadID] = thread
         emit(.threadUpserted(thread))
@@ -550,8 +584,55 @@ private actor MockState {
             timelinesByThread[threadID] = nil
             diffsByThread[threadID] = nil
             checkpointsByThread[threadID] = nil
+            backgroundAgentsByThread[threadID] = nil
             emit(.threadRemoved(id: threadID))
         }
+    }
+
+    private func runSubagentLifecycleDemo() async {
+        let threadID = "thread-1"
+        updateSubagentDemo(
+            threadID: threadID, state: .running, progress: "Using Read...", duration: nil,
+            activeCount: 1)
+        try? await Task.sleep(nanoseconds: 1_800_000_000)
+        updateSubagentDemo(
+            threadID: threadID, state: .running, progress: "Using Grep...", duration: nil,
+            activeCount: 1)
+        try? await Task.sleep(nanoseconds: 6_000_000_000)
+        updateSubagentDemo(
+            threadID: threadID, state: .completed,
+            progress: "Found the status projection and timeline mapping points.",
+            duration: 9, activeCount: 0)
+    }
+
+    private func updateSubagentDemo(
+        threadID: String, state: SubagentTaskState, progress: String, duration: TimeInterval?,
+        activeCount: Int
+    ) {
+        guard var thread = threadsByID[threadID] else { return }
+        backgroundAgentsByThread[threadID] = activeCount > 0 ? activeCount : nil
+        thread.backgroundAgentCount = activeCount
+        if thread.status != .running && thread.status != .waitingApproval && thread.status != .error
+            && thread.status != .archived
+        {
+            thread.status = activeCount > 0 ? .backgroundWork : .idle
+        }
+        thread.updatedAt = Date()
+        threadsByID[threadID] = thread
+        emit(.threadUpserted(thread))
+
+        let item = TimelineItem.subagentTask(
+            SubagentTaskItem(
+                taskId: "mock-subagent-1", taskType: "reviewer",
+                description: "Audit subagent timeline and status handling",
+                state: state, latestProgress: progress,
+                startedAt: Date().addingTimeInterval(-(duration ?? 2)), duration: duration))
+        timelinesByThread[threadID, default: []].upsertTimelineItem(item)
+        emit(.timelineAppended(threadID: threadID, item: item))
+    }
+
+    private func idleStatus(for threadID: String) -> ThreadStatus {
+        (backgroundAgentsByThread[threadID] ?? 0) > 0 ? .backgroundWork : .idle
     }
 
     // MARK: - Seed data
@@ -588,6 +669,7 @@ private actor MockState {
             ProviderInstance(id: "provider-claude", kind: .claude, availability: .available, version: "1.4.2"),
             ProviderInstance(id: "provider-codex", kind: .codex, availability: .available, version: "0.9.0"),
             ProviderInstance(id: "provider-cursor", kind: .cursor, availability: .authRequired, version: nil),
+            ProviderInstance(id: "provider-grok", kind: .grok, availability: .available, version: "0.2.91"),
             ProviderInstance(id: "provider-opencode", kind: .opencode, availability: .missing, version: nil),
         ]
 
@@ -596,8 +678,9 @@ private actor MockState {
             projectID: projectA.id,
             title: "Fix sidebar scroll jank",
             provider: .claude,
-            status: .running,
-            updatedAt: now.addingTimeInterval(-60)
+            status: .backgroundWork,
+            updatedAt: now.addingTimeInterval(-60),
+            backgroundAgentCount: 1
         )
         let thread2 = ChatThread(
             id: "thread-2",
@@ -623,8 +706,16 @@ private actor MockState {
             status: .error,
             updatedAt: now.addingTimeInterval(-7_200)
         )
+        let thread5 = ChatThread(
+            id: "thread-5",
+            projectID: projectA.id,
+            title: "Surface Grok provider",
+            provider: .grok,
+            status: .idle,
+            updatedAt: now.addingTimeInterval(-10_800)
+        )
 
-        for thread in [thread1, thread2, thread3, thread4] {
+        for thread in [thread1, thread2, thread3, thread4, thread5] {
             threadsByID[thread.id] = thread
         }
 
@@ -690,6 +781,12 @@ private actor MockState {
                 isStreaming: false,
                 at: now.addingTimeInterval(-480)
             ),
+            .subagentTask(
+                SubagentTaskItem(
+                    taskId: "mock-subagent-1", taskType: "reviewer",
+                    description: "Audit subagent timeline and status handling",
+                    state: .running, latestProgress: "Starting delegated review...",
+                    startedAt: now.addingTimeInterval(-460), duration: nil)),
             .toolEvent(id: "t1-tool1", name: "read_file", detail: "Sources/SergeCodeMac/Views/SidebarView.swift", kind: .fileRead, status: .succeeded, at: now.addingTimeInterval(-470)),
             .toolEvent(id: "t1-tool2", name: "edit_file", detail: "Sources/SergeCodeMac/Model/AppModel.swift", kind: .fileChange, status: .succeeded, at: now.addingTimeInterval(-200)),
             .checkpoint(Checkpoint(id: "ckpt-1a", threadID: "thread-1", label: "Before scroll refactor", createdAt: now.addingTimeInterval(-600))),

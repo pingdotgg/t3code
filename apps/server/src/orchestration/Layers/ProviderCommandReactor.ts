@@ -4,9 +4,11 @@ import {
   EventId,
   type ModelSelection,
   type OrchestrationEvent,
+  type OrchestrationThreadShell,
   ProviderDriverKind,
   type ProjectId,
   type OrchestrationSession,
+  type OrchestrationThread,
   ThreadId,
   type ProviderSession,
   type RuntimeMode,
@@ -16,6 +18,7 @@ import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shar
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -32,6 +35,7 @@ import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
+import { providerSessionConfirmsActiveTurn } from "../../provider/sessionLiveness.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import {
@@ -87,6 +91,8 @@ const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 const DEFAULT_THREAD_TITLE = "New thread";
+const STALE_RUNNING_SESSION_DETAIL =
+  "Provider process was not running after server restart; the in-flight turn was interrupted.";
 
 export function providerErrorLabel(value: string | undefined): string {
   const normalized = value?.trim();
@@ -113,6 +119,36 @@ function canReplaceThreadTitle(currentTitle: string, titleSeed?: string): boolea
   return trimmedTitleSeed !== undefined && trimmedTitleSeed.length > 0
     ? trimmedCurrentTitle === trimmedTitleSeed
     : false;
+}
+
+function latestTurnFailedWithUsageLimit(thread: OrchestrationThread): boolean {
+  const latestTurn = thread.latestTurn;
+  if (latestTurn?.state !== "error") {
+    return false;
+  }
+  const latestTurnRequestedAt = Date.parse(latestTurn.requestedAt);
+  return thread.activities.some((activity) => {
+    if (activity.kind !== "usage-limit.reached") {
+      return false;
+    }
+    if (activity.turnId === latestTurn.turnId) {
+      return true;
+    }
+    if (activity.turnId !== null) {
+      return false;
+    }
+    return Date.parse(activity.createdAt) >= latestTurnRequestedAt;
+  });
+}
+
+function projectedThreadLooksInFlight(
+  thread: Pick<OrchestrationThreadShell, "session" | "latestTurn">,
+): boolean {
+  return (
+    thread.session?.status === "starting" ||
+    thread.session?.status === "running" ||
+    thread.latestTurn?.state === "running"
+  );
 }
 
 function findProviderAdapterRequestError(
@@ -199,6 +235,7 @@ const make = Effect.gen(function* () {
   const serverCommandId = (tag: string) =>
     crypto.randomUUIDv4.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
   const serverEventId = () => crypto.randomUUIDv4.pipe(Effect.map(EventId.make));
+  const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   const handledTurnStartKeys = yield* Cache.make<string, true>({
     capacity: HANDLED_TURN_START_KEY_MAX,
     timeToLive: HANDLED_TURN_START_KEY_TTL,
@@ -282,6 +319,74 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const interruptStaleRunningSessionsOnStartup = Effect.fn(
+    "interruptStaleRunningSessionsOnStartup",
+  )(function* () {
+    const [snapshot, liveSessions] = yield* Effect.all([
+      projectionSnapshotQuery.getShellSnapshot(),
+      providerService.listSessions(),
+    ]);
+    const liveSessionByThreadId = new Map(
+      liveSessions.map((session) => [session.threadId, session]),
+    );
+    let interruptedCount = 0;
+
+    for (const thread of snapshot.threads) {
+      if (!projectedThreadLooksInFlight(thread)) {
+        continue;
+      }
+
+      if (providerSessionConfirmsActiveTurn(liveSessionByThreadId.get(thread.id))) {
+        continue;
+      }
+
+      const interrupted = yield* Effect.gen(function* () {
+        const interruptedAt = yield* nowIso;
+        yield* providerService.stopSession({ threadId: thread.id }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("provider command reactor failed to stop stale provider binding", {
+              threadId: thread.id,
+              cause: Cause.pretty(cause),
+            }),
+          ),
+        );
+        yield* setThreadSession({
+          threadId: thread.id,
+          session: {
+            threadId: thread.id,
+            status: "interrupted",
+            providerName: thread.session?.providerName ?? null,
+            ...(thread.session?.providerInstanceId !== undefined
+              ? { providerInstanceId: thread.session.providerInstanceId }
+              : {}),
+            runtimeMode: thread.session?.runtimeMode ?? thread.runtimeMode,
+            activeTurnId: null,
+            lastError: thread.session?.lastError ?? STALE_RUNNING_SESSION_DETAIL,
+            updatedAt: interruptedAt,
+          },
+          createdAt: interruptedAt,
+        });
+        return true;
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("provider command reactor failed to interrupt stale running session", {
+            threadId: thread.id,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as(false)),
+        ),
+      );
+      if (interrupted) {
+        interruptedCount += 1;
+      }
+    }
+
+    if (interruptedCount > 0) {
+      yield* Effect.logInfo("provider command reactor interrupted stale running sessions", {
+        interruptedCount,
+      });
+    }
+  });
+
   const setThreadSessionErrorOnTurnStartFailure = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
     readonly detail: string;
@@ -321,6 +426,7 @@ const make = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly currentModelSelection: ModelSelection;
     readonly requestedModelSelection: ModelSelection | undefined;
+    readonly allowAfterUsageLimit: boolean;
   }) {
     const requestedModelSelection = input.requestedModelSelection;
     if (
@@ -337,6 +443,9 @@ const make = Effect.gen(function* () {
       providers.find((snapshot) => snapshot.instanceId === requestedModelSelection.instanceId)
         ?.requiresNewThreadForModelChange === true;
     if (!requiresNewThread) {
+      return;
+    }
+    if (input.allowAfterUsageLimit) {
       return;
     }
     return yield* new ProviderAdapterRequestError({
@@ -440,6 +549,7 @@ const make = Effect.gen(function* () {
               }
             : thread.modelSelection,
         requestedModelSelection,
+        allowAfterUsageLimit: latestTurnFailedWithUsageLimit(thread),
       });
     }
     if (
@@ -1076,6 +1186,14 @@ const make = Effect.gen(function* () {
 
     yield* Effect.forkScoped(
       Stream.runForEach(orchestrationEngine.streamDomainEvents, processEvent),
+    );
+    yield* interruptStaleRunningSessionsOnStartup().pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning(
+          "provider command reactor failed to interrupt stale running sessions on startup",
+          { cause: Cause.pretty(cause) },
+        ),
+      ),
     );
   });
 

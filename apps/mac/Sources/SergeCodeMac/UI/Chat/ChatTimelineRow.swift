@@ -19,13 +19,15 @@ struct ChatTimelineRowView: View {
     private func singleRow(_ item: TimelineItem) -> some View {
         switch item {
         case .userMessage(_, let text, _):
-            UserMessageBubble(text: text)
+            UserMessageBubble(text: text, model: model)
         case .assistantMessage(_, let markdown, let isStreaming, _):
             AssistantMarkdownView(markdown: markdown, isStreaming: isStreaming)
         case .toolEvent(_, let name, let detail, let kind, let status, _):
             ToolEventRow(
                 name: name, detail: detail, kind: kind, status: status,
                 threadStatus: model.selectedThread?.status)
+        case .subagentTask(let task):
+            SubagentTaskRow(task: task)
         case .approval(let request):
             ApprovalCard(request: request) { approve in
                 Task { await model.respond(to: request, approve: approve) }
@@ -33,6 +35,18 @@ struct ChatTimelineRowView: View {
         case .userInput(let request):
             UserInputCard(request: request) { answers in
                 Task { await model.respond(to: request, answers: answers) }
+            }
+        case .usageLimit(let notice):
+            UsageLimitCard(
+                notice: notice,
+                state: model.usageLimitActions[notice.id] ?? .idle,
+                switchModels: switchModels(for: notice)
+            ) {
+                model.waitForUsageLimitReset(notice)
+            } onSwitch: { option in
+                Task { await model.switchModelAfterUsageLimit(notice, to: option) }
+            } onDismiss: {
+                model.dismissUsageLimit(notice)
             }
         case .plan(let plan):
             PlanCard(plan: plan) {
@@ -46,11 +60,36 @@ struct ChatTimelineRowView: View {
             ReasoningRow(text: text)
         }
     }
+
+    private func switchModels(for notice: UsageLimitNotice) -> [ModelOption] {
+        let thread = model.threads.first { $0.id == notice.threadID }
+        return model.models.filter { option in
+            if let provider = notice.provider, option.provider != provider {
+                return false
+            }
+            return !(option.instanceID == thread?.modelInstanceID && option.modelID == thread?.modelID)
+        }
+    }
 }
 
-/// Right-aligned solid bubble for the user's own messages.
+/// Right-aligned solid bubble for the user's own messages, with hover-revealed
+/// overlay actions (copy / edit / retry). Sessions are stateful on the
+/// provider side, so Edit and Retry send a new message rather than rewriting
+/// history: Edit stages the text in the composer, Retry resends it as-is.
 private struct UserMessageBubble: View {
     let text: String
+    let model: AppModel
+
+    @UIState private var isHovering = false
+    /// Local double-click guard: `canResend` flips only after the thread's
+    /// status round-trips to `.running`, which is async.
+    @UIState private var isResending = false
+
+    /// Resending mid-turn would interleave with the running agent; the
+    /// composer's send path has the same gate.
+    private var canResend: Bool {
+        model.connection == .ready && model.selectedThread?.status != .running && !isResending
+    }
 
     var body: some View {
         HStack {
@@ -61,6 +100,47 @@ private struct UserMessageBubble: View {
                 .padding(.vertical, 10)
                 .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 16))
                 .foregroundStyle(.white)
+                .overlay(alignment: .topTrailing) {
+                    MessageActionChip {
+                        CopyActionButton(text: text)
+                        MessageActionButton(
+                            systemImage: "pencil", help: "Edit in composer and resend",
+                            disabled: !canResend
+                        ) {
+                            model.stageComposerText(text)
+                        }
+                        MessageActionButton(
+                            systemImage: "arrow.clockwise", help: "Send this message again",
+                            disabled: !canResend
+                        ) {
+                            resend()
+                        }
+                    }
+                    .opacity(isHovering ? 1 : 0)
+                    .allowsHitTesting(isHovering)
+                    .accessibilityHidden(!isHovering)
+                    .padding(3)
+                }
+                // Hover and context menu live on the bubble, not the full
+                // row — the spacer's empty area shouldn't reveal actions.
+                .onHover { isHovering = $0 }
+                .animation(Motion.fade, value: isHovering)
+                .contextMenu {
+                    Button("Copy") { Pasteboard.copy(text) }
+                    Button("Edit in Composer") { model.stageComposerText(text) }
+                        .disabled(!canResend)
+                    Button("Retry") { resend() }
+                        .disabled(!canResend)
+                }
+        }
+    }
+
+    private func resend() {
+        guard canResend else { return }
+        isResending = true
+        Task {
+            await model.send(text: text)
+            isResending = false
         }
     }
 }
@@ -185,7 +265,7 @@ private struct ToolEventRow: View {
         case .failed: return .failed
         case .running:
             switch threadStatus {
-            case .running, .waitingApproval, nil: return .running
+            case .running, .waitingApproval, .backgroundWork, nil: return .running
             case .idle, .archived, .error: return .settled
             }
         }
@@ -298,6 +378,132 @@ private struct ToolEventRow: View {
         case .failed: .red
         case .settled: .secondary
         }
+    }
+}
+
+private struct SubagentTaskRow: View {
+    let task: SubagentTaskItem
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 9) {
+            statusIcon
+                .frame(width: 16, height: 16)
+                .padding(.top, 1)
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 7) {
+                    Image(systemName: "person.2")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 14)
+                    if let label = taskTypeLabel {
+                        Text(label)
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(.secondary.opacity(0.12), in: Capsule())
+                    }
+                    Text(title)
+                        .font(.callout.weight(.medium))
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    if let durationText {
+                        Text(durationText)
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(backgroundTint, in: RoundedRectangle(cornerRadius: 10))
+        .animation(Motion.ambient, value: task.state)
+    }
+
+    private var title: String {
+        task.description?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            ? task.description!
+            : "Subagent task"
+    }
+
+    private var taskTypeLabel: String? {
+        guard let type = task.taskType?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !type.isEmpty
+        else { return nil }
+        return type.replacingOccurrences(of: "-", with: " ")
+    }
+
+    private var subtitle: String? {
+        if let progress = task.latestProgress?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !progress.isEmpty
+        {
+            return progress
+        }
+        switch task.state {
+        case .running: return "Working..."
+        case .completed: return "Completed"
+        case .failed: return "Failed"
+        case .stopped: return "Stopped"
+        }
+    }
+
+    private var durationText: String? {
+        guard task.state != .running, let duration = task.duration else { return nil }
+        return Self.format(duration: duration)
+    }
+
+    private var statusIcon: some View {
+        Image(systemName: iconName)
+            .symbolEffect(.pulse, isActive: task.state == .running)
+            .foregroundStyle(iconTint)
+            .contentTransition(.symbolEffect(.replace))
+    }
+
+    private var iconName: String {
+        switch task.state {
+        case .running: "circle.dotted"
+        case .completed: "checkmark.circle.fill"
+        case .failed: "xmark.circle.fill"
+        case .stopped: "stop.circle.fill"
+        }
+    }
+
+    private var iconTint: Color {
+        switch task.state {
+        case .running: .secondary
+        case .completed: .green
+        case .failed: .red
+        case .stopped: .secondary
+        }
+    }
+
+    private var backgroundTint: Color {
+        switch task.state {
+        case .running: Color.accentColor.opacity(0.08)
+        case .completed: Color.green.opacity(0.08)
+        case .failed: Color.red.opacity(0.08)
+        case .stopped: Color.secondary.opacity(0.08)
+        }
+    }
+
+    private static func format(duration: TimeInterval) -> String {
+        if duration < 1 { return "<1s" }
+        if duration < 60 { return "\(Int(duration.rounded()))s" }
+        let minutes = Int(duration) / 60
+        let seconds = Int(duration) % 60
+        return seconds == 0 ? "\(minutes)m" : "\(minutes)m \(seconds)s"
     }
 }
 

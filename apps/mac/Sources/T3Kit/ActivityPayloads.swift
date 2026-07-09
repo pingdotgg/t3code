@@ -16,6 +16,7 @@ public enum ActivityKind {
     public static let approvalResolved = "approval.resolved"
     public static let userInputRequested = "user-input.requested"
     public static let userInputResolved = "user-input.resolved"
+    public static let usageLimitReached = "usage-limit.reached"
     public static let turnPlanUpdated = "turn.plan.updated"
     public static let contextWindowUpdated = "context-window.updated"
     /// Tool lifecycle (tone `.tool`): started is pure noise (always followed
@@ -25,9 +26,8 @@ public enum ActivityKind {
     public static let toolStarted = "tool.started"
     public static let toolUpdated = "tool.updated"
     public static let toolCompleted = "tool.completed"
-    /// Task lifecycle (tone `.info`): progress payloads carry the streaming
-    /// reasoning text; the wire `summary` is the fixed string
-    /// "Reasoning update".
+    /// Task lifecycle (tone `.info`): Claude Agent SDK subagent lifecycle.
+    /// These rows are aggregated by `taskId` before they reach the UI.
     public static let taskStarted = "task.started"
     public static let taskProgress = "task.progress"
     public static let taskCompleted = "task.completed"
@@ -47,22 +47,39 @@ public struct ToolLifecycleActivityPayload: Decodable, Sendable {
     public var detail: String?
 }
 
-// MARK: - task.progress / task.completed
+// MARK: - task.started / task.progress / task.completed
+
+/// Activity payload for kind `task.started`:
+/// `{ taskId, description, taskType? }`.
+public struct TaskStartedActivityPayload: Decodable, Sendable {
+    public var taskId: String?
+    public var taskType: String?
+    public var description: String?
+}
 
 /// Activity payload for kind `task.progress`:
-/// `{ taskId, detail, summary?, lastToolName?, usage? }`.
+/// `{ taskId, description, summary?, lastToolName?, usage? }`.
 public struct TaskProgressActivityPayload: Decodable, Sendable {
     public var taskId: String?
+    public var taskType: String?
+    public var description: String?
     public var detail: String?
     public var summary: String?
+    public var lastToolName: String?
+    public var usage: JSONValue?
 }
 
 /// Activity payload for kind `task.completed`:
-/// `{ taskId, status, detail?, usage? }`.
+/// `{ taskId, status, summary?, usage? }`.
 public struct TaskCompletedActivityPayload: Decodable, Sendable {
     public var taskId: String?
+    public var taskType: String?
+    public var description: String?
     public var status: String?
     public var detail: String?
+    public var summary: String?
+    public var lastToolName: String?
+    public var usage: JSONValue?
 }
 
 // MARK: - user-input.requested / user-input.resolved
@@ -104,6 +121,19 @@ public struct UserInputRequestedActivityPayload: Decodable, Sendable {
 /// Activity payload for kind `user-input.resolved`: `{ requestId?, answers }`.
 public struct UserInputResolvedActivityPayload: Decodable, Sendable {
     public var requestId: String?
+}
+
+// MARK: - usage-limit.reached
+
+/// Activity payload for kind `usage-limit.reached`:
+/// `{ message, provider?, source?, resetsAt?, resetsAtEpochSeconds?, resetSource? }`.
+public struct UsageLimitReachedActivityPayload: Decodable, Sendable {
+    public var message: String
+    public var provider: String?
+    public var source: String?
+    public var resetsAt: String?
+    public var resetsAtEpochSeconds: Int?
+    public var resetSource: String?
 }
 
 // MARK: - turn.plan.updated

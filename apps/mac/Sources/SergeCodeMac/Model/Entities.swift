@@ -4,7 +4,7 @@ import Foundation
 // them. Keep UI code independent of wire-shape churn.
 
 public enum ProviderKind: String, Codable, CaseIterable, Sendable, Identifiable {
-    case claude, codex, cursor, opencode
+    case claude, codex, cursor, grok, opencode
     public var id: String { rawValue }
 
     public var displayName: String {
@@ -12,6 +12,7 @@ public enum ProviderKind: String, Codable, CaseIterable, Sendable, Identifiable 
         case .claude: "Claude Code"
         case .codex: "Codex"
         case .cursor: "Cursor"
+        case .grok: "Grok"
         case .opencode: "OpenCode"
         }
     }
@@ -30,7 +31,7 @@ public struct Project: Identifiable, Hashable, Sendable {
 }
 
 public enum ThreadStatus: String, Sendable {
-    case idle, running, waitingApproval, error, archived
+    case idle, running, waitingApproval, backgroundWork, error, archived
 }
 
 /// UI mirror of the wire `RuntimeMode` (how much the agent may do unprompted).
@@ -127,6 +128,9 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
     /// Explicit reasoning-effort choice id from the thread's modelSelection
     /// options; nil means the provider default applies.
     public var reasoningEffort: String?
+    /// Active delegated/background task count. Used for sidebar accessibility
+    /// when `status == .backgroundWork`; zero for ordinary thread states.
+    public var backgroundAgentCount: Int
 
     public init(
         id: String, projectID: String, title: String, provider: ProviderKind,
@@ -134,7 +138,7 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
         runtimeMode: ThreadRuntimeMode = .fullAccess,
         interactionMode: ThreadInteractionMode = .normal,
         modelInstanceID: String? = nil, modelID: String? = nil,
-        reasoningEffort: String? = nil
+        reasoningEffort: String? = nil, backgroundAgentCount: Int = 0
     ) {
         self.id = id
         self.projectID = projectID
@@ -147,6 +151,7 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
         self.modelInstanceID = modelInstanceID
         self.modelID = modelID
         self.reasoningEffort = reasoningEffort
+        self.backgroundAgentCount = backgroundAgentCount
     }
 
     /// True when every stored property except `updatedAt` matches. Used by
@@ -189,6 +194,67 @@ public enum ToolEventKind: String, Sendable {
     }
 }
 
+public enum SubagentTaskState: String, Sendable {
+    case running, completed, failed, stopped
+}
+
+public struct SubagentTaskItem: Hashable, Sendable {
+    public var taskId: String
+    public var taskType: String?
+    public var description: String?
+    public var state: SubagentTaskState
+    public var latestProgress: String?
+    public var startedAt: Date
+    public var duration: TimeInterval?
+
+    public var id: String { "subagent-task:\(taskId)" }
+
+    public init(
+        taskId: String, taskType: String?, description: String?, state: SubagentTaskState,
+        latestProgress: String?, startedAt: Date, duration: TimeInterval?
+    ) {
+        self.taskId = taskId
+        self.taskType = taskType
+        self.description = description
+        self.state = state
+        self.latestProgress = latestProgress
+        self.startedAt = startedAt
+        self.duration = duration
+    }
+}
+
+public struct UsageLimitNotice: Identifiable, Hashable, Sendable {
+    public var id: String
+    public var threadID: String
+    public var provider: ProviderKind?
+    public var providerName: String
+    public var message: String
+    public var resetsAt: Date?
+    public var createdAt: Date
+
+    public init(
+        id: String, threadID: String, provider: ProviderKind?, providerName: String,
+        message: String, resetsAt: Date?, createdAt: Date
+    ) {
+        self.id = id
+        self.threadID = threadID
+        self.provider = provider
+        self.providerName = providerName
+        self.message = message
+        self.resetsAt = resetsAt
+        self.createdAt = createdAt
+    }
+}
+
+public enum UsageLimitActionState: Equatable, Sendable {
+    case idle
+    case waiting(resumeAt: Date)
+    case resuming
+    case switching(modelName: String)
+    case continued
+    case failed(String)
+}
+
 public enum TimelineItem: Identifiable, Sendable {
     case userMessage(id: String, text: String, at: Date)
     case assistantMessage(id: String, markdown: String, isStreaming: Bool, at: Date)
@@ -197,12 +263,14 @@ public enum TimelineItem: Identifiable, Sendable {
         status: ToolEventStatus, at: Date)
     case approval(ApprovalRequest)
     case userInput(UserInputRequest)
+    case usageLimit(UsageLimitNotice)
     case checkpoint(Checkpoint)
     case plan(ProposedPlan)
     case notice(id: String, text: String, at: Date)
     /// Streaming task/reasoning progress; the id is stable across updates of
     /// the same task, so new text replaces the row instead of stacking.
     case reasoning(id: String, text: String, at: Date)
+    case subagentTask(SubagentTaskItem)
 
     public var id: String {
         switch self {
@@ -211,10 +279,12 @@ public enum TimelineItem: Identifiable, Sendable {
         case .toolEvent(let id, _, _, _, _, _): id
         case .approval(let request): request.id
         case .userInput(let request): request.id
+        case .usageLimit(let notice): notice.id
         case .checkpoint(let checkpoint): checkpoint.id
         case .plan(let plan): plan.id
         case .notice(let id, _, _): id
         case .reasoning(let id, _, _): id
+        case .subagentTask(let item): item.id
         }
     }
 }
@@ -565,6 +635,26 @@ public struct OutgoingAttachment: Identifiable, Hashable, Sendable {
         self.mimeType = mimeType
         self.sizeBytes = sizeBytes
         self.dataURL = dataURL
+    }
+}
+
+/// A composer message waiting for the selected thread to become idle.
+public struct QueuedOutgoingMessage: Identifiable, Hashable, Sendable {
+    public var id: String
+    public var text: String
+    public var attachments: [OutgoingAttachment]
+    public var createdAt: Date
+    public var sendAttempts: Int
+
+    public init(
+        id: String = UUID().uuidString, text: String,
+        attachments: [OutgoingAttachment] = [], createdAt: Date = Date(), sendAttempts: Int = 0
+    ) {
+        self.id = id
+        self.text = text
+        self.attachments = attachments
+        self.createdAt = createdAt
+        self.sendAttempts = sendAttempts
     }
 }
 

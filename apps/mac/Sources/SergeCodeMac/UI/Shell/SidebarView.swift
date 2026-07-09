@@ -22,12 +22,11 @@ struct SidebarView: View {
         )) {
             ForEach(model.projects) { project in
                 // Archived threads live in Settings > Archive, not the sidebar.
-                let threadsForProject = model.threads.filter {
-                    $0.projectID == project.id && $0.status != .archived
-                }
+                let threadsForProject = visibleThreads(for: project)
                 Section {
                     ForEach(threadsForProject) { thread in
-                        SidebarThreadRow(thread: thread, scenery: scenery)
+                        SidebarThreadRow(
+                            thread: thread, vcs: model.threadState(thread.id)?.vcsStatus, scenery: scenery)
                             .tag(thread.id)
                             .contextMenu {
                                 Button("Archive") {
@@ -106,6 +105,12 @@ struct SidebarView: View {
             }
         }
     }
+
+    private func visibleThreads(for project: Project) -> [ChatThread] {
+        model.threads.filter { thread in
+            thread.projectID == project.id && thread.status != .archived
+        }
+    }
 }
 
 /// Project section header: name, a plus menu that starts a new session with
@@ -147,6 +152,7 @@ private struct ProjectSectionHeader: View {
 
 private struct SidebarThreadRow: View {
     let thread: ChatThread
+    let vcs: VcsStatus?
     let scenery: SceneryStore
 
     var body: some View {
@@ -158,12 +164,15 @@ private struct SidebarThreadRow: View {
             .frame(width: 28, height: 28)
             .clipShape(RoundedRectangle(cornerRadius: 7))
             .overlay(alignment: .bottomTrailing) {
-                Circle()
-                    .fill(statusTint)
-                    .frame(width: 7, height: 7)
-                    .overlay(Circle().strokeBorder(.background, lineWidth: 1.5))
-                    .offset(x: 2, y: 2)
-                    .animation(Motion.ambient, value: thread.status)
+                HStack(spacing: 2) {
+                    if hasOpenPullRequest {
+                        pullRequestIndicator
+                    }
+                    SidebarStatusDot(thread: thread)
+                }
+                .offset(x: 2, y: 2)
+                .animation(Motion.ambient, value: thread.status)
+                .animation(Motion.ambient, value: hasOpenPullRequest)
             }
             let names = scenery.displayNames(for: thread)
             VStack(alignment: .leading, spacing: 2) {
@@ -180,11 +189,104 @@ private struct SidebarThreadRow: View {
         .padding(.vertical, 2)
     }
 
+    private var hasOpenPullRequest: Bool {
+        vcs?.prState == .open
+    }
+
+    private var pullRequestIndicator: some View {
+        Image(systemName: "arrow.triangle.pull")
+            .font(.system(size: 7, weight: .bold))
+            .foregroundStyle(.tint)
+            .frame(width: 12, height: 12)
+            .background(Circle().fill(.background))
+            .help(vcs?.prNumber.map { "PR #\($0)" } ?? "Open pull request")
+    }
+}
+
+private struct SidebarStatusDot: View {
+    let thread: ChatThread
+
+    @UIState private var isBackgroundPulseExpanded = false
+
+    var body: some View {
+        Group {
+            if thread.status == .backgroundWork {
+                backgroundWorkDot
+            } else {
+                dot
+            }
+        }
+        .frame(width: 11, height: 11)
+        .accessibilityLabel(accessibilityLabel)
+        .animation(Motion.ambient, value: thread.status)
+        .onAppear { updatePulse(for: thread.status) }
+        .onChange(of: thread.status) { _, status in
+            updatePulse(for: status)
+        }
+    }
+
+    private var dot: some View {
+        Circle()
+            .fill(statusTint)
+            .frame(width: 7, height: 7)
+            .overlay(Circle().strokeBorder(.background, lineWidth: 1.5))
+    }
+
+    private var backgroundWorkDot: some View {
+        ZStack {
+            Circle()
+                .stroke(Color.green, lineWidth: 1.2)
+                .opacity(backgroundPulseOpacity)
+                .scaleEffect(backgroundPulseScale)
+            dot
+        }
+    }
+
+    private var backgroundPulseOpacity: Double {
+        Motion.reduceMotion ? 0.35 : (isBackgroundPulseExpanded ? 0.1 : 0.45)
+    }
+
+    private var backgroundPulseScale: CGFloat {
+        Motion.reduceMotion ? 1.45 : (isBackgroundPulseExpanded ? 1.85 : 1.0)
+    }
+
+    private func updatePulse(for status: ThreadStatus) {
+        guard status == .backgroundWork, !Motion.reduceMotion else {
+            withAnimation(Motion.ambient) {
+                isBackgroundPulseExpanded = false
+            }
+            return
+        }
+        isBackgroundPulseExpanded = false
+        withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) {
+            isBackgroundPulseExpanded = true
+        }
+    }
+
+    private var accessibilityLabel: String {
+        switch thread.status {
+        case .backgroundWork:
+            let count = max(1, thread.backgroundAgentCount)
+            return "\(count) background agent\(count == 1 ? "" : "s") running"
+        case .idle:
+            return "Idle"
+        case .running:
+            return "Running"
+        case .waitingApproval:
+            return "Needs approval"
+        case .error:
+            return "Error"
+        case .archived:
+            return "Archived"
+        }
+    }
+
     private var statusTint: Color {
         switch thread.status {
         case .idle: .secondary
         case .running: .green
         case .waitingApproval: .yellow
+        case .backgroundWork: .green
         case .error: .red
         case .archived: .gray
         }

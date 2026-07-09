@@ -19,7 +19,7 @@ public final class SceneryStore {
 
     public private(set) var pool: [SceneryPhoto] = []
     private var assignments: [String: String] = [:]  // threadID -> photoID
-    /// threadID -> scene display name committed at creation ("Seceda · 2").
+    /// threadID -> scene display name committed at creation ("Seceda").
     /// Kept locally because the server title becomes the AI-generated thread
     /// description after the first turn (see LiveBackend's titleSeed).
     private var names: [String: String] = [:]
@@ -122,27 +122,28 @@ public final class SceneryStore {
         return pool.min { (useCount[$0.id] ?? 0) < (useCount[$1.id] ?? 0) }
     }
 
-    /// Thread title for a scene: the place name, numbered on reuse
-    /// ("Seceda", then "Seceda · 2").
+    /// Thread title for a scene: the plain place name, even when reused.
     public func threadTitle(for photo: SceneryPhoto) -> String {
-        let uses = assignments.values.filter { $0 == photo.id }.count
-        return uses == 0 ? photo.name : "\(photo.name) · \(uses + 1)"
+        Self.baseSceneName(photo.name)
     }
 
     /// Commit a thread → photo binding (after the backend confirmed create),
     /// remembering the scene display name the thread was created under.
     public func assign(photoID: String, name: String, to threadID: String) {
         assignments[threadID] = photoID
-        names[threadID] = name
+        names[threadID] = Self.baseSceneName(name)
         saveAssignments()
         saveNames()
     }
 
-    /// Stable scene name for a thread ("Seceda · 2"). Falls back to the
-    /// assigned/hashed photo's base name for threads that predate the name
-    /// map or were created by another client.
+    /// Stable scene name for a thread ("Seceda"). Falls back to the
+    /// assigned/hashed photo's base name for threads that predate the name map
+    /// or were created by another client.
     public func sceneName(for threadID: String) -> String? {
-        names[threadID] ?? photo(for: threadID)?.name
+        if let name = names[threadID] {
+            return Self.baseSceneName(name)
+        }
+        return photo(for: threadID).map { Self.baseSceneName($0.name) }
     }
 
     /// Two-line naming for a thread: the scene place name as the stable
@@ -154,10 +155,39 @@ public final class SceneryStore {
             return (title, nil)
         }
         if title.isEmpty { return (scene, nil) }
-        // Titles still scene-derived (the exact seed, or a numbered legacy
-        // variant like "Seceda · 2") mean no description was generated yet.
-        if title.hasPrefix(scene) { return (title, nil) }
+        // Titles still matching the per-thread scene seed mean no description
+        // was generated yet. Keep explicit compatibility for old local titles
+        // that were numbered before scene reuse stopped changing the seed.
+        if title == scene || Self.isLegacyNumberedSceneTitle(title, base: scene) {
+            return (scene, nil)
+        }
         return (scene, title)
+    }
+
+    private static func baseSceneName(_ name: String) -> String {
+        for base in sceneNames.sorted(by: { $0.count > $1.count }) {
+            if name == base || isLegacyNumberedSceneTitle(name, base: base) {
+                return base
+            }
+        }
+        return name
+    }
+
+    /// Legacy scene numbering started at 2 (`<base> 1` was never produced).
+    /// Plain-space lap names are capped to one digit to avoid hiding AI titles
+    /// that end in years or large numbers.
+    private static func isLegacyNumberedSceneTitle(_ title: String, base: String) -> Bool {
+        let reuseSeparator = " · "
+        if title.hasPrefix(base + reuseSeparator) {
+            let suffix = title.dropFirst(base.count + reuseSeparator.count)
+            return Int(suffix).map { $0 >= 2 } ?? false
+        }
+
+        let lapSeparator = " "
+        guard title.hasPrefix(base + lapSeparator) else { return false }
+        let suffix = title.dropFirst(base.count + lapSeparator.count)
+        guard suffix.count == 1, let lap = Int(suffix) else { return false }
+        return (2...9).contains(lap)
     }
 
     /// Empty-state hero: rotates daily through the pool.
@@ -267,10 +297,9 @@ public final class SceneryStore {
 
         let refreshed = unique.enumerated().map { index, photo in
             let base = Self.sceneNames[index % Self.sceneNames.count]
-            let lap = index / Self.sceneNames.count
             return SceneryPhoto(
                 id: photo.id,
-                name: lap == 0 ? base : "\(base) \(lap + 1)",
+                name: base,
                 averageColorHex: photo.color,
                 heroURL: photo.urls.regular,
                 thumbURL: photo.urls.thumb,

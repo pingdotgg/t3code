@@ -9,6 +9,8 @@ public final class AppModel {
     public private(set) var threads: [ChatThread] = []
     public private(set) var providers: [ProviderInstance] = []
     public private(set) var models: [ModelOption] = []
+    /// Low-frequency usage-limit card actions — stays flat on AppModel (not ThreadState).
+    public private(set) var usageLimitActions: [String: UsageLimitActionState] = [:]
     /// Outcome of the most recent git action, shown as a transient banner.
     public var lastGitActionOutcome: GitActionOutcome?
 
@@ -37,8 +39,35 @@ public final class AppModel {
     /// subscribed. Beyond that, `closeTimeline` drops the live subscription.
     static let timelineSubscriptionKeepCount = 4
 
+    /// In-app dictation (mic → local ASR → on-device cleanup → composer).
+    public let dictation = DictationController()
+
+    /// Text staged for the composer by a timeline action (Edit on a sent
+    /// message). The composer consumes it via `takeComposerPrefill`. A fresh
+    /// UUID per staging makes repeat edits of the same text observable.
+    public private(set) var composerPrefill: ComposerPrefill?
+
+    /// In-memory outgoing queue, scoped by thread. Items are lost on app restart.
+    public private(set) var queuedMessagesByThread: [String: [QueuedOutgoingMessage]] = [:]
+
+    public struct ComposerPrefill: Equatable, Sendable {
+        public let id: UUID
+        public let text: String
+    }
+
     private let backend: any BackendService
     private var eventTask: Task<Void, Never>?
+    private var usageLimitResumeTasks: [String: Task<Void, Never>] = [:]
+    private var dismissedUsageLimitIDs: Set<String> = []
+
+    private static let usageLimitContinuationPrompt =
+        "Continue the interrupted task from where you stopped."
+
+    private var queuedSendInFlightThreadIDs: Set<String> = []
+    private var queuedRetryTokensByThread: [String: UUID] = [:]
+
+    private let maxQueuedSendAttempts = 3
+    private let queuedSendRetryDelay: UInt64 = 2_000_000_000
 
     // MARK: - Event intake buffers
     //
@@ -97,6 +126,10 @@ public final class AppModel {
 
     public func selectedTimeline() -> [TimelineItem] {
         selectedThreadID.flatMap { threadStates[$0]?.timeline } ?? []
+    }
+
+    public var selectedQueuedMessages: [QueuedOutgoingMessage] {
+        selectedThreadID.flatMap { queuedMessagesByThread[$0] } ?? []
     }
 
     // MARK: - Lifecycle
@@ -224,6 +257,7 @@ public final class AppModel {
 
             switch event {
             case .timelineAppended(let threadID, let item):
+                guard !isDismissedUsageLimit(item) else { break }
                 // Upsert: lifecycle updates arrive with the stable row id of
                 // an earlier item (tool call updated -> completed, streaming
                 // reasoning text) and must replace it, not stack.
@@ -232,9 +266,10 @@ public final class AppModel {
                 touched[threadID] = items
                 recordInteraction(item, threadID: threadID)
             case .timelineReset(let threadID, let items):
-                touched[threadID] = items
+                let filtered = items.filter { !isDismissedUsageLimit($0) }
+                touched[threadID] = filtered
                 streamingIndex[threadID] = nil
-                for item in items { recordInteraction(item, threadID: threadID) }
+                for item in filtered { recordInteraction(item, threadID: threadID) }
             case .assistantCompleted(let threadID, let messageID, let markdown):
                 var items = currentItems(threadID)
                 finishStreaming(
@@ -272,7 +307,9 @@ public final class AppModel {
             // When only `updatedAt` changed, skip the array write entirely —
             // rewriting threads[index] invalidates every sidebar row — and
             // stash the fresh timestamp for insertion-position searches.
+            let previousStatus: ThreadStatus?
             if let index = threads.firstIndex(where: { $0.id == thread.id }) {
+                previousStatus = threads[index].status
                 let existing = threads[index]
                 if existing.displayEquivalent(to: thread) {
                     effectiveUpdatedAt[thread.id] = thread.updatedAt
@@ -281,6 +318,7 @@ public final class AppModel {
                     effectiveUpdatedAt[thread.id] = nil
                 }
             } else {
+                previousStatus = nil
                 // New rows still slot in by the sidebar's sort key: snapshot
                 // replays after a reconnect arrive as upserts, and blind
                 // insertion at 0 would show them in reverse snapshot order.
@@ -292,11 +330,18 @@ public final class AppModel {
                 threads.insert(thread, at: index)
                 effectiveUpdatedAt[thread.id] = nil
             }
+            if shouldSendQueuedMessage(previousStatus: previousStatus, newStatus: thread.status) {
+                dequeueNextQueuedMessageIfNeeded(threadID: thread.id)
+            }
         case .threadRemoved(let id):
             threads.removeAll { $0.id == id }
             threadStates[id] = nil
             effectiveUpdatedAt[id] = nil
             recentlySelected.removeAll { $0 == id }
+            cancelUsageLimitResumeTasks(threadID: id)
+            queuedMessagesByThread[id] = nil
+            queuedSendInFlightThreadIDs.remove(id)
+            queuedRetryTokensByThread[id] = nil
             if selectedThreadID == id { selectedThreadID = nil }
         case .approvalRequested, .userInputRequested:
             break
@@ -333,6 +378,11 @@ public final class AppModel {
         default:
             break
         }
+    }
+
+    private func isDismissedUsageLimit(_ item: TimelineItem) -> Bool {
+        guard case .usageLimit(let notice) = item else { return false }
+        return dismissedUsageLimitIDs.contains(notice.id)
     }
 
     private func applyDelta(
@@ -392,11 +442,19 @@ public final class AppModel {
             async let threads = backend.threads()
             async let providers = backend.providers()
             async let models = backend.models()
+            let previousStatuses = Dictionary(uniqueKeysWithValues: self.threads.map { ($0.id, $0.status) })
+            let refreshedThreads = try await threads.sorted { $0.updatedAt > $1.updatedAt }
             self.projects = try await projects
-            self.threads = try await threads.sorted { $0.updatedAt > $1.updatedAt }
+            self.threads = refreshedThreads
             self.providers = try await providers
             self.models = try await models
             self.effectiveUpdatedAt.removeAll(keepingCapacity: true)
+            for thread in refreshedThreads
+            where shouldSendQueuedMessage(
+                previousStatus: previousStatuses[thread.id], newStatus: thread.status)
+            {
+                dequeueNextQueuedMessageIfNeeded(threadID: thread.id)
+            }
         } catch {
             lastError = String(describing: error)
         }
@@ -414,9 +472,13 @@ public final class AppModel {
         let state = self.state(creating: threadID)
         guard !state.hasLoadedTimeline else { return }
         do {
-            state.timeline = try await backend.timeline(threadID: threadID)
+            let items = try await backend.timeline(threadID: threadID)
+            state.timeline = items.filter { !isDismissedUsageLimit($0) }
             state.timelineVersion += 1
             state.hasLoadedTimeline = true
+            for item in state.timeline {
+                recordInteraction(item, threadID: threadID)
+            }
         } catch {
             lastError = String(describing: error)
         }
@@ -440,12 +502,160 @@ public final class AppModel {
 
     // MARK: - Commands
 
+    /// Stages `text` for the composer (Edit action on a sent message).
+    public func stageComposerText(_ text: String) {
+        composerPrefill = ComposerPrefill(id: UUID(), text: text)
+    }
+
+    /// Marks the staged prefill consumed. Returns it, or nil if already taken.
+    public func takeComposerPrefill() -> ComposerPrefill? {
+        defer { composerPrefill = nil }
+        return composerPrefill
+    }
+
+    public func enqueueMessage(text: String, attachments: [OutgoingAttachment] = []) {
+        guard let threadID = selectedThreadID else { return }
+        enqueueMessage(threadID: threadID, text: text, attachments: attachments)
+    }
+
+    @discardableResult
+    public func takeQueuedMessage(id: String, from threadID: String) -> QueuedOutgoingMessage? {
+        guard var queue = queuedMessagesByThread[threadID],
+            let index = queue.firstIndex(where: { $0.id == id })
+        else { return nil }
+        let message = queue.remove(at: index)
+        setQueuedMessages(queue, for: threadID)
+        return message
+    }
+
+    public func removeQueuedMessage(id: String, from threadID: String) {
+        _ = takeQueuedMessage(id: id, from: threadID)
+    }
+
+    public func sendQueuedMessageNow(id: String, from threadID: String) async {
+        guard let message = takeQueuedMessage(id: id, from: threadID) else { return }
+        await sendQueuedMessage(message, threadID: threadID)
+    }
+
     public func send(text: String, attachments: [OutgoingAttachment] = []) async {
-        guard let threadID = selectedThreadID, !(text.isEmpty && attachments.isEmpty) else { return }
+        guard let threadID = selectedThreadID else { return }
+        await sendAndReport(threadID: threadID, text: text, attachments: attachments)
+    }
+
+    private func enqueueMessage(
+        threadID: String, text: String, attachments: [OutgoingAttachment]
+    ) {
+        guard !(text.isEmpty && attachments.isEmpty) else { return }
+        let message = QueuedOutgoingMessage(text: text, attachments: attachments)
+        queuedMessagesByThread[threadID, default: []].append(message)
+    }
+
+    private func shouldSendQueuedMessage(
+        previousStatus: ThreadStatus?, newStatus: ThreadStatus
+    ) -> Bool {
+        guard let previousStatus else { return false }
+        return previousStatus != .idle && newStatus == .idle
+    }
+
+    private func dequeueNextQueuedMessageIfNeeded(
+        threadID: String, expectedMessageID: String? = nil
+    ) {
+        guard !queuedSendInFlightThreadIDs.contains(threadID) else { return }
+        guard threadStatus(for: threadID) == .idle else { return }
+        if let expectedMessageID, queuedMessagesByThread[threadID]?.first?.id != expectedMessageID {
+            return
+        }
+        queuedRetryTokensByThread[threadID] = nil
+        guard let message = takeFirstQueuedMessage(from: threadID) else { return }
+        queuedSendInFlightThreadIDs.insert(threadID)
+        Task { await sendQueuedMessage(message, threadID: threadID, tracksDequeue: true) }
+    }
+
+    private func takeFirstQueuedMessage(from threadID: String) -> QueuedOutgoingMessage? {
+        guard var queue = queuedMessagesByThread[threadID], !queue.isEmpty else { return nil }
+        let message = queue.removeFirst()
+        setQueuedMessages(queue, for: threadID)
+        return message
+    }
+
+    private func sendQueuedMessage(
+        _ message: QueuedOutgoingMessage, threadID: String, tracksDequeue: Bool = false
+    ) async {
+        var failedMessage: QueuedOutgoingMessage?
         do {
-            try await backend.sendMessage(threadID: threadID, text: text, attachments: attachments)
+            try await sendMessage(
+                threadID: threadID, text: message.text, attachments: message.attachments)
+        } catch {
+            var message = message
+            message.sendAttempts += 1
+            failedMessage = message
+            requeue(message, atFrontOf: threadID)
+            lastError = String(describing: error)
+        }
+        if tracksDequeue {
+            queuedSendInFlightThreadIDs.remove(threadID)
+        }
+        if let failedMessage {
+            scheduleQueuedSendRetryIfNeeded(failedMessage, threadID: threadID)
+        }
+    }
+
+    private func sendAndReport(
+        threadID: String, text: String, attachments: [OutgoingAttachment]
+    ) async {
+        do {
+            try await sendMessage(threadID: threadID, text: text, attachments: attachments)
         } catch {
             lastError = String(describing: error)
+        }
+    }
+
+    private func sendMessage(
+        threadID: String, text: String, attachments: [OutgoingAttachment]
+    ) async throws {
+        guard !(text.isEmpty && attachments.isEmpty) else { return }
+        try await backend.sendMessage(threadID: threadID, text: text, attachments: attachments)
+    }
+
+    private func threadStatus(for threadID: String) -> ThreadStatus? {
+        threads.first { $0.id == threadID }?.status
+    }
+
+    private func scheduleQueuedSendRetryIfNeeded(
+        _ message: QueuedOutgoingMessage, threadID: String
+    ) {
+        guard message.sendAttempts < maxQueuedSendAttempts else { return }
+        guard threadStatus(for: threadID) == .idle else { return }
+        guard queuedMessagesByThread[threadID]?.first?.id == message.id else { return }
+        guard queuedRetryTokensByThread[threadID] == nil else { return }
+
+        let token = UUID()
+        let retryDelay = queuedSendRetryDelay
+        queuedRetryTokensByThread[threadID] = token
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: retryDelay)
+            await self?.dequeueScheduledQueuedMessage(
+                threadID: threadID, expectedMessageID: message.id, token: token)
+        }
+    }
+
+    private func dequeueScheduledQueuedMessage(
+        threadID: String, expectedMessageID: String, token: UUID
+    ) {
+        guard queuedRetryTokensByThread[threadID] == token else { return }
+        queuedRetryTokensByThread[threadID] = nil
+        dequeueNextQueuedMessageIfNeeded(threadID: threadID, expectedMessageID: expectedMessageID)
+    }
+
+    private func requeue(_ message: QueuedOutgoingMessage, atFrontOf threadID: String) {
+        queuedMessagesByThread[threadID, default: []].insert(message, at: 0)
+    }
+
+    private func setQueuedMessages(_ messages: [QueuedOutgoingMessage], for threadID: String) {
+        if messages.isEmpty {
+            queuedMessagesByThread[threadID] = nil
+        } else {
+            queuedMessagesByThread[threadID] = messages
         }
     }
 
@@ -529,6 +739,72 @@ public final class AppModel {
         }
     }
 
+    public func waitForUsageLimitReset(_ notice: UsageLimitNotice) {
+        guard let resetsAt = notice.resetsAt else { return }
+        usageLimitResumeTasks[notice.id]?.cancel()
+        let resumeAt = resetsAt.addingTimeInterval(90)
+        usageLimitActions[notice.id] = .waiting(resumeAt: resumeAt)
+        usageLimitResumeTasks[notice.id] = Task { [weak self] in
+            let delay = max(0, resumeAt.timeIntervalSinceNow)
+            let nanoseconds = UInt64(min(delay, 60 * 60 * 24 * 14) * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: nanoseconds)
+            guard !Task.isCancelled else { return }
+            await self?.continueAfterUsageLimit(notice, model: nil)
+        }
+    }
+
+    public func switchModelAfterUsageLimit(_ notice: UsageLimitNotice, to model: ModelOption) async {
+        usageLimitResumeTasks[notice.id]?.cancel()
+        await continueAfterUsageLimit(notice, model: model)
+    }
+
+    public func dismissUsageLimit(_ notice: UsageLimitNotice) {
+        dismissedUsageLimitIDs.insert(notice.id)
+        usageLimitResumeTasks[notice.id]?.cancel()
+        usageLimitResumeTasks[notice.id] = nil
+        usageLimitActions[notice.id] = nil
+        for state in threadStates.values {
+            if state.timeline.contains(where: { $0.id == notice.id }) {
+                state.timeline.removeAll { $0.id == notice.id }
+                state.timelineVersion += 1
+            }
+        }
+    }
+
+    private func continueAfterUsageLimit(_ notice: UsageLimitNotice, model: ModelOption?) async {
+        do {
+            if let model {
+                usageLimitActions[notice.id] = .switching(modelName: model.displayName)
+                try await backend.setModel(threadID: notice.threadID, model: model)
+            } else {
+                usageLimitActions[notice.id] = .resuming
+            }
+            try await backend.sendMessage(
+                threadID: notice.threadID,
+                text: Self.usageLimitContinuationPrompt,
+                attachments: [])
+            usageLimitActions[notice.id] = .continued
+        } catch {
+            let message = String(describing: error)
+            usageLimitActions[notice.id] = .failed(message)
+            lastError = message
+        }
+        usageLimitResumeTasks[notice.id] = nil
+    }
+
+    private func cancelUsageLimitResumeTasks(threadID: String) {
+        let noticeIDs =
+            threadStates[threadID]?.timeline.compactMap { item -> String? in
+                guard case .usageLimit(let notice) = item else { return nil }
+                return notice.id
+            } ?? []
+        for id in noticeIDs {
+            usageLimitResumeTasks[id]?.cancel()
+            usageLimitResumeTasks[id] = nil
+            usageLimitActions[id] = nil
+        }
+    }
+
     public func setReasoningEffort(_ value: String) async {
         guard let threadID = selectedThreadID else { return }
         do {
@@ -605,6 +881,18 @@ public final class AppModel {
         } catch {
             lastError = String(describing: error)
         }
+    }
+
+    // MARK: - Mobile pairing (Settings ▸ iPhone)
+
+    public func isServerLanReachable() async -> Bool {
+        await backend.isServerLanReachable()
+    }
+
+    /// Throws so the settings tab can render the failure inline rather than
+    /// routing through the global `lastError` banner.
+    public func mintMobilePairing() async throws -> MobilePairingInfo {
+        try await backend.mintMobilePairing()
     }
 
     // MARK: - Settings / providers / archive

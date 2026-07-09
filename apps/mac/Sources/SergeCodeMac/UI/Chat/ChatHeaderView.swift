@@ -54,6 +54,7 @@ private struct ProviderBadge: View {
         case .claude: "sparkle"
         case .codex: "chevron.left.forwardslash.chevron.right"
         case .cursor: "cursorarrow"
+        case .grok: "bolt"
         case .opencode: "shippingbox"
         }
     }
@@ -76,6 +77,7 @@ private struct StatusBadge: View {
         case .idle: "Idle"
         case .running: "Running"
         case .waitingApproval: "Needs approval"
+        case .backgroundWork: "Background work"
         case .error: "Error"
         case .archived: "Archived"
         }
@@ -86,6 +88,7 @@ private struct StatusBadge: View {
         case .idle: "circle"
         case .running: "bolt.fill"
         case .waitingApproval: "exclamationmark.circle.fill"
+        case .backgroundWork: "person.2.fill"
         case .error: "xmark.octagon.fill"
         case .archived: "archivebox.fill"
         }
@@ -96,6 +99,7 @@ private struct StatusBadge: View {
         case .idle: .secondary
         case .running: .accentColor
         case .waitingApproval: .orange
+        case .backgroundWork: .green
         case .error: .red
         case .archived: .secondary
         }

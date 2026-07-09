@@ -198,7 +198,7 @@ describe("getStartedThreadModelChangeBlockReason", () => {
         hasStartedSession: false,
         currentModelSelection: {
           instanceId: ProviderInstanceId.make("grok"),
-          model: "grok-build",
+          model: "grok-4.5",
         },
         nextModelSelection: {
           instanceId: ProviderInstanceId.make("grok"),
@@ -215,11 +215,11 @@ describe("getStartedThreadModelChangeBlockReason", () => {
         hasStartedSession: true,
         currentModelSelection: {
           instanceId: ProviderInstanceId.make("grok"),
-          model: "grok-build",
+          model: "grok-4.5",
         },
         nextModelSelection: {
           instanceId: ProviderInstanceId.make("grok"),
-          model: "grok-build",
+          model: "grok-4.5",
         },
       }),
     ).toBeNull();
@@ -236,7 +236,7 @@ describe("getStartedThreadModelChangeBlockReason", () => {
         },
         nextModelSelection: {
           instanceId: ProviderInstanceId.make("grok"),
-          model: "grok-build",
+          model: "grok-4.5",
         },
       }),
     ).toEqual({

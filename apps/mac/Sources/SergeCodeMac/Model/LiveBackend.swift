@@ -34,17 +34,17 @@ import T3Kit
 //
 // ── Mapping decisions (wire -> UI) — best-effort, documented, never silent ────
 //  * ProviderKind: derived from ServerProvider.driver by substring match
-//    (claude/codex/cursor/opencode). Drivers with no ProviderKind equivalent
-//    (e.g. "grok") are dropped from providers() — ProviderKind is a closed enum
+//    (claude/codex/cursor/grok/opencode). Drivers with no ProviderKind
+//    equivalent are dropped from providers() — ProviderKind is a closed enum
 //    with no `.other`. See `providerKind(fromDriver:)`.
 //  * A thread's ProviderKind is resolved from its modelSelection.instanceId via
 //    the ServerConfig provider table, falling back to session.providerName, then
 //    to `.claude`. Documented in `resolveProviderKind`.
 //  * ThreadStatus is a projection of session.status + latestTurn.state +
-//    hasPendingApprovals + archivedAt (see `mapStatus`); the shell subscription
-//    is the source of truth for status (per-thread `thread.session-set` events
-//    are intentionally NOT used to mutate status, to avoid fighting the shell
-//    projection which already reflects session changes).
+//    hasPendingApprovals + archivedAt + active subagent task count (see
+//    `mapStatus`); the shell subscription remains the source of truth for the
+//    session/turn inputs. Per-thread task events only update the active-count
+//    input and then re-run that projection.
 //  * Assistant streaming: repeated `thread.message-sent` events for one
 //    messageId carry DELTA chunks in `text` while `streaming` is true, and
 //    the terminal `streaming: false` event replaces the full text only when
@@ -84,6 +84,14 @@ public actor LiveBackend: BackendService {
     private var sidecarStatesTask: Task<Void, Never>?
     private var socketSessionTask: Task<Void, Never>?
     private var threadSubscriptions: [String: Task<Void, Never>] = [:]
+    private struct RunningLivenessCheck {
+        let turnKey: String
+        let task: Task<Void, Never>
+    }
+    private var runningLivenessChecks: [String: RunningLivenessCheck] = [:]
+    private var latestRunningLivenessTurnKeys: [String: String] = [:]
+    private var confirmedRunningTurnKeys: [String: String] = [:]
+    private var staleRunningTurnKeys: [String: String] = [:]
 
     // MARK: Projection state (source for the query methods)
 
@@ -100,6 +108,10 @@ public actor LiveBackend: BackendService {
     /// away.
     private var titleSeedsByThread: [String: String] = [:]
     private var providersByInstanceId: [String: ServerProvider] = [:]
+    /// Latest shell per thread. Task lifecycle events re-project this cached
+    /// shell with the active subagent count instead of writing a competing
+    /// status value directly.
+    private var threadShellsByID: [String: OrchestrationThreadShell] = [:]
 
     /// Where a thread runs, from its shell (`worktreePath`) plus whether it
     /// has started any turn (`latestTurn`). Drives the first-turn worktree
@@ -146,6 +158,9 @@ public actor LiveBackend: BackendService {
     private var checkpointsByThread: [String: [Checkpoint]] = [:]
     /// Highest completed-turn count per thread, used as getFullThreadDiff's `toTurnCount`.
     private var currentTurnCount: [String: Int] = [:]
+    /// Active/background delegated task lifecycle, rebuilt from thread
+    /// snapshots and advanced by live `task.*` activity events.
+    private var subagentTasksByThread: [String: T3SubagentTaskActivityState] = [:]
 
     /// Verification-only breadcrumb path (see `emit`), opt-in via
     /// `$SERGECODE_DEBUG_LOG` (e.g. for a manual `open`-launched run whose
@@ -165,7 +180,21 @@ public actor LiveBackend: BackendService {
         return path
     }()
 
-    public init() {
+    /// When true, the sidecar binds `0.0.0.0` instead of loopback so the
+    /// SergeCode mobile app can connect over the local network. Auth is
+    /// still required (pairing token exchange + per-connection wsTicket);
+    /// the server flips its policy to `remote-reachable`, which keeps the
+    /// desktop-bootstrap method available (EnvironmentAuthPolicy.ts).
+    /// Fixed for the life of the process; read from
+    /// `MobileAccessPreference` at construction (App.swift).
+    private let allowLanAccess: Bool
+    /// Port of the running sidecar, captured at spawn for the mobile
+    /// pairing URL.
+    private var sidecarPort: Int?
+    private static let runningLivenessConfirmationDelay: Duration = .seconds(12)
+
+    public init(allowLanAccess: Bool = false) {
+        self.allowLanAccess = allowLanAccess
         let (stream, continuation) = AsyncStream<BackendEvent>.makeStream()
         self.events = stream
         self.continuation = continuation
@@ -193,14 +222,19 @@ public actor LiveBackend: BackendService {
 
         let sidecarConfig: SidecarConfig
         do {
-            sidecarConfig = try SidecarConfig(nodePath: nodePath, entryPath: entryPath)
+            sidecarConfig = try SidecarConfig(
+                nodePath: nodePath, entryPath: entryPath,
+                host: allowLanAccess ? "0.0.0.0" : "127.0.0.1")
         } catch {
             emit(.connection(.failed("Could not configure the server sidecar: \(error)")))
             return
         }
+        sidecarPort = sidecarConfig.port
 
+        // The app's own connection always goes over loopback, regardless of
+        // the bind host (0.0.0.0 is not a connectable address).
         let kit = T3KitConfig(
-            host: sidecarConfig.host, port: sidecarConfig.port, desktopBootstrapToken: token)
+            host: "127.0.0.1", port: sidecarConfig.port, desktopBootstrapToken: token)
         authClient = AuthClient(config: kit.authConfig)
 
         let process = ServerProcess(config: sidecarConfig, bootstrapToken: token)
@@ -223,6 +257,7 @@ public actor LiveBackend: BackendService {
         socketSessionTask = nil
         cancelAllThreadSubscriptions()
         cancelAllVcsSubscriptions()
+        cancelAllRunningLivenessChecks()
 
         if let conn = currentConnection {
             currentConnection = nil
@@ -271,6 +306,7 @@ public actor LiveBackend: BackendService {
         socketSessionTask = nil
         cancelAllThreadSubscriptions()
         cancelAllVcsSubscriptions()
+        cancelAllRunningLivenessChecks()
         currentClient = nil
         if let conn = currentConnection {
             currentConnection = nil
@@ -415,15 +451,20 @@ public actor LiveBackend: BackendService {
                 threadsByID[id] = nil
                 titleSeedsByThread[id] = nil
                 threadEnvByThread[id] = nil
+                threadShellsByID[id] = nil
+                subagentTasksByThread[id] = nil
+                clearRunningLivenessState(threadID: id)
                 emitOrdered(threadID: id, event: .threadRemoved(id: id))
             }
             for shell in snapshot.threads {
+                threadShellsByID[shell.id] = shell
                 let thread = mapThread(shell)
                 threadsByID[thread.id] = thread
                 modelSelectionsByThread[thread.id] = shell.modelSelection
                 threadEnvByThread[thread.id] = ThreadEnvState(
                     worktreePath: shell.worktreePath, hasTurns: shell.latestTurn != nil)
                 emitOrdered(threadID: thread.id, event: .threadUpserted(thread))
+                reconcileRunningLiveness(for: shell)
             }
         case .event(let event):
             switch event {
@@ -434,6 +475,7 @@ public actor LiveBackend: BackendService {
                 projectsByID[projectID] = nil
                 emit(.projectsChanged(currentProjectList()))
             case .threadUpserted(_, let shell):
+                threadShellsByID[shell.id] = shell
                 let thread = mapThread(shell)
                 threadsByID[thread.id] = thread
                 modelSelectionsByThread[thread.id] = shell.modelSelection
@@ -441,11 +483,15 @@ public actor LiveBackend: BackendService {
                     worktreePath: shell.worktreePath, hasTurns: shell.latestTurn != nil)
                 restartVcsWatchIfStale(threadID: thread.id)
                 emitOrdered(threadID: thread.id, event: .threadUpserted(thread))
+                reconcileRunningLiveness(for: shell)
             case .threadRemoved(_, let threadID):
                 threadsByID[threadID] = nil
                 modelSelectionsByThread[threadID] = nil
                 titleSeedsByThread[threadID] = nil
                 threadEnvByThread[threadID] = nil
+                threadShellsByID[threadID] = nil
+                subagentTasksByThread[threadID] = nil
+                clearRunningLivenessState(threadID: threadID)
                 emitOrdered(threadID: threadID, event: .threadRemoved(id: threadID))
             }
         }
@@ -504,6 +550,118 @@ public actor LiveBackend: BackendService {
             task.cancel()
         }
         threadSubscriptions.removeAll()
+    }
+
+    private func reconcileRunningLiveness(for shell: OrchestrationThreadShell) {
+        let turnKey = runningLivenessTurnKey(for: shell)
+        latestRunningLivenessTurnKeys[shell.id] = turnKey
+        // Liveness only watches running turns; background subagents have no
+        // turn to go stale, so their count must not influence this projection.
+        let wireStatus = mapStatus(
+            session: shell.session, latestTurn: shell.latestTurn, archivedAt: shell.archivedAt,
+            hasPendingApprovals: shell.hasPendingApprovals || shell.hasPendingUserInput,
+            activeSubagentCount: 0)
+        if wireStatus == .running {
+            scheduleRunningLivenessCheck(
+                threadID: shell.id, turnKey: turnKey)
+        } else {
+            clearRunningLivenessState(threadID: shell.id)
+        }
+    }
+
+    private func runningLivenessTurnKey(for shell: OrchestrationThreadShell) -> String {
+        shell.latestTurn?.turnId ?? shell.session?.activeTurnId ?? "pending-turn"
+    }
+
+    private func scheduleRunningLivenessCheck(threadID: String, turnKey: String) {
+        if let existingCheck = runningLivenessChecks[threadID] {
+            guard existingCheck.turnKey != turnKey else { return }
+            existingCheck.task.cancel()
+            runningLivenessChecks[threadID] = nil
+        }
+
+        guard confirmedRunningTurnKeys[threadID] != turnKey,
+            staleRunningTurnKeys[threadID] != turnKey,
+            let client = currentClient
+        else { return }
+        let task = Task { [weak self, client] in
+            guard let self else { return }
+            await self.runRunningLivenessCheck(
+                threadID: threadID, turnKey: turnKey, client: client)
+        }
+        runningLivenessChecks[threadID] = RunningLivenessCheck(turnKey: turnKey, task: task)
+    }
+
+    private func runRunningLivenessCheck(threadID: String, turnKey: String, client: T3Client) async {
+        do {
+            let firstCheck = try await client.getThreadLiveness(threadId: threadID)
+            try Task.checkCancellation()
+            if firstCheck.hasActiveTurn {
+                markRunningThreadLive(threadID: threadID, turnKey: turnKey)
+                finishRunningLivenessCheck(threadID: threadID, turnKey: turnKey)
+                return
+            }
+
+            try await Task.sleep(for: Self.runningLivenessConfirmationDelay)
+            let secondCheck = try await client.getThreadLiveness(threadId: threadID)
+            try Task.checkCancellation()
+            if secondCheck.hasActiveTurn {
+                markRunningThreadLive(threadID: threadID, turnKey: turnKey)
+            } else {
+                markRunningThreadStale(threadID: threadID, turnKey: turnKey)
+            }
+        } catch {
+            if !Task.isCancelled {
+                finishRunningLivenessCheck(threadID: threadID, turnKey: turnKey)
+            }
+            return
+        }
+        finishRunningLivenessCheck(threadID: threadID, turnKey: turnKey)
+    }
+
+    private func markRunningThreadStale(threadID: String, turnKey: String) {
+        guard latestRunningLivenessTurnKeys[threadID] == turnKey else { return }
+        confirmedRunningTurnKeys[threadID] = nil
+        guard var thread = threadsByID[threadID], thread.status == .running else { return }
+        staleRunningTurnKeys[threadID] = turnKey
+        thread.status = .error
+        threadsByID[threadID] = thread
+        emitOrdered(threadID: threadID, event: .threadUpserted(thread))
+    }
+
+    private func markRunningThreadLive(threadID: String, turnKey: String) {
+        guard latestRunningLivenessTurnKeys[threadID] == turnKey else { return }
+        confirmedRunningTurnKeys[threadID] = turnKey
+        let wasStale = staleRunningTurnKeys.removeValue(forKey: threadID) != nil
+        guard wasStale, var thread = threadsByID[threadID], thread.status == .error else {
+            return
+        }
+        thread.status = .running
+        threadsByID[threadID] = thread
+        emitOrdered(threadID: threadID, event: .threadUpserted(thread))
+    }
+
+    private func finishRunningLivenessCheck(threadID: String, turnKey: String) {
+        guard runningLivenessChecks[threadID]?.turnKey == turnKey else { return }
+        runningLivenessChecks[threadID] = nil
+    }
+
+    private func clearRunningLivenessState(threadID: String) {
+        runningLivenessChecks[threadID]?.task.cancel()
+        runningLivenessChecks[threadID] = nil
+        latestRunningLivenessTurnKeys[threadID] = nil
+        confirmedRunningTurnKeys[threadID] = nil
+        staleRunningTurnKeys[threadID] = nil
+    }
+
+    private func cancelAllRunningLivenessChecks() {
+        for check in runningLivenessChecks.values {
+            check.task.cancel()
+        }
+        runningLivenessChecks.removeAll()
+        latestRunningLivenessTurnKeys.removeAll()
+        confirmedRunningTurnKeys.removeAll()
+        staleRunningTurnKeys.removeAll()
     }
 
     private func cancelAllVcsSubscriptions() {
@@ -589,10 +747,19 @@ public actor LiveBackend: BackendService {
         }
 
         // Upsert (not append) so lifecycle activities sharing a row id —
-        // tool updated/completed for one call, successive reasoning updates
-        // of one task — collapse into a single row, same as the live tail.
+        // tool updated/completed for one call, subagent task lifecycle
+        // updates — collapse into a single row, same as the live tail.
         var items: [TimelineItem] = []
+        var subagentState = T3SubagentTaskActivityState()
+        let hadSubagentTasks = !(subagentTasksByThread[threadID]?.items.isEmpty ?? true)
         for entry in OrchestrationMapping.timeline(for: thread) {
+            if case let .activity(activity, at) = entry,
+                Self.isTaskLifecycleActivity(activity),
+                let task = subagentState.apply(activity: activity, at: at)
+            {
+                items.upsertTimelineItem(mapSubagentTask(task))
+                continue
+            }
             guard
                 let item = mapEntry(
                     entry, threadID: threadID, pendingUserInputIDs: pendingInputIDs,
@@ -600,6 +767,8 @@ public actor LiveBackend: BackendService {
             else { continue }
             items.upsertTimelineItem(item)
         }
+        let hasSubagentTasks = !subagentState.items.isEmpty
+        subagentTasksByThread[threadID] = hasSubagentTasks ? subagentState : nil
         // A prior timeline means this snapshot is a *re*-subscribe (e.g. after
         // a socket reconnect), not the thread's first load. `timeline()`
         // callers already have `latestTimeline` cached, so `snapshotWaiters`
@@ -613,6 +782,9 @@ public actor LiveBackend: BackendService {
                 threadID: threadID, event: .timelineReset(threadID: threadID, items: items))
         }
         resolveSnapshotWaiters(threadID: threadID, items: items)
+        if hadSubagentTasks || hasSubagentTasks {
+            reemitThreadWithCurrentProjection(threadID: threadID)
+        }
 
         // Side-channel state derived from the newest matching activity.
         if let activity = thread.activities.last(where: { $0.kind == ActivityKind.turnPlanUpdated }),
@@ -654,6 +826,9 @@ public actor LiveBackend: BackendService {
             guard !(seenActivityIDs[threadID]?.contains(activity.id) ?? false) else { return }
             seenActivityIDs[threadID, default: []].insert(activity.id)
             let at = WireDate.parse(activity.createdAt) ?? Date()
+            if applySubagentTaskActivity(activity, threadID: threadID, at: at) {
+                return
+            }
             // Typed activity kinds (user-input, live plan, context window)
             // are consumed into dedicated events, not generic timeline rows.
             if consumeSpecialActivity(activity, threadID: threadID, at: at, appendToTimeline: true) {
@@ -782,6 +957,17 @@ public actor LiveBackend: BackendService {
             }
             return true
 
+        case ActivityKind.usageLimitReached:
+            guard let notice = mapUsageLimitNotice(activity, threadID: threadID, at: at) else {
+                return false
+            }
+            if appendToTimeline {
+                emitOrdered(
+                    threadID: threadID,
+                    event: .timelineAppended(threadID: threadID, item: .usageLimit(notice)))
+            }
+            return true
+
         case ActivityKind.userInputResolved:
             let requestID =
                 activity.decodePayload(UserInputResolvedActivityPayload.self)?.requestId
@@ -838,6 +1024,30 @@ public actor LiveBackend: BackendService {
                 multiSelect: question.multiSelect)
         }
         return UserInputRequest(id: requestID, threadID: threadID, questions: questions, createdAt: at)
+    }
+
+    private func mapUsageLimitNotice(
+        _ activity: OrchestrationThreadActivity, threadID: String, at: Date
+    ) -> UsageLimitNotice? {
+        guard let payload = activity.decodePayload(UsageLimitReachedActivityPayload.self) else {
+            return nil
+        }
+        let resetAt =
+            payload.resetsAt.flatMap(WireDate.parse)
+            ?? payload.resetsAtEpochSeconds.map { Date(timeIntervalSince1970: TimeInterval($0)) }
+        let provider = payload.provider.flatMap(providerKind(fromDriver:))
+        let providerName =
+            provider?.displayName
+            ?? payload.provider?.replacingOccurrences(of: "Agent", with: " Agent")
+            ?? "Agent"
+        return UsageLimitNotice(
+            id: activity.id,
+            threadID: threadID,
+            provider: provider,
+            providerName: providerName,
+            message: payload.message,
+            resetsAt: resetAt,
+            createdAt: at)
     }
 
     private static func uiPlanStatus(_ status: TurnPlanStepStatus?) -> PlanStepStatus {
@@ -1043,7 +1253,8 @@ public actor LiveBackend: BackendService {
         }
         let thread = ChatThread(
             id: threadID, projectID: projectID, title: title, provider: provider, status: .idle,
-            updatedAt: Date(), modelInstanceID: selection.instanceId, modelID: selection.model)
+            updatedAt: Date(), modelInstanceID: selection.instanceId, modelID: selection.model,
+            reasoningEffort: Self.effortValue(of: selection))
         threadsByID[threadID] = thread
         modelSelectionsByThread[threadID] = selection
         titleSeedsByThread[threadID] = title
@@ -1340,14 +1551,14 @@ public actor LiveBackend: BackendService {
         else {
             throw LiveBackendError.noEffortOption(selection.model)
         }
-        // Replace any prior effort selection, keep unrelated options.
-        var options = selection.canonicalOptions ?? []
-        options.removeAll { Self.effortOptionIDs.contains($0.id) }
-        options.append(ProviderOptionSelection(id: descriptor.id, value: .string(value)))
-        let updated = ModelSelection(
-            instanceId: selection.instanceId, model: selection.model, canonicalOptions: options)
+        let updated = Self.modelSelection(selection, settingEffort: value, descriptorID: descriptor.id)
         _ = try await client.updateThreadMeta(threadId: threadID, modelSelection: updated)
         modelSelectionsByThread[threadID] = updated
+        if let instance = providersByInstanceId[selection.instanceId],
+            let provider = providerKind(fromDriver: instance.driver)
+        {
+            rememberReasoningEffort(value, for: provider)
+        }
         updateCachedThread(threadID) { $0.reasoningEffort = value }
     }
 
@@ -1581,6 +1792,34 @@ public actor LiveBackend: BackendService {
         return outcome
     }
 
+    // MARK: - BackendService: mobile pairing
+
+    public func isServerLanReachable() async -> Bool {
+        allowLanAccess && serverProcess != nil
+    }
+
+    public func mintMobilePairing() async throws -> MobilePairingInfo {
+        guard allowLanAccess else { throw LiveBackendError.mobileAccessDisabled }
+        guard let auth = authClient, let port = sidecarPort, currentClient != nil else {
+            throw LiveBackendError.notConnected
+        }
+        guard let address = LanAddressResolver.primaryIPv4() else {
+            throw LiveBackendError.noLanAddress
+        }
+        let accessToken = try await auth.acquireAccessToken()
+        let minted = try await auth.mintPairingCredential(accessToken: accessToken, label: "iPhone")
+        // Same shape the server's headless `serve` QR encodes
+        // (startupAccess.ts buildPairingUrl): path /pair, token in the URL
+        // fragment so it never appears in request logs.
+        guard let url = URL(string: "http://\(address):\(port)/pair#token=\(minted.credential)")
+        else {
+            throw LiveBackendError.noLanAddress
+        }
+        let expiresAt = WireDate.parse(minted.expiresAt) ?? Date().addingTimeInterval(5 * 60)
+        return MobilePairingInfo(
+            pairingURL: url, credential: minted.credential, expiresAt: expiresAt)
+    }
+
     // MARK: - BackendService: settings + providers
 
     public func settings() async throws -> AppSettings {
@@ -1699,17 +1938,29 @@ public actor LiveBackend: BackendService {
     private func mapThread(_ shell: OrchestrationThreadShell) -> ChatThread {
         let kind = resolveProviderKind(
             instanceId: shell.modelSelection.instanceId, providerName: shell.session?.providerName)
+        if shell.archivedAt != nil || shell.session?.status == .error
+            || shell.latestTurn?.state == .error
+        {
+            subagentTasksByThread[shell.id]?.clearActiveTasks()
+        }
+        let activeSubagentCount = subagentTasksByThread[shell.id]?.activeTaskCount ?? 0
         let status = mapStatus(
             session: shell.session, latestTurn: shell.latestTurn, archivedAt: shell.archivedAt,
-            hasPendingApprovals: shell.hasPendingApprovals || shell.hasPendingUserInput)
+            hasPendingApprovals: shell.hasPendingApprovals || shell.hasPendingUserInput,
+            activeSubagentCount: activeSubagentCount)
+        let presentedStatus =
+            status == .running
+            && staleRunningTurnKeys[shell.id] == runningLivenessTurnKey(for: shell)
+            ? .error : status
         let updatedAt = WireDate.parse(shell.updatedAt) ?? Date()
         return ChatThread(
             id: shell.id, projectID: shell.projectId, title: shell.title, provider: kind,
-            status: status, updatedAt: updatedAt,
+            status: presentedStatus, updatedAt: updatedAt,
             runtimeMode: Self.uiRuntimeMode(shell.runtimeMode),
             interactionMode: Self.uiInteractionMode(shell.interactionMode),
             modelInstanceID: shell.modelSelection.instanceId, modelID: shell.modelSelection.model,
-            reasoningEffort: Self.effortValue(of: shell.modelSelection))
+            reasoningEffort: Self.effortValue(of: shell.modelSelection),
+            backgroundAgentCount: activeSubagentCount)
     }
 
     // MARK: - Mode mapping (wire <-> UI)
@@ -1746,25 +1997,20 @@ public actor LiveBackend: BackendService {
 
     private func mapStatus(
         session: OrchestrationSession?, latestTurn: OrchestrationLatestTurn?, archivedAt: String?,
-        hasPendingApprovals: Bool
+        hasPendingApprovals: Bool, activeSubagentCount: Int
     ) -> ThreadStatus {
-        if archivedAt != nil { return .archived }
-        if hasPendingApprovals { return .waitingApproval }
-        if let status = session?.status {
-            switch status {
-            case .running, .starting: return .running
-            case .error: return .error
-            case .idle, .ready, .interrupted, .stopped: break
-            }
+        switch ThreadStatusProjection.project(
+            session: session, latestTurn: latestTurn, archivedAt: archivedAt,
+            hasPendingApprovals: hasPendingApprovals,
+            activeSubagentCount: activeSubagentCount)
+        {
+        case .idle: return .idle
+        case .running: return .running
+        case .waitingApproval: return .waitingApproval
+        case .backgroundWork: return .backgroundWork
+        case .error: return .error
+        case .archived: return .archived
         }
-        if let state = latestTurn?.state {
-            switch state {
-            case .running: return .running
-            case .error: return .error
-            case .interrupted, .completed: break
-            }
-        }
-        return .idle
     }
 
     /// Maps one merged timeline entry to a UI item. Returns nil for entries
@@ -1786,6 +2032,11 @@ public actor LiveBackend: BackendService {
                     pendingUserInputIDs.contains(request.id)
                 else { return nil }
                 return .userInput(request)
+            case ActivityKind.usageLimitReached:
+                guard let notice = mapUsageLimitNotice(activity, threadID: threadID, at: at) else {
+                    return nil
+                }
+                return .usageLimit(notice)
             case ActivityKind.userInputResolved, ActivityKind.turnPlanUpdated,
                 ActivityKind.contextWindowUpdated:
                 return nil
@@ -1821,9 +2072,8 @@ public actor LiveBackend: BackendService {
     }
 
     /// Refined activity row (ActivityRows): lifecycle noise maps to nil,
-    /// tool rows get their human title + payload detail, task progress
-    /// surfaces the actual reasoning text. Row ids are stable across one
-    /// tool call / task, so consumers upsert rather than append.
+    /// tool rows get their human title + payload detail, and row ids are
+    /// stable across one tool call so consumers upsert rather than append.
     private func mapActivity(_ activity: OrchestrationThreadActivity, at: Date) -> TimelineItem? {
         switch ActivityRows.row(for: activity) {
         case .tool(let id, let title, let detail, let itemType, let phase):
@@ -1842,6 +2092,66 @@ public actor LiveBackend: BackendService {
             return .notice(id: id, text: text, at: at)
         case nil:
             return nil
+        }
+    }
+
+    private static func isTaskLifecycleActivity(_ activity: OrchestrationThreadActivity) -> Bool {
+        switch activity.kind {
+        case ActivityKind.taskStarted, ActivityKind.taskProgress, ActivityKind.taskCompleted:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func applySubagentTaskActivity(
+        _ activity: OrchestrationThreadActivity, threadID: String, at: Date
+    ) -> Bool {
+        guard Self.isTaskLifecycleActivity(activity) else { return false }
+        var state = subagentTasksByThread[threadID] ?? T3SubagentTaskActivityState()
+        guard let task = state.apply(activity: activity, at: at) else { return false }
+        subagentTasksByThread[threadID] = state
+        emitOrdered(
+            threadID: threadID,
+            event: .timelineAppended(threadID: threadID, item: mapSubagentTask(task)))
+        reemitThreadWithCurrentProjection(threadID: threadID)
+        return true
+    }
+
+    private func reemitThreadWithCurrentProjection(threadID: String) {
+        if let shell = threadShellsByID[threadID] {
+            let thread = mapThread(shell)
+            threadsByID[threadID] = thread
+            emitOrdered(threadID: threadID, event: .threadUpserted(thread))
+            return
+        }
+        guard var thread = threadsByID[threadID] else { return }
+        let activeCount = subagentTasksByThread[threadID]?.activeTaskCount ?? 0
+        thread.backgroundAgentCount = activeCount
+        if thread.status == .idle, activeCount > 0 {
+            thread.status = .backgroundWork
+        } else if thread.status == .backgroundWork, activeCount == 0 {
+            thread.status = .idle
+        }
+        threadsByID[threadID] = thread
+        emitOrdered(threadID: threadID, event: .threadUpserted(thread))
+    }
+
+    private func mapSubagentTask(_ task: T3SubagentTaskItem) -> TimelineItem {
+        .subagentTask(
+            SubagentTaskItem(
+                taskId: task.taskId, taskType: task.taskType, description: task.description,
+                state: Self.uiSubagentTaskState(task.state),
+                latestProgress: task.completionSummary ?? task.latestProgress,
+                startedAt: task.startedAt, duration: task.duration))
+    }
+
+    private static func uiSubagentTaskState(_ state: T3SubagentTaskState) -> SubagentTaskState {
+        switch state {
+        case .running: .running
+        case .completed: .completed
+        case .failed: .failed
+        case .stopped: .stopped
         }
     }
 
@@ -1894,8 +2204,8 @@ public actor LiveBackend: BackendService {
         if lowered.contains("claude") { return .claude }
         if lowered.contains("codex") { return .codex }
         if lowered.contains("cursor") { return .cursor }
+        if lowered.contains("grok") { return .grok }
         if lowered.contains("opencode") { return .opencode }
-        // No ProviderKind equivalent (e.g. "grok"): the closed enum can't hold it.
         return nil
     }
 
@@ -1922,7 +2232,9 @@ public actor LiveBackend: BackendService {
     private func modelSelection(for provider: ProviderKind) -> ModelSelection? {
         // Prefer the model the user last picked for this provider kind, so a
         // new thread doesn't silently reset to the instance's first model.
-        if let remembered = lastUsedModelSelection(for: provider) { return remembered }
+        if let remembered = lastUsedModelSelection(for: provider) {
+            return applyingLastUsedEffort(to: remembered, for: provider)
+        }
         // Same bar as the provider list UI (`availability(for:)`): an
         // uninstalled/unauthenticated instance, or one with no models, can't
         // run a thread — returning nil surfaces `noProviderForKind` instead
@@ -1933,19 +2245,65 @@ public actor LiveBackend: BackendService {
                 && !$0.models.isEmpty
         }
         guard let chosen, let model = chosen.models.first?.slug else { return nil }
-        return ModelSelection(instanceId: chosen.instanceId, model: model)
+        return applyingLastUsedEffort(
+            to: ModelSelection(instanceId: chosen.instanceId, model: model), for: provider)
     }
 
-    // MARK: - Last-used model memory
+    private static func modelSelection(
+        _ selection: ModelSelection, settingEffort effort: String, descriptorID: String
+    ) -> ModelSelection {
+        // Replace any prior effort selection, keep unrelated options.
+        var options = selection.canonicalOptions ?? []
+        options.removeAll { Self.effortOptionIDs.contains($0.id) }
+        options.append(ProviderOptionSelection(id: descriptorID, value: .string(effort)))
+        return ModelSelection(
+            instanceId: selection.instanceId, model: selection.model, canonicalOptions: options)
+    }
+
+    private func applyingLastUsedEffort(
+        to selection: ModelSelection, for provider: ProviderKind
+    ) -> ModelSelection {
+        guard
+            let instance = providersByInstanceId[selection.instanceId],
+            let model = instance.models.first(where: { $0.slug == selection.model }),
+            let descriptor = Self.effortDescriptor(of: model),
+            let effort = resolvedLastUsedEffort(for: provider, descriptor: descriptor)
+        else { return selection }
+        return Self.modelSelection(selection, settingEffort: effort, descriptorID: descriptor.id)
+    }
+
+    private func resolvedLastUsedEffort(
+        for provider: ProviderKind, descriptor: SelectProviderOptionDescriptor
+    ) -> String? {
+        guard let remembered = lastUsedReasoningEffort(for: provider) else { return nil }
+        if descriptor.options.contains(where: { $0.id == remembered }) {
+            return remembered
+        }
+        return descriptor.options.first(where: { $0.isDefault == true })?.id
+    }
+
+    // MARK: - Last-used model/effort memory
 
     private static func lastUsedModelKey(for provider: ProviderKind) -> String {
         "lastUsedModel.\(provider.rawValue)"
+    }
+
+    private static func lastUsedEffortKey(for provider: ProviderKind) -> String {
+        "lastUsedEffort.\(provider.rawValue)"
     }
 
     private func rememberModelSelection(_ selection: ModelSelection, for provider: ProviderKind) {
         UserDefaults.standard.set(
             "\(selection.instanceId)\t\(selection.model)",
             forKey: Self.lastUsedModelKey(for: provider))
+    }
+
+    private func rememberReasoningEffort(_ value: String, for provider: ProviderKind) {
+        UserDefaults.standard.set(value, forKey: Self.lastUsedEffortKey(for: provider))
+    }
+
+    private func lastUsedReasoningEffort(for provider: ProviderKind) -> String? {
+        UserDefaults.standard.string(forKey: Self.lastUsedEffortKey(for: provider))
     }
 
     /// The remembered selection, only while it still points at an available
@@ -1978,6 +2336,11 @@ public enum LiveBackendError: Error, Sendable {
     case unknownThread(String)
     /// The thread's model exposes no reasoning-effort option descriptor.
     case noEffortOption(String)
+    /// Mobile pairing requested while the sidecar is loopback-only (the
+    /// preference was off at launch); relaunch applies the new bind host.
+    case mobileAccessDisabled
+    /// No non-loopback IPv4 interface found — not on a network.
+    case noLanAddress
 }
 
 // MARK: - Unified diff parsing (getFullThreadDiff string -> [DiffFile])

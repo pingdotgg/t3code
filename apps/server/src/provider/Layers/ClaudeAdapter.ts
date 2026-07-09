@@ -38,6 +38,7 @@ import {
   type ProviderSession,
   type ThreadTokenUsageSnapshot,
   type ProviderUserInputAnswers,
+  type RuntimeUsageLimitDetail,
   type RuntimeContentStreamKind,
   RuntimeItemId,
   RuntimeRequestId,
@@ -88,6 +89,7 @@ import {
 } from "../Errors.ts";
 import { type ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { detectClaudeUsageLimit, isUsageLimitDetail } from "../UsageLimit.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.UnknownFromJsonString);
 const decodeUnknownJsonStringExit = Schema.decodeUnknownExit(Schema.UnknownFromJsonString);
 
@@ -193,12 +195,14 @@ interface ClaudeSessionContext {
   }>;
   readonly inFlightTools: Map<number, ToolInFlight>;
   readonly claudeTasks: Map<string, ClaudeTaskState>;
+  claudeTaskPlanFingerprint: string | undefined;
   turnState: ClaudeTurnState | undefined;
   lastKnownContextWindow: number | undefined;
   lastKnownTokenUsage: ThreadTokenUsageSnapshot | undefined;
   lastKnownTotalProcessedTokens: number | undefined;
   lastAssistantUuid: string | undefined;
   lastThreadStartedId: string | undefined;
+  pendingUsageLimit: RuntimeUsageLimitDetail | undefined;
   stopped: boolean;
 }
 
@@ -696,12 +700,75 @@ function extractPlanStepsFromTodoInput(input: Record<string, unknown>): PlanStep
     }));
 }
 
-function isClaudeTaskTool(toolName: string): boolean {
-  return toolName === "TaskCreate" || toolName === "TaskUpdate" || toolName === "TaskList";
+type ClaudeTaskToolKind = "create" | "get" | "update" | "list";
+
+function claudeTaskToolKind(toolName: string): ClaudeTaskToolKind | undefined {
+  const normalized = toolName.toLowerCase().replace(/[^a-z0-9]/g, "");
+  switch (normalized) {
+    case "taskcreate":
+      return "create";
+    case "taskget":
+      return "get";
+    case "taskupdate":
+      return "update";
+    case "tasklist":
+      return "list";
+    default:
+      return undefined;
+  }
 }
 
 function normalizeClaudeTaskStatus(value: unknown): PlanStep["status"] {
-  return value === "completed" ? "completed" : value === "in_progress" ? "inProgress" : "pending";
+  if (typeof value !== "string") {
+    return "pending";
+  }
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+  switch (normalized) {
+    case "completed":
+    case "complete":
+    case "done":
+    case "success":
+    case "succeeded":
+    case "passed":
+    case "failed":
+    case "failure":
+    case "error":
+    case "errored":
+    case "killed":
+    case "stopped":
+    case "cancelled":
+    case "canceled":
+      return "completed";
+    case "in_progress":
+    case "inprogress":
+    case "running":
+    case "active":
+    case "started":
+    case "executing":
+      return "inProgress";
+    case "pending":
+    case "queued":
+    case "todo":
+    case "not_started":
+    case "paused":
+    case "blocked":
+    default:
+      return "pending";
+  }
+}
+
+function isDeletedClaudeTaskStatus(value: unknown): boolean {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+  return normalized === "deleted" || normalized === "delete" || normalized === "removed";
 }
 
 function readString(value: unknown): string | undefined {
@@ -714,23 +781,257 @@ function readStringArray(value: unknown): Array<string> {
     : [];
 }
 
-function readClaudeToolUseResult(message: SDKMessage): Record<string, unknown> | undefined {
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function readJsonRecordFromToolResultBlock(
+  block: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const content = block.content;
+  const directContent = asRecord(content);
+  if (directContent) {
+    return directContent;
+  }
+
+  const text = extractTextContent(content).trim();
+  return text.length > 0 ? tryParseJsonRecord(text) : undefined;
+}
+
+function readClaudeToolUseResult(
+  message: SDKMessage,
+  block?: Record<string, unknown>,
+): Record<string, unknown> | undefined {
   if (message.type !== "user") {
     return undefined;
   }
-  const result = (message as { readonly tool_use_result?: unknown }).tool_use_result;
-  return result !== null && typeof result === "object" && !Array.isArray(result)
-    ? (result as Record<string, unknown>)
-    : undefined;
+  return (
+    asRecord((message as { readonly tool_use_result?: unknown }).tool_use_result) ??
+    (block ? readJsonRecordFromToolResultBlock(block) : undefined)
+  );
 }
 
 function readClaudeTaskFromResult(
   result: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
-  const task = result?.task;
-  return task !== null && typeof task === "object" && !Array.isArray(task)
-    ? (task as Record<string, unknown>)
-    : undefined;
+  return asRecord(result?.task) ?? asRecord(result);
+}
+
+function readClaudeTaskSubject(input: Record<string, unknown>): string | undefined {
+  return readString(input.subject) ?? readString(input.description) ?? readString(input.activeForm);
+}
+
+function readClaudeTaskId(input: Record<string, unknown>): string | undefined {
+  return readString(input.taskId) ?? readString(input.task_id) ?? readString(input.id);
+}
+
+function syntheticClaudeTaskId(tool: ToolInFlight): string {
+  return `tool:${tool.itemId}`;
+}
+
+function updateClaudeTaskBlockedBy(
+  task: ClaudeTaskState,
+  input: {
+    readonly add?: ReadonlyArray<string>;
+    readonly remove?: ReadonlyArray<string>;
+    readonly replace?: ReadonlyArray<string>;
+  },
+): boolean {
+  let changed = false;
+  if (input.replace) {
+    const next = new Set(input.replace);
+    const current = Array.from(task.blockedBy);
+    if (current.length !== next.size || current.some((entry) => !next.has(entry))) {
+      task.blockedBy.clear();
+      for (const dependency of next) {
+        task.blockedBy.add(dependency);
+      }
+      changed = true;
+    }
+  }
+  for (const dependency of input.add ?? []) {
+    if (!task.blockedBy.has(dependency)) {
+      task.blockedBy.add(dependency);
+      changed = true;
+    }
+  }
+  for (const dependency of input.remove ?? []) {
+    if (task.blockedBy.delete(dependency)) {
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+function upsertClaudeTask(
+  tasks: Map<string, ClaudeTaskState>,
+  input: {
+    readonly id: string;
+    readonly subject?: string;
+    readonly status?: PlanStep["status"];
+    readonly blockedBy?: ReadonlyArray<string>;
+  },
+): boolean {
+  const subject = input.subject ?? "Task";
+  const status = input.status ?? "pending";
+  const existing = tasks.get(input.id);
+  if (!existing) {
+    tasks.set(input.id, {
+      id: input.id,
+      subject,
+      status,
+      blockedBy: new Set(input.blockedBy ?? []),
+    });
+    return true;
+  }
+
+  let changed = false;
+  if (input.subject && existing.subject !== input.subject) {
+    existing.subject = input.subject;
+    changed = true;
+  }
+  if (input.status && existing.status !== input.status) {
+    existing.status = input.status;
+    changed = true;
+  }
+  if (
+    input.blockedBy &&
+    updateClaudeTaskBlockedBy(existing, {
+      replace: input.blockedBy,
+    })
+  ) {
+    changed = true;
+  }
+  return changed;
+}
+
+function replaceClaudeTaskId(
+  tasks: Map<string, ClaudeTaskState>,
+  fromId: string,
+  toId: string,
+): boolean {
+  if (fromId === toId || !tasks.has(fromId)) {
+    return false;
+  }
+
+  const entries = Array.from(tasks.entries());
+  const existingTarget = tasks.get(toId);
+  tasks.clear();
+  let changed = false;
+  for (const [id, task] of entries) {
+    if (id === fromId) {
+      if (existingTarget) {
+        tasks.set(toId, {
+          id: toId,
+          subject: existingTarget.subject || task.subject,
+          status: existingTarget.status,
+          blockedBy: new Set([...task.blockedBy, ...existingTarget.blockedBy]),
+        });
+      } else {
+        tasks.set(toId, {
+          id: toId,
+          subject: task.subject,
+          status: task.status,
+          blockedBy: new Set(task.blockedBy),
+        });
+      }
+      changed = true;
+      continue;
+    }
+    if (id === toId && existingTarget) {
+      continue;
+    }
+    tasks.set(id, task);
+  }
+
+  for (const task of tasks.values()) {
+    if (task.blockedBy.delete(fromId)) {
+      task.blockedBy.add(toId);
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+function applyClaudeTaskToolInput(
+  tasks: Map<string, ClaudeTaskState>,
+  tool: ToolInFlight,
+): boolean {
+  const kind = claudeTaskToolKind(tool.toolName);
+  if (!kind) {
+    return false;
+  }
+
+  if (kind === "create") {
+    const subject = readClaudeTaskSubject(tool.input);
+    if (!subject) {
+      return false;
+    }
+    return upsertClaudeTask(tasks, {
+      id: syntheticClaudeTaskId(tool),
+      subject,
+      status: normalizeClaudeTaskStatus(tool.input.status),
+      blockedBy: [
+        ...readStringArray(tool.input.blockedBy),
+        ...readStringArray(tool.input.addBlockedBy),
+      ],
+    });
+  }
+
+  if (kind !== "update") {
+    return false;
+  }
+
+  const taskId = readClaudeTaskId(tool.input);
+  if (!taskId) {
+    return false;
+  }
+  if (isDeletedClaudeTaskStatus(tool.input.status)) {
+    return tasks.delete(taskId);
+  }
+
+  const subject = readClaudeTaskSubject(tool.input);
+  const hasStatus = typeof tool.input.status === "string";
+  const existing = tasks.get(taskId);
+  let changed = false;
+  if (!existing) {
+    tasks.set(taskId, {
+      id: taskId,
+      subject: subject ?? "Task",
+      status: hasStatus ? normalizeClaudeTaskStatus(tool.input.status) : "pending",
+      blockedBy: new Set([
+        ...readStringArray(tool.input.blockedBy),
+        ...readStringArray(tool.input.addBlockedBy),
+      ]),
+    });
+    changed = true;
+  } else {
+    if (subject && existing.subject !== subject) {
+      existing.subject = subject;
+      changed = true;
+    }
+    if (hasStatus) {
+      const status = normalizeClaudeTaskStatus(tool.input.status);
+      if (existing.status !== status) {
+        existing.status = status;
+        changed = true;
+      }
+    }
+  }
+
+  const task = tasks.get(taskId);
+  if (
+    task &&
+    updateClaudeTaskBlockedBy(task, {
+      add: [...readStringArray(tool.input.blockedBy), ...readStringArray(tool.input.addBlockedBy)],
+      remove: readStringArray(tool.input.removeBlockedBy),
+    })
+  ) {
+    changed = true;
+  }
+  return changed;
 }
 
 function applyClaudeTaskToolResult(
@@ -738,12 +1039,12 @@ function applyClaudeTaskToolResult(
   tool: ToolInFlight,
   result: Record<string, unknown> | undefined,
 ): boolean {
-  if (!isClaudeTaskTool(tool.toolName)) {
+  const kind = claudeTaskToolKind(tool.toolName);
+  if (!kind) {
     return false;
   }
 
-  let changed = false;
-  if (tool.toolName === "TaskList") {
+  if (kind === "list") {
     const resultTasks = result?.tasks;
     if (!Array.isArray(resultTasks)) {
       return false;
@@ -766,55 +1067,95 @@ function applyClaudeTaskToolResult(
         blockedBy: new Set(readStringArray(task.blockedBy)),
       });
     }
-    return tasks.size > 0;
-  }
-
-  if (tool.toolName === "TaskCreate") {
-    const resultTask = readClaudeTaskFromResult(result);
-    const id = readString(resultTask?.id);
-    const subject = readString(resultTask?.subject) ?? readString(tool.input.subject);
-    if (!id || !subject) {
-      return false;
-    }
-    tasks.set(id, {
-      id,
-      subject,
-      status: normalizeClaudeTaskStatus(tool.input.status),
-      blockedBy: new Set(readStringArray(tool.input.blockedBy)),
-    });
     return true;
   }
 
-  const taskId = readString(tool.input.taskId) ?? readString(result?.taskId);
+  if (kind === "get") {
+    const inputTaskId = readClaudeTaskId(tool.input);
+    if (result && "task" in result && result.task === null) {
+      return inputTaskId ? tasks.delete(inputTaskId) : false;
+    }
+    const resultTask = readClaudeTaskFromResult(result);
+    if (!resultTask) {
+      return inputTaskId ? tasks.delete(inputTaskId) : false;
+    }
+    const id = readClaudeTaskId(resultTask) ?? inputTaskId;
+    const subject = readClaudeTaskSubject(resultTask);
+    if (!id || !subject) {
+      return false;
+    }
+    return upsertClaudeTask(tasks, {
+      id,
+      subject,
+      status: normalizeClaudeTaskStatus(resultTask.status),
+      ...(resultTask.blockedBy !== undefined
+        ? { blockedBy: readStringArray(resultTask.blockedBy) }
+        : {}),
+    });
+  }
+
+  if (kind === "create") {
+    const resultTask = readClaudeTaskFromResult(result);
+    const syntheticId = syntheticClaudeTaskId(tool);
+    const resultId =
+      readClaudeTaskId(resultTask ?? {}) ?? readClaudeTaskId(result ?? {}) ?? syntheticId;
+    const subject =
+      readClaudeTaskSubject(tool.input) ??
+      (resultTask ? readClaudeTaskSubject(resultTask) : undefined) ??
+      (result ? readClaudeTaskSubject(result) : undefined);
+    let changed = replaceClaudeTaskId(tasks, syntheticId, resultId);
+    if (
+      upsertClaudeTask(tasks, {
+        id: resultId,
+        ...(subject ? { subject } : {}),
+        status: normalizeClaudeTaskStatus(tool.input.status),
+        blockedBy: [
+          ...readStringArray(tool.input.blockedBy),
+          ...readStringArray(tool.input.addBlockedBy),
+        ],
+      })
+    ) {
+      changed = true;
+    }
+    return changed;
+  }
+
+  const taskId = readClaudeTaskId(tool.input) ?? readClaudeTaskId(result ?? {});
   if (!taskId) {
     return false;
   }
+  if (isDeletedClaudeTaskStatus(tool.input.status)) {
+    return tasks.delete(taskId);
+  }
+
+  const statusChange = asRecord(result?.statusChange);
+  const resultStatus = result?.status ?? statusChange?.to;
+  const subject =
+    readClaudeTaskSubject(tool.input) ?? (result ? readClaudeTaskSubject(result) : undefined);
+  const status =
+    typeof tool.input.status === "string"
+      ? normalizeClaudeTaskStatus(tool.input.status)
+      : typeof resultStatus === "string"
+        ? normalizeClaudeTaskStatus(resultStatus)
+        : undefined;
+  let changed = upsertClaudeTask(tasks, {
+    id: taskId,
+    ...(subject ? { subject } : {}),
+    ...(status ? { status } : {}),
+    ...(tool.input.blockedBy !== undefined
+      ? { blockedBy: readStringArray(tool.input.blockedBy) }
+      : {}),
+  });
+
   const task = tasks.get(taskId);
-  if (!task) {
-    return false;
-  }
-  const subject = readString(tool.input.subject);
-  if (subject && task.subject !== subject) {
-    task.subject = subject;
+  if (
+    task &&
+    updateClaudeTaskBlockedBy(task, {
+      add: readStringArray(tool.input.addBlockedBy),
+      remove: readStringArray(tool.input.removeBlockedBy),
+    })
+  ) {
     changed = true;
-  }
-  if (typeof tool.input.status === "string") {
-    const status = normalizeClaudeTaskStatus(tool.input.status);
-    if (task.status !== status) {
-      task.status = status;
-      changed = true;
-    }
-  }
-  for (const dependency of readStringArray(tool.input.addBlockedBy)) {
-    if (!task.blockedBy.has(dependency)) {
-      task.blockedBy.add(dependency);
-      changed = true;
-    }
-  }
-  for (const dependency of readStringArray(tool.input.removeBlockedBy)) {
-    if (task.blockedBy.delete(dependency)) {
-      changed = true;
-    }
   }
   return changed;
 }
@@ -828,6 +1169,10 @@ function planStepsFromClaudeTasks(tasks: Map<string, ClaudeTaskState>): PlanStep
       status: task.status,
     };
   });
+}
+
+function claudeTaskPlanFingerprint(plan: ReadonlyArray<PlanStep>): string {
+  return JSON.stringify(plan);
 }
 
 function summarizeToolRequest(toolName: string, input: Record<string, unknown>): string {
@@ -1700,7 +2045,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       ...(turnState ? { turnId: asCanonicalTurnId(turnState.turnId) } : {}),
       payload: {
         message,
-        class: "provider_error",
+        class: isUsageLimitDetail(cause) ? "usage_limit" : "provider_error",
         ...(cause !== undefined ? { detail: cause } : {}),
       },
       providerRefs: nativeProviderRefs(context),
@@ -1849,9 +2194,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     },
   ) {
     const plan = planStepsFromClaudeTasks(context.claudeTasks);
-    if (plan.length === 0) {
+    const fingerprint = claudeTaskPlanFingerprint(plan);
+    if (context.claudeTaskPlanFingerprint === fingerprint) {
       return;
     }
+    context.claudeTaskPlanFingerprint = fingerprint;
 
     const stamp = yield* makeEventStamp();
     yield* offerRuntimeEvent({
@@ -2241,6 +2588,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             });
           }
         }
+        if (parsedInput && applyClaudeTaskToolInput(context.claudeTasks, nextTool)) {
+          yield* emitClaudeTaskPlanUpdated(context, {
+            toolUseId: nextTool.itemId,
+            rawMethod: "claude/stream_event/content_block_delta/input_json_delta",
+            rawPayload: message,
+          });
+        }
       }
       return;
     }
@@ -2312,6 +2666,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           payload: message,
         },
       });
+      if (applyClaudeTaskToolInput(context.claudeTasks, tool)) {
+        yield* emitClaudeTaskPlanUpdated(context, {
+          toolUseId: tool.itemId,
+          rawMethod: "claude/stream_event/content_block_start",
+          rawPayload: message,
+        });
+      }
       return;
     }
 
@@ -2355,7 +2716,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
       const [index, tool] = toolEntry;
       const itemStatus = toolResult.isError ? "failed" : "completed";
-      const toolUseResult = readClaudeToolUseResult(message);
+      const toolUseResult = readClaudeToolUseResult(message, toolResult.block);
       const toolData = {
         toolName: tool.toolName,
         input: tool.input,
@@ -2553,12 +2914,27 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     const status = turnStatusFromResult(message);
     const errorMessage = message.subtype === "success" ? undefined : message.errors[0];
+    const usageLimit =
+      status === "failed"
+        ? (detectClaudeUsageLimit({
+            message: errorMessage,
+            raw: message,
+            source: "result",
+          }) ?? context.pendingUsageLimit)
+        : undefined;
 
     if (status === "failed") {
-      yield* emitRuntimeError(context, errorMessage ?? "Claude turn failed.");
+      yield* emitRuntimeError(
+        context,
+        errorMessage ?? (usageLimit ? "Claude usage limit reached." : "Claude turn failed."),
+        usageLimit,
+      );
     }
 
     yield* completeTurn(context, status, errorMessage, message);
+    if (usageLimit !== undefined || status !== "failed") {
+      context.pendingUsageLimit = undefined;
+    }
   });
 
   const handleSystemMessage = Effect.fn("handleSystemMessage")(function* (
@@ -2838,6 +3214,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     if (message.type === "rate_limit_event") {
+      const usageLimit = detectClaudeUsageLimit({
+        raw: message,
+        source: "rate_limit_event",
+      });
+      if (usageLimit !== undefined) {
+        context.pendingUsageLimit = usageLimit;
+      }
       yield* offerRuntimeEvent({
         ...base,
         type: "account.rate-limits.updated",
@@ -2934,11 +3317,25 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         const failures = exit.cause.reasons.flatMap((reason) =>
           Cause.isFailReason(reason) ? [reason.error] : [],
         );
-        const message = failures[0]?.detail ?? "Claude runtime stream failed.";
-        yield* emitRuntimeError(context, message, {
-          failureCount: failures.length,
-          failureTags: failures.map((failure) => failure._tag),
-        });
+        const usageLimit = context.pendingUsageLimit;
+        const message =
+          usageLimit !== undefined
+            ? "Claude usage limit reached."
+            : (failures[0]?.detail ?? "Claude runtime stream failed.");
+        yield* emitRuntimeError(
+          context,
+          message,
+          usageLimit ?? {
+            failureCount: failures.length,
+            failureTags: failures.map((failure) => failure._tag),
+          },
+        );
+        yield* completeTurn(context, "failed", message);
+      }
+    } else if (context.pendingUsageLimit !== undefined) {
+      const message = "Claude usage limit reached.";
+      yield* emitRuntimeError(context, message, context.pendingUsageLimit);
+      if (context.turnState) {
         yield* completeTurn(context, "failed", message);
       }
     } else if (context.turnState) {
@@ -3557,12 +3954,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         turns: [],
         inFlightTools,
         claudeTasks,
+        claudeTaskPlanFingerprint: undefined,
         turnState: undefined,
         lastKnownContextWindow: initialContextWindow,
         lastKnownTokenUsage: undefined,
         lastKnownTotalProcessedTokens: undefined,
         lastAssistantUuid: resumeState?.resumeSessionAt,
         lastThreadStartedId: undefined,
+        pendingUsageLimit: undefined,
         stopped: false,
       };
       yield* Ref.set(contextRef, context);

@@ -82,6 +82,7 @@ import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSna
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
+import { ProviderService, type ProviderServiceShape } from "./provider/Services/ProviderService.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "./provider/providerMaintenance.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -332,6 +333,7 @@ const buildAppUnderTest = (options?: {
       ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]
     >;
     terminalManager?: Partial<TerminalManager.TerminalManager["Service"]>;
+    providerService?: Partial<ProviderServiceShape>;
     orchestrationEngine?: Partial<OrchestrationEngine.OrchestrationEngineService["Service"]>;
     projectionSnapshotQuery?: Partial<ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"]>;
     checkpointDiffQuery?: Partial<CheckpointDiffQuery.CheckpointDiffQuery["Service"]>;
@@ -519,6 +521,35 @@ const buildAppUnderTest = (options?: {
           ...options.layers.vcsStatusBroadcaster,
         })
       : VcsStatusBroadcaster.layer.pipe(Layer.provide(gitWorkflowLayer));
+    const unsupportedProviderServiceCall = <A, E = never>(): Effect.Effect<A, E> =>
+      Effect.die(new Error("ProviderService not stubbed in this test")) as Effect.Effect<A, E>;
+    const providerService: ProviderServiceShape = {
+      startSession: () => unsupportedProviderServiceCall(),
+      sendTurn: () => unsupportedProviderServiceCall(),
+      interruptTurn: () => unsupportedProviderServiceCall(),
+      respondToRequest: () => unsupportedProviderServiceCall(),
+      respondToUserInput: () => unsupportedProviderServiceCall(),
+      stopSession: () => unsupportedProviderServiceCall(),
+      listSessions: () => Effect.succeed([]),
+      getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
+      getInstanceInfo: (instanceId) => {
+        const driverKind = ProviderDriverKind.make(String(instanceId));
+        return Effect.succeed({
+          instanceId,
+          driverKind,
+          displayName: undefined,
+          enabled: true,
+          continuationIdentity: {
+            driverKind,
+            continuationKey: `${driverKind}:instance:${instanceId}`,
+          },
+        });
+      },
+      rollbackConversation: () => unsupportedProviderServiceCall(),
+      streamEvents: Stream.empty,
+      ...options?.layers?.providerService,
+    };
+    const providerServiceLayer = Layer.succeed(ProviderService, providerService);
 
     const servedRoutesLayer = HttpRouter.serve(makeRoutesLayer, {
       disableListenLog: true,
@@ -799,6 +830,7 @@ const buildAppUnderTest = (options?: {
           ...options?.layers?.cloudCliTokenManager,
         }),
       ),
+      Layer.provide(providerServiceLayer),
       Layer.provideMerge(makeAuthTestLayer()),
       Layer.provideMerge(ServerSecretStore.layer),
       Layer.provide(workspaceAndProjectServicesLayer),
@@ -5504,15 +5536,48 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           },
         ],
       };
+      const threadShell = makeDefaultOrchestrationThreadShell({
+        id: ThreadId.make("thread-1"),
+        projectId: ProjectId.make("project-a"),
+        title: "Thread A",
+        modelSelection: defaultModelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        latestTurn: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        session: null,
+      });
 
       yield* buildAppUnderTest({
         layers: {
           projectionSnapshotQuery: {
             getSnapshot: () => Effect.succeed(snapshot),
+            getThreadShellById: (threadId) =>
+              Effect.succeed(
+                threadId === threadShell.id ? Option.some(threadShell) : Option.none(),
+              ),
           },
           orchestrationEngine: {
             dispatch: () => Effect.succeed({ sequence: 7 }),
             readEvents: () => Stream.empty,
+          },
+          providerService: {
+            listSessions: () =>
+              Effect.succeed([
+                {
+                  provider: ProviderDriverKind.make("codex"),
+                  providerInstanceId: ProviderInstanceId.make("codex"),
+                  status: "running",
+                  runtimeMode: "full-access",
+                  threadId: ThreadId.make("thread-1"),
+                  createdAt: now,
+                  updatedAt: now,
+                },
+              ]),
           },
           checkpointDiffQuery: {
             getTurnDiff: () =>
@@ -5566,6 +5631,17 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
       assert.equal(fullDiffResult.diff, "full-diff");
+
+      const livenessResult = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.getThreadLiveness]({
+            threadId: ThreadId.make("thread-1"),
+          }),
+        ),
+      );
+      assert.equal(livenessResult.hasLiveSession, true);
+      assert.equal(livenessResult.hasActiveTurn, true);
+      assert.equal(livenessResult.activeTurnId, null);
 
       const replayResult = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>

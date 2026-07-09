@@ -179,7 +179,7 @@ it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
             textGeneration.generateThreadTitle({
               cwd: process.cwd(),
               message: "anything",
-              modelSelection: createModelSelection(ProviderInstanceId.make("grok"), "grok-build"),
+              modelSelection: createModelSelection(ProviderInstanceId.make("grok"), "grok-4.5"),
             }),
           );
           expect(error._tag).toBe("TextGenerationError");
@@ -205,7 +205,7 @@ it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
             commitSummary: "feat: add grok provider",
             diffSummary: "M apps/server/src/provider/Drivers/GrokDriver.ts",
             diffPatch: "diff --git a/.../GrokDriver.ts b/.../GrokDriver.ts",
-            modelSelection: createModelSelection(ProviderInstanceId.make("grok"), "grok-build"),
+            modelSelection: createModelSelection(ProviderInstanceId.make("grok"), "grok-4.5"),
           });
 
           expect(generated.title).toBe("feat(grok): wire up session/set_model");
@@ -225,7 +225,7 @@ it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
             textGeneration.generateThreadTitle({
               cwd: process.cwd(),
               message: "anything",
-              modelSelection: createModelSelection(ProviderInstanceId.make("grok"), "grok-build"),
+              modelSelection: createModelSelection(ProviderInstanceId.make("grok"), "grok-4.5"),
             }),
           );
           expect(error._tag).toBe("TextGenerationError");

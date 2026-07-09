@@ -3,11 +3,9 @@
 // whose kind/summary/payload are wire-shaped (ProviderRuntimeIngestion.ts):
 // rendered verbatim they read as "tool.started" / "Reasoning update" spam.
 // This mirrors the web client's deriveWorkLogEntries (session-logic.ts):
-// lifecycle noise is dropped, tool events carry their human title + payload
-// detail, and task progress surfaces the actual reasoning text. Rows carry a
-// stable id so lifecycle updates for the same tool call (or successive
-// reasoning updates of the same task) *replace* the prior row instead of
-// stacking — the app layer upserts by id.
+// lifecycle noise is dropped, and tool events carry their human title + payload
+// detail. Rows carry a stable id so lifecycle updates for the same tool call
+// *replace* the prior row instead of stacking — the app layer upserts by id.
 
 import Foundation
 
@@ -36,47 +34,16 @@ public enum ActivityRows {
     public static func row(for activity: OrchestrationThreadActivity) -> T3ActivityRow? {
         switch activity.kind {
         // `tool.started` is always superseded by `tool.updated`/`.completed`
-        // for the same call; `task.started` says nothing the first progress
-        // update doesn't; the context-window kind feeds the meter side
+        // for the same call; the context-window kind feeds the meter side
         // channel, never the timeline.
-        case ActivityKind.toolStarted, ActivityKind.taskStarted,
-            ActivityKind.contextWindowUpdated:
+        case ActivityKind.toolStarted, ActivityKind.contextWindowUpdated:
             return nil
 
-        case ActivityKind.taskProgress:
-            let payload = activity.decodePayload(TaskProgressActivityPayload.self)
-            // The wire summary is the literal string "Reasoning update"; the
-            // actual reasoning text lives in payload.summary/detail. No text
-            // -> no row (an empty "Reasoning update" marker carries nothing).
-            guard let text = nonEmpty(payload?.summary) ?? nonEmpty(payload?.detail) else {
-                return nil
-            }
-            let base = nonEmpty(payload?.taskId) ?? activity.id
-            return .reasoning(id: "task:\(base):reasoning", text: text)
-
-        case ActivityKind.taskCompleted:
-            let payload = activity.decodePayload(TaskCompletedActivityPayload.self)
-            let detail = nonEmpty(payload?.detail)
-            switch payload?.status {
-            case "failed":
-                return .tool(
-                    id: activity.id, title: activity.summary, detail: detail ?? "",
-                    itemType: nil, phase: .failed)
-            case "stopped":
-                // Interrupted, not succeeded: keep the info notice ("Task
-                // stopped", or the provider's result summary when present)
-                // instead of dropping it or faking a success phase.
-                return .notice(
-                    id: activity.id,
-                    text: detail ?? nonEmpty(activity.summary) ?? "Task stopped")
-            default:
-                // A bare completion (no result summary) that succeeded adds
-                // nothing over the task's last reasoning row.
-                guard let detail else { return nil }
-                return .tool(
-                    id: activity.id, title: activity.summary, detail: detail,
-                    itemType: nil, phase: .succeeded)
-            }
+        case ActivityKind.taskStarted, ActivityKind.taskProgress, ActivityKind.taskCompleted:
+            // Task lifecycle rows are stateful. LiveBackend folds them through
+            // T3SubagentTaskActivityState before calling this generic mapper;
+            // mapping one event here would split/lose lifecycle aggregation.
+            return nil
 
         case ActivityKind.runtimeWarning:
             // Unknown-SDK-message warnings whose whole body is the server's

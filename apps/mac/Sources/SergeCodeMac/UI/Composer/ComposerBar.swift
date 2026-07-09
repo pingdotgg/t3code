@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -20,6 +21,9 @@ public struct ComposerBar: View {
     @UIState private var mentionQuery: String?
     @UIState private var mentionSearchTask: Task<Void, Never>?
 
+    @UIState private var showDictationDownloadPrompt = false
+    @FocusState private var editorFocused: Bool
+
     private static let maxAttachments = 8
     private static let maxAttachmentBytes = 10 * 1024 * 1024
 
@@ -35,6 +39,10 @@ public struct ComposerBar: View {
         (!trimmedDraft.isEmpty || !attachments.isEmpty) && model.connection == .ready
     }
 
+    private var canQueue: Bool {
+        isThreadRunning && canSend
+    }
+
     private var isThreadRunning: Bool {
         model.selectedThread?.status == .running
     }
@@ -44,6 +52,16 @@ public struct ComposerBar: View {
     /// a grayed-out send button otherwise.
     private var showsStop: Bool {
         isThreadRunning && trimmedDraft.isEmpty && attachments.isEmpty
+    }
+
+    private var sendIconName: String {
+        if showsStop { return "stop.fill" }
+        return isThreadRunning ? "arrow.up.right.circle.fill" : "paperplane.fill"
+    }
+
+    private var sendHelp: String {
+        if showsStop { return "Stop the current turn" }
+        return isThreadRunning ? "Send now - steers the running agent" : "Send message"
     }
 
     /// Provider slash commands + mode built-ins, filtered by the `/token`
@@ -85,6 +103,16 @@ public struct ComposerBar: View {
                 .transition(Motion.pop(from: .bottomLeading))
             }
 
+            if !model.selectedQueuedMessages.isEmpty {
+                QueuedMessagesStrip(
+                    messages: model.selectedQueuedMessages,
+                    onEdit: editQueuedMessage,
+                    onSendNow: sendQueuedMessageNow,
+                    onRemove: removeQueuedMessage
+                )
+                .transition(Motion.bannerDrop)
+            }
+
             if let thread = model.selectedThread {
                 ComposerControlsRow(thread: thread, model: model)
             }
@@ -104,19 +132,31 @@ public struct ComposerBar: View {
                     .transition(Motion.rise)
             }
 
+            if let dictationError = model.dictation.lastError {
+                Text(dictationError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .padding(.horizontal, 4)
+                    .transition(Motion.rise)
+            }
+
             GlassEffectContainer {
                 HStack(alignment: .bottom, spacing: 10) {
                     Button {
                         showFileImporter = true
                     } label: {
                         Image(systemName: "paperclip")
+                            .foregroundStyle(.secondary)
+                            .alpineIconLabel()
                     }
                     .buttonStyle(.glass)
+                    .buttonBorderShape(.circle)
                     .disabled(attachments.count >= Self.maxAttachments)
                     .help("Attach images")
 
                     TextEditor(text: $draft)
                         .font(.body)
+                        .focused($editorFocused)
                         .scrollContentBackground(.hidden)
                         .frame(minHeight: 22, maxHeight: 120)
                         .fixedSize(horizontal: false, vertical: true)
@@ -134,16 +174,24 @@ public struct ComposerBar: View {
                                     .transition(.opacity)
                             }
                         }
+                        .padding(.vertical, 4)
                         .onChange(of: draft) { _, newValue in
                             updateMentionSearch(for: newValue)
                         }
                         // Enter sends (or accepts the top suggestion while a
-                        // list is open); Shift/Option+Enter fall through to
-                        // the editor and insert a newline.
+                        // list is open); Option+Enter queues while a turn is
+                        // running; Shift+Enter falls through to insert a newline.
                         .onKeyPress(keys: [.return]) { press in
                             // Caps Lock and keypad Enter report as modifiers
                             // but don't change intent — plain Enter still sends.
                             let semantic = press.modifiers.subtracting([.capsLock, .numericPad])
+                            if semantic == .option {
+                                if canQueue {
+                                    queue()
+                                    return .handled
+                                }
+                                return .ignored
+                            }
                             guard semantic.isEmpty else { return .ignored }
                             if let first = slashMatches?.first {
                                 applySlashCommand(first)
@@ -159,6 +207,22 @@ public struct ComposerBar: View {
                             return .handled
                         }
 
+                    dictationButton
+
+                    if canQueue {
+                        Button {
+                            queue()
+                        } label: {
+                            Image(systemName: "tray.and.arrow.down")
+                                .alpineIconLabel()
+                        }
+                        .buttonStyle(.glass)
+                        .buttonBorderShape(.circle)
+                        .keyboardShortcut(.return, modifiers: .option)
+                        .help("Queue for next turn (Option-Return)")
+                        .transition(Motion.materialize)
+                    }
+
                     // While a draft claims the smart button for sending, stop
                     // stays reachable as its own compact control — a running
                     // turn must always be cancellable without discarding the
@@ -168,38 +232,22 @@ public struct ComposerBar: View {
                             Task { await model.cancelCurrentTurn() }
                         } label: {
                             Image(systemName: "stop.fill")
+                                .alpineIconLabel()
                         }
                         .buttonStyle(.glass)
+                        .buttonBorderShape(.circle)
                         .tint(.red)
                         .keyboardShortcut(".", modifiers: .command)
                         .help("Stop the current turn")
                         .transition(Motion.materialize)
                     }
 
-                    Button {
-                        if showsStop {
-                            Task { await model.cancelCurrentTurn() }
-                        } else {
-                            send()
-                        }
-                    } label: {
-                        Image(systemName: showsStop ? "stop.fill" : "paperplane.fill")
-                            .contentTransition(.symbolEffect(.replace))
-                            .scaleEffect(showsStop || canSend ? 1.0 : 0.9)
-                            .opacity(showsStop || canSend ? 1.0 : 0.55)
-                    }
-                    .buttonStyle(.glass)
-                    .tint(showsStop ? .red : (canSend ? Color.accentColor : nil))
-                    .disabled(!showsStop && !canSend)
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .help(showsStop ? "Stop the current turn" : "Send message")
-                    .animation(Motion.snap, value: canSend)
-                    .animation(Motion.snap, value: showsStop)
+                    smartSendStopButton
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, 10)
                 .padding(.vertical, 10)
             }
-            .glassEffect(.regular, in: .rect(cornerRadius: 16))
+            .glassEffect(.regular, in: .rect(cornerRadius: 25))
         }
         // One animation domain for the whole composer: draft edits drive the
         // editor's height growth and suggestion filtering; the other keys
@@ -207,8 +255,37 @@ public struct ComposerBar: View {
         .animation(Motion.settle, value: draft)
         .animation(Motion.enter, value: mentionResults.map(\.id))
         .animation(Motion.enter, value: attachments.map(\.id))
+        .animation(Motion.enter, value: model.selectedQueuedMessages.map(\.id))
         .animation(Motion.enter, value: attachmentError)
+        .animation(Motion.enter, value: model.dictation.lastError)
         .animation(Motion.snap, value: isThreadRunning)
+        .task {
+            model.dictation.insertHandler = { text in
+                appendDictated(text)
+            }
+        }
+        .alert("Download dictation model?", isPresented: $showDictationDownloadPrompt) {
+            Button("Download") { model.dictation.downloadModel() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                "Dictation runs fully on this Mac using the Parakeet v3 speech model — a one-time ~2.5 GB download."
+            )
+        }
+        .alert("Microphone access needed", isPresented: micPermissionDeniedBinding) {
+            Button("Open System Settings") { openMicrophonePrivacySettings() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Allow SurgeCode to use the microphone in Privacy & Security → Microphone.")
+        }
+        // Edit action on a sent message: load its text as the draft. An
+        // in-progress draft is replaced — the edit gesture is explicit intent
+        // to compose from the old message.
+        .onChange(of: model.composerPrefill) { _, prefill in
+            guard prefill != nil, let staged = model.takeComposerPrefill() else { return }
+            draft = staged.text
+            editorFocused = true
+        }
         .fileImporter(
             isPresented: $showFileImporter, allowedContentTypes: [.image],
             allowsMultipleSelection: true
@@ -219,18 +296,182 @@ public struct ComposerBar: View {
         }
     }
 
+    @ViewBuilder
+    private var smartSendStopButton: some View {
+        styledSmartSendStopButton(active: showsStop || canSend)
+            .disabled(!showsStop && !canSend)
+            .keyboardShortcut(.return, modifiers: .command)
+            .help(sendHelp)
+            .animation(Motion.snap, value: canSend)
+            .animation(Motion.snap, value: showsStop)
+            .animation(Motion.snap, value: isThreadRunning)
+    }
+
+    @ViewBuilder
+    private func styledSmartSendStopButton(active: Bool) -> some View {
+        if active {
+            smartSendStopBaseButton
+                .buttonStyle(.glassProminent)
+                .tint(showsStop ? .red : (isThreadRunning ? .orange : AlpineTheme.accent))
+        } else {
+            smartSendStopBaseButton
+                .foregroundStyle(.secondary)
+                .buttonStyle(.glass)
+        }
+    }
+
+    private var smartSendStopBaseButton: some View {
+        Button {
+            if showsStop {
+                Task { await model.cancelCurrentTurn() }
+            } else {
+                send()
+            }
+        } label: {
+            Image(systemName: sendIconName)
+                .contentTransition(.symbolEffect(.replace))
+                .alpineIconLabel()
+        }
+        .buttonBorderShape(.circle)
+    }
+
+    // MARK: - Dictation
+
+    private var isRecording: Bool {
+        model.dictation.state == .recording
+    }
+
+    /// Mic control mirrors the smart send button's shape: one button whose
+    /// icon, tint, and behavior track the dictation state machine.
+    @ViewBuilder
+    private var dictationButton: some View {
+        let dictation = model.dictation
+        Button {
+            switch (dictation.state, dictation.modelStatus) {
+            case (.recording, _), (.idle, .ready):
+                dictation.toggleRecording()
+            case (.idle, .notDownloaded):
+                showDictationDownloadPrompt = true
+            default:
+                break
+            }
+        } label: {
+            Group {
+                switch (dictation.state, dictation.modelStatus) {
+                case (_, .downloading(let fraction)):
+                    ProgressView(value: fraction)
+                        .progressViewStyle(.circular)
+                        .controlSize(.small)
+                case (.processing, _):
+                    ProgressView()
+                        .controlSize(.small)
+                default:
+                    dictationMicIcon
+                        .contentTransition(.symbolEffect(.replace))
+                        .symbolEffect(.pulse, isActive: isRecording && !Motion.reduceMotion)
+                }
+            }
+            .alpineIconLabel()
+        }
+        .buttonStyle(.glass)
+        .buttonBorderShape(.circle)
+        .tint(isRecording ? .red : nil)
+        .disabled(
+            dictation.state == .processing || dictation.modelStatus.isDownloading
+        )
+        .help(dictationHelp)
+        .animation(Motion.snap, value: isRecording)
+    }
+
+    @ViewBuilder
+    private var dictationMicIcon: some View {
+        if isRecording {
+            Image(systemName: "mic.fill")
+                .foregroundStyle(.red)
+        } else {
+            Image(systemName: "mic")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var dictationHelp: String {
+        switch (model.dictation.state, model.dictation.modelStatus) {
+        case (.recording, _): "Stop dictating"
+        case (.processing, _): "Transcribing…"
+        case (_, .downloading): "Downloading the dictation model…"
+        case (_, .notDownloaded): "Dictate (downloads the on-device speech model first)"
+        default: "Dictate (on-device)"
+        }
+    }
+
+    private var micPermissionDeniedBinding: Binding<Bool> {
+        Binding(
+            get: { model.dictation.micPermissionDenied },
+            set: { model.dictation.micPermissionDenied = $0 })
+    }
+
+    private func openMicrophonePrivacySettings() {
+        let url = URL(
+            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!
+        NSWorkspace.shared.open(url)
+    }
+
+    private func appendDictated(_ text: String) {
+        if draft.isEmpty {
+            draft = text
+        } else if draft.hasSuffix(" ") || draft.hasSuffix("\n") {
+            draft += text
+        } else {
+            draft += " " + text
+        }
+    }
+
     // MARK: - Sending
 
     private func send() {
         guard canSend else { return }
         let text = trimmedDraft
         let outgoing = attachments
+        clearSubmittedDraft()
+        Task { await model.send(text: text, attachments: outgoing) }
+    }
+
+    private func queue() {
+        guard canQueue else { return }
+        let text = trimmedDraft
+        let outgoing = attachments
+        clearSubmittedDraft()
+        model.enqueueMessage(text: text, attachments: outgoing)
+    }
+
+    private func editQueuedMessage(_ message: QueuedOutgoingMessage) {
+        guard let threadID = model.selectedThreadID,
+            let queued = model.takeQueuedMessage(id: message.id, from: threadID)
+        else { return }
+        draft = queued.text
+        attachments = queued.attachments
+        attachmentError = nil
+        mentionQuery = nil
+        mentionResults = []
+        editorFocused = true
+    }
+
+    private func sendQueuedMessageNow(_ message: QueuedOutgoingMessage) {
+        guard let threadID = model.selectedThreadID else { return }
+        Task { await model.sendQueuedMessageNow(id: message.id, from: threadID) }
+    }
+
+    private func removeQueuedMessage(_ message: QueuedOutgoingMessage) {
+        guard let threadID = model.selectedThreadID else { return }
+        model.removeQueuedMessage(id: message.id, from: threadID)
+    }
+
+    private func clearSubmittedDraft() {
         draft = ""
         attachments = []
         attachmentError = nil
         mentionQuery = nil
         mentionResults = []
-        Task { await model.send(text: text, attachments: outgoing) }
     }
 
     // MARK: - Slash commands
@@ -376,6 +617,104 @@ private struct SuggestionList: View {
         }
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(.quaternary, lineWidth: 1))
+    }
+}
+
+/// Per-thread outgoing queue, shown above the composer input.
+private struct QueuedMessagesStrip: View {
+    let messages: [QueuedOutgoingMessage]
+    let onEdit: (QueuedOutgoingMessage) -> Void
+    let onSendNow: (QueuedOutgoingMessage) -> Void
+    let onRemove: (QueuedOutgoingMessage) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: "tray.and.arrow.down")
+                    .font(.callout)
+                    .foregroundStyle(Color.accentColor)
+                Text("Queued for next turn")
+                    .font(.callout.weight(.semibold))
+                Text("\(messages.count)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .contentTransition(.numericText())
+                Spacer(minLength: 8)
+            }
+
+            ForEach(messages) { message in
+                QueuedMessageRow(
+                    message: message,
+                    onEdit: { onEdit(message) },
+                    onSendNow: { onSendNow(message) },
+                    onRemove: { onRemove(message) })
+            }
+        }
+        .padding(10)
+        .glassEffect(.regular, in: .rect(cornerRadius: 16))
+        .accessibilityIdentifier("queued-messages-strip")
+    }
+}
+
+private struct QueuedMessageRow: View {
+    let message: QueuedOutgoingMessage
+    let onEdit: () -> Void
+    let onSendNow: () -> Void
+    let onRemove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "clock")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+
+            Button(action: onEdit) {
+                HStack(spacing: 6) {
+                    Text(summary)
+                        .font(.callout)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    if !message.attachments.isEmpty {
+                        Label("\(message.attachments.count)", systemImage: "photo")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Edit queued message")
+
+            Button(action: onSendNow) {
+                Image(systemName: "arrow.up.right.circle.fill")
+            }
+            .buttonStyle(.plain)
+            .help("Send now - steers the running agent")
+
+            Button(action: onRemove) {
+                Image(systemName: "xmark.circle.fill")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Remove queued message")
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(Color(nsColor: .textBackgroundColor).opacity(0.9), in: RoundedRectangle(cornerRadius: 8))
+        .transition(Motion.rise)
+    }
+
+    private var summary: String {
+        let compact = message.text
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !compact.isEmpty { return compact }
+        if message.attachments.count == 1, let attachment = message.attachments.first {
+            return attachment.name
+        }
+        return "\(message.attachments.count) attachments"
     }
 }
 

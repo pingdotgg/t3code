@@ -21,11 +21,24 @@ struct ActivityRowTests {
         #expect(row == nil)
     }
 
-    @Test func taskStartedIsSkipped() {
-        let row = ActivityRows.row(
-            for: activity(
-                tone: .info, kind: "task.started", summary: "local_agent task started"))
-        #expect(row == nil)
+    @Test func taskLifecycleIsSkippedByGenericMapper() {
+        #expect(
+            ActivityRows.row(
+                for: activity(
+                    tone: .info, kind: "task.started", summary: "local_agent task started"))
+                == nil)
+        #expect(
+            ActivityRows.row(
+                for: activity(
+                    tone: .info, kind: "task.progress", summary: "Reasoning update",
+                    payload: .object(["taskId": .string("task-1")])))
+                == nil)
+        #expect(
+            ActivityRows.row(
+                for: activity(
+                    tone: .info, kind: "task.completed", summary: "Task completed",
+                    payload: .object(["taskId": .string("task-1")])))
+                == nil)
     }
 
     @Test func checkpointCapturedNoticeIsSkipped() {
@@ -203,76 +216,6 @@ struct ActivityRowTests {
             row == .tool(
                 id: "tool:call-9", title: "Bash", detail: "swift build",
                 itemType: "command_execution", phase: .succeeded))
-    }
-
-    // MARK: Task progress / completion
-
-    @Test func taskProgressSurfacesReasoningTextWithStableId() {
-        let row = ActivityRows.row(
-            for: activity(
-                tone: .info, kind: "task.progress", summary: "Reasoning update",
-                payload: .object([
-                    "taskId": .string("task-1"),
-                    "summary": .string("Scanning the timeline mapper"),
-                ])))
-        #expect(row == .reasoning(id: "task:task-1:reasoning", text: "Scanning the timeline mapper"))
-    }
-
-    @Test func taskProgressWithoutTextIsSkipped() {
-        let row = ActivityRows.row(
-            for: activity(
-                tone: .info, kind: "task.progress", summary: "Reasoning update",
-                payload: .object(["taskId": .string("task-1"), "detail": .string("  ")])))
-        #expect(row == nil)
-    }
-
-    @Test func successfulTaskCompletionWithoutSummaryIsSkipped() {
-        let row = ActivityRows.row(
-            for: activity(
-                tone: .info, kind: "task.completed", summary: "Task completed",
-                payload: .object(["taskId": .string("task-1"), "status": .string("completed")])))
-        #expect(row == nil)
-    }
-
-    @Test func taskCompletionWithSummaryBecomesExpandableRow() {
-        let row = ActivityRows.row(
-            for: activity(
-                tone: .info, kind: "task.completed", summary: "Task completed",
-                payload: .object([
-                    "status": .string("completed"),
-                    "detail": .string("Refactored the log mapper"),
-                ])))
-        #expect(
-            row == .tool(
-                id: "a1", title: "Task completed", detail: "Refactored the log mapper",
-                itemType: nil, phase: .succeeded))
-    }
-
-    @Test func stoppedTaskCompletionSurfacesAsNotice() {
-        let row = ActivityRows.row(
-            for: activity(
-                tone: .info, kind: "task.completed", summary: "Task stopped",
-                payload: .object(["taskId": .string("task-1"), "status": .string("stopped")])))
-        #expect(row == .notice(id: "a1", text: "Task stopped"))
-    }
-
-    @Test func stoppedTaskCompletionPrefersResultSummaryText() {
-        let row = ActivityRows.row(
-            for: activity(
-                tone: .info, kind: "task.completed", summary: "Task stopped",
-                payload: .object([
-                    "status": .string("stopped"),
-                    "detail": .string("Interrupted while editing the mapper"),
-                ])))
-        #expect(row == .notice(id: "a1", text: "Interrupted while editing the mapper"))
-    }
-
-    @Test func failedTaskCompletionAlwaysSurfacesAsFailedRow() {
-        let row = ActivityRows.row(
-            for: activity(
-                tone: .error, kind: "task.completed", summary: "Task failed",
-                payload: .object(["status": .string("failed")])))
-        #expect(row == .tool(id: "a1", title: "Task failed", detail: "", itemType: nil, phase: .failed))
     }
 
     // MARK: Tone fallbacks
