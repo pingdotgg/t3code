@@ -447,6 +447,10 @@ private actor MockState {
                 displayName: "Opus 4.8", provider: .claude, isDefault: false,
                 effortOptionID: "effort", effortChoices: claudeEfforts),
             ModelOption(
+                instanceID: "provider-claude-synthero", modelID: "claude-sonnet-5",
+                displayName: "Sonnet 5", provider: .claudeSynthero, isDefault: true,
+                effortOptionID: "effort", effortChoices: claudeEfforts),
+            ModelOption(
                 instanceID: "provider-codex", modelID: "gpt-5.2-codex",
                 displayName: "GPT-5.2 Codex", provider: .codex, isDefault: true,
                 effortOptionID: "reasoningEffort",
@@ -689,6 +693,7 @@ private actor MockState {
 
         let providerList: [ProviderInstance] = [
             ProviderInstance(id: "provider-claude", kind: .claude, availability: .available, version: "1.4.2"),
+            ProviderInstance(id: "provider-claude-synthero", kind: .claudeSynthero, availability: .authRequired, version: nil),
             ProviderInstance(id: "provider-codex", kind: .codex, availability: .available, version: "0.9.0"),
             ProviderInstance(id: "provider-cursor", kind: .cursor, availability: .authRequired, version: nil),
             ProviderInstance(id: "provider-grok", kind: .grok, availability: .available, version: "0.2.91"),

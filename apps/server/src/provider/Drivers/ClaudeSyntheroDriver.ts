@@ -1,0 +1,341 @@
+/**
+ * ClaudeSyntheroDriver — Synthero API routed through the Claude Code harness.
+ *
+ * This is intentionally a separate provider driver from the normal Claude
+ * provider. It uses a dedicated Claude HOME by default and injects Synthero's
+ * Anthropic-compatible endpoint/token into only this provider instance's
+ * process environment, so the user's existing Claude login/setup is not
+ * mutated or reused.
+ *
+ * IMPORTANT: API keys are user configuration. Never commit a real key here;
+ * `authToken` defaults empty and falls back to provider-scoped
+ * SYNTHERO_AUTH_TOKEN / ANTHROPIC_AUTH_TOKEN environment variables.
+ *
+ * @module provider/Drivers/ClaudeSyntheroDriver
+ */
+import {
+  type ClaudeSettings,
+  ClaudeSyntheroSettings,
+  type ClaudeSyntheroSettings as ClaudeSyntheroSettingsType,
+  ProviderDriverKind,
+  type ProviderInstanceEnvironment,
+  type ServerProvider,
+} from "@t3tools/contracts";
+import * as Cache from "effect/Cache";
+import * as Crypto from "effect/Crypto";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import { HttpClient } from "effect/unstable/http";
+import { ChildProcessSpawner } from "effect/unstable/process";
+
+import { ServerConfig } from "../../config.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
+import { makeClaudeTextGeneration } from "../../textGeneration/ClaudeTextGeneration.ts";
+import { ProviderDriverError } from "../Errors.ts";
+import { makeClaudeAdapter } from "../Layers/ClaudeAdapter.ts";
+import {
+  checkClaudeProviderStatus,
+  makePendingClaudeProvider,
+  probeClaudeCapabilities,
+  type ClaudeProviderIdentity,
+} from "../Layers/ClaudeProvider.ts";
+import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
+import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
+import {
+  defaultProviderContinuationIdentity,
+  type ProviderDriver,
+  type ProviderInstance,
+} from "../ProviderDriver.ts";
+import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
+import type { ServerProviderDraft } from "../providerSnapshot.ts";
+import {
+  enrichProviderSnapshotWithVersionAdvisory,
+  makePackageManagedProviderMaintenanceResolver,
+  normalizeCommandPath,
+  resolveProviderMaintenanceCapabilitiesEffect,
+} from "../providerMaintenance.ts";
+import {
+  haveProviderSnapshotSettingsChanged,
+  makeProviderSnapshotSettingsSource,
+  type ProviderSnapshotSettings,
+} from "../providerUpdateSettings.ts";
+import { makeClaudeCapabilitiesCacheKey, makeClaudeContinuationGroupKey } from "./ClaudeHome.ts";
+
+const DRIVER_KIND = ProviderDriverKind.make("claude-synthero");
+const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
+const CAPABILITIES_PROBE_TTL = Duration.minutes(5);
+const DEFAULT_SYNTHERO_BASE_URL = "https://api.synterolink.com";
+const SYNTHERO_AUTH_TOKEN_ENV = "SYNTHERO_AUTH_TOKEN";
+const ANTHROPIC_AUTH_TOKEN_ENV = "ANTHROPIC_AUTH_TOKEN";
+
+const decodeClaudeSyntheroSettings = Schema.decodeSync(ClaudeSyntheroSettings);
+
+function isClaudeNativeCommandPath(commandPath: string): boolean {
+  const normalized = normalizeCommandPath(commandPath);
+  return (
+    normalized.endsWith("/.local/bin/claude") ||
+    normalized.endsWith("/.local/bin/claude.exe") ||
+    normalized.includes("/.local/share/claude/")
+  );
+}
+
+const UPDATE = makePackageManagedProviderMaintenanceResolver({
+  provider: DRIVER_KIND,
+  npmPackageName: "@anthropic-ai/claude-code",
+  homebrewFormula: "claude-code",
+  nativeUpdate: {
+    executable: "claude",
+    args: ["update"],
+    lockKey: "claude-native",
+    isCommandPath: isClaudeNativeCommandPath,
+  },
+});
+
+const CLAUDE_SYNTHERO_IDENTITY: ClaudeProviderIdentity = {
+  provider: DRIVER_KIND,
+  displayName: "Claude Synthero",
+  showInteractionModeToggle: true,
+  disabledMessage: "Claude Synthero is disabled in SergeCode settings.",
+  uncheckedMessage: "Claude Synthero provider status has not been checked in this session yet.",
+  commandMissingMessage: "Claude Synthero requires the Claude Code CLI (`claude`) to be installed.",
+  healthCheckFailedMessage: "Failed to execute Claude Code health check for Claude Synthero.",
+  timedOutMessage: "Claude Code is installed but timed out while checking Claude Synthero.",
+  commandFailedMessage: "Claude Code is installed but failed to run for Claude Synthero.",
+  authUnknownMessage:
+    "Could not verify Claude Synthero authentication from Claude Code initialization.",
+};
+
+export type ClaudeSyntheroDriverEnv =
+  | ChildProcessSpawner.ChildProcessSpawner
+  | Crypto.Crypto
+  | FileSystem.FileSystem
+  | HttpClient.HttpClient
+  | Path.Path
+  | ProviderEventLoggers
+  | ServerConfig
+  | ServerSettingsService;
+
+function resolveProviderScopedEnv(
+  environment: ProviderInstanceEnvironment,
+  name: string,
+): string | undefined {
+  return environment.find((variable) => variable.name === name)?.value.trim();
+}
+
+export function resolveClaudeSyntheroAuthToken(
+  settings: Pick<ClaudeSyntheroSettingsType, "authToken" | "enabled">,
+  providerEnvironment: ProviderInstanceEnvironment,
+  processEnv: NodeJS.ProcessEnv,
+): string {
+  if (!settings.enabled) return "";
+  const configured = settings.authToken.trim();
+  if (configured.length > 0) return configured;
+
+  const providerScoped =
+    resolveProviderScopedEnv(providerEnvironment, SYNTHERO_AUTH_TOKEN_ENV) ??
+    resolveProviderScopedEnv(providerEnvironment, ANTHROPIC_AUTH_TOKEN_ENV);
+  if (providerScoped && providerScoped.length > 0) return providerScoped;
+
+  return processEnv[SYNTHERO_AUTH_TOKEN_ENV]?.trim() ?? "";
+}
+
+function resolveClaudeSyntheroBaseURL(settings: Pick<ClaudeSyntheroSettingsType, "baseURL">) {
+  const configured = settings.baseURL.trim();
+  return configured.length > 0 ? configured : DEFAULT_SYNTHERO_BASE_URL;
+}
+
+function toClaudeSettings(config: ClaudeSyntheroSettingsType): ClaudeSettings {
+  return {
+    enabled: config.enabled,
+    binaryPath: config.binaryPath,
+    homePath: config.homePath,
+    customModels: config.customModels,
+    launchArgs: config.launchArgs,
+  } satisfies ClaudeSettings;
+}
+
+export function makeClaudeSyntheroEnvironment(input: {
+  readonly settings: ClaudeSyntheroSettingsType;
+  readonly providerEnvironment: ProviderInstanceEnvironment;
+  readonly baseEnv: NodeJS.ProcessEnv;
+}): NodeJS.ProcessEnv {
+  const { ANTHROPIC_AUTH_TOKEN: _normalClaudeAuthToken, ...baseEnvWithoutClaudeAuth } =
+    input.baseEnv;
+  const authToken = resolveClaudeSyntheroAuthToken(
+    input.settings,
+    input.providerEnvironment,
+    input.baseEnv,
+  );
+  return {
+    ...baseEnvWithoutClaudeAuth,
+    ANTHROPIC_BASE_URL: resolveClaudeSyntheroBaseURL(input.settings),
+    ...(authToken.length > 0 ? { ANTHROPIC_AUTH_TOKEN: authToken } : {}),
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+    CLAUDE_CODE_ATTRIBUTION_HEADER: "0",
+  };
+}
+
+function makeMissingAuthProvider(
+  config: ClaudeSyntheroSettingsType,
+): Effect.Effect<ServerProviderDraft> {
+  return makePendingClaudeProvider(toClaudeSettings(config), CLAUDE_SYNTHERO_IDENTITY).pipe(
+    Effect.map((pending) =>
+      config.enabled
+        ? {
+            ...pending,
+            installed: true,
+            status: "error" as const,
+            auth: { status: "unauthenticated" as const, type: DRIVER_KIND },
+            message:
+              "Claude Synthero auth token is missing. Add it in provider settings or set SYNTHERO_AUTH_TOKEN in the provider environment.",
+          }
+        : pending,
+    ),
+  );
+}
+
+const withInstanceIdentity =
+  (input: {
+    readonly instanceId: ProviderInstance["instanceId"];
+    readonly displayName: string | undefined;
+    readonly accentColor: string | undefined;
+    readonly continuationGroupKey: string;
+  }) =>
+  (snapshot: ServerProviderDraft): ServerProvider => ({
+    ...snapshot,
+    instanceId: input.instanceId,
+    driver: DRIVER_KIND,
+    ...(input.displayName ? { displayName: input.displayName } : {}),
+    ...(input.accentColor ? { accentColor: input.accentColor } : {}),
+    continuation: { groupKey: input.continuationGroupKey },
+  });
+
+export const ClaudeSyntheroDriver: ProviderDriver<
+  ClaudeSyntheroSettingsType,
+  ClaudeSyntheroDriverEnv
+> = {
+  driverKind: DRIVER_KIND,
+  metadata: {
+    displayName: "Claude Synthero",
+    supportsMultipleInstances: true,
+  },
+  configSchema: ClaudeSyntheroSettings,
+  defaultConfig: (): ClaudeSyntheroSettingsType => decodeClaudeSyntheroSettings({}),
+  create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const httpClient = yield* HttpClient.HttpClient;
+      const serverSettings = yield* ServerSettingsService;
+      const eventLoggers = yield* ProviderEventLoggers;
+      const baseEnv = mergeProviderInstanceEnvironment(environment);
+      const effectiveConfig = { ...config, enabled } satisfies ClaudeSyntheroSettingsType;
+      const claudeSettings = toClaudeSettings(effectiveConfig);
+      const processEnv = makeClaudeSyntheroEnvironment({
+        settings: effectiveConfig,
+        providerEnvironment: environment,
+        baseEnv,
+      });
+      const authToken = resolveClaudeSyntheroAuthToken(effectiveConfig, environment, baseEnv);
+      const fallbackContinuationIdentity = defaultProviderContinuationIdentity({
+        driverKind: DRIVER_KIND,
+        instanceId,
+      });
+      const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
+        binaryPath: effectiveConfig.binaryPath,
+        env: processEnv,
+      });
+      const continuationGroupKey = yield* makeClaudeContinuationGroupKey(claudeSettings);
+      const stampIdentity = withInstanceIdentity({
+        instanceId,
+        displayName,
+        accentColor,
+        continuationGroupKey,
+      });
+
+      const adapter = yield* makeClaudeAdapter(claudeSettings, {
+        instanceId,
+        driverKind: DRIVER_KIND,
+        environment: processEnv,
+        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
+      });
+      const textGeneration = yield* makeClaudeTextGeneration(claudeSettings, processEnv);
+
+      const capabilitiesProbeCache = yield* Cache.make({
+        capacity: 1,
+        timeToLive: CAPABILITIES_PROBE_TTL,
+        lookup: () =>
+          probeClaudeCapabilities(claudeSettings, processEnv).pipe(
+            Effect.provideService(Path.Path, path),
+          ),
+      });
+      const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(claudeSettings);
+
+      const checkProvider = (
+        authToken.length === 0 && effectiveConfig.enabled
+          ? makeMissingAuthProvider(effectiveConfig)
+          : checkClaudeProviderStatus(
+              claudeSettings,
+              () => Cache.get(capabilitiesProbeCache, capabilitiesCacheKey),
+              processEnv,
+              CLAUDE_SYNTHERO_IDENTITY,
+            )
+      ).pipe(
+        Effect.map(stampIdentity),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(Path.Path, path),
+      );
+
+      const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
+      const snapshot = yield* makeManagedServerProvider<
+        ProviderSnapshotSettings<ClaudeSyntheroSettingsType>
+      >({
+        maintenanceCapabilities,
+        getSettings: snapshotSettings.getSettings,
+        streamSettings: snapshotSettings.streamSettings,
+        haveSettingsChanged: haveProviderSnapshotSettingsChanged,
+        initialSnapshot: (settings) =>
+          makePendingClaudeProvider(
+            toClaudeSettings(settings.provider),
+            CLAUDE_SYNTHERO_IDENTITY,
+          ).pipe(Effect.map(stampIdentity)),
+        checkProvider,
+        enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
+          enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {
+            enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+          }).pipe(
+            Effect.provideService(HttpClient.HttpClient, httpClient),
+            Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot)),
+          ),
+        refreshInterval: SNAPSHOT_REFRESH_INTERVAL,
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderDriverError({
+              driver: DRIVER_KIND,
+              instanceId,
+              detail: `Failed to build Claude Synthero snapshot: ${cause.message ?? String(cause)}`,
+              cause,
+            }),
+        ),
+      );
+
+      return {
+        instanceId,
+        driverKind: DRIVER_KIND,
+        continuationIdentity: {
+          ...fallbackContinuationIdentity,
+          continuationKey: continuationGroupKey,
+        },
+        displayName,
+        accentColor,
+        enabled,
+        snapshot,
+        adapter,
+        textGeneration,
+      } satisfies ProviderInstance;
+    }),
+};

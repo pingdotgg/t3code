@@ -44,10 +44,38 @@ const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabili
 });
 
 const PROVIDER = ProviderDriverKind.make("claudeAgent");
-const CLAUDE_PRESENTATION = {
+
+export interface ClaudeProviderIdentity {
+  readonly provider: ProviderDriverKind;
+  readonly displayName: string;
+  readonly showInteractionModeToggle?: boolean | undefined;
+  readonly disabledMessage?: string | undefined;
+  readonly uncheckedMessage?: string | undefined;
+  readonly commandMissingMessage?: string | undefined;
+  readonly healthCheckFailedMessage?: string | undefined;
+  readonly timedOutMessage?: string | undefined;
+  readonly commandFailedMessage?: string | undefined;
+  readonly authUnknownMessage?: string | undefined;
+}
+
+const CLAUDE_IDENTITY: ClaudeProviderIdentity = {
+  provider: PROVIDER,
   displayName: "Claude",
   showInteractionModeToggle: true,
-} as const;
+  disabledMessage: "Claude is disabled in T3 Code settings.",
+  uncheckedMessage: "Claude provider status has not been checked in this session yet.",
+  commandMissingMessage: "Claude Agent CLI (`claude`) is not installed or not on PATH.",
+  healthCheckFailedMessage: "Failed to execute Claude Agent CLI health check.",
+  timedOutMessage:
+    "Claude Agent CLI is installed but failed to run. Timed out while running command.",
+  commandFailedMessage: "Claude Agent CLI is installed but failed to run.",
+  authUnknownMessage: "Could not verify Claude authentication status from initialization result.",
+};
+
+const presentationFromIdentity = (identity: ClaudeProviderIdentity) => ({
+  displayName: identity.displayName,
+  showInteractionModeToggle: identity.showInteractionModeToggle ?? true,
+});
 const MINIMUM_CLAUDE_FABLE_5_VERSION = "2.1.169";
 const MINIMUM_CLAUDE_OPUS_4_8_VERSION = "2.1.154";
 const MINIMUM_CLAUDE_OPUS_4_7_VERSION = "2.1.111";
@@ -657,6 +685,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     claudeSettings: ClaudeSettings,
   ) => Effect.Effect<ClaudeCapabilitiesProbe | undefined>,
   environment?: NodeJS.ProcessEnv,
+  identity: ClaudeProviderIdentity = CLAUDE_IDENTITY,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -666,14 +695,14 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const allModels = providerModelsFromSettings(
     BUILT_IN_MODELS,
-    PROVIDER,
+    identity.provider,
     claudeSettings.customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );
 
   if (!claudeSettings.enabled) {
     return buildServerProvider({
-      presentation: CLAUDE_PRESENTATION,
+      presentation: presentationFromIdentity(identity),
       enabled: false,
       checkedAt,
       models: allModels,
@@ -682,7 +711,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Claude is disabled in T3 Code settings.",
+        message: identity.disabledMessage ?? "Claude is disabled in T3 Code settings.",
       },
     });
   }
@@ -699,7 +728,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       errorTag: error._tag,
     });
     return buildServerProvider({
-      presentation: CLAUDE_PRESENTATION,
+      presentation: presentationFromIdentity(identity),
       enabled: claudeSettings.enabled,
       checkedAt,
       models: allModels,
@@ -709,15 +738,17 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         status: "error",
         auth: { status: "unknown" },
         message: isCommandMissingCause(error)
-          ? "Claude Agent CLI (`claude`) is not installed or not on PATH."
-          : "Failed to execute Claude Agent CLI health check.",
+          ? (identity.commandMissingMessage ??
+            "Claude Agent CLI (`claude`) is not installed or not on PATH.")
+          : (identity.healthCheckFailedMessage ??
+            "Failed to execute Claude Agent CLI health check."),
       },
     });
   }
 
   if (Option.isNone(versionProbe.success)) {
     return buildServerProvider({
-      presentation: CLAUDE_PRESENTATION,
+      presentation: presentationFromIdentity(identity),
       enabled: claudeSettings.enabled,
       checkedAt,
       models: allModels,
@@ -727,6 +758,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         status: "error",
         auth: { status: "unknown" },
         message:
+          identity.timedOutMessage ??
           "Claude Agent CLI is installed but failed to run. Timed out while running command.",
       },
     });
@@ -741,7 +773,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       stderrLength: version.stderr.length,
     });
     return buildServerProvider({
-      presentation: CLAUDE_PRESENTATION,
+      presentation: presentationFromIdentity(identity),
       enabled: claudeSettings.enabled,
       checkedAt,
       models: allModels,
@@ -750,14 +782,15 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         version: parsedVersion,
         status: "error",
         auth: { status: "unknown" },
-        message: "Claude Agent CLI is installed but failed to run.",
+        message:
+          identity.commandFailedMessage ?? "Claude Agent CLI is installed but failed to run.",
       },
     });
   }
 
   const models = providerModelsFromSettings(
     getBuiltInClaudeModelsForVersion(parsedVersion),
-    PROVIDER,
+    identity.provider,
     claudeSettings.customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );
@@ -777,7 +810,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 
   if (!capabilities) {
     return buildServerProvider({
-      presentation: CLAUDE_PRESENTATION,
+      presentation: presentationFromIdentity(identity),
       enabled: claudeSettings.enabled,
       checkedAt,
       models,
@@ -787,7 +820,9 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         version: parsedVersion,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Could not verify Claude authentication status from initialization result.",
+        message:
+          identity.authUnknownMessage ??
+          "Could not verify Claude authentication status from initialization result.",
       },
     });
   }
@@ -797,7 +832,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     authMethod: capabilities.tokenSource,
   });
   return buildServerProvider({
-    presentation: CLAUDE_PRESENTATION,
+    presentation: presentationFromIdentity(identity),
     enabled: claudeSettings.enabled,
     checkedAt,
     models,
@@ -820,19 +855,20 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
 export const makePendingClaudeProvider = (
   claudeSettings: ClaudeSettings,
+  identity: ClaudeProviderIdentity = CLAUDE_IDENTITY,
 ): Effect.Effect<ServerProviderDraft> =>
   Effect.gen(function* () {
     const checkedAt = yield* nowIso;
     const models = providerModelsFromSettings(
       BUILT_IN_MODELS,
-      PROVIDER,
+      identity.provider,
       claudeSettings.customModels,
       DEFAULT_CLAUDE_MODEL_CAPABILITIES,
     );
 
     if (!claudeSettings.enabled) {
       return buildServerProvider({
-        presentation: CLAUDE_PRESENTATION,
+        presentation: presentationFromIdentity(identity),
         enabled: false,
         checkedAt,
         models,
@@ -841,13 +877,13 @@ export const makePendingClaudeProvider = (
           version: null,
           status: "warning",
           auth: { status: "unknown" },
-          message: "Claude is disabled in T3 Code settings.",
+          message: identity.disabledMessage ?? "Claude is disabled in T3 Code settings.",
         },
       });
     }
 
     return buildServerProvider({
-      presentation: CLAUDE_PRESENTATION,
+      presentation: presentationFromIdentity(identity),
       enabled: true,
       checkedAt,
       models,
@@ -856,7 +892,9 @@ export const makePendingClaudeProvider = (
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Claude provider status has not been checked in this session yet.",
+        message:
+          identity.uncheckedMessage ??
+          "Claude provider status has not been checked in this session yet.",
       },
     });
   });

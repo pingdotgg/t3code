@@ -52,6 +52,7 @@ private struct ProviderBadge: View {
     private var icon: String {
         switch provider {
         case .claude: "sparkle"
+        case .claudeSynthero: "link"
         case .codex: "chevron.left.forwardslash.chevron.right"
         case .cursor: "cursorarrow"
         case .grok: "bolt"
