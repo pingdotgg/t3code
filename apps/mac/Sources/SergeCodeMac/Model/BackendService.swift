@@ -91,6 +91,9 @@ public protocol BackendService: Sendable {
     /// Set the thread's reasoning-effort option (a choice id from the
     /// model's `effortChoices`). Throws when the model has no effort option.
     func setReasoningEffort(threadID: String, value: String) async throws
+    /// Set the thread's service-tier option (a choice id from the model's
+    /// `serviceTierChoices`). Throws when the model has no service-tier option.
+    func setServiceTier(threadID: String, value: String) async throws
     /// Start an implementation turn from a proposed plan (plan-mode follow-up).
     func implementPlan(threadID: String, planID: String) async throws
 
