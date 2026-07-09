@@ -70,12 +70,21 @@ export function createMobilePreferencesState(runtime: Atom.AtomRuntime<MobilePre
     Atom.keepAlive,
     Atom.withLabel("mobile:preferences:optimistic-patch"),
   );
+  const confirmedPreferencesAtom = Atom.make<Preferences>({}).pipe(
+    Atom.keepAlive,
+    Atom.withLabel("mobile:preferences:confirmed"),
+  );
   let nextPatchVersion = 0;
 
   const preferencesAtom = Atom.make((get) => {
     const stored = get(storedPreferencesAtom);
+    const confirmed = get(confirmedPreferencesAtom);
     const optimistic = get(optimisticPatchAtom);
-    return AsyncResult.map(stored, (preferences) => ({ ...preferences, ...optimistic.values }));
+    return AsyncResult.map(stored, (preferences) => ({
+      ...preferences,
+      ...confirmed,
+      ...optimistic.values,
+    }));
   }).pipe(Atom.keepAlive, Atom.withLabel("mobile:preferences"));
 
   const updatePreferencesAtom = runtime
@@ -93,6 +102,24 @@ export function createMobilePreferencesState(runtime: Atom.AtomRuntime<MobilePre
         });
         return MobilePreferencesStore.pipe(
           Effect.flatMap((store) => store.savePatch(patch)),
+          Effect.tap((saved) =>
+            Effect.sync(() => {
+              get.set(confirmedPreferencesAtom, saved);
+              const optimistic = get(optimisticPatchAtom);
+              const values = { ...optimistic.values } as Record<string, unknown>;
+              const currentVersions = { ...optimistic.versions } as Record<string, unknown>;
+              for (const key of Object.keys(patch) as Array<keyof Preferences>) {
+                if (optimistic.versions[key] === version) {
+                  delete values[key];
+                  delete currentVersions[key];
+                }
+              }
+              get.set(optimisticPatchAtom, {
+                values: values as Partial<Preferences>,
+                versions: currentVersions as Partial<Record<keyof Preferences, number>>,
+              });
+            }),
+          ),
           Effect.tapError(() =>
             Effect.sync(() => {
               const optimistic = get(optimisticPatchAtom);

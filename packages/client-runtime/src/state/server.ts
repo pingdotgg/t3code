@@ -30,6 +30,7 @@ import { followStreamInEnvironment } from "./runtime.ts";
 export interface ServerConfigProjection {
   readonly config: ServerConfig;
   readonly latestEvent: ServerConfigStreamEvent;
+  readonly source: "cache" | "live";
 }
 
 export function applyServerConfigProjection(
@@ -41,6 +42,7 @@ export function applyServerConfigProjection(
       return Option.some({
         config: event.config,
         latestEvent: event,
+        source: "live",
       });
     case "keybindingsUpdated":
       return Option.map(current, (projection) => ({
@@ -50,6 +52,7 @@ export function applyServerConfigProjection(
           issues: event.payload.issues,
         },
         latestEvent: event,
+        source: "live",
       }));
     case "providerStatuses":
       return Option.map(current, (projection) => ({
@@ -58,6 +61,7 @@ export function applyServerConfigProjection(
           providers: event.payload.providers,
         },
         latestEvent: event,
+        source: "live",
       }));
     case "settingsUpdated":
       return Option.map(current, (projection) => ({
@@ -66,6 +70,7 @@ export function applyServerConfigProjection(
           settings: event.payload.settings,
         },
         latestEvent: event,
+        source: "live",
       }));
   }
 }
@@ -109,6 +114,7 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
       Option.map(cachedConfig, (config) => ({
         config,
         latestEvent: cachedConfigSnapshotEvent(config),
+        source: "cache" as const,
       })),
     );
     const persistence = yield* Queue.sliding<ServerConfig>(1);
@@ -215,6 +221,14 @@ export function projectServerWelcome(
   return [Option.some(welcome), [welcome]];
 }
 
+export function resolveServerConfigValue(
+  projection: ServerConfigProjection | null,
+  initialConfig: ServerConfig | null,
+): ServerConfig | null {
+  if (projection?.source === "live") return projection.config;
+  return initialConfig ?? projection?.config ?? null;
+}
+
 export function createServerEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | EnvironmentCacheStore | R, E>,
   options: {
@@ -251,7 +265,10 @@ export function createServerEnvironmentAtoms<R, E>(
       const projection = Option.getOrNull(
         AsyncResult.value(get(configProjection({ environmentId, input: {} }))),
       );
-      return projection?.config ?? get(options.initialConfigValueAtom(environmentId));
+      return resolveServerConfigValue(
+        projection,
+        get(options.initialConfigValueAtom(environmentId)),
+      );
     }).pipe(Atom.withLabel(`environment-data:server:config:${environmentId}`));
   });
   const settingsValueAtom = Atom.family((environmentId: EnvironmentId) =>

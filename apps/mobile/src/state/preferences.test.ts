@@ -198,4 +198,54 @@ describe("mobile preferences state", () => {
       registry.dispose();
     }),
   );
+
+  it.effect("rolls back to the last confirmed value after a later save fails", () =>
+    Effect.gen(function* () {
+      let saveCount = 0;
+      const state = makePreferencesState({
+        load: Effect.succeed({ baseFontSize: 16 }),
+        savePatch: () => {
+          saveCount += 1;
+          return saveCount === 1
+            ? Effect.succeed({ baseFontSize: 14 })
+            : Effect.fail(new MobilePreferencesSaveError({ cause: new Error("write failed") }));
+        },
+      });
+      const registry = AtomRegistry.make();
+      const unmountPreferences = registry.mount(state.preferencesAtom);
+      const unmountUpdate = registry.mount(state.updatePreferencesAtom);
+
+      yield* AtomRegistry.getResult(registry, state.preferencesAtom, {
+        suspendOnWaiting: true,
+      });
+      registry.set(state.updatePreferencesAtom, { baseFontSize: 14 });
+      yield* Effect.promise(() =>
+        vi.waitFor(() => {
+          expect(saveCount).toBe(1);
+          expect(registry.get(state.updatePreferencesAtom).waiting).toBe(false);
+          expect(Option.getOrThrow(AsyncResult.value(registry.get(state.preferencesAtom)))).toEqual(
+            {
+              baseFontSize: 14,
+            },
+          );
+        }),
+      );
+
+      registry.set(state.updatePreferencesAtom, { baseFontSize: 18 });
+      yield* Effect.promise(() =>
+        vi.waitFor(() => {
+          expect(saveCount).toBe(2);
+          expect(Option.getOrThrow(AsyncResult.value(registry.get(state.preferencesAtom)))).toEqual(
+            {
+              baseFontSize: 14,
+            },
+          );
+        }),
+      );
+
+      unmountUpdate();
+      unmountPreferences();
+      registry.dispose();
+    }),
+  );
 });

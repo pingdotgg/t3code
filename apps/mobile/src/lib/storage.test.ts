@@ -18,6 +18,10 @@ vi.mock("expo-secure-store", () => ({
   setItemAsync: mocks.setItemAsync,
 }));
 
+vi.mock("expo-sqlite", () => ({
+  openDatabaseAsync: vi.fn(() => Promise.reject(new Error("database unavailable"))),
+}));
+
 vi.mock("react-native", () => ({
   Platform: {
     OS: "ios",
@@ -30,7 +34,7 @@ vi.mock("./runtime", () => ({
   },
 }));
 
-import { loadSavedConnections, saveConnection } from "./storage";
+import { loadPreferences, loadSavedConnections, saveConnection } from "./storage";
 import { toStableSavedRemoteConnection } from "./connection";
 
 const managedConnection = {
@@ -96,6 +100,19 @@ describe("mobile connection storage", () => {
         cause: expect.any(SyntaxError),
         message: "Failed to decode mobile storage value for key t3code.connections.",
       }),
+    );
+
+    warn.mockRestore();
+  });
+
+  it("loads legacy preferences when SQLite is unavailable", async () => {
+    await mocks.setItemAsync("t3code.preferences", JSON.stringify({ baseFontSize: 17 }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await expect(loadPreferences()).resolves.toEqual({ baseFontSize: 17 });
+    expect(warn).toHaveBeenCalledWith(
+      "[mobile-storage] database unavailable, using legacy preferences",
+      expect.anything(),
     );
 
     warn.mockRestore();

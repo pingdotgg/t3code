@@ -73,11 +73,12 @@ export function SettingsClientStorageRouteScreen() {
     <View collapsable={false} className="flex-1 bg-sheet">
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
+        contentInset={{ bottom: Math.max(insets.bottom, 18) }}
         showsVerticalScrollIndicator={false}
         style={{ flex: 1 }}
         contentContainerStyle={{
           gap: 24,
-          paddingBottom: Math.max(insets.bottom, 18) + 18,
+          paddingBottom: 18,
           paddingHorizontal: 20,
           paddingTop: 16,
         }}
@@ -110,7 +111,28 @@ export function SettingsClientStorageRouteScreen() {
         </View>
 
         <SettingsSection title="Environment caches">
-          {environmentSummaries.length > 0 ? (
+          {AsyncResult.isFailure(summaryResult) ? (
+            <View className="items-center gap-2 px-6 py-8">
+              <SymbolView
+                name="exclamationmark.triangle"
+                size={28}
+                tintColor={destructiveColor}
+                type="monochrome"
+                weight="regular"
+              />
+              <Text className="text-center text-base text-foreground">Storage unavailable</Text>
+              <Text className="text-center text-sm text-foreground-muted">
+                Restart the app and try again.
+              </Text>
+            </View>
+          ) : !summary ? (
+            <View className="items-center gap-3 px-6 py-8">
+              <ActivityIndicator />
+              <Text className="text-center text-sm text-foreground-muted">
+                Inspecting cached data…
+              </Text>
+            </View>
+          ) : environmentSummaries.length > 0 ? (
             environmentSummaries.map((environment, index) => (
               <CacheEnvironmentRow
                 key={environment.environmentId}

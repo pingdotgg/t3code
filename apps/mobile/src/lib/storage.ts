@@ -174,9 +174,14 @@ export async function clearSavedConnection(environmentId: EnvironmentId): Promis
 }
 
 export async function loadPreferences(): Promise<Preferences> {
-  const storedJson = await mobileDatabaseRuntime.runPromise(
-    MobileDatabase.pipe(Effect.flatMap((database) => database.loadPreferencesJson)),
-  );
+  let databaseAvailable = true;
+  const storedJson = await mobileDatabaseRuntime
+    .runPromise(MobileDatabase.pipe(Effect.flatMap((database) => database.loadPreferencesJson)))
+    .catch((cause) => {
+      databaseAvailable = false;
+      console.warn("[mobile-storage] database unavailable, using legacy preferences", cause);
+      return Option.none<string>();
+    });
   let parsed = Option.isSome(storedJson)
     ? parseJsonStorageItem<Preferences>(PREFERENCES_KEY, storedJson.value)
     : null;
@@ -185,7 +190,7 @@ export async function loadPreferences(): Promise<Preferences> {
     const legacyJson = await readStorageItem(PREFERENCES_KEY);
     parsed =
       legacyJson === null ? null : parseJsonStorageItem<Preferences>(PREFERENCES_KEY, legacyJson);
-    if (parsed !== null) {
+    if (parsed !== null && databaseAvailable) {
       await mobileDatabaseRuntime.runPromise(
         MobileDatabase.pipe(
           Effect.flatMap((database) => database.savePreferencesJson(JSON.stringify(parsed))),

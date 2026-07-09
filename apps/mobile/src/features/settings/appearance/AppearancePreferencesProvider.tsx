@@ -65,15 +65,9 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
 
   const updatePreferences = useCallback(
     (patch: Partial<AppearancePreferences>) => {
-      const next = resolveAppearancePreferences({ ...preferences, ...patch });
-      savePreferences({
-        baseFontSize: next.baseFontSize,
-        terminalFontSize: next.terminalFontSize,
-        codeFontSize: next.codeFontSize,
-        codeWordBreak: next.codeWordBreak,
-      });
+      savePreferences(patch);
     },
-    [preferences, savePreferences],
+    [savePreferences],
   );
 
   const setBaseFontSize = useCallback(

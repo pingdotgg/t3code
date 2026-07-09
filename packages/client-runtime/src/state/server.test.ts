@@ -25,6 +25,7 @@ import {
   applyServerConfigProjection,
   makeEnvironmentServerConfigState,
   projectServerWelcome,
+  resolveServerConfigValue,
 } from "./server.ts";
 
 const CONFIG = {
@@ -36,6 +37,12 @@ const CONFIG = {
   providers: [],
   settings: {},
 } as unknown as ServerConfig;
+
+const snapshotEvent = (config: ServerConfig): ServerConfigStreamEvent => ({
+  version: 1,
+  type: "snapshot",
+  config,
+});
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -90,6 +97,33 @@ describe("server state projection", () => {
 
     expect(Option.getOrThrow(afterReady)).toBe(welcome);
     expect(emitted).toEqual([]);
+  });
+
+  it("prefers an active session config over cache until a live event arrives", () => {
+    const cached = { ...CONFIG, settings: { source: "cache" } } as unknown as ServerConfig;
+    const initial = { ...CONFIG, settings: { source: "session" } } as unknown as ServerConfig;
+    const live = { ...CONFIG, settings: { source: "live" } } as unknown as ServerConfig;
+
+    expect(
+      resolveServerConfigValue(
+        {
+          config: cached,
+          latestEvent: snapshotEvent(cached),
+          source: "cache",
+        },
+        initial,
+      ),
+    ).toBe(initial);
+    expect(
+      resolveServerConfigValue(
+        {
+          config: live,
+          latestEvent: snapshotEvent(live),
+          source: "live",
+        },
+        initial,
+      ),
+    ).toBe(live);
   });
 
   it.effect("starts from cached configuration and persists the live projection", () =>

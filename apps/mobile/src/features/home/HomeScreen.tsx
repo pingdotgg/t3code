@@ -178,11 +178,14 @@ export function HomeScreen(props: HomeScreenProps) {
     }
     return next;
   }, [groupDisplayStates, preferencesResult]);
+  const effectiveGroupDisplayStatesRef = useRef(effectiveGroupDisplayStates);
+  effectiveGroupDisplayStatesRef.current = effectiveGroupDisplayStates;
 
   const updateGroupDisplay = useCallback(
     (key: string, action: HomeGroupDisplayAction) => {
-      const next = new Map(effectiveGroupDisplayStates);
+      const next = new Map(effectiveGroupDisplayStatesRef.current);
       next.set(key, nextGroupDisplayState(next.get(key) ?? DEFAULT_GROUP_DISPLAY_STATE, action));
+      effectiveGroupDisplayStatesRef.current = next;
       setGroupDisplayStates(next);
       if (action === "toggle-collapsed") {
         const collapsedProjectGroups: string[] = [];
@@ -194,7 +197,7 @@ export function HomeScreen(props: HomeScreenProps) {
         savePreferences({ collapsedProjectGroups });
       }
     },
-    [effectiveGroupDisplayStates, savePreferences],
+    [savePreferences],
   );
 
   const handleSwipeableWillOpen = useCallback((methods: SwipeableMethods) => {
