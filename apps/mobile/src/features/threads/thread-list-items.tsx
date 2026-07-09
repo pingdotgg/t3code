@@ -12,6 +12,7 @@ import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSw
 import { AppText as Text } from "../../components/AppText";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
+import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/time";
 import { useThemeColor } from "../../lib/useThemeColor";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
@@ -101,10 +102,9 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
         <Text
           className={
             compact
-              ? "flex-shrink text-base font-t3-bold text-foreground-muted"
-              : "flex-shrink text-sm font-t3-bold text-foreground-muted"
+              ? "flex-shrink text-base font-t3-bold tracking-[0.2px] text-foreground-muted"
+              : "flex-shrink text-sm font-t3-bold tracking-[0.2px] text-foreground-muted"
           }
-          style={{ letterSpacing: 0.2 }}
           numberOfLines={1}
         >
           {props.title}
@@ -236,7 +236,6 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
   const compact = props.variant === "compact";
   const separatorColor = useThemeColor("--color-separator");
   const iconSubtleColor = useThemeColor("--color-icon-subtle");
-  const foregroundColor = useThemeColor("--color-foreground");
   const mutedColor = useThemeColor("--color-foreground-muted");
   const pressedBackgroundColor = useThemeColor("--color-subtle");
 
@@ -254,17 +253,14 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
   );
 
   const statusPill = (
-    <View
-      className="bg-zinc-500/12 dark:bg-zinc-500/16"
-      style={{ borderRadius: 99, paddingHorizontal: 6, paddingVertical: 2 }}
-    >
+    <View className="rounded-full bg-zinc-500/12 px-1.5 py-0.5 dark:bg-zinc-500/16">
       <Text className="text-3xs font-t3-bold text-zinc-600 dark:text-zinc-300">Pending</Text>
     </View>
   );
 
   const subtitleRow =
     subtitleParts.length > 0 ? (
-      <View className="flex-row items-center gap-1.5" style={{ marginTop: 1 }}>
+      <View className="mt-px flex-row items-center gap-1.5">
         <SymbolView
           name="tray.and.arrow.up"
           size={10}
@@ -272,9 +268,12 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
           type="monochrome"
         />
         <Text
-          className={compact ? "text-sm text-foreground-muted" : "text-xs"}
+          className={
+            compact
+              ? "shrink text-sm text-foreground-muted"
+              : "shrink text-xs text-foreground-muted"
+          }
           numberOfLines={1}
-          style={compact ? { flexShrink: 1 } : { flexShrink: 1, color: mutedColor }}
         >
           {subtitleParts.join(" · ")}
         </Text>
@@ -311,12 +310,7 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
             </Text>
             <View className="flex-row items-center gap-2">
               {statusPill}
-              <Text
-                className="text-base text-foreground-tertiary"
-                style={{ fontVariant: ["tabular-nums"] }}
-              >
-                {timestamp}
-              </Text>
+              <Text className="text-base tabular-nums text-foreground-tertiary">{timestamp}</Text>
               <SymbolView
                 name="chevron.right"
                 size={13}
@@ -345,22 +339,14 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
         paddingVertical: 10,
       })}
     >
-      <View style={{ gap: 3 }}>
+      <View className="gap-[3px]">
         <View className="flex-row items-center justify-between gap-2">
-          <Text
-            className="flex-1 text-base font-t3-medium"
-            numberOfLines={1}
-            style={{ color: foregroundColor }}
-          >
+          <Text className="flex-1 text-base font-t3-medium text-foreground" numberOfLines={1}>
             {pendingTask.title}
           </Text>
           <View className="flex-row items-center gap-2">
             {statusPill}
-            <Text
-              className="text-xs"
-              numberOfLines={1}
-              style={{ color: mutedColor, fontVariant: ["tabular-nums"] }}
-            >
+            <Text className="text-xs tabular-nums text-foreground-muted" numberOfLines={1}>
               {timestamp}
             </Text>
           </View>
@@ -418,11 +404,9 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   const iconSubtleColor = useThemeColor("--color-icon-subtle");
   const screenColor = useThemeColor("--color-screen");
   const drawerColor = useThemeColor("--color-drawer");
-  const foregroundColor = useThemeColor("--color-foreground");
   const mutedColor = useThemeColor("--color-foreground-muted");
   const pressedBackgroundColor = useThemeColor("--color-subtle");
   const selectedBackgroundColor = useThemeColor("--color-user-bubble");
-  const selectedForegroundColor = useThemeColor("--color-user-bubble-foreground");
   const selectedMutedColor = useThemeColor("--color-user-bubble-foreground-muted");
 
   const { thread, onSelectThread, onArchiveThread, onDeleteThread } = props;
@@ -436,7 +420,6 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   );
 
   const backgroundColor = compact ? screenColor : drawerColor;
-  const effectiveForeground = selected ? selectedForegroundColor : foregroundColor;
   const effectiveMuted = selected ? selectedMutedColor : mutedColor;
   const effectivePressedBackground = selected ? "rgba(255,255,255,0.16)" : pressedBackgroundColor;
   const effectiveStatus =
@@ -464,10 +447,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   );
 
   const statusPill = effectiveStatus ? (
-    <View
-      className={effectiveStatus.pillClassName}
-      style={{ borderRadius: 99, paddingHorizontal: 6, paddingVertical: 2 }}
-    >
+    <View className={`${effectiveStatus.pillClassName} rounded-full px-1.5 py-0.5`}>
       <Text className={`text-3xs font-t3-bold ${effectiveStatus.textClassName}`}>
         {effectiveStatus.label}
       </Text>
@@ -476,7 +456,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
 
   const subtitleRow =
     subtitleParts.length > 0 || pr !== null ? (
-      <View className="flex-row items-center gap-1.5" style={{ marginTop: 1 }}>
+      <View className="mt-px flex-row items-center gap-1.5">
         {subtitleParts.length > 0 ? (
           <>
             <SymbolView
@@ -486,9 +466,13 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
               type="monochrome"
             />
             <Text
-              className={compact ? "text-sm text-foreground-muted" : "text-xs"}
+              className={cn(
+                "shrink",
+                compact ? "text-sm text-foreground-muted" : "text-xs",
+                !compact &&
+                  (selected ? "text-user-bubble-foreground-muted" : "text-foreground-muted"),
+              )}
               numberOfLines={1}
-              style={compact ? { flexShrink: 1 } : { flexShrink: 1, color: effectiveMuted }}
             >
               {subtitleParts.join(" · ")}
             </Text>
@@ -540,12 +524,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
               </Text>
               <View className="flex-row items-center gap-2">
                 {statusPill}
-                <Text
-                  className="text-base text-foreground-tertiary"
-                  style={{ fontVariant: ["tabular-nums"] }}
-                >
-                  {timestamp}
-                </Text>
+                <Text className="text-base tabular-nums text-foreground-tertiary">{timestamp}</Text>
                 <SymbolView
                   name="chevron.right"
                   size={13}
@@ -584,21 +563,25 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
           paddingVertical: 10,
         })}
       >
-        <View style={{ gap: 3 }}>
+        <View className="gap-[3px]">
           <View className="flex-row items-center justify-between gap-2">
             <Text
-              className="flex-1 text-base font-t3-medium"
+              className={cn(
+                "flex-1 text-base font-t3-medium",
+                selected ? "text-user-bubble-foreground" : "text-foreground",
+              )}
               numberOfLines={1}
-              style={{ color: effectiveForeground }}
             >
               {thread.title}
             </Text>
             <View className="flex-row items-center gap-2">
               {statusPill}
               <Text
-                className="text-xs"
+                className={cn(
+                  "text-xs tabular-nums",
+                  selected ? "text-user-bubble-foreground-muted" : "text-foreground-muted",
+                )}
                 numberOfLines={1}
-                style={{ color: effectiveMuted, fontVariant: ["tabular-nums"] }}
               >
                 {timestamp}
               </Text>

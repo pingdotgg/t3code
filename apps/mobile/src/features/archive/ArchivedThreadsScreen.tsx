@@ -244,9 +244,8 @@ function ProjectGroupLabel(props: {
         workspaceRoot={props.project.workspaceRoot}
       />
       <Text
-        className="flex-1 text-xs font-t3-medium uppercase text-foreground-muted"
+        className="flex-1 text-xs font-t3-medium tracking-[0.5px] uppercase text-foreground-muted"
         numberOfLines={1}
-        style={{ letterSpacing: 0.5 }}
       >
         {props.project.title}
       </Text>
@@ -331,10 +330,7 @@ function ArchivedThreadRow(props: {
               >
                 {props.thread.title}
               </Text>
-              <Text
-                className="text-xs text-foreground-tertiary"
-                style={{ fontVariant: ["tabular-nums"], minWidth: 30, textAlign: "right" }}
-              >
+              <Text className="min-w-[30px] text-right text-xs tabular-nums text-foreground-tertiary">
                 {timestamp}
               </Text>
             </View>
@@ -347,9 +343,8 @@ function ArchivedThreadRow(props: {
                   type="monochrome"
                 />
                 <Text
-                  className="min-w-0 flex-1 text-2xs text-foreground-tertiary"
+                  className="min-w-0 flex-1 font-mono text-2xs text-foreground-tertiary"
                   numberOfLines={1}
-                  style={{ fontFamily: "monospace" }}
                 >
                   {subtitle.join(" · ")}
                 </Text>

@@ -75,13 +75,8 @@ export function SettingsClientStorageRouteScreen() {
         contentInsetAdjustmentBehavior="automatic"
         contentInset={{ bottom: Math.max(insets.bottom, 18) }}
         showsVerticalScrollIndicator={false}
-        style={{ flex: 1 }}
-        contentContainerStyle={{
-          gap: 24,
-          paddingBottom: 18,
-          paddingHorizontal: 20,
-          paddingTop: 16,
-        }}
+        className="flex-1"
+        contentContainerClassName="gap-6 px-5 pt-4 pb-[18px]"
       >
         <SettingsSection title="Environment caches">
           {AsyncResult.isFailure(summaryResult) ? (
@@ -180,7 +175,6 @@ function CacheEnvironmentRow(props: {
   readonly onClear: () => void;
 }) {
   const iconColor = useThemeColor("--color-icon");
-  const dangerForegroundColor = useThemeColor("--color-danger-foreground");
   return (
     <View
       className={
@@ -206,11 +200,7 @@ function CacheEnvironmentRow(props: {
         onPress={props.onClear}
         className="rounded-full px-3 py-2 disabled:opacity-40"
       >
-        <Text
-          className="font-t3-medium tabular-nums text-danger-foreground"
-          numberOfLines={1}
-          style={{ color: dangerForegroundColor }}
-        >
+        <Text className="font-t3-medium tabular-nums text-danger-foreground" numberOfLines={1}>
           Clear {formatBytes(props.environment.payloadBytes)}
         </Text>
       </Pressable>

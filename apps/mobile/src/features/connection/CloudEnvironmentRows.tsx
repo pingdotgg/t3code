@@ -297,9 +297,8 @@ function CloudEnvironmentRowShell(props: {
         {props.connectionError ? (
           <Text
             aria-hidden
-            className={cn("absolute left-0 right-0 text-xs", statusClassName)}
             onTextLayout={onMeasuredErrorTextLayout}
-            style={{ opacity: 0, zIndex: -1 }}
+            className={cn("absolute inset-x-0 -z-[1] text-xs opacity-0", statusClassName)}
           >
             {measuredErrorText}
           </Text>
@@ -321,7 +320,7 @@ function CloudEnvironmentRowShell(props: {
                 <Text
                   accessibilityHint="Copies the trace ID"
                   accessibilityRole="button"
-                  className={cn("text-xs underline", statusClassName)}
+                  className={cn("text-xs underline decoration-dotted", statusClassName)}
                   onLongPress={(event) => {
                     event.stopPropagation();
                     copyTextWithHaptic(errorTraceId, { target: "connection-trace-id" });
@@ -329,7 +328,6 @@ function CloudEnvironmentRowShell(props: {
                   onPress={(event) => {
                     event.stopPropagation();
                   }}
-                  style={{ textDecorationStyle: "dotted" }}
                 >
                   {errorTraceId}
                 </Text>

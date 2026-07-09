@@ -655,7 +655,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
 
       <View className="flex-1 bg-sheet">
         {showConnectionNotice ? (
-          <View style={{ flex: 1, paddingTop: topContentInset }}>
+          <View className="flex-1" style={{ paddingTop: topContentInset }}>
             <EnvironmentConnectionNotice
               environmentLabel={environment.presentation?.entry.target.label ?? "Environment"}
               connection={
@@ -722,7 +722,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
               bottom: Math.max(insets.bottom, 18) + 18,
             }}
             showsVerticalScrollIndicator={false}
-            style={{ flex: 1 }}
+            className="flex-1"
           >
             {listHeader}
             {!selectedSection ? (

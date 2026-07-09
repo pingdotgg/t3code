@@ -246,7 +246,7 @@ export function FileTreeBrowser(props: {
   // flex-1 Views is ignored, which is why the tree rendered under the header with no blur.
   return (
     <FlatList
-      style={{ flex: 1 }}
+      className="flex-1"
       data={visibleNodes}
       keyExtractor={(item) => item.node.path}
       contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}

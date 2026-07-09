@@ -22,16 +22,17 @@ export function SidebarFilterButton(props: {
 
   return (
     <Pressable
+      className="h-11 w-[50px] cursor-pointer items-center justify-center rounded-[22px]"
       accessibilityLabel={props.accessibilityLabel}
       accessibilityRole="button"
       hitSlop={4}
       style={({ pressed }) => [
-        styles.button,
         props.grouped
           ? { backgroundColor: pressed ? pressedBackgroundColor : "transparent", borderWidth: 0 }
           : {
               backgroundColor: pressed ? pressedBackgroundColor : idleBackgroundColor,
               borderColor,
+              borderWidth: StyleSheet.hairlineWidth,
             },
       ]}
     >
@@ -39,17 +40,3 @@ export function SidebarFilterButton(props: {
     </Pressable>
   );
 }
-
-const styles = StyleSheet.create({
-  button: {
-    // Match the native glass UIBarButtonItem group metrics (~50pt slots,
-    // 44pt bar height, label-colored ~20pt glyphs).
-    width: 50,
-    height: 44,
-    borderRadius: 22,
-    borderWidth: StyleSheet.hairlineWidth,
-    alignItems: "center",
-    justifyContent: "center",
-    cursor: "pointer",
-  },
-});

@@ -50,11 +50,10 @@ export function SettingsEnvironmentsRouteScreen() {
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
-        style={{ flex: 1 }}
+        className="flex-1"
+        contentContainerClassName="px-5 pt-4"
         contentContainerStyle={{
           paddingBottom: Math.max(insets.bottom, 18) + 18,
-          paddingHorizontal: 20,
-          paddingTop: 16,
         }}
       >
         {hasLocalEnvironments ? (
@@ -63,10 +62,7 @@ export function SettingsEnvironmentsRouteScreen() {
               <View
                 key={environment.environmentId}
                 collapsable={false}
-                style={{
-                  borderTopWidth: index === 0 ? 0 : 1,
-                }}
-                className={cn(index !== 0 && "border-border")}
+                className={cn(index !== 0 && "border-t border-border")}
               >
                 <ConnectionEnvironmentRow
                   environment={environment}

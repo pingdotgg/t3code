@@ -1,6 +1,7 @@
 import { SymbolView } from "expo-symbols";
+import { Image } from "expo-image";
 import { useState } from "react";
-import { Image, View } from "react-native";
+import { View } from "react-native";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useThemeColor } from "../lib/useThemeColor";
 import { useAssetUrl } from "../state/assets";
@@ -78,7 +79,7 @@ function ProjectFaviconImage(props: {
             borderRadius: props.size * 0.16,
             ...(showImage ? {} : { position: "absolute" as const, opacity: 0 }),
           }}
-          resizeMode="contain"
+          contentFit="contain"
           onLoad={() => {
             if (props.faviconUrl) loadedFaviconUrls.add(props.faviconUrl);
             setStatus("loaded");

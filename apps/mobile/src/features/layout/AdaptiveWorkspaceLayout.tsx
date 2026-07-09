@@ -476,16 +476,17 @@ export function AdaptiveWorkspaceLayout(props: {
   return (
     <HomeListOptionsProvider>
       <AdaptiveWorkspaceContext.Provider value={contextValue}>
-        <View testID="adaptive-workspace-layout" style={{ flex: 1, flexDirection: "row" }}>
+        <View testID="adaptive-workspace-layout" className="flex-1 flex-row">
           {shouldRenderPrimarySidebar && layout.listPaneWidth !== null ? (
             <Animated.View
+              className="self-stretch overflow-hidden"
               accessibilityElementsHidden={!panes.primarySidebarVisible}
               collapsable={false}
               importantForAccessibility={
                 panes.primarySidebarVisible ? "auto" : "no-hide-descendants"
               }
               pointerEvents={panes.primarySidebarVisible ? "auto" : "none"}
-              style={[{ alignSelf: "stretch", overflow: "hidden" }, sidebarAnimatedStyle]}
+              style={sidebarAnimatedStyle}
             >
               <ThreadNavigationSidebar
                 width={layout.listPaneWidth}
@@ -501,7 +502,7 @@ export function AdaptiveWorkspaceLayout(props: {
               />
             </Animated.View>
           ) : null}
-          <View className="bg-screen" collapsable={false} style={{ flex: 1, overflow: "hidden" }}>
+          <View className="flex-1 overflow-hidden bg-screen" collapsable={false}>
             <View
               collapsable={false}
               style={

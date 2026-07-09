@@ -31,11 +31,9 @@ export function ComposerToolbarRow(props: {
 }) {
   return (
     <View
+      className="flex-row items-center gap-1.5"
       style={[
         {
-          alignItems: "center",
-          flexDirection: "row",
-          gap: 6,
           paddingBottom: props.paddingBottom ?? 8,
           paddingHorizontal: props.paddingHorizontal ?? 6,
           paddingTop: props.paddingTop ?? 8,
@@ -89,7 +87,7 @@ export function ComposerToolbarScroller(props: {
   }, []);
 
   return (
-    <View className="min-w-0 flex-1" style={{ position: "relative" }}>
+    <View className="relative min-w-0 flex-1">
       <ScrollView
         horizontal
         keyboardShouldPersistTaps="always"

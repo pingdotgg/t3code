@@ -88,7 +88,7 @@ function ConfiguredConnectOnboardingRouteScreen() {
         alwaysBounceVertical
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
-        style={{ flex: 1 }}
+        className="flex-1"
         contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
         contentContainerStyle={{
           gap: 16,

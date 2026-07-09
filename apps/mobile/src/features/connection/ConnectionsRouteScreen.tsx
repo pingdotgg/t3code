@@ -42,7 +42,7 @@ export function ConnectionsRouteScreen() {
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
-        style={{ flex: 1 }}
+        className="flex-1"
         contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
         contentContainerStyle={{
           paddingHorizontal: 20,
@@ -55,10 +55,7 @@ export function ConnectionsRouteScreen() {
               <View
                 key={environment.environmentId}
                 collapsable={false}
-                style={{
-                  borderTopWidth: index === 0 ? 0 : 1,
-                }}
-                className={cn(index !== 0 && "border-border")}
+                className={cn(index !== 0 && "border-t border-border")}
               >
                 <ConnectionEnvironmentRow
                   environment={environment}

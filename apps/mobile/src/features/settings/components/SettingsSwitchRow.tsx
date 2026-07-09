@@ -20,8 +20,11 @@ export function SettingsSwitchRow(props: {
 
   return (
     <View
-      className="flex-row items-center gap-4 p-4"
-      style={{ opacity: props.disabled ? 0.45 : 1 }}
+      className={
+        props.disabled
+          ? "flex-row items-center gap-4 p-4 opacity-[0.45]"
+          : "flex-row items-center gap-4 p-4"
+      }
     >
       <SymbolView name={props.icon} size={22} tintColor={icon} type="monochrome" weight="regular" />
       <Text className="flex-1 text-lg text-foreground">{props.label}</Text>

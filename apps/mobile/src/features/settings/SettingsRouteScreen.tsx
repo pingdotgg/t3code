@@ -94,12 +94,10 @@ function LocalSettingsRouteScreen() {
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
-        style={{ flex: 1 }}
+        className="flex-1"
+        contentContainerClassName="gap-6 px-5 pt-4"
         contentContainerStyle={{
-          gap: 24,
           paddingBottom: Math.max(insets.bottom, 18) + 18,
-          paddingHorizontal: 20,
-          paddingTop: 16,
         }}
       >
         <SettingsSection title="Configuration">
@@ -430,12 +428,10 @@ function ConfiguredSettingsRouteScreen() {
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
-        style={{ flex: 1 }}
+        className="flex-1"
+        contentContainerClassName="gap-6 px-5 pt-4"
         contentContainerStyle={{
-          gap: 24,
           paddingBottom: Math.max(insets.bottom, 18) + 18,
-          paddingHorizontal: 20,
-          paddingTop: 16,
         }}
       >
         <View className="gap-3">

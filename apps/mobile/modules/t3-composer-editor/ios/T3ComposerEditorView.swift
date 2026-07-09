@@ -300,7 +300,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate {
     skillText: "#a21caf",
     fileTint: "#737373"
   )
-  private var fontFamily = "DMSans_400Regular"
+  private var fontFamily = "DMSans-Regular"
   private var fontSize: CGFloat = 14
   private var lineHeight: CGFloat = 20
   private var contentInsetVertical: CGFloat = 0
@@ -608,7 +608,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate {
     iconImage: UIImage?,
     style: ComposerChipStyle
   ) -> UIImage {
-    let font = UIFont(name: "DMSans_500Medium", size: max(12, fontSize - 2))
+    let font = UIFont(name: "DMSans-Medium", size: max(12, fontSize - 2))
       ?? UIFont.systemFont(ofSize: max(12, fontSize - 2), weight: .medium)
     let fallbackIcon = UIImage(
       systemName: iconName,

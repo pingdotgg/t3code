@@ -206,13 +206,12 @@ export function ThreadWorkLog(props: {
                     nestedScrollEnabled
                     directionalLockEnabled
                     showsVerticalScrollIndicator
-                    style={{ maxHeight: 240 }}
+                    className="max-h-60"
                     contentContainerStyle={{ paddingRight: 8 }}
                   >
                     <Text
                       selectable
-                      className="text-2xs leading-normal text-foreground-muted"
-                      style={{ fontFamily: "ui-monospace" }}
+                      className="font-mono text-2xs leading-normal text-foreground-muted"
                     >
                       {row.fullDetail}
                     </Text>

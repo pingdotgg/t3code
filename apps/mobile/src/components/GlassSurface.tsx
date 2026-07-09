@@ -10,7 +10,7 @@ import {
 } from "react-native";
 import { useThemeColor } from "../lib/useThemeColor";
 
-export interface GlassSurfaceProps extends ViewProps {
+export interface GlassSurfaceProps extends Omit<ViewProps, "className"> {
   readonly children: ReactNode;
   readonly glassEffectStyle?: "clear" | "regular" | "none";
   readonly tintColor?: ColorValue;

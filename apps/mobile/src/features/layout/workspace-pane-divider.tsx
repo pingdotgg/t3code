@@ -69,6 +69,7 @@ export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
   return (
     <GestureDetector gesture={resizeGesture}>
       <Pressable
+        className="relative z-[100] -mx-[22px] w-11 self-stretch cursor-pointer justify-center"
         accessibilityActions={[
           { name: "increment", label: "Make pane wider" },
           { name: "decrement", label: "Make pane narrower" },
@@ -82,7 +83,6 @@ export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
         onAccessibilityAction={handleAccessibilityAction}
         onHoverIn={() => setHovered(true)}
         onHoverOut={() => setHovered(false)}
-        style={styles.hitTarget}
       >
         <View style={[styles.line, (hovered || dragging) && styles.activeLine]} />
       </Pressable>
@@ -91,15 +91,6 @@ export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
 }
 
 const styles = StyleSheet.create({
-  hitTarget: {
-    alignSelf: "stretch",
-    cursor: "pointer",
-    justifyContent: "center",
-    marginHorizontal: -22,
-    position: "relative",
-    width: 44,
-    zIndex: 100,
-  },
   line: {
     alignSelf: "center",
     backgroundColor:

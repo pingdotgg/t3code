@@ -412,7 +412,7 @@ export function HomeScreen(props: HomeScreenProps) {
       {Platform.OS === "ios" ? null : <HomeTopContentSpacer topInset={insets.top} />}
 
       {shouldShowConnectionStatus && Platform.OS === "ios" ? (
-        <View style={{ paddingBottom: 16 }}>
+        <View className="pb-4">
           <WorkspaceConnectionStatus
             state={props.catalogState}
             onPress={props.onOpenEnvironments}

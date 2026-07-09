@@ -129,13 +129,14 @@ export function WorkspaceInspectorPane(props: {
       ) : null}
       {inspectorSupported ? (
         <Animated.View
+          className="shrink-0 overflow-hidden"
           accessibilityElementsHidden={!inspectorVisible}
           collapsable={false}
           importantForAccessibility={inspectorVisible ? "auto" : "no-hide-descendants"}
           pointerEvents={inspectorVisible ? "auto" : "none"}
-          style={[{ flexShrink: 0, overflow: "hidden" }, inspectorStyle]}
+          style={inspectorStyle}
         >
-          <Animated.View style={[{ flex: 1 }, inspectorContentStyle]}>
+          <Animated.View className="flex-1" style={inspectorContentStyle}>
             {props.renderInspector?.()}
           </Animated.View>
         </Animated.View>
