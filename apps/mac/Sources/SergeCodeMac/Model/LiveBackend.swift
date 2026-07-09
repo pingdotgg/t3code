@@ -63,7 +63,8 @@ import T3Kit
 //    return [] (graceful — no diff yet). The unified-diff string is parsed by
 //    UnifiedDiffParser below.
 //  * Checkpoints: OrchestrationCheckpointSummary.checkpointRef is used as the
-//    UI Checkpoint.id; restoreCheckpoint routes id -> (threadId, turnCount).
+//    UI Checkpoint.id; restore uses (threadId, turnCount). Mapping preserves
+//    status/files/assistantMessageId via CheckpointMapping.
 
 public actor LiveBackend: BackendService {
 
@@ -717,10 +718,7 @@ public actor LiveBackend: BackendService {
         for summary in thread.checkpoints {
             checkpointRoutes[summary.checkpointRef] = (threadID, summary.checkpointTurnCount)
             let at = WireDate.parse(summary.completedAt) ?? Date()
-            checkpoints.append(
-                Checkpoint(
-                    id: summary.checkpointRef, threadID: threadID,
-                    label: "Turn \(summary.checkpointTurnCount)", createdAt: at))
+            checkpoints.append(CheckpointMapping.checkpoint(from: summary, threadID: threadID, at: at))
             maxTurn = max(maxTurn, summary.checkpointTurnCount)
         }
         checkpointsByThread[threadID] = checkpoints
@@ -890,9 +888,8 @@ public actor LiveBackend: BackendService {
             }
             seenCheckpointRefs[threadID, default: []].insert(payload.checkpointRef)
             let at = WireDate.parse(payload.completedAt) ?? Date()
-            let checkpoint = Checkpoint(
-                id: payload.checkpointRef, threadID: threadID,
-                label: "Turn \(payload.checkpointTurnCount)", createdAt: at)
+            let checkpoint = CheckpointMapping.checkpoint(
+                from: payload, threadID: threadID, at: at)
             checkpointsByThread[threadID, default: []].append(checkpoint)
             emitOrdered(
                 threadID: threadID,
@@ -1581,17 +1578,22 @@ public actor LiveBackend: BackendService {
         return UnifiedDiffParser.parse(result.diff)
     }
 
+    public func diff(threadID: String, fromTurn: Int, toTurn: Int) async throws -> [DiffFile] {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        guard toTurn > 0, toTurn > fromTurn else { return [] }
+        let result = try await client.getTurnDiff(
+            threadId: threadID, fromTurnCount: fromTurn, toTurnCount: toTurn)
+        return UnifiedDiffParser.parse(result.diff)
+    }
+
     public func checkpoints(threadID: String) async throws -> [Checkpoint] {
         checkpointsByThread[threadID] ?? []
     }
 
-    public func restoreCheckpoint(id: String) async throws {
+    public func restoreCheckpoint(threadID: String, turnCount: Int) async throws {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
-        guard let route = checkpointRoutes[id] else {
-            throw LiveBackendError.unresolvedCheckpoint(id)
-        }
-        _ = try await client.revertCheckpoint(threadId: route.threadID, turnCount: route.turnCount)
-        emitOrdered(threadID: route.threadID, event: .diffInvalidated(threadID: route.threadID))
+        _ = try await client.revertCheckpoint(threadId: threadID, turnCount: turnCount)
+        emitOrdered(threadID: threadID, event: .diffInvalidated(threadID: threadID))
     }
 
     public func addProject(path: String) async throws -> Project {
@@ -2060,9 +2062,7 @@ public actor LiveBackend: BackendService {
                     detail: approvalDetail(activity.payload), createdAt: at))
         case let .checkpoint(summary, at):
             return .checkpoint(
-                Checkpoint(
-                    id: summary.checkpointRef, threadID: threadID,
-                    label: "Turn \(summary.checkpointTurnCount)", createdAt: at))
+                CheckpointMapping.checkpoint(from: summary, threadID: threadID, at: at))
         case let .proposedPlan(plan, at):
             return .plan(
                 ProposedPlan(

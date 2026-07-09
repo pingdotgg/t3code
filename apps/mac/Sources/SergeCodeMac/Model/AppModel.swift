@@ -349,10 +349,13 @@ public final class AppModel {
         case .diffInvalidated(let threadID):
             // Diff invalidation always coincides with a checkpoint change
             // (new checkpoint completed, or a revert pruned some), so refresh
-            // both — an open Checkpoints inspector stays current.
+            // both — and reload review mode if it's open for this thread.
             Task {
                 await refreshDiff(threadID: threadID)
                 await refreshCheckpoints(threadID: threadID)
+                if threadState(threadID)?.isReviewing == true {
+                    await loadReviewDiff(threadID: threadID)
+                }
             }
         case .providersChanged(let list):
             providers = list
@@ -499,6 +502,74 @@ public final class AppModel {
         } catch {
             lastError = String(describing: error)
         }
+    }
+
+    // MARK: - Diff review mode
+
+    /// Enter main-area review for a scope, optionally focusing a file path.
+    public func openReview(
+        threadID: String, scope: ReviewScope, focusPath: String? = nil
+    ) {
+        let ts = state(creating: threadID)
+        ts.reviewScope = scope
+        ts.reviewSelectedPath = focusPath
+        ts.isReviewing = true
+        ts.reviewDiff = nil
+        ts.isLoadingReviewDiff = true
+        Task { await loadReviewDiff(threadID: threadID) }
+    }
+
+    public func closeReview(threadID: String) {
+        guard let ts = threadStates[threadID] else { return }
+        ts.isReviewing = false
+        ts.reviewScope = nil
+        ts.reviewSelectedPath = nil
+        ts.reviewDiff = nil
+        ts.isLoadingReviewDiff = false
+    }
+
+    public func closeReview() {
+        guard let threadID = selectedThreadID else { return }
+        closeReview(threadID: threadID)
+    }
+
+    public func selectReviewFile(threadID: String, path: String?) {
+        state(creating: threadID).reviewSelectedPath = path
+    }
+
+    public func loadReviewDiff(threadID: String) async {
+        let ts = state(creating: threadID)
+        guard let scope = ts.reviewScope else {
+            ts.isLoadingReviewDiff = false
+            return
+        }
+        ts.isLoadingReviewDiff = true
+        do {
+            let files: [DiffFile]
+            switch scope {
+            case .allChanges:
+                files = try await backend.diff(threadID: threadID)
+            case .checkpoint(let fromTurn, let toTurn, _):
+                files = try await backend.diff(
+                    threadID: threadID, fromTurn: fromTurn, toTurn: toTurn)
+            }
+            // Scope may have changed while the request was in flight.
+            guard ts.reviewScope == scope else { return }
+            ts.reviewDiff = files
+            if let path = ts.reviewSelectedPath,
+                files.contains(where: { $0.path == path })
+            {
+                // Keep focused path.
+            } else {
+                ts.reviewSelectedPath = files.first?.path
+            }
+        } catch {
+            lastError = String(describing: error)
+            if ts.reviewScope == scope {
+                ts.reviewDiff = []
+            }
+        }
+        ts.isLoadingReviewDiff = false
     }
 
     // MARK: - Commands
@@ -878,7 +949,8 @@ public final class AppModel {
 
     public func restoreCheckpoint(_ checkpoint: Checkpoint) async {
         do {
-            try await backend.restoreCheckpoint(id: checkpoint.id)
+            try await backend.restoreCheckpoint(
+                threadID: checkpoint.threadID, turnCount: checkpoint.turnCount)
         } catch {
             lastError = String(describing: error)
         }
