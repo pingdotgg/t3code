@@ -90,6 +90,76 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const commandQueue = yield* Queue.unbounded<CommandEnvelope>();
   const eventPubSub = yield* PubSub.unbounded<OrchestrationEvent>();
 
+  /**
+   * Per-thread domain-event buses. Lazily created on first `streamThreadEvents`
+   * subscriber; refcounted and dropped when the last subscriber scope closes or
+   * when a `thread.deleted` event is published for that thread.
+   */
+  const threadEventBuses = new Map<
+    ThreadId,
+    {
+      readonly pubsub: PubSub.PubSub<OrchestrationEvent>;
+      refCount: number;
+    }
+  >();
+
+  const acquireThreadEventBus = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      let entry = threadEventBuses.get(threadId);
+      if (entry === undefined) {
+        const pubsub = yield* PubSub.unbounded<OrchestrationEvent>();
+        entry = { pubsub, refCount: 0 };
+        threadEventBuses.set(threadId, entry);
+      }
+      entry.refCount += 1;
+      return entry.pubsub;
+    });
+
+  const releaseThreadEventBus = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      const entry = threadEventBuses.get(threadId);
+      if (entry === undefined) {
+        return;
+      }
+      entry.refCount -= 1;
+      if (entry.refCount <= 0) {
+        threadEventBuses.delete(threadId);
+        yield* PubSub.shutdown(entry.pubsub);
+      }
+    });
+
+  const dropThreadEventBus = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      const entry = threadEventBuses.get(threadId);
+      if (entry === undefined) {
+        return;
+      }
+      threadEventBuses.delete(threadId);
+      yield* PubSub.shutdown(entry.pubsub);
+    });
+
+  /**
+   * Publish a committed event to the global firehose and, when the event
+   * targets a thread that currently has a keyed bus, to that bus as well.
+   * Aggregate targeting matches ws subscribeThread: `aggregateKind === "thread"`
+   * with `aggregateId` as the thread id.
+   */
+  const publishDomainEvent = (event: OrchestrationEvent): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      yield* PubSub.publish(eventPubSub, event);
+
+      if (event.aggregateKind === "thread") {
+        const threadId = event.aggregateId as ThreadId;
+        const entry = threadEventBuses.get(threadId);
+        if (entry !== undefined) {
+          yield* PubSub.publish(entry.pubsub, event);
+        }
+        if (event.type === "thread.deleted") {
+          yield* dropThreadEventBus(threadId);
+        }
+      }
+    });
+
   const projectEventsOntoReadModel = (
     baseReadModel: OrchestrationReadModel,
     events: ReadonlyArray<OrchestrationEvent>,
@@ -121,7 +191,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       commandReadModel = yield* projectEventsOntoReadModel(commandReadModel, persistedEvents);
 
       for (const persistedEvent of persistedEvents) {
-        yield* PubSub.publish(eventPubSub, persistedEvent);
+        yield* publishDomainEvent(persistedEvent);
       }
     });
 
@@ -214,7 +284,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 
         commandReadModel = committedCommand.nextCommandReadModel;
         for (const [index, event] of committedCommand.committedEvents.entries()) {
-          yield* PubSub.publish(eventPubSub, event);
+          yield* publishDomainEvent(event);
           if (index === 0) {
             yield* Metric.update(
               Metric.withAttributes(
@@ -320,6 +390,13 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       return yield* Deferred.await(result);
     });
 
+  const streamThreadEvents: OrchestrationEngineShape["streamThreadEvents"] = (threadId) =>
+    Stream.unwrap(
+      Effect.acquireRelease(acquireThreadEventBus(threadId), () =>
+        releaseThreadEventBus(threadId),
+      ).pipe(Effect.map((pubsub) => Stream.fromPubSub(pubsub))),
+    );
+
   return {
     readEvents,
     dispatch,
@@ -329,7 +406,10 @@ const makeOrchestrationEngine = Effect.gen(function* () {
     get streamDomainEvents(): OrchestrationEngineShape["streamDomainEvents"] {
       return Stream.fromPubSub(eventPubSub);
     },
-  } satisfies OrchestrationEngineShape;
+    streamThreadEvents,
+    /** @internal Test-only: number of live per-thread event buses. */
+    threadEventBusCount: () => threadEventBuses.size,
+  } satisfies OrchestrationEngineShape & { readonly threadEventBusCount: () => number };
 });
 
 export const OrchestrationEngineLive = Layer.effect(

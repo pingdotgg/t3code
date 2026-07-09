@@ -5,6 +5,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -385,9 +386,84 @@ function toAuthAccessStreamEvent(
   }
 }
 
+/**
+ * Map a domain event to an optional shell stream event.
+ *
+ * Pure w.r.t. WebSocket connection context — only depends on the event and
+ * projection snapshots — so a single shared shell broadcast can fan out to all
+ * `subscribeShell` clients.
+ */
+const toShellStreamEvent = (
+  projectionSnapshotQuery: ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"],
+  event: OrchestrationEvent,
+): Effect.Effect<Option.Option<OrchestrationShellStreamEvent>, never, never> => {
+  switch (event.type) {
+    case "project.created":
+    case "project.meta-updated":
+      return projectionSnapshotQuery.getProjectShellById(event.payload.projectId).pipe(
+        Effect.map((project) =>
+          Option.map(project, (nextProject) => ({
+            kind: "project-upserted" as const,
+            sequence: event.sequence,
+            project: nextProject,
+          })),
+        ),
+        Effect.orElseSucceed(() => Option.none()),
+      );
+    case "project.deleted":
+      return Effect.succeed(
+        Option.some({
+          kind: "project-removed" as const,
+          sequence: event.sequence,
+          projectId: event.payload.projectId,
+        }),
+      );
+    case "thread.deleted":
+    case "thread.archived":
+      return Effect.succeed(
+        Option.some({
+          kind: "thread-removed" as const,
+          sequence: event.sequence,
+          threadId: event.payload.threadId,
+        }),
+      );
+    case "thread.unarchived":
+      return projectionSnapshotQuery.getThreadShellById(event.payload.threadId).pipe(
+        Effect.map((thread) =>
+          Option.map(thread, (nextThread) => ({
+            kind: "thread-upserted" as const,
+            sequence: event.sequence,
+            thread: nextThread,
+          })),
+        ),
+        Effect.orElseSucceed(() => Option.none()),
+      );
+    default:
+      if (event.aggregateKind !== "thread") {
+        return Effect.succeed(Option.none());
+      }
+      return projectionSnapshotQuery.getThreadShellById(ThreadId.make(event.aggregateId)).pipe(
+        Effect.map((thread) =>
+          Option.map(thread, (nextThread) => ({
+            kind: "thread-upserted" as const,
+            sequence: event.sequence,
+            thread: nextThread,
+          })),
+        ),
+        Effect.orElseSucceed(() => Option.none()),
+      );
+  }
+};
+
 const makeWsRpcLayer = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+  /**
+   * Shared server-scoped shell live stream. One `streamDomainEvents` consumer
+   * maps through `toShellStreamEvent` and republishes; each `subscribeShell`
+   * client subscribes to this instead of mapping independently.
+   */
+  shellLiveStream: Stream.Stream<OrchestrationShellStreamEvent>,
 ) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
@@ -611,69 +687,6 @@ const makeWsRpcLayer = (
 
       const enrichOrchestrationEvents = (events: ReadonlyArray<OrchestrationEvent>) =>
         Effect.forEach(events, enrichProjectEvent, { concurrency: 4 });
-
-      const toShellStreamEvent = (
-        event: OrchestrationEvent,
-      ): Effect.Effect<Option.Option<OrchestrationShellStreamEvent>, never, never> => {
-        switch (event.type) {
-          case "project.created":
-          case "project.meta-updated":
-            return projectionSnapshotQuery.getProjectShellById(event.payload.projectId).pipe(
-              Effect.map((project) =>
-                Option.map(project, (nextProject) => ({
-                  kind: "project-upserted" as const,
-                  sequence: event.sequence,
-                  project: nextProject,
-                })),
-              ),
-              Effect.orElseSucceed(() => Option.none()),
-            );
-          case "project.deleted":
-            return Effect.succeed(
-              Option.some({
-                kind: "project-removed" as const,
-                sequence: event.sequence,
-                projectId: event.payload.projectId,
-              }),
-            );
-          case "thread.deleted":
-          case "thread.archived":
-            return Effect.succeed(
-              Option.some({
-                kind: "thread-removed" as const,
-                sequence: event.sequence,
-                threadId: event.payload.threadId,
-              }),
-            );
-          case "thread.unarchived":
-            return projectionSnapshotQuery.getThreadShellById(event.payload.threadId).pipe(
-              Effect.map((thread) =>
-                Option.map(thread, (nextThread) => ({
-                  kind: "thread-upserted" as const,
-                  sequence: event.sequence,
-                  thread: nextThread,
-                })),
-              ),
-              Effect.orElseSucceed(() => Option.none()),
-            );
-          default:
-            if (event.aggregateKind !== "thread") {
-              return Effect.succeed(Option.none());
-            }
-            return projectionSnapshotQuery
-              .getThreadShellById(ThreadId.make(event.aggregateId))
-              .pipe(
-                Effect.map((thread) =>
-                  Option.map(thread, (nextThread) => ({
-                    kind: "thread-upserted" as const,
-                    sequence: event.sequence,
-                    thread: nextThread,
-                  })),
-                ),
-                Effect.orElseSucceed(() => Option.none()),
-              );
-        }
-      };
 
       const dispatchBootstrapTurnStart = (
         command: Extract<OrchestrationCommand, { type: "thread.turn.start" }>,
@@ -1076,19 +1089,15 @@ const makeWsRpcLayer = (
                 ),
               );
 
-              const liveStream = orchestrationEngine.streamDomainEvents.pipe(
-                Stream.mapEffect(toShellStreamEvent),
-                Stream.flatMap((event) =>
-                  Option.isSome(event) ? Stream.succeed(event.value) : Stream.empty,
-                ),
-              );
-
+              // Shared server-scoped broadcast (see websocketRpcRouteLayer) —
+              // subscription is established here, after the snapshot read,
+              // matching prior snapshot-then-live sequencing.
               return Stream.concat(
                 Stream.make({
                   kind: "snapshot" as const,
                   snapshot,
                 }),
-                liveStream,
+                shellLiveStream,
               );
             }),
             { "rpc.aggregate": "orchestration" },
@@ -1143,13 +1152,10 @@ const makeWsRpcLayer = (
                 });
               }
 
-              const liveStream = orchestrationEngine.streamDomainEvents.pipe(
-                Stream.filter(
-                  (event) =>
-                    event.aggregateKind === "thread" &&
-                    event.aggregateId === input.threadId &&
-                    isThreadDetailEvent(event),
-                ),
+              // Keyed per-thread bus; subscription established after snapshot
+              // read to preserve existing snapshot-then-live gap semantics.
+              const liveStream = orchestrationEngine.streamThreadEvents(input.threadId).pipe(
+                Stream.filter(isThreadDetailEvent),
                 Stream.map((event) => ({
                   kind: "event" as const,
                   event,
@@ -1793,6 +1799,29 @@ const makeWsRpcLayer = (
 export const websocketRpcRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+    const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
+    const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+
+    // One server-scoped domain-event → shell-stream broadcast. toShellStreamEvent
+    // is connection-pure (projection lookups only), so all subscribeShell clients
+    // share this single mapped firehose instead of remapping independently.
+    const shellEventsPubSub = yield* Effect.acquireRelease(
+      PubSub.unbounded<OrchestrationShellStreamEvent>(),
+      (pubsub) => PubSub.shutdown(pubsub),
+    );
+    yield* Effect.forkScoped(
+      Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) =>
+        toShellStreamEvent(projectionSnapshotQuery, event).pipe(
+          Effect.flatMap((maybeShellEvent) =>
+            Option.isSome(maybeShellEvent)
+              ? PubSub.publish(shellEventsPubSub, maybeShellEvent.value).pipe(Effect.asVoid)
+              : Effect.void,
+          ),
+        ),
+      ),
+    );
+    const shellLiveStream = Stream.fromPubSub(shellEventsPubSub);
+
     return HttpRouter.add(
       "GET",
       "/ws",
@@ -1812,7 +1841,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           disableTracing: true,
         }).pipe(
           Effect.provide(
-            makeWsRpcLayer(session, previewAutomationBroker).pipe(
+            makeWsRpcLayer(session, previewAutomationBroker, shellLiveStream).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(

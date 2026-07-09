@@ -677,6 +677,7 @@ const buildAppUnderTest = (options?: {
           readEvents: () => Stream.empty,
           dispatch: () => Effect.succeed({ sequence: 0 }),
           streamDomainEvents: Stream.empty,
+          streamThreadEvents: () => Stream.empty,
           ...options?.layers?.orchestrationEngine,
         }),
       ),

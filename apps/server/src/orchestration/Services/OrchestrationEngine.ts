@@ -10,7 +10,7 @@
  *
  * @module OrchestrationEngineService
  */
-import type { OrchestrationCommand, OrchestrationEvent } from "@t3tools/contracts";
+import type { OrchestrationCommand, OrchestrationEvent, ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
@@ -51,6 +51,18 @@ export interface OrchestrationEngineShape {
    * This is a hot runtime stream (new events only), not a historical replay.
    */
   readonly streamDomainEvents: Stream.Stream<OrchestrationEvent>;
+
+  /**
+   * Stream domain events for a single thread aggregate.
+   *
+   * Lazily allocates a per-thread PubSub on first subscriber and tears it down
+   * when the last subscriber's scope closes (or when `thread.deleted` is
+   * published for that thread). Hot runtime stream only — not a historical
+   * replay.
+   *
+   * @param threadId - Thread aggregate to subscribe to.
+   */
+  readonly streamThreadEvents: (threadId: ThreadId) => Stream.Stream<OrchestrationEvent>;
 }
 
 /**
