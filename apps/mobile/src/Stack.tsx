@@ -41,6 +41,7 @@ import { NewTaskDraftRouteScreen } from "./features/threads/NewTaskDraftRouteScr
 import { NewTaskFlowProvider } from "./features/threads/new-task-flow-provider";
 import { NewTaskRouteScreen } from "./features/threads/NewTaskRouteScreen";
 import { SettingsAppearanceRouteScreen } from "./features/settings/SettingsAppearanceRouteScreen";
+import { SettingsClientStorageRouteScreen } from "./features/settings/SettingsClientStorageRouteScreen";
 import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteScreen";
 import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnvironmentsRouteScreen";
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
@@ -145,6 +146,13 @@ const SettingsSheetStack = createNativeStackNavigator({
       linking: "appearance",
       options: {
         title: "Appearance",
+      },
+    }),
+    SettingsClientStorage: createNativeStackScreen({
+      screen: SettingsClientStorageRouteScreen,
+      linking: "client-storage",
+      options: {
+        title: "Client Storage",
       },
     }),
     SettingsAuth: createNativeStackScreen({

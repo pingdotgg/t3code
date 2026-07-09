@@ -81,6 +81,10 @@ describe("environment shell synchronization", () => {
         loadThread: () => Effect.succeed(Option.none()),
         saveThread: () => Effect.void,
         removeThread: () => Effect.void,
+        loadServerConfig: () => Effect.succeed(Option.none()),
+        saveServerConfig: () => Effect.void,
+        loadVcsRefs: () => Effect.succeed(Option.none()),
+        saveVcsRefs: () => Effect.void,
         clear: () => Effect.void,
       });
       // Cold cache with no HTTP snapshot available → falls back to the
@@ -171,6 +175,10 @@ describe("environment shell synchronization", () => {
         loadThread: () => Effect.succeed(Option.none()),
         saveThread: () => Effect.void,
         removeThread: () => Effect.void,
+        loadServerConfig: () => Effect.succeed(Option.none()),
+        saveServerConfig: () => Effect.void,
+        loadVcsRefs: () => Effect.succeed(Option.none()),
+        saveVcsRefs: () => Effect.void,
         clear: () => Effect.void,
       });
       const snapshotLoader = ShellSnapshotLoader.of({

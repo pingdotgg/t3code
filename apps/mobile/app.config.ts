@@ -123,6 +123,7 @@ const config: ExpoConfig = {
   plugins: [
     "expo-font",
     "expo-secure-store",
+    "expo-sqlite",
     ["@clerk/expo", { theme: "./clerk-theme.json" }],
     "expo-web-browser",
     [

@@ -30,7 +30,8 @@ import { makeEnvironmentHttpApiClient } from "@t3tools/client-runtime/rpc";
 
 import { authClientMetadata } from "../../lib/authClientMetadata";
 import type { SavedRemoteConnection } from "../../lib/connection";
-import { loadOrCreateAgentAwarenessDeviceId, loadPreferences } from "../../lib/storage";
+import * as MobilePreferences from "../../persistence/mobile-preferences";
+import * as MobileStorage from "../../persistence/mobile-storage";
 import { resolveCloudPublicConfig } from "./publicConfig";
 
 const RELAY_STATUS_AND_CONNECT_SCOPES = [
@@ -256,14 +257,19 @@ function ensureConnectEndpointMatchesEnvironment(input: {
   return Effect.void;
 }
 
-export function linkEnvironmentToCloud(input: {
+interface LinkEnvironmentToCloudInput {
   readonly connection: SavedRemoteConnection;
   readonly clerkToken: string;
-}): Effect.Effect<
-  void,
-  CloudEnvironmentLinkError,
-  HttpClient.HttpClient | ManagedRelay.ManagedRelayClient
-> {
+}
+
+type LinkEnvironmentToCloudRequirements =
+  | HttpClient.HttpClient
+  | ManagedRelay.ManagedRelayClient
+  | MobileStorage.MobileStorage;
+
+export function linkEnvironmentToCloudWithPreference(
+  input: LinkEnvironmentToCloudInput & { readonly liveActivitiesEnabled: boolean },
+): Effect.Effect<void, CloudEnvironmentLinkError, LinkEnvironmentToCloudRequirements> {
   return Effect.gen(function* () {
     if (!input.connection.bearerToken) {
       return yield* new CloudEnvironmentLinkError({
@@ -273,15 +279,11 @@ export function linkEnvironmentToCloud(input: {
     const localBearerToken = input.connection.bearerToken;
     const relayUrl = yield* requireRelayUrl();
     const relayClient = yield* ManagedRelay.ManagedRelayClient;
-    const deviceId = yield* Effect.tryPromise({
-      try: () => loadOrCreateAgentAwarenessDeviceId(),
-      catch: cloudEnvironmentLinkError("Could not load the mobile device id."),
-    });
-    const preferences = yield* Effect.tryPromise({
-      try: () => loadPreferences(),
-      catch: cloudEnvironmentLinkError("Could not load mobile notification preferences."),
-    });
-    const liveActivitiesEnabled = preferences.liveActivitiesEnabled !== false;
+    const storage = yield* MobileStorage.MobileStorage;
+    const deviceId = yield* storage.loadOrCreateAgentAwarenessDeviceId.pipe(
+      Effect.mapError(cloudEnvironmentLinkError("Could not load the mobile device id.")),
+    );
+    const liveActivitiesEnabled = input.liveActivitiesEnabled;
     const challenge = yield* relayClient
       .createEnvironmentLinkChallenge({
         clerkToken: input.clerkToken,
@@ -348,6 +350,25 @@ export function linkEnvironmentToCloud(input: {
         Effect.mapError(cloudEnvironmentLinkError("Could not configure environment relay access.")),
       );
   });
+}
+
+export function linkEnvironmentToCloud(
+  input: LinkEnvironmentToCloudInput,
+): Effect.Effect<
+  void,
+  CloudEnvironmentLinkError,
+  LinkEnvironmentToCloudRequirements | MobilePreferences.MobilePreferencesStore
+> {
+  return MobilePreferences.MobilePreferencesStore.pipe(
+    Effect.flatMap((preferencesStore) => preferencesStore.load),
+    Effect.mapError(cloudEnvironmentLinkError("Could not load mobile notification preferences.")),
+    Effect.flatMap((preferences) =>
+      linkEnvironmentToCloudWithPreference({
+        ...input,
+        liveActivitiesEnabled: preferences.liveActivitiesEnabled !== false,
+      }),
+    ),
+  );
 }
 
 export function listCloudEnvironments(input: {
@@ -460,10 +481,10 @@ export function listCloudEnvironmentsWithStatus(input: {
 
 const loadAgentAwarenessDeviceId = Effect.fn("mobile.cloud.loadAgentAwarenessDeviceId")(
   function* () {
-    return yield* Effect.tryPromise({
-      try: () => loadOrCreateAgentAwarenessDeviceId(),
-      catch: cloudEnvironmentLinkError("Could not load the mobile device id."),
-    });
+    const storage = yield* MobileStorage.MobileStorage;
+    return yield* storage.loadOrCreateAgentAwarenessDeviceId.pipe(
+      Effect.mapError(cloudEnvironmentLinkError("Could not load the mobile device id.")),
+    );
   },
 );
 
@@ -557,7 +578,10 @@ export function connectCloudEnvironment(input: {
 }): Effect.Effect<
   SavedRemoteConnection,
   CloudEnvironmentLinkError,
-  HttpClient.HttpClient | ManagedRelay.ManagedRelayClient | ManagedRelay.ManagedRelayDpopSigner
+  | HttpClient.HttpClient
+  | ManagedRelay.ManagedRelayClient
+  | ManagedRelay.ManagedRelayDpopSigner
+  | MobileStorage.MobileStorage
 > {
   return connectRelayManagedEnvironment({
     clerkToken: input.clerkToken,
@@ -572,7 +596,10 @@ export function refreshCloudEnvironmentConnection(input: {
 }): Effect.Effect<
   SavedRemoteConnection,
   CloudEnvironmentLinkError,
-  HttpClient.HttpClient | ManagedRelay.ManagedRelayClient | ManagedRelay.ManagedRelayDpopSigner
+  | HttpClient.HttpClient
+  | ManagedRelay.ManagedRelayClient
+  | ManagedRelay.ManagedRelayDpopSigner
+  | MobileStorage.MobileStorage
 > {
   return connectRelayManagedEnvironment({
     clerkToken: input.clerkToken,
