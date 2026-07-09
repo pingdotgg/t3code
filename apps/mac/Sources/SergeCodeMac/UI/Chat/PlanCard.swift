@@ -5,12 +5,14 @@ import SwiftUI
 /// reading content, so it stays opaque; only the card frame is glass.
 public struct PlanCard: View {
     let plan: ProposedPlan
+    let model: AppModel
     let onImplement: () -> Void
 
     @UIState private var isExpanded = true
 
-    public init(plan: ProposedPlan, onImplement: @escaping () -> Void) {
+    public init(plan: ProposedPlan, model: AppModel, onImplement: @escaping () -> Void) {
         self.plan = plan
+        self.model = model
         self.onImplement = onImplement
     }
 
@@ -41,7 +43,9 @@ public struct PlanCard: View {
             .buttonStyle(.plain)
 
             if isExpanded {
-                AssistantMarkdownView(markdown: plan.markdown, isStreaming: false)
+                AssistantMarkdownView(
+                    markdown: plan.markdown, isStreaming: false,
+                    threadID: plan.threadID, model: model)
                     .padding(10)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(

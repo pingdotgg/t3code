@@ -964,7 +964,8 @@ private actor MockState {
             .assistantMessage(
                 id: "t1-a1",
                 markdown: """
-                Looked at `SidebarView`. The list re-sorts on every `threadUpserted` \
+                Looked at `Sources/SergeCodeMac/Views/SidebarView.swift:24`. The \
+                list re-sorts on every `threadUpserted` \
                 event, which causes the scroll offset to jump. I'll pin the sort to \
                 only run when the thread list actually changes order.
 
@@ -1004,7 +1005,8 @@ private actor MockState {
                 threadID: "thread-1",
                 markdown: """
                 ## Plan: stop the sidebar scroll jumping
-                1. Pin the sort to run only on explicit reorder events.
+                1. Pin the sort in `Sources/SergeCodeMac/Views/SidebarView.swift:24` \
+                to run only on explicit reorder events.
                 2. Keep scroll anchored to the selected row during upserts.
                 """,
                 isImplemented: false,
@@ -1035,9 +1037,10 @@ private actor MockState {
             .assistantMessage(
                 id: "t2-a1",
                 markdown: """
-                Sketched `MockBackend` with seeded projects, threads, and a fake \
-                streaming reply. Before I run the build to sanity-check it, I need \
-                your go-ahead since this shells out.
+                Sketched `Sources/SergeCodeMac/Model/MockBackend.swift:12` with \
+                seeded projects, threads, and a fake streaming reply. Before I \
+                run the build to sanity-check it, I need your go-ahead since \
+                this shells out.
                 """,
                 isStreaming: false,
                 at: now.addingTimeInterval(-900)
