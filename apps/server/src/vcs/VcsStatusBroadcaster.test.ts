@@ -55,6 +55,8 @@ const remoteStatusWithPr: VcsStatusRemoteResult = {
     baseRef: "main",
     headRef: "codex/connection-state-audit",
     state: "open",
+    reviewDecision: null,
+    unresolvedReviewThreadCount: null,
   },
 };
 

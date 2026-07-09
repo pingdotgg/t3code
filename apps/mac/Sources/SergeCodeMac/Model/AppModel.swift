@@ -1114,6 +1114,11 @@ public final class AppModel {
         do {
             lastGitActionOutcome = try await backend.runGitAction(
                 threadID: threadID, action: action, commitMessage: commitMessage)
+            // Merge (and other actions that change remote PR state) need a
+            // fresh VCS snapshot so dedicated buttons disappear promptly.
+            if action == .mergePR, lastGitActionOutcome?.success == true {
+                try? await backend.watchVcsStatus(threadID: threadID)
+            }
         } catch {
             lastGitActionOutcome = GitActionOutcome(
                 success: false, title: "Git action failed", detail: String(describing: error))

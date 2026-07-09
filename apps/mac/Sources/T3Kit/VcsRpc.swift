@@ -27,6 +27,10 @@ public struct VcsStatusChangeRequest: Decodable, Sendable {
     public var headRef: String
     /// "open" | "closed" | "merged"
     public var state: String
+    /// GitHub reviewDecision: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null
+    public var reviewDecision: String?
+    /// Unresolved review thread count, or null when unavailable.
+    public var unresolvedReviewThreadCount: Int?
 }
 
 /// `VcsStatusLocalResult` — repo-local status (no network).
@@ -222,6 +226,7 @@ public enum GitStackedAction: String, Encodable, Sendable {
     case createPR = "create_pr"
     case commitPush = "commit_push"
     case commitPushPR = "commit_push_pr"
+    case mergePR = "merge_pr"
 }
 
 struct GitRunStackedActionInput: Encodable, Sendable {

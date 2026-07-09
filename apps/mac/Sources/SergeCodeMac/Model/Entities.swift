@@ -711,6 +711,13 @@ public enum PullRequestState: String, Sendable {
     case open, closed, merged
 }
 
+/// GitHub reviewDecision values from `VcsStatusChangeRequest.reviewDecision`.
+public enum PullRequestReviewDecision: String, Sendable {
+    case approved = "APPROVED"
+    case changesRequested = "CHANGES_REQUESTED"
+    case reviewRequired = "REVIEW_REQUIRED"
+}
+
 /// Working-tree + branch + PR status for one project repo.
 public struct VcsStatus: Hashable, Sendable {
     public var isRepo: Bool
@@ -732,13 +739,19 @@ public struct VcsStatus: Hashable, Sendable {
     public var prTitle: String?
     public var prURL: String?
     public var prState: PullRequestState?
+    /// GitHub review decision; nil when unknown / non-GitHub / fetch failed.
+    public var reviewDecision: PullRequestReviewDecision?
+    /// Unresolved review thread count; nil when unknown / fetch failed.
+    public var unresolvedReviewThreadCount: Int?
 
     public init(
         isRepo: Bool, branch: String?, isDefaultBranch: Bool, changedFileCount: Int,
         insertions: Int, deletions: Int, aheadCount: Int, behindCount: Int, hasUpstream: Bool,
         hasPrimaryRemote: Bool = false, aheadOfDefaultCount: Int? = nil,
         prNumber: Int? = nil, prTitle: String? = nil, prURL: String? = nil,
-        prState: PullRequestState? = nil
+        prState: PullRequestState? = nil,
+        reviewDecision: PullRequestReviewDecision? = nil,
+        unresolvedReviewThreadCount: Int? = nil
     ) {
         self.isRepo = isRepo
         self.branch = branch
@@ -755,6 +768,8 @@ public struct VcsStatus: Hashable, Sendable {
         self.prTitle = prTitle
         self.prURL = prURL
         self.prState = prState
+        self.reviewDecision = reviewDecision
+        self.unresolvedReviewThreadCount = unresolvedReviewThreadCount
     }
 }
 
@@ -776,7 +791,7 @@ public struct BranchRef: Identifiable, Hashable, Sendable {
 
 /// The stacked git pipelines the toolbar offers.
 public enum GitAction: String, CaseIterable, Sendable, Identifiable {
-    case commit, push, commitPush, commitPushPR
+    case commit, push, commitPush, commitPushPR, mergePR
     public var id: String { rawValue }
 
     public var displayName: String {
@@ -785,11 +800,20 @@ public enum GitAction: String, CaseIterable, Sendable, Identifiable {
         case .push: "Push"
         case .commitPush: "Commit & Push"
         case .commitPushPR: "Commit, Push & Open PR"
+        case .mergePR: "Merge PR"
         }
     }
 
     public var needsCommitMessage: Bool {
-        self != .push
+        switch self {
+        case .push, .mergePR: false
+        default: true
+        }
+    }
+
+    /// Actions listed in the generic Git overflow menu (not dedicated buttons).
+    public static var menuActions: [GitAction] {
+        [.commit, .push, .commitPush, .commitPushPR]
     }
 }
 
