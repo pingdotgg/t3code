@@ -223,9 +223,6 @@ function CacheEnvironmentRow(props: {
       <Text className="min-w-0 flex-1 text-base text-foreground" numberOfLines={1}>
         {props.environmentLabel}
       </Text>
-      <Text className="shrink-0 text-sm tabular-nums text-foreground-muted">
-        {formatBytes(props.environment.payloadBytes)}
-      </Text>
       <Pressable
         accessibilityLabel={`Clear cache for ${props.environmentLabel}`}
         accessibilityRole="button"
@@ -234,10 +231,11 @@ function CacheEnvironmentRow(props: {
         className="rounded-full px-3 py-2 disabled:opacity-40"
       >
         <Text
-          className="font-t3-medium text-danger-foreground"
+          className="font-t3-medium tabular-nums text-danger-foreground"
+          numberOfLines={1}
           style={{ color: dangerForegroundColor }}
         >
-          Clear
+          Clear {formatBytes(props.environment.payloadBytes)}
         </Text>
       </Pressable>
     </View>
