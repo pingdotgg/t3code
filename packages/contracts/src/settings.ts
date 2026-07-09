@@ -246,6 +246,74 @@ export const ClaudeSettings = makeProviderSettingsSchema(
 );
 export type ClaudeSettings = typeof ClaudeSettings.Type;
 
+export const ClaudeSyntheroSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    binaryPath: makeBinaryPathSetting("claude").pipe(
+      Schema.annotateKey({
+        title: "Claude binary path",
+        description: "Path to the Claude Code binary used by this Synthero instance.",
+        providerSettingsForm: { placeholder: "claude", clearWhenEmpty: "omit" },
+      }),
+    ),
+    homePath: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("~/.claude-synthero")),
+      Schema.annotateKey({
+        title: "Claude HOME path",
+        description:
+          "Dedicated HOME used only for Claude Synthero. Keeps it separate from your normal Claude login and setup.",
+        providerSettingsForm: { placeholder: "~/.claude-synthero", clearWhenEmpty: "omit" },
+      }),
+    ),
+    baseURL: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("https://api.synterolink.com")),
+      Schema.annotateKey({
+        title: "Synthero base URL",
+        description: "Anthropic-compatible endpoint passed to Claude Code as ANTHROPIC_BASE_URL.",
+        providerSettingsForm: {
+          placeholder: "https://api.synterolink.com",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    authToken: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Synthero auth token",
+        description:
+          "Stored in plain text on disk. Leave blank to read SYNTHERO_AUTH_TOKEN or ANTHROPIC_AUTH_TOKEN from the provider environment.",
+        providerSettingsForm: {
+          control: "password",
+          placeholder: "sk-...",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    customModels: Schema.Array(Schema.String).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    launchArgs: Schema.String.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Launch arguments",
+        description: "Additional Claude Code CLI arguments passed on session start.",
+        providerSettingsForm: {
+          placeholder: "e.g. --chrome",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+  },
+  {
+    order: ["binaryPath", "homePath", "baseURL", "authToken", "launchArgs"],
+  },
+);
+export type ClaudeSyntheroSettings = typeof ClaudeSyntheroSettings.Type;
+
 export const CursorSettings = makeProviderSettingsSchema(
   {
     enabled: Schema.Boolean.pipe(
@@ -442,6 +510,7 @@ export const ServerSettings = Schema.Struct({
   providers: Schema.Struct({
     codex: CodexSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     claudeAgent: ClaudeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    "claude-synthero": ClaudeSyntheroSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     cursor: CursorSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     grok: GrokSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     fugu: FuguSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
@@ -527,6 +596,16 @@ const ClaudeSettingsPatch = Schema.Struct({
   launchArgs: Schema.optionalKey(TrimmedString),
 });
 
+const ClaudeSyntheroSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  binaryPath: Schema.optionalKey(TrimmedString),
+  homePath: Schema.optionalKey(TrimmedString),
+  baseURL: Schema.optionalKey(TrimmedString),
+  authToken: Schema.optionalKey(TrimmedString),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+  launchArgs: Schema.optionalKey(TrimmedString),
+});
+
 const CursorSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   binaryPath: Schema.optionalKey(TrimmedString),
@@ -574,6 +653,7 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Struct({
       codex: Schema.optionalKey(CodexSettingsPatch),
       claudeAgent: Schema.optionalKey(ClaudeSettingsPatch),
+      "claude-synthero": Schema.optionalKey(ClaudeSyntheroSettingsPatch),
       cursor: Schema.optionalKey(CursorSettingsPatch),
       grok: Schema.optionalKey(GrokSettingsPatch),
       fugu: Schema.optionalKey(FuguSettingsPatch),

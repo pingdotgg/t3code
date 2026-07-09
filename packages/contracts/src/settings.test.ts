@@ -186,3 +186,29 @@ describe("ServerSettingsPatch string normalization", () => {
     expect(encoded.providers?.codex?.binaryPath).toBe("/opt/homebrew/bin/codex");
   });
 });
+
+describe("Claude Synthero settings", () => {
+  it("decodes a separate legacy provider config with an isolated Claude HOME", () => {
+    const decoded = decodeServerSettings({});
+
+    expect(decoded.providers["claude-synthero"].enabled).toBe(true);
+    expect(decoded.providers["claude-synthero"].binaryPath).toBe("claude");
+    expect(decoded.providers["claude-synthero"].homePath).toBe("~/.claude-synthero");
+    expect(decoded.providers["claude-synthero"].baseURL).toBe("https://api.synterolink.com");
+    expect(decoded.providers["claude-synthero"].authToken).toBe("");
+  });
+
+  it("accepts Claude Synthero provider patches", () => {
+    const patch = decodeServerSettingsPatch({
+      providers: {
+        "claude-synthero": {
+          baseURL: "  https://api.synterolink.com  ",
+          authToken: "  sk-test  ",
+        },
+      },
+    });
+
+    expect(patch.providers?.["claude-synthero"]?.baseURL).toBe("https://api.synterolink.com");
+    expect(patch.providers?.["claude-synthero"]?.authToken).toBe("sk-test");
+  });
+});

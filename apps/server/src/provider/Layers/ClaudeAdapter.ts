@@ -93,7 +93,7 @@ import { detectClaudeUsageLimit, isUsageLimitDetail } from "../UsageLimit.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.UnknownFromJsonString);
 const decodeUnknownJsonStringExit = Schema.decodeUnknownExit(Schema.UnknownFromJsonString);
 
-const PROVIDER = ProviderDriverKind.make("claudeAgent");
+const DEFAULT_CLAUDE_PROVIDER = ProviderDriverKind.make("claudeAgent");
 type ClaudeTextStreamKind = Extract<RuntimeContentStreamKind, "assistant_text" | "reasoning_text">;
 type ClaudeToolResultStreamKind = Extract<
   RuntimeContentStreamKind,
@@ -217,6 +217,7 @@ interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
 
 export interface ClaudeAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
+  readonly driverKind?: ProviderDriverKind;
   readonly environment?: NodeJS.ProcessEnv;
   readonly createQuery?: (input: {
     readonly prompt: AsyncIterable<SDKUserMessage>;
@@ -1280,12 +1281,25 @@ function buildClaudeImageContentBlock(input: {
   };
 }
 
+/**
+ * Build a Claude SDK user message from canonical send-turn input.
+ *
+ * The provider dependency is threaded in so validation/read failures are
+ * stamped with the active Claude-backed driver (`claudeAgent`,
+ * `claude-synthero`, etc.) instead of always reporting the stock Claude
+ * provider.
+ *
+ * @param input - Canonical send-turn payload from the provider service.
+ * @param dependencies - File, attachment, instance, and provider context.
+ * @returns A Claude SDK user message containing text and supported images.
+ */
 const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
   input: ProviderSendTurnInput,
   dependencies: {
     readonly fileSystem: FileSystem.FileSystem;
     readonly attachmentsDir: string;
     readonly boundInstanceId: ProviderInstanceId;
+    readonly provider: ProviderDriverKind;
   },
 ) {
   const text = buildPromptText(input, dependencies.boundInstanceId);
@@ -1302,7 +1316,7 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
 
     if (!SUPPORTED_CLAUDE_IMAGE_MIME_TYPES.has(attachment.mimeType)) {
       return yield* new ProviderAdapterRequestError({
-        provider: PROVIDER,
+        provider: dependencies.provider,
         method: "turn/start",
         detail: `Unsupported Claude image attachment type '${attachment.mimeType}'.`,
       });
@@ -1314,7 +1328,7 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
     });
     if (!attachmentPath) {
       return yield* new ProviderAdapterRequestError({
-        provider: PROVIDER,
+        provider: dependencies.provider,
         method: "turn/start",
         detail: `Invalid attachment id '${attachment.id}'.`,
       });
@@ -1324,7 +1338,7 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
       Effect.mapError(
         (cause) =>
           new ProviderAdapterRequestError({
-            provider: PROVIDER,
+            provider: dependencies.provider,
             method: "turn/start",
             detail: "Failed to read attachment file.",
             cause,
@@ -1534,21 +1548,31 @@ function toolResultBlocksFromUserMessage(message: SDKMessage): Array<{
   return blocks;
 }
 
+/**
+ * Convert SDK/session failures that imply a missing or closed session into
+ * typed provider-adapter session errors for the active Claude-backed driver.
+ *
+ * @param provider - Driver kind to stamp onto the returned error.
+ * @param threadId - Thread whose session operation failed.
+ * @param cause - Unknown SDK/runtime failure cause.
+ * @returns A typed session error when recognized, otherwise `undefined`.
+ */
 function toSessionError(
+  provider: ProviderDriverKind,
   threadId: ThreadId,
   cause: unknown,
 ): ProviderAdapterSessionNotFoundError | ProviderAdapterSessionClosedError | undefined {
   const normalized = toMessage(cause, "").toLowerCase();
   if (normalized.includes("unknown session") || normalized.includes("not found")) {
     return new ProviderAdapterSessionNotFoundError({
-      provider: PROVIDER,
+      provider,
       threadId,
       cause,
     });
   }
   if (normalized.includes("closed")) {
     return new ProviderAdapterSessionClosedError({
-      provider: PROVIDER,
+      provider,
       threadId,
       cause,
     });
@@ -1556,13 +1580,30 @@ function toSessionError(
   return undefined;
 }
 
-function toRequestError(threadId: ThreadId, method: string, cause: unknown): ProviderAdapterError {
-  const sessionError = toSessionError(threadId, cause);
+/**
+ * Convert an unknown Claude SDK failure into a typed provider adapter error.
+ *
+ * Session-not-found/closed causes are preserved as session errors; all other
+ * failures become request errors stamped with the active Claude-backed driver.
+ *
+ * @param provider - Driver kind to stamp onto the error.
+ * @param threadId - Thread whose request failed.
+ * @param method - Logical adapter method/operation name.
+ * @param cause - Unknown SDK/runtime failure cause.
+ * @returns A typed provider adapter error.
+ */
+function toRequestError(
+  provider: ProviderDriverKind,
+  threadId: ThreadId,
+  method: string,
+  cause: unknown,
+): ProviderAdapterError {
+  const sessionError = toSessionError(provider, threadId, cause);
   if (sessionError) {
     return sessionError;
   }
   return new ProviderAdapterRequestError({
-    provider: PROVIDER,
+    provider,
     method,
     detail: `${method} failed`,
     cause,
@@ -1680,10 +1721,23 @@ function sdkNativeItemId(message: SDKMessage): string | undefined {
   return undefined;
 }
 
+/**
+ * Construct a scoped Claude adapter instance.
+ *
+ * The optional `driverKind` lets first-class Claude-backed providers reuse
+ * the adapter while stamping sessions, events, logs, and errors with their
+ * own provider kind.
+ *
+ * @param claudeSettings - Effective Claude runtime settings for this instance.
+ * @param options - Instance id, driver identity, environment, query factory,
+ * and native event logging overrides.
+ * @returns A provider adapter backed by the Claude Agent SDK.
+ */
 export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   claudeSettings: ClaudeSettings,
   options?: ClaudeAdapterLiveOptions,
 ) {
+  const PROVIDER = options?.driverKind ?? DEFAULT_CLAUDE_PROVIDER;
   const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("claudeAgent");
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -4064,7 +4118,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       if (context.currentApiModelId !== apiModelId) {
         yield* Effect.tryPromise({
           try: () => context.query.setModel(apiModelId),
-          catch: (cause) => toRequestError(input.threadId, "turn/setModel", cause),
+          catch: (cause) => toRequestError(PROVIDER, input.threadId, "turn/setModel", cause),
         });
         context.currentApiModelId = apiModelId;
       }
@@ -4081,12 +4135,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     if (input.interactionMode === "plan") {
       yield* Effect.tryPromise({
         try: () => context.query.setPermissionMode("plan"),
-        catch: (cause) => toRequestError(input.threadId, "turn/setPermissionMode", cause),
+        catch: (cause) => toRequestError(PROVIDER, input.threadId, "turn/setPermissionMode", cause),
       });
     } else if (input.interactionMode === "default") {
       yield* Effect.tryPromise({
         try: () => context.query.setPermissionMode(context.basePermissionMode ?? "default"),
-        catch: (cause) => toRequestError(input.threadId, "turn/setPermissionMode", cause),
+        catch: (cause) => toRequestError(PROVIDER, input.threadId, "turn/setPermissionMode", cause),
       });
     }
 
@@ -4128,12 +4182,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       fileSystem,
       attachmentsDir: serverConfig.attachmentsDir,
       boundInstanceId,
-    });
+      provider: PROVIDER,
+    }).pipe(
+      Effect.mapError((cause) => toRequestError(PROVIDER, input.threadId, "turn/start", cause)),
+    );
 
     yield* Queue.offer(context.promptQueue, {
       type: "message",
       message,
-    }).pipe(Effect.mapError((cause) => toRequestError(input.threadId, "turn/start", cause)));
+    }).pipe(
+      Effect.mapError((cause) => toRequestError(PROVIDER, input.threadId, "turn/start", cause)),
+    );
 
     return {
       threadId: context.session.threadId,
@@ -4149,7 +4208,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const context = yield* requireSession(threadId);
       yield* Effect.tryPromise({
         try: () => context.query.interrupt(),
-        catch: (cause) => toRequestError(threadId, "turn/interrupt", cause),
+        catch: (cause) => toRequestError(PROVIDER, threadId, "turn/interrupt", cause),
       });
     },
   );
