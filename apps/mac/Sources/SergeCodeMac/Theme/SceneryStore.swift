@@ -228,8 +228,16 @@ public final class SceneryStore {
 
     /// The scene the next created thread will get. The preview and subsequent
     /// assignment use the same cached bucket and deterministic FNV seed.
-    public func peekNextScene(projectPath: String? = nil) -> SceneryPhoto? {
-        let setId = resolvedSetId(projectPath: projectPath)
+    public func peekNextScene(
+        projectPath: String? = nil,
+        setIdOverride: String? = nil
+    ) -> SceneryPhoto? {
+        var setId = resolvedSetId(projectPath: projectPath)
+        if let setIdOverride,
+            availableSets.contains(where: { $0.id == setIdOverride })
+        {
+            setId = setIdOverride
+        }
         let setPool = pools[setId] ?? []
         let assignmentCount = assignments.values.count { $0.resolvedSetId == setId }
         let seed = [
@@ -251,10 +259,20 @@ public final class SceneryStore {
     /// Commit a thread → photo binding (after the backend confirmed create),
     /// remembering the scene display name the thread was created under.
     public func assign(
-        photoID: String, name: String, to threadID: String, projectPath: String? = nil
+        photoID: String,
+        name: String,
+        to threadID: String,
+        projectPath: String? = nil,
+        setIdOverride: String? = nil
     ) {
         let setId =
-            setIdContaining(photoID: photoID)
+            setIdOverride.flatMap { candidate in
+                guard pools[candidate]?.contains(where: { $0.id == photoID }) == true else {
+                    return nil
+                }
+                return candidate
+            }
+            ?? setIdContaining(photoID: photoID)
             ?? resolvedSetId(projectPath: projectPath)
         let base = baseSceneName(name, setId: setId)
         assignments[threadID] = SceneryAssignment(
@@ -982,19 +1000,28 @@ extension AppModel {
     /// assignment once the backend confirms.
     @discardableResult
     public func createSceneThread(
-        projectID: String, provider: ProviderKind, scenery: SceneryStore
+        projectID: String,
+        provider: ProviderKind,
+        scenery: SceneryStore,
+        scenerySetId: String? = nil
     ) async -> ChatThread? {
         // First launch races the initial pool fetch; start() is idempotent and
         // waits for it, so early threads still get a scene name + assignment.
         await scenery.start()
         let projectPath = projects.first(where: { $0.id == projectID })?.path
-        let scene = scenery.peekNextScene(projectPath: projectPath)
+        let scene = scenery.peekNextScene(
+            projectPath: projectPath,
+            setIdOverride: scenerySetId)
         let sceneTitle = scene.map { scenery.threadTitle(for: $0) }
         let thread = await createThread(
             projectID: projectID, provider: provider, title: sceneTitle)
         if let thread, let scene, let sceneTitle {
             scenery.assign(
-                photoID: scene.id, name: sceneTitle, to: thread.id, projectPath: projectPath)
+                photoID: scene.id,
+                name: sceneTitle,
+                to: thread.id,
+                projectPath: projectPath,
+                setIdOverride: scenerySetId)
         }
         return thread
     }

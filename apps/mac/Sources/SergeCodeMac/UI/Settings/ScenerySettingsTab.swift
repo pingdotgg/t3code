@@ -257,7 +257,7 @@ struct ScenerySettingsTab: View {
             Text("Per project")
         } footer: {
             Text(
-                "When a project has no set chosen, it uses the default photo set. Accent and symbol are optional badges for later UI."
+                "When a project has no set chosen, it uses the default photo set. Accent and symbol appear as subtle badges in the sidebar and chat header."
             )
             .font(.caption)
             .foregroundStyle(.secondary)

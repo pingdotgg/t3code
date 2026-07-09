@@ -2,8 +2,8 @@ import AppKit
 import SwiftUI
 
 /// Glass sheet for starting a new session: pick an existing project or add
-/// a new one via a native folder picker (or typed path), choose a provider,
-/// and create the thread.
+/// a new one via a native folder picker (or typed path), choose a provider
+/// and scenery set, then create the thread.
 struct NewSessionSheet: View {
     let model: AppModel
     let scenery: SceneryStore
@@ -13,6 +13,7 @@ struct NewSessionSheet: View {
     @UIState private var selectedProjectID: String?
     @UIState private var provider: ProviderKind = .claude
     @UIState private var newProjectPath: String = ""
+    @UIState private var scenerySetOverride: String?
     @UIState private var isBusy = false
     @UIState private var errorMessage: String?
 
@@ -28,11 +29,19 @@ struct NewSessionSheet: View {
             // preview band so the sheet carries the alpine identity too.
             // peekNextScene() reads rotationBucket via @Observable, so
             // App.onReceive bucket reevaluation repaints this strip.
-            let nextScene = scenery.peekNextScene()
+            let previewSetId = selectedScenerySetId
+            let nextScene = scenery.peekNextScene(
+                projectPath: selectedProjectPath,
+                setIdOverride: previewSetId)
             ZStack(alignment: .bottomLeading) {
                 FrostedSceneryBackdrop(
-                    scenery: scenery, photo: nextScene, fallbackSeed: "new-session")
-                    .id(nextScene?.id ?? "next-\(scenery.rotationBucket.timeOfDay.rawValue)")
+                    scenery: scenery,
+                    photo: nextScene,
+                    setId: previewSetId,
+                    fallbackSeed: "new-session")
+                    .id(
+                        "\(previewSetId)/\(nextScene?.id ?? "next")/\(scenery.rotationBucket.timeOfDay.rawValue)"
+                    )
                 VStack(alignment: .leading, spacing: 2) {
                     Text("New Session")
                         .font(.title2.bold())
@@ -57,6 +66,7 @@ struct NewSessionSheet: View {
             .labelsHidden()
             .onChange(of: mode) {
                 selectedProjectID = nil
+                scenerySetOverride = nil
                 clearError()
             }
 
@@ -70,6 +80,7 @@ struct NewSessionSheet: View {
                         }
                     }
                     .onChange(of: selectedProjectID) {
+                        scenerySetOverride = nil
                         clearError()
                     }
                 case .new:
@@ -84,6 +95,7 @@ struct NewSessionSheet: View {
                         .buttonStyle(.glass)
                     }
                     .onChange(of: newProjectPath) {
+                        scenerySetOverride = nil
                         clearError()
                     }
                 }
@@ -101,6 +113,22 @@ struct NewSessionSheet: View {
             }
             .onChange(of: provider) {
                 clearError()
+            }
+
+            HStack(spacing: 8) {
+                Label("Scenery", systemImage: "photo.on.rectangle.angled")
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Picker("Scenery", selection: scenerySetBinding) {
+                    ForEach(scenery.availableSets) { set in
+                        Text(set.title).tag(set.id)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .fixedSize()
+                .disabled(scenery.availableSets.isEmpty)
+                .accessibilityLabel("Scenery set for new session")
             }
 
             if let errorMessage {
@@ -182,6 +210,35 @@ struct NewSessionSheet: View {
         model.configuredProviderKinds
     }
 
+    private var selectedProjectPath: String? {
+        switch mode {
+        case .existing:
+            guard let selectedProjectID else { return nil }
+            return model.projects.first(where: { $0.id == selectedProjectID })?.path
+        case .new:
+            let path = newProjectPath.trimmingCharacters(in: .whitespacesAndNewlines)
+            return path.isEmpty ? nil : path
+        }
+    }
+
+    private var validScenerySetOverride: String? {
+        guard let scenerySetOverride, scenery.set(id: scenerySetOverride) != nil else {
+            return nil
+        }
+        return scenerySetOverride
+    }
+
+    private var selectedScenerySetId: String {
+        validScenerySetOverride
+            ?? scenery.resolvedSetId(projectPath: selectedProjectPath)
+    }
+
+    private var scenerySetBinding: Binding<String> {
+        Binding(
+            get: { selectedScenerySetId },
+            set: { scenerySetOverride = $0 })
+    }
+
     private var providerReadinessMessage: String? {
         guard !configuredProviderKinds.isEmpty else {
             return "No providers are configured yet. Refresh providers in Settings."
@@ -219,14 +276,20 @@ struct NewSessionSheet: View {
         case .existing:
             guard let projectID = selectedProjectID else { return }
             createdThread = await model.createSceneThread(
-                projectID: projectID, provider: provider, scenery: scenery)
+                projectID: projectID,
+                provider: provider,
+                scenery: scenery,
+                scenerySetId: validScenerySetOverride)
         case .new:
             let path = newProjectPath.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !path.isEmpty else { return }
             await model.addProject(path: path)
             if let project = model.projects.first(where: { $0.path == path }) {
                 createdThread = await model.createSceneThread(
-                    projectID: project.id, provider: provider, scenery: scenery)
+                    projectID: project.id,
+                    provider: provider,
+                    scenery: scenery,
+                    scenerySetId: validScenerySetOverride)
             }
         }
         if createdThread != nil {

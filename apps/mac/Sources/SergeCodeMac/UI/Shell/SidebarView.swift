@@ -45,6 +45,7 @@ struct SidebarView: View {
                 } header: {
                     ProjectSectionHeader(
                         project: project,
+                        scenery: scenery,
                         configuredProviderKinds: model.configuredProviderKinds,
                         canCreateThread: { model.canCreateThread(with: $0) },
                         onNewSession: { provider in
@@ -116,9 +117,10 @@ struct SidebarView: View {
 }
 
 /// Project section header: name, a plus menu that starts a new session with
-/// the chosen provider, and a context menu for rename/delete.
+/// the chosen provider, and a context menu for scenery, rename, and delete.
 private struct ProjectSectionHeader: View {
     let project: Project
+    let scenery: SceneryStore
     let configuredProviderKinds: [ProviderKind]
     let canCreateThread: (ProviderKind) -> Bool
     let onNewSession: (ProviderKind) -> Void
@@ -127,7 +129,12 @@ private struct ProjectSectionHeader: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            Text(project.name)
+            if let prefs = projectPrefs, prefs.showsProjectBadge {
+                ProjectSceneryBadge(prefs: prefs, symbolSize: 10, dotSize: 5)
+                Text(project.name)
+            } else {
+                Text(project.name)
+            }
             Spacer()
             Menu {
                 if configuredProviderKinds.isEmpty {
@@ -155,10 +162,44 @@ private struct ProjectSectionHeader: View {
                         .disabled(!canCreateThread(provider))
                 }
             }
+            Menu("Scenery Set") {
+                Button("Default") {
+                    setScenerySet(nil)
+                }
+                Divider()
+                if scenery.availableSets.isEmpty {
+                    Text("No scenery sets available")
+                }
+                ForEach(scenery.availableSets) { set in
+                    Button {
+                        setScenerySet(set.id)
+                    } label: {
+                        if set.id == resolvedSetId {
+                            Label(set.title, systemImage: "checkmark")
+                        } else {
+                            Text(set.title)
+                        }
+                    }
+                }
+            }
             Button("Rename…") { onRename() }
             Divider()
             Button("Delete Project…", role: .destructive) { onDelete() }
         }
+    }
+
+    private var projectPrefs: ProjectSceneryPrefs? {
+        scenery.projectPrefs(for: project.path)
+    }
+
+    private var resolvedSetId: String {
+        scenery.resolvedSetId(projectPath: project.path)
+    }
+
+    private func setScenerySet(_ setId: String?) {
+        var next = projectPrefs ?? ProjectSceneryPrefs()
+        next.setId = setId
+        scenery.setProjectPrefs(next, forProjectPath: project.path)
     }
 }
 

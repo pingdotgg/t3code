@@ -262,6 +262,56 @@ struct SceneryStoreMultiSetTests {
         #expect(nextKyoto?.id == "k1")
         let nextDefault = store.peekNextScene()
         #expect(nextDefault?.id == "d1")
+
+        let overridden = try #require(
+            store.peekNextScene(
+                projectPath: "/proj/kyoto",
+                setIdOverride: ScenerySet.dolomitesID))
+        #expect(overridden.id == "d1")
+        #expect(store.projectPrefs(for: "/proj/kyoto")?.setId == "kyoto")
+        #expect(
+            store.peekNextScene(projectPath: "/proj/kyoto", setIdOverride: "missing")?.id
+                == "k1")
+
+        store.assign(
+            photoID: overridden.id,
+            name: overridden.name,
+            to: "thread-overridden",
+            projectPath: "/proj/kyoto",
+            setIdOverride: ScenerySet.dolomitesID)
+        #expect(store.resolvedSetId(forThread: "thread-overridden") == ScenerySet.dolomitesID)
+        #expect(store.projectPrefs(for: "/proj/kyoto")?.setId == "kyoto")
+    }
+
+    @Test("assignment override disambiguates photo ids shared across sets")
+    func assignmentOverrideDisambiguatesSharedPhoto() throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = SceneryStore(client: nil, root: root)
+        store.reloadFromDiskForTesting()
+        let sharedDolomitesPhoto = samplePhoto(id: "shared", name: "Seceda")
+        let sharedKyotoPhoto = samplePhoto(id: "shared", name: "Arashiyama")
+        let kyoto = ScenerySet(
+            id: "kyoto",
+            title: "Kyoto",
+            origin: .custom,
+            createdAt: Date(timeIntervalSince1970: 1),
+            queries: [SceneryQuery(text: "kyoto")],
+            sceneNames: ["Arashiyama"])
+        store.registerSetForTesting(
+            ScenerySet.makeBuiltinDolomites(), pool: [sharedDolomitesPhoto])
+        store.registerSetForTesting(kyoto, pool: [sharedKyotoPhoto])
+
+        store.assign(
+            photoID: sharedKyotoPhoto.id,
+            name: sharedKyotoPhoto.name,
+            to: "thread-shared",
+            projectPath: nil,
+            setIdOverride: kyoto.id)
+
+        #expect(store.resolvedSetId(forThread: "thread-shared") == kyoto.id)
+        #expect(store.photo(for: "thread-shared")?.name == "Arashiyama")
     }
 
     @Test("migration then store load keeps legacy assignment photo ids")

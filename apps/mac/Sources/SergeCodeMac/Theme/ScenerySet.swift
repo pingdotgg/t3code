@@ -230,7 +230,7 @@ public struct ScenerySettingsFile: Codable, Hashable, Sendable {
 }
 
 /// Per-project scenery preferences (`scenery/project-prefs.json` values).
-/// `accentHex` / `sfSymbol` are reserved for later phases.
+/// `accentHex` / `sfSymbol` drive the optional project badges in app chrome.
 public struct ProjectSceneryPrefs: Codable, Hashable, Sendable {
     public var setId: String?
     public var accentHex: String?
