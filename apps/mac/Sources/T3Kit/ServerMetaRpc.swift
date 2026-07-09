@@ -88,4 +88,51 @@ extension T3Client {
     public func updateSettings(patch: ServerSettingsPatch) async throws -> ServerSettings {
         try await call("server.updateSettings", ServerUpdateSettingsInput(patch: patch))
     }
+
+    /// AI-curated scenery set for a user-typed location (`server.generateScenerySet`).
+    public func generateScenerySet(location: String) async throws -> GeneratedScenerySet {
+        try await call(
+            "server.generateScenerySet", GenerateScenerySetInput(location: location))
+    }
+}
+
+/// `server.generateScenerySet` payload.
+struct GenerateScenerySetInput: Encodable, Sendable {
+    var location: String
+}
+
+/// Optional tags on an Unsplash query produced by text generation.
+public enum GeneratedSceneryTimeOfDay: String, Codable, Sendable, Hashable {
+    case dawn, day, dusk, night
+}
+
+public enum GeneratedScenerySeason: String, Codable, Sendable, Hashable {
+    case spring, summer, autumn, winter
+}
+
+public struct GeneratedSceneryQuery: Codable, Sendable, Hashable {
+    public var text: String
+    public var timeOfDay: GeneratedSceneryTimeOfDay?
+    public var season: GeneratedScenerySeason?
+
+    public init(
+        text: String,
+        timeOfDay: GeneratedSceneryTimeOfDay? = nil,
+        season: GeneratedScenerySeason? = nil
+    ) {
+        self.text = text
+        self.timeOfDay = timeOfDay
+        self.season = season
+    }
+}
+
+/// Success payload for `server.generateScenerySet`.
+public struct GeneratedScenerySet: Codable, Sendable, Hashable {
+    public var sceneNames: [String]
+    public var queries: [GeneratedSceneryQuery]
+
+    public init(sceneNames: [String], queries: [GeneratedSceneryQuery]) {
+        self.sceneNames = sceneNames
+        self.queries = queries
+    }
 }

@@ -1,4 +1,5 @@
 import Foundation
+import T3Kit
 
 // Seam between the UI and the transport. LiveBackend (T3Kit + SidecarKit)
 // and MockBackend both implement this; the UI only ever sees BackendService.
@@ -137,6 +138,10 @@ public protocol BackendService: Sendable {
     func refreshProviders() async throws
     /// Run a provider CLI's own update command.
     func updateProvider(instanceID: String) async throws
+
+    /// AI-curated scene names + Unsplash queries for a location photo set.
+    /// Used by `SceneSetComposer`; fails when the sidecar/model is unavailable.
+    func generateScenerySet(location: String) async throws -> GeneratedScenerySet
 }
 
 /// One freshly-minted mobile pairing handshake: the URL the iPhone scans

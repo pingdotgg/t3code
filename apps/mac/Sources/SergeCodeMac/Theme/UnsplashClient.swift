@@ -80,12 +80,51 @@ public actor UnsplashClient {
             var name: String
             var links: UserLinks?
         }
+        struct Location: Decodable, Sendable {
+            var name: String?
+            var city: String?
+            var country: String?
+        }
 
         var id: String
         var color: String?
+        var description: String?
+        var altDescription: String?
+        var location: Location?
         var urls: URLs
         var links: Links?
         var user: User
+
+        /// Best-effort place label from Unsplash metadata (for fallback scene names).
+        var suggestedSceneName: String? {
+            if let name = location?.name?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !name.isEmpty
+            {
+                return Self.shortenSceneName(name)
+            }
+            let city = location?.city?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let country = location?.country?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let city, !city.isEmpty {
+                return Self.shortenSceneName(city)
+            }
+            if let country, !country.isEmpty {
+                return Self.shortenSceneName(country)
+            }
+            for candidate in [description, altDescription] {
+                if let text = candidate?.trimmingCharacters(in: .whitespacesAndNewlines),
+                    !text.isEmpty
+                {
+                    return Self.shortenSceneName(text)
+                }
+            }
+            return nil
+        }
+
+        private static func shortenSceneName(_ raw: String) -> String {
+            let collapsed = raw.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            if collapsed.count <= 48 { return collapsed }
+            return String(collapsed.prefix(45)).trimmingCharacters(in: .whitespaces) + "..."
+        }
     }
 
     public enum UnsplashError: Error {

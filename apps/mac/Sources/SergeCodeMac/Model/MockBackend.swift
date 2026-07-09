@@ -1,4 +1,5 @@
 import Foundation
+import T3Kit
 
 // Deterministic-but-alive fake backend for UI work without the Node sidecar.
 // All mutable state lives behind an actor; the public API is the BackendService
@@ -87,6 +88,36 @@ public final class MockBackend: BackendService, @unchecked Sendable {
     public func refreshProviders() async throws {}
 
     public func updateProvider(instanceID: String) async throws {}
+
+    public func generateScenerySet(location: String) async throws -> GeneratedScenerySet {
+        let trimmed = location.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw MockBackendError.emptyLocation
+        }
+        // Deterministic fixture for UI/dev without the model CLI.
+        let slug = trimmed.lowercased()
+        return GeneratedScenerySet(
+            sceneNames: (1...30).map { "\(trimmed) Viewpoint \($0)" },
+            queries: [
+                GeneratedSceneryQuery(text: "\(slug) landscape"),
+                GeneratedSceneryQuery(text: "\(slug) mountains", timeOfDay: .day),
+                GeneratedSceneryQuery(text: "\(slug) sunrise", timeOfDay: .dawn),
+                GeneratedSceneryQuery(text: "\(slug) sunset", timeOfDay: .dusk),
+                GeneratedSceneryQuery(text: "\(slug) night lights", timeOfDay: .night),
+                GeneratedSceneryQuery(text: "\(slug) autumn colors", season: .autumn),
+                GeneratedSceneryQuery(text: "\(slug) winter snow", season: .winter),
+                GeneratedSceneryQuery(text: "\(slug) coast"),
+            ])
+    }
+
+    private enum MockBackendError: Error, LocalizedError {
+        case emptyLocation
+        var errorDescription: String? {
+            switch self {
+            case .emptyLocation: "Location must not be empty."
+            }
+        }
+    }
 
     public func watchVcsStatus(threadID: String) async throws {
         await state.emitVcsStatus(threadID: threadID)

@@ -642,7 +642,7 @@ public final class SceneryStore {
         }
     }
 
-    // MARK: - Test / Phase 2 hooks
+    // MARK: - Registry mutations (Phase 2+)
 
     /// Writes project-prefs (used by Phase 5 UI; available now for tests).
     public func setProjectPrefs(_ prefs: ProjectSceneryPrefs, forProjectPath path: String) {
@@ -657,14 +657,24 @@ public final class SceneryStore {
         syncDefaultPool()
     }
 
-    /// Installs a set manifest into the registry (disk + memory) without fetching.
-    public func registerSetForTesting(_ set: ScenerySet, pool: [SceneryPhoto] = []) {
+    /// Installs a set manifest into the registry (disk + memory).
+    /// When `pool` is non-empty it is persisted; otherwise the pool stays empty
+    /// until a later refresh. Custom sets are sorted after the builtin.
+    public func registerSet(_ set: ScenerySet, pool: [SceneryPhoto] = []) {
         if let idx = availableSets.firstIndex(where: { $0.id == set.id }) {
             availableSets[idx] = set
         } else {
             availableSets.append(set)
         }
+        availableSets.sort { lhs, rhs in
+            if lhs.id == ScenerySet.dolomitesID { return true }
+            if rhs.id == ScenerySet.dolomitesID { return false }
+            return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+        }
         saveManifest(set)
+        try? FileManager.default.createDirectory(
+            at: setDirectory(set.id).appendingPathComponent("images", isDirectory: true),
+            withIntermediateDirectories: true)
         pools[set.id] = pool
         namesBySet[set.id] = namesBySet[set.id] ?? [:]
         registeredBySet[set.id] = registeredBySet[set.id] ?? []
@@ -672,6 +682,64 @@ public final class SceneryStore {
             poolFetchedAt[set.id] = Date()
             savePool(for: set.id)
         }
+        syncDefaultPool()
+    }
+
+    /// Test alias for `registerSet`.
+    public func registerSetForTesting(_ set: ScenerySet, pool: [SceneryPhoto] = []) {
+        registerSet(set, pool: pool)
+    }
+
+    public enum DeleteSetError: Error, LocalizedError, Equatable {
+        case notFound
+        case builtinProtected
+        public var errorDescription: String? {
+            switch self {
+            case .notFound: "That scenery set was not found."
+            case .builtinProtected: "Built-in scenery sets cannot be deleted."
+            }
+        }
+    }
+
+    /// Removes a custom set: registry entry, on-disk directory, project prefs
+    /// pointing at it, and thread assignments for that set (so those threads
+    /// lazily re-resolve photos from the default set). Builtin sets are refused.
+    public func deleteCustomSet(id: String) throws {
+        guard let existing = set(id: id) else { throw DeleteSetError.notFound }
+        guard existing.origin == .custom else { throw DeleteSetError.builtinProtected }
+
+        availableSets.removeAll { $0.id == id }
+        pools[id] = nil
+        poolFetchedAt[id] = nil
+        namesBySet[id] = nil
+        registeredBySet[id] = nil
+        let imagePrefix = "\(id)/"
+        images = images.filter { !$0.key.hasPrefix(imagePrefix) }
+
+        if settings.defaultSetId == id {
+            settings.defaultSetId = ScenerySet.dolomitesID
+            saveSettings()
+        }
+
+        var prefsChanged = false
+        for (path, prefs) in projectPrefs where prefs.setId == id {
+            var next = prefs
+            next.setId = nil
+            projectPrefs[path] = next
+            prefsChanged = true
+        }
+        if prefsChanged { saveProjectPrefs() }
+
+        // Drop assignments owned by the deleted set so photo(for:) falls through
+        // to the resolved default pool (lazy reassignment).
+        let before = assignments.count
+        assignments = assignments.filter { $0.value.resolvedSetId != id }
+        if assignments.count != before {
+            saveAssignments()
+        }
+
+        let dir = setDirectory(id)
+        try? FileManager.default.removeItem(at: dir)
         syncDefaultPool()
     }
 
