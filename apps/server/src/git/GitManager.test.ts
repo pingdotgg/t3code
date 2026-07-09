@@ -1488,6 +1488,39 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("review status treats a truncated review thread page as unknown", () =>
+    Effect.gen(function* () {
+      const ghCalls: ReadonlyArray<string>[] = [];
+      const stdoutSequence = [
+        '{"reviewDecision":"APPROVED"}',
+        '{"nameWithOwner":"SergeSerb2/SergeCode"}',
+        '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"isResolved":true}],"pageInfo":{"hasNextPage":true}}}}}}',
+      ];
+      const gitHubCliLayer = GitHubCli.layer.pipe(
+        Layer.provide(
+          Layer.mock(VcsProcess.VcsProcess)({
+            run: (input) => {
+              ghCalls.push(input.args);
+              return Effect.succeed(fakeGhOutput(stdoutSequence[ghCalls.length - 1] ?? ""));
+            },
+          }),
+        ),
+      );
+      const gitHubCli = yield* GitHubCli.GitHubCli.pipe(Effect.provide(gitHubCliLayer));
+
+      const status = yield* gitHubCli.getPullRequestReviewStatus({
+        cwd: "/repo",
+        reference: "#88",
+      });
+
+      expect(status).toEqual({
+        reviewDecision: "APPROVED",
+        unresolvedReviewThreadCount: null,
+      });
+      expect(ghCalls[2]?.join(" ")).toContain("pageInfo { hasNextPage }");
+    }),
+  );
+
   it.effect("status keeps PR metadata when review status enrichment fails", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

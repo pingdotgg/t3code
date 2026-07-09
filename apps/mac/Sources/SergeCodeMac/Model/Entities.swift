@@ -862,7 +862,7 @@ public enum GitAction: String, CaseIterable, Sendable, Identifiable {
 
     /// Actions listed in the generic Git overflow menu (not dedicated buttons).
     public static var menuActions: [GitAction] {
-        [.commit, .push, .commitPush, .commitPushPR]
+        allCases.filter { $0 != .mergePR }
     }
 }
 

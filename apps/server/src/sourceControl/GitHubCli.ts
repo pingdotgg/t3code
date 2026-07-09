@@ -320,13 +320,18 @@ function countUnresolvedReviewThreads(raw: string): number | null {
           pullRequest?: {
             reviewThreads?: {
               nodes?: ReadonlyArray<{ isResolved?: boolean }> | null;
+              pageInfo?: {
+                hasNextPage?: boolean;
+              } | null;
             } | null;
           } | null;
         } | null;
       } | null;
     };
-    const nodes = parsed.data?.repository?.pullRequest?.reviewThreads?.nodes;
+    const reviewThreads = parsed.data?.repository?.pullRequest?.reviewThreads;
+    const nodes = reviewThreads?.nodes;
     if (!Array.isArray(nodes)) return null;
+    if (reviewThreads?.pageInfo?.hasNextPage === true) return null;
     return nodes.filter((thread) => thread?.isResolved !== true).length;
   } catch {
     return null;
@@ -569,7 +574,7 @@ export const make = Effect.gen(function* () {
         }
 
         const graphqlQuery =
-          "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewThreads(first: 100) { nodes { isResolved } } } } }";
+          "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewThreads(first: 100) { nodes { isResolved } pageInfo { hasNextPage } } } } }";
 
         const unresolvedReviewThreadCount = yield* execute({
           cwd: input.cwd,
