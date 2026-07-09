@@ -120,15 +120,12 @@ struct AppModelBatchingTests {
         let request = ApprovalRequest(
             id: "ap2", threadID: "t1", kind: .command, title: "Run", detail: "ls",
             createdAt: Date())
-        // timelineReset seeds the map too, so wipe coverage by resolving an
-        // id recorded only under a *different* thread first: simulate a map
-        // miss by resetting a second thread carrying the same item id is not
-        // possible (ids are globally unique) — instead resolve an id the map
-        // never saw by constructing the timeline through a reset on t1 and
-        // resolving after a second reset cleared nothing. The reset path
-        // records the map, so this asserts reset seeding works as designed.
-        model.enqueue(.timelineReset(threadID: "t1", items: [.approval(request)]))
+        // Empty reset creates ThreadState without seeding interactionThreadByID.
+        // Writing the approval onto the timeline directly mimics a snapshot
+        // load that bypassed events (map miss → full-thread scan fallback).
+        model.enqueue(.timelineReset(threadID: "t1", items: []))
         model.flushPendingEvents()
+        model.threadState("t1")!.timeline = [.approval(request)]
 
         model.enqueue(.approvalResolved(id: "ap2"))
         model.flushPendingEvents()

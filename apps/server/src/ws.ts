@@ -1856,6 +1856,11 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               : Effect.void,
           ),
         ),
+      ).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logError("shell event broadcaster crashed", { cause }),
+        ),
+        Effect.forever,
       ),
     );
     const shellLiveStream = Stream.fromPubSub(shellEventsPubSub);

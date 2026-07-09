@@ -20,6 +20,7 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import {
@@ -94,48 +95,65 @@ const makeOrchestrationEngine = Effect.gen(function* () {
    * Per-thread domain-event buses. Lazily created on first `streamThreadEvents`
    * subscriber; refcounted and dropped when the last subscriber scope closes or
    * when a `thread.deleted` event is published for that thread.
+   *
+   * Held in a SynchronizedRef so concurrent acquire for the same threadId
+   * cannot both observe a miss, create duplicate PubSubs, and orphan the first
+   * subscriber's bus.
    */
-  const threadEventBuses = new Map<
-    ThreadId,
-    {
-      readonly pubsub: PubSub.PubSub<OrchestrationEvent>;
-      refCount: number;
-    }
-  >();
+  type ThreadEventBusEntry = {
+    readonly pubsub: PubSub.PubSub<OrchestrationEvent>;
+    readonly refCount: number;
+  };
+  const threadEventBuses = yield* SynchronizedRef.make(
+    new Map<ThreadId, ThreadEventBusEntry>(),
+  );
 
   const acquireThreadEventBus = (threadId: ThreadId) =>
-    Effect.gen(function* () {
-      let entry = threadEventBuses.get(threadId);
-      if (entry === undefined) {
-        const pubsub = yield* PubSub.unbounded<OrchestrationEvent>();
-        entry = { pubsub, refCount: 0 };
-        threadEventBuses.set(threadId, entry);
+    SynchronizedRef.modifyEffect(threadEventBuses, (buses) => {
+      const existing = buses.get(threadId);
+      if (existing !== undefined) {
+        const next = new Map(buses);
+        next.set(threadId, { pubsub: existing.pubsub, refCount: existing.refCount + 1 });
+        return Effect.succeed([existing.pubsub, next] as const);
       }
-      entry.refCount += 1;
-      return entry.pubsub;
+      return PubSub.unbounded<OrchestrationEvent>().pipe(
+        Effect.map((pubsub) => {
+          const next = new Map(buses);
+          next.set(threadId, { pubsub, refCount: 1 });
+          return [pubsub, next] as const;
+        }),
+      );
     });
 
   const releaseThreadEventBus = (threadId: ThreadId) =>
-    Effect.gen(function* () {
-      const entry = threadEventBuses.get(threadId);
+    SynchronizedRef.modifyEffect(threadEventBuses, (buses) => {
+      const entry = buses.get(threadId);
       if (entry === undefined) {
-        return;
+        return Effect.succeed([undefined as void, buses] as const);
       }
-      entry.refCount -= 1;
-      if (entry.refCount <= 0) {
-        threadEventBuses.delete(threadId);
-        yield* PubSub.shutdown(entry.pubsub);
+      if (entry.refCount <= 1) {
+        const next = new Map(buses);
+        next.delete(threadId);
+        return PubSub.shutdown(entry.pubsub).pipe(
+          Effect.as([undefined as void, next] as const),
+        );
       }
+      const next = new Map(buses);
+      next.set(threadId, { pubsub: entry.pubsub, refCount: entry.refCount - 1 });
+      return Effect.succeed([undefined as void, next] as const);
     });
 
   const dropThreadEventBus = (threadId: ThreadId) =>
-    Effect.gen(function* () {
-      const entry = threadEventBuses.get(threadId);
+    SynchronizedRef.modifyEffect(threadEventBuses, (buses) => {
+      const entry = buses.get(threadId);
       if (entry === undefined) {
-        return;
+        return Effect.succeed([undefined as void, buses] as const);
       }
-      threadEventBuses.delete(threadId);
-      yield* PubSub.shutdown(entry.pubsub);
+      const next = new Map(buses);
+      next.delete(threadId);
+      return PubSub.shutdown(entry.pubsub).pipe(
+        Effect.as([undefined as void, next] as const),
+      );
     });
 
   /**
@@ -150,7 +168,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 
       if (event.aggregateKind === "thread") {
         const threadId = event.aggregateId as ThreadId;
-        const entry = threadEventBuses.get(threadId);
+        const entry = SynchronizedRef.getUnsafe(threadEventBuses).get(threadId);
         if (entry !== undefined) {
           yield* PubSub.publish(entry.pubsub, event);
         }
@@ -408,7 +426,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
     },
     streamThreadEvents,
     /** @internal Test-only: number of live per-thread event buses. */
-    threadEventBusCount: () => threadEventBuses.size,
+    threadEventBusCount: () => SynchronizedRef.getUnsafe(threadEventBuses).size,
   } satisfies OrchestrationEngineShape & { readonly threadEventBusCount: () => number };
 });
 

@@ -146,4 +146,9 @@ enum TimelineDisplayCache {
         storage[threadID] = (key, value)
         return value
     }
+
+    /// Drop a thread's memo entry (timeline release / eviction / removal).
+    static func evict(threadID: String) {
+        storage.removeValue(forKey: threadID)
+    }
 }

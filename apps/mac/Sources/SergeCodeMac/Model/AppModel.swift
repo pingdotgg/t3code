@@ -342,6 +342,7 @@ public final class AppModel {
             queuedMessagesByThread[id] = nil
             queuedSendInFlightThreadIDs.remove(id)
             queuedRetryTokensByThread[id] = nil
+            TimelineDisplayCache.evict(threadID: id)
             if selectedThreadID == id { selectedThreadID = nil }
         case .approvalRequested, .userInputRequested:
             break
@@ -1069,6 +1070,7 @@ public final class AppModel {
             state.timeline = []
             state.hasLoadedTimeline = false
         }
+        TimelineDisplayCache.evict(threadID: threadID)
     }
 
     private func pruneTimelineSubscriptions() {
@@ -1080,12 +1082,19 @@ public final class AppModel {
             // Never drop the currently selected thread, even if it somehow
             // appears past the keep window.
             guard threadID != selectedThreadID else { continue }
-            if let state = threadStates[threadID] {
-                state.timeline = []
-                state.hasLoadedTimeline = false
-            }
-            Task { [backend] in
-                await backend.closeTimeline(threadID: threadID)
+            // Detached close can race a re-select of this thread. Re-check
+            // eviction under MainActor before clearing state / closing so a
+            // rescued thread keeps its timeline and subscription.
+            Task {
+                guard threadID != self.selectedThreadID
+                    && !self.recentlySelected.contains(threadID)
+                else { return }
+                if let state = self.threadStates[threadID] {
+                    state.timeline = []
+                    state.hasLoadedTimeline = false
+                }
+                TimelineDisplayCache.evict(threadID: threadID)
+                await self.backend.closeTimeline(threadID: threadID)
             }
         }
     }

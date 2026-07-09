@@ -1832,7 +1832,14 @@ const make = Effect.gen(function* () {
     start,
     // Drain must also empty the coalesce buffer: tests (and shutdown paths)
     // rely on drain() meaning "every observed event's effects are visible".
-    drain: worker.enqueue({ source: "flush" }).pipe(Effect.andThen(worker.drain)),
+    // An event processed after a flush marker can buffer new activities, so
+    // loop until a flush pass leaves pendingActivities empty.
+    drain: Effect.gen(function* () {
+      do {
+        yield* worker.enqueue({ source: "flush" });
+        yield* worker.drain;
+      } while (pendingActivities.size > 0);
+    }),
   } satisfies ProviderRuntimeIngestionShape;
 });
 
