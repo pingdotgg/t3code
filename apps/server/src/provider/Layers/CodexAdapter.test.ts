@@ -64,7 +64,7 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
 
   public readonly startImpl = vi.fn(() =>
     Promise.resolve({
-      provider: ProviderDriverKind.make("codex"),
+      provider: this.options.provider ?? ProviderDriverKind.make("codex"),
       status: "ready" as const,
       runtimeMode: this.options.runtimeMode,
       threadId: this.options.threadId,
@@ -280,6 +280,7 @@ validationLayer("CodexAdapterLive validation", (it) => {
         binaryPath: "codex",
         cwd: process.cwd(),
         model: "gpt-5.3-codex",
+        provider: ProviderDriverKind.make("codex"),
         providerInstanceId: ProviderInstanceId.make("codex"),
         serviceTier: "priority",
         threadId: asThreadId("thread-1"),
@@ -287,6 +288,41 @@ validationLayer("CodexAdapterLive validation", (it) => {
       });
     }),
   );
+  it.effect("stamps Codex-backed alternate drivers with the adapter provider", () => {
+    const fuguRuntimeFactory = makeRuntimeFactory();
+    const fuguLayer = Layer.effect(
+      CodexAdapter,
+      Effect.gen(function* () {
+        const codexConfig = decodeCodexSettings({});
+        return yield* makeCodexAdapter(codexConfig, {
+          driverKind: ProviderDriverKind.make("fugu"),
+          instanceId: ProviderInstanceId.make("fugu"),
+          makeRuntime: fuguRuntimeFactory.factory,
+        });
+      }),
+    ).pipe(
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const session = yield* adapter.startSession({
+        provider: ProviderDriverKind.make("fugu"),
+        threadId: asThreadId("thread-fugu"),
+        runtimeMode: "full-access",
+      });
+
+      NodeAssert.equal(session.provider, ProviderDriverKind.make("fugu"));
+      NodeAssert.equal(adapter.provider, ProviderDriverKind.make("fugu"));
+      NodeAssert.equal(
+        fuguRuntimeFactory.factory.mock.calls[0]?.[0].provider,
+        ProviderDriverKind.make("fugu"),
+      );
+    }).pipe(Effect.provide(fuguLayer));
+  });
 });
 
 const sessionRuntimeFactory = makeRuntimeFactory();
