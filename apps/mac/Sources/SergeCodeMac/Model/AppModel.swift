@@ -930,6 +930,15 @@ public final class AppModel {
         }
     }
 
+    public func setServiceTier(_ value: String) async {
+        guard let threadID = selectedThreadID else { return }
+        do {
+            try await backend.setServiceTier(threadID: threadID, value: value)
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
     public func implementPlan(_ plan: ProposedPlan) async {
         do {
             try await backend.implementPlan(threadID: plan.threadID, planID: plan.id)

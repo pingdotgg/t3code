@@ -1200,6 +1200,7 @@ public actor LiveBackend: BackendService {
                 guard let kind = providerKind(fromDriver: provider.driver) else { return [] }
                 return provider.models.map { model in
                     let effort = Self.effortDescriptor(of: model)
+                    let serviceTier = Self.serviceTierDescriptor(of: model)
                     return ModelOption(
                         instanceID: provider.instanceId, modelID: model.slug,
                         displayName: model.name, provider: kind,
@@ -1209,6 +1210,10 @@ public actor LiveBackend: BackendService {
                         isDefault: model.slug == provider.models.first?.slug,
                         effortOptionID: effort?.id,
                         effortChoices: effort?.options.map {
+                            EffortChoice(id: $0.id, label: $0.label, isDefault: $0.isDefault ?? false)
+                        } ?? [],
+                        serviceTierOptionID: serviceTier?.id,
+                        serviceTierChoices: serviceTier?.options.map {
                             EffortChoice(id: $0.id, label: $0.label, isDefault: $0.isDefault ?? false)
                         } ?? [])
                 }
@@ -1251,7 +1256,8 @@ public actor LiveBackend: BackendService {
         let thread = ChatThread(
             id: threadID, projectID: projectID, title: title, provider: provider, status: .idle,
             updatedAt: Date(), modelInstanceID: selection.instanceId, modelID: selection.model,
-            reasoningEffort: Self.effortValue(of: selection))
+            reasoningEffort: Self.effortValue(of: selection),
+            serviceTier: Self.serviceTierValue(of: selection))
         threadsByID[threadID] = thread
         modelSelectionsByThread[threadID] = selection
         titleSeedsByThread[threadID] = title
@@ -1509,12 +1515,14 @@ public actor LiveBackend: BackendService {
             $0.modelID = model.modelID
             $0.provider = model.provider
             $0.reasoningEffort = nil
+            $0.serviceTier = nil
         }
     }
 
     /// Effort-style select descriptors go by different ids per driver
     /// (claudeAgent: "effort"; codex: "reasoningEffort"; cursor: "reasoning").
     private static let effortOptionIDs: Set<String> = ["effort", "reasoningEffort", "reasoning"]
+    private static let serviceTierOptionID = "serviceTier"
 
     private static func effortDescriptor(of model: ServerProviderModel)
         -> SelectProviderOptionDescriptor?
@@ -1527,10 +1535,29 @@ public actor LiveBackend: BackendService {
         }.first
     }
 
+    private static func serviceTierDescriptor(of model: ServerProviderModel)
+        -> SelectProviderOptionDescriptor?
+    {
+        model.capabilities?.optionDescriptors?.lazy.compactMap { descriptor in
+            if case .select(let select) = descriptor, select.id == serviceTierOptionID {
+                return select
+            }
+            return nil
+        }.first
+    }
+
     /// The explicit effort value in a thread's modelSelection options, if any.
     private static func effortValue(of selection: ModelSelection) -> String? {
         selection.canonicalOptions?.lazy.compactMap { option -> String? in
             guard effortOptionIDs.contains(option.id), case .string(let value) = option.value
+            else { return nil }
+            return value
+        }.first
+    }
+
+    private static func serviceTierValue(of selection: ModelSelection) -> String? {
+        selection.canonicalOptions?.lazy.compactMap { option -> String? in
+            guard option.id == serviceTierOptionID, case .string(let value) = option.value
             else { return nil }
             return value
         }.first
@@ -1557,6 +1584,30 @@ public actor LiveBackend: BackendService {
             rememberReasoningEffort(value, for: provider)
         }
         updateCachedThread(threadID) { $0.reasoningEffort = value }
+    }
+
+    public func setServiceTier(threadID: String, value: String) async throws {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        guard let selection = modelSelectionsByThread[threadID] else {
+            throw LiveBackendError.unknownThread(threadID)
+        }
+        guard
+            let model = providersByInstanceId[selection.instanceId]?.models
+                .first(where: { $0.slug == selection.model }),
+            let descriptor = Self.serviceTierDescriptor(of: model)
+        else {
+            throw LiveBackendError.noServiceTierOption(selection.model)
+        }
+        let updated = Self.modelSelection(
+            selection, settingServiceTier: value, descriptorID: descriptor.id)
+        _ = try await client.updateThreadMeta(threadId: threadID, modelSelection: updated)
+        modelSelectionsByThread[threadID] = updated
+        if let instance = providersByInstanceId[selection.instanceId],
+            let provider = providerKind(fromDriver: instance.driver)
+        {
+            rememberServiceTier(value, for: provider)
+        }
+        updateCachedThread(threadID) { $0.serviceTier = value }
     }
 
     /// Optimistically patch the cached thread and re-emit it; the shell
@@ -1962,6 +2013,7 @@ public actor LiveBackend: BackendService {
             interactionMode: Self.uiInteractionMode(shell.interactionMode),
             modelInstanceID: shell.modelSelection.instanceId, modelID: shell.modelSelection.model,
             reasoningEffort: Self.effortValue(of: shell.modelSelection),
+            serviceTier: Self.serviceTierValue(of: shell.modelSelection),
             backgroundAgentCount: activeSubagentCount)
     }
 
@@ -2238,7 +2290,7 @@ public actor LiveBackend: BackendService {
         // Prefer the model the user last picked for this provider kind, so a
         // new thread doesn't silently reset to the instance's first model.
         if let remembered = lastUsedModelSelection(for: provider) {
-            return applyingLastUsedEffort(to: remembered, for: provider)
+            return applyingLastUsedOptions(to: remembered, for: provider)
         }
         // Same bar as the provider list UI (`availability(for:)`): an
         // uninstalled/unauthenticated instance, or one with no models, can't
@@ -2250,8 +2302,15 @@ public actor LiveBackend: BackendService {
                 && !$0.models.isEmpty
         }
         guard let chosen, let model = chosen.models.first?.slug else { return nil }
-        return applyingLastUsedEffort(
+        return applyingLastUsedOptions(
             to: ModelSelection(instanceId: chosen.instanceId, model: model), for: provider)
+    }
+
+    private func applyingLastUsedOptions(
+        to selection: ModelSelection, for provider: ProviderKind
+    ) -> ModelSelection {
+        applyingLastUsedServiceTier(
+            to: applyingLastUsedEffort(to: selection, for: provider), for: provider)
     }
 
     private static func modelSelection(
@@ -2261,6 +2320,16 @@ public actor LiveBackend: BackendService {
         var options = selection.canonicalOptions ?? []
         options.removeAll { Self.effortOptionIDs.contains($0.id) }
         options.append(ProviderOptionSelection(id: descriptorID, value: .string(effort)))
+        return ModelSelection(
+            instanceId: selection.instanceId, model: selection.model, canonicalOptions: options)
+    }
+
+    private static func modelSelection(
+        _ selection: ModelSelection, settingServiceTier tier: String, descriptorID: String
+    ) -> ModelSelection {
+        var options = selection.canonicalOptions ?? []
+        options.removeAll { $0.id == serviceTierOptionID }
+        options.append(ProviderOptionSelection(id: descriptorID, value: .string(tier)))
         return ModelSelection(
             instanceId: selection.instanceId, model: selection.model, canonicalOptions: options)
     }
@@ -2277,10 +2346,33 @@ public actor LiveBackend: BackendService {
         return Self.modelSelection(selection, settingEffort: effort, descriptorID: descriptor.id)
     }
 
+    private func applyingLastUsedServiceTier(
+        to selection: ModelSelection, for provider: ProviderKind
+    ) -> ModelSelection {
+        guard
+            let instance = providersByInstanceId[selection.instanceId],
+            let model = instance.models.first(where: { $0.slug == selection.model }),
+            let descriptor = Self.serviceTierDescriptor(of: model),
+            let tier = resolvedLastUsedServiceTier(for: provider, descriptor: descriptor)
+        else { return selection }
+        return Self.modelSelection(
+            selection, settingServiceTier: tier, descriptorID: descriptor.id)
+    }
+
     private func resolvedLastUsedEffort(
         for provider: ProviderKind, descriptor: SelectProviderOptionDescriptor
     ) -> String? {
         guard let remembered = lastUsedReasoningEffort(for: provider) else { return nil }
+        if descriptor.options.contains(where: { $0.id == remembered }) {
+            return remembered
+        }
+        return descriptor.options.first(where: { $0.isDefault == true })?.id
+    }
+
+    private func resolvedLastUsedServiceTier(
+        for provider: ProviderKind, descriptor: SelectProviderOptionDescriptor
+    ) -> String? {
+        guard let remembered = lastUsedServiceTier(for: provider) else { return nil }
         if descriptor.options.contains(where: { $0.id == remembered }) {
             return remembered
         }
@@ -2297,6 +2389,10 @@ public actor LiveBackend: BackendService {
         "lastUsedEffort.\(provider.rawValue)"
     }
 
+    private static func lastUsedServiceTierKey(for provider: ProviderKind) -> String {
+        "lastUsedServiceTier.\(provider.rawValue)"
+    }
+
     private func rememberModelSelection(_ selection: ModelSelection, for provider: ProviderKind) {
         UserDefaults.standard.set(
             "\(selection.instanceId)\t\(selection.model)",
@@ -2309,6 +2405,14 @@ public actor LiveBackend: BackendService {
 
     private func lastUsedReasoningEffort(for provider: ProviderKind) -> String? {
         UserDefaults.standard.string(forKey: Self.lastUsedEffortKey(for: provider))
+    }
+
+    private func rememberServiceTier(_ value: String, for provider: ProviderKind) {
+        UserDefaults.standard.set(value, forKey: Self.lastUsedServiceTierKey(for: provider))
+    }
+
+    private func lastUsedServiceTier(for provider: ProviderKind) -> String? {
+        UserDefaults.standard.string(forKey: Self.lastUsedServiceTierKey(for: provider))
     }
 
     /// The remembered selection, only while it still points at an available
@@ -2341,6 +2445,8 @@ public enum LiveBackendError: Error, Sendable {
     case unknownThread(String)
     /// The thread's model exposes no reasoning-effort option descriptor.
     case noEffortOption(String)
+    /// The thread's model exposes no service-tier option descriptor.
+    case noServiceTierOption(String)
     /// Mobile pairing requested while the sidecar is loopback-only (the
     /// preference was off at launch); relaunch applies the new bind host.
     case mobileAccessDisabled

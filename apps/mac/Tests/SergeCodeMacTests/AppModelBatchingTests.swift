@@ -177,7 +177,7 @@ struct AppModelBatchingTests {
                 threadID: "t1",
                 item: .toolEvent(
                     id: "tool1", name: "Bash", detail: "ls", kind: .command, status: .succeeded,
-                    at: Date(timeIntervalSince1970: 2), output: "ok", outputIsError: false)))
+                    at: Date(timeIntervalSince1970: 2), output: nil, outputIsError: false)))
         model.flushPendingEvents()
 
         let items = model.threadState("t1")?.timeline ?? []

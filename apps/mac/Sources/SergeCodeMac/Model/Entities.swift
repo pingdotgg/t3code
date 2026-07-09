@@ -97,12 +97,17 @@ public struct ModelOption: Identifiable, Hashable, Sendable {
     /// ("effort", "reasoningEffort", …); nil when the model has none.
     public var effortOptionID: String?
     public var effortChoices: [EffortChoice]
+    /// Wire id of the model's service-tier option descriptor ("serviceTier");
+    /// nil when the model has none.
+    public var serviceTierOptionID: String?
+    public var serviceTierChoices: [EffortChoice]
 
     public var id: String { "\(instanceID)/\(modelID)" }
 
     public init(
         instanceID: String, modelID: String, displayName: String, provider: ProviderKind,
-        isDefault: Bool, effortOptionID: String? = nil, effortChoices: [EffortChoice] = []
+        isDefault: Bool, effortOptionID: String? = nil, effortChoices: [EffortChoice] = [],
+        serviceTierOptionID: String? = nil, serviceTierChoices: [EffortChoice] = []
     ) {
         self.instanceID = instanceID
         self.modelID = modelID
@@ -111,6 +116,8 @@ public struct ModelOption: Identifiable, Hashable, Sendable {
         self.isDefault = isDefault
         self.effortOptionID = effortOptionID
         self.effortChoices = effortChoices
+        self.serviceTierOptionID = serviceTierOptionID
+        self.serviceTierChoices = serviceTierChoices
     }
 }
 
@@ -130,6 +137,9 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
     /// Explicit reasoning-effort choice id from the thread's modelSelection
     /// options; nil means the provider default applies.
     public var reasoningEffort: String?
+    /// Explicit service-tier choice id from the thread's modelSelection
+    /// options; nil means the provider default applies.
+    public var serviceTier: String?
     /// Active delegated/background task count. Used for sidebar accessibility
     /// when `status == .backgroundWork`; zero for ordinary thread states.
     public var backgroundAgentCount: Int
@@ -140,7 +150,8 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
         runtimeMode: ThreadRuntimeMode = .fullAccess,
         interactionMode: ThreadInteractionMode = .normal,
         modelInstanceID: String? = nil, modelID: String? = nil,
-        reasoningEffort: String? = nil, backgroundAgentCount: Int = 0
+        reasoningEffort: String? = nil, serviceTier: String? = nil,
+        backgroundAgentCount: Int = 0
     ) {
         self.id = id
         self.projectID = projectID
@@ -153,6 +164,7 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
         self.modelInstanceID = modelInstanceID
         self.modelID = modelID
         self.reasoningEffort = reasoningEffort
+        self.serviceTier = serviceTier
         self.backgroundAgentCount = backgroundAgentCount
     }
 
@@ -169,6 +181,7 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
             && modelInstanceID == other.modelInstanceID
             && modelID == other.modelID
             && reasoningEffort == other.reasoningEffort
+            && serviceTier == other.serviceTier
     }
 }
 

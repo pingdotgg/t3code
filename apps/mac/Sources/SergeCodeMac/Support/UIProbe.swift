@@ -64,6 +64,33 @@
                 model.closeReview()
             }
 
+            // Service tier control: switch to the seeded codex thread, which
+            // exposes Standard/Fast choices, then flip the tier and capture.
+            let previousThreadID = model.selectedThreadID
+            if let codexThread = model.threads.first(where: { $0.id == "thread-2" }) {
+                model.selectedThreadID = codexThread.id
+                try? await Task.sleep(for: .seconds(1))
+                let option = model.models.first {
+                    $0.instanceID == codexThread.modelInstanceID
+                        && $0.modelID == codexThread.modelID
+                }
+                let choices = option?.serviceTierChoices.map(\.label) ?? []
+                print(
+                    "UIProbe: serviceTier choices=\(choices) "
+                        + "threadTier=\(model.threads.first { $0.id == codexThread.id }?.serviceTier ?? "nil")")
+                if let fast = option?.serviceTierChoices.first(where: { $0.id == "priority" }) {
+                    await model.setServiceTier(fast.id)
+                    try? await Task.sleep(for: .seconds(1))
+                }
+                let after = model.threads.first { $0.id == codexThread.id }?.serviceTier
+                print("UIProbe: serviceTier after set=\(after ?? "nil")")
+                snapshot("4b-service-tier", dir: dir)
+                model.selectedThreadID = previousThreadID
+                try? await Task.sleep(for: .seconds(1))
+            } else {
+                print("UIProbe: no codex thread-2 for service tier probe")
+            }
+
             // Queue while the mock thread is running, then force an idle
             // transition. The first queued message should be removed and sent
             // through the normal send path; any later queued items would wait
