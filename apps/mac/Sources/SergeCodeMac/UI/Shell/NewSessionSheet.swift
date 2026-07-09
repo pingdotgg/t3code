@@ -14,6 +14,7 @@ struct NewSessionSheet: View {
     @UIState private var provider: ProviderKind = .claude
     @UIState private var newProjectPath: String = ""
     @UIState private var isBusy = false
+    @UIState private var errorMessage: String?
 
     private enum Mode: String, CaseIterable, Identifiable {
         case existing = "Existing Project"
@@ -51,7 +52,10 @@ struct NewSessionSheet: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .onChange(of: mode) { selectedProjectID = nil }
+            .onChange(of: mode) {
+                selectedProjectID = nil
+                clearError()
+            }
 
             Group {
                 switch mode {
@@ -61,6 +65,9 @@ struct NewSessionSheet: View {
                         ForEach(model.projects) { project in
                             Text(project.name).tag(Optional(project.id))
                         }
+                    }
+                    .onChange(of: selectedProjectID) {
+                        clearError()
                     }
                 case .new:
                     HStack(spacing: 8) {
@@ -73,15 +80,32 @@ struct NewSessionSheet: View {
                         }
                         .buttonStyle(.glass)
                     }
+                    .onChange(of: newProjectPath) {
+                        clearError()
+                    }
                 }
             }
             .id(mode)
             .transition(Motion.paneSwap)
 
             Picker("Provider", selection: $provider) {
-                ForEach(ProviderKind.allCases) { kind in
+                if runnableProviderKinds.isEmpty {
+                    Text("No available providers").tag(provider)
+                }
+                ForEach(runnableProviderKinds) { kind in
                     Text(kind.displayName).tag(kind)
                 }
+            }
+            .onChange(of: provider) {
+                clearError()
+            }
+
+            if let errorMessage {
+                Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .transition(.opacity)
             }
 
             HStack {
@@ -100,12 +124,17 @@ struct NewSessionSheet: View {
         .frame(width: 420)
         .glassEffect(.regular, in: .rect(cornerRadius: 20))
         .animation(Motion.settle, value: mode)
+        .animation(Motion.fade, value: errorMessage == nil)
         .task {
             // Warm the settings so the folder picker can open at the
             // configured default projects directory.
             if model.settings == nil {
                 await model.loadSettings()
             }
+            syncProviderSelection()
+        }
+        .onChange(of: model.runnableProviderKinds) {
+            syncProviderSelection()
         }
     }
 
@@ -133,29 +162,53 @@ struct NewSessionSheet: View {
     }
 
     private var canCreate: Bool {
+        guard runnableProviderKinds.contains(provider) else { return false }
         switch mode {
-        case .existing: selectedProjectID != nil
-        case .new: !newProjectPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .existing: return selectedProjectID != nil
+        case .new: return !newProjectPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
 
+    private var runnableProviderKinds: [ProviderKind] {
+        model.runnableProviderKinds
+    }
+
+    private func syncProviderSelection() {
+        guard !runnableProviderKinds.isEmpty else { return }
+        if !runnableProviderKinds.contains(provider), let first = runnableProviderKinds.first {
+            provider = first
+        }
+    }
+
+    private func clearError() {
+        errorMessage = nil
+    }
+
     private func create() async {
+        clearError()
         isBusy = true
         defer { isBusy = false }
+        var createdThread: ChatThread?
         switch mode {
         case .existing:
             guard let projectID = selectedProjectID else { return }
-            await model.createSceneThread(
+            createdThread = await model.createSceneThread(
                 projectID: projectID, provider: provider, scenery: scenery)
         case .new:
             let path = newProjectPath.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !path.isEmpty else { return }
             await model.addProject(path: path)
             if let project = model.projects.first(where: { $0.path == path }) {
-                await model.createSceneThread(
+                createdThread = await model.createSceneThread(
                     projectID: project.id, provider: provider, scenery: scenery)
             }
         }
-        isPresented = false
+        if createdThread != nil {
+            isPresented = false
+        } else {
+            errorMessage =
+                model.lastError
+                ?? "Couldn't create a new \(provider.displayName) session. Check provider settings and try again."
+        }
     }
 }

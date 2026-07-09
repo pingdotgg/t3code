@@ -682,6 +682,23 @@ public final class AppModel {
         return providers.first { $0.kind == thread.provider }?.slashCommands ?? []
     }
 
+    /// Provider kinds that have at least one available provider instance with
+    /// at least one selectable model. New-session entry points use this list
+    /// instead of `ProviderKind.allCases` so unavailable/auth-required
+    /// providers such as an unconfigured Claude Synthero cannot be selected
+    /// and then fail with `noProviderForKind`.
+    public var runnableProviderKinds: [ProviderKind] {
+        let availableInstanceIDs = Set(
+            providers
+                .filter { $0.availability == .available }
+                .map(\.id))
+        return ProviderKind.allCases.filter { kind in
+            models.contains { option in
+                option.provider == kind && availableInstanceIDs.contains(option.instanceID)
+            }
+        }
+    }
+
     @discardableResult
     public func createThread(
         projectID: String, provider: ProviderKind, title: String? = nil

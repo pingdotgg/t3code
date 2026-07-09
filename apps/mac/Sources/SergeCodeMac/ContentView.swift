@@ -84,7 +84,10 @@ struct RootView: View {
             }
             ForEach(model.projects) { project in
                 Menu(project.name) {
-                    ForEach(ProviderKind.allCases) { provider in
+                    if model.runnableProviderKinds.isEmpty {
+                        Text("No available providers")
+                    }
+                    ForEach(model.runnableProviderKinds) { provider in
                         Button {
                             Task {
                                 await model.createSceneThread(

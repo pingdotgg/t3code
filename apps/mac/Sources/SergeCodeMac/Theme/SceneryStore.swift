@@ -389,9 +389,10 @@ public final class SceneryStore {
 extension AppModel {
     /// Scene-aware thread creation: reserves the next pool photo, names the
     /// thread after it, and commits the assignment once the backend confirms.
+    @discardableResult
     public func createSceneThread(
         projectID: String, provider: ProviderKind, scenery: SceneryStore
-    ) async {
+    ) async -> ChatThread? {
         // First launch races the initial pool fetch; start() is idempotent and
         // waits for it, so early threads still get a scene name + assignment.
         await scenery.start()
@@ -402,5 +403,6 @@ extension AppModel {
         if let thread, let scene, let sceneTitle {
             scenery.assign(photoID: scene.id, name: sceneTitle, to: thread.id)
         }
+        return thread
     }
 }
