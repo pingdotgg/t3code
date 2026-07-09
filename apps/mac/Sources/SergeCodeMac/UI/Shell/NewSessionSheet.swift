@@ -26,10 +26,13 @@ struct NewSessionSheet: View {
         VStack(alignment: .leading, spacing: 16) {
             // The scene the created thread will be named after — a frosted
             // preview band so the sheet carries the alpine identity too.
+            // peekNextScene() reads rotationBucket via @Observable, so
+            // App.onReceive bucket reevaluation repaints this strip.
             let nextScene = scenery.peekNextScene()
             ZStack(alignment: .bottomLeading) {
                 FrostedSceneryBackdrop(
                     scenery: scenery, photo: nextScene, fallbackSeed: "new-session")
+                    .id(nextScene?.id ?? "next-\(scenery.rotationBucket.timeOfDay.rawValue)")
                 VStack(alignment: .leading, spacing: 2) {
                     Text("New Session")
                         .font(.title2.bold())

@@ -10,9 +10,14 @@ struct EmptyStateView: View {
     @UIState private var hasAppeared = false
 
     var body: some View {
+        // dailyFeatured() reads rotationBucket/rotationDayKey via @Observable,
+        // so a bucket/day change from App.onReceive reevaluates this body.
         let featured = scenery.dailyFeatured()
         ZStack {
             SceneryImageView(scenery: scenery, photo: featured, fallbackSeed: "empty-state")
+                // Recreate the image subtree when the rotation seed changes so
+                // a cached hero for the previous bucket cannot stick.
+                .id(featured?.id ?? "empty-\(scenery.rotationDayKey)")
                 .overlay(
                     LinearGradient(
                         colors: [.black.opacity(0.10), .black.opacity(0.30)],

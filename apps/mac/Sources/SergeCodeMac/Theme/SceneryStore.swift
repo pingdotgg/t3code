@@ -56,10 +56,15 @@ public final class SceneryStore {
     private let client: UnsplashClient?
     private let root: URL
 
-    /// Updated only on activation/day-change notifications. This makes
-    /// rotation observable without polling or per-frame date reads.
+    /// Updated only on activation/day-change notifications. `@Observable`
+    /// tracks these stores so surfaces that call `dailyFeatured()` /
+    /// `peekNextScene()` (which read them) invalidate when the bucket flips —
+    /// without polling or per-frame date reads, and without notifying views
+    /// that never touch rotation state.
     public private(set) var rotationBucket: SceneryBucket
-    private var rotationDayKey: String
+    /// Day identity used by `dailyFeatured()` (year + ordinal). Public so
+    /// views can also depend on day rollover explicitly if needed.
+    public private(set) var rotationDayKey: String
 
     /// Pixel width heroes are fetched and cached at: the widest attached
     /// screen's pixel width (so full-screen never upscales), capped to keep
@@ -127,14 +132,21 @@ public final class SceneryStore {
 
     /// Refreshes the cached local bucket. The app calls this on activation and
     /// NSCalendarDayChanged; tests can inject a fixed date/calendar.
+    /// Writes only when the bucket or day key actually change so repeated
+    /// activation notifications do not spuriously invalidate rotation readers.
     public func reevaluateRotation(
         at date: Date = Date(), calendar: Calendar = .autoupdatingCurrent
     ) {
-        rotationBucket = SceneryBucket.compute(for: date, calendar: calendar)
-        rotationDayKey = Self.dayKey(for: date, calendar: calendar)
+        let nextBucket = SceneryBucket.compute(for: date, calendar: calendar)
+        let nextDayKey = Self.dayKey(for: date, calendar: calendar)
+        guard nextBucket != rotationBucket || nextDayKey != rotationDayKey else { return }
+        rotationBucket = nextBucket
+        rotationDayKey = nextDayKey
     }
 
-    private static func dayKey(for date: Date, calendar: Calendar) -> String {
+    /// Pure calendar helper; `nonisolated` so tests and non-UI call sites can
+    /// use it without hopping to the main actor.
+    nonisolated private static func dayKey(for date: Date, calendar: Calendar) -> String {
         let parts = calendar.dateComponents([.year, .day], from: date)
         let ordinal = calendar.ordinality(of: .day, in: .year, for: date) ?? 0
         return "\(parts.year ?? 0)-\(ordinal)"

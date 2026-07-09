@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import Testing
 
 @testable import SergeCodeMac
@@ -236,5 +237,96 @@ struct SceneryPhotoTagSidecarTests {
         #expect(store.peekNextScene()?.id == nightPhoto.id)
         #expect(store.dailyFeatured()?.id == nightPhoto.id)
         #expect(store.photo(for: "existing-thread")?.id == dawnPhoto.id)
+    }
+}
+
+@Suite("Scenery rotation observation")
+@MainActor
+struct SceneryRotationObservationTests {
+    private func photo(_ id: String) -> SceneryPhoto {
+        SceneryPhoto(
+            id: id,
+            name: id,
+            averageColorHex: "#112233",
+            heroURL: URL(string: "https://example.com/\(id)-hero.jpg")!,
+            thumbURL: URL(string: "https://example.com/\(id)-thumb.jpg")!,
+            rawURL: nil,
+            downloadLocationURL: nil,
+            photographerName: "Tester",
+            photographerProfileURL: nil)
+    }
+
+    @Test("bucket mutation invalidates dailyFeatured/peekNextScene; same bucket is a no-op")
+    func observationFiresOnBucketChange() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("scenery-obs-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let dawn = try #require(
+            calendar.date(from: DateComponents(year: 2026, month: 4, day: 15, hour: 6)))
+        let night = try #require(
+            calendar.date(from: DateComponents(year: 2026, month: 4, day: 15, hour: 22)))
+
+        let store = SceneryStore(client: nil, root: root)
+        store.reloadFromDiskForTesting()
+        store.registerSetForTesting(
+            ScenerySet.makeBuiltinDolomites(),
+            pool: [photo("dawn"), photo("night")],
+            photoTags: [
+                "dawn": SceneryPhotoTags(timeOfDay: .dawn),
+                "night": SceneryPhotoTags(timeOfDay: .night),
+            ])
+        store.reevaluateRotation(at: dawn, calendar: calendar)
+
+        // dailyFeatured() reads rotationBucket/rotationDayKey — Observation must
+        // fire so EmptyStateView's body re-runs when the bucket flips.
+        let dailyChanged = ObservationFlag()
+        withObservationTracking {
+            _ = store.dailyFeatured()
+        } onChange: {
+            dailyChanged.set()
+        }
+        store.reevaluateRotation(at: night, calendar: calendar)
+        #expect(dailyChanged.value)
+
+        // Same bucket/day must not write (activation storms should not repaint).
+        store.reevaluateRotation(at: dawn, calendar: calendar)
+        let noopChanged = ObservationFlag()
+        withObservationTracking {
+            _ = store.dailyFeatured()
+        } onChange: {
+            noopChanged.set()
+        }
+        store.reevaluateRotation(at: dawn, calendar: calendar)
+        #expect(!noopChanged.value)
+
+        // peekNextScene() path (NewSessionSheet) — re-register after prior onChange.
+        let peekChanged = ObservationFlag()
+        withObservationTracking {
+            _ = store.peekNextScene()
+        } onChange: {
+            peekChanged.set()
+        }
+        store.reevaluateRotation(at: night, calendar: calendar)
+        #expect(peekChanged.value)
+    }
+}
+
+/// `@Sendable` onChange needs a class box; mutations are main-actor test only.
+private final class ObservationFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _value = false
+    var value: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return _value
+    }
+    func set() {
+        lock.lock()
+        _value = true
+        lock.unlock()
     }
 }
