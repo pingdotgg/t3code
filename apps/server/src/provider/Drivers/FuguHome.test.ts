@@ -101,7 +101,7 @@ it.layer(NodeServices.layer)("FuguHome", (it) => {
         expect(Result.isFailure(result)).toBe(true);
         if (Result.isFailure(result)) {
           expect(result.failure.message).toMatch(/Install codex-fugu/);
-          expect(result.failure.message).toMatch(/fugu\.json/);
+          expect(result.failure.message).toContain(path.resolve(missingCatalog));
         }
 
         // Home must not be partially created without a valid catalog.

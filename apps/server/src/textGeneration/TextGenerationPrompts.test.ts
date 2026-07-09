@@ -191,6 +191,19 @@ describe("normalizeCliError", () => {
     expect(result.detail).toBe("fallback");
   });
 
+  it("detects unavailable CLIs from non-Error spawn messages", () => {
+    const result = normalizeCliError(
+      "codex",
+      "generateCommitMessage",
+      "spawn codex ENOENT",
+      "fallback",
+    );
+
+    expect(result).toBeInstanceOf(TextGenerationError);
+    expect(result.detail).toContain("Codex CLI");
+    expect(result.detail).toContain("not available on PATH");
+  });
+
   it("does not expose CLI failure details in the public error message", () => {
     const result = normalizeCliError(
       "codex",

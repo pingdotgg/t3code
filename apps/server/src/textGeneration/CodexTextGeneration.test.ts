@@ -13,7 +13,7 @@ import { CodexSettings, ProviderInstanceId, TextGenerationError } from "@t3tools
 
 import * as ServerConfig from "../config.ts";
 import * as TextGeneration from "./TextGeneration.ts";
-import { makeCodexTextGeneration } from "./CodexTextGeneration.ts";
+import { makeCodexTextGeneration, type CodexTextGenerationOptions } from "./CodexTextGeneration.ts";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 const DEFAULT_TEST_MODEL_SELECTION = createModelSelection(
@@ -35,6 +35,7 @@ function makeFakeCodexBinary(
     requireServiceTier?: string;
     requireReasoningEffort?: string;
     forbidReasoningEffort?: boolean;
+    deleteOutput?: boolean;
     stdinMustContain?: string;
     stdinMustNotContain?: string;
   },
@@ -147,6 +148,7 @@ function makeFakeCodexBinary(
         "  cat > \"$output_path\" <<'__T3CODE_FAKE_CODEX_OUTPUT__'",
         input.output,
         "__T3CODE_FAKE_CODEX_OUTPUT__",
+        ...(input.deleteOutput ? ['  rm -f "$output_path"'] : []),
         "fi",
         `exit ${input.exitCode ?? 0}`,
         "",
@@ -166,17 +168,19 @@ function withFakeCodexEnv<A, E, R>(
     requireServiceTier?: string;
     requireReasoningEffort?: string;
     forbidReasoningEffort?: boolean;
+    deleteOutput?: boolean;
     stdinMustContain?: string;
     stdinMustNotContain?: string;
   },
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
+  options?: CodexTextGenerationOptions,
 ) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-codex-text-" });
     const codexPath = yield* makeFakeCodexBinary(tempDir, input);
     const config = decodeCodexSettings({ binaryPath: codexPath });
-    const textGeneration = yield* makeCodexTextGeneration(config);
+    const textGeneration = yield* makeCodexTextGeneration(config, undefined, options);
     return yield* effectFn(textGeneration);
   }).pipe(Effect.scoped);
 }
@@ -571,6 +575,97 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
             }
           }),
       ),
+  );
+
+  it.effect("uses the provider display name for structured output decode failures", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({
+          title: "This is not a branch payload",
+        }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const result = yield* textGeneration
+            .generateBranchName({
+              cwd: process.cwd(),
+              message: "Fix websocket reconnect flake",
+              modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+            })
+            .pipe(Effect.result);
+
+          expect(Result.isFailure(result)).toBe(true);
+          if (Result.isFailure(result)) {
+            expect(result.failure).toBeInstanceOf(TextGenerationError);
+            expect(result.failure.message).toContain("Fugu returned invalid structured output");
+            expect(result.failure.message).not.toContain(
+              "Codex returned invalid structured output",
+            );
+          }
+        }),
+      { displayName: "Fugu" },
+    ),
+  );
+
+  it.effect("uses the provider display name for output file read failures", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ subject: "ignored", body: "" }),
+        deleteOutput: true,
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const result = yield* textGeneration
+            .generateCommitMessage({
+              cwd: process.cwd(),
+              branch: "feature/codex-error",
+              stagedSummary: "M README.md",
+              stagedPatch: "diff --git a/README.md b/README.md",
+              modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+            })
+            .pipe(Effect.result);
+
+          expect(Result.isFailure(result)).toBe(true);
+          if (Result.isFailure(result)) {
+            expect(result.failure).toBeInstanceOf(TextGenerationError);
+            expect(result.failure.message).toContain("Failed to read Fugu output file");
+            expect(result.failure.message).not.toContain("Failed to read Codex output file");
+          }
+        }),
+      { displayName: "Fugu" },
+    ),
+  );
+
+  it.effect("matches spawn failures against the configured binary basename", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-codex-text-" });
+      const config = decodeCodexSettings({ binaryPath: "codex" });
+      const textGeneration = yield* makeCodexTextGeneration(
+        config,
+        { PATH: tempDir },
+        {
+          displayName: "Fugu",
+        },
+      );
+
+      const result = yield* textGeneration
+        .generateCommitMessage({
+          cwd: process.cwd(),
+          branch: "feature/codex-error",
+          stagedSummary: "M README.md",
+          stagedPatch: "diff --git a/README.md b/README.md",
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        })
+        .pipe(Effect.result);
+
+      expect(Result.isFailure(result)).toBe(true);
+      if (Result.isFailure(result)) {
+        expect(result.failure).toBeInstanceOf(TextGenerationError);
+        expect(result.failure.message).toContain("Codex CLI (`codex`) is required");
+        expect(result.failure.message).not.toContain("Fugu CLI (`fugu`) is required");
+      }
+    }).pipe(Effect.scoped),
   );
 
   it.effect("returns typed TextGenerationError when codex exits non-zero", () =>

@@ -9,7 +9,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { type ModelSelection } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
-import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { isCommandAvailable, resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
@@ -67,7 +67,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
   const defaultReasoningEffort =
     options?.defaultReasoningEffort ?? CODEX_GIT_TEXT_GENERATION_REASONING_EFFORT;
   const displayName = options?.displayName ?? "Codex";
-  const errorProviderKey = displayName.toLowerCase();
+  const binaryPath = codexConfig.binaryPath.trim() || "codex";
+  const errorProviderKey = path.basename(binaryPath).toLowerCase();
 
   type MaterializedImageAttachments = {
     readonly imagePaths: ReadonlyArray<string>;
@@ -198,8 +199,18 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         getModelSelectionStringOptionValue(modelSelection, "reasoningEffort") ??
         defaultReasoningEffort;
       const serviceTier = getCodexServiceTierOptionValue(modelSelection);
+      const commandAvailable = yield* isCommandAvailable(binaryPath, { env: resolvedEnvironment });
+      if (!commandAvailable) {
+        return yield* normalizeCliError(
+          errorProviderKey,
+          operation,
+          new Error(`Command not found: ${errorProviderKey}`),
+          `Failed to spawn ${displayName} CLI process`,
+        );
+      }
+
       const spawnCommand = yield* resolveSpawnCommand(
-        codexConfig.binaryPath || "codex",
+        binaryPath,
         [
           "exec",
           "--ephemeral",
@@ -292,7 +303,10 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           Option.match({
             onNone: () =>
               Effect.fail(
-                new TextGenerationError({ operation, detail: "Codex CLI request timed out." }),
+                new TextGenerationError({
+                  operation,
+                  detail: `${displayName} CLI request timed out.`,
+                }),
               ),
             onSome: () => Effect.void,
           }),
@@ -306,7 +320,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           (cause) =>
             new TextGenerationError({
               operation,
-              detail: "Failed to read Codex output file.",
+              detail: `Failed to read ${displayName} output file.`,
               cause,
             }),
         ),
@@ -316,7 +330,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
             Effect.fail(
               new TextGenerationError({
                 operation,
-                detail: "Codex returned invalid structured output.",
+                detail: `${displayName} returned invalid structured output.`,
                 cause,
               }),
             ),

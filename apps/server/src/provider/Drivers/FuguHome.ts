@@ -99,8 +99,7 @@ export const ensureFuguHome = Effect.fn("ensureFuguHome")(function* (
   );
   if (!catalogExists) {
     return yield* new FuguHomeError({
-      detail:
-        "Fugu model catalog not found at ~/.codex/fugu.json. Install codex-fugu first so the Sakana model catalog is available.",
+      detail: `Fugu model catalog not found at ${catalogPath}. Install codex-fugu first so the Sakana model catalog is available.`,
     });
   }
 
