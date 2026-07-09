@@ -373,6 +373,16 @@ export function resolveThreadBranchUpdate(
   };
 }
 
+export function resolveThreadBranchMetadataPatch(
+  branch: string | null,
+  expectedBranch: string | null,
+): {
+  branch: string | null;
+  expectedBranch: string | null;
+} {
+  return { branch, expectedBranch };
+}
+
 export function resolveLiveThreadBranchUpdate(input: {
   threadBranch: string | null;
   gitStatus: VcsStatusResult | null;
