@@ -40,6 +40,7 @@ import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
 
 export const ProviderSessionReleaseReason = Schema.Literals([
   "idle_timeout",
@@ -174,6 +175,8 @@ interface LiveSessionEntry {
   readonly busyCount: number;
   readonly lastActivityAtMs: number;
   readonly idleFiber: Fiber.Fiber<void, never> | null;
+  /** Set when idle release is deferred for pending background work; bounds total deferral. */
+  readonly pinnedSinceMs: number | null;
 }
 
 type ProviderSessionEventSignal =
@@ -185,6 +188,8 @@ type ProviderSessionEventSignal =
 
 export interface ProviderSessionManagerV2LayerOptions {
   readonly idleTimeoutMs?: number;
+  /** Cap on how long idle release may be deferred for pending background work. */
+  readonly maxIdlePinMs?: number;
   /** Test replay harnesses can omit T3's MCP server from provider protocol fixtures. */
   readonly configureMcp?: boolean;
 }
@@ -252,6 +257,7 @@ export const layerWithOptions = (
       const nextSubscriberId = yield* Ref.make(0);
       const sessionOpen = yield* makeKeyedSerialExecutor<ProviderSessionId>();
       const idleTimeoutMs = Math.max(1, options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS);
+      const maxIdlePinMs = Math.max(0, options.maxIdlePinMs ?? DEFAULT_MAX_IDLE_PIN_MS);
       const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
         options.configureMcp === false
           ? Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))
@@ -471,12 +477,19 @@ export const layerWithOptions = (
         readonly reason: ProviderSessionReleaseReason;
         readonly detail?: string;
         readonly cancelIdleFiber?: boolean;
+        readonly onlyIfIdleGeneration?: number;
       }) =>
         Effect.acquireUseRelease(
           Ref.modify(sessions, (current) => {
             const key = sessionKey(input.providerSessionId);
             const existing = current.get(key);
             if (existing === undefined) {
+              return [Option.none<LiveSessionEntry>(), current] as const;
+            }
+            if (
+              input.onlyIfIdleGeneration !== undefined &&
+              (existing.busyCount > 0 || existing.idleGeneration !== input.onlyIfIdleGeneration)
+            ) {
               return [Option.none<LiveSessionEntry>(), current] as const;
             }
             const updated = new Map(current);
@@ -532,13 +545,16 @@ export const layerWithOptions = (
           ),
         );
 
+      // Annotated to break the releaseIfStillIdle <-> scheduleIdleReleaseInternal
+      // inference cycle introduced by the pin re-arm below.
       const releaseIfStillIdle = (input: {
         readonly providerSessionId: ProviderSessionId;
         readonly generation: number;
-      }) =>
+      }): Effect.Effect<void> =>
         Effect.gen(function* () {
           const current = yield* Ref.get(sessions);
-          const entry = current.get(sessionKey(input.providerSessionId));
+          const key = sessionKey(input.providerSessionId);
+          const entry = current.get(key);
           if (
             entry === undefined ||
             entry.busyCount > 0 ||
@@ -546,10 +562,46 @@ export const layerWithOptions = (
           ) {
             return;
           }
+          const hasPendingWork =
+            entry.runtime.hasPendingBackgroundWork === undefined
+              ? false
+              : yield* entry.runtime.hasPendingBackgroundWork.pipe(
+                  Effect.catchCause(() => Effect.succeed(false)),
+                );
+          if (hasPendingWork) {
+            const now = yield* Clock.currentTimeMillis;
+            const pinnedSinceMs = entry.pinnedSinceMs ?? now;
+            if (now - pinnedSinceMs < maxIdlePinMs) {
+              yield* Effect.logInfo("orchestration-v2.driver-session.idle-release-deferred", {
+                providerSessionId: input.providerSessionId,
+                pinnedForMs: now - pinnedSinceMs,
+              });
+              yield* Ref.update(sessions, (latest) => {
+                const latestEntry = latest.get(key);
+                if (latestEntry === undefined || latestEntry.busyCount > 0) {
+                  return latest;
+                }
+                const updated = new Map(latest);
+                updated.set(key, { ...latestEntry, pinnedSinceMs });
+                return updated;
+              });
+              yield* scheduleIdleReleaseInternal(input.providerSessionId);
+              return;
+            }
+            yield* Effect.logWarning("orchestration-v2.driver-session.idle-release-pin-expired", {
+              providerSessionId: input.providerSessionId,
+              pinnedForMs: now - pinnedSinceMs,
+            });
+          }
+          // hasPendingBackgroundWork yields to the adapter, so the idle
+          // decision above can go stale; the generation guard revalidates
+          // busyCount and idleGeneration inside releaseEntry's atomic
+          // entry removal.
           yield* releaseEntry({
             providerSessionId: input.providerSessionId,
             reason: "idle_timeout",
             cancelIdleFiber: false,
+            onlyIfIdleGeneration: input.generation,
           }).pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning("orchestration-v2.driver-session.idle-release-failed", {
@@ -751,6 +803,7 @@ export const layerWithOptions = (
                 busyCount: entry.busyCount + 1,
                 idleFiber: null,
                 lastActivityAtMs: now,
+                pinnedSinceMs: null,
               });
               return [entry.idleFiber, updated] as const;
             });
@@ -1154,6 +1207,7 @@ export const layerWithOptions = (
                 busyCount: 0,
                 lastActivityAtMs: now,
                 idleFiber: null,
+                pinnedSinceMs: null,
               };
               yield* Ref.update(sessions, (current) => {
                 const updated = new Map(current);
