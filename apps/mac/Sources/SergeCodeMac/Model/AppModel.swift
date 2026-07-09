@@ -53,6 +53,22 @@ public final class AppModel {
     public struct ComposerPrefill: Equatable, Sendable {
         public let id: UUID
         public let text: String
+        /// When set, the next send rewinds the thread to just before this
+        /// message (server revert) and the edited text replaces it.
+        public let editedMessageID: String?
+        /// Thread the edited message belongs to — discarded if the send
+        /// targets a different thread (composer is not keyed per thread).
+        public let editedMessageThreadID: String?
+
+        public init(
+            id: UUID, text: String, editedMessageID: String? = nil,
+            editedMessageThreadID: String? = nil
+        ) {
+            self.id = id
+            self.text = text
+            self.editedMessageID = editedMessageID
+            self.editedMessageThreadID = editedMessageThreadID
+        }
     }
 
     private let backend: any BackendService
@@ -585,14 +601,26 @@ public final class AppModel {
     // MARK: - Commands
 
     /// Stages `text` for the composer (Edit action on a sent message).
-    public func stageComposerText(_ text: String) {
-        composerPrefill = ComposerPrefill(id: UUID(), text: text)
+    /// When `editedMessageID` is set, a subsequent send rewinds the thread
+    /// so the edited text replaces that message instead of appending.
+    public func stageComposerText(_ text: String, editedMessageID: String? = nil) {
+        composerPrefill = ComposerPrefill(
+            id: UUID(),
+            text: text,
+            editedMessageID: editedMessageID,
+            editedMessageThreadID: editedMessageID != nil ? selectedThreadID : nil
+        )
     }
 
     /// Marks the staged prefill consumed. Returns it, or nil if already taken.
     public func takeComposerPrefill() -> ComposerPrefill? {
         defer { composerPrefill = nil }
         return composerPrefill
+    }
+
+    /// Drops any unconsumed edit prefill (thread switch / composer clear).
+    public func clearComposerPrefill() {
+        composerPrefill = nil
     }
 
     public func enqueueMessage(text: String, attachments: [OutgoingAttachment] = []) {
@@ -619,9 +647,17 @@ public final class AppModel {
         await sendQueuedMessage(message, threadID: threadID)
     }
 
-    public func send(text: String, attachments: [OutgoingAttachment] = []) async {
+    public func send(
+        text: String,
+        attachments: [OutgoingAttachment] = [],
+        replacingMessageID: String? = nil,
+        replacingMessageThreadID: String? = nil
+    ) async {
         guard let threadID = selectedThreadID else { return }
-        await sendAndReport(threadID: threadID, text: text, attachments: attachments)
+        await sendAndReport(
+            threadID: threadID, text: text, attachments: attachments,
+            replacingMessageID: replacingMessageID,
+            replacingMessageThreadID: replacingMessageThreadID)
     }
 
     private func enqueueMessage(
@@ -683,20 +719,79 @@ public final class AppModel {
     }
 
     private func sendAndReport(
-        threadID: String, text: String, attachments: [OutgoingAttachment]
+        threadID: String, text: String, attachments: [OutgoingAttachment],
+        replacingMessageID: String? = nil, replacingMessageThreadID: String? = nil
     ) async {
         do {
-            try await sendMessage(threadID: threadID, text: text, attachments: attachments)
+            try await sendMessage(
+                threadID: threadID, text: text, attachments: attachments,
+                replacingMessageID: replacingMessageID,
+                replacingMessageThreadID: replacingMessageThreadID)
         } catch {
             lastError = String(describing: error)
         }
     }
 
     private func sendMessage(
-        threadID: String, text: String, attachments: [OutgoingAttachment]
+        threadID: String, text: String, attachments: [OutgoingAttachment],
+        replacingMessageID: String? = nil, replacingMessageThreadID: String? = nil
     ) async throws {
         guard !(text.isEmpty && attachments.isEmpty) else { return }
+        // Edit/resend: only revert when the staged message belongs to the
+        // thread we're about to send on. A cross-thread send must not truncate.
+        if let messageID = replacingMessageID,
+            let originThreadID = replacingMessageThreadID,
+            originThreadID == threadID
+        {
+            let timeline = threadStates[threadID]?.timeline ?? []
+            if let turnCount = Self.revertTurnCount(forUserMessageID: messageID, in: timeline) {
+                try await backend.restoreCheckpoint(threadID: threadID, turnCount: turnCount)
+            }
+        }
         try await backend.sendMessage(threadID: threadID, text: text, attachments: attachments)
+    }
+
+    /// Maps a user message to the checkpoint turn count the server should
+    /// retain before that message — web-client parity (`ChatView.tsx`
+    /// `revertTurnCountByUserMessageId`):
+    /// 1. Walk forward from the user message to the next checkpoint that
+    ///    belongs to the turn it started (`max(0, checkpoint.turnCount - 1)`).
+    /// 2. Stop at the next user message if no checkpoint is found.
+    /// 3. Fallback: 0-based index among user messages (covers incomplete /
+    ///    cancelled turns that never produced a checkpoint).
+    static func revertTurnCount(forUserMessageID messageID: String, in timeline: [TimelineItem])
+        -> Int?
+    {
+        guard
+            let start = timeline.firstIndex(where: {
+                if case .userMessage(let id, _, _) = $0 { return id == messageID }
+                return false
+            })
+        else { return nil }
+
+        var index = start + 1
+        while index < timeline.count {
+            switch timeline[index] {
+            case .userMessage:
+                return userMessageIndex(of: messageID, in: timeline)
+            case .checkpoint(let checkpoint) where checkpoint.turnCount > 0:
+                return max(0, checkpoint.turnCount - 1)
+            default:
+                index += 1
+            }
+        }
+        return userMessageIndex(of: messageID, in: timeline)
+    }
+
+    private static func userMessageIndex(of messageID: String, in timeline: [TimelineItem]) -> Int?
+    {
+        var index = 0
+        for item in timeline {
+            guard case .userMessage(let id, _, _) = item else { continue }
+            if id == messageID { return index }
+            index += 1
+        }
+        return nil
     }
 
     private func threadStatus(for threadID: String) -> ThreadStatus? {

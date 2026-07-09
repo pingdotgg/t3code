@@ -102,7 +102,11 @@ public protocol BackendService: Sendable {
     /// Turn-range diff (`fromTurn` exclusive lower bound, `toTurn` inclusive).
     func diff(threadID: String, fromTurn: Int, toTurn: Int) async throws -> [DiffFile]
     func checkpoints(threadID: String) async throws -> [Checkpoint]
-    /// Restore the workspace to the named turn count for this thread.
+    /// Rewind the thread (workspace + history) to `turnCount` completed
+    /// turns (0 = empty thread). The server emits `thread.reverted`;
+    /// backends must surface a truncated timeline (via `timelineReset`)
+    /// and only return once the rewind has been applied, so callers such
+    /// as edit-resend can sequence a follow-up send after it.
     func restoreCheckpoint(threadID: String, turnCount: Int) async throws
 
     func addProject(path: String) async throws -> Project

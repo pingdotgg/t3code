@@ -614,14 +614,17 @@ private actor MockState {
         }
     }
 
+    /// Rewinds mock state to `turnCount` and emits a full `timelineReset`,
+    /// mirroring LiveBackend's `thread.reverted` handling: the timeline keeps
+    /// only the first `turnCount` user turns, checkpoints beyond the turn
+    /// disappear, and the full diff drops files only they touched.
     func restoreCheckpoint(threadID: String, turnCount: Int) {
         let checkpoints = checkpointsByThread[threadID] ?? []
         let checkpoint = checkpoints.first(where: { $0.turnCount == turnCount })
         let label = checkpoint?.label ?? "Turn \(turnCount)"
 
         // Rewind mock state before invalidating, so the refresh the
-        // invalidation triggers reads post-restore data: checkpoints beyond
-        // the turn disappear, and the full diff drops files only they touched.
+        // invalidation triggers reads post-restore data.
         let kept = checkpoints.filter { $0.turnCount <= turnCount }
         let keptPaths = Set(kept.flatMap { $0.files.map(\.path) })
         let removedPaths = Set(
@@ -640,6 +643,13 @@ private actor MockState {
             }
         }
 
+        // Truncate the timeline and reset wholesale so AppModel replaces its
+        // cache (same event shape LiveBackend uses for `thread.reverted`).
+        let retained = Self.timelineRetaining(
+            turnCount: turnCount, from: timelinesByThread[threadID] ?? [])
+        timelinesByThread[threadID] = retained
+        emit(.timelineReset(threadID: threadID, items: retained))
+
         let notice = TimelineItem.notice(
             id: nextID("notice"),
             text: "Restored checkpoint “\(label)”.",
@@ -648,6 +658,20 @@ private actor MockState {
         timelinesByThread[threadID, default: []].append(notice)
         emit(.timelineAppended(threadID: threadID, item: notice))
         emit(.diffInvalidated(threadID: threadID))
+    }
+
+    static func timelineRetaining(turnCount: Int, from items: [TimelineItem]) -> [TimelineItem] {
+        guard turnCount > 0 else { return [] }
+        var userCount = 0
+        var retained: [TimelineItem] = []
+        for item in items {
+            if case .userMessage = item {
+                userCount += 1
+                if userCount > turnCount { break }
+            }
+            retained.append(item)
+        }
+        return retained
     }
 
     func addProject(path: String) -> Project {
