@@ -89,10 +89,10 @@ struct NewSessionSheet: View {
             .transition(Motion.paneSwap)
 
             Picker("Provider", selection: $provider) {
-                if runnableProviderKinds.isEmpty {
-                    Text("No available providers").tag(provider)
+                if configuredProviderKinds.isEmpty {
+                    Text("No providers found").tag(provider)
                 }
-                ForEach(runnableProviderKinds) { kind in
+                ForEach(configuredProviderKinds) { kind in
                     Text(kind.displayName).tag(kind)
                 }
             }
@@ -104,6 +104,12 @@ struct NewSessionSheet: View {
                 Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
                     .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .transition(.opacity)
+            } else if let providerReadinessMessage {
+                Label(providerReadinessMessage, systemImage: "info.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .transition(.opacity)
             }
@@ -133,7 +139,7 @@ struct NewSessionSheet: View {
             }
             syncProviderSelection()
         }
-        .onChange(of: model.runnableProviderKinds) {
+        .onChange(of: model.configuredProviderKinds) {
             syncProviderSelection()
         }
     }
@@ -162,20 +168,37 @@ struct NewSessionSheet: View {
     }
 
     private var canCreate: Bool {
-        guard runnableProviderKinds.contains(provider) else { return false }
+        guard model.canCreateThread(with: provider) else { return false }
         switch mode {
         case .existing: return selectedProjectID != nil
         case .new: return !newProjectPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
 
-    private var runnableProviderKinds: [ProviderKind] {
-        model.runnableProviderKinds
+    private var configuredProviderKinds: [ProviderKind] {
+        model.configuredProviderKinds
+    }
+
+    private var providerReadinessMessage: String? {
+        guard !configuredProviderKinds.isEmpty else {
+            return "No providers are configured yet. Refresh providers in Settings."
+        }
+        guard !model.canCreateThread(with: provider) else { return nil }
+        switch model.providerAvailability(for: provider) {
+        case .authRequired:
+            return "\(provider.displayName) needs sign-in or an auth token. Configure it in Settings > Providers, then refresh."
+        case .missing:
+            return "\(provider.displayName) is not installed or is unavailable. Check Settings > Providers."
+        case .available:
+            return "\(provider.displayName) has no selectable models yet. Refresh providers and try again."
+        case nil:
+            return "\(provider.displayName) is not configured. Refresh providers in Settings."
+        }
     }
 
     private func syncProviderSelection() {
-        guard !runnableProviderKinds.isEmpty else { return }
-        if !runnableProviderKinds.contains(provider), let first = runnableProviderKinds.first {
+        guard !configuredProviderKinds.isEmpty else { return }
+        if !configuredProviderKinds.contains(provider), let first = configuredProviderKinds.first {
             provider = first
         }
     }

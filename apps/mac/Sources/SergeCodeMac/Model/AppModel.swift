@@ -699,6 +699,33 @@ public final class AppModel {
         }
     }
 
+    /// Provider kinds that exist in the current server provider list. This is
+    /// intentionally broader than `runnableProviderKinds`: new-session pickers
+    /// should still show configured but auth-required providers (for example
+    /// Claude Synthero before its token is entered) with a disabled action and
+    /// a clear readiness hint instead of disappearing entirely.
+    public var configuredProviderKinds: [ProviderKind] {
+        ProviderKind.allCases.filter { kind in
+            providers.contains { $0.kind == kind } || models.contains { $0.provider == kind }
+        }
+    }
+
+    public func canCreateThread(with provider: ProviderKind) -> Bool {
+        runnableProviderKinds.contains(provider)
+    }
+
+    public func providerAvailability(for provider: ProviderKind) -> ProviderAvailability? {
+        let instances = providers.filter { $0.kind == provider }
+        guard !instances.isEmpty else { return nil }
+        if instances.contains(where: { $0.availability == .available }) {
+            return .available
+        }
+        if instances.contains(where: { $0.availability == .authRequired }) {
+            return .authRequired
+        }
+        return .missing
+    }
+
     @discardableResult
     public func createThread(
         projectID: String, provider: ProviderKind, title: String? = nil

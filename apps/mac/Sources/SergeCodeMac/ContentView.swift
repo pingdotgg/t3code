@@ -84,10 +84,10 @@ struct RootView: View {
             }
             ForEach(model.projects) { project in
                 Menu(project.name) {
-                    if model.runnableProviderKinds.isEmpty {
-                        Text("No available providers")
+                    if model.configuredProviderKinds.isEmpty {
+                        Text("No providers found")
                     }
-                    ForEach(model.runnableProviderKinds) { provider in
+                    ForEach(model.configuredProviderKinds) { provider in
                         Button {
                             Task {
                                 await model.createSceneThread(
@@ -96,6 +96,7 @@ struct RootView: View {
                         } label: {
                             Label(provider.displayName, systemImage: "bolt")
                         }
+                        .disabled(!model.canCreateThread(with: provider))
                     }
                 }
             }

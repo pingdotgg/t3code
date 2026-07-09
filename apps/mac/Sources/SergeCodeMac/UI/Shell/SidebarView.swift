@@ -45,7 +45,8 @@ struct SidebarView: View {
                 } header: {
                     ProjectSectionHeader(
                         project: project,
-                        runnableProviderKinds: model.runnableProviderKinds,
+                        configuredProviderKinds: model.configuredProviderKinds,
+                        canCreateThread: { model.canCreateThread(with: $0) },
                         onNewSession: { provider in
                             Task {
                                 await model.createSceneThread(
@@ -118,7 +119,8 @@ struct SidebarView: View {
 /// the chosen provider, and a context menu for rename/delete.
 private struct ProjectSectionHeader: View {
     let project: Project
-    let runnableProviderKinds: [ProviderKind]
+    let configuredProviderKinds: [ProviderKind]
+    let canCreateThread: (ProviderKind) -> Bool
     let onNewSession: (ProviderKind) -> Void
     let onRename: () -> Void
     let onDelete: () -> Void
@@ -128,11 +130,12 @@ private struct ProjectSectionHeader: View {
             Text(project.name)
             Spacer()
             Menu {
-                if runnableProviderKinds.isEmpty {
-                    Text("No available providers")
+                if configuredProviderKinds.isEmpty {
+                    Text("No providers found")
                 }
-                ForEach(runnableProviderKinds) { provider in
+                ForEach(configuredProviderKinds) { provider in
                     Button(provider.displayName) { onNewSession(provider) }
+                        .disabled(!canCreateThread(provider))
                 }
             } label: {
                 Image(systemName: "plus")
@@ -144,11 +147,12 @@ private struct ProjectSectionHeader: View {
         }
         .contextMenu {
             Menu("New Session") {
-                if runnableProviderKinds.isEmpty {
-                    Text("No available providers")
+                if configuredProviderKinds.isEmpty {
+                    Text("No providers found")
                 }
-                ForEach(runnableProviderKinds) { provider in
+                ForEach(configuredProviderKinds) { provider in
                     Button(provider.displayName) { onNewSession(provider) }
+                        .disabled(!canCreateThread(provider))
                 }
             }
             Button("Rename…") { onRename() }
