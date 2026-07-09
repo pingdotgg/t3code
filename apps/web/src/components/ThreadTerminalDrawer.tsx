@@ -434,6 +434,10 @@ export function TerminalViewport({
     reportFailure: false,
   });
   const hasHandledExitRef = useRef(false);
+  // Bumped when the async WASM gate finishes creating a terminal, so the
+  // session sync effect re-runs against the live terminal even when no
+  // session field changed while the WASM module was loading.
+  const [terminalEpoch, setTerminalEpoch] = useState(0);
   const selectionPointerRef = useRef<{ x: number; y: number } | null>(null);
   const selectionGestureActiveRef = useRef(false);
   const selectionActionRequestIdRef = useRef(0);
@@ -549,6 +553,7 @@ export function TerminalViewport({
         status: "closed",
         version: 0,
       };
+      setTerminalEpoch((value) => value + 1);
 
       const clearSelectionAction = () => {
         selectionActionRequestIdRef.current += 1;
@@ -970,7 +975,7 @@ export function TerminalViewport({
       });
     }
     previousSessionRef.current = current;
-  }, [autoFocus, terminalBuffer, terminalError, terminalStatus, terminalVersion]);
+  }, [autoFocus, terminalBuffer, terminalEpoch, terminalError, terminalStatus, terminalVersion]);
 
   useEffect(() => {
     if (!autoFocus) return;

@@ -207,13 +207,25 @@ export const loadGhosttyTerminalStyle: Effect.Effect<
       return undefined;
     });
 
-  const configSource = yield* readFirstExisting([
-    path.join(xdgConfigHome, "ghostty", "config"),
-    path.join(home, "Library", "Application Support", "com.mitchellh.ghostty", "config"),
-  ]);
-  if (configSource === undefined) return undefined;
+  // Ghostty reads the XDG config first and the macOS Application Support
+  // config after it, so later files override earlier values. It also accepts
+  // config.ghostty as the file name. Merge every location that exists instead
+  // of stopping at the first match.
+  const configDirs = [
+    path.join(xdgConfigHome, "ghostty"),
+    path.join(home, "Library", "Application Support", "com.mitchellh.ghostty"),
+  ];
+  const configSources: Array<string> = [];
+  for (const dir of configDirs) {
+    const source = yield* readFirstExisting([
+      path.join(dir, "config"),
+      path.join(dir, "config.ghostty"),
+    ]);
+    if (source !== undefined) configSources.push(source);
+  }
+  if (configSources.length === 0) return undefined;
 
-  const config = parseGhosttyConfig(configSource);
+  const config = parseGhosttyConfig(configSources.join("\n"));
 
   const loadThemeColors = (themeName: string) =>
     Effect.gen(function* () {
