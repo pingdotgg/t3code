@@ -9,6 +9,7 @@ import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
 import { deriveLatestContextWindowSnapshot } from "~/lib/contextWindow";
 import {
+  formatResetCountdown,
   type HeaderUsageStatsVisibility,
   resolveScopedWeeklyLabel,
   selectHeaderUsageStats,
@@ -35,8 +36,8 @@ const contextWindow = deriveLatestContextWindowSnapshot([
 
 const claudeUsage: ClaudeAccountUsage = {
   limits: [
-    { kind: "session", percent: 42 },
-    { kind: "weekly_all", percent: 63.4 },
+    { kind: "session", percent: 42, resetsAt: "2026-03-23T04:36:00.000Z" },
+    { kind: "weekly_all", percent: 63.4, resetsAt: "2026-03-26T12:06:00.000Z" },
     { kind: "weekly_scoped", percent: 18, scopeLabel: "Fable" },
   ],
   fetchedAt: "2026-03-23T00:00:00.000Z",
@@ -77,6 +78,23 @@ describe("selectHeaderUsageStats", () => {
       { id: "weekly", label: "Weekly", value: "63%" },
       { id: "scopedWeekly", label: "Fable", value: "18%" },
     ]);
+  });
+
+  it("threads each limit's resetsAt through to the matching stat", () => {
+    const stats = selectHeaderUsageStats({
+      visibility: allVisible,
+      contextWindow,
+      claudeUsage,
+    });
+
+    const byId = Object.fromEntries(stats.map((stat) => [stat.id, stat.resetsAt]));
+    expect(byId.session).toBe("2026-03-23T04:36:00.000Z");
+    expect(byId.weekly).toBe("2026-03-26T12:06:00.000Z");
+    // The scoped-weekly limit has no resetsAt in the fixture.
+    expect(byId.scopedWeekly).toBeUndefined();
+    // Non-limit stats never carry a reset time.
+    expect(byId.context).toBeUndefined();
+    expect(byId.spend).toBeUndefined();
   });
 
   it("attaches the estimate caveat tooltip to the spend stat only", () => {
@@ -187,6 +205,38 @@ describe("selectHeaderUsageStats", () => {
     expect(stats).toEqual([
       expect.objectContaining({ id: "scopedWeekly", label: "Scoped", value: "18%" }),
     ]);
+  });
+});
+
+describe("formatResetCountdown", () => {
+  const now = new Date("2026-03-23T00:00:00.000Z").getTime();
+
+  it("formats hours and minutes without days", () => {
+    expect(formatResetCountdown("2026-03-23T04:36:00.000Z", now)).toBe("4h36m");
+  });
+
+  it("formats days, hours, and minutes", () => {
+    expect(formatResetCountdown("2026-03-26T12:06:00.000Z", now)).toBe("3d12h6m");
+  });
+
+  it("shows only minutes when under an hour", () => {
+    expect(formatResetCountdown("2026-03-23T00:36:00.000Z", now)).toBe("36m");
+  });
+
+  it("keeps a zero-hour segment when days are present", () => {
+    expect(formatResetCountdown("2026-03-26T00:06:00.000Z", now)).toBe("3d0h6m");
+  });
+
+  it("drops seconds (floors to the minute)", () => {
+    expect(formatResetCountdown("2026-03-23T04:36:59.000Z", now)).toBe("4h36m");
+  });
+
+  it("returns null for a reset already in the past", () => {
+    expect(formatResetCountdown("2026-03-22T23:00:00.000Z", now)).toBeNull();
+  });
+
+  it("returns null for an unparseable timestamp", () => {
+    expect(formatResetCountdown("not-a-date", now)).toBeNull();
   });
 });
 

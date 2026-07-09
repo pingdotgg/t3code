@@ -99,6 +99,40 @@ export interface HeaderUsageStatItem {
   readonly colorClass: string;
   /** Optional caveat shown on hover (e.g. spend is an estimate, not a bill). */
   readonly tooltip?: string;
+  /**
+   * ISO timestamp when this limit's window resets, when applicable. Rendered on
+   * hover as a relative countdown (e.g. "Resets in 3d12h6m").
+   */
+  readonly resetsAt?: string;
+}
+
+/**
+ * Relative countdown until `resetsAt`, e.g. "36m", "4h36m", "3d12h6m". Seconds
+ * are intentionally dropped. Returns null for a missing/invalid timestamp or
+ * one already in the past (the next usage refresh will clear it).
+ */
+export function formatResetCountdown(resetsAt: string, nowMs: number): string | null {
+  const target = new Date(resetsAt).getTime();
+  if (Number.isNaN(target)) {
+    return null;
+  }
+  const remainingMs = target - nowMs;
+  if (remainingMs <= 0) {
+    return null;
+  }
+  const totalMinutes = Math.floor(remainingMs / 60_000);
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  const parts: string[] = [];
+  if (days > 0) {
+    parts.push(`${days}d`);
+  }
+  if (days > 0 || hours > 0) {
+    parts.push(`${hours}h`);
+  }
+  parts.push(`${minutes}m`);
+  return parts.join("");
 }
 
 export const SPEND_STAT_TOOLTIP =
@@ -161,6 +195,7 @@ export function selectHeaderUsageStats(input: {
             label: "Session",
             value: formatLimitPercent(limit),
             colorClass: definition.colorClass,
+            ...(limit.resetsAt ? { resetsAt: limit.resetsAt } : {}),
           });
         }
         break;
@@ -173,6 +208,7 @@ export function selectHeaderUsageStats(input: {
             label: "Weekly",
             value: formatLimitPercent(limit),
             colorClass: definition.colorClass,
+            ...(limit.resetsAt ? { resetsAt: limit.resetsAt } : {}),
           });
         }
         break;
@@ -185,6 +221,7 @@ export function selectHeaderUsageStats(input: {
             label: limit.scopeLabel ?? FALLBACK_SCOPED_WEEKLY_LABEL,
             value: formatLimitPercent(limit),
             colorClass: definition.colorClass,
+            ...(limit.resetsAt ? { resetsAt: limit.resetsAt } : {}),
           });
         }
         break;
@@ -203,9 +240,13 @@ export function HeaderUsageStats(props: { stats: ReadonlyArray<HeaderUsageStatIt
   if (stats.length === 0) {
     return null;
   }
+  const now = Date.now();
   return (
     <div className="hidden shrink-0 items-center gap-8 xl:flex">
       {stats.map((stat) => {
+        const resetCountdown = stat.resetsAt ? formatResetCountdown(stat.resetsAt, now) : null;
+        const tooltipContent =
+          stat.tooltip ?? (resetCountdown ? `Resets in ${resetCountdown}` : null);
         const block = (
           <div key={stat.id} className="flex flex-col items-start">
             <span className="text-[10px] font-medium uppercase leading-tight tracking-[0.08em] text-muted-foreground">
@@ -218,13 +259,13 @@ export function HeaderUsageStats(props: { stats: ReadonlyArray<HeaderUsageStatIt
             </span>
           </div>
         );
-        if (!stat.tooltip) {
+        if (!tooltipContent) {
           return block;
         }
         return (
           <Tooltip key={stat.id}>
             <TooltipTrigger render={block} />
-            <TooltipPopup className="max-w-72">{stat.tooltip}</TooltipPopup>
+            <TooltipPopup className="max-w-72">{tooltipContent}</TooltipPopup>
           </Tooltip>
         );
       })}
