@@ -155,6 +155,8 @@ public final class SceneSetComposer {
             }
 
             store.registerSet(set, pool: namedPhotos)
+            await store.generatePaletteIfNeeded(for: setId, downloadSamples: true)
+            try Task.checkCancellation()
             state = .finished(setId: setId)
         } catch is CancellationError {
             state = .failed(.cancelled)

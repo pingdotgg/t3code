@@ -171,6 +171,7 @@ private struct SidebarThreadRow: View {
         HStack(spacing: 9) {
             SceneryImageView(
                 scenery: scenery, photo: scenery.photo(for: thread.id), variant: .thumb,
+                setId: scenery.resolvedSetId(forThread: thread.id),
                 fallbackSeed: thread.id
             )
             .frame(width: 28, height: 28)

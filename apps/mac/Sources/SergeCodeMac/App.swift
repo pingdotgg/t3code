@@ -39,7 +39,7 @@ struct SergeCodeApp: App {
     var body: some Scene {
         WindowGroup {
             RootView(model: model, scenery: scenery)
-                .tint(AlpineTheme.accent)
+                .tint(AlpineTheme.accent(palette: activeSceneryPalette))
                 .containerBackground(.thinMaterial, for: .window)
                 .onAppear {
                     // Thread → project path so scenery set resolution can read
@@ -63,6 +63,15 @@ struct SergeCodeApp: App {
         Settings {
             SettingsScene(model: model)
         }
+    }
+
+    private var activeSceneryPalette: SceneryPalette? {
+        guard let threadID = model.selectedThreadID else {
+            return scenery.palette(for: nil)
+        }
+        return scenery.palette(
+            for: scenery.photo(for: threadID),
+            setId: scenery.resolvedSetId(forThread: threadID))
     }
 }
 

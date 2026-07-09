@@ -11,6 +11,7 @@ import UniformTypeIdentifiers
 // command menu (mode built-ins + provider-native slash commands).
 public struct ComposerBar: View {
     private let model: AppModel
+    private let accent: Color
 
     @UIState private var draft: String = ""
     @UIState private var attachments: [OutgoingAttachment] = []
@@ -27,8 +28,9 @@ public struct ComposerBar: View {
     private static let maxAttachments = 8
     private static let maxAttachmentBytes = 10 * 1024 * 1024
 
-    public init(model: AppModel) {
+    public init(model: AppModel, accent: Color) {
         self.model = model
+        self.accent = accent
     }
 
     private var trimmedDraft: String {
@@ -312,7 +314,7 @@ public struct ComposerBar: View {
         if active {
             smartSendStopBaseButton
                 .buttonStyle(.glassProminent)
-                .tint(showsStop ? .red : (isThreadRunning ? .orange : AlpineTheme.accent))
+                .tint(showsStop ? .red : (isThreadRunning ? .orange : accent))
         } else {
             smartSendStopBaseButton
                 .foregroundStyle(.secondary)

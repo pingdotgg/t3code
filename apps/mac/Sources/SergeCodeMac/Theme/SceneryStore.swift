@@ -43,6 +43,7 @@ public final class SceneryStore {
 
     private var images: [String: NSImage] = [:]  // "setId/photoID/variant" -> image
     private var loadingKeys: Set<String> = []
+    private var paletteExtractionSetIDs: Set<String> = []
 
     private var settings = ScenerySettingsFile()
     private var projectPrefs: [String: ProjectSceneryPrefs] = [:]
@@ -93,6 +94,9 @@ public final class SceneryStore {
             startTask = Task {
                 loadFromDisk()
                 for set in availableSets {
+                    await generatePaletteIfNeeded(for: set.id)
+                }
+                for set in availableSets {
                     let fetchedAt = poolFetchedAt[set.id]
                     let stale =
                         fetchedAt.map { Date().timeIntervalSince($0) > Self.poolMaxAge } ?? true
@@ -130,6 +134,16 @@ public final class SceneryStore {
 
     public func set(id: String) -> ScenerySet? {
         availableSets.first { $0.id == id }
+    }
+
+    /// Palette for a resolved set. An explicit set id wins; otherwise the
+    /// photo's owning set and then the global default are used.
+    public func palette(for photo: SceneryPhoto?, setId: String? = nil) -> SceneryPalette? {
+        let owner =
+            setId
+            ?? photo.flatMap { setIdContaining(photoID: $0.id) }
+            ?? resolvedSetId(projectPath: nil)
+        return set(id: owner)?.palette
     }
 
     public var defaultSetId: String {
@@ -290,6 +304,14 @@ public final class SceneryStore {
     /// Load a photo's image into the in-memory cache: disk first, CDN on
     /// miss (writing back to disk). Safe to call repeatedly.
     public func ensureImage(_ photo: SceneryPhoto?, variant: ImageVariant) async {
+        await ensureImage(photo, variant: variant, triggerPaletteBackfill: true)
+    }
+
+    private func ensureImage(
+        _ photo: SceneryPhoto?,
+        variant: ImageVariant,
+        triggerPaletteBackfill: Bool
+    ) async {
         guard let photo else { return }
         let setId = setIdContaining(photoID: photo.id) ?? ScenerySet.dolomitesID
         let key = cacheKey(setId, photo.id, variant)
@@ -321,7 +343,74 @@ public final class SceneryStore {
         }
         if let data, let image = NSImage(data: data) {
             images[key] = image
+            if triggerPaletteBackfill {
+                await generatePaletteIfNeeded(for: setId)
+            }
         }
+    }
+
+    /// Extracts and persists a custom set's palette once. New-set creation can
+    /// request thumbnail downloads first; startup and image loads use existing
+    /// disk files as a lazy backfill. Bitmap work stays off the main actor.
+    public func generatePaletteIfNeeded(for setId: String, downloadSamples: Bool = false) async {
+        guard let manifest = set(id: setId), manifest.origin == .custom,
+            manifest.palette == nil, !paletteExtractionSetIDs.contains(setId)
+        else { return }
+
+        paletteExtractionSetIDs.insert(setId)
+        defer { paletteExtractionSetIDs.remove(setId) }
+
+        if downloadSamples {
+            let samplePhotos = Array((pools[setId] ?? []).prefix(
+                SceneryPaletteExtractor.maximumImageCount))
+            for photo in samplePhotos {
+                guard !Task.isCancelled else { return }
+                await ensureImage(photo, variant: .thumb, triggerPaletteBackfill: false)
+            }
+        }
+
+        let sampleURLs = paletteSampleURLs(for: setId)
+        guard !sampleURLs.isEmpty else { return }
+        let palette = await Task.detached(priority: .utility) {
+            SceneryPaletteExtractor.extract(contentsOf: sampleURLs)
+        }.value
+        guard !Task.isCancelled, let palette,
+            let index = availableSets.firstIndex(where: { $0.id == setId }),
+            availableSets[index].palette == nil
+        else { return }
+
+        var updated = availableSets[index]
+        updated.palette = palette
+        availableSets[index] = updated
+        saveManifest(updated)
+    }
+
+    private func paletteSampleURLs(for setId: String) -> [URL] {
+        let imagesDirectory = setDirectory(setId).appendingPathComponent("images", isDirectory: true)
+        let files =
+            ((try? FileManager.default.contentsOfDirectory(
+                at: imagesDirectory,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles])) ?? [])
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+
+        var result: [URL] = []
+        for photo in pools[setId] ?? [] {
+            let thumbName = fileName(photo.id, .thumb)
+            let currentHeroName = fileName(photo.id, .hero)
+            let heroPrefix = "\(photo.id)-hero-w"
+            if let file = files.first(where: { $0.lastPathComponent == thumbName })
+                ?? files.first(where: { $0.lastPathComponent == currentHeroName })
+                ?? files.first(where: {
+                    $0.lastPathComponent.hasPrefix(heroPrefix)
+                        && $0.pathExtension.lowercased() == "jpg"
+                })
+            {
+                result.append(file)
+                if result.count == SceneryPaletteExtractor.maximumImageCount { break }
+            }
+        }
+        return result
     }
 
     private func cacheKey(_ setId: String, _ photoID: String, _ variant: ImageVariant) -> String {
@@ -709,6 +798,7 @@ public final class SceneryStore {
         guard existing.origin == .custom else { throw DeleteSetError.builtinProtected }
 
         availableSets.removeAll { $0.id == id }
+        paletteExtractionSetIDs.remove(id)
         pools[id] = nil
         poolFetchedAt[id] = nil
         namesBySet[id] = nil
@@ -754,6 +844,7 @@ public final class SceneryStore {
         poolFetchedAt = [:]
         registeredBySet = [:]
         images = [:]
+        paletteExtractionSetIDs = []
         loadFromDisk()
     }
 }

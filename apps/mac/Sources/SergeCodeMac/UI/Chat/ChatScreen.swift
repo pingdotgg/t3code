@@ -24,7 +24,12 @@ public struct ChatScreen: View {
                 PlanProgressStrip(model: model)
                     .padding(.horizontal, 16)
                     .padding(.top, 8)
-                ComposerBar(model: model)
+                ComposerBar(
+                    model: model,
+                    accent: AlpineTheme.accent(
+                        palette: scenery.palette(
+                            for: scenery.photo(for: thread.id),
+                            setId: scenery.resolvedSetId(forThread: thread.id))))
                     // Breathing room against the window edges and sidebars —
                     // the floating glass composer shouldn't touch chrome.
                     .padding(.horizontal, 16)
@@ -46,6 +51,7 @@ public struct ChatScreen: View {
             if let thread = model.selectedThread {
                 SceneryChatBackground(
                     scenery: scenery, photo: scenery.photo(for: thread.id),
+                    setId: scenery.resolvedSetId(forThread: thread.id),
                     fallbackSeed: thread.id)
             } else {
                 Rectangle().fill(.background)

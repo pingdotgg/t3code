@@ -7,13 +7,16 @@ struct SceneryImageView: View {
     let scenery: SceneryStore
     let photo: SceneryPhoto?
     var variant: SceneryStore.ImageVariant = .hero
+    var setId: String?
     /// Seed for the gradient fallback when there is no photo (keyless /
     /// offline); defaults to the photo id.
     var fallbackSeed: String = "sergecode"
 
     var body: some View {
         ZStack {
-            AlpineTheme.gradient(seed: photo?.id ?? fallbackSeed)
+            AlpineTheme.gradient(
+                seed: photo?.id ?? fallbackSeed,
+                palette: scenery.palette(for: photo, setId: setId))
             if let photo, let image = scenery.image(photo, variant: variant) {
                 Image(nsImage: image)
                     .resizable()
@@ -50,12 +53,17 @@ struct SceneryImageView: View {
 struct FrostedSceneryBackdrop: View {
     let scenery: SceneryStore
     let photo: SceneryPhoto?
+    var setId: String?
     var fallbackSeed: String = "sergecode"
     /// Frost strength; lower shows more of the scene.
     var blurRadius: CGFloat = 9
 
     var body: some View {
-        SceneryImageView(scenery: scenery, photo: photo, fallbackSeed: fallbackSeed)
+        SceneryImageView(
+            scenery: scenery,
+            photo: photo,
+            setId: setId,
+            fallbackSeed: fallbackSeed)
             .blur(radius: blurRadius, opaque: true)
             .saturation(1.08)
             .overlay(
@@ -83,12 +91,17 @@ extension View {
 struct SceneryChatBackground: View {
     let scenery: SceneryStore
     let photo: SceneryPhoto?
+    var setId: String?
     var fallbackSeed: String = "sergecode"
 
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        SceneryImageView(scenery: scenery, photo: photo, fallbackSeed: fallbackSeed)
+        SceneryImageView(
+            scenery: scenery,
+            photo: photo,
+            setId: setId,
+            fallbackSeed: fallbackSeed)
             .blur(radius: 4, opaque: true)
             .saturation(1.05)
             .overlay(colorScheme == .dark ? Color.black.opacity(0.50) : .white.opacity(0.58))
@@ -105,7 +118,10 @@ struct SceneryChatBackground: View {
     }
 
     private var washEdge: Color {
-        colorScheme == .dark ? .black : .white
+        AlpineTheme.sceneryWash(
+            seed: photo?.id ?? fallbackSeed,
+            palette: scenery.palette(for: photo, setId: setId),
+            colorScheme: colorScheme)
     }
 }
 
