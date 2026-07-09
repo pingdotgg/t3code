@@ -2,9 +2,10 @@ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hos
 import {
   listLoginShellCandidates,
   mergePathEntries,
-  readPathFromLoginShell,
+  readEnvironmentFromLoginShell,
   readPathFromLaunchctl,
   resolveWindowsEnvironment,
+  type ShellEnvironmentReader,
 } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -17,19 +18,59 @@ function logPathHydrationWarning(message: string, error?: unknown): void {
   );
 }
 
-function hydratePosixPath(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): void {
+const POSIX_PROVIDER_AUTH_ENV_NAMES = ["SAKANA_API_KEY"] as const;
+type PosixProviderAuthEnvName = (typeof POSIX_PROVIDER_AUTH_ENV_NAMES)[number];
+
+export function hydratePosixProviderAuthEnvironment(
+  env: NodeJS.ProcessEnv,
+  shellEnvironment: Partial<Record<PosixProviderAuthEnvName, string>>,
+): void {
+  for (const name of POSIX_PROVIDER_AUTH_ENV_NAMES) {
+    if (env[name]) continue;
+    const value = shellEnvironment[name];
+    if (value && value.length > 0) {
+      env[name] = value;
+    }
+  }
+}
+
+export function hydratePosixProcessEnvironment(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+  options: {
+    readonly readEnvironment?: ShellEnvironmentReader;
+    readonly readLaunchctlPath?: () => string | undefined;
+    readonly shellCandidates?: ReadonlyArray<string>;
+  } = {},
+): void {
+  if (platform !== "darwin" && platform !== "linux") return;
+
+  const readEnvironment = options.readEnvironment ?? readEnvironmentFromLoginShell;
+  const shellCandidates = options.shellCandidates ?? listLoginShellCandidates(platform, env.SHELL);
   let shellPath: string | undefined;
-  for (const shell of listLoginShellCandidates(platform, env.SHELL)) {
+  let missingAuthNames = POSIX_PROVIDER_AUTH_ENV_NAMES.filter((name) => !env[name]);
+
+  for (const shell of shellCandidates) {
+    const names = [...(shellPath ? [] : ["PATH"]), ...missingAuthNames];
+    if (names.length === 0) break;
+
+    let shellEnvironment: Partial<Record<string, string>>;
     try {
-      shellPath = readPathFromLoginShell(shell);
+      shellEnvironment = readEnvironment(shell, names);
     } catch (error) {
-      logPathHydrationWarning(`Failed to read PATH from login shell ${shell}.`, error);
+      logPathHydrationWarning(`Failed to read user environment from login shell ${shell}.`, error);
+      continue;
     }
 
-    if (shellPath) break;
+    if (!shellPath && shellEnvironment.PATH) {
+      shellPath = shellEnvironment.PATH;
+    }
+    hydratePosixProviderAuthEnvironment(env, shellEnvironment);
+    missingAuthNames = missingAuthNames.filter((name) => !env[name]);
   }
 
-  const launchctlPath = platform === "darwin" && !shellPath ? readPathFromLaunchctl() : undefined;
+  const readLaunchctlPath = options.readLaunchctlPath ?? readPathFromLaunchctl;
+  const launchctlPath = platform === "darwin" && !shellPath ? readLaunchctlPath() : undefined;
   const mergedPath = mergePathEntries(shellPath ?? launchctlPath, env.PATH, platform);
   if (mergedPath) {
     env.PATH = mergedPath;
@@ -63,10 +104,10 @@ export const fixPath = Effect.fn("fixPath")(function* (): Effect.fn.Return<
 
   if (platform !== "darwin" && platform !== "linux") return;
 
-  yield* Effect.sync(() => hydratePosixPath(env, platform)).pipe(
+  yield* Effect.sync(() => hydratePosixProcessEnvironment(env, platform)).pipe(
     Effect.catchDefect((defect) =>
       Effect.sync(() => {
-        logPathHydrationWarning("Failed to hydrate PATH from the user environment.", defect);
+        logPathHydrationWarning("Failed to hydrate the user environment.", defect);
       }),
     ),
   );

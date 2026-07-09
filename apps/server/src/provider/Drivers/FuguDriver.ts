@@ -27,7 +27,7 @@ import { makeCodexTextGeneration } from "../../textGeneration/CodexTextGeneratio
 import { ServerConfig } from "../../config.ts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { ProviderDriverError } from "../Errors.ts";
+import { ProviderAdapterValidationError, ProviderDriverError } from "../Errors.ts";
 import { makeCodexAdapter } from "../Layers/CodexAdapter.ts";
 import {
   checkCodexProviderStatus,
@@ -60,6 +60,9 @@ const decodeFuguSettings = Schema.decodeSync(FuguSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("fugu");
 const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
+const SAKANA_API_KEY_ENV = "SAKANA_API_KEY";
+const FUGU_UNAUTHENTICATED_MESSAGE =
+  "Fugu is not authenticated. Set the SAKANA_API_KEY environment variable and try again.";
 export const FUGU_ALLOWED_REASONING_EFFORTS = ["high", "xhigh", "max"] as const;
 const FUGU_REASONING_CHOICES = [
   { id: "high", label: "High" },
@@ -85,9 +88,20 @@ const FUGU_IDENTITY: CodexProviderIdentity = {
   label: "Fugu",
   notInstalledMessage:
     "Fugu requires the real Codex binary (`codex`) on PATH. Install Codex (not codex-fugu — that wrapper cannot run app-server).",
-  unauthenticatedMessage:
-    "Fugu is not authenticated. Set the SAKANA_API_KEY environment variable and try again.",
+  unauthenticatedMessage: FUGU_UNAUTHENTICATED_MESSAGE,
 };
+
+function hasFuguApiKey(environment: NodeJS.ProcessEnv): boolean {
+  return Boolean(environment[SAKANA_API_KEY_ENV]?.trim());
+}
+
+function missingFuguApiKeyError(operation: string): ProviderAdapterValidationError {
+  return new ProviderAdapterValidationError({
+    provider: DRIVER_KIND,
+    operation,
+    issue: FUGU_UNAUTHENTICATED_MESSAGE,
+  });
+}
 
 type SelectProviderOptionDescriptor = Extract<
   ProviderOptionDescriptor,
@@ -219,7 +233,7 @@ export const FuguDriver: ProviderDriver<FuguSettings, FuguDriverEnv> = {
         env: processEnv,
       });
 
-      const adapter = yield* makeCodexAdapter(effectiveConfig, {
+      const codexAdapter = yield* makeCodexAdapter(effectiveConfig, {
         instanceId,
         driverKind: DRIVER_KIND,
         defaultReasoningEffort: "high",
@@ -227,6 +241,13 @@ export const FuguDriver: ProviderDriver<FuguSettings, FuguDriverEnv> = {
         environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       });
+      const adapter = {
+        ...codexAdapter,
+        startSession: (input) =>
+          hasFuguApiKey(processEnv)
+            ? codexAdapter.startSession(input)
+            : Effect.fail(missingFuguApiKeyError("startSession")),
+      } satisfies typeof codexAdapter;
       // Fugu models only accept high/xhigh/max reasoning efforts.
       const textGeneration = yield* makeCodexTextGeneration(effectiveConfig, processEnv, {
         defaultReasoningEffort: "high",
@@ -242,6 +263,16 @@ export const FuguDriver: ProviderDriver<FuguSettings, FuguDriverEnv> = {
             processEnv,
             FUGU_IDENTITY,
           );
+        }
+
+        if (!hasFuguApiKey(processEnv)) {
+          const pending = yield* makePendingCodexProvider(effectiveConfig, FUGU_IDENTITY);
+          return {
+            ...pending,
+            status: "error" as const,
+            auth: { status: "unauthenticated" as const },
+            message: FUGU_IDENTITY.unauthenticatedMessage,
+          } satisfies ServerProviderDraft;
         }
 
         const homeBootstrap = yield* ensureFuguHome(effectiveConfig).pipe(Effect.result);

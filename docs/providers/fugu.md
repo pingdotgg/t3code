@@ -35,6 +35,12 @@ overwritten.
 Set the `SAKANA_API_KEY` environment variable in the Fugu provider's
 Environment variables section in Settings. Mark the value as sensitive.
 
+On macOS and Linux, local desktop launches also try to inherit `SAKANA_API_KEY`
+from your login shell when the app process does not already have it. Windows
+does not use this login-shell fallback. The provider-specific Environment
+variables section is the most predictable place to store the key on every
+platform.
+
 ## Configure SergeCode
 
 In Settings, your Fugu provider can usually stay like this:
@@ -61,12 +67,17 @@ Binary path: /usr/local/bin/codex
 - `fugu` (default) — Sakana's go-to model; best balance of cost and performance
 - `fugu-ultra` — choose only for complex tasks where quality is top priority
 
-Both models support reasoning efforts **High** and **Extra High** only
-(`high` / `xhigh`). There is no Low or Medium. Both use a 1M-token context
-window.
+Both models support reasoning efforts **High**, **Extra High**, and **Max**
+(`high` / `xhigh` / `max`). There is no Low or Medium. Both use a 1M-token
+context window.
 
 ## Troubleshooting
 
 **"Fugu model catalog not found"** — install `codex-fugu` first so
 `~/.codex/fugu.json` is present. SergeCode reads that catalog and will not
 bootstrap a Fugu home without it.
+
+**"Fugu is not authenticated. Set the SAKANA_API_KEY environment variable and
+try again."** — add `SAKANA_API_KEY` to the Fugu provider's Environment
+variables section in Settings, or export it from your login shell and restart
+the local server.
