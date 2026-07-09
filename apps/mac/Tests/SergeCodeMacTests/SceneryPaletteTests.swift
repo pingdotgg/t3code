@@ -103,6 +103,36 @@ struct SceneryPaletteManifestTests {
         #expect(manifest.palette == nil)
         #expect(resolved == expected)
     }
+
+    @Test("Phase-1 manifest JSON without palette key decodes with palette nil")
+    func phase1ManifestWithoutPaletteKey() throws {
+        // Phase-1 manifests predate the palette field. Decode must stay
+        // backward-compatible so existing on-disk sets load with palette == nil.
+        let json = """
+            {
+              "id": "kyoto-a1b2",
+              "title": "Kyoto",
+              "origin": "custom",
+              "createdAt": "2024-01-15T12:00:00Z",
+              "queries": [
+                { "text": "kyoto temple autumn", "take": 8 }
+              ],
+              "sceneNames": ["Fushimi", "Arashiyama"]
+            }
+            """
+        let data = Data(json.utf8)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(ScenerySet.self, from: data)
+
+        #expect(decoded.id == "kyoto-a1b2")
+        #expect(decoded.title == "Kyoto")
+        #expect(decoded.origin == .custom)
+        #expect(decoded.sceneNames == ["Fushimi", "Arashiyama"])
+        #expect(decoded.queries.count == 1)
+        #expect(decoded.queries[0].text == "kyoto temple autumn")
+        #expect(decoded.palette == nil)
+    }
 }
 
 @Suite("Scenery palette backfill")

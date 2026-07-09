@@ -45,7 +45,10 @@ public final class SceneryStore {
 
     private var images: [String: NSImage] = [:]  // "setId/photoID/variant" -> image
     private var loadingKeys: Set<String> = []
-    private var paletteExtractionSetIDs: Set<String> = []
+    /// Session-scoped in-flight + failed-extraction guard. Prevents unbounded
+    /// re-spawns when extract returns nil; cleared only when no sample files
+    /// exist yet (so a later image load can try once). Retry next launch is OK.
+    private var paletteExtractionAttempted: Set<String> = []
 
     private var settings = ScenerySettingsFile()
     private var projectPrefs: [String: ProjectSceneryPrefs] = [:]
@@ -389,13 +392,15 @@ public final class SceneryStore {
     /// Extracts and persists a custom set's palette once. New-set creation can
     /// request thumbnail downloads first; startup and image loads use existing
     /// disk files as a lazy backfill. Bitmap work stays off the main actor.
+    ///
+    /// Failed extractions are not retried this launch (in-memory attempt marker).
+    /// Missing sample files still allow a later retry once images land on disk.
     public func generatePaletteIfNeeded(for setId: String, downloadSamples: Bool = false) async {
         guard let manifest = set(id: setId), manifest.origin == .custom,
-            manifest.palette == nil, !paletteExtractionSetIDs.contains(setId)
+            manifest.palette == nil, !paletteExtractionAttempted.contains(setId)
         else { return }
 
-        paletteExtractionSetIDs.insert(setId)
-        defer { paletteExtractionSetIDs.remove(setId) }
+        paletteExtractionAttempted.insert(setId)
 
         if downloadSamples {
             let samplePhotos = Array((pools[setId] ?? []).prefix(
@@ -407,10 +412,16 @@ public final class SceneryStore {
         }
 
         let sampleURLs = paletteSampleURLs(for: setId)
-        guard !sampleURLs.isEmpty else { return }
+        guard !sampleURLs.isEmpty else {
+            // No samples yet — clear so a later ensureImage can try once images exist.
+            paletteExtractionAttempted.remove(setId)
+            return
+        }
         let palette = await Task.detached(priority: .utility) {
             SceneryPaletteExtractor.extract(contentsOf: sampleURLs)
         }.value
+        // On nil extract / cancel: leave setId in paletteExtractionAttempted so
+        // rapid ensureImage calls do not re-spawn unbounded concurrent work.
         guard !Task.isCancelled, let palette,
             let index = availableSets.firstIndex(where: { $0.id == setId }),
             availableSets[index].palette == nil
@@ -891,7 +902,7 @@ public final class SceneryStore {
         guard existing.origin == .custom else { throw DeleteSetError.builtinProtected }
 
         availableSets.removeAll { $0.id == id }
-        paletteExtractionSetIDs.remove(id)
+        paletteExtractionAttempted.remove(id)
         pools[id] = nil
         photoTagsBySet[id] = nil
         poolFetchedAt[id] = nil
@@ -939,7 +950,7 @@ public final class SceneryStore {
         poolFetchedAt = [:]
         registeredBySet = [:]
         images = [:]
-        paletteExtractionSetIDs = []
+        paletteExtractionAttempted = []
         loadFromDisk()
     }
 
