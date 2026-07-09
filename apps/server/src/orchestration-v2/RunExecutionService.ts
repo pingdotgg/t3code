@@ -75,6 +75,25 @@ function isTerminalSubagentStatus(status: OrchestrationV2Subagent["status"]): bo
   );
 }
 
+// Turn item types whose lifecycle can outlive the root turn (background
+// commands, monitors/dynamic tools, subagent rows). Ingestion must not stop
+// while one of these is still non-terminal, or the late completion event is
+// dropped and the item spins forever in the projection.
+const backgroundCapableTurnItemTypes: ReadonlySet<OrchestrationV2TurnItem["type"]> = new Set([
+  "command_execution",
+  "dynamic_tool",
+  "subagent",
+]);
+
+function isTerminalTurnItemStatus(status: OrchestrationV2TurnItem["status"]): boolean {
+  return (
+    status === "completed" ||
+    status === "interrupted" ||
+    status === "failed" ||
+    status === "cancelled"
+  );
+}
+
 export function finalProviderThreadStatus(
   disposition: ProviderTerminalEvent["threadDisposition"],
 ): OrchestrationV2ProviderThread["status"] {
@@ -557,6 +576,9 @@ export const layer: Layer.Layer<
           const rootRunFinalized = yield* Ref.make(false);
           const activeChildProviderTurns = yield* Ref.make<ReadonlySet<ProviderTurnId>>(new Set());
           const activeChildSubagents = yield* Ref.make<ReadonlySet<NodeId>>(new Set());
+          const activeBackgroundTurnItems = yield* Ref.make<
+            ReadonlySet<OrchestrationV2TurnItem["id"]>
+          >(new Set());
           const finalizeRootRun = (terminal: ProviderTerminalEvent) =>
             Effect.gen(function* () {
               if (yield* Ref.get(rootRunFinalized)) {
@@ -617,6 +639,26 @@ export const layer: Layer.Layer<
                   });
                 }
               }
+              if (
+                event.type === "turn_item.updated" &&
+                backgroundCapableTurnItemTypes.has(event.turnItem.type)
+              ) {
+                const belongsToRootRun = event.turnItem.runId === input.run.id;
+                const belongsToOwnedChildThread =
+                  event.turnItem.threadId !== input.run.threadId &&
+                  routing.ownedThreadIds.has(event.turnItem.threadId);
+                if (belongsToRootRun || belongsToOwnedChildThread) {
+                  yield* Ref.update(activeBackgroundTurnItems, (current) => {
+                    const next = new Set(current);
+                    if (isTerminalTurnItemStatus(event.turnItem.status)) {
+                      next.delete(event.turnItem.id);
+                    } else {
+                      next.add(event.turnItem.id);
+                    }
+                    return next;
+                  });
+                }
+              }
             });
           const shouldStopProviderEventIngestion = Effect.gen(function* () {
             if (!(yield* Ref.get(rootTerminalSeen))) {
@@ -627,7 +669,23 @@ export const layer: Layer.Layer<
               return false;
             }
             const childSubagents = yield* Ref.get(activeChildSubagents);
-            return childSubagents.size === 0;
+            if (childSubagents.size > 0) {
+              return false;
+            }
+            // Keep ingesting past root settlement while background-capable
+            // items owned by this run (or an owned child thread) are still
+            // non-terminal, so their late completion events reach the
+            // projection (stuck-spinner fix). Only for completed runs:
+            // interrupted/failed turns intentionally drop background tracking
+            // rather than pinning the stream open. Assumes adapters emit an
+            // item's non-terminal event before the root terminal; an item
+            // first seen after the terminal is not pinned.
+            const terminal = yield* Ref.get(terminalEvent);
+            if (terminal !== null && terminal.status === "completed") {
+              const backgroundItems = yield* Ref.get(activeBackgroundTurnItems);
+              return backgroundItems.size === 0;
+            }
+            return true;
           });
           const eventSubscription =
             input.session.subscribeEvents === undefined
