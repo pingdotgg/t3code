@@ -1038,7 +1038,7 @@ export default function GitActionsControl({
           environmentId: activeThreadRef.environmentId,
           input: {
             threadId: activeThreadRef.threadId,
-            ...resolveThreadBranchMetadataPatch(branch),
+            ...resolveThreadBranchMetadataPatch(branch, activeServerThread.branch),
           },
         });
 

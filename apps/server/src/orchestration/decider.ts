@@ -4,7 +4,6 @@ import {
   type OrchestrationEvent,
   type OrchestrationReadModel,
 } from "@t3tools/contracts";
-import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -321,10 +320,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       });
       const branch =
         command.branch !== undefined &&
-        command.branch !== null &&
-        thread.branch !== null &&
-        isTemporaryWorktreeBranch(command.branch) &&
-        !isTemporaryWorktreeBranch(thread.branch)
+        command.expectedBranch !== undefined &&
+        thread.branch !== command.expectedBranch
           ? thread.branch
           : command.branch;
       const occurredAt = yield* nowIso;

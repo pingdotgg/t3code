@@ -1114,9 +1114,13 @@ describe("resolveLiveThreadBranchUpdate", () => {
 
 describe("resolveThreadBranchMetadataPatch", () => {
   it("does not overwrite worktree metadata while reconciling a branch", () => {
-    assert.deepEqual(resolveThreadBranchMetadataPatch("feature/current-ref"), {
-      branch: "feature/current-ref",
-    });
+    assert.deepEqual(
+      resolveThreadBranchMetadataPatch("feature/current-ref", "feature/previous-ref"),
+      {
+        branch: "feature/current-ref",
+        expectedBranch: "feature/previous-ref",
+      },
+    );
   });
 });
 

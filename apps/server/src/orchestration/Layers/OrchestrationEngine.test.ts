@@ -521,11 +521,65 @@ describe("OrchestrationEngine", () => {
         commandId: CommandId.make("cmd-stale-temporary-branch-sync"),
         threadId: ThreadId.make("thread-branch-race"),
         branch: "t3code/1234abcd",
+        expectedBranch: "t3code/1234abcd",
       }),
     );
 
     const snapshot = await system.readModel();
     expect(snapshot.threads[0]?.branch).toBe("t3code/generated-branch-name");
+    await system.dispose();
+  });
+
+  it("allows authoritative worktree bootstrap to assign a temporary branch", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-worktree-bootstrap-project-create"),
+        projectId: asProjectId("project-worktree-bootstrap"),
+        title: "Worktree Bootstrap Project",
+        workspaceRoot: "/tmp/project-worktree-bootstrap",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-worktree-bootstrap-thread-create"),
+        threadId: ThreadId.make("thread-worktree-bootstrap"),
+        projectId: asProjectId("project-worktree-bootstrap"),
+        title: "Worktree Bootstrap Thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: "main",
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-authoritative-worktree-bootstrap"),
+        threadId: ThreadId.make("thread-worktree-bootstrap"),
+        branch: "t3code/1234abcd",
+        worktreePath: "/tmp/project-worktree-bootstrap-worktree",
+      }),
+    );
+
+    const snapshot = await system.readModel();
+    expect(snapshot.threads[0]?.branch).toBe("t3code/1234abcd");
+    expect(snapshot.threads[0]?.worktreePath).toBe("/tmp/project-worktree-bootstrap-worktree");
     await system.dispose();
   });
 
