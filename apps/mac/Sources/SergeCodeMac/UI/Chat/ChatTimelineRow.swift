@@ -4,6 +4,7 @@ import T3Kit
 /// Dispatches a single `TimelineDisplayItem` to its row view.
 struct ChatTimelineRowView: View {
     let item: TimelineDisplayItem
+    let threadID: String
     let model: AppModel
 
     var body: some View {
@@ -21,7 +22,8 @@ struct ChatTimelineRowView: View {
         case .userMessage(_, let text, _):
             UserMessageBubble(text: text, model: model)
         case .assistantMessage(_, let markdown, let isStreaming, _):
-            AssistantMarkdownView(markdown: markdown, isStreaming: isStreaming)
+            AssistantMarkdownView(
+                markdown: markdown, isStreaming: isStreaming, threadID: threadID, model: model)
         case .toolEvent(_, let name, let detail, let kind, let status, _, let output, let outputIsError):
             ToolEventRow(
                 name: name, detail: detail, kind: kind, status: status,
@@ -50,7 +52,7 @@ struct ChatTimelineRowView: View {
                 model.dismissUsageLimit(notice)
             }
         case .plan(let plan):
-            PlanCard(plan: plan) {
+            PlanCard(plan: plan, model: model) {
                 Task { await model.implementPlan(plan) }
             }
         case .checkpoint(let checkpoint):

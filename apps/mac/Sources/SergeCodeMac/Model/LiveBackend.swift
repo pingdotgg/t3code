@@ -1438,7 +1438,9 @@ public actor LiveBackend: BackendService {
     ) async throws {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
         let root = try threadCwd(threadID)
-        let cwd = subpath.map { root + "/" + $0 } ?? root
+        // Agent messages may cite paths outside the workspace. Absolute paths
+        // must reach the launcher unchanged rather than being rooted twice.
+        let cwd = subpath.map { $0.hasPrefix("/") ? $0 : root + "/" + $0 } ?? root
         try await client.openInEditor(cwd: cwd, editor: editor.rawValue)
     }
 

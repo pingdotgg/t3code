@@ -1007,8 +1007,9 @@ public final class AppModel {
         }
     }
 
-    public func openInEditor(subpath: String?, editor: ExternalEditor) async {
-        guard let threadID = selectedThreadID else { return }
+    public func openInEditor(
+        threadID: String, subpath: String?, editor: ExternalEditor
+    ) async {
         do {
             try await backend.openInEditor(threadID: threadID, subpath: subpath, editor: editor)
         } catch {

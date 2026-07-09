@@ -48,7 +48,7 @@ struct ChatTimelineScrollView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
                     ForEach(displayItems) { item in
-                        ChatTimelineRowView(item: item, model: model)
+                        ChatTimelineRowView(item: item, threadID: threadID, model: model)
                             .id(item.id)
                             .transition(Motion.rise)
                     }
