@@ -7,7 +7,6 @@ import * as Layer from "effect/Layer";
 import { HttpClient } from "effect/unstable/http";
 
 import type { SavedRemoteConnection } from "../../lib/connection";
-import { MobilePreferencesStore } from "../../persistence/mobile-preferences";
 import { MobileStorage } from "../../persistence/mobile-storage";
 import {
   CloudEnvironmentLinkError,
@@ -47,14 +46,6 @@ const connection: SavedRemoteConnection = {
 const testLayer = Layer.mergeAll(
   Layer.succeed(ManagedRelay.ManagedRelayClient, null as never),
   Layer.succeed(
-    MobilePreferencesStore,
-    MobilePreferencesStore.of({
-      load: Effect.succeed({ liveActivitiesEnabled: true }),
-      savePatch: () => Effect.die("unexpected preference write"),
-      update: () => Effect.die("unexpected preference update"),
-    }),
-  ),
-  Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make(() => Effect.die("unexpected HTTP request")),
   ),
@@ -82,6 +73,7 @@ describe("liveActivityPreferences", () => {
     Effect.gen(function* () {
       yield* setLiveActivityUpdatesEnabled({
         enabled: false,
+        previousEnabled: true,
         clerkToken: "clerk-token",
         connections: [connection],
       });
@@ -101,6 +93,7 @@ describe("liveActivityPreferences", () => {
     Effect.gen(function* () {
       yield* setLiveActivityUpdatesEnabled({
         enabled: true,
+        previousEnabled: false,
         clerkToken: "clerk-token",
         connections: [connection],
       });
@@ -120,6 +113,7 @@ describe("liveActivityPreferences", () => {
     Effect.gen(function* () {
       yield* setLiveActivityUpdatesEnabled({
         enabled: false,
+        previousEnabled: true,
         clerkToken: null,
         connections: [connection],
       });
@@ -140,6 +134,7 @@ describe("liveActivityPreferences", () => {
     return Effect.gen(function* () {
       yield* setLiveActivityUpdatesEnabled({
         enabled: true,
+        previousEnabled: false,
         clerkToken: "clerk-token",
         connections: [connection, managedConnection],
       });
@@ -162,6 +157,7 @@ describe("liveActivityPreferences", () => {
       const exit = yield* Effect.exit(
         setLiveActivityUpdatesEnabled({
           enabled: false,
+          previousEnabled: true,
           clerkToken: "clerk-token",
           connections: [connection],
         }),

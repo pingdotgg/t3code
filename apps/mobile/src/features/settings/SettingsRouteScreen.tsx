@@ -286,6 +286,7 @@ function ConfiguredSettingsRouteScreen() {
       runtime.runPromiseExit(
         setLiveActivityUpdatesEnabled({
           enabled: true,
+          previousEnabled: false,
           clerkToken: tokenResult.value,
           connections,
         }),
@@ -366,6 +367,7 @@ function ConfiguredSettingsRouteScreen() {
             runtime.runPromiseExit(
               setLiveActivityUpdatesEnabled({
                 enabled: false,
+                previousEnabled: true,
                 clerkToken: token,
                 connections,
               }),

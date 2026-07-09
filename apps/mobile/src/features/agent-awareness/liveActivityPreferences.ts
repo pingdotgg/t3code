@@ -1,18 +1,16 @@
 import * as Effect from "effect/Effect";
 
 import type { SavedRemoteConnection } from "../../lib/connection";
-import { MobilePreferencesStore } from "../../persistence/mobile-preferences";
 import { linkEnvironmentToCloudWithPreference } from "../cloud/linkEnvironment";
 import { updateAgentAwarenessRegistrationPreferences } from "./remoteRegistration";
 
 export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEnabled")(
   function* (input: {
     readonly enabled: boolean;
+    readonly previousEnabled: boolean;
     readonly clerkToken: string | null;
     readonly connections: ReadonlyArray<SavedRemoteConnection>;
   }) {
-    const preferences = yield* MobilePreferencesStore;
-    const previousEnabled = (yield* preferences.load).liveActivitiesEnabled !== false;
     const linkedConnections = input.connections.filter(
       (connection) => connection.bearerToken !== null,
     );
@@ -39,8 +37,12 @@ export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEn
 
     const restoreRelayPreference = Effect.fn("restoreRelayPreference")(function* () {
       yield* updateAgentAwarenessRegistrationPreferences({
-        liveActivitiesEnabled: previousEnabled,
-      }).pipe(Effect.catchCause(() => Effect.void));
+        liveActivitiesEnabled: input.previousEnabled,
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not restore Live Activity device preference.", cause),
+        ),
+      );
 
       const clerkToken = input.clerkToken;
       if (!clerkToken) return;
@@ -51,8 +53,15 @@ export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEn
           linkEnvironmentToCloudWithPreference({
             clerkToken,
             connection,
-            liveActivitiesEnabled: previousEnabled,
-          }).pipe(Effect.catchCause(() => Effect.void)),
+            liveActivitiesEnabled: input.previousEnabled,
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning(
+                `Could not restore Live Activity preference for environment ${connection.environmentId}.`,
+                cause,
+              ),
+            ),
+          ),
         { concurrency: "unbounded" },
       );
     });
