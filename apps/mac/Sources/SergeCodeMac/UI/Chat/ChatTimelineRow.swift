@@ -64,12 +64,11 @@ struct ChatTimelineRowView: View {
 
     private func switchModels(for notice: UsageLimitNotice) -> [ModelOption] {
         let thread = model.threads.first { $0.id == notice.threadID }
-        return model.models.filter { option in
-            if let provider = notice.provider, option.provider != provider {
-                return false
-            }
-            return !(option.instanceID == thread?.modelInstanceID && option.modelID == thread?.modelID)
-        }
+        return UsageLimitModelOptions.options(
+            available: model.models,
+            currentInstanceID: thread?.modelInstanceID,
+            currentModelID: thread?.modelID,
+            exhaustedProvider: notice.provider)
     }
 }
 
