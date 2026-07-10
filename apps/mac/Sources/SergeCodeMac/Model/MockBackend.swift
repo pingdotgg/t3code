@@ -389,7 +389,9 @@ private actor MockState {
             return []
         }
         let paths = Set(target.files.map(\.path))
-        if paths.isEmpty { return diffsByThread[threadID] ?? [] }
+        // Tools-only checkpoints (no file edits) have no scoped diff — falling
+        // back to the full thread diff would show unrelated changes.
+        if paths.isEmpty { return [] }
         return (diffsByThread[threadID] ?? []).filter { paths.contains($0.path) }
     }
 
