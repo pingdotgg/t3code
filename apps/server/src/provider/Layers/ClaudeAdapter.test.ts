@@ -55,6 +55,7 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
   private failure: unknown | undefined;
 
   public readonly interruptCalls: Array<void> = [];
+  public readonly stopTaskCalls: Array<string> = [];
   public readonly setModelCalls: Array<string | undefined> = [];
   public readonly setPermissionModeCalls: Array<string> = [];
   public readonly setMaxThinkingTokensCalls: Array<number | null> = [];
@@ -96,6 +97,10 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
 
   readonly interrupt = async (): Promise<void> => {
     this.interruptCalls.push(undefined);
+  };
+
+  readonly stopTask = async (taskId: string): Promise<void> => {
+    this.stopTaskCalls.push(taskId);
   };
 
   readonly setModel = async (model?: string): Promise<void> => {
@@ -2382,6 +2387,66 @@ describe("ClaudeAdapterLive", () => {
       if (completed?.type === "task.completed") {
         assert.equal(completed.payload.status, "completed");
         assert.equal(completed.payload.outputFile, "/tmp/task-meta-1-output.txt");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("stopTask calls SDK stopTask and synthesizes stopped after grace if needed", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) =>
+          event.type === "task.completed" &&
+          event.payload.taskId === "task-stop-1" &&
+          event.payload.status === "stopped",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "spawn a long task",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-stop-1",
+        description: "Long runner",
+        session_id: "sdk-session-stop-task",
+        uuid: "task-started-stop-1",
+      } as unknown as SDKMessage);
+
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      yield* adapter.stopTask(THREAD_ID, "task-stop-1");
+      assert.deepEqual(harness.query.stopTaskCalls, ["task-stop-1"]);
+
+      // No SDK terminal event — advance the grace timer so the safety net fires.
+      yield* TestClock.adjust("3 seconds");
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const stopped = runtimeEvents.find(
+        (event) =>
+          event.type === "task.completed" &&
+          event.payload.taskId === "task-stop-1" &&
+          event.payload.status === "stopped",
+      );
+      assert.equal(stopped?.type, "task.completed");
+      if (stopped?.type === "task.completed") {
+        assert.equal(stopped.payload.status, "stopped");
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),

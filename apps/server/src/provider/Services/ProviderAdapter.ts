@@ -69,6 +69,12 @@ export interface ProviderAdapterShape<TError> {
   readonly interruptTurn: (threadId: ThreadId, turnId?: TurnId) => Effect.Effect<void, TError>;
 
   /**
+   * Stop a single running subagent/background task by provider task id.
+   * Providers without per-task stop should fail with a clear request error.
+   */
+  readonly stopTask: (threadId: ThreadId, taskId: string) => Effect.Effect<void, TError>;
+
+  /**
    * Respond to an interactive approval request.
    */
   readonly respondToRequest: (

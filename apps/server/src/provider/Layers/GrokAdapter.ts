@@ -1272,6 +1272,15 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         );
       });
 
+    const stopTask: GrokAdapterShape["stopTask"] = (_threadId, _taskId) =>
+      Effect.fail(
+        new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "task/stop",
+          detail: "Per-task stop is not supported for Grok sessions.",
+        }),
+      );
+
     const interruptTurn: GrokAdapterShape["interruptTurn"] = (threadId, turnId) =>
       Effect.gen(function* () {
         const observed = yield* Effect.sync(() => {
@@ -1450,6 +1459,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
       startSession,
       sendTurn,
       interruptTurn,
+      stopTask,
       readThread,
       rollbackThread,
       respondToRequest,

@@ -14,6 +14,7 @@ import {
   type SetThreadRuntimeModeInput,
   type StartThreadTurnInput,
   type StopThreadSessionInput,
+  type StopThreadTaskInput,
   type UnarchiveThreadInput,
   type UpdateThreadMetadataInput,
   archiveThread,
@@ -27,6 +28,7 @@ import {
   setThreadRuntimeMode,
   startThreadTurn,
   stopThreadSession,
+  stopThreadTask,
   unarchiveThread,
   updateThreadMetadata,
 } from "../operations/commands.ts";
@@ -44,6 +46,7 @@ export type {
   SetThreadRuntimeModeInput,
   StartThreadTurnInput,
   StopThreadSessionInput,
+  StopThreadTaskInput,
   UnarchiveThreadInput,
   UpdateThreadMetadataInput,
 } from "../operations/commands.ts";
@@ -109,6 +112,12 @@ export function createThreadEnvironmentAtoms<R, E>(
     interruptTurn: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:interrupt-turn",
       execute: (input: InterruptThreadTurnInput) => interruptThreadTurn(input),
+      scheduler,
+      concurrency,
+    }),
+    stopTask: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:stop-task",
+      execute: (input: StopThreadTaskInput) => stopThreadTask(input),
       scheduler,
       concurrency,
     }),

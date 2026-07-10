@@ -58,6 +58,7 @@ import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -230,12 +231,16 @@ function isTerminalTaskUpdatedStatus(status: string | undefined): boolean {
 
 interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
   readonly interrupt: () => Promise<void>;
+  readonly stopTask: (taskId: string) => Promise<void>;
   readonly setModel: (model?: string) => Promise<void>;
   readonly setPermissionMode: (mode: PermissionMode) => Promise<void>;
   readonly setMaxThinkingTokens: (maxThinkingTokens: number | null) => Promise<void>;
   readonly getContextUsage?: () => Promise<SDKControlGetContextUsageResponse>;
   readonly close: () => void;
 }
+
+/** How long to wait for the SDK's own terminal task event after stopTask. */
+const STOP_TASK_TERMINAL_GRACE = Duration.seconds(3);
 
 export interface ClaudeAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
@@ -4498,6 +4503,59 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     },
   );
 
+  /**
+   * Stop one subagent task via the Claude Agent SDK. If the SDK does not emit
+   * a terminal task event within a short grace period, synthesize
+   * task.completed status "stopped" so the UI settles.
+   */
+  const stopTask: ClaudeAdapterShape["stopTask"] = Effect.fn("stopTask")(function* (
+    threadId,
+    taskId,
+  ) {
+    const context = yield* requireSession(threadId);
+    yield* Effect.tryPromise({
+      try: () => context.query.stopTask(taskId),
+      catch: (cause) => toRequestError(PROVIDER, threadId, "task/stop", cause),
+    });
+
+    // Safety net: race a short wait against natural terminal emission.
+    // Detached so the RPC returns immediately and does not require a Scope.
+    yield* Effect.forkDetach(
+      Effect.sleep(STOP_TASK_TERMINAL_GRACE).pipe(
+        Effect.flatMap(() =>
+          Effect.gen(function* () {
+            if (context.stopped || !context.openTaskIds.has(taskId)) {
+              return;
+            }
+            context.openTaskIds.delete(taskId);
+            forgetTaskToolInputForTask(context, taskId);
+            const stamp = yield* makeEventStamp();
+            yield* offerRuntimeEvent({
+              type: "task.completed",
+              eventId: stamp.eventId,
+              provider: PROVIDER,
+              createdAt: stamp.createdAt,
+              threadId: context.session.threadId,
+              ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+              payload: {
+                taskId: RuntimeTaskId.make(taskId),
+                status: "stopped",
+                summary: "Task stopped (stopTask grace elapsed).",
+              },
+              providerRefs: nativeProviderRefs(context),
+              raw: {
+                source: "claude.sdk.message",
+                method: "claude/synthetic/task_stopped",
+                payload: { taskId, reason: "stopTask grace elapsed" },
+              },
+            });
+          }),
+        ),
+        Effect.catchCause(() => Effect.void),
+      ),
+    );
+  });
+
   const readThread: ClaudeAdapterShape["readThread"] = Effect.fn("readThread")(
     function* (threadId) {
       const context = yield* requireSession(threadId);
@@ -4601,6 +4659,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     startSession,
     sendTurn,
     interruptTurn,
+    stopTask,
     readThread,
     rollbackThread,
     respondToRequest,

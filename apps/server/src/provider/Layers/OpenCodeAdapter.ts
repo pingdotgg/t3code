@@ -1310,6 +1310,15 @@ export function makeOpenCodeAdapter(
       },
     );
 
+    const stopTask: OpenCodeAdapterShape["stopTask"] = (_threadId, _taskId) =>
+      Effect.fail(
+        new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "task/stop",
+          detail: "Per-task stop is not supported for OpenCode sessions.",
+        }),
+      );
+
     const respondToRequest: OpenCodeAdapterShape["respondToRequest"] = Effect.fn(
       "respondToRequest",
     )(function* (threadId, requestId, decision) {
@@ -1457,6 +1466,7 @@ export function makeOpenCodeAdapter(
       startSession,
       sendTurn,
       interruptTurn,
+      stopTask,
       respondToRequest,
       respondToUserInput,
       stopSession,
