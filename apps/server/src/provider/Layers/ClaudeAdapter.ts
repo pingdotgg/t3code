@@ -187,6 +187,12 @@ interface ClaudeSessionContext {
   readonly basePermissionMode: PermissionMode | undefined;
   currentApiModelId: string | undefined;
   resumeSessionId: string | undefined;
+  /**
+   * When true, the next user prompt should include a one-shot note that
+   * background shells/tasks from before the resume are dead. Only set when
+   * the SDK query was started with `resume:`.
+   */
+  pendingResumeDeadShellNote: boolean;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
   readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
   readonly turns: Array<{
@@ -1306,9 +1312,15 @@ const CLAUDE_SETTING_SOURCES = [
   "local",
 ] as const satisfies ReadonlyArray<SettingSource>;
 
+const RESUME_DEAD_SHELL_NOTE =
+  "[Note: this session was resumed after a restart. Any background shells or background tasks from before the restart are dead — do not poll or wait on them; restart that work if still needed.]";
+
 function buildPromptText(
   input: ProviderSendTurnInput,
   boundInstanceId: ProviderInstanceId,
+  options?: {
+    readonly appendResumeDeadShellNote?: boolean;
+  },
 ): string {
   const rawEffort =
     input.modelSelection?.instanceId === boundInstanceId
@@ -1319,7 +1331,14 @@ function buildPromptText(
   const caps = getClaudeModelCapabilities(claudeModel);
 
   const promptEffort = resolvePromptInjectedEffort(caps, rawEffort);
-  return applyClaudePromptEffortPrefix(input.input?.trim() ?? "", promptEffort);
+  const base = applyClaudePromptEffortPrefix(input.input?.trim() ?? "", promptEffort);
+  if (!options?.appendResumeDeadShellNote) {
+    return base;
+  }
+  if (base.length === 0) {
+    return RESUME_DEAD_SHELL_NOTE;
+  }
+  return `${base}\n\n${RESUME_DEAD_SHELL_NOTE}`;
 }
 
 function buildUserMessage(input: {
@@ -1369,9 +1388,12 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
     readonly attachmentsDir: string;
     readonly boundInstanceId: ProviderInstanceId;
     readonly provider: ProviderDriverKind;
+    readonly appendResumeDeadShellNote?: boolean;
   },
 ) {
-  const text = buildPromptText(input, dependencies.boundInstanceId);
+  const text = buildPromptText(input, dependencies.boundInstanceId, {
+    appendResumeDeadShellNote: dependencies.appendResumeDeadShellNote === true,
+  });
   const sdkContent: Array<Record<string, unknown>> = [];
 
   if (text.length > 0) {
@@ -4207,6 +4229,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         basePermissionMode: permissionMode,
         currentApiModelId: apiModelId,
         resumeSessionId: sessionId,
+        // Only when the SDK query was actually started with resume:.
+        pendingResumeDeadShellNote: existingResumeSessionId !== undefined,
         pendingApprovals,
         pendingUserInputs,
         turns: [],
@@ -4384,11 +4408,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       });
     }
 
+    const appendResumeDeadShellNote = context.pendingResumeDeadShellNote;
+    if (appendResumeDeadShellNote) {
+      context.pendingResumeDeadShellNote = false;
+    }
+
     const message = yield* buildUserMessageEffect(input, {
       fileSystem,
       attachmentsDir: serverConfig.attachmentsDir,
       boundInstanceId,
       provider: PROVIDER,
+      appendResumeDeadShellNote,
     }).pipe(
       Effect.mapError((cause) => toRequestError(PROVIDER, input.threadId, "turn/start", cause)),
     );

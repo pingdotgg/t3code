@@ -3569,6 +3569,92 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("appends a one-shot dead-shell note on the first prompt after resume", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const session = yield* adapter.startSession({
+        threadId: RESUME_THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        resumeCursor: {
+          threadId: "resume-thread-1",
+          resume: "550e8400-e29b-41d4-a716-446655440000",
+          turnCount: 3,
+        },
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "continue where we left off",
+        attachments: [],
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      const firstPrompt = yield* Effect.promise(() => readFirstPromptText(createInput));
+      assert.ok(firstPrompt?.includes("continue where we left off"));
+      assert.ok(
+        firstPrompt?.includes(
+          "Any background shells or background tasks from before the restart are dead",
+        ),
+      );
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "second message",
+        attachments: [],
+      });
+
+      // Second prompt should not carry the note again.
+      const iterator = createInput?.prompt[Symbol.asyncIterator]();
+      assert.ok(iterator);
+      // first was already consumed by readFirstPromptText; read the second.
+      const second = yield* Effect.promise(() => iterator!.next());
+      assert.equal(second.done, false);
+      const content = second.value.message.content;
+      const secondText =
+        typeof content === "string"
+          ? content
+          : content.find((block) => block.type === "text" && "text" in block)?.text;
+      assert.equal(secondText, "second message");
+      assert.ok(
+        typeof secondText === "string" &&
+          !secondText.includes("background shells or background tasks"),
+      );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("does not append resume dead-shell note on fresh sessions", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "hello fresh",
+        attachments: [],
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.resume, undefined);
+      const promptText = yield* Effect.promise(() => readFirstPromptText(createInput));
+      assert.equal(promptText, "hello fresh");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("preserves durable resume ids across Claude resume hooks", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
