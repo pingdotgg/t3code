@@ -1200,6 +1200,19 @@ function claudeRuntimeQueryPolicyKey(policy: ClaudeRuntimeQueryPolicy): string {
   });
 }
 
+// Live-query reuse must key on the effective allowlist (including the
+// MCP-derived pre-approvals), not just the runtime policy: policies that
+// share a policy key can still differ in MCP pre-approvals.
+export function claudeEffectiveQueryPolicyKey(
+  queryPolicy: ClaudeRuntimeQueryPolicy,
+  mcpOverrides: { readonly allowedTools?: ReadonlyArray<string> },
+): string {
+  return claudeRuntimeQueryPolicyKey({
+    ...queryPolicy,
+    ...(mcpOverrides.allowedTools === undefined ? {} : { allowedTools: mcpOverrides.allowedTools }),
+  });
+}
+
 type ClaudeToolItemType = Extract<
   OrchestrationV2TurnItem["type"],
   "command_execution" | "file_change" | "dynamic_tool" | "web_search"
@@ -3060,7 +3073,7 @@ export function makeClaudeAdapterV2(
               ? {}
               : { allowedTools: queryPolicy.allowedTools }),
           });
-          const queryPolicyKey = claudeRuntimeQueryPolicyKey(queryPolicy);
+          const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides);
           const compiledSelection = compileClaudeModelSelection(turnInput.modelSelection);
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);

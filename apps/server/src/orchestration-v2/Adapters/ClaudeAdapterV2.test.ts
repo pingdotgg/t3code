@@ -45,6 +45,7 @@ import {
   CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS,
   CLAUDE_T3_MCP_TOOL_WILDCARD,
   ClaudeProviderCapabilitiesV2,
+  claudeEffectiveQueryPolicyKey,
   claudeMcpQueryOverrides,
   claudeRuntimeQueryPolicyForRuntimePolicy,
   loggedClaudeQueryOptions,
@@ -313,6 +314,38 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       const overrides = claudeMcpQueryOverrides({ threadId, readOnlySandbox: true });
 
       assert.deepEqual(overrides.allowedTools, [...CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS]);
+    });
+  });
+
+  it("keys live-query reuse on the MCP-derived pre-approvals", () => {
+    const threadId = ThreadId.make("thread-claude-mcp-query-key");
+    withMcpSession(threadId, () => {
+      const queryPolicy = claudeRuntimeQueryPolicyForRuntimePolicy(
+        ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: "/workspace",
+          approvalPolicy: "on-request",
+          sandboxPolicy: {
+            type: "readOnly",
+            access: { type: "fullAccess" },
+            networkAccess: false,
+          },
+        }),
+      );
+
+      const readOnlyKey = claudeEffectiveQueryPolicyKey(
+        queryPolicy,
+        claudeMcpQueryOverrides({ threadId, readOnlySandbox: true }),
+      );
+      const fullAccessKey = claudeEffectiveQueryPolicyKey(
+        queryPolicy,
+        claudeMcpQueryOverrides({ threadId, readOnlySandbox: false }),
+      );
+      const detachedKey = claudeEffectiveQueryPolicyKey(queryPolicy, {});
+
+      assert.notEqual(readOnlyKey, fullAccessKey);
+      assert.notEqual(fullAccessKey, detachedKey);
     });
   });
 
