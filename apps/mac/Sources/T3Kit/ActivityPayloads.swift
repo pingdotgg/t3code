@@ -81,7 +81,7 @@ public struct TaskProgressActivityPayload: Decodable, Sendable {
 }
 
 /// Activity payload for kind `task.updated`:
-/// `{ taskId, status?, description?, error?, isBackgrounded?, endTime?, totalPausedMs? }`.
+/// `{ taskId, status?, description?, error?, isBackgrounded?, endTime?, totalPausedMs?, model? }`.
 public struct TaskUpdatedActivityPayload: Decodable, Sendable {
     public var taskId: String?
     public var status: String?
@@ -91,6 +91,7 @@ public struct TaskUpdatedActivityPayload: Decodable, Sendable {
     public var isBackgrounded: Bool?
     public var endTime: Double?
     public var totalPausedMs: Double?
+    public var model: String?
 }
 
 /// Activity payload for kind `task.completed`:

@@ -2603,7 +2603,7 @@ describe("ClaudeAdapterLive", () => {
 
       // After terminal, the same tool_use_id must not resolve the old model —
       // entry was pruned. A fresh task_started without a new tool_use remember
-      // should fall back to the session model.
+      // has no authoritative model (session model is never fabricated).
       const secondStartedFiber = yield* Stream.takeUntil(
         adapter.streamEvents,
         (event) => event.type === "task.started" && event.payload.taskId === "task-prune-2",
@@ -2625,7 +2625,7 @@ describe("ClaudeAdapterLive", () => {
       );
       assert.equal(secondStarted?.type, "task.started");
       if (secondStarted?.type === "task.started") {
-        assert.equal(secondStarted.payload.model, "claude-sonnet-4-5");
+        assert.equal(secondStarted.payload.model, undefined);
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
@@ -2685,7 +2685,7 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("falls back to session model when Task tool input has no model", () => {
+  it.effect("omits model on task.started when Task tool input has no model", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
@@ -2747,7 +2747,7 @@ describe("ClaudeAdapterLive", () => {
       const started = runtimeEvents.find((event) => event.type === "task.started");
       assert.equal(started?.type, "task.started");
       if (started?.type === "task.started") {
-        assert.equal(started.payload.model, "claude-sonnet-4-5");
+        assert.equal(started.payload.model, undefined);
         assert.equal(started.payload.subagentType, "Explore");
         assert.equal(started.payload.toolUseId, "toolu-task-2");
       }
@@ -2756,6 +2756,248 @@ describe("ClaudeAdapterLive", () => {
       Effect.provide(harness.layer),
     );
   });
+
+  it.effect(
+    "mines subagent model from assistant messages and emits task.updated only on change",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+
+        const runtimeEventsFiber = yield* Stream.takeUntil(
+          adapter.streamEvents,
+          (event) => event.type === "task.completed",
+        ).pipe(Stream.runCollect, Effect.forkChild);
+
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            model: "claude-sonnet-4-5",
+          },
+          runtimeMode: "full-access",
+        });
+
+        yield* adapter.sendTurn({
+          threadId: THREAD_ID,
+          input: "spawn explore",
+          attachments: [],
+        });
+
+        harness.query.emit({
+          type: "stream_event",
+          session_id: "sdk-session-task-model-mine",
+          uuid: "stream-task-tool-model-mine",
+          parent_tool_use_id: null,
+          event: {
+            type: "content_block_start",
+            index: 0,
+            content_block: {
+              type: "tool_use",
+              id: "toolu-task-mine",
+              name: "Task",
+              input: {
+                description: "Explore the repo",
+                subagent_type: "Explore",
+                prompt: "Find auth code",
+              },
+            },
+          },
+        } as unknown as SDKMessage);
+
+        harness.query.emit({
+          type: "system",
+          subtype: "task_started",
+          task_id: "task-mine-1",
+          tool_use_id: "toolu-task-mine",
+          description: "Explore the repo",
+          subagent_type: "Explore",
+          session_id: "sdk-session-task-model-mine",
+          uuid: "task-started-mine-1",
+        } as unknown as SDKMessage);
+
+        harness.query.emit({
+          type: "assistant",
+          session_id: "sdk-session-task-model-mine",
+          uuid: "assistant-subagent-1",
+          parent_tool_use_id: "toolu-task-mine",
+          message: {
+            id: "assistant-message-subagent-1",
+            model: "grok-4-5",
+            content: [{ type: "text", text: "Found auth module" }],
+          },
+        } as unknown as SDKMessage);
+
+        // Identical model on a later subagent turn must not re-emit task.updated.
+        harness.query.emit({
+          type: "assistant",
+          session_id: "sdk-session-task-model-mine",
+          uuid: "assistant-subagent-2",
+          parent_tool_use_id: "toolu-task-mine",
+          message: {
+            id: "assistant-message-subagent-2",
+            model: "grok-4-5",
+            content: [{ type: "text", text: "Still exploring" }],
+          },
+        } as unknown as SDKMessage);
+
+        harness.query.emit({
+          type: "system",
+          subtype: "task_notification",
+          task_id: "task-mine-1",
+          tool_use_id: "toolu-task-mine",
+          status: "completed",
+          summary: "Done",
+          session_id: "sdk-session-task-model-mine",
+          uuid: "task-completed-mine-1",
+        } as unknown as SDKMessage);
+
+        const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+        const started = runtimeEvents.find((event) => event.type === "task.started");
+        assert.equal(started?.type, "task.started");
+        if (started?.type === "task.started") {
+          assert.equal(started.payload.model, undefined);
+          assert.equal(started.payload.toolUseId, "toolu-task-mine");
+        }
+
+        const modelUpdates = runtimeEvents.filter(
+          (event) =>
+            event.type === "task.updated" &&
+            event.payload.model !== undefined &&
+            event.payload.model !== null,
+        );
+        assert.equal(modelUpdates.length, 1);
+        const modelUpdate = modelUpdates[0];
+        assert.equal(modelUpdate?.type, "task.updated");
+        if (modelUpdate?.type === "task.updated") {
+          assert.equal(modelUpdate.payload.taskId, "task-mine-1");
+          assert.equal(modelUpdate.payload.model, "grok-4-5");
+        }
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
+  it.effect(
+    "mines subagent model from assistant messages after parent turn completes while task stays open",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            model: "claude-sonnet-4-5",
+          },
+          runtimeMode: "full-access",
+        });
+
+        yield* adapter.sendTurn({
+          threadId: THREAD_ID,
+          input: "spawn explore",
+          attachments: [],
+        });
+
+        // Task tool input has no model override — model arrives later from
+        // a background subagent assistant message after the parent turn ends.
+        harness.query.emit({
+          type: "stream_event",
+          session_id: "sdk-session-task-cross-turn-mine",
+          uuid: "stream-task-tool-cross-turn-mine",
+          parent_tool_use_id: null,
+          event: {
+            type: "content_block_start",
+            index: 0,
+            content_block: {
+              type: "tool_use",
+              id: "toolu-task-cross-turn",
+              name: "Task",
+              input: {
+                description: "Explore the repo",
+                subagent_type: "Explore",
+                prompt: "Find auth code",
+              },
+            },
+          },
+        } as unknown as SDKMessage);
+
+        harness.query.emit({
+          type: "system",
+          subtype: "task_started",
+          task_id: "task-cross-turn-1",
+          tool_use_id: "toolu-task-cross-turn",
+          description: "Explore the repo",
+          subagent_type: "Explore",
+          session_id: "sdk-session-task-cross-turn-mine",
+          uuid: "task-started-cross-turn-1",
+        } as unknown as SDKMessage);
+
+        // Parent turn completes while the subagent task remains open.
+        const turnCompletedFiber = yield* Stream.filter(
+          adapter.streamEvents,
+          (event) => event.type === "turn.completed",
+        ).pipe(Stream.runHead, Effect.forkChild);
+
+        harness.query.emit({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          errors: [],
+          session_id: "sdk-session-task-cross-turn-mine",
+          uuid: "result-cross-turn-1",
+        } as unknown as SDKMessage);
+
+        const turnCompleted = yield* Fiber.join(turnCompletedFiber);
+        assert.equal(turnCompleted._tag, "Some");
+
+        // Subscribe after turn completion so this fiber does not race the
+        // turn.completed waiter. Open-task correlation must still resolve.
+        const modelUpdatedFiber = yield* Stream.takeUntil(
+          adapter.streamEvents,
+          (event) =>
+            event.type === "task.updated" &&
+            event.payload.model !== undefined &&
+            event.payload.model !== null,
+        ).pipe(Stream.runCollect, Effect.forkChild);
+
+        harness.query.emit({
+          type: "assistant",
+          session_id: "sdk-session-task-cross-turn-mine",
+          uuid: "assistant-subagent-cross-turn-1",
+          parent_tool_use_id: "toolu-task-cross-turn",
+          message: {
+            id: "assistant-message-subagent-cross-turn-1",
+            model: "grok-4-5",
+            content: [{ type: "text", text: "Found auth module" }],
+          },
+        } as unknown as SDKMessage);
+
+        const runtimeEvents = Array.from(yield* Fiber.join(modelUpdatedFiber));
+        const modelUpdates = runtimeEvents.filter(
+          (event) =>
+            event.type === "task.updated" &&
+            event.payload.model !== undefined &&
+            event.payload.model !== null,
+        );
+        assert.equal(modelUpdates.length, 1);
+        const modelUpdate = modelUpdates[0];
+        assert.equal(modelUpdate?.type, "task.updated");
+        if (modelUpdate?.type === "task.updated") {
+          assert.equal(modelUpdate.payload.taskId, "task-cross-turn-1");
+          assert.equal(modelUpdate.payload.model, "grok-4-5");
+        }
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
 
   it.effect("emits Claude context window on result completion usage snapshots", () => {
     const harness = makeHarness();

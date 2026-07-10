@@ -196,6 +196,7 @@ public struct T3SubagentTaskActivityState: Sendable, Equatable {
             var item = existingOrNew(taskId: taskId, at: at)
             item.description =
                 nonEmpty(payload?.description) ?? nonEmpty(payload?.detail) ?? item.description
+            item.model = nonEmpty(payload?.model) ?? item.model
             if let isBackgrounded = payload?.isBackgrounded {
                 item.isBackgrounded = isBackgrounded
             }

@@ -1117,7 +1117,10 @@ private actor MockState {
                 outputIsError: false),
             .toolEvent(
                 id: "t1-tool2", name: "edit_file",
-                detail: "Sources/SergeCodeMac/Model/AppModel.swift", kind: .fileChange,
+                detail: """
+                    Edit: {"file_path":"Sources/SergeCodeMac/Model/AppModel.swift","old_string":"threads.sort { $0.updatedAt > $1.updatedAt }\\nreturn threads","new_string":"if needsResort {\\n  threads.sort { $0.updatedAt > $1.updatedAt }\\n}\\nreturn threads"}
+                    """,
+                kind: .fileChange,
                 status: .succeeded, at: now.addingTimeInterval(-200),
                 output: nil, outputIsError: false),
             .checkpoint(

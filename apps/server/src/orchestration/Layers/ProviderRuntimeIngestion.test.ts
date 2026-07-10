@@ -2983,6 +2983,7 @@ describe("ProviderRuntimeIngestion", () => {
         isBackgrounded: true,
         error: undefined,
         description: "Explore auth (background)",
+        model: "grok-4-5",
       },
     });
 
@@ -3038,6 +3039,7 @@ describe("ProviderRuntimeIngestion", () => {
     expect(updated?.kind).toBe("task.updated");
     expect(updatedPayload?.isBackgrounded).toBe(true);
     expect(updatedPayload?.description).toBe("Explore auth (background)");
+    expect(updatedPayload?.model).toBe("grok-4-5");
     expect(completedPayload?.outputFile).toBe("/tmp/task-meta-1.txt");
   });
 
