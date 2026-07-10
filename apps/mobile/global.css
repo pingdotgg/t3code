@@ -51,6 +51,7 @@
       /* Inputs */
       --color-input: #ffffff;
       --color-input-border: rgba(0, 0, 0, 0.1);
+      --color-sidebar-search: rgba(118, 118, 128, 0.12);
       --color-placeholder: #a3a3a3;
 
       /* Icons */
@@ -144,6 +145,7 @@
       /* Inputs */
       --color-input: #141414;
       --color-input-border: rgba(255, 255, 255, 0.08);
+      --color-sidebar-search: rgba(118, 118, 128, 0.24);
       --color-placeholder: #8e8e93;
 
       /* Icons */
@@ -194,9 +196,10 @@
 
 /* ─── Typography ────────────────────────────────────────────────────── */
 @theme {
-  --font-sans: "DMSans_400Regular";
-  --font-medium: "DMSans_500Medium";
-  --font-bold: "DMSans_700Bold";
+  /* Keep these native family names aligned with app.config.ts. */
+  --font-sans: "DMSans-Regular";
+  --font-medium: "DMSans-Medium";
+  --font-bold: "DMSans-Bold";
 
   /* Keep this scale aligned with src/lib/typography.ts for native style props. */
   --text-3xs: 11px;
@@ -221,14 +224,14 @@
 
 /* ─── Custom utilities ──────────────────────────────────────────────── */
 @utility font-t3-medium {
-  font-family: "DMSans_500Medium";
+  font-family: var(--font-medium);
 }
 
 @utility font-t3-bold {
-  font-family: "DMSans_700Bold";
+  font-family: var(--font-bold);
 }
 
 @utility font-t3-extrabold {
-  font-family: "DMSans_700Bold";
+  font-family: var(--font-bold);
   font-weight: 800;
 }

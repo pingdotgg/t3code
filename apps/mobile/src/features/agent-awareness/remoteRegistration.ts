@@ -20,6 +20,7 @@ import {
 
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { runtime } from "../../lib/runtime";
+import type { Preferences } from "../../persistence/mobile-preferences";
 import {
   clearAgentAwarenessRegistrationRecord,
   loadAgentAwarenessDeviceId,
@@ -27,7 +28,7 @@ import {
   loadOrCreateAgentAwarenessDeviceId,
   loadPreferences,
   saveAgentAwarenessRegistrationRecord,
-} from "../../lib/storage";
+} from "../../persistence/imperative";
 import AgentActivity, { type AgentActivityProps } from "../../widgets/AgentActivity";
 import { resolveCloudPublicConfig } from "../cloud/publicConfig";
 import { makeRelayDeviceRegistrationRequest, resolveApsEnvironment } from "./registrationPayload";
@@ -122,6 +123,17 @@ let pendingDeviceRegistration: {
 
 interface DeviceRegistrationInput {
   readonly observedPushToken?: string;
+}
+
+interface RegisterDeviceInput extends DeviceRegistrationInput {
+  readonly preferencesOverride?: Partial<Preferences>;
+}
+
+export function mergeAgentAwarenessRegistrationPreferences(
+  stored: Preferences,
+  override: Partial<Preferences> | undefined,
+): Preferences {
+  return { ...stored, ...override };
 }
 
 export function normalizeAgentAwarenessRelayBaseUrl(
@@ -655,7 +667,7 @@ function enqueueDeviceRegistration(input: DeviceRegistrationInput, context: stri
 }
 
 function registerDevice(
-  input: DeviceRegistrationInput = {},
+  input: RegisterDeviceInput = {},
   expectedGeneration = deviceRegistrationGeneration,
 ): Effect.Effect<void, unknown, ManagedRelay.ManagedRelayClient> {
   return Effect.gen(function* () {
@@ -665,7 +677,7 @@ function registerDevice(
     }
 
     logRegistrationDebug("device registration loading local state", { expectedGeneration });
-    const [deviceId, preferences] = yield* Effect.all([
+    const [deviceId, storedPreferences] = yield* Effect.all([
       Effect.tryPromise({
         try: () => loadOrCreateAgentAwarenessDeviceId(),
         catch: (cause) =>
@@ -683,6 +695,10 @@ function registerDevice(
           }),
       }),
     ]);
+    const preferences = mergeAgentAwarenessRegistrationPreferences(
+      storedPreferences,
+      input.preferencesOverride,
+    );
     const pushTokenRegistration = yield* nativePushTokenRegistration(input?.observedPushToken);
     logRegistrationDebug("device registration local state ready", {
       expectedGeneration,
@@ -815,6 +831,21 @@ export function refreshAgentAwarenessRegistration(): Effect.Effect<
           setRegistrationStatus("failed");
         }
         logRegistrationError("device registration refresh failed", error);
+      }),
+    ),
+  );
+}
+
+export function updateAgentAwarenessRegistrationPreferences(
+  preferencesOverride: Partial<Preferences>,
+): Effect.Effect<void, unknown, ManagedRelay.ManagedRelayClient> {
+  return registerDevice({ preferencesOverride }).pipe(
+    Effect.tapError((error) =>
+      Effect.sync(() => {
+        if (registrationStatus !== "registered") {
+          setRegistrationStatus("failed");
+        }
+        logRegistrationError("device preference registration refresh failed", error);
       }),
     ),
   );

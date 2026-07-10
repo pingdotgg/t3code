@@ -193,10 +193,9 @@ const WorkingDurationPill = memo(function WorkingDurationPill(props: {
 
   return (
     <Animated.View
-      className="px-4 pb-2 pt-2"
+      className="shrink-0 px-4 pb-2 pt-2"
       entering={FadeInDown.duration(200)}
       exiting={FadeOut.duration(140)}
-      style={{ flexShrink: 0 }}
     >
       <View className="self-start rounded-full border border-neutral-200/80 bg-neutral-50/90 px-3 py-2 dark:border-white/[0.08] dark:bg-white/[0.04]">
         <View className="flex-row items-center gap-2">
@@ -390,7 +389,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     <View className="flex-1">
       {showContent ? (
         <View
-          style={{ flex: 1 }}
+          className="flex-1"
           onTouchStart={handleFeedTouchStart}
           onTouchMove={handleFeedTouchMove}
           onTouchEnd={handleFeedTouchEnd}
@@ -419,7 +418,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
           />
         </View>
       ) : (
-        <View style={{ flex: 1 }} />
+        <View className="flex-1" />
       )}
 
       {/* Floating composer — sticks to keyboard via KeyboardStickyView */}
@@ -431,10 +430,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
           {/* No paddingTop here: the overlay's measured height becomes the
               list's bottom inset, so any padding above the pill/composer
               pushes the resting content floor up by the same amount. */}
-          <View ref={composerOverlayRef} onLayout={onComposerLayout} style={{ width: "100%" }}>
+          <View ref={composerOverlayRef} onLayout={onComposerLayout} className="w-full">
             <Animated.View
+              className="w-full self-center"
               layout={LinearTransition.duration(220)}
-              style={{ alignSelf: "center", maxWidth: contentMaxWidth, width: "100%" }}
+              style={{ maxWidth: contentMaxWidth }}
             >
               {props.activeWorkStartedAt ? (
                 <WorkingDurationPill startedAt={props.activeWorkStartedAt} />
@@ -442,10 +442,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
 
               {props.activePendingApproval || props.activePendingUserInput ? (
                 <Animated.View
-                  className="gap-3 px-4 pb-3"
+                  className="shrink-0 gap-3 px-4 pb-3"
                   entering={FadeInDown.duration(220)}
                   exiting={FadeOut.duration(140)}
-                  style={{ flexShrink: 0 }}
                 >
                   {props.activePendingApproval ? (
                     <PendingApprovalCard

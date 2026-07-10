@@ -8,7 +8,8 @@
     "development": {
       "corepack": true,
       "env": {
-        "APP_VARIANT": "development"
+        "APP_VARIANT": "development",
+        "NODE_OPTIONS": "--max-old-space-size=4096"
       },
       "channel": "development",
       "developmentClient": true,
@@ -17,7 +18,8 @@
     "preview": {
       "corepack": true,
       "env": {
-        "APP_VARIANT": "preview"
+        "APP_VARIANT": "preview",
+        "NODE_OPTIONS": "--max-old-space-size=4096"
       },
       "channel": "preview",
       "environment": "preview",
@@ -27,7 +29,8 @@
       "corepack": true,
       "env": {
         "APP_VARIANT": "preview",
-        "MOBILE_VERSION_POLICY": "fingerprint"
+        "MOBILE_VERSION_POLICY": "fingerprint",
+        "NODE_OPTIONS": "--max-old-space-size=4096"
       },
       "channel": "preview",
       "environment": "preview",
@@ -40,7 +43,8 @@
     "production": {
       "corepack": true,
       "env": {
-        "APP_VARIANT": "production"
+        "APP_VARIANT": "production",
+        "NODE_OPTIONS": "--max-old-space-size=4096"
       },
       "channel": "production",
       "environment": "production",

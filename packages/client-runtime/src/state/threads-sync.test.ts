@@ -170,6 +170,10 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
       Ref.update(savedThreads, (current) => [...current, thread]),
     removeThread: (_environmentId, threadId) =>
       Ref.update(removedThreads, (current) => [...current, threadId]),
+    loadServerConfig: () => Effect.succeed(Option.none()),
+    saveServerConfig: () => Effect.void,
+    loadVcsRefs: () => Effect.succeed(Option.none()),
+    saveVcsRefs: () => Effect.void,
     clear: () => Effect.void,
   });
   const threadState = yield* makeEnvironmentThreadState(THREAD_ID).pipe(

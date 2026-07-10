@@ -1,6 +1,6 @@
 import type { RelayDeviceRegistrationRequest } from "@t3tools/contracts/relay";
 
-import type { Preferences } from "../../lib/storage";
+import type { Preferences } from "../../persistence/mobile-preferences";
 
 // Development builds are Xcode-signed and receive sandbox APNs tokens;
 // preview and production builds are distribution-signed and use production

@@ -15,6 +15,7 @@ import { Image, StyleSheet } from "react-native";
 import { markdownFileIconSource } from "@t3tools/mobile-markdown-text/file-icons";
 import { resolveMarkdownFileIcon } from "@t3tools/mobile-markdown-text/links";
 import { useThemeColor } from "../lib/useThemeColor";
+import { useFontFamily } from "../lib/useFontFamily";
 import { useScaledTextRole } from "../features/settings/appearance/useScaledTextRole";
 import {
   acknowledgeComposerNativeEvent,
@@ -117,6 +118,7 @@ export function ComposerEditor({
   const skillBorder = useThemeColor("--color-inline-skill-border");
   const skillText = useThemeColor("--color-inline-skill-foreground");
   const fileTint = useThemeColor("--color-icon-muted");
+  const fontFamily = useFontFamily("regular");
 
   useImperativeHandle(
     ref,
@@ -226,9 +228,7 @@ export function ComposerEditor({
       themeJson={themeJson}
       placeholder={props.placeholder ?? ""}
       fontFamily={
-        typeof resolvedTextStyle.fontFamily === "string"
-          ? resolvedTextStyle.fontFamily
-          : "DMSans_400Regular"
+        typeof resolvedTextStyle.fontFamily === "string" ? resolvedTextStyle.fontFamily : fontFamily
       }
       fontSize={
         typeof resolvedTextStyle.fontSize === "number"

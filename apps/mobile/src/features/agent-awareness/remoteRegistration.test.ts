@@ -21,12 +21,13 @@ import {
   loadAgentAwarenessRegistrationRecord,
   loadOrCreateAgentAwarenessDeviceId,
   saveAgentAwarenessRegistrationRecord,
-} from "../../lib/storage";
+} from "../../persistence/imperative";
 import { makeRelayDeviceRegistrationRequest, resolveApsEnvironment } from "./registrationPayload";
 import {
   AgentAwarenessOperationError,
   __resetAgentAwarenessRemoteRegistrationForTest,
   getAgentAwarenessRegistrationStatus,
+  mergeAgentAwarenessRegistrationPreferences,
   refreshActiveLiveActivityRemoteRegistration,
   refreshAgentAwarenessRegistration,
   normalizeAgentAwarenessRelayBaseUrl,
@@ -142,7 +143,7 @@ vi.mock("../../lib/runtime", () => ({
   },
 }));
 
-vi.mock("../../lib/storage", () => ({
+vi.mock("../../persistence/imperative", () => ({
   loadAgentAwarenessDeviceId: vi.fn(() => Promise.resolve("device-1")),
   loadOrCreateAgentAwarenessDeviceId: vi.fn(() => Promise.resolve("device-1")),
   loadPreferences: vi.fn(() => Promise.resolve({ liveActivitiesEnabled: false })),
@@ -322,6 +323,15 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       "https://relay.example.test",
     );
     expect(normalizeAgentAwarenessRelayBaseUrl("   ")).toBeNull();
+  });
+
+  it("overrides persisted preferences for an in-flight registration", () => {
+    expect(
+      mergeAgentAwarenessRegistrationPreferences(
+        { liveActivitiesEnabled: false, baseFontSize: 18 },
+        { liveActivitiesEnabled: true },
+      ),
+    ).toEqual({ liveActivitiesEnabled: true, baseFontSize: 18 });
   });
 
   it.effect("registers at most one listener while a Live Activity push token is pending", () => {

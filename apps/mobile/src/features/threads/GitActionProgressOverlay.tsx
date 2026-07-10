@@ -47,7 +47,8 @@ export function GitActionProgressOverlay(props: {
     <Animated.View
       entering={FadeIn.duration(200)}
       exiting={FadeOut.duration(150)}
-      style={{ top: insets.top + 48, left: 12, right: 12, position: "absolute", zIndex: 100 }}
+      className="absolute inset-x-3 z-[100]"
+      style={{ top: insets.top + 48 }}
       pointerEvents="box-none"
     >
       <Pressable onPress={handlePress}>

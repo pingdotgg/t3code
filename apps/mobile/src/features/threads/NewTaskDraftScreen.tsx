@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Alert, InteractionManager, View, useColorScheme } from "react-native";
 import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useThemeColor } from "../../lib/useThemeColor";
 
 import { EnvironmentId } from "@t3tools/contracts";
 import {
@@ -112,7 +111,6 @@ export function NewTaskDraftScreen(props: {
     };
   }, [props.pendingTaskId, cancelEditingPendingTask]);
 
-  const borderColor = useThemeColor("--color-border");
   const headlineText = useScaledTextRole("headline");
   const sheetFadeOpaque = colorScheme === "dark" ? "rgba(14,14,14,0.98)" : "rgba(242,242,247,0.98)";
   const sheetFadeTransparent = colorScheme === "dark" ? "rgba(14,14,14,0)" : "rgba(242,242,247,0)";
@@ -600,8 +598,8 @@ export function NewTaskDraftScreen(props: {
     <View className="flex-1 bg-sheet">
       <NativeStackScreenOptions options={{ title: selectedProject.title }} />
 
-      <KeyboardAvoidingView automaticOffset behavior="padding" style={{ flex: 1 }}>
-        <View style={{ flex: 1, minHeight: 0, paddingHorizontal: 20, paddingTop: 8 }}>
+      <KeyboardAvoidingView automaticOffset behavior="padding" className="flex-1">
+        <View className="min-h-0 flex-1 px-5 pt-2">
           <ComposerEditor
             ref={promptInputRef}
             autoFocus
@@ -617,15 +615,9 @@ export function NewTaskDraftScreen(props: {
           />
         </View>
 
-        <View
-          style={{
-            borderTopWidth: 1,
-            borderTopColor: borderColor,
-            paddingBottom: controlsBottomPadding,
-          }}
-        >
+        <View className="border-t border-border" style={{ paddingBottom: controlsBottomPadding }}>
           {flow.attachments.length > 0 ? (
-            <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
+            <View className="px-4 pt-3">
               <ComposerAttachmentStrip
                 attachments={flow.attachments}
                 onRemove={flow.removeAttachment}

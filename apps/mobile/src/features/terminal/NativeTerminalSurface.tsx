@@ -82,9 +82,9 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: Ter
 
   return (
     <View
+      className="flex-1"
       style={[
         {
-          flex: 1,
           backgroundColor: theme.background,
           borderRadius: 8,
           overflow: "hidden",
@@ -93,19 +93,18 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: Ter
       ]}
       onLayout={handleLayout}
     >
-      <View style={{ flex: 1, paddingHorizontal: 10, paddingVertical: 8 }}>
+      <View className="flex-1 px-2.5 py-2">
         <Text
-          className="text-2xs"
+          className="pb-2 text-2xs"
           style={{
             color: theme.mutedForeground,
-            paddingBottom: 8,
           }}
         >
           {statusLabel}
         </Text>
         <ScrollView
-          style={{ flex: 1 }}
-          contentContainerStyle={{ paddingBottom: 12 }}
+          className="flex-1"
+          contentContainerClassName="pb-3"
           showsVerticalScrollIndicator={false}
         >
           <Text
@@ -122,13 +121,9 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: Ter
         </ScrollView>
       </View>
       <View
+        className="flex-row items-center gap-2 border-t p-2"
         style={{
-          borderTopWidth: 1,
           borderTopColor: theme.border,
-          flexDirection: "row",
-          alignItems: "center",
-          gap: 8,
-          padding: 8,
         }}
       >
         <TextInput
@@ -165,13 +160,7 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: Ter
           })}
           onPress={() => props.onInput("\u0003")}
         >
-          <Text
-            className="text-2xs"
-            style={{
-              color: theme.foreground,
-              fontFamily: "DMSans_700Bold",
-            }}
-          >
+          <Text className="text-2xs font-t3-bold" style={{ color: theme.foreground }}>
             Ctrl-C
           </Text>
         </Pressable>

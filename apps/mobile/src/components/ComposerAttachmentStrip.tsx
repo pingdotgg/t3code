@@ -39,14 +39,14 @@ export function ComposerAttachmentStrip(props: ComposerAttachmentStripProps) {
       horizontal
       showsHorizontalScrollIndicator={false}
       keyboardShouldPersistTaps="always"
-      style={{ flexGrow: 0 }}
+      className="grow-0"
     >
-      <View style={{ flexDirection: "row", gap: 10 }}>
+      <View className="flex-row gap-2.5">
         {props.attachments.map((image) => (
           <View
             key={image.id}
+            className="relative"
             style={{
-              position: "relative",
               paddingTop: removeButtonGutter,
               paddingRight: removeButtonGutter,
             }}
@@ -66,16 +66,10 @@ export function ComposerAttachmentStrip(props: ComposerAttachmentStripProps) {
               />
             </Pressable>
             <Pressable
+              className="absolute h-[22px] w-[22px] items-center justify-center rounded-[11px] bg-black/55"
               style={{
-                position: "absolute",
                 top: removeButtonPlacement === "gutter" ? 0 : 4,
                 right: removeButtonPlacement === "gutter" ? 0 : 4,
-                width: 22,
-                height: 22,
-                borderRadius: 11,
-                backgroundColor: "rgba(0,0,0,0.55)",
-                alignItems: "center",
-                justifyContent: "center",
               }}
               hitSlop={6}
               onPress={() => props.onRemove(image.id)}
