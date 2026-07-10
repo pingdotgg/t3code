@@ -205,7 +205,9 @@ interface ClaudeSessionContext {
    * Assistant Task/Agent tool_use id → parsed tool input. Used to resolve
    * an explicit subagent model override from Task tool input (SDK task_*
    * messages do not carry model). Pruned when the correlated task reaches
-   * a terminal state, on turn completion, and on session stop.
+   * a terminal state, when closed/orphan entries are pruned at turn end, and
+   * on session stop. Open-task entries survive normal turn completion so
+   * background subagent messages can still be correlated across turns.
    */
   readonly taskToolInputsByUseId: Map<string, Record<string, unknown>>;
   /** task_id → tool_use_id for pruning taskToolInputsByUseId on terminal. */
@@ -213,7 +215,8 @@ interface ClaudeSessionContext {
   /**
    * task_id → last known authoritative model (Task tool input override and/or
    * mined from subagent assistant messages). Used to emit task.updated only
-   * when the model changes.
+   * when the model changes. Survives normal turn completion while the task
+   * remains open (backgrounded subagents).
    */
   readonly taskModelByTaskId: Map<string, string>;
   /** task_id values that have started but not yet completed/stopped. */
@@ -693,6 +696,32 @@ function clearTaskToolInputMemory(context: ClaudeSessionContext): void {
   context.taskToolInputsByUseId.clear();
   context.taskToolUseIdByTaskId.clear();
   context.taskModelByTaskId.clear();
+}
+
+/**
+ * Drop Task tool / model correlation memory for tasks that are no longer open.
+ * Open tasks keep their mappings so background subagent assistant messages
+ * arriving after the parent turn ends can still resolve parent_tool_use_id
+ * and avoid re-emitting an already-mined model. Orphan tool_use inputs that
+ * never started a task are dropped so the maps cannot grow across turns.
+ */
+function pruneTaskToolInputMemoryForClosedTasks(context: ClaudeSessionContext): void {
+  for (const taskId of [...context.taskToolUseIdByTaskId.keys()]) {
+    if (!context.openTaskIds.has(taskId)) {
+      forgetTaskToolInputForTask(context, taskId);
+    }
+  }
+  for (const taskId of [...context.taskModelByTaskId.keys()]) {
+    if (!context.openTaskIds.has(taskId)) {
+      context.taskModelByTaskId.delete(taskId);
+    }
+  }
+  const liveToolUseIds = new Set(context.taskToolUseIdByTaskId.values());
+  for (const toolUseId of [...context.taskToolInputsByUseId.keys()]) {
+    if (!liveToolUseIds.has(toolUseId)) {
+      context.taskToolInputsByUseId.delete(toolUseId);
+    }
+  }
 }
 
 function readOptionalTrimmedString(value: unknown): string | undefined {
@@ -2487,9 +2516,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           : "Task stopped (turn interrupted).",
       );
     }
-    // Turn is finished — drop any leftover Task tool input memory so the map
-    // cannot grow across multi-turn sessions.
-    clearTaskToolInputMemory(context);
+    // Drop closed/orphan Task tool memory so maps cannot grow across turns,
+    // but keep open-task correlation so background subagent messages after
+    // the parent turn ends can still resolve parent_tool_use_id → taskId.
+    pruneTaskToolInputMemoryForClosedTasks(context);
 
     const resultContextWindow = maxClaudeContextWindowFromModelUsage(result?.modelUsage);
     if (resultContextWindow !== undefined) {

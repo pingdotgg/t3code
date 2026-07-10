@@ -2881,6 +2881,124 @@ describe("ClaudeAdapterLive", () => {
     },
   );
 
+  it.effect(
+    "mines subagent model from assistant messages after parent turn completes while task stays open",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            model: "claude-sonnet-4-5",
+          },
+          runtimeMode: "full-access",
+        });
+
+        yield* adapter.sendTurn({
+          threadId: THREAD_ID,
+          input: "spawn explore",
+          attachments: [],
+        });
+
+        // Task tool input has no model override — model arrives later from
+        // a background subagent assistant message after the parent turn ends.
+        harness.query.emit({
+          type: "stream_event",
+          session_id: "sdk-session-task-cross-turn-mine",
+          uuid: "stream-task-tool-cross-turn-mine",
+          parent_tool_use_id: null,
+          event: {
+            type: "content_block_start",
+            index: 0,
+            content_block: {
+              type: "tool_use",
+              id: "toolu-task-cross-turn",
+              name: "Task",
+              input: {
+                description: "Explore the repo",
+                subagent_type: "Explore",
+                prompt: "Find auth code",
+              },
+            },
+          },
+        } as unknown as SDKMessage);
+
+        harness.query.emit({
+          type: "system",
+          subtype: "task_started",
+          task_id: "task-cross-turn-1",
+          tool_use_id: "toolu-task-cross-turn",
+          description: "Explore the repo",
+          subagent_type: "Explore",
+          session_id: "sdk-session-task-cross-turn-mine",
+          uuid: "task-started-cross-turn-1",
+        } as unknown as SDKMessage);
+
+        // Parent turn completes while the subagent task remains open.
+        const turnCompletedFiber = yield* Stream.filter(
+          adapter.streamEvents,
+          (event) => event.type === "turn.completed",
+        ).pipe(Stream.runHead, Effect.forkChild);
+
+        harness.query.emit({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          errors: [],
+          session_id: "sdk-session-task-cross-turn-mine",
+          uuid: "result-cross-turn-1",
+        } as unknown as SDKMessage);
+
+        const turnCompleted = yield* Fiber.join(turnCompletedFiber);
+        assert.equal(turnCompleted._tag, "Some");
+
+        // Subscribe after turn completion so this fiber does not race the
+        // turn.completed waiter. Open-task correlation must still resolve.
+        const modelUpdatedFiber = yield* Stream.takeUntil(
+          adapter.streamEvents,
+          (event) =>
+            event.type === "task.updated" &&
+            event.payload.model !== undefined &&
+            event.payload.model !== null,
+        ).pipe(Stream.runCollect, Effect.forkChild);
+
+        harness.query.emit({
+          type: "assistant",
+          session_id: "sdk-session-task-cross-turn-mine",
+          uuid: "assistant-subagent-cross-turn-1",
+          parent_tool_use_id: "toolu-task-cross-turn",
+          message: {
+            id: "assistant-message-subagent-cross-turn-1",
+            model: "grok-4-5",
+            content: [{ type: "text", text: "Found auth module" }],
+          },
+        } as unknown as SDKMessage);
+
+        const runtimeEvents = Array.from(yield* Fiber.join(modelUpdatedFiber));
+        const modelUpdates = runtimeEvents.filter(
+          (event) =>
+            event.type === "task.updated" &&
+            event.payload.model !== undefined &&
+            event.payload.model !== null,
+        );
+        assert.equal(modelUpdates.length, 1);
+        const modelUpdate = modelUpdates[0];
+        assert.equal(modelUpdate?.type, "task.updated");
+        if (modelUpdate?.type === "task.updated") {
+          assert.equal(modelUpdate.payload.taskId, "task-cross-turn-1");
+          assert.equal(modelUpdate.payload.model, "grok-4-5");
+        }
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
   it.effect("emits Claude context window on result completion usage snapshots", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
