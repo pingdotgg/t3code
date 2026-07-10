@@ -27,7 +27,13 @@ struct PlanProgressStrip: View {
             .glassEffect(.regular, in: .rect(cornerRadius: 16))
             .onReceive(NotificationCenter.default.publisher(for: .uiProbeToggleSection)) { note in
                 guard note.object as? String == "plan" else { return }
-                withAnimation(Motion.snap) { isExpanded.toggle() }
+                // Deferred one runloop turn: UIProbe may post this right after a
+                // cacheDisplay snapshot forced layout; a synchronous flip mid
+                // display cycle re-enters AppKit's layout-feedback-loop guard
+                // (see ContentView inspector toggle).
+                DispatchQueue.main.async {
+                    withAnimation(Motion.snap) { isExpanded.toggle() }
+                }
             }
             .animation(Motion.settle, value: isExpanded)
             // Live todo updates stream in from the agent: the count ticks,
