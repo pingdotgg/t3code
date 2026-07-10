@@ -50,6 +50,7 @@ import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import {
+  openSubagentTaskIdsFromActivities,
   providerErrorLabel,
   providerErrorLabelFromInstanceHint,
   ProviderCommandReactorLive,
@@ -1911,6 +1912,20 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
+  it("derives open subagent task ids from activity rows", () => {
+    expect(
+      openSubagentTaskIdsFromActivities([
+        { kind: "task.started", payload: { taskId: "t1" } },
+        { kind: "task.progress", payload: { taskId: "t1" } },
+        { kind: "task.started", payload: { taskId: "t2" } },
+        { kind: "task.completed", payload: { taskId: "t1", status: "completed" } },
+        { kind: "task.updated", payload: { taskId: "t2", status: "failed" } },
+        { kind: "task.started", payload: { taskId: "t3" } },
+        { kind: "task.updated", payload: { taskId: "t3", status: "running" } },
+      ]),
+    ).toEqual(["t3"]);
+  });
+
   it("interrupts stale projected running turns on reactor startup", async () => {
     const harness = await createHarness({ startReactor: false });
     const now = "2026-01-01T00:00:00.000Z";
@@ -1947,6 +1962,60 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.activeTurnId).toBeNull();
     expect(thread?.latestTurn?.state).not.toBe("running");
     expect(thread?.session?.lastError ?? "").toContain("Provider process was not running");
+  });
+
+  it("closes dangling subagent task activities on reactor startup", async () => {
+    const harness = await createHarness({ startReactor: false });
+    const now = "2026-01-01T00:00:00.000Z";
+    const threadId = ThreadId.make("thread-1");
+
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.activity.append",
+        commandId: CommandId.make("cmd-dangling-task-started"),
+        threadId,
+        activity: {
+          id: EventId.make("activity-dangling-task-started"),
+          tone: "info",
+          kind: "task.started",
+          summary: "Task started",
+          payload: {
+            taskId: "task-dangling-1",
+            description: "Left open after crash",
+          },
+          turnId: null,
+          createdAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await harness.startReactor();
+
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      const thread = readModel.threads.find((entry) => entry.id === threadId);
+      return thread?.activities.some(
+        (activity) =>
+          activity.kind === "task.completed" &&
+          typeof activity.payload === "object" &&
+          activity.payload !== null &&
+          (activity.payload as { taskId?: string; status?: string }).taskId === "task-dangling-1" &&
+          (activity.payload as { status?: string }).status === "stopped",
+      );
+    });
+
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === threadId);
+    const stopped = thread?.activities.find(
+      (activity) =>
+        activity.kind === "task.completed" &&
+        typeof activity.payload === "object" &&
+        activity.payload !== null &&
+        (activity.payload as { taskId?: string }).taskId === "task-dangling-1",
+    );
+    expect(stopped?.kind).toBe("task.completed");
+    expect((stopped?.payload as { status?: string } | undefined)?.status).toBe("stopped");
   });
 
   it("continues interrupting stale projected running turns when one thread update fails", async () => {

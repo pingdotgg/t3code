@@ -199,6 +199,8 @@ interface ClaudeSessionContext {
    * the subagent model (SDK task_* messages do not carry it).
    */
   readonly taskToolInputsByUseId: Map<string, Record<string, unknown>>;
+  /** task_id values that have started but not yet completed/stopped. */
+  readonly openTaskIds: Set<string>;
   readonly claudeTasks: Map<string, ClaudeTaskState>;
   claudeTaskPlanFingerprint: string | undefined;
   turnState: ClaudeTurnState | undefined;
@@ -209,6 +211,11 @@ interface ClaudeSessionContext {
   lastThreadStartedId: string | undefined;
   pendingUsageLimit: RuntimeUsageLimitDetail | undefined;
   stopped: boolean;
+}
+
+/** SDK task_updated statuses that mean the task is terminal. */
+function isTerminalTaskUpdatedStatus(status: string | undefined): boolean {
+  return status === "completed" || status === "failed" || status === "killed";
 }
 
 interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
@@ -2339,12 +2346,58 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     });
   });
 
+  /**
+   * Emit synthetic `task.completed` (status "stopped") for every still-open
+   * subagent task so the projection/UI stop treating them as running.
+   */
+  const closeOpenSubagentTasks = Effect.fn("closeOpenSubagentTasks")(function* (
+    context: ClaudeSessionContext,
+    summary: string,
+  ) {
+    if (context.openTaskIds.size === 0) {
+      return;
+    }
+    const openIds = Array.from(context.openTaskIds);
+    context.openTaskIds.clear();
+    for (const taskId of openIds) {
+      const stamp = yield* makeEventStamp();
+      yield* offerRuntimeEvent({
+        type: "task.completed",
+        eventId: stamp.eventId,
+        provider: PROVIDER,
+        createdAt: stamp.createdAt,
+        threadId: context.session.threadId,
+        ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+        payload: {
+          taskId: RuntimeTaskId.make(taskId),
+          status: "stopped",
+          summary,
+        },
+        providerRefs: nativeProviderRefs(context),
+        raw: {
+          source: "claude.sdk.message",
+          method: "claude/synthetic/task_stopped",
+          payload: { taskId, reason: summary },
+        },
+      });
+    }
+  });
+
   const completeTurn = Effect.fn("completeTurn")(function* (
     context: ClaudeSessionContext,
     status: ProviderRuntimeTurnStatus,
     errorMessage?: string,
     result?: SDKResultMessage,
   ) {
+    if (status === "interrupted" || status === "cancelled") {
+      yield* closeOpenSubagentTasks(
+        context,
+        status === "cancelled"
+          ? "Task stopped (turn cancelled)."
+          : "Task stopped (turn interrupted).",
+      );
+    }
+
     const resultContextWindow = maxClaudeContextWindowFromModelUsage(result?.modelUsage);
     if (resultContextWindow !== undefined) {
       context.lastKnownContextWindow = resultContextWindow;
@@ -3184,6 +3237,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           (message as { workflow_name?: unknown }).workflow_name,
         );
         const model = resolveSubagentTaskModel(context, toolUseId);
+        context.openTaskIds.add(message.task_id);
         yield* offerRuntimeEvent({
           ...base,
           type: "task.started",
@@ -3250,6 +3304,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           typeof patch.total_paused_ms === "number" ? patch.total_paused_ms : undefined;
         const isBackgrounded =
           typeof patch.is_backgrounded === "boolean" ? patch.is_backgrounded : undefined;
+        if (isTerminalTaskUpdatedStatus(status)) {
+          context.openTaskIds.delete(message.task_id);
+        }
         yield* offerRuntimeEvent({
           ...base,
           type: "task.updated",
@@ -3269,6 +3326,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         const outputFile = readOptionalTrimmedString(
           (message as { output_file?: unknown }).output_file,
         );
+        context.openTaskIds.delete(message.task_id);
         yield* emitThreadTokenUsage(
           context,
           normalizeClaudeTaskProgressTokenUsage(message.usage, context),
@@ -3574,6 +3632,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     if (context.turnState) {
       yield* completeTurn(context, "interrupted", "Session stopped.");
+    } else {
+      // No active turn (e.g. background tasks after the parent turn ended).
+      yield* closeOpenSubagentTasks(context, "Task stopped (session stopped).");
     }
 
     yield* Queue.shutdown(context.promptQueue);
@@ -4151,6 +4212,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         turns: [],
         inFlightTools,
         taskToolInputsByUseId: new Map(),
+        openTaskIds: new Set(),
         claudeTasks,
         claudeTaskPlanFingerprint: undefined,
         turnState: undefined,

@@ -2389,6 +2389,58 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("emits synthetic task.completed stopped for open tasks on session stop", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "task.completed" && event.payload.status === "stopped",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "spawn a task",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-open-1",
+        description: "Still running",
+        session_id: "sdk-session-open-task",
+        uuid: "task-started-open-1",
+      } as unknown as SDKMessage);
+
+      // Give the stream fiber a moment to process task_started before stop.
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      yield* adapter.stopSession(THREAD_ID);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const stopped = runtimeEvents.find(
+        (event) => event.type === "task.completed" && event.payload.status === "stopped",
+      );
+      assert.equal(stopped?.type, "task.completed");
+      if (stopped?.type === "task.completed") {
+        assert.equal(stopped.payload.taskId, "task-open-1");
+        assert.equal(stopped.payload.status, "stopped");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("falls back to session model when Task tool input has no model", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
