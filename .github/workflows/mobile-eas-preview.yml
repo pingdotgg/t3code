@@ -57,7 +57,10 @@ jobs:
         with:
           eas-version: latest
           token: ${{ secrets.EXPO_TOKEN }}
-          packager: pnpm
+          # npm, not pnpm: this only installs eas-cli into the action's own
+          # tool dir, and pnpm 11 hard-fails that install on dtrace-provider's
+          # ignored build script (no allowBuilds config outside the repo).
+          packager: npm
 
       - name: Pull preview environment variables
         if: steps.expo-token.outputs.present == 'true'

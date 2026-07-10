@@ -22,8 +22,11 @@ export function SettingsRow(props: {
   const chevron = useThemeColor("--color-chevron");
   const content = (
     <View
-      className="flex-row items-center gap-4 p-4"
-      style={{ opacity: props.disabled ? 0.45 : 1 }}
+      className={
+        props.disabled
+          ? "flex-row items-center gap-4 p-4 opacity-[0.45]"
+          : "flex-row items-center gap-4 p-4"
+      }
     >
       <SymbolView name={props.icon} size={22} tintColor={icon} type="monochrome" weight="regular" />
       <Text className="shrink-0 text-lg text-foreground" numberOfLines={1}>

@@ -9,5 +9,5 @@ export function T3KeyboardCommands(
     readonly onCommand: (command: HardwareKeyboardCommand) => void;
   }>,
 ) {
-  return <View style={{ flex: 1 }}>{props.children}</View>;
+  return <View className="flex-1">{props.children}</View>;
 }

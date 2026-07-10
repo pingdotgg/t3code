@@ -31,6 +31,7 @@ import * as Arr from "effect/Array";
 import * as Cause from "effect/Cause";
 import * as Order from "effect/Order";
 import { AsyncResult } from "effect/unstable/reactivity";
+import { cn } from "../../lib/cn";
 
 import { useProjects, useServerConfigs } from "../../state/entities";
 import { filesystemEnvironment } from "../../state/filesystem";
@@ -99,10 +100,7 @@ function sourceFromParam(value: string | string[] | undefined): AddProjectRemote
 
 function SectionTitle(props: { readonly children: string }) {
   return (
-    <Text
-      className="px-1 text-2xs font-t3-bold uppercase text-foreground-muted"
-      style={{ letterSpacing: 0.7 }}
-    >
+    <Text className="px-1 text-2xs font-t3-bold tracking-[0.7px] uppercase text-foreground-muted">
       {props.children}
     </Text>
   );
@@ -112,7 +110,12 @@ function AddProjectShell(props: { readonly children: ReactNode }) {
   const insets = useSafeAreaInsets();
 
   return (
-    <View className="flex-1 bg-sheet">
+    // collapsable={false} is load-bearing: if this wrapper is flattened, the
+    // ScrollView lands directly under RNSSafeAreaView and RNS's formSheet
+    // scroll-view frame correction mistakes this full-height wrapper for a
+    // "header" sibling, coercing the ScrollView to zero height (blank sheet
+    // as soon as the sheet re-lays-out, e.g. when the keyboard opens).
+    <View collapsable={false} className="flex-1 bg-sheet">
       <ScrollView
         keyboardShouldPersistTaps="handled"
         contentInsetAdjustmentBehavior="automatic"
@@ -143,19 +146,17 @@ function ListRow(props: {
   readonly right?: ReactNode;
   readonly onPress?: () => void;
 }) {
-  const borderColor = useThemeColor("--color-border-subtle");
   const chevronColor = useThemeColor("--color-chevron");
 
   return (
     <Pressable
       disabled={props.disabled}
       onPress={props.onPress}
-      className="bg-card px-3.5 py-2.5 active:opacity-70"
-      style={{
-        opacity: props.disabled ? 0.45 : 1,
-        borderTopWidth: props.isFirst ? 0 : 1,
-        borderTopColor: borderColor,
-      }}
+      className={cn(
+        "bg-card px-3.5 py-2.5 active:opacity-70",
+        !props.isFirst && "border-t border-border-subtle",
+        props.disabled && "opacity-[0.45]",
+      )}
     >
       <View className="flex-row items-center gap-3">
         <View

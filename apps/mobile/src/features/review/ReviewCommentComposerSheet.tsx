@@ -144,15 +144,11 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
   }
 
   return (
-    <View style={{ flex: 1 }}>
-      <KeyboardAvoidingView automaticOffset behavior="padding" style={{ flex: 1 }}>
+    <View className="flex-1">
+      <KeyboardAvoidingView automaticOffset behavior="padding" className="flex-1">
         <View
-          style={{
-            flex: 1,
-            paddingHorizontal: 20,
-            paddingTop: 8,
-            paddingBottom: target ? 0 : Math.max(insets.bottom, 18),
-          }}
+          className="flex-1 px-5 pt-2"
+          style={{ paddingBottom: target ? 0 : Math.max(insets.bottom, 18) }}
         >
           <View className="flex-row items-center justify-between py-2">
             <Pressable
@@ -253,8 +249,7 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
                         textAlignVertical="top"
                         value={commentText}
                         onChangeText={setCommentText}
-                        className="h-full flex-1 border-0 bg-transparent px-0 py-0 font-sans text-base"
-                        style={{ flex: 1, minHeight: 0 }}
+                        className="h-full min-h-0 flex-1 border-0 bg-transparent px-0 py-0 font-sans text-base"
                       />
                     </TextInputWrapper>
                   </View>
