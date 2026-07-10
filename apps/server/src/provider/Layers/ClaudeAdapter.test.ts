@@ -3616,7 +3616,10 @@ describe("ClaudeAdapterLive", () => {
       const secondText =
         typeof content === "string"
           ? content
-          : content.find((block) => block.type === "text" && "text" in block)?.text;
+          : content.find(
+              (block: { type?: string; text?: string }) =>
+                block.type === "text" && typeof block.text === "string",
+            )?.text;
       assert.equal(secondText, "second message");
       assert.ok(
         typeof secondText === "string" &&

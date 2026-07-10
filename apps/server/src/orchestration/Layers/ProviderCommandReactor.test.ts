@@ -1995,13 +1995,16 @@ describe("ProviderCommandReactor", () => {
     await waitFor(async () => {
       const readModel = await harness.readModel();
       const thread = readModel.threads.find((entry) => entry.id === threadId);
-      return thread?.activities.some(
-        (activity) =>
-          activity.kind === "task.completed" &&
-          typeof activity.payload === "object" &&
-          activity.payload !== null &&
-          (activity.payload as { taskId?: string; status?: string }).taskId === "task-dangling-1" &&
-          (activity.payload as { status?: string }).status === "stopped",
+      return (
+        thread?.activities.some(
+          (activity) =>
+            activity.kind === "task.completed" &&
+            typeof activity.payload === "object" &&
+            activity.payload !== null &&
+            (activity.payload as { taskId?: string; status?: string }).taskId ===
+              "task-dangling-1" &&
+            (activity.payload as { status?: string }).status === "stopped",
+        ) === true
       );
     });
 
