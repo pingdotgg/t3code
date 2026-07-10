@@ -423,6 +423,10 @@ public final class AppModel {
             state(creating: threadID).planProgress = progress
         case .vcsStatusChanged(let threadID, let status):
             state(creating: threadID).vcsStatus = status
+        case .subagentStopFailed(let taskId, let message):
+            // Async stop failures (unsupported adapter, no session, etc.)
+            // arrive as projected activities, not as a thrown RPC error.
+            subagentStopErrors[taskId] = message
         case .timelineAppended, .timelineReset, .assistantDelta, .assistantCompleted,
             .approvalResolved, .userInputResolved:
             // Timeline events are staged by applyBatch; never reach here.

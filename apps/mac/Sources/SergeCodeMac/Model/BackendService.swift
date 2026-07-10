@@ -36,6 +36,8 @@ public enum BackendEvent: Sendable {
     /// Keyed by thread: a worktree thread's repo status is its worktree's,
     /// not the project checkout's.
     case vcsStatusChanged(threadID: String, status: VcsStatus)
+    /// Projected `provider.task.stop.failed` activity keyed for the task row.
+    case subagentStopFailed(taskId: String, message: String)
 }
 
 public protocol BackendService: Sendable {

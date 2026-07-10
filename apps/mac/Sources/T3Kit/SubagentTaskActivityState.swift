@@ -1,7 +1,11 @@
 import Foundation
 
 public enum T3SubagentTaskState: String, Sendable, Equatable {
-    case running, completed, failed, stopped
+    /// Actively working (counts toward activeSubagentCount).
+    case running
+    /// Non-terminal pause from the provider; not active for counts/stalled timers.
+    case paused
+    case completed, failed, stopped
 }
 
 /// One progress update for a subagent task. Consecutive identical
@@ -210,7 +214,13 @@ public struct T3SubagentTaskActivityState: Sendable, Equatable {
                         item.completionSummary = error
                         item.latestProgress = error
                     }
+                } else if status == "paused" {
+                    // Non-terminal: keep completedAt nil so a later running
+                    // update can un-pause. Not counted as active.
+                    item.state = .paused
                 } else {
+                    // pending/running/nil (and unknown non-terminal) → running,
+                    // which also un-pauses a previously paused task.
                     item.state = .running
                 }
             } else if isTerminalTaskUpdatedStatus(status),
@@ -289,7 +299,9 @@ public struct T3SubagentTaskActivityState: Sendable, Equatable {
         switch item.state {
         case .running:
             activeTaskIDsStorage.insert(item.taskId)
-        case .completed, .failed, .stopped:
+        case .paused, .completed, .failed, .stopped:
+            // Paused is non-terminal for state machine purposes but does not
+            // count as actively working (sidebar badge / stalled timers).
             activeTaskIDsStorage.remove(item.taskId)
         }
     }

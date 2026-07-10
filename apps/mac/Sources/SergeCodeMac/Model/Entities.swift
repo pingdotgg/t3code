@@ -210,7 +210,7 @@ public enum ToolEventKind: String, Sendable {
 }
 
 public enum SubagentTaskState: String, Sendable {
-    case running, completed, failed, stopped
+    case running, paused, completed, failed, stopped
 }
 
 public struct SubagentTaskProgressEntry: Hashable, Sendable {

@@ -486,7 +486,7 @@ private struct SubagentTaskRow: View {
 
     var body: some View {
         // TimelineView owns the 1Hz tick only while the task is running;
-        // terminal rows never attach a live timer subscription.
+        // paused/terminal rows never attach a live timer subscription.
         Group {
             if task.state == .running {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -522,7 +522,7 @@ private struct SubagentTaskRow: View {
                                 .lineLimit(2)
                                 .fixedSize(horizontal: false, vertical: true)
                             Spacer(minLength: 8)
-                            if task.state == .running, isHovering {
+                            if task.state == .running || task.state == .paused, isHovering {
                                 stopAgentButton
                             }
                             durationLabel
@@ -580,7 +580,7 @@ private struct SubagentTaskRow: View {
         }
         .onHover { isHovering = $0 }
         .contextMenu {
-            if task.state == .running {
+            if task.state == .running || task.state == .paused {
                 Button("Stop agent", role: .destructive) {
                     onStopAgent()
                 }
@@ -648,6 +648,23 @@ private struct SubagentTaskRow: View {
                         .padding(.vertical, 1)
                         .background(Color.orange.opacity(0.14), in: Capsule())
                 }
+                if task.isBackgrounded {
+                    Text("background")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(.secondary.opacity(0.12), in: Capsule())
+                }
+            }
+        } else if task.state == .paused {
+            HStack(spacing: 6) {
+                Text("paused")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(.secondary.opacity(0.12), in: Capsule())
                 if task.isBackgrounded {
                     Text("background")
                         .font(.caption2.weight(.medium))
@@ -785,7 +802,7 @@ private struct SubagentTaskRow: View {
     }
 
     private var subtitle: String? {
-        // Completed/failed/stopped: prefer completion summary via latestProgress.
+        // Terminal (and paused): prefer completion/latest summary when present.
         if task.state != .running {
             if let progress = task.latestProgress?.trimmingCharacters(in: .whitespacesAndNewlines),
                 !progress.isEmpty
@@ -794,6 +811,7 @@ private struct SubagentTaskRow: View {
             }
             switch task.state {
             case .running: return nil
+            case .paused: return "Paused"
             case .completed: return "Completed"
             case .failed: return "Failed"
             case .stopped: return "Stopped"
@@ -827,6 +845,7 @@ private struct SubagentTaskRow: View {
     private func iconName(stalled: Bool) -> String {
         switch task.state {
         case .running: stalled ? "exclamationmark.circle" : "circle.dotted"
+        case .paused: "pause.circle.fill"
         case .completed: "checkmark.circle.fill"
         case .failed: "xmark.circle.fill"
         case .stopped: "stop.circle.fill"
@@ -836,6 +855,7 @@ private struct SubagentTaskRow: View {
     private func iconTint(stalled: Bool) -> Color {
         switch task.state {
         case .running: stalled ? .orange : .secondary
+        case .paused: .secondary
         case .completed: .green
         case .failed: .red
         case .stopped: .secondary
@@ -845,6 +865,7 @@ private struct SubagentTaskRow: View {
     private func backgroundTint(stalled: Bool) -> Color {
         switch task.state {
         case .running: stalled ? Color.orange.opacity(0.08) : Color.accentColor.opacity(0.08)
+        case .paused: Color.secondary.opacity(0.08)
         case .completed: Color.green.opacity(0.08)
         case .failed: Color.red.opacity(0.08)
         case .stopped: Color.secondary.opacity(0.08)

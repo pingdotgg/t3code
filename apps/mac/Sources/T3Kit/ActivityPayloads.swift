@@ -32,6 +32,8 @@ public enum ActivityKind {
     public static let taskProgress = "task.progress"
     public static let taskUpdated = "task.updated"
     public static let taskCompleted = "task.completed"
+    /// Tone `.error`: stop-task RPC failed; payload may carry `taskId` + `detail`.
+    public static let providerTaskStopFailed = "provider.task.stop.failed"
     /// Tone `.info`: adapter-side warning about a provider message the
     /// server couldn't project (ProviderRuntimeIngestion.ts).
     public static let runtimeWarning = "runtime.warning"

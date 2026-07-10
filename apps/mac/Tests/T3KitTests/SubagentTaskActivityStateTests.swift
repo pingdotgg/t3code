@@ -576,6 +576,44 @@ struct SubagentTaskActivityStateTests {
         #expect(state.activeTaskIDs.isEmpty)
     }
 
+    @Test func taskUpdatedPausedIsNonTerminalAndNotActive() {
+        let started = activity(
+            id: "act-start", kind: ActivityKind.taskStarted,
+            at: "2026-07-04T10:00:00.000Z",
+            payload: .object([
+                "taskId": .string("task-1"),
+                "description": .string("Long runner"),
+            ]))
+        let paused = activity(
+            id: "act-paused", kind: ActivityKind.taskUpdated,
+            at: "2026-07-04T10:00:05.000Z",
+            payload: .object([
+                "taskId": .string("task-1"),
+                "status": .string("paused"),
+            ]))
+        let resumed = activity(
+            id: "act-resumed", kind: ActivityKind.taskUpdated,
+            at: "2026-07-04T10:00:08.000Z",
+            payload: .object([
+                "taskId": .string("task-1"),
+                "status": .string("running"),
+            ]))
+
+        var state = T3SubagentTaskActivityState()
+        _ = state.apply(activity: started, at: WireDate.parse(started.createdAt)!)
+        #expect(state.activeTaskIDs == Set(["task-1"]))
+
+        let pausedItem = state.apply(activity: paused, at: WireDate.parse(paused.createdAt)!)
+        #expect(pausedItem?.state == .paused)
+        #expect(pausedItem?.completedAt == nil)
+        #expect(state.activeTaskIDs.isEmpty)
+
+        let runningItem = state.apply(activity: resumed, at: WireDate.parse(resumed.createdAt)!)
+        #expect(runningItem?.state == .running)
+        #expect(runningItem?.completedAt == nil)
+        #expect(state.activeTaskIDs == Set(["task-1"]))
+    }
+
     @Test func terminalTaskUpdatedDoesNotFlipAlreadyCompletedState() {
         let started = activity(
             id: "act-start", kind: ActivityKind.taskStarted,

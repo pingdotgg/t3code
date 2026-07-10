@@ -1047,6 +1047,23 @@ public actor LiveBackend: BackendService {
                         usedTokens: payload.usedTokens, maxTokens: payload.maxTokens)))
             return true
 
+        case ActivityKind.providerTaskStopFailed:
+            // Route to the per-task inline error when taskId is present;
+            // otherwise fall through to a generic timeline notice.
+            let object = activity.payload.objectValue
+            let taskId = object?["taskId"]?.stringValue?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let detail = object?["detail"]?.stringValue?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let taskId, !taskId.isEmpty else { return false }
+            let message =
+                (detail?.isEmpty == false ? detail! : activity.summary.isEmpty
+                    ? "Failed to stop task" : activity.summary)
+            emitOrdered(
+                threadID: threadID,
+                event: .subagentStopFailed(taskId: taskId, message: message))
+            return true
+
         default:
             return false
         }
@@ -2329,7 +2346,8 @@ public actor LiveBackend: BackendService {
 
     private static func isTaskLifecycleActivity(_ activity: OrchestrationThreadActivity) -> Bool {
         switch activity.kind {
-        case ActivityKind.taskStarted, ActivityKind.taskProgress, ActivityKind.taskCompleted:
+        case ActivityKind.taskStarted, ActivityKind.taskProgress, ActivityKind.taskUpdated,
+            ActivityKind.taskCompleted:
             return true
         default:
             return false
@@ -2413,6 +2431,7 @@ public actor LiveBackend: BackendService {
     private static func uiSubagentTaskState(_ state: T3SubagentTaskState) -> SubagentTaskState {
         switch state {
         case .running: .running
+        case .paused: .paused
         case .completed: .completed
         case .failed: .failed
         case .stopped: .stopped
