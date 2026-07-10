@@ -389,7 +389,9 @@ private actor MockState {
             return []
         }
         let paths = Set(target.files.map(\.path))
-        if paths.isEmpty { return diffsByThread[threadID] ?? [] }
+        // Tools-only checkpoints (no file edits) have no scoped diff — falling
+        // back to the full thread diff would show unrelated changes.
+        if paths.isEmpty { return [] }
         return (diffsByThread[threadID] ?? []).filter { paths.contains($0.path) }
     }
 
@@ -1031,6 +1033,12 @@ private actor MockState {
                         path: "Sources/SergeCodeMac/Model/ThreadState.swift", kind: "modified",
                         additions: 2, deletions: 0),
                 ]),
+            // Empty files + matching assistantMessageId → "Ran N tools" caption in ChangesTimelineView.
+            Checkpoint(
+                id: "ckpt-1d", threadID: thread1.id, label: "Turn 4",
+                createdAt: now.addingTimeInterval(-10), turnCount: 4, status: .ready,
+                files: [],
+                assistantMessageId: "t1-a3"),
         ]
         checkpointsByThread[thread2.id] = [
             Checkpoint(
@@ -1145,6 +1153,38 @@ private actor MockState {
                 ],
                 createdAt: now.addingTimeInterval(-40)
             )),
+            // Read-only verify turn: tools only, no file edits → empty checkpoint files + "Ran N tools".
+            .userMessage(
+                id: "t1-u3",
+                text: "Can you double-check the fix without editing anything?",
+                at: now.addingTimeInterval(-20)),
+            .toolEvent(
+                id: "t1-tool10", name: "read_file",
+                detail: "Sources/SergeCodeMac/Views/SidebarView.swift", kind: .fileRead,
+                status: .succeeded, at: now.addingTimeInterval(-18),
+                output: "if needsResort { threads.sort { $0.updatedAt > $1.updatedAt } }\n",
+                outputIsError: false),
+            .toolEvent(
+                id: "t1-tool11", name: "grep",
+                detail: "needsResort", kind: .fileRead,
+                status: .succeeded, at: now.addingTimeInterval(-16),
+                output: "Sources/SergeCodeMac/Views/SidebarView.swift:31: if needsResort {\n",
+                outputIsError: false),
+            .toolEvent(
+                id: "t1-tool12", name: "read_file",
+                detail: "Sources/SergeCodeMac/Model/AppModel.swift", kind: .fileRead,
+                status: .succeeded, at: now.addingTimeInterval(-14),
+                output: "func threadUpserted(_ thread: ChatThread) { … }\n",
+                outputIsError: false),
+            .assistantMessage(
+                id: "t1-a3",
+                markdown: """
+                Verified without changes. The `needsResort` guard keeps scroll \
+                stable on upserts, and nothing else looks off.
+                """,
+                isStreaming: false,
+                at: now.addingTimeInterval(-12)
+            ),
         ]
     }
 

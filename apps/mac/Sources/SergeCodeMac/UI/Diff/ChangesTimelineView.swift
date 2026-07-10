@@ -57,7 +57,7 @@ public struct ChangesTimelineView: View {
         .onReceive(NotificationCenter.default.publisher(for: .uiProbeToggleSection)) { note in
             // Legacy harness key: open full-thread review (rail has no collapse).
             guard note.object as? String == "checkpoints" else { return }
-            openAllChanges()
+            DispatchQueue.main.async { openAllChanges() }
         }
         .confirmationDialog(
             "Restore Checkpoint?",
@@ -169,14 +169,24 @@ public struct ChangesTimelineView: View {
     // MARK: - Timeline spine
 
     private var timelineSpine: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let toolCounts = CheckpointMapping.toolCounts(
+            timeline: model.threadState(threadID)?.timeline ?? [],
+            checkpoints: model.threadState(threadID)?.checkpoints ?? []
+        )
+        return VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(checkpoints.enumerated()), id: \.element.id) { index, checkpoint in
-                checkpointMarker(checkpoint, isLast: index == checkpoints.count - 1)
+                checkpointMarker(
+                    checkpoint,
+                    isLast: index == checkpoints.count - 1,
+                    toolCount: toolCounts[checkpoint.id]
+                )
             }
         }
     }
 
-    private func checkpointMarker(_ checkpoint: Checkpoint, isLast: Bool) -> some View {
+    private func checkpointMarker(
+        _ checkpoint: Checkpoint, isLast: Bool, toolCount: Int?
+    ) -> some View {
         let selected = isCheckpointSelected(checkpoint)
         let previousTurn = previousTurnCount(before: checkpoint)
 
@@ -198,7 +208,7 @@ public struct ChangesTimelineView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 checkpointHeader(checkpoint, previousTurn: previousTurn)
-                checkpointFiles(checkpoint, previousTurn: previousTurn)
+                checkpointFiles(checkpoint, previousTurn: previousTurn, toolCount: toolCount)
             }
             .padding(.trailing, 10)
             .padding(.bottom, 10)
@@ -290,10 +300,20 @@ public struct ChangesTimelineView: View {
     }
 
     @ViewBuilder
-    private func checkpointFiles(_ checkpoint: Checkpoint, previousTurn: Int) -> some View {
+    private func checkpointFiles(
+        _ checkpoint: Checkpoint, previousTurn: Int, toolCount: Int?
+    ) -> some View {
         let files = checkpoint.files
         if files.isEmpty {
-            EmptyView()
+            if let n = toolCount, n >= 1 {
+                Text("Ran \(n) tool\(n == 1 ? "" : "s")")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .padding(.leading, 2)
+            } else {
+                EmptyView()
+            }
         } else if files.count > 6 && !expandedFileCheckpoints.contains(checkpoint.id) {
             Button {
                 withAnimation(Motion.snap) {

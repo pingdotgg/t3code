@@ -8,9 +8,19 @@ struct RootView: View {
 
     @UIState private var showInspector = true
     @UIState private var showNewSessionSheet = false
+    @UIState private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
-        NavigationSplitView {
+        // Drag-collapse writes visibility through this binding; wrapping
+        // the set animates the snap-closed instead of an instant jump.
+        NavigationSplitView(columnVisibility: Binding(
+            get: { columnVisibility },
+            set: { newValue in
+                withAnimation(Motion.snap) {
+                    columnVisibility = newValue
+                }
+            }
+        )) {
             SidebarView(model: model, scenery: scenery)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 280)
         } detail: {

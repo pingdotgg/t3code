@@ -63,4 +63,39 @@ enum CheckpointMapping {
             ThreadTurnDiffCompletedPayload.self, from: Data(json.utf8))
         return checkpoint(from: payload, threadID: threadID)
     }
+
+    /// Count tool events attributed to each checkpoint turn.
+    ///
+    /// Tools that appear before an assistant message whose id matches a
+    /// checkpoint's `assistantMessageId` are attributed to that checkpoint.
+    /// A user message resets the running counter so tools from a turn
+    /// without a mapped checkpoint do not bleed into the next turn.
+    static func toolCounts(
+        timeline: [TimelineItem], checkpoints: [Checkpoint]
+    ) -> [String: Int] {
+        var assistantToCheckpoint: [String: String] = [:]
+        for checkpoint in checkpoints {
+            guard let assistantID = checkpoint.assistantMessageId else { continue }
+            assistantToCheckpoint[assistantID] = checkpoint.id
+        }
+
+        var counts: [String: Int] = [:]
+        var running = 0
+        for item in timeline {
+            switch item {
+            case .toolEvent:
+                running += 1
+            case .assistantMessage(let id, _, _, _):
+                if let checkpointID = assistantToCheckpoint[id] {
+                    counts[checkpointID] = running
+                    running = 0
+                }
+            case .userMessage:
+                running = 0
+            default:
+                break
+            }
+        }
+        return counts
+    }
 }
