@@ -79,6 +79,8 @@ public protocol BackendService: Sendable {
     func deleteThread(id: String) async throws
     func sendMessage(threadID: String, text: String, attachments: [OutgoingAttachment]) async throws
     func cancelTurn(threadID: String) async throws
+    /// Stop a single Claude subagent/background task (thread.task.stop).
+    func stopTask(threadID: String, taskId: String) async throws
     func respondToApproval(id: String, approve: Bool) async throws
     /// Answer a pending user-input request. `answers` maps each question id
     /// to the selected option labels (single-element unless multi-select) or

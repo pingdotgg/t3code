@@ -30,9 +30,15 @@ struct ChatTimelineRowView: View {
                 output: output, outputIsError: outputIsError,
                 threadStatus: model.selectedThread?.status)
         case .subagentTask(let task):
-            SubagentTaskRow(task: task) {
-                Task { await model.cancelCurrentTurn() }
-            }
+            SubagentTaskRow(
+                task: task,
+                onStopAgent: {
+                    Task { await model.stopSubagentTask(taskId: task.taskId) }
+                },
+                onStopTurn: {
+                    Task { await model.cancelCurrentTurn() }
+                }
+            )
         case .approval(let request):
             ApprovalCard(request: request) { approve in
                 Task { await model.respond(to: request, approve: approve) }
@@ -451,6 +457,7 @@ private struct SubagentTaskRow: View {
     private static let stalledThreshold: TimeInterval = 3 * 60
 
     let task: SubagentTaskItem
+    let onStopAgent: () -> Void
     let onStopTurn: () -> Void
 
     @UIState private var isExpanded = false
@@ -508,7 +515,7 @@ private struct SubagentTaskRow: View {
                                 .fixedSize(horizontal: false, vertical: true)
                             Spacer(minLength: 8)
                             if task.state == .running, isHovering {
-                                stopTurnButton
+                                stopAgentButton
                             }
                             durationLabel
                             if hasExpandableContent {
@@ -554,6 +561,9 @@ private struct SubagentTaskRow: View {
         .onHover { isHovering = $0 }
         .contextMenu {
             if task.state == .running {
+                Button("Stop agent", role: .destructive) {
+                    onStopAgent()
+                }
                 Button("Stop turn…", role: .destructive) {
                     showStopTurnConfirm = true
                 }
@@ -570,23 +580,23 @@ private struct SubagentTaskRow: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(
-                "Stopping interrupts the whole turn, including all running agents — not just this one. The Claude SDK has no per-subagent stop."
+                "Stopping interrupts the whole turn, including all running agents — not just this one."
             )
         }
     }
 
     @ViewBuilder
-    private var stopTurnButton: some View {
+    private var stopAgentButton: some View {
         Button {
-            showStopTurnConfirm = true
+            onStopAgent()
         } label: {
             Image(systemName: "stop.circle")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
         .buttonStyle(.plain)
-        .help("Stop turn…")
-        .accessibilityLabel("Stop turn")
+        .help("Stop agent")
+        .accessibilityLabel("Stop agent")
     }
 
     @ViewBuilder

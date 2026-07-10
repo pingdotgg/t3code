@@ -1507,6 +1507,11 @@ public actor LiveBackend: BackendService {
         _ = try await client.interruptTurn(threadId: threadID)
     }
 
+    public func stopTask(threadID: String, taskId: String) async throws {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        _ = try await client.stopTask(threadId: threadID, taskId: taskId)
+    }
+
     public func respondToApproval(id: String, approve: Bool) async throws {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
         guard let route = approvalRoutes[id] else {

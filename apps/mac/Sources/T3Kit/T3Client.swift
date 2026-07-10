@@ -337,6 +337,17 @@ public actor T3Client {
     }
 
     @discardableResult
+    public func stopTask(threadId: String, taskId: String, turnId: String? = nil) async throws
+        -> DispatchResult
+    {
+        try await dispatch(
+            .threadTaskStop(
+                ThreadTaskStopCommand(
+                    commandId: T3Ids.newCommandId(), threadId: threadId, taskId: taskId,
+                    turnId: turnId, createdAt: T3Clock.nowISO8601())))
+    }
+
+    @discardableResult
     public func respondToApproval(
         threadId: String, requestId: String, decision: ProviderApprovalDecision
     ) async throws -> DispatchResult {

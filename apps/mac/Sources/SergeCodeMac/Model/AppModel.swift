@@ -1116,6 +1116,15 @@ public final class AppModel {
         }
     }
 
+    public func stopSubagentTask(taskId: String) async {
+        guard let threadID = selectedThreadID else { return }
+        do {
+            try await backend.stopTask(threadID: threadID, taskId: taskId)
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
     public func restoreCheckpoint(_ checkpoint: Checkpoint) async {
         do {
             try await backend.restoreCheckpoint(

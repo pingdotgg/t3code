@@ -194,6 +194,10 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         await state.cancelTurn(threadID: threadID)
     }
 
+    public func stopTask(threadID: String, taskId: String) async throws {
+        await state.stopTask(threadID: threadID, taskId: taskId)
+    }
+
     public func respondToApproval(id: String, approve: Bool) async throws {
         await state.respondToApproval(id: id, approve: approve)
     }
@@ -496,6 +500,25 @@ private actor MockState {
         let notice = TimelineItem.notice(id: nextID("notice"), text: "Turn cancelled.", at: Date())
         timelinesByThread[threadID, default: []].append(notice)
         emit(.timelineAppended(threadID: threadID, item: notice))
+    }
+
+    func stopTask(threadID: String, taskId: String) {
+        // Mock: mark the matching subagent row stopped if present.
+        guard var timeline = timelinesByThread[threadID] else { return }
+        let now = Date()
+        for index in timeline.indices {
+            if case .subagentTask(var task) = timeline[index], task.taskId == taskId {
+                task.state = .stopped
+                task.lastActivityAt = now
+                task.duration = task.duration ?? now.timeIntervalSince(task.startedAt)
+                task.latestProgress = task.latestProgress ?? "Stopped"
+                let item = TimelineItem.subagentTask(task)
+                timeline[index] = item
+                timelinesByThread[threadID] = timeline
+                emit(.timelineAppended(threadID: threadID, item: item))
+                return
+            }
+        }
     }
 
     func models() -> [ModelOption] {

@@ -1139,6 +1139,26 @@ public struct ThreadTurnInterruptCommand: Encodable, Sendable {
     }
 }
 
+public struct ThreadTaskStopCommand: Encodable, Sendable {
+    public let type: String = "thread.task.stop"
+    public var commandId: String
+    public var threadId: String
+    public var taskId: String
+    public var turnId: String?
+    public var createdAt: String
+
+    public init(
+        commandId: String, threadId: String, taskId: String, turnId: String? = nil,
+        createdAt: String
+    ) {
+        self.commandId = commandId
+        self.threadId = threadId
+        self.taskId = taskId
+        self.turnId = turnId
+        self.createdAt = createdAt
+    }
+}
+
 public struct ThreadApprovalRespondCommand: Encodable, Sendable {
     public let type: String = "thread.approval.respond"
     public var commandId: String
@@ -1222,6 +1242,7 @@ public enum ClientOrchestrationCommand: Encodable, Sendable {
     case threadInteractionModeSet(ThreadInteractionModeSetCommand)
     case threadTurnStart(ThreadTurnStartCommand)
     case threadTurnInterrupt(ThreadTurnInterruptCommand)
+    case threadTaskStop(ThreadTaskStopCommand)
     case threadApprovalRespond(ThreadApprovalRespondCommand)
     case threadUserInputRespond(ThreadUserInputRespondCommand)
     case threadCheckpointRevert(ThreadCheckpointRevertCommand)
@@ -1242,6 +1263,7 @@ public enum ClientOrchestrationCommand: Encodable, Sendable {
         case .threadInteractionModeSet(let c): try container.encode(c)
         case .threadTurnStart(let c): try container.encode(c)
         case .threadTurnInterrupt(let c): try container.encode(c)
+        case .threadTaskStop(let c): try container.encode(c)
         case .threadApprovalRespond(let c): try container.encode(c)
         case .threadUserInputRespond(let c): try container.encode(c)
         case .threadCheckpointRevert(let c): try container.encode(c)
