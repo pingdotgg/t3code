@@ -2289,7 +2289,10 @@ public actor LiveBackend: BackendService {
                 }
                 return .usageLimit(notice)
             case ActivityKind.userInputResolved, ActivityKind.turnPlanUpdated,
-                ActivityKind.contextWindowUpdated:
+                ActivityKind.contextWindowUpdated,
+                // Live path routes this to per-task stop-error UI only; a
+                // stale failure must not reappear as a timeline row on reopen.
+                ActivityKind.providerTaskStopFailed:
                 return nil
             default:
                 return mapActivity(activity, at: at)
