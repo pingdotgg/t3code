@@ -191,6 +191,76 @@
                 }
             }
 
+            // Multi-line diff selection: pure builder produces one string with
+            // real newlines (SwiftUI Text selection is per-view; the fix joins
+            // lines into a single AttributedString).
+            let multiLineDiff = FileChangeDiffText.attributedBody([
+                (.removed, "let a = 1"),
+                (.removed, "let b = 2"),
+                (.added, "let a = 2"),
+                (.added, "let b = 3"),
+            ])
+            let multiLinePlain = String(multiLineDiff.characters)
+            let multiLineOK =
+                multiLinePlain.contains("- let a = 1\n- let b = 2")
+                && multiLinePlain.contains("+ let a = 2\n+ let b = 3")
+            print(
+                "UIProbe: multi-line diff selectable block=\(multiLineOK) "
+                    + "chars=\(multiLinePlain.count)")
+
+            // Select Text overlay: use the pricing thread (thread-3) — earlier
+            // probe steps mutate thread-1's timeline (queue/retry), so a still-
+            // seeded conversation is a cleaner fixture for the sheet.
+            model.selectedThreadID =
+                model.threads.first { $0.id == "thread-3" }?.id
+                ?? model.threads.first { $0.id == "thread-1" }?.id
+                ?? model.threads.first?.id
+            if let threadID = model.selectedThreadID {
+                await model.loadTimelineIfNeeded(threadID: threadID)
+            }
+            try? await Task.sleep(for: .seconds(1))
+            let seededCount = model.selectedTimeline().count
+            print("UIProbe: select-text prep timelineItems=\(seededCount)")
+
+            toggleSection("select-text")
+            try? await Task.sleep(for: .seconds(1.5))
+            // Prefer conversation role headers — the composer NSTextView never
+            // contains them. Fall back to the longest non-editable text view.
+            let selectTextView =
+                textView(containing: "Assistant")
+                ?? textView(containing: "You\n")
+            let candidate =
+                selectTextView
+                ?? allTextViews()
+                    .filter { !$0.isEditable }
+                    .max(by: { $0.string.count < $1.string.count })
+            if let candidate {
+                candidate.selectAll(nil)
+                let selected = candidate.selectedRange().length
+                let plain = candidate.string
+                let preview = String(plain.prefix(120)).replacingOccurrences(of: "\n", with: "\\n")
+                let hasConversation =
+                    plain.contains("You")
+                    || plain.contains("Assistant")
+                    || plain.contains("Tool")
+                    || plain.contains("Subagent")
+                    || plain.contains("Notice")
+                print(
+                    "UIProbe: select-text open=\(true) hasConversation=\(hasConversation) "
+                        + "selectAllLength=\(selected) totalChars=\(plain.count) "
+                        + "editable=\(candidate.isEditable) preview=\(preview)")
+            } else {
+                let all = allTextViews().map {
+                    "len=\($0.string.count) editable=\($0.isEditable) "
+                        + "preview=\(String($0.string.prefix(40)).replacingOccurrences(of: "\n", with: "\\n"))"
+                }
+                print(
+                    "UIProbe: select-text open failed (no NSTextView) textViews=\(all)")
+            }
+            snapshotAllWindows("13-select-text", dir: dir)
+            toggleSection("select-text-done")
+            try? await Task.sleep(for: .seconds(0.5))
+
             print("UIProbe: done")
             NSApp.terminate(nil)
         }
@@ -249,15 +319,23 @@
         }
 
         private static func textView(containing needle: String) -> NSTextView? {
-            guard let root = NSApp.windows.first(where: { $0.isVisible })?.contentView
-            else { return nil }
-            return textViews(in: root).first { $0.string.contains(needle) }
+            allTextViews().first { $0.string.contains(needle) }
+        }
+
+        private static func allTextViews() -> [NSTextView] {
+            var found: [NSTextView] = []
+            for window in NSApp.windows where window.isVisible {
+                if let root = window.contentView {
+                    found += textViews(in: root)
+                }
+            }
+            return found
         }
 
         private static func textViews(in view: NSView) -> [NSTextView] {
             var found: [NSTextView] = []
+            if let text = view as? NSTextView { found.append(text) }
             for subview in view.subviews {
-                if let text = subview as? NSTextView { found.append(text) }
                 found += textViews(in: subview)
             }
             return found

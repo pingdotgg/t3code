@@ -7,6 +7,7 @@ public struct ChatScreen: View {
     let scenery: SceneryStore
 
     @UIState private var isPinnedToBottom = true
+    @UIState private var showSelectableTranscript = false
 
     public init(model: AppModel, scenery: SceneryStore) {
         self.model = model
@@ -71,6 +72,39 @@ public struct ChatScreen: View {
                 Rectangle().fill(.background)
             }
         }
+        .environment(
+            \.openSelectText,
+            model.selectedThreadID == nil
+                ? nil
+                : { @MainActor in showSelectableTranscript = true })
+        // Hidden button so ⇧⌘A works without a toolbar item (macOS 26 glass
+        // toolbar items must not double glassEffect).
+        .background {
+            Button("Select Text…") { showSelectableTranscript = true }
+                .keyboardShortcut("a", modifiers: [.command, .shift])
+                .opacity(0)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+                .disabled(model.selectedThreadID == nil)
+        }
+        .sheet(isPresented: $showSelectableTranscript) {
+            SelectableTranscriptSheet(
+                items: currentDisplayItems(),
+                projectRoot: selectedProjectRoot)
+        }
+        #if DEBUG
+            .onReceive(NotificationCenter.default.publisher(for: .uiProbeToggleSection)) { note in
+                guard let key = note.object as? String else { return }
+                switch key {
+                case "select-text":
+                    showSelectableTranscript = true
+                case "select-text-done":
+                    showSelectableTranscript = false
+                default:
+                    break
+                }
+            }
+        #endif
         .task(id: model.selectedThreadID) {
             isPinnedToBottom = true
             guard let threadID = model.selectedThreadID else { return }
@@ -78,6 +112,29 @@ public struct ChatScreen: View {
             await model.loadTimelineIfNeeded(threadID: threadID)
             await vcs
         }
+    }
+
+    /// Same display-item source the timeline scroll view uses (cached).
+    private func currentDisplayItems() -> [TimelineDisplayItem] {
+        let items = model.selectedTimeline()
+        let threadID = model.selectedThreadID ?? ""
+        return TimelineDisplayCache.grouped(
+            items: items,
+            threadID: threadID,
+            version: model.timelineVersion(threadID: threadID),
+            threadIsSettled: threadIsSettled)
+    }
+
+    private var threadIsSettled: Bool {
+        switch model.selectedThread?.status {
+        case .idle, .archived, .error: true
+        case .running, .waitingApproval, .backgroundWork, nil: false
+        }
+    }
+
+    private var selectedProjectRoot: String? {
+        guard let thread = model.selectedThread else { return nil }
+        return model.projects.first { $0.id == thread.projectID }?.path
     }
 }
 

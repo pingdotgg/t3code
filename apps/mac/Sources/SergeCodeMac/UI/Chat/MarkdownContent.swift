@@ -115,6 +115,7 @@ struct AssistantMarkdownView: View {
     }
 
     @UIState private var isHovering = false
+    @Environment(\.openSelectText) private var openSelectText
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -154,6 +155,10 @@ struct AssistantMarkdownView: View {
         .animation(Motion.fade, value: isStreaming)
         .contextMenu {
             Button("Copy as Markdown") { Pasteboard.copy(markdown) }
+            if let openSelectText {
+                Divider()
+                Button("Select Text…") { openSelectText() }
+            }
         }
         .environment(\.openURL, OpenURLAction { url in
             guard url.scheme?.lowercased() == "sergecode-file" else { return .systemAction }
@@ -287,7 +292,7 @@ private func orderedBlock(_ trimmed: String) -> MarkdownBlock? {
 }
 
 /// Inline-only markdown (bold/italic/code/links), newlines preserved.
-private func inlineAttributed(_ text: String) -> AttributedString {
+func inlineAttributed(_ text: String) -> AttributedString {
     let options = AttributedString.MarkdownParsingOptions(
         allowsExtendedAttributes: true,
         interpretedSyntax: .inlineOnlyPreservingWhitespace,
@@ -313,7 +318,9 @@ private struct MarkdownProseText: View {
     }
 }
 
-private func attributedMarkdownProse(_ blocks: [MarkdownBlock]) -> AttributedString {
+/// Stitches parsed prose blocks into one attributed string (multi-line
+/// selection within a prose run).
+func attributedMarkdownProse(_ blocks: [MarkdownBlock]) -> AttributedString {
     var result = AttributedString()
 
     for (index, block) in blocks.enumerated() {
@@ -323,6 +330,28 @@ private func attributedMarkdownProse(_ blocks: [MarkdownBlock]) -> AttributedStr
         result.append(attributedBlock(block))
     }
 
+    return result
+}
+
+/// Full assistant markdown (prose + fenced code) as one attributed document
+/// for the conversation-wide Select Text overlay.
+func attributedMarkdownDocument(_ markdown: String) -> AttributedString {
+    var result = AttributedString()
+    let segments = parseMarkdownSegments(markdown)
+    for (index, segment) in segments.enumerated() {
+        if index > 0 {
+            result.append(AttributedString("\n\n"))
+        }
+        switch segment {
+        case .prose(let text):
+            result.append(attributedMarkdownProse(parseMarkdownBlocks(text)))
+        case .code(_, let code):
+            var codeRun = AttributedString(code)
+            codeRun.font = .system(.body, design: .monospaced)
+            codeRun.backgroundColor = Color(nsColor: .textBackgroundColor)
+            result.append(codeRun)
+        }
+    }
     return result
 }
 
