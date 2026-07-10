@@ -902,10 +902,17 @@ public final class SceneryStore {
     /// Installs a set manifest into the registry (disk + memory).
     /// When `pool` is non-empty it is persisted; otherwise the pool stays empty
     /// until a later refresh. Custom sets are sorted after the builtin.
+    ///
+    /// When `replacePoolResidue` is true and `pool` is non-empty, clears stale
+    /// per-set state left by a prior version of the same set id (thread name
+    /// overrides, download registrations for removed photos, cached images for
+    /// photos no longer in the pool, and palette extraction attempt markers so
+    /// a nil palette is recomputed).
     public func registerSet(
         _ set: ScenerySet,
         pool: [SceneryPhoto] = [],
-        photoTags: [String: SceneryPhotoTags]? = nil
+        photoTags: [String: SceneryPhotoTags]? = nil,
+        replacePoolResidue: Bool = false
     ) {
         if let idx = availableSets.firstIndex(where: { $0.id == set.id }) {
             availableSets[idx] = set
@@ -927,8 +934,33 @@ public final class SceneryStore {
         } else {
             photoTagsBySet[set.id] = photoTagsBySet[set.id] ?? [:]
         }
-        namesBySet[set.id] = namesBySet[set.id] ?? [:]
-        registeredBySet[set.id] = registeredBySet[set.id] ?? []
+
+        if replacePoolResidue, !pool.isEmpty {
+            let keepIDs = Set(pool.map(\.id))
+            // Thread → scene name map may still reference caption-era names.
+            namesBySet[set.id] = [:]
+            saveNames(for: set.id)
+            // Keep download registrations only for photos that remain.
+            let previousRegistered = registeredBySet[set.id] ?? []
+            registeredBySet[set.id] = previousRegistered.intersection(keepIDs)
+            saveRegisteredDownloads(for: set.id)
+            // Drop in-memory images for removed photos.
+            let imagePrefix = "\(set.id)/"
+            images = images.filter { key, _ in
+                guard key.hasPrefix(imagePrefix) else { return true }
+                // key shape: "{setId}/{photoID}/{variant}"
+                let rest = key.dropFirst(imagePrefix.count)
+                let photoID = rest.split(separator: "/", maxSplits: 1).first.map(String.init) ?? ""
+                return keepIDs.contains(photoID)
+            }
+            pruneStaleImageFiles(setId: set.id, keepPhotoIDs: keepIDs)
+            // New set has palette: nil — allow generatePaletteIfNeeded to run again.
+            paletteExtractionAttempted.remove(set.id)
+        } else {
+            namesBySet[set.id] = namesBySet[set.id] ?? [:]
+            registeredBySet[set.id] = registeredBySet[set.id] ?? []
+        }
+
         if !pool.isEmpty {
             poolFetchedAt[set.id] = Date()
             savePool(for: set.id)
@@ -943,9 +975,37 @@ public final class SceneryStore {
     public func registerSetForTesting(
         _ set: ScenerySet,
         pool: [SceneryPhoto] = [],
-        photoTags: [String: SceneryPhotoTags]? = nil
+        photoTags: [String: SceneryPhotoTags]? = nil,
+        replacePoolResidue: Bool = false
     ) {
-        registerSet(set, pool: pool, photoTags: photoTags)
+        registerSet(
+            set, pool: pool, photoTags: photoTags, replacePoolResidue: replacePoolResidue)
+    }
+
+    /// Removes on-disk cached images for photos no longer in the pool.
+    private func pruneStaleImageFiles(setId: String, keepPhotoIDs: Set<String>) {
+        let imagesDirectory = setDirectory(setId).appendingPathComponent(
+            "images", isDirectory: true)
+        let files =
+            (try? FileManager.default.contentsOfDirectory(
+                at: imagesDirectory,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles])) ?? []
+        for file in files {
+            let name = file.lastPathComponent
+            // Files look like "{photoID}-thumb.jpg" or "{photoID}-hero-w{N}.jpg".
+            let photoID: String
+            if let range = name.range(of: "-thumb.") {
+                photoID = String(name[..<range.lowerBound])
+            } else if let range = name.range(of: "-hero-") {
+                photoID = String(name[..<range.lowerBound])
+            } else {
+                continue
+            }
+            if !keepPhotoIDs.contains(photoID) {
+                try? FileManager.default.removeItem(at: file)
+            }
+        }
     }
 
     public enum DeleteSetError: Error, LocalizedError, Equatable {
