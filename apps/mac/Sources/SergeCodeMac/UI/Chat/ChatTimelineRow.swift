@@ -32,11 +32,15 @@ struct ChatTimelineRowView: View {
         case .subagentTask(let task):
             SubagentTaskRow(
                 task: task,
+                stopError: model.subagentStopErrors[task.taskId],
                 onStopAgent: {
                     Task { await model.stopSubagentTask(taskId: task.taskId) }
                 },
                 onStopTurn: {
                     Task { await model.cancelCurrentTurn() }
+                },
+                onClearStopError: {
+                    model.clearSubagentStopError(taskId: task.taskId)
                 }
             )
         case .approval(let request):
@@ -457,8 +461,11 @@ private struct SubagentTaskRow: View {
     private static let stalledThreshold: TimeInterval = 3 * 60
 
     let task: SubagentTaskItem
+    /// Transient stop-RPC failure (not part of the provider task payload).
+    let stopError: String?
     let onStopAgent: () -> Void
     let onStopTurn: () -> Void
+    let onClearStopError: () -> Void
 
     @UIState private var isExpanded = false
     @UIState private var isHovering = false
@@ -467,6 +474,7 @@ private struct SubagentTaskRow: View {
     private var hasExpandableContent: Bool {
         !task.progressLog.isEmpty
             || task.error != nil
+            || stopError != nil
             || task.lastToolName != nil
             || task.usageSummary != nil
     }
@@ -542,6 +550,15 @@ private struct SubagentTaskRow: View {
                                 .lineLimit(2)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
+
+                        // Always visible — stop failures must not require expand.
+                        if let stopError = nonEmpty(stopError) {
+                            Text(stopError)
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                 }
                 .contentShape(Rectangle())
@@ -558,6 +575,9 @@ private struct SubagentTaskRow: View {
         .padding(.vertical, 7)
         .background(backgroundTint(stalled: stalled), in: RoundedRectangle(cornerRadius: 10))
         .animation(Motion.ambient, value: task.state)
+        .onChange(of: task.state) { _, _ in
+            onClearStopError()
+        }
         .onHover { isHovering = $0 }
         .contextMenu {
             if task.state == .running {
