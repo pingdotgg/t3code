@@ -60,10 +60,12 @@ export function normalizeUsageWindows(
       if (!kind) {
         return [];
       }
+      const trimmedLabel = window.label.trim();
+      const defaultLabel = kind === "session" ? "Session" : "Weekly";
       return [
         {
           kind,
-          label: kind === "session" ? "Session" : "Weekly",
+          label: trimmedLabel.length > 0 ? trimmedLabel : defaultLabel,
           usedPercent: clampPercent(window.usedPercent),
           ...(window.resetsAt ? { resetsAt: window.resetsAt } : {}),
           ...(typeof window.windowDurationMins === "number" &&

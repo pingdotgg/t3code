@@ -175,6 +175,31 @@ describe("codexUsageProbe", () => {
       ]);
     });
 
+    it("applies fallback window durations when runtime updates omit them", () => {
+      const usage = parseCodexRuntimeUsageLimits({
+        checkedAt: CHECKED_AT,
+        rateLimits: {
+          primary: { usedPercent: 12 },
+          secondary: { usedPercent: 34 },
+        },
+      });
+
+      expect(usage?.windows).toEqual([
+        {
+          kind: "session",
+          label: "Session",
+          usedPercent: 12,
+          windowDurationMins: 300,
+        },
+        {
+          kind: "weekly",
+          label: "Weekly",
+          usedPercent: 34,
+          windowDurationMins: 10080,
+        },
+      ]);
+    });
+
     it("returns undefined when the payload carries no usable windows", () => {
       expect(
         parseCodexRuntimeUsageLimits({
