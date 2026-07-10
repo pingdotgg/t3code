@@ -60,11 +60,12 @@ export interface OrchestrationEngineShape {
   readonly streamDomainEvents: Stream.Stream<OrchestrationEvent>;
 
   /**
-   * Acquire a scoped live-domain-event subscription before doing work that
-   * depends on the subscription being attached.
+   * Acquire an independent live-domain-event subscription within an
+   * `Effect.scoped` region or another effect that provides `Scope`.
    *
    * This is a hot runtime event source for new events only, not a historical
-   * replay. Use `readEvents` when persisted replay is required.
+   * replay. The subscription is released when its owning scope closes. Use
+   * `readEvents` when persisted replay is required.
    */
   readonly subscribeDomainEvents: Effect.Effect<
     PubSub.Subscription<OrchestrationEvent>,

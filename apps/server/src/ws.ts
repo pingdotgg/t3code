@@ -638,6 +638,23 @@ const makeWsRpcLayer = (
         return streamThreadDetailEvents(Stream.fromSubscription(subscription), threadId);
       });
 
+      const bufferThreadDetailEvents = Effect.fn("ws.bufferThreadDetailEvents")(function* (
+        threadId: ThreadId,
+      ) {
+        const liveStream = yield* subscribeThreadDetailEvents(threadId);
+        // Dropping a matching event would create an unrecoverable gap. Keep the
+        // queue unbounded, but bind both it and its drain fiber to the client
+        // subscription scope and filter unrelated orchestration events first.
+        const liveBuffer =
+          yield* Queue.unbounded<
+            Extract<OrchestrationThreadStreamItem, { readonly kind: "event" }>
+          >();
+        yield* Effect.forkScoped(
+          liveStream.pipe(Stream.runForEach((item) => Queue.offer(liveBuffer, item))),
+        );
+        return liveBuffer;
+      });
+
       const toShellStreamEvent = (
         event: OrchestrationEvent,
       ): Effect.Effect<Option.Option<OrchestrationShellStreamEvent>, never, never> => {
@@ -1198,15 +1215,13 @@ const makeWsRpcLayer = (
                 const afterSequence = input.afterSequence;
                 return Stream.unwrap(
                   Effect.gen(function* () {
-                    const liveStream = yield* subscribeThreadDetailEvents(input.threadId);
-                    const liveBuffer = yield* Queue.unbounded<OrchestrationThreadStreamItem>();
-                    yield* Effect.forkScoped(
-                      liveStream.pipe(Stream.runForEach((item) => Queue.offer(liveBuffer, item))),
-                    );
+                    const liveBuffer = yield* bufferThreadDetailEvents(input.threadId);
+                    const lastCatchUpSequence = yield* Ref.make(afterSequence);
                     const catchUpStream = streamThreadDetailEvents(
                       orchestrationEngine.readEvents(afterSequence, Number.MAX_SAFE_INTEGER),
                       input.threadId,
                     ).pipe(
+                      Stream.tap((item) => Ref.set(lastCatchUpSequence, item.event.sequence)),
                       Stream.mapError(
                         (cause) =>
                           new OrchestrationGetSnapshotError({
@@ -1215,7 +1230,14 @@ const makeWsRpcLayer = (
                           }),
                       ),
                     );
-                    return Stream.concat(catchUpStream, Stream.fromQueue(liveBuffer));
+                    const liveTailStream = Stream.fromQueue(liveBuffer).pipe(
+                      Stream.filterEffect((item) =>
+                        Ref.get(lastCatchUpSequence).pipe(
+                          Effect.map((sequence) => item.event.sequence > sequence),
+                        ),
+                      ),
+                    );
+                    return Stream.concat(catchUpStream, liveTailStream);
                   }),
                 );
               }
@@ -1226,14 +1248,7 @@ const makeWsRpcLayer = (
               // buffer before reading the atomic snapshot. This retains matching
               // events without allowing the underlying unbounded subscription to
               // accumulate unrelated orchestration traffic during a slow read.
-              const liveStream = yield* subscribeThreadDetailEvents(input.threadId);
-              const liveBuffer =
-                yield* Queue.unbounded<
-                  Extract<OrchestrationThreadStreamItem, { readonly kind: "event" }>
-                >();
-              yield* Effect.forkScoped(
-                liveStream.pipe(Stream.runForEach((item) => Queue.offer(liveBuffer, item))),
-              );
+              const liveBuffer = yield* bufferThreadDetailEvents(input.threadId);
 
               const snapshot = yield* projectionSnapshotQuery
                 .getThreadDetailSnapshot(input.threadId)
@@ -1255,6 +1270,8 @@ const makeWsRpcLayer = (
               }
 
               const liveTailStream = Stream.fromQueue(liveBuffer).pipe(
+                // snapshotSequence is inclusive: the snapshot already reflects
+                // every event through this sequence.
                 Stream.filter((item) => item.event.sequence > snapshot.value.snapshotSequence),
               );
 

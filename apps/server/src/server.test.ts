@@ -711,6 +711,8 @@ const buildAppUnderTest = (options?: {
           readEvents: () => Stream.empty,
           dispatch: () => Effect.succeed({ sequence: 0 }),
           streamDomainEvents: Stream.empty,
+          // Most tests do not exercise live orchestration events. Tests that do
+          // must override this intentionally inert subscription.
           subscribeDomainEvents: Effect.flatMap(PubSub.unbounded<OrchestrationEvent>(), (pubsub) =>
             PubSub.subscribe(pubsub),
           ),
@@ -5650,6 +5652,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         threadId,
         occurredAt: now,
       });
+      const snapshotMessageEvent = makeThreadMessageSentEvent({
+        id: "already-in-snapshot",
+        sequence: 1,
+        text: "already represented by the snapshot",
+        threadId,
+        occurredAt: now,
+      });
 
       yield* buildAppUnderTest({
         layers: {
@@ -5675,6 +5684,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               threadId,
             }).pipe(Stream.take(2), Stream.runCollect, Effect.forkScoped);
             yield* Deferred.await(snapshotStarted);
+            yield* PubSub.publish(eventPubSub, snapshotMessageEvent);
             yield* PubSub.publish(eventPubSub, userMessageEvent);
             yield* Deferred.succeed(snapshotGate, undefined);
             return Array.from(yield* Fiber.join(fiber));
@@ -5706,10 +5716,16 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         text: "persisted catch-up",
         threadId,
       });
+      const overlappingEvent = makeThreadMessageSentEvent({
+        id: "racy-replay-overlap",
+        sequence: 3,
+        text: "persisted and live during replay",
+        threadId,
+      });
       const liveEvent = makeThreadMessageSentEvent({
         id: "racy-replay-live",
-        sequence: 3,
-        text: "live during replay",
+        sequence: 4,
+        text: "live after overlap",
         threadId,
       });
 
@@ -5723,9 +5739,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   assert.equal(limit, Number.MAX_SAFE_INTEGER);
                   yield* Deferred.succeed(replayStarted, undefined);
                   yield* Deferred.await(replayGate);
-                  return catchUpEvent;
+                  return [catchUpEvent, overlappingEvent] as const;
                 }),
-              ),
+              ).pipe(Stream.flatMap(Stream.fromIterable)),
             streamDomainEvents: Stream.empty,
             subscribeDomainEvents: PubSub.subscribe(eventPubSub),
           },
@@ -5739,8 +5755,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             const fiber = yield* client[ORCHESTRATION_WS_METHODS.subscribeThread]({
               threadId,
               afterSequence: 1,
-            }).pipe(Stream.take(2), Stream.runCollect, Effect.forkScoped);
+            }).pipe(Stream.take(3), Stream.runCollect, Effect.forkScoped);
             yield* Deferred.await(replayStarted);
+            yield* PubSub.publish(eventPubSub, overlappingEvent);
             yield* PubSub.publish(eventPubSub, liveEvent);
             yield* Deferred.succeed(replayGate, undefined);
             return Array.from(yield* Fiber.join(fiber));
@@ -5748,14 +5765,16 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
 
+      assert.equal(items.length, 3);
+      assertTrue(items.every((item) => item.kind === "event"));
       const events = items.flatMap((item) => (item.kind === "event" ? [item.event] : []));
       assert.deepEqual(
         events.map((event) => event.sequence),
-        [2, 3],
+        [2, 3, 4],
       );
       assert.deepEqual(
         events.map((event) => (event.type === "thread.message-sent" ? event.payload.text : null)),
-        ["persisted catch-up", "live during replay"],
+        ["persisted catch-up", "persisted and live during replay", "live after overlap"],
       );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );

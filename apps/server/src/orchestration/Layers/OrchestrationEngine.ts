@@ -323,6 +323,8 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   return {
     readEvents,
     dispatch,
+    // Re-running this scoped acquisition creates an independent PubSub
+    // subscription that is released when its owning scope closes.
     subscribeDomainEvents: PubSub.subscribe(eventPubSub),
     // Each access creates a fresh PubSub subscription so that multiple
     // consumers (wsServer, ProviderRuntimeIngestion, CheckpointReactor, etc.)
