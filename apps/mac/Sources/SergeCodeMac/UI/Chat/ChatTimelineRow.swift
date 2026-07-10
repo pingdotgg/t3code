@@ -4,6 +4,7 @@ import T3Kit
 /// Dispatches a single `TimelineDisplayItem` to its row view.
 struct ChatTimelineRowView: View {
     let item: TimelineDisplayItem
+    let threadID: String
     let model: AppModel
 
     var body: some View {
@@ -18,10 +19,11 @@ struct ChatTimelineRowView: View {
     @ViewBuilder
     private func singleRow(_ item: TimelineItem) -> some View {
         switch item {
-        case .userMessage(_, let text, _):
-            UserMessageBubble(text: text, model: model)
+        case .userMessage(let id, let text, _):
+            UserMessageBubble(messageID: id, text: text, model: model)
         case .assistantMessage(_, let markdown, let isStreaming, _):
-            AssistantMarkdownView(markdown: markdown, isStreaming: isStreaming)
+            AssistantMarkdownView(
+                markdown: markdown, isStreaming: isStreaming, threadID: threadID, model: model)
         case .toolEvent(_, let name, let detail, let kind, let status, _, let output, let outputIsError):
             ToolEventRow(
                 name: name, detail: detail, kind: kind, status: status,
@@ -50,7 +52,7 @@ struct ChatTimelineRowView: View {
                 model.dismissUsageLimit(notice)
             }
         case .plan(let plan):
-            PlanCard(plan: plan) {
+            PlanCard(plan: plan, model: model) {
                 Task { await model.implementPlan(plan) }
             }
         case .checkpoint(let checkpoint):
@@ -64,20 +66,21 @@ struct ChatTimelineRowView: View {
 
     private func switchModels(for notice: UsageLimitNotice) -> [ModelOption] {
         let thread = model.threads.first { $0.id == notice.threadID }
-        return model.models.filter { option in
-            if let provider = notice.provider, option.provider != provider {
-                return false
-            }
-            return !(option.instanceID == thread?.modelInstanceID && option.modelID == thread?.modelID)
-        }
+        return UsageLimitModelOptions.options(
+            available: model.models,
+            currentInstanceID: thread?.modelInstanceID,
+            currentModelID: thread?.modelID,
+            exhaustedProvider: notice.provider)
     }
 }
 
 /// Right-aligned solid bubble for the user's own messages, with hover-revealed
-/// overlay actions (copy / edit / retry). Sessions are stateful on the
-/// provider side, so Edit and Retry send a new message rather than rewriting
-/// history: Edit stages the text in the composer, Retry resends it as-is.
+/// overlay actions (copy / edit / retry). Edit stages the text in the composer
+/// with the message identity so a subsequent send rewinds the thread and
+/// replaces this turn; Retry does the same rewind then resends the text
+/// verbatim.
 private struct UserMessageBubble: View {
+    let messageID: String
     let text: String
     let model: AppModel
 
@@ -108,7 +111,7 @@ private struct UserMessageBubble: View {
                             systemImage: "pencil", help: "Edit in composer and resend",
                             disabled: !canResend
                         ) {
-                            model.stageComposerText(text)
+                            model.stageComposerText(text, editedMessageID: messageID)
                         }
                         MessageActionButton(
                             systemImage: "arrow.clockwise", help: "Send this message again",
@@ -128,8 +131,10 @@ private struct UserMessageBubble: View {
                 .animation(Motion.fade, value: isHovering)
                 .contextMenu {
                     Button("Copy") { Pasteboard.copy(text) }
-                    Button("Edit in Composer") { model.stageComposerText(text) }
-                        .disabled(!canResend)
+                    Button("Edit in Composer") {
+                        model.stageComposerText(text, editedMessageID: messageID)
+                    }
+                    .disabled(!canResend)
                     Button("Retry") { resend() }
                         .disabled(!canResend)
                 }
@@ -139,8 +144,12 @@ private struct UserMessageBubble: View {
     private func resend() {
         guard canResend else { return }
         isResending = true
+        let threadID = model.selectedThreadID
         Task {
-            await model.send(text: text)
+            await model.send(
+                text: text,
+                replacingMessageID: messageID,
+                replacingMessageThreadID: threadID)
             isResending = false
         }
     }

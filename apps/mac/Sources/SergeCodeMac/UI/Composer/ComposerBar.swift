@@ -13,14 +13,19 @@ public struct ComposerBar: View {
     private let model: AppModel
     private let accent: Color
 
-    @UIState private var draft: String = ""
-    @UIState private var attachments: [OutgoingAttachment] = []
     @UIState private var showFileImporter = false
+    @UIState private var fileImporterThreadID: String?
     @UIState private var attachmentError: String?
 
     @UIState private var mentionResults: [WorkspaceEntry] = []
     @UIState private var mentionQuery: String?
     @UIState private var mentionSearchTask: Task<Void, Never>?
+
+    /// When set, the next send rewinds the origin thread to just before this
+    /// message. Cleared on send, draft clear, or thread switch because edit
+    /// identity is transient UI state and must never truncate the wrong thread.
+    @UIState private var editedMessageID: String?
+    @UIState private var editedMessageThreadID: String?
 
     @UIState private var showDictationDownloadPrompt = false
     @FocusState private var editorFocused: Bool
@@ -31,6 +36,32 @@ public struct ComposerBar: View {
     public init(model: AppModel, accent: Color) {
         self.model = model
         self.accent = accent
+    }
+
+    private var draft: String {
+        get {
+            guard let threadID = model.selectedThreadID else { return "" }
+            return model.composerDraft(for: threadID).text
+        }
+        nonmutating set {
+            guard let threadID = model.selectedThreadID else { return }
+            model.setComposerDraftText(newValue, for: threadID)
+        }
+    }
+
+    private var draftBinding: Binding<String> {
+        Binding(get: { draft }, set: { draft = $0 })
+    }
+
+    private var attachments: [OutgoingAttachment] {
+        get {
+            guard let threadID = model.selectedThreadID else { return [] }
+            return model.composerDraft(for: threadID).attachments
+        }
+        nonmutating set {
+            guard let threadID = model.selectedThreadID else { return }
+            model.setComposerDraftAttachments(newValue, for: threadID)
+        }
     }
 
     private var trimmedDraft: String {
@@ -145,6 +176,7 @@ public struct ComposerBar: View {
             GlassEffectContainer {
                 HStack(alignment: .bottom, spacing: 10) {
                     Button {
+                        fileImporterThreadID = model.selectedThreadID
                         showFileImporter = true
                     } label: {
                         Image(systemName: "paperclip")
@@ -156,7 +188,7 @@ public struct ComposerBar: View {
                     .disabled(attachments.count >= Self.maxAttachments)
                     .help("Attach images")
 
-                    TextEditor(text: $draft)
+                    TextEditor(text: draftBinding)
                         .font(.body)
                         .focused($editorFocused)
                         .scrollContentBackground(.hidden)
@@ -285,15 +317,34 @@ public struct ComposerBar: View {
         // to compose from the old message.
         .onChange(of: model.composerPrefill) { _, prefill in
             guard prefill != nil, let staged = model.takeComposerPrefill() else { return }
-            draft = staged.text
-            editorFocused = true
+            editedMessageID = staged.editedMessageID
+            editedMessageThreadID = staged.editedMessageThreadID
+            if model.selectedThreadID == staged.threadID {
+                editorFocused = true
+            }
+        }
+        // Drafts persist per-thread. ComposerBar stays mounted across thread
+        // switches, so only staged edit context and transient UI state drop.
+        .onChange(of: model.selectedThreadID) { _, _ in
+            resetTransientState()
+            model.clearComposerPrefill()
+        }
+        // User wiped the draft: drop edit identity so a later unrelated
+        // send is a normal append.
+        .onChange(of: draft) { _, newValue in
+            if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                editedMessageID = nil
+                editedMessageThreadID = nil
+            }
         }
         .fileImporter(
             isPresented: $showFileImporter, allowedContentTypes: [.image],
             allowsMultipleSelection: true
         ) { result in
-            if case .success(let urls) = result {
-                attach(urls: urls)
+            let targetThreadID = fileImporterThreadID
+            fileImporterThreadID = nil
+            if case .success(let urls) = result, let targetThreadID {
+                attach(urls: urls, to: targetThreadID)
             }
         }
     }
@@ -431,17 +482,31 @@ public struct ComposerBar: View {
     // MARK: - Sending
 
     private func send() {
-        guard canSend else { return }
-        let text = trimmedDraft
-        let outgoing = attachments
-        clearSubmittedDraft()
-        Task { await model.send(text: text, attachments: outgoing) }
+        guard canSend, let threadID = model.selectedThreadID else { return }
+        let submittedDraft = ComposerDraft(text: draft, attachments: attachments)
+        let outgoingText = trimmedDraft
+        let replacingID = editedMessageID
+        let replacingThreadID = editedMessageThreadID
+        model.clearComposerDraft(for: threadID)
+        resetTransientState()
+        Task {
+            let sent = await model.send(
+                threadID: threadID, text: outgoingText,
+                attachments: submittedDraft.attachments,
+                replacingMessageID: replacingID,
+                replacingMessageThreadID: replacingThreadID)
+            if !sent {
+                model.restoreComposerDraft(submittedDraft, for: threadID)
+            }
+        }
     }
 
     private func queue() {
         guard canQueue else { return }
         let text = trimmedDraft
         let outgoing = attachments
+        // Queued sends are deferred; an edit-resend must not silently become
+        // an append later — drop the edit identity when queueing.
         clearSubmittedDraft()
         model.enqueueMessage(text: text, attachments: outgoing)
     }
@@ -455,6 +520,9 @@ public struct ComposerBar: View {
         attachmentError = nil
         mentionQuery = nil
         mentionResults = []
+        // Queued messages are not yet on the server timeline — no revert.
+        editedMessageID = nil
+        editedMessageThreadID = nil
         editorFocused = true
     }
 
@@ -469,11 +537,22 @@ public struct ComposerBar: View {
     }
 
     private func clearSubmittedDraft() {
-        draft = ""
-        attachments = []
-        attachmentError = nil
+        guard let threadID = model.selectedThreadID else { return }
+        model.clearComposerDraft(for: threadID)
+        resetTransientState()
+    }
+
+    private func resetTransientState() {
+        mentionSearchTask?.cancel()
+        mentionSearchTask = nil
         mentionQuery = nil
         mentionResults = []
+        showFileImporter = false
+        fileImporterThreadID = nil
+        attachmentError = nil
+        showDictationDownloadPrompt = false
+        editedMessageID = nil
+        editedMessageThreadID = nil
     }
 
     // MARK: - Slash commands
@@ -535,10 +614,11 @@ public struct ComposerBar: View {
 
     // MARK: - Attachments
 
-    private func attach(urls: [URL]) {
+    private func attach(urls: [URL], to threadID: String) {
         attachmentError = nil
+        var stagedAttachments = model.composerDraft(for: threadID).attachments
         for url in urls {
-            guard attachments.count < Self.maxAttachments else {
+            guard stagedAttachments.count < Self.maxAttachments else {
                 attachmentError = "At most \(Self.maxAttachments) attachments per message."
                 break
             }
@@ -558,12 +638,13 @@ public struct ComposerBar: View {
                 attachmentError = "\(url.lastPathComponent) is not an image."
                 continue
             }
-            attachments.append(
+            stagedAttachments.append(
                 OutgoingAttachment(
                     id: UUID().uuidString, name: url.lastPathComponent, mimeType: mimeType,
                     sizeBytes: data.count,
                     dataURL: "data:\(mimeType);base64,\(data.base64EncodedString())"))
         }
+        model.setComposerDraftAttachments(stagedAttachments, for: threadID)
     }
 }
 

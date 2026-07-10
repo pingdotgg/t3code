@@ -94,15 +94,23 @@ enum MarkdownSegmentCache {
 /// streaming indicator. Content stays unframed and opaque for long-form
 /// reading; only the hover action chip floats above it.
 struct AssistantMarkdownView: View {
+    // The mac client has no editor picker yet; Cursor is first in the shared
+    // EDITORS ordering and therefore matches the existing client default.
+    private static let defaultEditor: ExternalEditor = .cursor
+
     let markdown: String
     let isStreaming: Bool
+    let threadID: String
+    let model: AppModel
     // Parsed once per view value, not per body evaluation — body re-runs on
     // every timeline mutation while this view's markdown is unchanged.
     private let segments: [MarkdownSegment]
 
-    init(markdown: String, isStreaming: Bool) {
+    init(markdown: String, isStreaming: Bool, threadID: String, model: AppModel) {
         self.markdown = markdown
         self.isStreaming = isStreaming
+        self.threadID = threadID
+        self.model = model
         self.segments = MarkdownSegmentCache.segments(for: markdown)
     }
 
@@ -147,6 +155,18 @@ struct AssistantMarkdownView: View {
         .contextMenu {
             Button("Copy as Markdown") { Pasteboard.copy(markdown) }
         }
+        .environment(\.openURL, OpenURLAction { url in
+            guard url.scheme?.lowercased() == "sergecode-file" else { return .systemAction }
+            guard let target = parseFileLinkURL(url) else { return .handled }
+            // The launcher API does not accept a line yet; keep it in the URL
+            // contract so a future RPC extension can preserve the location.
+            _ = target.line
+            Task {
+                await model.openInEditor(
+                    threadID: threadID, subpath: target.path, editor: Self.defaultEditor)
+            }
+            return .handled
+        })
     }
 }
 
@@ -282,7 +302,8 @@ private struct MarkdownProseText: View {
     private let attributed: AttributedString
 
     init(_ raw: String) {
-        self.attributed = attributedMarkdownProse(parseMarkdownBlocks(raw))
+        self.attributed = linkifyFilePaths(
+            in: attributedMarkdownProse(parseMarkdownBlocks(raw)))
     }
 
     var body: some View {

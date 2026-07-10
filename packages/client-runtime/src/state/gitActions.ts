@@ -63,6 +63,9 @@ export function buildGitActionProgressStages(input: {
   if (input.action === "push") {
     return [pushStage];
   }
+  if (input.action === "merge_pr") {
+    return ["Merging PR..."];
+  }
   if (input.action === "create_pr") {
     return input.shouldPushBeforePr ? [pushStage, ...prStages] : prStages;
   }

@@ -48,8 +48,9 @@ import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as GitHubCli from "../sourceControl/GitHubCli.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
-import type { ChangeRequest } from "@t3tools/contracts";
+import type { ChangeRequest, GitPullRequestReviewDecision } from "@t3tools/contracts";
 
 export interface GitActionProgressReporter {
   readonly publish: (event: GitActionProgressEvent) => Effect.Effect<void, never>;
@@ -351,6 +352,11 @@ function summarizeGitActionResult(
   title: string;
   description?: string;
 } {
+  if (result.pr.status === "merged") {
+    const prNumber = result.pr.number ? ` #${result.pr.number}` : "";
+    return withDescription(`Merged ${terms.shortLabel}${prNumber}`, truncateText(result.pr.title));
+  }
+
   if (result.pr.status === "created" || result.pr.status === "opened_existing") {
     const prNumber = result.pr.number ? ` #${result.pr.number}` : "";
     const title = `${result.pr.status === "created" ? "Created" : "Opened"} ${terms.shortLabel}${prNumber}`;
@@ -454,13 +460,21 @@ function appendUnique(values: string[], next: string | null | undefined): void {
   values.push(trimmed);
 }
 
-function toStatusPr(pr: PullRequestInfo): {
+function toStatusPr(
+  pr: PullRequestInfo,
+  review?: {
+    reviewDecision: GitPullRequestReviewDecision | null;
+    unresolvedReviewThreadCount: number | null;
+  },
+): {
   number: number;
   title: string;
   url: string;
   baseRef: string;
   headRef: string;
   state: "open" | "closed" | "merged";
+  reviewDecision: GitPullRequestReviewDecision | null;
+  unresolvedReviewThreadCount: number | null;
 } {
   return {
     number: pr.number,
@@ -469,6 +483,8 @@ function toStatusPr(pr: PullRequestInfo): {
     baseRef: pr.baseRefName,
     headRef: pr.headRefName,
     state: pr.state,
+    reviewDecision: review?.reviewDecision ?? null,
+    unresolvedReviewThreadCount: review?.unresolvedReviewThreadCount ?? null,
   };
 }
 
@@ -521,6 +537,7 @@ function toPullRequestHeadRemoteInfo(pr: {
 export const make = Effect.gen(function* () {
   const gitCore = yield* GitVcsDriver.GitVcsDriver;
   const sourceControlProviders = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
+  const githubCli = yield* GitHubCli.GitHubCli;
   const textGeneration = yield* TextGeneration.TextGeneration;
   const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const crypto = yield* Crypto.Crypto;
@@ -785,12 +802,12 @@ export const make = Effect.gen(function* () {
             branch: details.branch,
             upstreamRef: details.upstreamRef,
           }).pipe(
-            Effect.map((latest) => {
-              if (!latest) return null;
+            Effect.flatMap((latest) => {
+              if (!latest) return Effect.succeed(null);
               // On the default branch, only surface open PRs.
               // Merged/closed matches are usually reverse-merge history, not the thread's PR context.
-              if (details.isDefaultBranch && latest.state !== "open") return null;
-              return toStatusPr(latest);
+              if (details.isDefaultBranch && latest.state !== "open") return Effect.succeed(null);
+              return enrichStatusPr(cwd, latest);
             }),
             Effect.orElseSucceed(() => null),
           )
@@ -990,6 +1007,39 @@ export const make = Effect.gen(function* () {
       return latestOpenPr;
     }
     return parsed[0] ?? null;
+  });
+
+  const enrichStatusPr = Effect.fn("enrichStatusPr")(function* (cwd: string, pr: PullRequestInfo) {
+    if (pr.state !== "open") {
+      return toStatusPr(pr);
+    }
+
+    // Review status is GitHub-specific today. Failures must never break status.
+    const providerKind = yield* sourceControlProvider(cwd).pipe(
+      Effect.map((provider) => provider.kind),
+      Effect.orElseSucceed(() => "unknown" as const),
+    );
+    if (providerKind !== "github") {
+      return toStatusPr(pr);
+    }
+
+    const review = yield* githubCli
+      .getPullRequestReviewStatus({
+        cwd,
+        reference: String(pr.number),
+      })
+      .pipe(
+        Effect.map((status) => ({
+          reviewDecision: status.reviewDecision,
+          unresolvedReviewThreadCount: status.unresolvedReviewThreadCount,
+        })),
+        Effect.orElseSucceed(() => ({
+          reviewDecision: null,
+          unresolvedReviewThreadCount: null,
+        })),
+      );
+
+    return toStatusPr(pr, review);
   });
 
   const buildCompletionToast = Effect.fn("buildCompletionToast")(function* (
@@ -1666,6 +1716,66 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  const runMergePrStep = Effect.fn("runMergePrStep")(function* (
+    cwd: string,
+    branch: string,
+    upstreamRef: string | null,
+  ) {
+    const openPr = yield* resolveBranchHeadContext(cwd, {
+      branch,
+      upstreamRef,
+    }).pipe(
+      Effect.flatMap((headContext) => findOpenPr(cwd, headContext)),
+      Effect.mapError(
+        (cause) =>
+          new GitManagerError({
+            operation: "runStackedAction",
+            cwd,
+            detail: "Failed to resolve the open pull request for this branch.",
+            cause,
+          }),
+      ),
+    );
+
+    if (!openPr) {
+      return yield* new GitManagerError({
+        operation: "runStackedAction",
+        cwd,
+        detail: "No open pull request found for the current branch.",
+      });
+    }
+
+    yield* githubCli
+      .mergePullRequest({
+        cwd,
+        reference: String(openPr.number),
+      })
+      .pipe(
+        Effect.mapError((error) => {
+          const causeMessage =
+            error.cause instanceof Error && error.cause.message.trim().length > 0
+              ? error.cause.message.trim()
+              : null;
+          return new GitManagerError({
+            operation: "runStackedAction",
+            cwd,
+            detail:
+              causeMessage ?? (error.detail || error.message || "Failed to merge pull request."),
+            cause: error,
+          });
+        }),
+      );
+
+    return {
+      status: "merged" as const,
+      url: openPr.url,
+      number: openPr.number,
+      baseBranch: openPr.baseRefName,
+      headBranch: openPr.headRefName,
+      title: openPr.title,
+    };
+  });
+
   const runStackedAction: GitManager["Service"]["runStackedAction"] = Effect.fn("runStackedAction")(
     function* (input, options) {
       const progress = yield* createProgressEmitter(input, options);
@@ -1676,14 +1786,17 @@ export const make = Effect.gen(function* () {
         GitManagerServiceError
       > {
         const initialStatus = yield* gitCore.statusDetails(input.cwd);
-        const wantsCommit = isCommitAction(input.action);
+        const wantsMerge = input.action === "merge_pr";
+        const wantsCommit = !wantsMerge && isCommitAction(input.action);
         const wantsPush =
-          input.action === "push" ||
-          input.action === "commit_push" ||
-          input.action === "commit_push_pr" ||
-          (input.action === "create_pr" &&
-            (!initialStatus.hasUpstream || initialStatus.aheadCount > 0));
-        const wantsPr = input.action === "create_pr" || input.action === "commit_push_pr";
+          !wantsMerge &&
+          (input.action === "push" ||
+            input.action === "commit_push" ||
+            input.action === "commit_push_pr" ||
+            (input.action === "create_pr" &&
+              (!initialStatus.hasUpstream || initialStatus.aheadCount > 0)));
+        const wantsPr =
+          !wantsMerge && (input.action === "create_pr" || input.action === "commit_push_pr");
 
         if (input.featureBranch && !wantsCommit) {
           return yield* new GitManagerError({
@@ -1699,13 +1812,22 @@ export const make = Effect.gen(function* () {
             detail: "Commit local changes before creating a PR.",
           });
         }
+        if (wantsMerge && !initialStatus.branch) {
+          return yield* new GitManagerError({
+            operation: "runStackedAction",
+            cwd: input.cwd,
+            detail: "Cannot merge a pull request from detached HEAD.",
+          });
+        }
 
-        const phases: GitActionProgressPhase[] = [
-          ...(input.featureBranch ? (["branch"] as const) : []),
-          ...(wantsCommit ? (["commit"] as const) : []),
-          ...(wantsPush ? (["push"] as const) : []),
-          ...(wantsPr ? (["pr"] as const) : []),
-        ];
+        const phases: GitActionProgressPhase[] = wantsMerge
+          ? (["merge"] as const)
+          : [
+              ...(input.featureBranch ? (["branch"] as const) : []),
+              ...(wantsCommit ? (["commit"] as const) : []),
+              ...(wantsPush ? (["push"] as const) : []),
+              ...(wantsPr ? (["pr"] as const) : []),
+            ];
 
         yield* progress.emit({
           kind: "action_started",
@@ -1725,6 +1847,44 @@ export const make = Effect.gen(function* () {
             cwd: input.cwd,
             detail: "Cannot create a pull request from detached HEAD.",
           });
+        }
+
+        if (wantsMerge) {
+          const changeRequestTerms = yield* sourceControlProvider(input.cwd).pipe(
+            Effect.map((provider) => getChangeRequestTerminologyForKind(provider.kind)),
+            Effect.orElseSucceed(() => getChangeRequestTerminologyForKind("unknown")),
+          );
+          yield* progress.emit({
+            kind: "phase_started",
+            phase: "merge",
+            label: `Merging ${changeRequestTerms.shortLabel}...`,
+          });
+          yield* Ref.set(currentPhase, Option.some("merge"));
+          const pr = yield* runMergePrStep(
+            input.cwd,
+            initialStatus.branch!,
+            initialStatus.upstreamRef,
+          );
+          const toast = yield* buildCompletionToast(input.cwd, {
+            action: input.action,
+            branch: { status: "skipped_not_requested" as const },
+            commit: { status: "skipped_not_requested" as const },
+            push: { status: "skipped_not_requested" as const },
+            pr,
+          });
+          const result = {
+            action: input.action,
+            branch: { status: "skipped_not_requested" as const },
+            commit: { status: "skipped_not_requested" as const },
+            push: { status: "skipped_not_requested" as const },
+            pr,
+            toast,
+          };
+          yield* progress.emit({
+            kind: "action_finished",
+            result,
+          });
+          return result;
         }
 
         let branchStep: { status: "created" | "skipped_not_requested"; name?: string };

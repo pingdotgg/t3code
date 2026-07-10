@@ -524,17 +524,66 @@ public struct ProposedPlan: Identifiable, Hashable, Sendable {
     }
 }
 
+/// UI mirror of wire `OrchestrationCheckpointStatus`.
+public enum CheckpointStatus: String, Sendable, Hashable {
+    case ready, missing, error
+}
+
+/// One file touched by a checkpoint (from `OrchestrationCheckpointFile`).
+public struct CheckpointFile: Identifiable, Hashable, Sendable {
+    public var path: String
+    /// Wire kind string (`added` / `modified` / `deleted` / `renamed`, etc.).
+    public var kind: String
+    public var additions: Int
+    public var deletions: Int
+
+    public var id: String { path }
+
+    public init(path: String, kind: String, additions: Int, deletions: Int) {
+        self.path = path
+        self.kind = kind
+        self.additions = additions
+        self.deletions = deletions
+    }
+}
+
 public struct Checkpoint: Identifiable, Hashable, Sendable {
     public var id: String
     public var threadID: String
     public var label: String
     public var createdAt: Date
+    /// Server turn count used for restore and scoped turn-diff queries.
+    public var turnCount: Int
+    public var status: CheckpointStatus
+    public var files: [CheckpointFile]
+    public var assistantMessageId: String?
 
-    public init(id: String, threadID: String, label: String, createdAt: Date) {
+    public init(
+        id: String, threadID: String, label: String, createdAt: Date,
+        turnCount: Int = 0, status: CheckpointStatus = .ready,
+        files: [CheckpointFile] = [], assistantMessageId: String? = nil
+    ) {
         self.id = id
         self.threadID = threadID
         self.label = label
         self.createdAt = createdAt
+        self.turnCount = turnCount
+        self.status = status
+        self.files = files
+        self.assistantMessageId = assistantMessageId
+    }
+}
+
+/// Scope of the main-area diff review mode.
+public enum ReviewScope: Equatable, Hashable, Sendable {
+    case allChanges
+    case checkpoint(fromTurn: Int, toTurn: Int, label: String)
+
+    public var title: String {
+        switch self {
+        case .allChanges: "All Changes"
+        case .checkpoint(_, _, let label): label
+        }
     }
 }
 
@@ -711,6 +760,13 @@ public enum PullRequestState: String, Sendable {
     case open, closed, merged
 }
 
+/// GitHub reviewDecision values from `VcsStatusChangeRequest.reviewDecision`.
+public enum PullRequestReviewDecision: String, Sendable {
+    case approved = "APPROVED"
+    case changesRequested = "CHANGES_REQUESTED"
+    case reviewRequired = "REVIEW_REQUIRED"
+}
+
 /// Working-tree + branch + PR status for one project repo.
 public struct VcsStatus: Hashable, Sendable {
     public var isRepo: Bool
@@ -732,13 +788,19 @@ public struct VcsStatus: Hashable, Sendable {
     public var prTitle: String?
     public var prURL: String?
     public var prState: PullRequestState?
+    /// GitHub review decision; nil when unknown / non-GitHub / fetch failed.
+    public var reviewDecision: PullRequestReviewDecision?
+    /// Unresolved review thread count; nil when unknown / fetch failed.
+    public var unresolvedReviewThreadCount: Int?
 
     public init(
         isRepo: Bool, branch: String?, isDefaultBranch: Bool, changedFileCount: Int,
         insertions: Int, deletions: Int, aheadCount: Int, behindCount: Int, hasUpstream: Bool,
         hasPrimaryRemote: Bool = false, aheadOfDefaultCount: Int? = nil,
         prNumber: Int? = nil, prTitle: String? = nil, prURL: String? = nil,
-        prState: PullRequestState? = nil
+        prState: PullRequestState? = nil,
+        reviewDecision: PullRequestReviewDecision? = nil,
+        unresolvedReviewThreadCount: Int? = nil
     ) {
         self.isRepo = isRepo
         self.branch = branch
@@ -755,6 +817,8 @@ public struct VcsStatus: Hashable, Sendable {
         self.prTitle = prTitle
         self.prURL = prURL
         self.prState = prState
+        self.reviewDecision = reviewDecision
+        self.unresolvedReviewThreadCount = unresolvedReviewThreadCount
     }
 }
 
@@ -776,7 +840,7 @@ public struct BranchRef: Identifiable, Hashable, Sendable {
 
 /// The stacked git pipelines the toolbar offers.
 public enum GitAction: String, CaseIterable, Sendable, Identifiable {
-    case commit, push, commitPush, commitPushPR
+    case commit, push, commitPush, commitPushPR, mergePR
     public var id: String { rawValue }
 
     public var displayName: String {
@@ -785,11 +849,20 @@ public enum GitAction: String, CaseIterable, Sendable, Identifiable {
         case .push: "Push"
         case .commitPush: "Commit & Push"
         case .commitPushPR: "Commit, Push & Open PR"
+        case .mergePR: "Merge PR"
         }
     }
 
     public var needsCommitMessage: Bool {
-        self != .push
+        switch self {
+        case .push, .mergePR: false
+        default: true
+        }
+    }
+
+    /// Actions listed in the generic Git overflow menu (not dedicated buttons).
+    public static var menuActions: [GitAction] {
+        allCases.filter { $0 != .mergePR }
     }
 }
 

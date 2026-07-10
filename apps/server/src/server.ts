@@ -200,6 +200,7 @@ const GitManagerLayerLive = GitManager.layer.pipe(
   Layer.provideMerge(GitVcsDriver.layer),
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),
   Layer.provideMerge(TextGeneration.layer),
+  Layer.provideMerge(GitHubCli.layer),
 );
 
 const GitLayerLive = Layer.empty.pipe(

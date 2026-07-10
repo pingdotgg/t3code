@@ -8,11 +8,8 @@ struct ComposerControlsRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            ModelPickerMenu(thread: thread, model: model)
-            EffortMenu(thread: thread, model: model)
-            ServiceTierMenu(thread: thread, model: model)
-            RuntimeModeMenu(thread: thread, model: model)
-            PlanModeToggle(thread: thread, model: model)
+            ModelEffortTierGroup(thread: thread, model: model)
+            RuntimePlanModeGroup(thread: thread, model: model)
             Spacer()
             if let status = model.threadState(thread.id)?.contextWindow {
                 ContextMeterView(status: status)
@@ -24,49 +21,102 @@ struct ComposerControlsRow: View {
     }
 }
 
-/// Menu listing every (provider instance, model) pair, grouped by provider.
-private struct ModelPickerMenu: View {
+/// Visually grouped model + effort + tier controls as a single capsule strip.
+private struct ModelEffortTierGroup: View {
+    let thread: ChatThread
+    let model: AppModel
+
+    private var currentModelOption: ModelOption? {
+        model.models.first {
+            $0.instanceID == thread.modelInstanceID && $0.modelID == thread.modelID
+        }
+    }
+
+    private var showsEffort: Bool {
+        guard let option = currentModelOption else { return false }
+        return !option.effortChoices.isEmpty
+    }
+
+    private var showsTier: Bool {
+        guard let option = currentModelOption else { return false }
+        return !option.serviceTierChoices.isEmpty
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ModelPickerMenu(thread: thread, model: model)
+            if showsEffort {
+                segmentDivider
+                EffortMenu(thread: thread, model: model)
+            }
+            if showsTier {
+                segmentDivider
+                ServiceTierMenu(thread: thread, model: model)
+            }
+        }
+        .glassEffect(.regular, in: Capsule())
+    }
+
+    private var segmentDivider: some View {
+        Rectangle()
+            .fill(.separator)
+            .frame(width: 1, height: 12)
+            .padding(.horizontal, 1)
+    }
+}
+
+/// Shared label chrome for compact menu segments inside the capsule group.
+private struct ComposerSegmentLabel: View {
+    let icon: String
+    let title: String
+    var isHovering: Bool = false
+    /// When true, icon + title use the accent color (e.g. plan mode on).
+    var isAccented: Bool = false
+    /// When true, icon changes animate with a symbol replace transition.
+    var animateSymbol: Bool = false
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.caption)
+                .foregroundStyle(isAccented ? Color.accentColor : Color.secondary)
+                .contentTransition(animateSymbol ? .symbolEffect(.replace) : .identity)
+            Text(title)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(isAccented ? Color.accentColor : Color.primary)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .contentShape(Rectangle())
+        .background {
+            if isHovering {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(.fill.secondary)
+            }
+        }
+    }
+}
+
+/// Visually grouped runtime-mode menu + plan-mode toggle as a single capsule.
+private struct RuntimePlanModeGroup: View {
     let thread: ChatThread
     let model: AppModel
 
     var body: some View {
-        Menu {
-            ForEach(ProviderKind.allCases) { kind in
-                let options = model.models.filter { $0.provider == kind }
-                if !options.isEmpty {
-                    Section(kind.displayName) {
-                        ForEach(options) { option in
-                            Button {
-                                Task { await model.setModel(option) }
-                            } label: {
-                                if isCurrent(option) {
-                                    Label(option.displayName, systemImage: "checkmark")
-                                } else {
-                                    Text(option.displayName)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        } label: {
-            Label(currentModelName, systemImage: "cpu")
-                .font(.caption)
+        HStack(spacing: 0) {
+            RuntimeModeMenu(thread: thread, model: model)
+            segmentDivider
+            PlanModeToggle(thread: thread, model: model)
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .disabled(model.models.isEmpty)
+        .glassEffect(.regular, in: Capsule())
     }
 
-    private func isCurrent(_ option: ModelOption) -> Bool {
-        option.instanceID == thread.modelInstanceID && option.modelID == thread.modelID
-    }
-
-    private var currentModelName: String {
-        if let current = model.models.first(where: isCurrent(_:)) {
-            return current.displayName
-        }
-        return thread.modelID ?? thread.provider.displayName
+    private var segmentDivider: some View {
+        Rectangle()
+            .fill(.separator)
+            .frame(width: 1, height: 12)
+            .padding(.horizontal, 1)
     }
 }
 
@@ -75,6 +125,8 @@ private struct ModelPickerMenu: View {
 private struct EffortMenu: View {
     let thread: ChatThread
     let model: AppModel
+
+    @UIState private var isHovering = false
 
     var body: some View {
         if let option = currentModelOption, !option.effortChoices.isEmpty {
@@ -91,12 +143,16 @@ private struct EffortMenu: View {
                     }
                 }
             } label: {
-                Label(currentLabel(of: option), systemImage: "brain")
-                    .font(.caption)
+                ComposerSegmentLabel(
+                    icon: "brain",
+                    title: currentLabel(of: option),
+                    isHovering: isHovering
+                )
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
             .help("Reasoning effort")
+            .onHover { isHovering = $0 }
         }
     }
 
@@ -123,6 +179,8 @@ private struct ServiceTierMenu: View {
     let thread: ChatThread
     let model: AppModel
 
+    @UIState private var isHovering = false
+
     var body: some View {
         if let option = currentModelOption, !option.serviceTierChoices.isEmpty {
             Menu {
@@ -138,12 +196,16 @@ private struct ServiceTierMenu: View {
                     }
                 }
             } label: {
-                Label(currentLabel(of: option), systemImage: "bolt")
-                    .font(.caption)
+                ComposerSegmentLabel(
+                    icon: "bolt",
+                    title: currentLabel(of: option),
+                    isHovering: isHovering
+                )
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
             .help("Service tier")
+            .onHover { isHovering = $0 }
         }
     }
 
@@ -168,6 +230,8 @@ private struct RuntimeModeMenu: View {
     let thread: ChatThread
     let model: AppModel
 
+    @UIState private var isHovering = false
+
     var body: some View {
         Menu {
             ForEach(ThreadRuntimeMode.allCases) { mode in
@@ -182,11 +246,15 @@ private struct RuntimeModeMenu: View {
                 }
             }
         } label: {
-            Label(thread.runtimeMode.displayName, systemImage: thread.runtimeMode.symbolName)
-                .font(.caption)
+            ComposerSegmentLabel(
+                icon: thread.runtimeMode.symbolName,
+                title: thread.runtimeMode.displayName,
+                isHovering: isHovering
+            )
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
+        .onHover { isHovering = $0 }
     }
 }
 
@@ -195,20 +263,26 @@ private struct PlanModeToggle: View {
     let thread: ChatThread
     let model: AppModel
 
+    @UIState private var isHovering = false
+
     private var isPlan: Bool { thread.interactionMode == .plan }
 
     var body: some View {
         Button {
             Task { await model.setInteractionMode(isPlan ? .normal : .plan) }
         } label: {
-            Label("Plan", systemImage: isPlan ? "list.clipboard.fill" : "list.clipboard")
-                .font(.caption)
-                .contentTransition(.symbolEffect(.replace))
+            ComposerSegmentLabel(
+                icon: isPlan ? "list.clipboard.fill" : "list.clipboard",
+                title: "Plan",
+                isHovering: isHovering,
+                isAccented: isPlan,
+                animateSymbol: true
+            )
         }
         .buttonStyle(.plain)
-        .foregroundStyle(isPlan ? Color.accentColor : Color.secondary)
         .animation(Motion.snap, value: isPlan)
         .help(isPlan ? "Plan mode on — the agent proposes a plan instead of editing" : "Turn on plan mode")
+        .onHover { isHovering = $0 }
     }
 }
 
