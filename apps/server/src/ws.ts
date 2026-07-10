@@ -614,27 +614,13 @@ const makeWsRpcLayer = (
       const enrichOrchestrationEvents = (events: ReadonlyArray<OrchestrationEvent>) =>
         Effect.forEach(events, enrichProjectEvent, { concurrency: 4 });
 
-      const subscribeDomainEventStream = <A, E, R>(
-        makeStream: (events: Stream.Stream<OrchestrationEvent>) => Stream.Stream<A, E, R>,
-      ) => {
-        if (orchestrationEngine.subscribeDomainEvents === undefined) {
-          return Effect.succeed(makeStream(orchestrationEngine.streamDomainEvents));
-        }
-
-        return Effect.map(orchestrationEngine.subscribeDomainEvents, (subscription) =>
-          makeStream(Stream.fromSubscription(subscription)),
-        );
-      };
-
-      const streamThreadDetailEventsAfterSnapshot = (
-        events: Stream.Stream<OrchestrationEvent>,
+      const streamThreadDetailEvents = <E, R>(
+        events: Stream.Stream<OrchestrationEvent, E, R>,
         threadId: ThreadId,
-        snapshotSequence: number,
       ) =>
         events.pipe(
           Stream.filter(
             (event) =>
-              event.sequence > snapshotSequence &&
               event.aggregateKind === "thread" &&
               event.aggregateId === threadId &&
               isThreadDetailEvent(event),
@@ -644,6 +630,13 @@ const makeWsRpcLayer = (
             event,
           })),
         );
+
+      const subscribeThreadDetailEvents = Effect.fn("ws.subscribeThreadDetailEvents")(function* (
+        threadId: ThreadId,
+      ) {
+        const subscription = yield* orchestrationEngine.subscribeDomainEvents;
+        return streamThreadDetailEvents(Stream.fromSubscription(subscription), threadId);
+      });
 
       const toShellStreamEvent = (
         event: OrchestrationEvent,
@@ -1184,19 +1177,6 @@ const makeWsRpcLayer = (
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeThread,
             Effect.gen(function* () {
-              const isThisThreadDetailEvent = (event: OrchestrationEvent) =>
-                event.aggregateKind === "thread" &&
-                event.aggregateId === input.threadId &&
-                isThreadDetailEvent(event);
-
-              const replayLiveStream = orchestrationEngine.streamDomainEvents.pipe(
-                Stream.filter(isThisThreadDetailEvent),
-                Stream.map((event) => ({
-                  kind: "event" as const,
-                  event,
-                })),
-              );
-
               // When the client already loaded the snapshot over HTTP it passes
               // that snapshot's sequence, and we resume the live subscription by
               // replaying persisted events after it instead of re-sending the
@@ -1218,25 +1198,23 @@ const makeWsRpcLayer = (
                 const afterSequence = input.afterSequence;
                 return Stream.unwrap(
                   Effect.gen(function* () {
+                    const liveStream = yield* subscribeThreadDetailEvents(input.threadId);
                     const liveBuffer = yield* Queue.unbounded<OrchestrationThreadStreamItem>();
                     yield* Effect.forkScoped(
-                      replayLiveStream.pipe(
-                        Stream.runForEach((item) => Queue.offer(liveBuffer, item)),
+                      liveStream.pipe(Stream.runForEach((item) => Queue.offer(liveBuffer, item))),
+                    );
+                    const catchUpStream = streamThreadDetailEvents(
+                      orchestrationEngine.readEvents(afterSequence, Number.MAX_SAFE_INTEGER),
+                      input.threadId,
+                    ).pipe(
+                      Stream.mapError(
+                        (cause) =>
+                          new OrchestrationGetSnapshotError({
+                            message: `Failed to replay thread ${input.threadId} events`,
+                            cause,
+                          }),
                       ),
                     );
-                    const catchUpStream = orchestrationEngine
-                      .readEvents(afterSequence, Number.MAX_SAFE_INTEGER)
-                      .pipe(
-                        Stream.filter(isThisThreadDetailEvent),
-                        Stream.map((event) => ({ kind: "event" as const, event })),
-                        Stream.mapError(
-                          (cause) =>
-                            new OrchestrationGetSnapshotError({
-                              message: `Failed to replay thread ${input.threadId} events`,
-                              cause,
-                            }),
-                        ),
-                      );
                     return Stream.concat(catchUpStream, Stream.fromQueue(liveBuffer));
                   }),
                 );
@@ -1246,9 +1224,7 @@ const makeWsRpcLayer = (
               // clients that fall back to a WebSocket snapshot, acquire the live
               // subscription before reading the atomic snapshot so events emitted
               // during that read can be filtered against its sequence and retained.
-              const liveDomainEventStream = yield* subscribeDomainEventStream((events) =>
-                streamThreadDetailEventsAfterSnapshot(events, input.threadId, 0),
-              );
+              const liveStream = yield* subscribeThreadDetailEvents(input.threadId);
 
               const snapshot = yield* projectionSnapshotQuery
                 .getThreadDetailSnapshot(input.threadId)
@@ -1269,7 +1245,7 @@ const makeWsRpcLayer = (
                 });
               }
 
-              const liveStream = liveDomainEventStream.pipe(
+              const liveTailStream = liveStream.pipe(
                 Stream.filter((item) => item.event.sequence > snapshot.value.snapshotSequence),
               );
 
@@ -1278,7 +1254,7 @@ const makeWsRpcLayer = (
                   kind: "snapshot" as const,
                   snapshot: snapshot.value,
                 }),
-                liveStream,
+                liveTailStream,
               );
             }),
             { "rpc.aggregate": "orchestration" },

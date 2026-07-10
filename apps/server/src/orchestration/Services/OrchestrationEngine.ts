@@ -66,7 +66,7 @@ export interface OrchestrationEngineShape {
    * This is a hot runtime event source for new events only, not a historical
    * replay. Use `readEvents` when persisted replay is required.
    */
-  readonly subscribeDomainEvents?: Effect.Effect<
+  readonly subscribeDomainEvents: Effect.Effect<
     PubSub.Subscription<OrchestrationEvent>,
     never,
     Scope.Scope

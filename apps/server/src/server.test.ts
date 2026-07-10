@@ -123,6 +123,38 @@ const defaultModelSelection = {
   instanceId: ProviderInstanceId.make("codex"),
   model: "gpt-5-codex",
 } as const;
+const makeThreadMessageSentEvent = (input: {
+  readonly id: string;
+  readonly sequence: number;
+  readonly text: string;
+  readonly threadId: ThreadId;
+  readonly occurredAt?: string;
+}): OrchestrationEvent => {
+  const occurredAt = input.occurredAt ?? "2026-01-01T00:00:00.000Z";
+  return {
+    sequence: input.sequence,
+    eventId: EventId.make(`event-${input.id}`),
+    aggregateKind: "thread",
+    aggregateId: input.threadId,
+    occurredAt,
+    commandId: CommandId.make(`cmd-${input.id}`),
+    causationEventId: null,
+    correlationId: null,
+    metadata: {},
+    type: "thread.message-sent",
+    payload: {
+      threadId: input.threadId,
+      messageId: MessageId.make(`message-${input.id}`),
+      role: "user",
+      text: input.text,
+      attachments: [],
+      turnId: null,
+      streaming: false,
+      createdAt: occurredAt,
+      updatedAt: occurredAt,
+    },
+  } satisfies OrchestrationEvent;
+};
 const testEnvironmentDescriptor = {
   environmentId: EnvironmentId.make("environment-test"),
   label: "Test environment",
@@ -679,6 +711,9 @@ const buildAppUnderTest = (options?: {
           readEvents: () => Stream.empty,
           dispatch: () => Effect.succeed({ sequence: 0 }),
           streamDomainEvents: Stream.empty,
+          subscribeDomainEvents: Effect.flatMap(PubSub.unbounded<OrchestrationEvent>(), (pubsub) =>
+            PubSub.subscribe(pubsub),
+          ),
           ...options?.layers?.orchestrationEngine,
         }),
       ),
@@ -5585,7 +5620,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       const now = "2026-01-01T00:00:00.000Z";
       const threadId = ThreadId.make("thread-racy-subscribe");
-      const messageId = MessageId.make("message-racy-first-user");
       const eventPubSub = yield* PubSub.unbounded<OrchestrationEvent>();
       const snapshotStarted = yield* Deferred.make<void>();
       const snapshotGate = yield* Deferred.make<void>();
@@ -5609,29 +5643,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         checkpoints: [],
         deletedAt: null,
       } satisfies OrchestrationThread;
-      const userMessageEvent = {
+      const userMessageEvent = makeThreadMessageSentEvent({
+        id: "racy-first-user",
         sequence: 2,
-        eventId: EventId.make("event-racy-first-user"),
-        aggregateKind: "thread" as const,
-        aggregateId: threadId,
+        text: "hi",
+        threadId,
         occurredAt: now,
-        commandId: CommandId.make("cmd-racy-first-user"),
-        causationEventId: null,
-        correlationId: null,
-        metadata: {},
-        type: "thread.message-sent" as const,
-        payload: {
-          threadId,
-          messageId,
-          role: "user" as const,
-          text: "hi",
-          attachments: [],
-          turnId: null,
-          streaming: false,
-          createdAt: now,
-          updatedAt: now,
-        },
-      } satisfies OrchestrationEvent;
+      });
 
       yield* buildAppUnderTest({
         layers: {
@@ -5673,6 +5691,72 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           assert.equal(event.payload.text, "hi");
         }
       }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("buffers live thread detail events while replaying afterSequence catch-up", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread-racy-replay");
+      const eventPubSub = yield* PubSub.unbounded<OrchestrationEvent>();
+      const replayStarted = yield* Deferred.make<void>();
+      const replayGate = yield* Deferred.make<void>();
+      const catchUpEvent = makeThreadMessageSentEvent({
+        id: "racy-replay-catch-up",
+        sequence: 2,
+        text: "persisted catch-up",
+        threadId,
+      });
+      const liveEvent = makeThreadMessageSentEvent({
+        id: "racy-replay-live",
+        sequence: 3,
+        text: "live during replay",
+        threadId,
+      });
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            readEvents: (afterSequence, limit) =>
+              Stream.fromEffect(
+                Effect.gen(function* () {
+                  assert.equal(afterSequence, 1);
+                  assert.equal(limit, Number.MAX_SAFE_INTEGER);
+                  yield* Deferred.succeed(replayStarted, undefined);
+                  yield* Deferred.await(replayGate);
+                  return catchUpEvent;
+                }),
+              ),
+            streamDomainEvents: Stream.empty,
+            subscribeDomainEvents: PubSub.subscribe(eventPubSub),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const items = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const fiber = yield* client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+              threadId,
+              afterSequence: 1,
+            }).pipe(Stream.take(2), Stream.runCollect, Effect.forkScoped);
+            yield* Deferred.await(replayStarted);
+            yield* PubSub.publish(eventPubSub, liveEvent);
+            yield* Deferred.succeed(replayGate, undefined);
+            return Array.from(yield* Fiber.join(fiber));
+          }),
+        ),
+      );
+
+      const events = items.flatMap((item) => (item.kind === "event" ? [item.event] : []));
+      assert.deepEqual(
+        events.map((event) => event.sequence),
+        [2, 3],
+      );
+      assert.deepEqual(
+        events.map((event) => (event.type === "thread.message-sent" ? event.payload.text : null)),
+        ["persisted catch-up", "live during replay"],
+      );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
