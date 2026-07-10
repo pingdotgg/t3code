@@ -179,15 +179,27 @@ struct SceneryStoreTranslucencyPersistenceTests {
         #expect(writer.sceneryTranslucency == ScenerySettingsFile.defaultTranslucency)
 
         writer.setSceneryTranslucency(0.55)
+        // In-memory update is immediate; disk write is debounced.
         #expect(writer.sceneryTranslucency == 0.55)
 
-        // Out of range clamps and still persists.
+        let beforeFlush = SceneryStore(client: nil, root: root)
+        beforeFlush.reloadFromDiskForTesting()
+        #expect(beforeFlush.sceneryTranslucency == ScenerySettingsFile.defaultTranslucency)
+
+        // Out of range clamps in memory; flush persists the final value once.
         writer.setSceneryTranslucency(0.1)
         #expect(writer.sceneryTranslucency == 0.5)
+        writer.flushPendingSettingsSave()
 
         let reader = SceneryStore(client: nil, root: root)
         reader.reloadFromDiskForTesting()
         #expect(reader.sceneryTranslucency == 0.5)
+
+        // Second flush with nothing pending is a no-op.
+        writer.flushPendingSettingsSave()
+        let readerAgain = SceneryStore(client: nil, root: root)
+        readerAgain.reloadFromDiskForTesting()
+        #expect(readerAgain.sceneryTranslucency == 0.5)
     }
 }
 

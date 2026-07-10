@@ -80,6 +80,10 @@ public final class SceneryStore {
     @ObservationIgnored
     public var projectPathForThread: ((String) -> String?)?
 
+    /// Debounced `settings.json` write (translucency slider ticks).
+    @ObservationIgnored
+    private var pendingSettingsSaveTask: Task<Void, Never>?
+
     public init(client: UnsplashClient? = UnsplashClient(), root: URL? = nil) {
         self.client = client
         let now = Date()
@@ -907,10 +911,35 @@ public final class SceneryStore {
 
     /// Updates the global scenery photo opacity (window glass bleed-through).
     /// Values outside `0.5...1.0` are clamped; no-op when unchanged after clamp.
+    /// Memory updates immediately; disk write is debounced (~400ms). Call
+    /// `flushPendingSettingsSave()` when a continuous edit ends (e.g. slider).
     public func setSceneryTranslucency(_ value: Double) {
         let clamped = ScenerySettingsFile.clampTranslucency(value)
         guard settings.sceneryTranslucency != clamped else { return }
         settings.sceneryTranslucency = clamped
+        scheduleDebouncedSettingsSave()
+    }
+
+    /// Cancels a pending debounced settings write and persists immediately
+    /// if one was scheduled. No-op when nothing is pending.
+    public func flushPendingSettingsSave() {
+        guard pendingSettingsSaveTask != nil else { return }
+        commitPendingSettingsSave()
+    }
+
+    private func scheduleDebouncedSettingsSave() {
+        pendingSettingsSaveTask?.cancel()
+        pendingSettingsSaveTask = Task {
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+            commitPendingSettingsSave()
+        }
+    }
+
+    /// Shared by debounce completion and flush: clear pending + one disk write.
+    private func commitPendingSettingsSave() {
+        pendingSettingsSaveTask?.cancel()
+        pendingSettingsSaveTask = nil
         saveSettings()
     }
 

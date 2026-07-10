@@ -142,20 +142,28 @@ struct ScenerySettingsTab: View {
             HStack(spacing: 12) {
                 Slider(
                     value: translucencyBinding,
-                    in: ScenerySettingsFile.translucencyRange
-                ) {
-                    Text("Scenery opacity")
-                } minimumValueLabel: {
-                    Text("50%")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                } maximumValueLabel: {
-                    Text("100%")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
+                    in: ScenerySettingsFile.translucencyRange,
+                    label: {
+                        Text("Scenery opacity")
+                    },
+                    minimumValueLabel: {
+                        Text("50%")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    },
+                    maximumValueLabel: {
+                        Text("100%")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    },
+                    onEditingChanged: { editing in
+                        if !editing {
+                            scenery.flushPendingSettingsSave()
+                        }
+                    }
+                )
                 .accessibilityLabel("Scenery opacity")
                 .accessibilityValue("\(percentLabel) percent")
 
