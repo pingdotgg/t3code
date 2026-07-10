@@ -209,8 +209,9 @@ function ThreadNavigationSidebarPane(
         projectSortOrder: options.projectSortOrder,
         threadSortOrder: options.threadSortOrder,
         projectGroupingMode: options.projectGroupingMode,
+        showSubagentThreads,
       }),
-    [options, pendingTasks, projects, props.searchQuery, threads],
+    [options, pendingTasks, projects, props.searchQuery, showSubagentThreads, threads],
   );
   const [groupDisplayStates, setGroupDisplayStates] = useState<
     ReadonlyMap<string, HomeGroupDisplayState>
@@ -254,6 +255,7 @@ function ThreadNavigationSidebarPane(
         showAllThreads: hasSearchQuery,
         showSubagentThreads,
         expandedThreadKeys: effectiveExpandedSubagentThreadKeys,
+        pinnedThreadKey: props.selectedThreadKey,
         threadSortOrder: options.threadSortOrder,
       }),
     [
@@ -261,6 +263,7 @@ function ThreadNavigationSidebarPane(
       groups,
       groupDisplayStates,
       hasSearchQuery,
+      props.selectedThreadKey,
       showSubagentThreads,
       options.threadSortOrder,
     ],

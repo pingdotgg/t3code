@@ -1,7 +1,9 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   flattenSubagentThreadTree,
+  getSubagentThreadAncestorKeys,
   getSubagentThreadTreeRoots,
+  subagentThreadKey,
   type SubagentThreadTreeRow,
 } from "@t3tools/client-runtime/state/thread-relationships";
 import type { SidebarThreadSortOrder } from "@t3tools/contracts";
@@ -140,6 +142,12 @@ export function buildHomeListLayout(input: {
   /** Enables nested, collapsible subagent rows. Disabled by default. */
   readonly showSubagentThreads?: boolean;
   readonly expandedThreadKeys?: ReadonlySet<string>;
+  /**
+   * Key of an explicitly selected thread that must stay reachable. In nested
+   * mode, when its branch root falls past the pagination cut, that root is
+   * appended so the selection never disappears from the list.
+   */
+  readonly pinnedThreadKey?: string | null;
   readonly threadSortOrder?: SidebarThreadSortOrder;
 }): HomeListLayout {
   const items: HomeListItem[] = [];
@@ -162,10 +170,13 @@ export function buildHomeListLayout(input: {
       continue;
     }
 
-    const roots = getSubagentThreadTreeRoots(group.threads);
-    // Pagination is intentionally root-based: revealing a parent also reveals
-    // any expanded descendants without consuming additional page slots.
-    const totalCount = roots.length;
+    const nested = input.showSubagentThreads === true;
+    // In nested mode pagination is intentionally root-based: revealing a
+    // parent also reveals any expanded descendants without consuming
+    // additional page slots. When the feature is off, threads stay flat and
+    // subagent children paginate like any other thread.
+    const paginatedThreads = nested ? getSubagentThreadTreeRoots(group.threads) : group.threads;
+    const totalCount = paginatedThreads.length;
     // Default to the group's recent-activity window (last few days, or a small
     // fallback for stale projects), capped at the initial page size. Until the
     // user taps "Show more", older threads stay hidden to save vertical space;
@@ -184,22 +195,42 @@ export function buildHomeListLayout(input: {
             : baselineCount,
           totalCount,
         );
-    const visibleRoots = roots.slice(0, visibleCount);
-    const visibleThreadRows: readonly SubagentThreadTreeRow<EnvironmentThreadShell>[] =
-      input.showSubagentThreads === true
-        ? flattenSubagentThreadTree({
-            threads: group.threads,
-            roots: visibleRoots,
-            expandedThreadKeys: input.expandedThreadKeys ?? new Set(),
-            threadSortOrder: input.threadSortOrder ?? "updated_at",
-          })
-        : visibleRoots.map((thread) => ({
-            thread,
-            depth: 0,
-            hasSubagentChildren: false,
-            isSubagentBranchExpanded: false,
-          }));
-    const hiddenCount = totalCount - visibleCount;
+    let visibleRoots = paginatedThreads.slice(0, visibleCount);
+    if (nested && input.pinnedThreadKey != null && visibleRoots.length < totalCount) {
+      // A routed selection must stay reachable: when its branch root falls
+      // past the pagination cut, append that root so the branch still renders.
+      const pinnedBranchKeys = new Set([
+        input.pinnedThreadKey,
+        ...getSubagentThreadAncestorKeys(group.threads, input.pinnedThreadKey),
+      ]);
+      const isPinnedRoot = (thread: EnvironmentThreadShell) =>
+        pinnedBranchKeys.has(subagentThreadKey(thread));
+      if (!visibleRoots.some(isPinnedRoot)) {
+        const pinnedRoot = paginatedThreads.slice(visibleCount).find(isPinnedRoot);
+        if (pinnedRoot !== undefined) {
+          visibleRoots = [...visibleRoots, pinnedRoot];
+        }
+      }
+    }
+    const visibleThreadRows: readonly SubagentThreadTreeRow<EnvironmentThreadShell>[] = nested
+      ? flattenSubagentThreadTree({
+          threads: group.threads,
+          roots: visibleRoots,
+          // While searching, a match may sit under a collapsed parent; force
+          // every branch open so matches are never invisible.
+          expandedThreadKeys:
+            input.showAllThreads === true
+              ? new Set(group.threads.map(subagentThreadKey))
+              : (input.expandedThreadKeys ?? new Set()),
+          threadSortOrder: input.threadSortOrder ?? "updated_at",
+        })
+      : visibleRoots.map((thread) => ({
+          thread,
+          depth: 0,
+          hasSubagentChildren: false,
+          isSubagentBranchExpanded: false,
+        }));
+    const hiddenCount = totalCount - visibleRoots.length;
     const hasShowMoreRow = !input.showAllThreads && totalCount > baselineCount;
 
     // Pending (unsent) tasks lead the group and are never paginated away.
@@ -223,7 +254,7 @@ export function buildHomeListLayout(input: {
         depth: row.depth,
         hasSubagentChildren: row.hasSubagentChildren,
         isSubagentBranchExpanded: row.isSubagentBranchExpanded,
-        subagentTreeVisible: input.showSubagentThreads === true,
+        subagentTreeVisible: nested,
         isLast: threadIndex === visibleThreadRows.length - 1 && !hasShowMoreRow,
       });
     }

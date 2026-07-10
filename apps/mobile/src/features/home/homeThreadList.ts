@@ -39,7 +39,11 @@ export interface HomeThreadGroup {
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
   /** Full sorted thread history for the group (revealed when expanded / searching). */
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
-  /** Root-thread subset shown by default: roots from the last few days, or the newest few. */
+  /**
+   * Subset shown by default: threads from the last few days, or the most
+   * recent few. When the nested subagent presentation is on, only tree roots
+   * are counted so subagent children never consume default slots.
+   */
   readonly recentThreads: ReadonlyArray<EnvironmentThreadShell>;
   /**
    * Where a quick "new thread in this project" should land. For aggregated
@@ -97,6 +101,12 @@ export function buildHomeThreadGroups(input: {
   readonly projectSortOrder: HomeProjectSortOrder;
   readonly threadSortOrder: SidebarThreadSortOrder;
   readonly projectGroupingMode: SidebarProjectGroupingMode;
+  /**
+   * Mirrors the nested subagent list presentation. When true, the recency
+   * baseline counts only tree roots; when false (default), threads stay flat
+   * and subagent children count like any other thread.
+   */
+  readonly showSubagentThreads?: boolean;
   /** Current time used for the recency window; defaults to now. Injectable for tests. */
   readonly now?: number;
 }): ReadonlyArray<HomeThreadGroup> {
@@ -211,11 +221,14 @@ export function buildHomeThreadGroups(input: {
     const sortedThreads = sortThreads(matchingThreads, input.threadSortOrder);
     // An active search should reach the full history, so the recency window
     // only trims the default (no-query) view.
-    const rootThreads = getSubagentThreadTreeRoots(sortedThreads);
+    const recencyCandidates =
+      input.showSubagentThreads === true
+        ? getSubagentThreadTreeRoots(sortedThreads)
+        : sortedThreads;
     const recentThreads =
       query.length === 0
-        ? selectRecentThreads(rootThreads, input.threadSortOrder, now)
-        : rootThreads;
+        ? selectRecentThreads(recencyCandidates, input.threadSortOrder, now)
+        : recencyCandidates;
 
     // Sorted newest-first, so the first thread whose project is a group member
     // marks the machine the user last worked on.

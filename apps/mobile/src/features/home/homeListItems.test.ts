@@ -99,37 +99,84 @@ function displayStates(
   return new Map(Object.entries(entries));
 }
 
-describe("buildHomeListLayout", () => {
-  it("hides subagents by default and paginates only roots when nesting is enabled", () => {
-    const project = makeProject("nested", "nested");
-    const roots = Array.from({ length: 8 }, (_, index) => makeThread(`root-${index}`, project.id));
-    const children = roots.map((root, index) => {
-      const child = makeThread(`child-${index}`, project.id);
-      return {
-        ...child,
-        lineage: {
-          rootThreadId: root.id,
-          parentThreadId: root.id,
-          relationshipToParent: "subagent" as const,
-        },
-      };
-    });
-    const group: HomeThreadGroup = {
-      key: "nested",
-      title: "nested",
+function makeSubagentGroup(
+  key: string,
+  rootCount: number,
+): {
+  readonly roots: EnvironmentThreadShell[];
+  readonly children: EnvironmentThreadShell[];
+  readonly group: HomeThreadGroup;
+} {
+  const project = makeProject(key, key);
+  const roots = Array.from({ length: rootCount }, (_, index) =>
+    makeThread(`${key}-root-${index}`, project.id),
+  );
+  const children = roots.map((root, index) => {
+    const child = makeThread(`${key}-child-${index}`, project.id);
+    return {
+      ...child,
+      lineage: {
+        rootThreadId: root.id,
+        parentThreadId: root.id,
+        relationshipToParent: "subagent" as const,
+      },
+    };
+  });
+  const threads = roots.flatMap((root, index) => [root, children[index] as EnvironmentThreadShell]);
+  return {
+    roots,
+    children,
+    group: {
+      key,
+      title: key,
       representative: project,
       projects: [project],
       pendingTasks: [],
-      threads: roots.flatMap((root, index) => [root, children[index] as EnvironmentThreadShell]),
+      threads,
       recentThreads: roots,
       newThreadTarget: project,
-    };
+    },
+  };
+}
 
-    const hidden = buildHomeListLayout({ groups: [group], displayStates: new Map() });
+describe("buildHomeListLayout", () => {
+  it("keeps subagent children as plain flat rows when nesting is off", () => {
+    const { group } = makeSubagentGroup("flat", 8);
+    // With nesting off, `recentThreads` mirrors the pre-feature flat baseline.
+    const flatGroup: HomeThreadGroup = { ...group, recentThreads: group.threads };
+
+    const layout = buildHomeListLayout({ groups: [flatGroup], displayStates: new Map() });
+    const rows = layout.items.filter((item) => item.type === "thread");
+    // Children paginate exactly like any other thread: the first page is the
+    // first slice of the flat list (roots and children interleaved).
+    expect(rows.map((item) => item.thread.id)).toEqual(
+      flatGroup.threads.slice(0, HOME_INITIAL_VISIBLE_THREADS).map((thread) => thread.id),
+    );
+    expect(rows.map((item) => item.thread.id)).toContain("flat-child-0");
     expect(
-      hidden.items.filter((item) => item.type === "thread").map((item) => item.thread.id),
+      rows.every(
+        (item) => item.depth === 0 && !item.hasSubagentChildren && !item.subagentTreeVisible,
+      ),
+    ).toBe(true);
+    expect(layout.items.at(-1)).toMatchObject({
+      type: "show-more",
+      hiddenCount: flatGroup.threads.length - HOME_INITIAL_VISIBLE_THREADS,
+    });
+  });
+
+  it("paginates only roots and hides collapsed children when nesting is enabled", () => {
+    const { group, roots } = makeSubagentGroup("nested", 8);
+
+    const collapsed = buildHomeListLayout({
+      groups: [group],
+      displayStates: new Map(),
+      showSubagentThreads: true,
+      expandedThreadKeys: new Set(),
+    });
+    expect(
+      collapsed.items.filter((item) => item.type === "thread").map((item) => item.thread.id),
     ).toEqual(roots.slice(0, HOME_INITIAL_VISIBLE_THREADS).map((thread) => thread.id));
-    expect(hidden.items.at(-1)).toMatchObject({ type: "show-more", hiddenCount: 2 });
+    expect(collapsed.items.at(-1)).toMatchObject({ type: "show-more", hiddenCount: 2 });
 
     const expandedThreadKeys = new Set(
       roots.slice(0, HOME_INITIAL_VISIBLE_THREADS).map(subagentThreadKey),
@@ -146,6 +193,54 @@ describe("buildHomeListLayout", () => {
       Array.from({ length: HOME_INITIAL_VISIBLE_THREADS }, () => [0, 1]).flat(),
     );
     expect(nested.items.at(-1)).toMatchObject({ type: "show-more", hiddenCount: 2 });
+  });
+
+  it("reveals children under collapsed parents while searching in nested mode", () => {
+    const { group, children } = makeSubagentGroup("search", 2);
+
+    const layout = buildHomeListLayout({
+      groups: [group],
+      displayStates: new Map(),
+      showAllThreads: true,
+      showSubagentThreads: true,
+      // Nothing explicitly expanded: a search match under a collapsed parent
+      // must still render.
+      expandedThreadKeys: new Set(),
+    });
+
+    const rows = layout.items.filter((item) => item.type === "thread");
+    expect(rows.map((item) => item.thread.id)).toContain(children[0]?.id);
+    expect(rows.find((item) => item.thread.id === children[0]?.id)).toMatchObject({ depth: 1 });
+  });
+
+  it("keeps the pinned thread's branch visible when its root is paginated out", () => {
+    const { group, roots, children } = makeSubagentGroup("pinned", 8);
+    const lastRoot = roots.at(-1) as EnvironmentThreadShell;
+    const lastChild = children.at(-1) as EnvironmentThreadShell;
+
+    const unpinned = buildHomeListLayout({
+      groups: [group],
+      displayStates: new Map(),
+      showSubagentThreads: true,
+      expandedThreadKeys: new Set([subagentThreadKey(lastRoot)]),
+    });
+    expect(
+      unpinned.items.filter((item) => item.type === "thread").map((item) => item.thread.id),
+    ).not.toContain(lastChild.id);
+
+    const pinned = buildHomeListLayout({
+      groups: [group],
+      displayStates: new Map(),
+      showSubagentThreads: true,
+      expandedThreadKeys: new Set([subagentThreadKey(lastRoot)]),
+      pinnedThreadKey: subagentThreadKey(lastChild),
+    });
+    const rows = pinned.items.filter((item) => item.type === "thread");
+    // The selected branch's root is appended past the pagination cut, so both
+    // the root and the routed child render.
+    expect(rows.map((item) => item.thread.id)).toContain(lastRoot.id);
+    expect(rows.find((item) => item.thread.id === lastChild.id)).toMatchObject({ depth: 1 });
+    expect(pinned.items.at(-1)).toMatchObject({ type: "show-more", hiddenCount: 1 });
   });
 
   it("renders a header plus all threads for a small group without a show-more row", () => {

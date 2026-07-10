@@ -261,7 +261,7 @@ describe("buildHomeThreadGroups", () => {
     expect(group?.threads.map((thread) => thread.id)).toEqual(["recent-1", "recent-2", "old"]);
   });
 
-  it("uses roots for the recent-thread window instead of spending slots on subagents", () => {
+  it("uses roots for the recent-thread window only when nested subagents are shown", () => {
     const environmentId = EnvironmentId.make("environment-1");
     const project = makeProject({
       environmentId,
@@ -288,9 +288,17 @@ describe("buildHomeThreadGroups", () => {
       },
     });
 
-    const group = buildGroups([project], [root, child])[0];
-    expect(group?.threads.map((thread) => thread.id)).toEqual([child.id, root.id]);
-    expect(group?.recentThreads.map((thread) => thread.id)).toEqual([root.id]);
+    const nested = buildGroups([project], [root, child], { showSubagentThreads: true })[0];
+    expect(nested?.threads.map((thread) => thread.id)).toEqual([child.id, root.id]);
+    // Nested mode counts only tree roots, so the child never spends a slot.
+    expect(nested?.recentThreads.map((thread) => thread.id)).toEqual([root.id]);
+
+    // With the feature off, subagent children behave like any other thread:
+    // the recency window keeps the recently-updated child, matching the
+    // pre-feature flat behavior.
+    const flat = buildGroups([project], [root, child])[0];
+    expect(flat?.threads.map((thread) => thread.id)).toEqual([child.id, root.id]);
+    expect(flat?.recentThreads.map((thread) => thread.id)).toEqual([child.id]);
   });
 
   it("falls back to the most recent 3 threads when none are within 5 days", () => {

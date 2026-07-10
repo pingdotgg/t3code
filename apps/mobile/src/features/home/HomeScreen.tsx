@@ -240,6 +240,7 @@ export function HomeScreen(props: HomeScreenProps) {
         projectSortOrder: props.projectSortOrder,
         threadSortOrder: props.threadSortOrder,
         projectGroupingMode: props.projectGroupingMode,
+        showSubagentThreads: props.showSubagentThreads,
       }),
     [
       props.pendingTasks,
@@ -248,6 +249,7 @@ export function HomeScreen(props: HomeScreenProps) {
       props.projectSortOrder,
       props.searchQuery,
       props.selectedEnvironmentId,
+      props.showSubagentThreads,
       props.threadSortOrder,
       props.threads,
     ],
