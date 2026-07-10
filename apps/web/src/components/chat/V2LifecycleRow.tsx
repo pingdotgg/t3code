@@ -29,6 +29,13 @@ export function isV2LifecycleItem(item: OrchestrationV2TurnItem): boolean {
   return LIFECYCLE_TYPES.has(item.type);
 }
 
+const TERMINAL_SUBAGENT_STATUSES = new Set<OrchestrationV2TurnItem["status"]>([
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+]);
+
 export function V2LifecycleRow(props: {
   readonly item: OrchestrationV2TurnItem;
   readonly createdAt: string;
@@ -116,15 +123,17 @@ export function V2LifecycleRow(props: {
     );
   }
   if (item.type === "subagent") {
+    const finalResult =
+      TERMINAL_SUBAGENT_STATUSES.has(item.status) && item.result?.trim() ? item.result : null;
     return (
       <RelatedThreadCard
         itemType={item.type}
         icon={BotIcon}
         title={subagentDisplayTitle(item.title ?? "Subagent")}
-        detail={item.result ?? item.progress ?? item.prompt}
+        detail={finalResult ?? item.progress ?? item.prompt}
         badge={item.status}
         threadId={item.childThreadId}
-        expandedDetail={item.result}
+        expandedDetail={finalResult}
         onOpenThread={props.onOpenThread}
       />
     );
@@ -144,7 +153,7 @@ function RelatedThreadCard(props: {
 }) {
   const Icon = props.icon;
   const threadId = props.threadId;
-  const expandedDetail = props.expandedDetail?.trim() ? props.expandedDetail : null;
+  const expandedDetail = props.expandedDetail ?? null;
   const content = (
     <>
       <Icon className="size-3.5 shrink-0 text-muted-foreground" />
