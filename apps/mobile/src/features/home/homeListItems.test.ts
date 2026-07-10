@@ -3,6 +3,7 @@ import {
   type EnvironmentProject,
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
+import { subagentThreadKey } from "@t3tools/client-runtime/state/thread-relationships";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
@@ -99,6 +100,54 @@ function displayStates(
 }
 
 describe("buildHomeListLayout", () => {
+  it("hides subagents by default and paginates only roots when nesting is enabled", () => {
+    const project = makeProject("nested", "nested");
+    const roots = Array.from({ length: 8 }, (_, index) => makeThread(`root-${index}`, project.id));
+    const children = roots.map((root, index) => {
+      const child = makeThread(`child-${index}`, project.id);
+      return {
+        ...child,
+        lineage: {
+          rootThreadId: root.id,
+          parentThreadId: root.id,
+          relationshipToParent: "subagent" as const,
+        },
+      };
+    });
+    const group: HomeThreadGroup = {
+      key: "nested",
+      title: "nested",
+      representative: project,
+      projects: [project],
+      pendingTasks: [],
+      threads: roots.flatMap((root, index) => [root, children[index] as EnvironmentThreadShell]),
+      recentThreads: roots,
+      newThreadTarget: project,
+    };
+
+    const hidden = buildHomeListLayout({ groups: [group], displayStates: new Map() });
+    expect(
+      hidden.items.filter((item) => item.type === "thread").map((item) => item.thread.id),
+    ).toEqual(roots.slice(0, HOME_INITIAL_VISIBLE_THREADS).map((thread) => thread.id));
+    expect(hidden.items.at(-1)).toMatchObject({ type: "show-more", hiddenCount: 2 });
+
+    const expandedThreadKeys = new Set(
+      roots.slice(0, HOME_INITIAL_VISIBLE_THREADS).map(subagentThreadKey),
+    );
+    const nested = buildHomeListLayout({
+      groups: [group],
+      displayStates: new Map(),
+      showSubagentThreads: true,
+      expandedThreadKeys,
+    });
+    const nestedRows = nested.items.filter((item) => item.type === "thread");
+    expect(nestedRows).toHaveLength(HOME_INITIAL_VISIBLE_THREADS * 2);
+    expect(nestedRows.map((item) => item.depth)).toEqual(
+      Array.from({ length: HOME_INITIAL_VISIBLE_THREADS }, () => [0, 1]).flat(),
+    );
+    expect(nested.items.at(-1)).toMatchObject({ type: "show-more", hiddenCount: 2 });
+  });
+
   it("renders a header plus all threads for a small group without a show-more row", () => {
     const layout = buildHomeListLayout({
       groups: [makeGroup("alpha", 3)],

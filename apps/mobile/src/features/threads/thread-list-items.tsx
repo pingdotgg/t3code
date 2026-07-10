@@ -417,6 +417,11 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   readonly environmentLabel: string | null;
   readonly projectCwd: string | null;
   readonly isLast: boolean;
+  readonly depth?: number;
+  readonly hasSubagentChildren?: boolean;
+  readonly isSubagentBranchExpanded?: boolean;
+  readonly subagentTreeVisible?: boolean;
+  readonly onToggleSubagentBranch?: (thread: EnvironmentThreadShell) => void;
   /** Sidebar only: the thread currently open in the detail pane. */
   readonly selected?: boolean;
   /** Defaults to window width minus compact margins. */
@@ -526,7 +531,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
       </View>
     ) : null;
 
-  const rowContent = (close: () => void) =>
+  const rowButton = (close: () => void) =>
     compact ? (
       <Pressable
         accessibilityHint="Swipe left for archive and delete actions"
@@ -628,6 +633,69 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
       </Pressable>
     );
 
+  const rowContent = (close: () => void) => {
+    const treeVisible = props.subagentTreeVisible === true;
+    const hasChildren = props.hasSubagentChildren === true;
+    const expanded = props.isSubagentBranchExpanded === true;
+    const depth = props.depth ?? 0;
+    const disclosureSize = compact ? 28 : 24;
+    const disclosure = treeVisible ? (
+      hasChildren ? (
+        <Pressable
+          accessibilityLabel={`${expanded ? "Collapse" : "Expand"} subagents for ${thread.title}`}
+          accessibilityRole="button"
+          accessibilityState={{ expanded }}
+          hitSlop={6}
+          onPress={() => {
+            close();
+            props.onToggleSubagentBranch?.(thread);
+          }}
+          style={({ pressed }) => ({
+            alignItems: "center",
+            alignSelf: "stretch",
+            justifyContent: "center",
+            opacity: pressed ? 0.5 : 1,
+            width: disclosureSize,
+          })}
+        >
+          <SymbolView
+            name={expanded ? "chevron.down" : "chevron.right"}
+            size={compact ? 12 : 10}
+            tintColor={selected ? "#ffffff" : iconSubtleColor}
+            type="monochrome"
+            weight="semibold"
+          />
+        </Pressable>
+      ) : (
+        <View style={{ width: disclosureSize }} />
+      )
+    ) : null;
+
+    return (
+      <View
+        style={{
+          backgroundColor: treeVisible && selected ? selectedBackgroundColor : backgroundColor,
+          flexDirection: "row",
+          paddingLeft: treeVisible ? depth * (compact ? 16 : 14) : 0,
+        }}
+      >
+        {disclosure}
+        <View style={{ flex: 1 }}>
+          {/* Keep the disclosure and row as sibling controls so both remain
+              reachable to VoiceOver/TalkBack. */}
+          <ControlPillMenu
+            actions={THREAD_ROW_MENU_ACTIONS}
+            onPressAction={handleMenuAction}
+            shouldOpenOnLongPress
+            style={{ flex: 1 }}
+          >
+            {rowButton(close)}
+          </ControlPillMenu>
+        </View>
+      </View>
+    );
+  };
+
   return (
     <ThreadSwipeable
       backgroundColor={backgroundColor}
@@ -644,23 +712,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
       simultaneousWithExternalGesture={props.simultaneousSwipeGesture}
       threadTitle={thread.title}
     >
-      {(close) => (
-        // Messages-style row actions on long-press. iOS: a real
-        // UIContextMenuInteraction with the row as the zoom preview (needs the
-        // patched @react-native-menu, see
-        // patches/@react-native-menu__menu@2.0.0.patch — in long-press mode the
-        // interaction is hosted by the component view and the underlying
-        // UIButton passes touches through, so row taps keep working). Android:
-        // ControlPillMenu injects onLongPress into the row and anchors the
-        // token-styled dropdown to it; taps and swipes are untouched.
-        <ControlPillMenu
-          actions={THREAD_ROW_MENU_ACTIONS}
-          onPressAction={handleMenuAction}
-          shouldOpenOnLongPress
-        >
-          {rowContent(close)}
-        </ControlPillMenu>
-      )}
+      {(close) => rowContent(close)}
     </ThreadSwipeable>
   );
 });

@@ -172,9 +172,15 @@ describe("mobile connection storage", () => {
 
   it("loads legacy preferences when SQLite is unavailable", async () => {
     mocks.setDatabaseFailures(true, true);
-    await mocks.setItemAsync("t3code.preferences", JSON.stringify({ baseFontSize: 17 }));
+    await mocks.setItemAsync(
+      "t3code.preferences",
+      JSON.stringify({ baseFontSize: 17, showSubagentThreads: true }),
+    );
 
-    await expect(loadPreferences()).resolves.toEqual({ baseFontSize: 17 });
+    await expect(loadPreferences()).resolves.toEqual({
+      baseFontSize: 17,
+      showSubagentThreads: true,
+    });
   });
 
   it("falls back to secure storage when SQLite cannot save preferences", async () => {

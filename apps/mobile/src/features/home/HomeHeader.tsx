@@ -38,11 +38,13 @@ export function HomeHeader(props: {
   readonly projectSortOrder: HomeProjectSortOrder;
   readonly threadSortOrder: SidebarThreadSortOrder;
   readonly projectGroupingMode: SidebarProjectGroupingMode;
+  readonly showSubagentThreads: boolean;
   readonly onSearchQueryChange: (query: string) => void;
   readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
   readonly onProjectSortOrderChange: (sortOrder: HomeProjectSortOrder) => void;
   readonly onThreadSortOrderChange: (sortOrder: SidebarThreadSortOrder) => void;
   readonly onProjectGroupingModeChange: (mode: SidebarProjectGroupingMode) => void;
+  readonly onShowSubagentThreadsChange: (show: boolean) => void;
   readonly onOpenSettings: () => void;
   readonly onStartNewTask: () => void;
 }) {
@@ -63,7 +65,7 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
   const insets = useSafeAreaInsets();
   const iconColor = useThemeColor("--color-icon");
   const mutedColor = useThemeColor("--color-foreground-muted");
-  const hasCustomListOptions = hasCustomHomeListOptions(props);
+  const hasCustomListOptions = hasCustomHomeListOptions(props) || props.showSubagentThreads;
   const menuActions = useMemo<MenuAction[]>(
     () => [
       {
@@ -101,6 +103,12 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
         })),
       },
       {
+        id: "show-subagents",
+        title: "Show nested subagents",
+        subtitle: "Indent subagent threads beneath their parent",
+        state: checkedMenuState(props.showSubagentThreads),
+      },
+      {
         id: "project-grouping",
         title: "Group projects",
         subactions: PROJECT_GROUPING_OPTIONS.map((option) => ({
@@ -115,6 +123,7 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
       props.projectGroupingMode,
       props.projectSortOrder,
       props.selectedEnvironmentId,
+      props.showSubagentThreads,
       props.threadSortOrder,
     ],
   );
@@ -156,6 +165,10 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
       );
       if (grouping) {
         props.onProjectGroupingModeChange(grouping.value);
+        return;
+      }
+      if (id === "show-subagents") {
+        props.onShowSubagentThreadsChange(!props.showSubagentThreads);
       }
     },
     [props],
@@ -255,7 +268,7 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
 function IosHomeHeader(props: HomeHeaderProps) {
   const searchBarRef = useRef<SearchBarCommands>(null);
   const iconColor = useThemeColor("--color-icon");
-  const hasCustomListOptions = hasCustomHomeListOptions(props);
+  const hasCustomListOptions = hasCustomHomeListOptions(props) || props.showSubagentThreads;
   const focusSearch = useCallback(() => {
     searchBarRef.current?.focus();
     return searchBarRef.current !== null;
@@ -405,6 +418,14 @@ function IosHomeHeader(props: HomeHeaderProps) {
                 </NativeHeaderToolbar.MenuAction>
               ))}
             </NativeHeaderToolbar.Menu>
+
+            <NativeHeaderToolbar.MenuAction
+              isOn={props.showSubagentThreads}
+              onPress={() => props.onShowSubagentThreadsChange(!props.showSubagentThreads)}
+              subtitle="Indent subagent threads beneath their parent"
+            >
+              <NativeHeaderToolbar.Label>Show nested subagents</NativeHeaderToolbar.Label>
+            </NativeHeaderToolbar.MenuAction>
           </NativeHeaderToolbar.Menu>
           <NativeHeaderToolbar.Spacer width={8} sharesBackground={false} />
           <NativeHeaderToolbar.SearchBarSlot />

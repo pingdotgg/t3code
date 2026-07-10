@@ -1,4 +1,10 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import {
+  flattenSubagentThreadTree,
+  getSubagentThreadTreeRoots,
+  type SubagentThreadTreeRow,
+} from "@t3tools/client-runtime/state/thread-relationships";
+import type { SidebarThreadSortOrder } from "@t3tools/contracts";
 
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import type { HomeThreadGroup } from "./homeThreadList";
@@ -31,6 +37,10 @@ export interface HomeThreadListItem {
   readonly type: "thread";
   readonly key: string;
   readonly thread: EnvironmentThreadShell;
+  readonly depth: number;
+  readonly hasSubagentChildren: boolean;
+  readonly isSubagentBranchExpanded: boolean;
+  readonly subagentTreeVisible: boolean;
   readonly isLast: boolean;
 }
 
@@ -104,6 +114,10 @@ export function homeListItemsAreEqual(previous: HomeListItem, item: HomeListItem
       return (
         previous.type === "thread" &&
         previous.thread === item.thread &&
+        previous.depth === item.depth &&
+        previous.hasSubagentChildren === item.hasSubagentChildren &&
+        previous.isSubagentBranchExpanded === item.isSubagentBranchExpanded &&
+        previous.subagentTreeVisible === item.subagentTreeVisible &&
         previous.isLast === item.isLast
       );
     case "show-more":
@@ -123,6 +137,10 @@ export function buildHomeListLayout(input: {
    * When searching, pagination is suspended so every match stays visible.
    */
   readonly showAllThreads?: boolean;
+  /** Enables nested, collapsible subagent rows. Disabled by default. */
+  readonly showSubagentThreads?: boolean;
+  readonly expandedThreadKeys?: ReadonlySet<string>;
+  readonly threadSortOrder?: SidebarThreadSortOrder;
 }): HomeListLayout {
   const items: HomeListItem[] = [];
   const stickyHeaderIndices: number[] = [];
@@ -144,7 +162,10 @@ export function buildHomeListLayout(input: {
       continue;
     }
 
-    const totalCount = group.threads.length;
+    const roots = getSubagentThreadTreeRoots(group.threads);
+    // Pagination is intentionally root-based: revealing a parent also reveals
+    // any expanded descendants without consuming additional page slots.
+    const totalCount = roots.length;
     // Default to the group's recent-activity window (last few days, or a small
     // fallback for stale projects), capped at the initial page size. Until the
     // user taps "Show more", older threads stay hidden to save vertical space;
@@ -163,7 +184,21 @@ export function buildHomeListLayout(input: {
             : baselineCount,
           totalCount,
         );
-    const visibleThreads = group.threads.slice(0, visibleCount);
+    const visibleRoots = roots.slice(0, visibleCount);
+    const visibleThreadRows: readonly SubagentThreadTreeRow<EnvironmentThreadShell>[] =
+      input.showSubagentThreads === true
+        ? flattenSubagentThreadTree({
+            threads: group.threads,
+            roots: visibleRoots,
+            expandedThreadKeys: input.expandedThreadKeys ?? new Set(),
+            threadSortOrder: input.threadSortOrder ?? "updated_at",
+          })
+        : visibleRoots.map((thread) => ({
+            thread,
+            depth: 0,
+            hasSubagentChildren: false,
+            isSubagentBranchExpanded: false,
+          }));
     const hiddenCount = totalCount - visibleCount;
     const hasShowMoreRow = !input.showAllThreads && totalCount > baselineCount;
 
@@ -175,17 +210,21 @@ export function buildHomeListLayout(input: {
         pendingTask,
         isLast:
           pendingIndex === group.pendingTasks.length - 1 &&
-          visibleThreads.length === 0 &&
+          visibleThreadRows.length === 0 &&
           !hasShowMoreRow,
       });
     }
 
-    for (const [threadIndex, thread] of visibleThreads.entries()) {
+    for (const [threadIndex, row] of visibleThreadRows.entries()) {
       items.push({
         type: "thread",
-        key: `thread:${thread.environmentId}:${thread.id}`,
-        thread,
-        isLast: threadIndex === visibleThreads.length - 1 && !hasShowMoreRow,
+        key: `thread:${row.thread.environmentId}:${row.thread.id}`,
+        thread: row.thread,
+        depth: row.depth,
+        hasSubagentChildren: row.hasSubagentChildren,
+        isSubagentBranchExpanded: row.isSubagentBranchExpanded,
+        subagentTreeVisible: input.showSubagentThreads === true,
+        isLast: threadIndex === visibleThreadRows.length - 1 && !hasShowMoreRow,
       });
     }
 

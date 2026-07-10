@@ -261,6 +261,38 @@ describe("buildHomeThreadGroups", () => {
     expect(group?.threads.map((thread) => thread.id)).toEqual(["recent-1", "recent-2", "old"]);
   });
 
+  it("uses roots for the recent-thread window instead of spending slots on subagents", () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const project = makeProject({
+      environmentId,
+      id: ProjectId.make("project-1"),
+      title: "T3 Code",
+    });
+    const root = makeThread({
+      environmentId,
+      id: ThreadId.make("root"),
+      projectId: project.id,
+      title: "Root",
+      updatedAt: "2026-06-01T00:00:00.000Z",
+    });
+    const child = makeThread({
+      environmentId,
+      id: ThreadId.make("child"),
+      projectId: project.id,
+      title: "Subagent",
+      updatedAt: "2026-06-28T00:00:00.000Z",
+      lineage: {
+        rootThreadId: root.id,
+        parentThreadId: root.id,
+        relationshipToParent: "subagent",
+      },
+    });
+
+    const group = buildGroups([project], [root, child])[0];
+    expect(group?.threads.map((thread) => thread.id)).toEqual([child.id, root.id]);
+    expect(group?.recentThreads.map((thread) => thread.id)).toEqual([root.id]);
+  });
+
   it("falls back to the most recent 3 threads when none are within 5 days", () => {
     const environmentId = EnvironmentId.make("environment-1");
     const project = makeProject({

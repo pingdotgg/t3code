@@ -16,6 +16,7 @@ import { HomeScreen } from "./HomeScreen";
 import { HomeHeader } from "./HomeHeader";
 import { useHomeListOptions } from "./home-list-options";
 import { usePendingTaskListActions } from "./usePendingTaskListActions";
+import { useSubagentThreadListPreference } from "./use-subagent-thread-list-preference";
 import { useThreadListActions } from "./useThreadListActions";
 
 /* ─── Route screen ───────────────────────────────────────────────────── */
@@ -29,6 +30,7 @@ export function HomeRouteScreen() {
   const navigation = useNavigation();
   const [searchQuery, setSearchQuery] = useState("");
   const { archiveThread, confirmDeleteThread } = useThreadListActions();
+  const { showSubagentThreads, setShowSubagentThreads } = useSubagentThreadListPreference();
   const pendingTasks = usePendingNewTasks();
   const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions();
   const environments = useMemo(
@@ -94,11 +96,13 @@ export function HomeRouteScreen() {
           projectSortOrder={listOptions.projectSortOrder}
           threadSortOrder={listOptions.threadSortOrder}
           projectGroupingMode={listOptions.projectGroupingMode}
+          showSubagentThreads={showSubagentThreads}
           onEnvironmentChange={setSelectedEnvironmentId}
           onOpenSettings={() => navigation.navigate("SettingsSheet", { screen: "Settings" })}
           onProjectGroupingModeChange={setProjectGroupingMode}
           onProjectSortOrderChange={setProjectSortOrder}
           onSearchQueryChange={setSearchQuery}
+          onShowSubagentThreadsChange={setShowSubagentThreads}
           onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
           onThreadSortOrderChange={setThreadSortOrder}
         />
@@ -145,6 +149,7 @@ export function HomeRouteScreen() {
           projectSortOrder={listOptions.projectSortOrder}
           savedConnectionsById={savedConnectionsById}
           searchQuery={searchQuery}
+          showSubagentThreads={showSubagentThreads}
           selectedEnvironmentId={selectedEnvironmentId}
           threads={threads}
           threadSortOrder={listOptions.threadSortOrder}

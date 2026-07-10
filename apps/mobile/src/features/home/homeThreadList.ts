@@ -7,6 +7,7 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import { getThreadSortTimestamp, sortThreads } from "@t3tools/client-runtime/state/thread-sort";
+import { getSubagentThreadTreeRoots } from "@t3tools/client-runtime/state/thread-relationships";
 import type {
   EnvironmentId,
   SidebarProjectGroupingMode,
@@ -38,7 +39,7 @@ export interface HomeThreadGroup {
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
   /** Full sorted thread history for the group (revealed when expanded / searching). */
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
-  /** Subset shown by default: threads from the last few days, or the most recent few. */
+  /** Root-thread subset shown by default: roots from the last few days, or the newest few. */
   readonly recentThreads: ReadonlyArray<EnvironmentThreadShell>;
   /**
    * Where a quick "new thread in this project" should land. For aggregated
@@ -210,10 +211,11 @@ export function buildHomeThreadGroups(input: {
     const sortedThreads = sortThreads(matchingThreads, input.threadSortOrder);
     // An active search should reach the full history, so the recency window
     // only trims the default (no-query) view.
+    const rootThreads = getSubagentThreadTreeRoots(sortedThreads);
     const recentThreads =
       query.length === 0
-        ? selectRecentThreads(sortedThreads, input.threadSortOrder, now)
-        : sortedThreads;
+        ? selectRecentThreads(rootThreads, input.threadSortOrder, now)
+        : rootThreads;
 
     // Sorted newest-first, so the first thread whose project is a group member
     // marks the machine the user last worked on.

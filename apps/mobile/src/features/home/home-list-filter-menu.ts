@@ -41,10 +41,12 @@ export function buildHomeListFilterMenu(props: {
   readonly projectSortOrder: HomeProjectSortOrder;
   readonly threadSortOrder: SidebarThreadSortOrder;
   readonly projectGroupingMode: SidebarProjectGroupingMode;
+  readonly showSubagentThreads: boolean;
   readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
   readonly onProjectSortOrderChange: (sortOrder: HomeProjectSortOrder) => void;
   readonly onThreadSortOrderChange: (sortOrder: SidebarThreadSortOrder) => void;
   readonly onProjectGroupingModeChange: (mode: SidebarProjectGroupingMode) => void;
+  readonly onShowSubagentThreadsChange: (show: boolean) => void;
   readonly onOpenSettings?: () => void;
 }): HomeListFilterMenu {
   const items: Array<HomeListFilterMenuAction | HomeListFilterMenuSubmenu> = [];
@@ -58,6 +60,13 @@ export function buildHomeListFilterMenu(props: {
   }
 
   items.push(
+    {
+      type: "action",
+      title: "Show nested subagents",
+      subtitle: "Indent subagent threads beneath their parent",
+      state: props.showSubagentThreads ? "on" : "off",
+      onPress: () => props.onShowSubagentThreadsChange(!props.showSubagentThreads),
+    },
     {
       type: "submenu",
       title: "Environment",

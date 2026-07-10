@@ -7,6 +7,7 @@ import {
   type EnvironmentProject,
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
+import { subagentThreadKey } from "@t3tools/client-runtime/state/thread-relationships";
 import type {
   EnvironmentId,
   SidebarProjectGroupingMode,
@@ -61,6 +62,7 @@ interface HomeScreenProps {
   readonly projectSortOrder: HomeProjectSortOrder;
   readonly threadSortOrder: SidebarThreadSortOrder;
   readonly projectGroupingMode: SidebarProjectGroupingMode;
+  readonly showSubagentThreads: boolean;
   readonly onSearchQueryChange: (query: string) => void;
   readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
   readonly onProjectSortOrderChange: (sortOrder: HomeProjectSortOrder) => void;
@@ -161,6 +163,9 @@ export function HomeScreen(props: HomeScreenProps) {
   const [groupDisplayStates, setGroupDisplayStates] = useState<
     ReadonlyMap<string, HomeGroupDisplayState>
   >(() => new Map());
+  const [expandedSubagentThreadKeys, setExpandedSubagentThreadKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
@@ -249,14 +254,33 @@ export function HomeScreen(props: HomeScreenProps) {
   );
 
   const hasSearchQuery = props.searchQuery.trim().length > 0;
+  const toggleSubagentBranch = useCallback((thread: EnvironmentThreadShell) => {
+    const key = subagentThreadKey(thread);
+    setExpandedSubagentThreadKeys((previous) => {
+      const next = new Set(previous);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
   const listLayout = useMemo(
     () =>
       buildHomeListLayout({
         groups: projectGroups,
         displayStates: effectiveGroupDisplayStates,
         showAllThreads: hasSearchQuery,
+        showSubagentThreads: props.showSubagentThreads,
+        expandedThreadKeys: expandedSubagentThreadKeys,
+        threadSortOrder: props.threadSortOrder,
       }),
-    [projectGroups, effectiveGroupDisplayStates, hasSearchQuery],
+    [
+      projectGroups,
+      effectiveGroupDisplayStates,
+      expandedSubagentThreadKeys,
+      hasSearchQuery,
+      props.showSubagentThreads,
+      props.threadSortOrder,
+    ],
   );
 
   const projectCwdByKey = useMemo(() => {
@@ -322,6 +346,11 @@ export function HomeScreen(props: HomeScreenProps) {
                 null
               }
               isLast={item.isLast}
+              depth={item.depth}
+              hasSubagentChildren={item.hasSubagentChildren}
+              isSubagentBranchExpanded={item.isSubagentBranchExpanded}
+              subagentTreeVisible={item.subagentTreeVisible}
+              onToggleSubagentBranch={toggleSubagentBranch}
               onArchiveThread={props.onArchiveThread}
               onDeleteThread={props.onDeleteThread}
               onSelectThread={props.onSelectThread}
@@ -353,6 +382,7 @@ export function HomeScreen(props: HomeScreenProps) {
       props.onSelectPendingTask,
       props.onSelectThread,
       props.savedConnectionsById,
+      toggleSubagentBranch,
       updateGroupDisplay,
     ],
   );

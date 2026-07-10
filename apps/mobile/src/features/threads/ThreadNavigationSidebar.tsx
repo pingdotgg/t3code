@@ -3,6 +3,10 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
+import {
+  getSubagentThreadAncestorKeys,
+  subagentThreadKey,
+} from "@t3tools/client-runtime/state/thread-relationships";
 import { LegendList } from "@legendapp/list/react-native";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
@@ -33,6 +37,7 @@ import {
   useHomeListOptions,
 } from "../home/home-list-options";
 import { buildHomeListFilterMenu } from "../home/home-list-filter-menu";
+import { useSubagentThreadListPreference } from "../home/use-subagent-thread-list-preference";
 import {
   buildHomeListLayout,
   DEFAULT_GROUP_DISPLAY_STATE,
@@ -169,6 +174,7 @@ function ThreadNavigationSidebarPane(
   const headerIsOverContentRef = useRef(false);
   const sidebarScrollGesture = useMemo(() => Gesture.Native(), []);
   const { archiveThread, confirmDeleteThread } = useThreadListActions();
+  const { showSubagentThreads, setShowSubagentThreads } = useSubagentThreadListPreference();
   const pendingTasks = usePendingNewTasks();
   const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions();
   const environments = useMemo(
@@ -209,6 +215,9 @@ function ThreadNavigationSidebarPane(
   const [groupDisplayStates, setGroupDisplayStates] = useState<
     ReadonlyMap<string, HomeGroupDisplayState>
   >(() => new Map());
+  const [expandedSubagentThreadKeys, setExpandedSubagentThreadKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const updateGroupDisplay = useCallback((key: string, action: HomeGroupDisplayAction) => {
     setGroupDisplayStates((previous) => {
       const next = new Map(previous);
@@ -220,14 +229,41 @@ function ThreadNavigationSidebarPane(
     });
   }, []);
   const hasSearchQuery = props.searchQuery.trim().length > 0;
+  const effectiveExpandedSubagentThreadKeys = useMemo(() => {
+    const next = new Set(expandedSubagentThreadKeys);
+    const visibleThreads = groups.flatMap((group) => group.threads);
+    for (const key of getSubagentThreadAncestorKeys(visibleThreads, props.selectedThreadKey)) {
+      next.add(key);
+    }
+    return next;
+  }, [expandedSubagentThreadKeys, groups, props.selectedThreadKey]);
+  const toggleSubagentBranch = useCallback((thread: EnvironmentThreadShell) => {
+    const key = subagentThreadKey(thread);
+    setExpandedSubagentThreadKeys((previous) => {
+      const next = new Set(previous);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
   const listLayout = useMemo(
     () =>
       buildHomeListLayout({
         groups,
         displayStates: groupDisplayStates,
         showAllThreads: hasSearchQuery,
+        showSubagentThreads,
+        expandedThreadKeys: effectiveExpandedSubagentThreadKeys,
+        threadSortOrder: options.threadSortOrder,
       }),
-    [groups, groupDisplayStates, hasSearchQuery],
+    [
+      effectiveExpandedSubagentThreadKeys,
+      groups,
+      groupDisplayStates,
+      hasSearchQuery,
+      showSubagentThreads,
+      options.threadSortOrder,
+    ],
   );
   const projectCwdByKey = useMemo(() => {
     const map = new Map<string, string>();
@@ -278,6 +314,12 @@ function ThreadNavigationSidebarPane(
         })),
       },
       {
+        id: "show-subagents",
+        title: "Show nested subagents",
+        subtitle: "Indent subagent threads beneath their parent",
+        state: showSubagentThreads ? "on" : "off",
+      },
+      {
         id: "project-grouping",
         title: "Group projects",
         subactions: PROJECT_GROUPING_OPTIONS.map((option) => ({
@@ -288,7 +330,7 @@ function ThreadNavigationSidebarPane(
         })),
       },
     ],
-    [environments, options],
+    [environments, options, showSubagentThreads],
   );
   const handleListMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
@@ -322,13 +364,18 @@ function ThreadNavigationSidebarPane(
         (option) => `project-grouping:${option.value}` === event,
       );
       if (grouping) setProjectGroupingMode(grouping.value);
+      if (event === "show-subagents") {
+        setShowSubagentThreads(!showSubagentThreads);
+      }
     },
     [
       environments,
       setProjectGroupingMode,
       setProjectSortOrder,
       setSelectedEnvironmentId,
+      setShowSubagentThreads,
       setThreadSortOrder,
+      showSubagentThreads,
     ],
   );
 
@@ -448,6 +495,11 @@ function ThreadNavigationSidebarPane(
                 null
               }
               isLast={item.isLast}
+              depth={item.depth}
+              hasSubagentChildren={item.hasSubagentChildren}
+              isSubagentBranchExpanded={item.isSubagentBranchExpanded}
+              subagentTreeVisible={item.subagentTreeVisible}
+              onToggleSubagentBranch={toggleSubagentBranch}
               selected={
                 scopedThreadKey(thread.environmentId, thread.id) === props.selectedThreadKey
               }
@@ -487,12 +539,14 @@ function ThreadNavigationSidebarPane(
       props.width,
       savedConnectionsById,
       sidebarScrollGesture,
+      toggleSubagentBranch,
       updateGroupDisplay,
     ],
   );
-  const filterIcon = hasCustomHomeListOptions(options)
-    ? "line.3.horizontal.decrease.circle.fill"
-    : "line.3.horizontal.decrease.circle";
+  const filterIcon =
+    hasCustomHomeListOptions(options) || showSubagentThreads
+      ? "line.3.horizontal.decrease.circle.fill"
+      : "line.3.horizontal.decrease.circle";
   const filterMenu = useMemo(
     () =>
       buildHomeListFilterMenu({
@@ -501,10 +555,12 @@ function ThreadNavigationSidebarPane(
         projectSortOrder: options.projectSortOrder,
         threadSortOrder: options.threadSortOrder,
         projectGroupingMode: options.projectGroupingMode,
+        showSubagentThreads,
         onEnvironmentChange: setSelectedEnvironmentId,
         onProjectSortOrderChange: setProjectSortOrder,
         onThreadSortOrderChange: setThreadSortOrder,
         onProjectGroupingModeChange: setProjectGroupingMode,
+        onShowSubagentThreadsChange: setShowSubagentThreads,
       }),
     [
       environments,
@@ -512,7 +568,9 @@ function ThreadNavigationSidebarPane(
       setProjectGroupingMode,
       setProjectSortOrder,
       setSelectedEnvironmentId,
+      setShowSubagentThreads,
       setThreadSortOrder,
+      showSubagentThreads,
     ],
   );
   const nativeHeaderItems = useMemo(
