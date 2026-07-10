@@ -84,28 +84,91 @@ export function sanitizeSceneName(raw: string): string {
   return `${normalized.slice(0, 45).trimEnd()}...`;
 }
 
+type SceneryTimeOfDayTag = "dawn" | "day" | "dusk" | "night";
+type ScenerySeasonTag = "spring" | "summer" | "autumn" | "winter";
+
+type SceneryQuerySanitized = {
+  text: string;
+  timeOfDay?: SceneryTimeOfDayTag | undefined;
+  season?: ScenerySeasonTag | undefined;
+};
+
+type SceneryLocationSanitized = {
+  name: string;
+  query: string;
+  timeOfDay?: SceneryTimeOfDayTag | undefined;
+  season?: ScenerySeasonTag | undefined;
+};
+
+function sanitizeOptionalTags(raw: {
+  timeOfDay?: string | undefined;
+  season?: string | undefined;
+}): {
+  timeOfDay?: SceneryTimeOfDayTag | undefined;
+  season?: ScenerySeasonTag | undefined;
+} {
+  const timeOfDay =
+    raw.timeOfDay && SCENERY_TIME_OF_DAY.has(raw.timeOfDay)
+      ? (raw.timeOfDay as SceneryTimeOfDayTag)
+      : undefined;
+  const season =
+    raw.season && SCENERY_SEASON.has(raw.season) ? (raw.season as ScenerySeasonTag) : undefined;
+  return {
+    ...(timeOfDay ? { timeOfDay } : {}),
+    ...(season ? { season } : {}),
+  };
+}
+
 /**
- * Normalise model scenery-set output: unique non-empty scene names and
- * non-empty queries with optional valid tags.
+ * Normalise model scenery-set output: unique named locations (capped),
+ * derived scene names, and non-empty general queries with optional valid tags.
  */
 export function sanitizeScenerySetResult(input: {
-  sceneNames: ReadonlyArray<string>;
-  queries: ReadonlyArray<{
-    text: string;
-    timeOfDay?: string | undefined;
-    season?: string | undefined;
-  }>;
+  sceneNames?: ReadonlyArray<string> | undefined;
+  queries?:
+    | ReadonlyArray<{
+        text: string;
+        timeOfDay?: string | undefined;
+        season?: string | undefined;
+      }>
+    | undefined;
+  locations?:
+    | ReadonlyArray<{
+        name: string;
+        query: string;
+        timeOfDay?: string | undefined;
+        season?: string | undefined;
+      }>
+    | undefined;
 }): {
   sceneNames: string[];
-  queries: Array<{
-    text: string;
-    timeOfDay?: "dawn" | "day" | "dusk" | "night" | undefined;
-    season?: "spring" | "summer" | "autumn" | "winter" | undefined;
-  }>;
+  queries: SceneryQuerySanitized[];
+  locations?: SceneryLocationSanitized[] | undefined;
 } {
+  const seenLocationNames = new Set<string>();
+  const locations: SceneryLocationSanitized[] = [];
+  for (const raw of input.locations ?? []) {
+    const name = sanitizeSceneName(raw.name);
+    const query = raw.query.trim().replace(/\s+/g, " ");
+    if (!name || !query) continue;
+    const key = name.toLowerCase();
+    if (seenLocationNames.has(key)) continue;
+    seenLocationNames.add(key);
+    locations.push({
+      name,
+      query,
+      ...sanitizeOptionalTags(raw),
+    });
+    // Hard cap: never exceed 16 locations even if the model returns more.
+    if (locations.length >= 16) break;
+  }
+
   const seenNames = new Set<string>();
   const sceneNames: string[] = [];
-  for (const raw of input.sceneNames) {
+  // Prefer authentic place names from locations when present.
+  const nameSources =
+    locations.length > 0 ? locations.map((l) => l.name) : (input.sceneNames ?? []);
+  for (const raw of nameSources) {
     const name = sanitizeSceneName(raw);
     if (!name) continue;
     const key = name.toLowerCase();
@@ -116,37 +179,27 @@ export function sanitizeScenerySetResult(input: {
   }
 
   const seenQueries = new Set<string>();
-  const queries: Array<{
-    text: string;
-    timeOfDay?: "dawn" | "day" | "dusk" | "night" | undefined;
-    season?: "spring" | "summer" | "autumn" | "winter" | undefined;
-  }> = [];
+  const queries: SceneryQuerySanitized[] = [];
 
-  for (const raw of input.queries) {
+  for (const raw of input.queries ?? []) {
     const text = raw.text.trim().replace(/\s+/g, " ");
     if (!text) continue;
     const key = text.toLowerCase();
     if (seenQueries.has(key)) continue;
     seenQueries.add(key);
 
-    const timeOfDay =
-      raw.timeOfDay && SCENERY_TIME_OF_DAY.has(raw.timeOfDay)
-        ? (raw.timeOfDay as "dawn" | "day" | "dusk" | "night")
-        : undefined;
-    const season =
-      raw.season && SCENERY_SEASON.has(raw.season)
-        ? (raw.season as "spring" | "summer" | "autumn" | "winter")
-        : undefined;
-
     queries.push({
       text,
-      ...(timeOfDay ? { timeOfDay } : {}),
-      ...(season ? { season } : {}),
+      ...sanitizeOptionalTags(raw),
     });
     if (queries.length >= 12) break;
   }
 
-  return { sceneNames, queries };
+  return {
+    sceneNames,
+    queries,
+    ...(locations.length > 0 ? { locations } : {}),
+  };
 }
 
 /** CLI name to human-readable label, e.g. "codex" → "Codex CLI (`codex`)" */

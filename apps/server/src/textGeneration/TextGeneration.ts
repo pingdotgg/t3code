@@ -76,6 +76,15 @@ export interface ScenerySetQueryGeneration {
   season?: ScenerySeason | undefined;
 }
 
+export interface ScenerySetLocationGeneration {
+  /** Authentic place name, e.g. "Kirkjufell". */
+  name: string;
+  /** Unsplash search that finds photos of that place. */
+  query: string;
+  timeOfDay?: SceneryTimeOfDay | undefined;
+  season?: ScenerySeason | undefined;
+}
+
 export interface ScenerySetGenerationInput {
   cwd: string;
   /** User-typed location name, e.g. "Kyoto" or "Norwegian Fjords". */
@@ -85,10 +94,12 @@ export interface ScenerySetGenerationInput {
 }
 
 export interface ScenerySetGenerationResult {
-  /** ~30 real place/viewpoint names for the location. */
+  /** Authentic place names (derived from `locations` when present). */
   sceneNames: string[];
-  /** 6-10 Unsplash search queries, mix of untagged + tagged variants. */
+  /** General Unsplash search queries for variety top-up. */
   queries: ScenerySetQueryGeneration[];
+  /** Per-location name + place-specific query (preferred client fetch path). */
+  locations?: ScenerySetLocationGeneration[] | undefined;
 }
 
 export interface TextGenerationService {
