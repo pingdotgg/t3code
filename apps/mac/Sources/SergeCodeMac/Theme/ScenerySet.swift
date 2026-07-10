@@ -164,6 +164,28 @@ public struct SceneryPalette: Codable, Hashable, Sendable {
     }
 }
 
+/// One iconic place used to fetch and name a pool photo. Persisted on the set
+/// so `refreshPool` can re-fetch with authentic place names instead of
+/// round-robining curated names onto generic top-up photos.
+public struct SceneryLocation: Codable, Hashable, Sendable {
+    public var name: String
+    public var query: String
+    public var timeOfDay: SceneryTimeOfDay?
+    public var season: ScenerySeason?
+
+    public init(
+        name: String,
+        query: String,
+        timeOfDay: SceneryTimeOfDay? = nil,
+        season: ScenerySeason? = nil
+    ) {
+        self.name = name
+        self.query = query
+        self.timeOfDay = timeOfDay
+        self.season = season
+    }
+}
+
 /// A curated location photo set: manifest + on-disk pool under `sets/<id>/`.
 public struct ScenerySet: Codable, Hashable, Sendable, Identifiable {
     public var id: String
@@ -172,6 +194,9 @@ public struct ScenerySet: Codable, Hashable, Sendable, Identifiable {
     public var createdAt: Date
     public var queries: [SceneryQuery]
     public var sceneNames: [String]
+    /// Per-location fetch targets. Nil/empty → legacy query-pool refresh
+    /// (round-robin `sceneNames`). Absent from older manifests → nil.
+    public var locations: [SceneryLocation]?
     public var palette: SceneryPalette?
 
     public init(
@@ -181,6 +206,7 @@ public struct ScenerySet: Codable, Hashable, Sendable, Identifiable {
         createdAt: Date,
         queries: [SceneryQuery],
         sceneNames: [String],
+        locations: [SceneryLocation]? = nil,
         palette: SceneryPalette? = nil
     ) {
         self.id = id
@@ -189,6 +215,7 @@ public struct ScenerySet: Codable, Hashable, Sendable, Identifiable {
         self.createdAt = createdAt
         self.queries = queries
         self.sceneNames = sceneNames
+        self.locations = locations
         self.palette = palette
     }
 

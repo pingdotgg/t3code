@@ -574,6 +574,15 @@ export const GenerateScenerySetQuery = Schema.Struct({
 });
 export type GenerateScenerySetQuery = typeof GenerateScenerySetQuery.Type;
 
+/** One iconic place with a search query that finds photos of that place. */
+export const GenerateSceneryLocation = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  query: TrimmedNonEmptyString,
+  timeOfDay: Schema.optional(SceneryTimeOfDay),
+  season: Schema.optional(ScenerySeason),
+});
+export type GenerateSceneryLocation = typeof GenerateSceneryLocation.Type;
+
 export const GenerateScenerySetInput = Schema.Struct({
   location: TrimmedNonEmptyString,
 });
@@ -582,6 +591,8 @@ export type GenerateScenerySetInput = typeof GenerateScenerySetInput.Type;
 export const GenerateScenerySetResult = Schema.Struct({
   sceneNames: Schema.Array(TrimmedNonEmptyString),
   queries: Schema.Array(GenerateScenerySetQuery),
+  /** Per-location fetch targets (name + matching Unsplash query). Optional for older clients/servers. */
+  locations: Schema.optional(Schema.Array(GenerateSceneryLocation)),
 });
 export type GenerateScenerySetResult = typeof GenerateScenerySetResult.Type;
 

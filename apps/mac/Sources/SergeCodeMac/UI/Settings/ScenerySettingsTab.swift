@@ -306,7 +306,9 @@ struct ScenerySettingsTab: View {
                         set: set,
                         scenery: scenery,
                         isDefault: set.id == scenery.defaultSetId,
+                        isComposerBusy: isComposerBusy,
                         onSetDefault: { scenery.setDefaultSetId(set.id) },
+                        onRegenerate: { regenerateSet(set) },
                         onDelete: {
                             setPendingDelete = set
                             showDeleteConfirm = true
@@ -353,6 +355,15 @@ struct ScenerySettingsTab: View {
         composer.createSet(location: trimmed)
     }
 
+    /// Rebuilds a custom set in place (same set id) so broken caption-era
+    /// names are replaced with authentic place names + matching photos.
+    private func regenerateSet(_ set: ScenerySet) {
+        guard !isComposerBusy else { return }
+        guard set.origin == .custom, set.id != ScenerySet.dolomitesID else { return }
+        locationName = set.title
+        composer.createSet(location: set.title, replacingSetId: set.id)
+    }
+
     private func deleteSet(_ set: ScenerySet) {
         defer { setPendingDelete = nil }
         do {
@@ -377,7 +388,9 @@ private struct ScenerySetGalleryRow: View {
     let set: ScenerySet
     let scenery: SceneryStore
     let isDefault: Bool
+    let isComposerBusy: Bool
     let onSetDefault: () -> Void
+    let onRegenerate: () -> Void
     let onDelete: () -> Void
 
     private var photos: [SceneryPhoto] {
@@ -436,6 +449,8 @@ private struct ScenerySetGalleryRow: View {
                     Button("Set as Default") { onSetDefault() }
                 }
                 if set.origin == .custom {
+                    Button("Regenerate") { onRegenerate() }
+                        .disabled(isComposerBusy)
                     Divider()
                     Button("Delete…", role: .destructive) { onDelete() }
                 }

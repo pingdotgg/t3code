@@ -73,7 +73,10 @@ public final class SceneSetComposer {
     }
 
     /// Start creating a custom set for `location`. Cancels any in-flight run.
-    public func createSet(location: String) {
+    ///
+    /// When `replacingSetId` is set, the new pool is registered under that id
+    /// (in-place regenerate) instead of a fresh slug derived from the title.
+    public func createSet(location: String, replacingSetId: String? = nil) {
         cancel()
         let trimmed = location.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -84,9 +87,15 @@ public final class SceneSetComposer {
             state = .failed(.missingUnsplashKey)
             return
         }
+        if let replacingSetId {
+            guard let existing = store.set(id: replacingSetId), existing.origin == .custom else {
+                state = .failed(.backendFailure("That scenery set cannot be regenerated."))
+                return
+            }
+        }
 
         workTask = Task { [weak self] in
-            await self?.runCreate(location: trimmed)
+            await self?.runCreate(location: trimmed, replacingSetId: replacingSetId)
         }
     }
 
@@ -108,7 +117,7 @@ public final class SceneSetComposer {
 
     // MARK: - Pipeline
 
-    private func runCreate(location: String) async {
+    private func runCreate(location: String, replacingSetId: String?) async {
         state = .generatingNames
 
         let generated: GeneratedScenerySet
@@ -130,26 +139,31 @@ public final class SceneSetComposer {
             return
         }
 
-        let setId = ScenerySetSlug.make(from: location)
+        // Prefer explicit replace id so title edits / random slug suffixes do
+        // not orphan the existing set on regenerate.
+        let setId = replacingSetId ?? ScenerySetSlug.make(from: location)
         let title = location
-        var sceneNames = Self.normalizeSceneNames(generated.sceneNames)
         /// Set only after `registerSet` succeeds for this run — used to roll
-        /// back if cancel lands during palette extraction.
+        /// back if cancel lands during palette extraction. Never roll back a
+        /// regenerate (would wipe the set the user already had).
         var registeredSetId: String?
+        let isReplace = replacingSetId != nil
 
         do {
-            let (photos, metaNames, photoTags) = try await fetchPool(
-                queries: queries,
-                sceneNames: sceneNames,
-                location: location)
+            let generatedLocations = generated.locations ?? []
+            let persistedLocations = Self.makeStoreLocations(from: generatedLocations)
+            let poolResult: PoolBuildResult
+            if !persistedLocations.isEmpty {
+                poolResult = try await fetchPoolFromLocations(
+                    locations: persistedLocations,
+                    queries: queries,
+                    location: location)
+            } else {
+                poolResult = try await fetchPoolLegacy(
+                    queries: queries,
+                    location: location)
+            }
             try Task.checkCancellation()
-
-            if sceneNames.count < 8, !metaNames.isEmpty {
-                sceneNames = Self.normalizeSceneNames(sceneNames + metaNames)
-            }
-            if sceneNames.isEmpty {
-                sceneNames = Self.numberedNames(location: location, count: max(photos.count, 12))
-            }
 
             let set = ScenerySet(
                 id: setId,
@@ -157,25 +171,25 @@ public final class SceneSetComposer {
                 origin: .custom,
                 createdAt: Date(),
                 queries: queries,
-                sceneNames: sceneNames,
+                sceneNames: poolResult.sceneNames,
+                locations: persistedLocations.isEmpty ? nil : persistedLocations,
                 palette: nil)
 
-            // Re-apply names against the final sceneNames list.
-            let namedPhotos = photos.enumerated().map { index, photo in
-                var copy = photo
-                let base = sceneNames[index % sceneNames.count]
-                copy.name = base
-                return copy
+            store.registerSet(
+                set,
+                pool: poolResult.photos,
+                photoTags: poolResult.photoTags,
+                replacePoolResidue: true)
+            if !isReplace {
+                registeredSetId = setId
             }
-
-            store.registerSet(set, pool: namedPhotos, photoTags: photoTags)
-            registeredSetId = setId
             await store.generatePaletteIfNeeded(for: setId, downloadSamples: true)
             try Task.checkCancellation()
             state = .finished(setId: setId)
         } catch is CancellationError {
             // Choice: roll back (not treat-as-success). Cancel after register
-            // must not leave a set on disk while state is .failed(.cancelled).
+            // must not leave a *new* set on disk while state is .failed(.cancelled).
+            // Regenerates keep the last registered pool (do not delete).
             if let registeredSetId {
                 try? store.deleteCustomSet(id: registeredSetId)
             }
@@ -187,21 +201,62 @@ public final class SceneSetComposer {
         }
     }
 
-    private func fetchPool(
+    // MARK: - Per-location fetch (preferred)
+
+    private struct PoolBuildResult {
+        var photos: [SceneryPhoto]
+        var sceneNames: [String]
+        var photoTags: [String: SceneryPhotoTags]
+    }
+
+    /// Fetch 1 deduped photo per named location (query targets that place),
+    /// then top up from general queries when needed. Shared implementation
+    /// lives in `SceneryPoolBuilder` (also used by store refresh).
+    private func fetchPoolFromLocations(
+        locations: [SceneryLocation],
         queries: [SceneryQuery],
-        sceneNames: [String],
         location: String
-    ) async throws -> (
-        photos: [SceneryPhoto],
-        metaNames: [String],
-        photoTags: [String: SceneryPhotoTags]
-    ) {
+    ) async throws -> PoolBuildResult {
+        guard let client else { throw SceneSetComposerError.missingUnsplashKey }
+
+        let totalSteps = max(locations.count + queries.count, 1)
+        state = .fetchingPhotos(completed: 0, total: totalSteps)
+
+        do {
+            let built = try await SceneryPoolBuilder.buildFromLocations(
+                client: client,
+                locations: locations,
+                queries: queries,
+                setTitle: location,
+                onProgress: { [weak self] completed, total in
+                    await MainActor.run {
+                        self?.state = .fetchingPhotos(completed: completed, total: total)
+                    }
+                })
+            return PoolBuildResult(
+                photos: built.photos,
+                sceneNames: built.sceneNames,
+                photoTags: built.photoTags)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch SceneryPoolBuilder.BuildError.noPhotosFound {
+            throw SceneSetComposerError.noPhotosFound
+        } catch {
+            throw SceneSetComposerError.backendFailure(error.localizedDescription)
+        }
+    }
+
+    // MARK: - Legacy fetch (no locations — old server / templated fallback)
+
+    private func fetchPoolLegacy(
+        queries: [SceneryQuery],
+        location: String
+    ) async throws -> PoolBuildResult {
         guard let client else { throw SceneSetComposerError.missingUnsplashKey }
 
         var fetched: [(photo: UnsplashClient.APIPhoto, tags: SceneryPhotoTags?)] = []
-        var metaNames: [String] = []
         let total = queries.count
-        state = .fetchingPhotos(completed: 0, total: total)
+        state = .fetchingPhotos(completed: 0, total: max(total, 1))
 
         for (index, query) in queries.enumerated() {
             try Task.checkCancellation()
@@ -210,45 +265,67 @@ public final class SceneSetComposer {
                 let tags = SceneryPhotoTags(query: query)
                 for photo in results {
                     fetched.append((photo: photo, tags: tags))
-                    if let name = photo.suggestedSceneName {
-                        metaNames.append(name)
-                    }
                 }
             }
             state = .fetchingPhotos(completed: index + 1, total: total)
         }
 
         var seen: Set<String> = []
-        let unique = Array(fetched.filter { seen.insert($0.photo.id).inserted }.prefix(24))
+        let unique = Array(
+            fetched.filter { seen.insert($0.photo.id).inserted }.prefix(SceneryPoolBuilder.maxPhotos))
         guard !unique.isEmpty else { throw SceneSetComposerError.noPhotosFound }
 
-        let names =
-            sceneNames.isEmpty
-            ? Self.numberedNames(location: location, count: unique.count)
-            : sceneNames
-        let photos = unique.enumerated().map { index, entry in
-            let photo = entry.photo
-            let base = names[index % names.count]
-            return SceneryPhoto(
-                id: photo.id,
-                name: base,
-                averageColorHex: photo.color,
-                heroURL: photo.urls.regular,
-                thumbURL: photo.urls.thumb,
-                rawURL: photo.urls.raw,
-                downloadLocationURL: photo.links?.downloadLocation,
-                photographerName: photo.user.name,
-                photographerProfileURL: photo.user.links?.html)
+        // Caption-free: metadata location only, else numbered set-title names.
+        var usedNumber = 0
+        let photos: [SceneryPhoto] = unique.map { entry in
+            let name: String
+            if let meta = entry.photo.suggestedSceneName {
+                name = meta
+            } else {
+                usedNumber += 1
+                name = Self.numberedNames(location: location, count: usedNumber).last!
+            }
+            return SceneryPoolBuilder.sceneryPhoto(from: entry.photo, name: name)
         }
         let photoTags = Dictionary(
             unique.compactMap { entry in
                 entry.tags.map { (entry.photo.id, $0) }
             },
             uniquingKeysWith: { first, _ in first })
-        return (photos, metaNames, photoTags)
+        let sceneNames = Self.normalizeSceneNames(photos.map(\.name))
+        return PoolBuildResult(photos: photos, sceneNames: sceneNames, photoTags: photoTags)
     }
 
     // MARK: - Pure helpers (unit-tested)
+
+    /// Maps generated RPC locations into persisted manifest locations.
+    nonisolated static func makeStoreLocations(
+        from generated: [GeneratedSceneryLocation]
+    ) -> [SceneryLocation] {
+        var seen = Set<String>()
+        var out: [SceneryLocation] = []
+        for loc in generated {
+            let name = normalizeSceneNames([loc.name]).first
+            let query = loc.query.trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            guard let name, !query.isEmpty else { continue }
+            let key = name.lowercased()
+            guard seen.insert(key).inserted else { continue }
+            out.append(
+                SceneryLocation(
+                    name: name,
+                    query: query,
+                    timeOfDay: loc.timeOfDay.flatMap { SceneryTimeOfDay(rawValue: $0.rawValue) },
+                    season: loc.season.flatMap { ScenerySeason(rawValue: $0.rawValue) }))
+            if out.count >= 16 { break }
+        }
+        return out
+    }
+
+    nonisolated static func tags(from location: GeneratedSceneryLocation) -> SceneryPhotoTags? {
+        let mapped = makeStoreLocations(from: [location]).first
+        return mapped.flatMap { SceneryPoolBuilder.tags(from: $0) }
+    }
 
     nonisolated static func makeStoreQueries(
         from generated: [GeneratedSceneryQuery], location: String
@@ -266,7 +343,8 @@ public final class SceneSetComposer {
                     timeOfDay: query.timeOfDay.flatMap { SceneryTimeOfDay(rawValue: $0.rawValue) },
                     season: query.season.flatMap { ScenerySeason(rawValue: $0.rawValue) },
                     take: out.isEmpty ? 12 : 8))
-            if out.count >= 12 { break }
+            // Align with server sanitize cap (4–6 general top-up queries).
+            if out.count >= 6 { break }
         }
         if out.isEmpty {
             return ScenerySetFallback.templatedQueries(location: location)
@@ -342,7 +420,7 @@ public enum ScenerySetFallback {
                 },
                 season: $0.season.flatMap { GeneratedScenerySeason(rawValue: $0.rawValue) })
         }
-        // Empty scene names → filled from Unsplash metadata / numbered fallback.
-        return GeneratedScenerySet(sceneNames: [], queries: queries)
+        // Empty locations + empty scene names → legacy path: metadata / numbered.
+        return GeneratedScenerySet(sceneNames: [], queries: queries, locations: nil)
     }
 }

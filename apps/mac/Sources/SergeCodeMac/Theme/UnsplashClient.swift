@@ -100,7 +100,9 @@ public actor UnsplashClient {
         var links: Links?
         var user: User
 
-        /// Best-effort place label from Unsplash metadata (for fallback scene names).
+        /// Best-effort place label from Unsplash *location* metadata only.
+        /// Never falls back to `description` / `alt_description` captions —
+        /// those are machine prose and must not become scene names.
         var suggestedSceneName: String? {
             if let name = location?.name?.trimmingCharacters(in: .whitespacesAndNewlines),
                 !name.isEmpty
@@ -114,13 +116,6 @@ public actor UnsplashClient {
             }
             if let country, !country.isEmpty {
                 return Self.shortenSceneName(country)
-            }
-            for candidate in [description, altDescription] {
-                if let text = candidate?.trimmingCharacters(in: .whitespacesAndNewlines),
-                    !text.isEmpty
-                {
-                    return Self.shortenSceneName(text)
-                }
             }
             return nil
         }

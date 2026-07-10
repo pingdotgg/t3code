@@ -229,38 +229,51 @@ const SceneryTimeOfDaySchema = Schema.Literals(["dawn", "day", "dusk", "night"])
 const ScenerySeasonSchema = Schema.Literals(["spring", "summer", "autumn", "winter"]);
 
 /**
- * Prompt for AI-curated scenery packs: ~30 real place names + 6-10 Unsplash
- * search queries tuned for scenic landscape wallpapers.
+ * Prompt for AI-curated scenery packs: 12–16 iconic named locations (each with
+ * a place-specific Unsplash query) plus 4–6 general scenic top-up queries.
  */
 export function buildScenerySetPrompt(input: ScenerySetPromptInput) {
   const location = input.location.trim();
   const prompt = [
     "You curate scenic landscape photo sets for a coding app wallpaper system.",
-    "Given a location name, return real places and Unsplash search queries.",
-    "Return a JSON object with keys: sceneNames, queries.",
+    "Given a location name, return REAL iconic places with matching photo search queries.",
+    "Return a JSON object with keys: locations, queries.",
     "Rules:",
-    "- sceneNames: about 30 short, evocative place or viewpoint names at/near the location",
-    "- Prefer real named peaks, lakes, valleys, passes, temples, viewpoints, trails",
-    "- Style like: 'Tre Cime', 'Lago di Braies', 'Fushimi Inari', 'Trolltunga' — specific, short, no country suffixes",
-    "- No duplicates; no generic labels like 'Mountain 1' or 'Beautiful View'",
-    "- queries: 6 to 10 Unsplash photo search strings for scenic landscape wallpapers",
-    "- Mix untagged general queries with tagged variants (timeOfDay and/or season)",
-    "- Query text should include the location plus scenic terms (mountains, coast, meadow, temple, etc.)",
+    "- locations: 12 to 16 entries. Each is a REAL, iconic, photogenic place within or near the given location",
+    "- location.name: the authentic proper name locals/guidebooks use (native spelling ok: Skógafoss, Jökulsárlón, Fushimi Inari)",
+    "- name must be short; no country/region suffix; no generic labels like 'Mountain 1' or 'Beautiful View'",
+    "- location.query: an Unsplash search string that surfaces photos OF THAT EXACT place",
+    "- query pattern: place name + disambiguating feature + region (e.g. 'Kirkjufell mountain Iceland', 'Jökulsárlón glacier lagoon', 'Fushimi Inari shrine Kyoto')",
+    "- A minority of locations may include timeOfDay and/or season tags; most stay untagged",
+    "- No duplicate location names; prefer famous viewpoints, peaks, lakes, waterfalls, passes, temples, coasts",
+    "- queries: 4 to 6 GENERAL scenic Unsplash search strings for variety top-up (not place-specific)",
+    "- General queries should include the location plus scenic terms (mountains, coast, meadow, etc.)",
+    "- Mix untagged general queries with a few tagged variants (timeOfDay and/or season)",
     "- timeOfDay if set must be one of: dawn, day, dusk, night",
     "- season if set must be one of: spring, summer, autumn, winter",
-    "- Omit timeOfDay/season when the query is intentionally untagged (anytime)",
+    "- Omit timeOfDay/season when intentionally untagged (anytime)",
     "- Optimize for high-quality landscape photography, not people or urban street snaps",
     "",
     `Location: ${location}`,
   ].join("\n");
 
+  const tagFields = {
+    timeOfDay: Schema.optional(SceneryTimeOfDaySchema),
+    season: Schema.optional(ScenerySeasonSchema),
+  };
+
   const outputSchema = Schema.Struct({
-    sceneNames: Schema.Array(Schema.String),
+    locations: Schema.Array(
+      Schema.Struct({
+        name: Schema.String,
+        query: Schema.String,
+        ...tagFields,
+      }),
+    ),
     queries: Schema.Array(
       Schema.Struct({
         text: Schema.String,
-        timeOfDay: Schema.optional(SceneryTimeOfDaySchema),
-        season: Schema.optional(ScenerySeasonSchema),
+        ...tagFields,
       }),
     ),
   });

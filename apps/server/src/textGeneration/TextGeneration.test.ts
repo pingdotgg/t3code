@@ -130,6 +130,12 @@ describe("makeTextGenerationFromRegistry", () => {
             Effect.succeed({
               sceneNames: [`${input.location} Peak`],
               queries: [{ text: `${input.location} landscape`, timeOfDay: "dawn" as const }],
+              locations: [
+                {
+                  name: `${input.location} Peak`,
+                  query: `${input.location} Peak mountain`,
+                },
+              ],
             }),
         }),
       );

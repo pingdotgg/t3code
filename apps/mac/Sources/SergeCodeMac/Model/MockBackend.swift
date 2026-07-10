@@ -96,18 +96,24 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         }
         // Deterministic fixture for UI/dev without the model CLI.
         let slug = trimmed.lowercased()
+        let locations: [GeneratedSceneryLocation] = (1...14).map { index in
+            let name = "\(trimmed) Viewpoint \(index)"
+            return GeneratedSceneryLocation(
+                name: name,
+                query: "\(name) \(slug)",
+                timeOfDay: index == 3 ? .dawn : nil,
+                season: index == 7 ? .winter : nil)
+        }
         return GeneratedScenerySet(
-            sceneNames: (1...30).map { "\(trimmed) Viewpoint \($0)" },
+            sceneNames: locations.map(\.name),
             queries: [
                 GeneratedSceneryQuery(text: "\(slug) landscape"),
                 GeneratedSceneryQuery(text: "\(slug) mountains", timeOfDay: .day),
                 GeneratedSceneryQuery(text: "\(slug) sunrise", timeOfDay: .dawn),
-                GeneratedSceneryQuery(text: "\(slug) sunset", timeOfDay: .dusk),
-                GeneratedSceneryQuery(text: "\(slug) night lights", timeOfDay: .night),
-                GeneratedSceneryQuery(text: "\(slug) autumn colors", season: .autumn),
-                GeneratedSceneryQuery(text: "\(slug) winter snow", season: .winter),
                 GeneratedSceneryQuery(text: "\(slug) coast"),
-            ])
+                GeneratedSceneryQuery(text: "\(slug) autumn colors", season: .autumn),
+            ],
+            locations: locations)
     }
 
     private enum MockBackendError: Error, LocalizedError {

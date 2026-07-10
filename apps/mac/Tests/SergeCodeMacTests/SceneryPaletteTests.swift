@@ -132,6 +132,28 @@ struct SceneryPaletteManifestTests {
         #expect(decoded.queries.count == 1)
         #expect(decoded.queries[0].text == "kyoto temple autumn")
         #expect(decoded.palette == nil)
+        #expect(decoded.locations == nil)
+    }
+
+    @Test("manifest JSON without locations key decodes with locations nil")
+    func manifestWithoutLocationsKey() throws {
+        let json = """
+            {
+              "id": "iceland-a1b2",
+              "title": "Iceland",
+              "origin": "custom",
+              "createdAt": "2024-01-15T12:00:00Z",
+              "queries": [
+                { "text": "iceland landscape", "take": 8 }
+              ],
+              "sceneNames": ["Kirkjufell", "Skógafoss"]
+            }
+            """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(ScenerySet.self, from: Data(json.utf8))
+        #expect(decoded.locations == nil)
+        #expect(decoded.sceneNames == ["Kirkjufell", "Skógafoss"])
     }
 }
 
