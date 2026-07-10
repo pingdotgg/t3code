@@ -184,7 +184,7 @@ describe("ServerProvider", () => {
   });
 
   it("accepts grok usage limit sources", () => {
-    const parsed = decodeServerProvider({
+    const unavailable = decodeServerProvider({
       instanceId: "grok",
       driver: "grok",
       enabled: true,
@@ -208,8 +208,37 @@ describe("ServerProvider", () => {
       },
     });
 
-    expect(parsed.usageLimits?.source).toBe("grokAcp");
-    expect(parsed.usageLimits?.available).toBe(false);
+    expect(unavailable.usageLimits?.source).toBe("grokAcp");
+    expect(unavailable.usageLimits?.available).toBe(false);
+
+    const fromTui = decodeServerProvider({
+      instanceId: "grok",
+      driver: "grok",
+      enabled: true,
+      installed: true,
+      version: "0.2.87",
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-07-07T00:00:00.000Z",
+      models: [],
+      usageLimits: {
+        source: "grokStatusProbe",
+        available: true,
+        checkedAt: "2026-07-07T00:00:00.000Z",
+        windows: [
+          {
+            kind: "weekly",
+            label: "Weekly",
+            usedPercent: 32,
+            windowDurationMins: 10080,
+            resetsAt: "2026-07-11T09:10:00.000Z",
+          },
+        ],
+      },
+    });
+
+    expect(fromTui.usageLimits?.source).toBe("grokStatusProbe");
+    expect(fromTui.usageLimits?.windows[0]?.usedPercent).toBe(32);
   });
 
   it("rejects invalid usage percentages", () => {

@@ -110,6 +110,7 @@ export const ServerProviderUsageLimits = Schema.Struct({
     "claudeStatusProbe",
     "cursorAcp",
     "grokAcp",
+    "grokStatusProbe",
     "opencodeManaged",
   ]),
   available: Schema.Boolean,

@@ -5,7 +5,6 @@ import {
   type ServerProvider,
   type ServerProviderAuth,
   type ServerProviderModel,
-  type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { causeErrorTag } from "@t3tools/shared/observability";
@@ -38,6 +37,8 @@ import {
   probeGrokAuthViaAcp,
   type GrokAuthSubscriptionProbeResult,
 } from "../grokUsageProbe.ts";
+import { probeGrokUsageLimits } from "../grokTuiUsageProbe.ts";
+import * as PtyAdapter from "../../terminal/PtyAdapter.ts";
 import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
 const GROK_PRESENTATION = {
   displayName: "Grok",
@@ -182,20 +183,6 @@ function resolveGrokProbeAuth(
   return grokAuthFromSubscriptionProbe(auth);
 }
 
-function resolveGrokProbeUsageLimits(input: {
-  readonly checkedAt: string;
-  readonly auth: GrokAuthSubscriptionProbeResult | undefined;
-}): ServerProviderUsageLimits | undefined {
-  if (!input.auth?.authenticated) {
-    return undefined;
-  }
-  return makeUnavailableUsageLimits({
-    source: "grokAcp",
-    checkedAt: input.checkedAt,
-    reason: "Grok does not expose subscription usage",
-  });
-}
-
 const runGrokVersionCommand = (
   grokSettings: GrokSettings,
   environment: NodeJS.ProcessEnv = process.env,
@@ -217,6 +204,7 @@ const runGrokVersionCommand = (
 export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(function* (
   grokSettings: GrokSettings,
   environment: NodeJS.ProcessEnv = process.env,
+  ptyAdapter?: PtyAdapter.PtyAdapter["Service"],
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -353,10 +341,24 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       ? grokModelsFromSettings(grokSettings.customModels, discovery.models)
       : fallbackModels;
   const auth = resolveGrokProbeAuth(discovery.auth);
-  const usageLimits = resolveGrokProbeUsageLimits({
-    checkedAt,
-    auth: discovery.auth,
-  });
+  const usageLimits =
+    auth.status !== "authenticated"
+      ? undefined
+      : ptyAdapter
+        ? yield* probeGrokUsageLimits(
+            {
+              binaryPath: grokSettings.binaryPath || "grok",
+              cwd: process.cwd(),
+              checkedAt,
+              environment,
+            },
+            ptyAdapter,
+          ).pipe(Effect.map((result) => result.usageLimits))
+        : makeUnavailableUsageLimits({
+            source: "grokStatusProbe",
+            checkedAt,
+            reason: "Usage limits unavailable for this Grok instance in the current runtime.",
+          });
 
   if (auth.status === "unauthenticated") {
     return buildServerProvider({
