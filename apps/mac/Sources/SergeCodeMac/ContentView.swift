@@ -46,6 +46,9 @@ struct RootView: View {
                 .inspectorColumnWidth(min: 300, ideal: 360, max: 480)
             }
         }
+        // Let `WindowGlassBackground` show through chrome gaps / faded scenery
+        // instead of an opaque split-view plate over the desktop glass.
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 ConnectionStatusPill(phase: model.connection)

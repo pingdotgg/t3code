@@ -70,10 +70,12 @@ struct ScenerySetFallbackTests {
         #expect(names == ["Fushimi Inari", "Arashiyama"])
     }
 
-    @Test("numbered names last resort")
+    @Test("numbered names last resort (historical; new pools use bare title)")
     func numbered() {
         let names = SceneSetComposer.numberedNames(location: "Kyoto", count: 3)
         #expect(names == ["Kyoto 1", "Kyoto 2", "Kyoto 3"])
+        #expect(SceneSetComposer.bareSetTitle("  Iceland  ") == "Iceland")
+        #expect(SceneSetComposer.bareSetTitle("") == "Scene")
     }
 
     @Test("location tags map to photo tags")
@@ -214,6 +216,7 @@ private final class FixedSceneryBackend: BackendService, @unchecked Sendable {
     func sendMessage(threadID: String, text: String, attachments: [OutgoingAttachment]) async throws
     {}
     func cancelTurn(threadID: String) async throws {}
+    func stopTask(threadID: String, taskId: String) async throws {}
     func respondToApproval(id: String, approve: Bool) async throws {}
     func respondToUserInput(id: String, answers: [String: [String]]) async throws {}
     func setRuntimeMode(threadID: String, mode: ThreadRuntimeMode) async throws {}
@@ -427,7 +430,7 @@ struct SceneSetComposerPipelineTests {
         }
     }
 
-    @Test("top-up naming never uses captions; falls back to numbered set title")
+    @Test("top-up naming never uses captions; falls back to bare set title")
     func topUpNeverCaptions() async throws {
         let root = try tempRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -469,8 +472,12 @@ struct SceneSetComposerPipelineTests {
         #expect(photos[1].name == "Place B")
         for photo in photos.dropFirst(2) {
             #expect(!photo.name.lowercased().contains("image describes"))
-            // Captions stripped → numbered "Iceland N" (no location metadata on stubs).
-            #expect(photo.name.hasPrefix("Iceland "))
+            // Captions stripped → bare set title (never "Iceland 1"…"Iceland N").
+            #expect(photo.name == "Iceland")
+        }
+        // Thread titles must not leak pool indices either.
+        for photo in photos.dropFirst(2) {
+            #expect(store.threadTitle(for: photo) == "Iceland")
         }
     }
 
@@ -513,10 +520,135 @@ struct SceneSetComposerPipelineTests {
             #expect(!photo.name.lowercased().contains("image describes"))
             #expect(!photo.name.lowercased().contains("highway"))
         }
-        // Caption-only photo gets numbered name.
-        if let cap = photos.first(where: { $0.id == "cap-1" }) {
-            #expect(cap.name.hasPrefix("Iceland "))
+        // Caption-only photo gets the bare set title (not "Iceland N").
+        guard let cap = photos.first(where: { $0.id == "cap-1" }) else {
+            Issue.record("expected caption-only photo cap-1")
+            return
         }
+        #expect(cap.name == "Iceland")
+        #expect(store.threadTitle(for: cap) == "Iceland")
+    }
+
+    @Test("legacy path with empty locations never titles threads Iceland N")
+    func legacyEmptyLocationsThreadTitleIsBarePlace() async throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        // No Unsplash location metadata → previously numbered "Iceland 1"… "Iceland 5".
+        UnsplashSearchStub.resultsByQuery = [
+            "Iceland landscape": (1...8).map { i in
+                UnsplashSearchStub.photoJSON(
+                    id: "pool-\(i)",
+                    description: "this image describes scenic number \(i)")
+            },
+            "*": [],
+        ]
+
+        // Backend returns queries but no locations (trigger: empty locations path).
+        let backend = FixedSceneryBackend(
+            response: GeneratedScenerySet(
+                sceneNames: [],
+                queries: [GeneratedSceneryQuery(text: "Iceland landscape")],
+                locations: nil))
+
+        let store = SceneryStore(client: nil, root: root)
+        store.reloadFromDiskForTesting()
+        let composer = SceneSetComposer(store: store, backend: backend, client: makeClient())
+        composer.createSet(location: "Iceland")
+
+        let state = await awaitFinished(composer: composer)
+        guard case .finished(let setId) = state else {
+            Issue.record("expected finished, got \(state)")
+            return
+        }
+
+        let photos = store.photos(forSetId: setId)
+        #expect(photos.count >= 5)
+        for photo in photos {
+            #expect(photo.name == "Iceland")
+            #expect(store.threadTitle(for: photo) == "Iceland")
+            // No pool-index suffix like "Iceland 5".
+            #expect(photo.name.range(of: #" \d+$"#, options: .regularExpression) == nil)
+        }
+        // sceneNames must not be polluted with "Iceland 1"…"Iceland N".
+        #expect(store.set(id: setId)?.sceneNames == ["Iceland"])
+    }
+
+    @Test("threadTitle strips historical pool-index names from on-disk pools")
+    func threadTitleStripsPoolIndexEvenWhenSceneNamesPolluted() throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = SceneryStore(client: nil, root: root)
+        store.reloadFromDiskForTesting()
+
+        let setId = "iceland-polluted"
+        // Simulate the old bug: pool + sceneNames only contain numbered labels.
+        let photos = (1...5).map { i in
+            SceneryPhoto(
+                id: "p-\(i)",
+                name: "Iceland \(i)",
+                averageColorHex: "#000000",
+                heroURL: URL(string: "https://images.unsplash.com/p\(i)")!,
+                thumbURL: URL(string: "https://images.unsplash.com/p\(i)-t")!,
+                rawURL: nil,
+                downloadLocationURL: nil,
+                photographerName: "Old",
+                photographerProfileURL: nil)
+        }
+        let set = ScenerySet(
+            id: setId,
+            title: "Iceland",
+            origin: .custom,
+            createdAt: Date(timeIntervalSince1970: 1),
+            queries: [SceneryQuery(text: "iceland landscape")],
+            sceneNames: photos.map(\.name),
+            locations: nil)
+        store.registerSet(set, pool: photos)
+
+        // Photo 5 was the classic first-thread title leak.
+        let fifth = photos[4]
+        #expect(fifth.name == "Iceland 5")
+        #expect(store.threadTitle(for: fifth) == "Iceland")
+        for photo in photos {
+            #expect(store.threadTitle(for: photo) == "Iceland")
+        }
+    }
+
+    @Test("legacy path uses curated sceneNames when locations empty")
+    func legacyUsesCuratedSceneNames() async throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        UnsplashSearchStub.resultsByQuery = [
+            "iceland landscape": [
+                UnsplashSearchStub.photoJSON(id: "c1"),
+                UnsplashSearchStub.photoJSON(id: "c2"),
+                UnsplashSearchStub.photoJSON(id: "c3"),
+            ],
+            "*": [],
+        ]
+
+        let backend = FixedSceneryBackend(
+            response: GeneratedScenerySet(
+                sceneNames: ["Kirkjufell", "Skógafoss", "Reynisfjara"],
+                queries: [GeneratedSceneryQuery(text: "iceland landscape")],
+                locations: nil))
+
+        let store = SceneryStore(client: nil, root: root)
+        store.reloadFromDiskForTesting()
+        let composer = SceneSetComposer(store: store, backend: backend, client: makeClient())
+        composer.createSet(location: "Iceland")
+
+        let state = await awaitFinished(composer: composer)
+        guard case .finished(let setId) = state else {
+            Issue.record("expected finished, got \(state)")
+            return
+        }
+
+        let photos = store.photos(forSetId: setId)
+        #expect(photos.map(\.name) == ["Kirkjufell", "Skógafoss", "Reynisfjara"])
+        #expect(store.threadTitle(for: photos[0]) == "Kirkjufell")
     }
 
     @Test("regenerate replaces same set id and cleans stale residue")
@@ -677,13 +809,14 @@ struct SceneSetComposerPipelineTests {
         #expect(kirk?.name == "Kirkjufell")
         #expect(skog?.name == "Skógafoss")
         // Round-robin of sceneNames onto top-up would put Kirkjufell/Skógafoss
-        // on random top-up ids — ensure top-ups are numbered (no location meta).
+        // on random top-up ids — ensure top-ups use bare set title (no location meta).
         for photo in photos where photo.id.hasPrefix("fresh-top") {
             #expect(photo.name != "Kirkjufell")
             #expect(photo.name != "Skógafoss")
             #expect(!photo.name.lowercased().contains("caption"))
             #expect(!photo.name.lowercased().contains("image describes"))
-            #expect(photo.name.hasPrefix("Iceland "))
+            #expect(photo.name == "Iceland")
+            #expect(store.threadTitle(for: photo) == "Iceland")
         }
         #expect(store.photoTagsForTesting(setId: setId)["fresh-kirk"]?.timeOfDay == .dusk)
     }

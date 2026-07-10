@@ -52,8 +52,8 @@ struct SceneryImageView: View {
 /// text never sits on this (Liquid Glass rule).
 ///
 /// Photo opacity follows `scenery.sceneryTranslucency` so the window's
-/// `.containerBackground` material can bleed through; the scrim is scaled
-/// gently so chrome labels stay readable at the 50% extreme.
+/// behind-window glass (`WindowGlassBackground`) can bleed through; the
+/// scrim is scaled gently so chrome labels stay readable at the 50% extreme.
 struct FrostedSceneryBackdrop: View {
     let scenery: SceneryStore
     let photo: SceneryPhoto?
@@ -101,7 +101,7 @@ extension View {
 /// readable everywhere on top, while the scene stays clearly visible.
 ///
 /// Photo opacity is `scenery.sceneryTranslucency` (default 0.85) so the
-/// window material underneath shows through. Wash layers sit above the
+/// behind-window glass underneath shows through. Wash layers sit above the
 /// opacity and are only gently scaled — they must not collapse with the
 /// photo at 50% translucency.
 struct SceneryChatBackground: View {

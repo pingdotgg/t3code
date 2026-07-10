@@ -159,9 +159,13 @@ public final class SceneSetComposer {
                     queries: queries,
                     location: location)
             } else {
+                // No usable locations (legacy server, sanitization drop, or
+                // templated backend fallback). Prefer AI sceneNames when present;
+                // otherwise bare set title — never "Iceland 1"…"Iceland N".
                 poolResult = try await fetchPoolLegacy(
                     queries: queries,
-                    location: location)
+                    location: location,
+                    curatedNames: generated.sceneNames)
             }
             try Task.checkCancellation()
 
@@ -250,7 +254,8 @@ public final class SceneSetComposer {
 
     private func fetchPoolLegacy(
         queries: [SceneryQuery],
-        location: String
+        location: String,
+        curatedNames: [String] = []
     ) async throws -> PoolBuildResult {
         guard let client else { throw SceneSetComposerError.missingUnsplashKey }
 
@@ -275,15 +280,22 @@ public final class SceneSetComposer {
             fetched.filter { seen.insert($0.photo.id).inserted }.prefix(SceneryPoolBuilder.maxPhotos))
         guard !unique.isEmpty else { throw SceneSetComposerError.noPhotosFound }
 
-        // Caption-free: metadata location only, else numbered set-title names.
-        var usedNumber = 0
+        // Caption-free naming priority:
+        // 1) Unsplash location metadata
+        // 2) AI-curated sceneNames (older servers without `locations`)
+        // 3) bare set title — never pool-index labels like "Iceland 5"
+        let curated = Self.normalizeSceneNames(curatedNames)
+        let fallbackName = Self.bareSetTitle(location)
+        var curatedIndex = 0
         let photos: [SceneryPhoto] = unique.map { entry in
             let name: String
             if let meta = entry.photo.suggestedSceneName {
                 name = meta
+            } else if !curated.isEmpty {
+                name = curated[curatedIndex % curated.count]
+                curatedIndex += 1
             } else {
-                usedNumber += 1
-                name = Self.numberedNames(location: location, count: usedNumber).last!
+                name = fallbackName
             }
             return SceneryPoolBuilder.sceneryPhoto(from: entry.photo, name: name)
         }
@@ -367,9 +379,16 @@ public final class SceneSetComposer {
         return out
     }
 
-    nonisolated static func numberedNames(location: String, count: Int) -> [String] {
+    /// Bare place label for metadata-less pool photos (never numbered).
+    nonisolated static func bareSetTitle(_ location: String) -> String {
         let base = location.trimmingCharacters(in: .whitespacesAndNewlines)
-        let label = base.isEmpty ? "Scene" : base
+        return base.isEmpty ? "Scene" : base
+    }
+
+    /// Historical helper: pool-index labels. Prefer `bareSetTitle` for new pools;
+    /// kept for tests and for stripping old on-disk names in `baseSceneName`.
+    nonisolated static func numberedNames(location: String, count: Int) -> [String] {
+        let label = bareSetTitle(location)
         return (1...max(count, 1)).map { "\(label) \($0)" }
     }
 }

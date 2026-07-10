@@ -166,6 +166,17 @@
                 await snapshotSettings(
                     tab: .scenery, name: "12-settings-scenery", model: model, scenery: scenery,
                     dir: dir)
+
+                // Window glass translucency: capture solid (1.0) and floor
+                // (0.5) states, logging NSWindow isOpaque/clear + behind-window
+                // effect presence. Self-capture cannot prove desktop bleed, but
+                // it confirms the hierarchy is wired for it.
+                await probeWindowTranslucency(scenery: scenery, dir: dir)
+
+                // Create-image-set naming: mock backend returns locations;
+                // register the resulting bare-title pool and create a thread.
+                // Confirms new threads get "Iceland", not "Iceland 5".
+                await probeIcelandSceneSetCreate(model: model, scenery: scenery)
             } else {
                 print("UIProbe: skipping settings snapshots (live backend run)")
             }
@@ -193,6 +204,148 @@
 
             print("UIProbe: done")
             NSApp.terminate(nil)
+        }
+
+        /// Captures the main window at translucency 1.0 and 0.5 and logs
+        /// window/glass configuration for verification.
+        private static func probeWindowTranslucency(scenery: SceneryStore, dir: String) async {
+            let previous = scenery.sceneryTranslucency
+
+            scenery.setSceneryTranslucency(1.0)
+            try? await Task.sleep(for: .seconds(1))
+            logWindowGlassState(label: "translucency=1.0")
+            snapshot("13-glass-opaque", dir: dir)
+
+            scenery.setSceneryTranslucency(0.5)
+            try? await Task.sleep(for: .seconds(1))
+            logWindowGlassState(label: "translucency=0.5")
+            snapshot("14-glass-see-through", dir: dir)
+
+            scenery.setSceneryTranslucency(previous)
+            scenery.flushPendingSettingsSave()
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+
+        private static func logWindowGlassState(label: String) {
+            guard let window = NSApp.windows.first(where: {
+                $0.isVisible && $0.styleMask.contains(.titled) && $0.styleMask.contains(.resizable)
+            }) else {
+                print("UIProbe: \(label) no main window")
+                return
+            }
+            let opaque = window.isOpaque
+            let clearBG = window.backgroundColor == .clear
+            let configured = TransparentWindowConfigurator.isConfigured(window)
+            let behindCount = TransparentWindowConfigurator.behindWindowEffectCount(
+                in: window.contentView)
+            print(
+                "UIProbe: \(label) isOpaque=\(opaque) clearBackground=\(clearBG) "
+                    + "configured=\(configured) behindWindowEffects=\(behindCount)")
+            if !configured {
+                print("UIProbe: FAIL expected non-opaque clear window for glass translucency")
+            } else if behindCount == 0 {
+                print("UIProbe: FAIL expected ≥1 behind-window NSVisualEffectView")
+            } else {
+                print("UIProbe: PASS window glass hierarchy ready (\(label))")
+            }
+        }
+
+        /// Exercises custom scenery set create → first thread title.
+        ///
+        /// Uses MockBackend for AI names (locations present) and a synthetic
+        /// pool so Unsplash is not required. New pools use the bare place
+        /// name; historical pool-index names still strip via `threadTitle`.
+        private static func probeIcelandSceneSetCreate(model: AppModel, scenery: SceneryStore) async {
+            let previousDefaultSetId = scenery.defaultSetId
+            let probeRunID = UUID().uuidString
+            let setId = "probe-iceland-\(probeRunID)"
+            let pollutedSetId = "probe-iceland-polluted-\(probeRunID)"
+            defer {
+                scenery.setDefaultSetId(previousDefaultSetId)
+                try? scenery.deleteCustomSet(id: pollutedSetId)
+                try? scenery.deleteCustomSet(id: setId)
+            }
+
+            let backend = MockBackend()
+            do {
+                let generated = try await backend.generateScenerySet(location: "Iceland")
+                let locations = SceneSetComposer.makeStoreLocations(from: generated.locations ?? [])
+                print(
+                    "UIProbe: iceland generate locations=\(locations.count) "
+                        + "first=\(locations.first?.name ?? "nil")")
+            } catch {
+                print("UIProbe: iceland generateScenerySet failed: \(error)")
+            }
+
+            // New create path: bare set title for metadata-less pool photos.
+            let barePhotos: [SceneryPhoto] = (1...5).map { i in
+                SceneryPhoto(
+                    id: "probe-ice-\(i)",
+                    name: "Iceland",
+                    averageColorHex: "#1a3a4a",
+                    heroURL: URL(string: "https://images.unsplash.com/probe-ice-\(i)")!,
+                    thumbURL: URL(string: "https://images.unsplash.com/probe-ice-\(i)-t")!,
+                    rawURL: nil,
+                    downloadLocationURL: nil,
+                    photographerName: "Probe",
+                    photographerProfileURL: nil)
+            }
+            let bareSet = ScenerySet(
+                id: setId,
+                title: "Iceland",
+                origin: .custom,
+                createdAt: Date(),
+                queries: [SceneryQuery(text: "iceland landscape")],
+                sceneNames: ["Iceland"],
+                locations: [
+                    SceneryLocation(name: "Iceland", query: "iceland landscape")
+                ])
+            scenery.registerSet(bareSet, pool: barePhotos, replacePoolResidue: true)
+            scenery.setDefaultSetId(setId)
+
+            if let project = model.projects.first {
+                let thread = await model.createSceneThread(
+                    projectID: project.id,
+                    provider: .codex,
+                    scenery: scenery,
+                    scenerySetId: setId)
+                let title = thread?.title ?? "nil"
+                print("UIProbe: iceland new-set thread title=\(title)")
+                if title != "Iceland" {
+                    print("UIProbe: FAIL expected thread title Iceland, got \(title)")
+                } else {
+                    print("UIProbe: PASS iceland new-set thread title is bare place name")
+                }
+            } else {
+                print("UIProbe: no project for iceland createSceneThread")
+            }
+
+            // Defense in depth: polluted on-disk pool still strips to "Iceland".
+            let polluted = SceneryPhoto(
+                id: "probe-ice-polluted-5",
+                name: "Iceland 5",
+                averageColorHex: "#1a3a4a",
+                heroURL: URL(string: "https://images.unsplash.com/probe-polluted")!,
+                thumbURL: URL(string: "https://images.unsplash.com/probe-polluted-t")!,
+                rawURL: nil,
+                downloadLocationURL: nil,
+                photographerName: "Probe",
+                photographerProfileURL: nil)
+            let pollutedSet = ScenerySet(
+                id: pollutedSetId,
+                title: "Iceland",
+                origin: .custom,
+                createdAt: Date(),
+                queries: [SceneryQuery(text: "iceland landscape")],
+                sceneNames: ["Iceland 1", "Iceland 2", "Iceland 3", "Iceland 4", "Iceland 5"])
+            scenery.registerSet(pollutedSet, pool: [polluted], replacePoolResidue: true)
+            let stripped = scenery.threadTitle(for: polluted)
+            print("UIProbe: iceland polluted threadTitle=\(stripped)")
+            if stripped != "Iceland" {
+                print("UIProbe: FAIL expected stripped Iceland, got \(stripped)")
+            } else {
+                print("UIProbe: PASS polluted pool-index title strips to Iceland")
+            }
         }
 
         /// Hosts SettingsScene in its own window on `tab` and captures it —

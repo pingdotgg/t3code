@@ -250,9 +250,10 @@ public struct ScenerySet: Codable, Hashable, Sendable, Identifiable {
 /// Global scenery settings (`scenery/settings.json`).
 public struct ScenerySettingsFile: Codable, Hashable, Sendable {
     public var defaultSetId: String
-    /// Opacity of the scenery photo layer over the window material.
-    /// `1.0` = fully solid (historical look); lower values let the
-    /// behind-window glass base show through. Clamped to `translucencyRange`.
+    /// Opacity of the scenery photo layer over the window glass, and
+    /// solidifying strength of that glass. `1.0` = fully solid (historical
+    /// look); lower values let the behind-window desktop blur show through
+    /// the photo *and* the window plate. Clamped to `translucencyRange`.
     public var sceneryTranslucency: Double
 
     public static let defaultTranslucency: Double = 0.85
