@@ -36,6 +36,15 @@ const FINAL_RESULT_SUBAGENT_STATUSES = new Set<OrchestrationV2TurnItem["status"]
   "failed",
 ]);
 
+// Once a subagent stops, its last streamed result says more than the stale
+// progress line; while it runs, live progress comes first.
+const TERMINAL_SUBAGENT_STATUSES = new Set<OrchestrationV2TurnItem["status"]>([
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+]);
+
 export function V2LifecycleRow(props: {
   readonly item: OrchestrationV2TurnItem;
   readonly createdAt: string;
@@ -125,12 +134,15 @@ export function V2LifecycleRow(props: {
   if (item.type === "subagent") {
     const streamedResult = item.result?.trim() ? item.result : null;
     const finalResult = FINAL_RESULT_SUBAGENT_STATUSES.has(item.status) ? streamedResult : null;
+    const detail = TERMINAL_SUBAGENT_STATUSES.has(item.status)
+      ? (streamedResult ?? item.progress ?? item.prompt)
+      : (item.progress ?? streamedResult ?? item.prompt);
     return (
       <RelatedThreadCard
         itemType={item.type}
         icon={BotIcon}
         title={subagentDisplayTitle(item.title ?? "Subagent")}
-        detail={finalResult ?? item.progress ?? streamedResult ?? item.prompt}
+        detail={detail}
         badge={item.status}
         threadId={item.childThreadId}
         expandedDetail={finalResult}
