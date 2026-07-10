@@ -101,6 +101,7 @@ function createProviderServiceHarness() {
     startSession: () => unsupported(),
     sendTurn: () => unsupported(),
     interruptTurn: () => unsupported(),
+    stopTask: () => unsupported(),
     respondToRequest: () => unsupported(),
     respondToUserInput: () => unsupported(),
     stopSession: () => unsupported(),
@@ -2947,6 +2948,99 @@ describe("ProviderRuntimeIngestion", () => {
     ).toBe("# Plan title");
   });
 
+  it("projects full subagent task metadata and task.updated patches", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "task.started",
+      eventId: asEventId("evt-task-meta-started"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-task-meta"),
+      payload: {
+        taskId: "task-meta-1",
+        taskType: "local_agent",
+        description: "Explore auth",
+        subagentType: "Explore",
+        workflowName: "spec",
+        toolUseId: "toolu-1",
+        model: "claude-opus-4-6",
+      },
+    });
+
+    harness.emit({
+      type: "task.updated",
+      eventId: asEventId("evt-task-meta-updated"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-task-meta"),
+      payload: {
+        taskId: "task-meta-1",
+        status: "running",
+        isBackgrounded: true,
+        error: undefined,
+        description: "Explore auth (background)",
+      },
+    });
+
+    harness.emit({
+      type: "task.completed",
+      eventId: asEventId("evt-task-meta-completed"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-task-meta"),
+      payload: {
+        taskId: "task-meta-1",
+        status: "completed",
+        summary: "Found the auth module",
+        outputFile: "/tmp/task-meta-1.txt",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-task-meta-completed",
+      ),
+    );
+
+    const started = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-task-meta-started",
+    );
+    const updated = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-task-meta-updated",
+    );
+    const completed = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-task-meta-completed",
+    );
+
+    const startedPayload =
+      started?.payload && typeof started.payload === "object"
+        ? (started.payload as Record<string, unknown>)
+        : undefined;
+    const updatedPayload =
+      updated?.payload && typeof updated.payload === "object"
+        ? (updated.payload as Record<string, unknown>)
+        : undefined;
+    const completedPayload =
+      completed?.payload && typeof completed.payload === "object"
+        ? (completed.payload as Record<string, unknown>)
+        : undefined;
+
+    expect(startedPayload?.model).toBe("claude-opus-4-6");
+    expect(startedPayload?.subagentType).toBe("Explore");
+    expect(startedPayload?.workflowName).toBe("spec");
+    expect(startedPayload?.toolUseId).toBe("toolu-1");
+    expect(startedPayload?.description).toBe("Explore auth");
+    expect(updated?.kind).toBe("task.updated");
+    expect(updatedPayload?.isBackgrounded).toBe(true);
+    expect(updatedPayload?.description).toBe("Explore auth (background)");
+    expect(completedPayload?.outputFile).toBe("/tmp/task-meta-1.txt");
+  });
+
   it("projects structured user input request and resolution as thread activities", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
@@ -3060,6 +3154,82 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("runtime still processed");
   });
+  it("merges disjoint task.updated patches when coalescing the same task", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "thread.started",
+      eventId: asEventId("evt-task-patch-thread"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+    });
+    harness.emit({
+      type: "session.started",
+      eventId: asEventId("evt-task-patch-session"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+    });
+    harness.emit({
+      type: "task.started",
+      eventId: asEventId("evt-task-patch-started"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-task-patch"),
+      payload: {
+        taskId: "task-patch-1",
+        description: "Long runner",
+      },
+    });
+
+    // Two partial patches for the same task within the coalesce window —
+    // first sets isBackgrounded, second sets description. Both fields must
+    // survive after flush (field-wise merge, not latest-wins replace).
+    harness.emit({
+      type: "task.updated",
+      eventId: asEventId("evt-task-patch-a"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-task-patch"),
+      payload: {
+        taskId: "task-patch-1",
+        status: "running",
+        isBackgrounded: true,
+      },
+    });
+    harness.emit({
+      type: "task.updated",
+      eventId: asEventId("evt-task-patch-b"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: "2026-01-01T00:00:01.050Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-task-patch"),
+      payload: {
+        taskId: "task-patch-1",
+        description: "Long runner (bg)",
+      },
+    });
+
+    await harness.drain();
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    const updates = (thread?.activities ?? []).filter(
+      (activity: ProviderRuntimeTestActivity) => activity.kind === "task.updated",
+    );
+    expect(updates).toHaveLength(1);
+    const payload =
+      updates[0]?.payload && typeof updates[0].payload === "object"
+        ? (updates[0].payload as Record<string, unknown>)
+        : undefined;
+    expect(payload?.isBackgrounded).toBe(true);
+    expect(payload?.description).toBe("Long runner (bg)");
+    expect(payload?.taskId).toBe("task-patch-1");
+  });
+
   it("coalesces bursts of tool.updated snapshots for the same item", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

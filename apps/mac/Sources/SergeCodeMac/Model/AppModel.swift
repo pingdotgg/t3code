@@ -11,6 +11,9 @@ public final class AppModel {
     public private(set) var models: [ModelOption] = []
     /// Low-frequency usage-limit card actions — stays flat on AppModel (not ThreadState).
     public private(set) var usageLimitActions: [String: UsageLimitActionState] = [:]
+    /// Per-task stop failures for subagent rows (`taskId` → message). Transient;
+    /// cleared on the next successful stop, a new stop attempt, or task state change.
+    public private(set) var subagentStopErrors: [String: String] = [:]
     /// Outcome of the most recent git action, shown as a transient banner.
     public var lastGitActionOutcome: GitActionOutcome?
 
@@ -420,6 +423,10 @@ public final class AppModel {
             state(creating: threadID).planProgress = progress
         case .vcsStatusChanged(let threadID, let status):
             state(creating: threadID).vcsStatus = status
+        case .subagentStopFailed(let taskId, let message):
+            // Async stop failures (unsupported adapter, no session, etc.)
+            // arrive as projected activities, not as a thrown RPC error.
+            subagentStopErrors[taskId] = message
         case .timelineAppended, .timelineReset, .assistantDelta, .assistantCompleted,
             .approvalResolved, .userInputResolved:
             // Timeline events are staged by applyBatch; never reach here.
@@ -1114,6 +1121,24 @@ public final class AppModel {
         } catch {
             lastError = String(describing: error)
         }
+    }
+
+    public func stopSubagentTask(taskId: String) async {
+        guard let threadID = selectedThreadID else { return }
+        // Clear any prior stop error so a retry starts clean.
+        subagentStopErrors[taskId] = nil
+        do {
+            try await backend.stopTask(threadID: threadID, taskId: taskId)
+            subagentStopErrors[taskId] = nil
+        } catch {
+            // Surface on the task row — `lastError` is not rendered in the chat timeline.
+            subagentStopErrors[taskId] = String(describing: error)
+        }
+    }
+
+    /// Clears a per-task stop error (e.g. when the task transitions state).
+    public func clearSubagentStopError(taskId: String) {
+        subagentStopErrors[taskId] = nil
     }
 
     public func restoreCheckpoint(_ checkpoint: Checkpoint) async {

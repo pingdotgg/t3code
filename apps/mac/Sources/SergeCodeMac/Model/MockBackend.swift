@@ -6,6 +6,20 @@ import T3Kit
 // protocol (Sendable, async). Events are pushed through an AsyncStream whose
 // continuation is stored on the actor so any method can emit.
 
+private enum MockBackendError: Error, LocalizedError {
+    case emptyLocation
+    case threadNotFound(String)
+    case taskNotFound(threadID: String, taskId: String)
+    var errorDescription: String? {
+        switch self {
+        case .emptyLocation: "Location must not be empty."
+        case .threadNotFound(let id): "Thread not found: \(id)."
+        case .taskNotFound(let threadID, let taskId):
+            "Task '\(taskId)' not found on thread \(threadID)."
+        }
+    }
+}
+
 public final class MockBackend: BackendService, @unchecked Sendable {
     public let events: AsyncStream<BackendEvent>
     private let continuation: AsyncStream<BackendEvent>.Continuation
@@ -116,15 +130,6 @@ public final class MockBackend: BackendService, @unchecked Sendable {
             locations: locations)
     }
 
-    private enum MockBackendError: Error, LocalizedError {
-        case emptyLocation
-        var errorDescription: String? {
-            switch self {
-            case .emptyLocation: "Location must not be empty."
-            }
-        }
-    }
-
     public func watchVcsStatus(threadID: String) async throws {
         await state.emitVcsStatus(threadID: threadID)
     }
@@ -198,6 +203,10 @@ public final class MockBackend: BackendService, @unchecked Sendable {
 
     public func cancelTurn(threadID: String) async throws {
         await state.cancelTurn(threadID: threadID)
+    }
+
+    public func stopTask(threadID: String, taskId: String) async throws {
+        try await state.stopTask(threadID: threadID, taskId: taskId)
     }
 
     public func respondToApproval(id: String, approve: Bool) async throws {
@@ -280,6 +289,8 @@ private actor MockState {
     private var approvalsByID: [String: ApprovalRequest] = [:]
     private var providerList: [ProviderInstance] = []
     private var backgroundAgentsByThread: [String: Int] = [:]
+    /// Task IDs stopped via `stopTask`; lifecycle demo must not revive them.
+    private var cancelledTaskIDs: Set<String> = []
 
     private var started = false
     private var counter = 0
@@ -502,6 +513,44 @@ private actor MockState {
         let notice = TimelineItem.notice(id: nextID("notice"), text: "Turn cancelled.", at: Date())
         timelinesByThread[threadID, default: []].append(notice)
         emit(.timelineAppended(threadID: threadID, item: notice))
+    }
+
+    func stopTask(threadID: String, taskId: String) throws {
+        guard threadsByID[threadID] != nil else {
+            throw MockBackendError.threadNotFound(threadID)
+        }
+        guard var timeline = timelinesByThread[threadID] else {
+            throw MockBackendError.taskNotFound(threadID: threadID, taskId: taskId)
+        }
+        let now = Date()
+        for index in timeline.indices {
+            if case .subagentTask(var task) = timeline[index], task.taskId == taskId {
+                cancelledTaskIDs.insert(taskId)
+                task.state = .stopped
+                task.lastActivityAt = now
+                task.duration = task.duration ?? now.timeIntervalSince(task.startedAt)
+                task.latestProgress = task.latestProgress ?? "Stopped"
+                let item = TimelineItem.subagentTask(task)
+                timeline[index] = item
+                timelinesByThread[threadID] = timeline
+                emit(.timelineAppended(threadID: threadID, item: item))
+
+                // Drop this agent from the active background count.
+                let remaining = max(0, (backgroundAgentsByThread[threadID] ?? 0) - 1)
+                backgroundAgentsByThread[threadID] = remaining > 0 ? remaining : nil
+                if var thread = threadsByID[threadID] {
+                    thread.backgroundAgentCount = remaining
+                    if thread.status == .backgroundWork, remaining == 0 {
+                        thread.status = .idle
+                    }
+                    thread.updatedAt = now
+                    threadsByID[threadID] = thread
+                    emit(.threadUpserted(thread))
+                }
+                return
+            }
+        }
+        throw MockBackendError.taskNotFound(threadID: threadID, taskId: taskId)
     }
 
     func models() -> [ModelOption] {
@@ -786,6 +835,10 @@ private actor MockState {
         threadID: String, state: SubagentTaskState, progress: String, duration: TimeInterval?,
         activeCount: Int
     ) {
+        let demoTaskId = "mock-subagent-1"
+        // Authoritative stop: cancelled tasks stay stopped even if the demo
+        // lifecycle would otherwise revive them.
+        if cancelledTaskIDs.contains(demoTaskId) { return }
         guard var thread = threadsByID[threadID] else { return }
         backgroundAgentsByThread[threadID] = activeCount > 0 ? activeCount : nil
         thread.backgroundAgentCount = activeCount
@@ -800,7 +853,7 @@ private actor MockState {
 
         let item = TimelineItem.subagentTask(
             SubagentTaskItem(
-                taskId: "mock-subagent-1", taskType: "reviewer",
+                taskId: demoTaskId, taskType: "reviewer",
                 description: "Audit subagent timeline and status handling",
                 state: state, latestProgress: progress,
                 startedAt: Date().addingTimeInterval(-(duration ?? 2)), duration: duration))

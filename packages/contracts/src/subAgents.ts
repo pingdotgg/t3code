@@ -9,7 +9,9 @@
  * Keep this module schema-only; the runtime lives in
  * `apps/server/src/mcp/toolkits/agents/`.
  */
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
@@ -24,6 +26,28 @@ export const SUB_AGENT_MAX_SPAWN_DEPTH = 2;
 
 export const SubAgentStatus = Schema.Literals(["running", "completed", "interrupted", "error"]);
 export type SubAgentStatus = typeof SubAgentStatus.Type;
+
+/**
+ * Strip C0/C1 control characters (including newlines) and collapse internal
+ * whitespace so agent names are safe for thread titles like `Agent: <name>`.
+ */
+export const sanitizeSubAgentName = (value: string): string =>
+  value
+    .replace(/[\u0000-\u001F\u007F-\u009F]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+/** Optional short agent name: trimmed, control-stripped, non-empty after sanitize. */
+export const SubAgentName = Schema.String.pipe(
+  Schema.decodeTo(
+    Schema.String,
+    SchemaTransformation.transformOrFail({
+      decode: (value) => Effect.succeed(sanitizeSubAgentName(value)),
+      encode: (value) => Effect.succeed(value),
+    }),
+  ),
+).check(Schema.isNonEmpty());
+export type SubAgentName = typeof SubAgentName.Type;
 
 export const SubAgentProviderSummary = Schema.Struct({
   instanceId: ProviderInstanceId,
@@ -40,8 +64,32 @@ export const SubAgentProviderSummary = Schema.Struct({
 });
 export type SubAgentProviderSummary = typeof SubAgentProviderSummary.Type;
 
+/** Spawned sub-agent handle returned by `agent_list` for the calling session. */
+export const SubAgentSpawnedSummary = Schema.Struct({
+  threadId: ThreadId,
+  /** Optional short name passed to `agent_spawn` (without the `Agent: ` prefix). */
+  name: Schema.optional(SubAgentName),
+  title: TrimmedNonEmptyString,
+  providerInstanceId: ProviderInstanceId,
+  model: TrimmedNonEmptyString,
+  /**
+   * Latest observed turn status for this handle. Terminal values
+   * (`completed` / `interrupted` / `error`) mean the agent is not currently
+   * running a turn. Records are retained after completion so callers can
+   * still list history; drive with `agent_send` / `agent_wait` only when
+   * status matches the operation (see tool errors for invalid-status).
+   */
+  status: SubAgentStatus,
+});
+export type SubAgentSpawnedSummary = typeof SubAgentSpawnedSummary.Type;
+
 export const SubAgentListResult = Schema.Struct({
   providers: Schema.Array(SubAgentProviderSummary),
+  /**
+   * Sub-agents spawned by the calling session via `agent_spawn` in this
+   * server process. Empty after a restart (handles do not survive restarts).
+   */
+  agents: Schema.Array(SubAgentSpawnedSummary).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 export type SubAgentListResult = typeof SubAgentListResult.Type;
 
@@ -59,9 +107,16 @@ export const SubAgentSpawnInput = Schema.Struct({
       description: "Model slug from agent_list. Defaults to the target provider's first model.",
     }),
   ),
+  name: Schema.optional(
+    SubAgentName.annotate({
+      description:
+        'Short agent name shown in the UI as the thread title "Agent: <name>". Prefer this over title for named workers. Control characters and internal whitespace runs are sanitized.',
+    }),
+  ),
   title: Schema.optional(
     TrimmedNonEmptyString.annotate({
-      description: "Thread title shown in the UI. Defaults to the first line of the prompt.",
+      description:
+        "Thread title shown in the UI. Defaults to `Agent: <name>` when name is set, otherwise the first line of the prompt.",
     }),
   ),
 });
@@ -72,6 +127,7 @@ export const SubAgentSpawnResult = Schema.Struct({
   providerInstanceId: ProviderInstanceId,
   model: TrimmedNonEmptyString,
   title: TrimmedNonEmptyString,
+  name: Schema.optional(SubAgentName),
   status: SubAgentStatus,
 });
 export type SubAgentSpawnResult = typeof SubAgentSpawnResult.Type;
@@ -122,6 +178,8 @@ export const SubAgentErrorReason = Schema.Literals([
   "thread-not-found",
   "depth-limit-exceeded",
   "dispatch-failed",
+  /** Handle is not in a state that accepts the requested operation. */
+  "invalid-status",
 ]);
 export type SubAgentErrorReason = typeof SubAgentErrorReason.Type;
 

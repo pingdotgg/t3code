@@ -36,6 +36,8 @@ public enum BackendEvent: Sendable {
     /// Keyed by thread: a worktree thread's repo status is its worktree's,
     /// not the project checkout's.
     case vcsStatusChanged(threadID: String, status: VcsStatus)
+    /// Projected `provider.task.stop.failed` activity keyed for the task row.
+    case subagentStopFailed(taskId: String, message: String)
 }
 
 public protocol BackendService: Sendable {
@@ -79,6 +81,8 @@ public protocol BackendService: Sendable {
     func deleteThread(id: String) async throws
     func sendMessage(threadID: String, text: String, attachments: [OutgoingAttachment]) async throws
     func cancelTurn(threadID: String) async throws
+    /// Stop a single Claude subagent/background task (thread.task.stop).
+    func stopTask(threadID: String, taskId: String) async throws
     func respondToApproval(id: String, approve: Bool) async throws
     /// Answer a pending user-input request. `answers` maps each question id
     /// to the selected option labels (single-element unless multi-select) or

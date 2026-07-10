@@ -20,6 +20,7 @@ import {
   EventId,
   MessageId,
   ProjectId,
+  RuntimeTaskId,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -50,6 +51,7 @@ import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import {
+  openSubagentTaskIdsFromActivities,
   providerErrorLabel,
   providerErrorLabelFromInstanceHint,
   ProviderCommandReactorLive,
@@ -225,6 +227,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
     const interruptTurn = vi.fn((_: unknown) => Effect.void);
+    const stopTask = vi.fn((_: unknown) => Effect.void);
     const respondToRequest = vi.fn<ProviderServiceShape["respondToRequest"]>(() => Effect.void);
     const respondToUserInput = vi.fn<ProviderServiceShape["respondToUserInput"]>(() => Effect.void);
     const stopSession = vi.fn((input: unknown) =>
@@ -301,6 +304,7 @@ describe("ProviderCommandReactor", () => {
       startSession: startSession as ProviderServiceShape["startSession"],
       sendTurn: sendTurn as ProviderServiceShape["sendTurn"],
       interruptTurn: interruptTurn as ProviderServiceShape["interruptTurn"],
+      stopTask: stopTask as ProviderServiceShape["stopTask"],
       respondToRequest: respondToRequest as ProviderServiceShape["respondToRequest"],
       respondToUserInput: respondToUserInput as ProviderServiceShape["respondToUserInput"],
       stopSession: stopSession as ProviderServiceShape["stopSession"],
@@ -422,6 +426,7 @@ describe("ProviderCommandReactor", () => {
       startSession,
       sendTurn,
       interruptTurn,
+      stopTask,
       respondToRequest,
       respondToUserInput,
       stopSession,
@@ -1856,6 +1861,108 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
+  it("reacts to thread.task-stop-requested by calling provider stopTask", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-task-stop"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "claudeAgent",
+          runtimeMode: "full-access",
+          activeTurnId: asTurnId("turn-1"),
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.task.stop",
+        commandId: CommandId.make("cmd-task-stop"),
+        threadId: ThreadId.make("thread-1"),
+        taskId: RuntimeTaskId.make("task-1"),
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.stopTask.mock.calls.length === 1);
+    expect(harness.stopTask.mock.calls[0]?.[0]).toEqual({
+      threadId: "thread-1",
+      taskId: "task-1",
+    });
+  });
+
+  it("includes taskId on provider.task.stop.failed activities", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    harness.stopTask.mockImplementation(
+      () =>
+        Effect.fail(
+          new ProviderAdapterRequestError({
+            provider: ProviderDriverKind.make("claudeAgent"),
+            method: "task/stop",
+            detail: "stopTask is not supported by this adapter",
+          }),
+        ) as never,
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-task-stop-fail"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "claudeAgent",
+          runtimeMode: "full-access",
+          activeTurnId: asTurnId("turn-1"),
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.task.stop",
+        commandId: CommandId.make("cmd-task-stop-fail"),
+        threadId: ThreadId.make("thread-1"),
+        taskId: RuntimeTaskId.make("task-fail-1"),
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      return (
+        thread?.activities.some((activity) => activity.kind === "provider.task.stop.failed") ??
+        false
+      );
+    });
+
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    const failureActivity = thread?.activities.find(
+      (activity) => activity.kind === "provider.task.stop.failed",
+    );
+    expect(failureActivity).toBeDefined();
+    expect(failureActivity?.payload).toMatchObject({
+      taskId: "task-fail-1",
+      detail: "stopTask is not supported by this adapter",
+    });
+  });
+
   it("starts a fresh session when only projected session state exists", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
@@ -1911,6 +2018,20 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
+  it("derives open subagent task ids from activity rows", () => {
+    expect(
+      openSubagentTaskIdsFromActivities([
+        { kind: "task.started", payload: { taskId: "t1" } },
+        { kind: "task.progress", payload: { taskId: "t1" } },
+        { kind: "task.started", payload: { taskId: "t2" } },
+        { kind: "task.completed", payload: { taskId: "t1", status: "completed" } },
+        { kind: "task.updated", payload: { taskId: "t2", status: "failed" } },
+        { kind: "task.started", payload: { taskId: "t3" } },
+        { kind: "task.updated", payload: { taskId: "t3", status: "running" } },
+      ]),
+    ).toEqual(["t3"]);
+  });
+
   it("interrupts stale projected running turns on reactor startup", async () => {
     const harness = await createHarness({ startReactor: false });
     const now = "2026-01-01T00:00:00.000Z";
@@ -1947,6 +2068,63 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.activeTurnId).toBeNull();
     expect(thread?.latestTurn?.state).not.toBe("running");
     expect(thread?.session?.lastError ?? "").toContain("Provider process was not running");
+  });
+
+  it("closes dangling subagent task activities on reactor startup", async () => {
+    const harness = await createHarness({ startReactor: false });
+    const now = "2026-01-01T00:00:00.000Z";
+    const threadId = ThreadId.make("thread-1");
+
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.activity.append",
+        commandId: CommandId.make("cmd-dangling-task-started"),
+        threadId,
+        activity: {
+          id: EventId.make("activity-dangling-task-started"),
+          tone: "info",
+          kind: "task.started",
+          summary: "Task started",
+          payload: {
+            taskId: "task-dangling-1",
+            description: "Left open after crash",
+          },
+          turnId: null,
+          createdAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await harness.startReactor();
+
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      const thread = readModel.threads.find((entry) => entry.id === threadId);
+      return (
+        thread?.activities.some(
+          (activity) =>
+            activity.kind === "task.completed" &&
+            typeof activity.payload === "object" &&
+            activity.payload !== null &&
+            (activity.payload as { taskId?: string; status?: string }).taskId ===
+              "task-dangling-1" &&
+            (activity.payload as { status?: string }).status === "stopped",
+        ) === true
+      );
+    });
+
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === threadId);
+    const stopped = thread?.activities.find(
+      (activity) =>
+        activity.kind === "task.completed" &&
+        typeof activity.payload === "object" &&
+        activity.payload !== null &&
+        (activity.payload as { taskId?: string }).taskId === "task-dangling-1",
+    );
+    expect(stopped?.kind).toBe("task.completed");
+    expect((stopped?.payload as { status?: string } | undefined)?.status).toBe("stopped");
   });
 
   it("continues interrupting stale projected running turns when one thread update fails", async () => {

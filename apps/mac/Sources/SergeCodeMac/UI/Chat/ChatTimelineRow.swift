@@ -41,7 +41,19 @@ struct ChatTimelineRowView: View {
                 threadStatus: model.selectedThread?.status,
                 projectRoot: projectRoot)
         case .subagentTask(let task):
-            SubagentTaskRow(task: task)
+            SubagentTaskRow(
+                task: task,
+                stopError: model.subagentStopErrors[task.taskId],
+                onStopAgent: {
+                    Task { await model.stopSubagentTask(taskId: task.taskId) }
+                },
+                onStopTurn: {
+                    Task { await model.cancelCurrentTurn() }
+                },
+                onClearStopError: {
+                    model.clearSubagentStopError(taskId: task.taskId)
+                }
+            )
         case .approval(let request):
             ApprovalCard(request: request) { approve in
                 Task { await model.respond(to: request, approve: approve) }
@@ -480,22 +492,57 @@ private struct ToolEventRow: View {
 private struct SubagentTaskRow: View {
     /// Expanded log shows the tail; older entries are summarized above.
     private static let maxVisibleLogEntries = 30
+    /// No progress for this long marks a running task as stalled.
+    private static let stalledThreshold: TimeInterval = 3 * 60
 
     let task: SubagentTaskItem
+    /// Transient stop-RPC failure (not part of the provider task payload).
+    let stopError: String?
+    let onStopAgent: () -> Void
+    let onStopTurn: () -> Void
+    let onClearStopError: () -> Void
 
     @UIState private var isExpanded = false
+    @UIState private var isHovering = false
+    @UIState private var showStopTurnConfirm = false
 
     private var hasExpandableContent: Bool {
         !task.progressLog.isEmpty
+            || task.error != nil
+            || stopError != nil
+            || task.lastToolName != nil
+            || task.usageSummary != nil
+    }
+
+    private func isStalled(at currentNow: Date) -> Bool {
+        guard task.state == .running else { return false }
+        return currentNow.timeIntervalSince(task.lastActivityAt) > Self.stalledThreshold
     }
 
     var body: some View {
+        // TimelineView owns the 1Hz tick only while the task is running;
+        // paused/terminal rows never attach a live timer subscription.
+        Group {
+            if task.state == .running {
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    rowChrome(now: context.date)
+                }
+            } else {
+                rowChrome(now: Date())
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func rowChrome(now currentNow: Date) -> some View {
+        let stalled = isStalled(at: currentNow)
         VStack(alignment: .leading, spacing: 4) {
             Button {
+                guard hasExpandableContent else { return }
                 withAnimation(Motion.snap) { isExpanded.toggle() }
             } label: {
                 HStack(alignment: .top, spacing: 9) {
-                    statusIcon
+                    statusIcon(stalled: stalled)
                         .frame(width: 16, height: 16)
                         .padding(.top, 1)
 
@@ -505,20 +552,14 @@ private struct SubagentTaskRow: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .frame(width: 14)
-                            if let label = taskTypeLabel {
-                                Text(label)
-                                    .font(.caption2.weight(.medium))
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(.secondary.opacity(0.12), in: Capsule())
-                            }
                             Text(title)
                                 .font(.callout.weight(.medium))
                                 .lineLimit(2)
                                 .fixedSize(horizontal: false, vertical: true)
                             Spacer(minLength: 8)
+                            if task.state == .running || task.state == .paused, isHovering {
+                                stopAgentButton
+                            }
                             durationLabel
                             if hasExpandableContent {
                                 Image(systemName: "chevron.right")
@@ -528,11 +569,29 @@ private struct SubagentTaskRow: View {
                             }
                         }
 
+                        if let identityBadge {
+                            Text(identityBadge)
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+
+                        healthTags(now: currentNow)
+
                         if let subtitle {
                             Text(subtitle)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+
+                        // Always visible — stop failures must not require expand.
+                        if let stopError = nonEmpty(stopError) {
+                            Text(stopError)
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                                .textSelection(.enabled)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
@@ -543,14 +602,56 @@ private struct SubagentTaskRow: View {
             .disabled(!hasExpandableContent)
 
             if isExpanded && hasExpandableContent {
-                progressLogBody
+                expandedBody
                     .transition(Motion.unfold)
             }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
-        .background(backgroundTint, in: RoundedRectangle(cornerRadius: 10))
+        .background(backgroundTint(stalled: stalled), in: RoundedRectangle(cornerRadius: 10))
         .animation(Motion.ambient, value: task.state)
+        .onChange(of: task.state) { _, _ in
+            onClearStopError()
+        }
+        .onHover { isHovering = $0 }
+        .contextMenu {
+            if task.state == .running || task.state == .paused {
+                Button("Stop agent", role: .destructive) {
+                    onStopAgent()
+                }
+                Button("Stop turn…", role: .destructive) {
+                    showStopTurnConfirm = true
+                }
+            }
+        }
+        .confirmationDialog(
+            "Stop turn?",
+            isPresented: $showStopTurnConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Stop turn", role: .destructive) {
+                onStopTurn()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                "Stopping interrupts the whole turn, including all running agents — not just this one."
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var stopAgentButton: some View {
+        Button {
+            onStopAgent()
+        } label: {
+            Image(systemName: "stop.circle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.plain)
+        .help("Stop agent")
+        .accessibilityLabel("Stop agent")
     }
 
     @ViewBuilder
@@ -563,6 +664,95 @@ private struct SubagentTaskRow: View {
             Text(Self.format(duration: duration))
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private func healthTags(now currentNow: Date) -> some View {
+        if task.state == .running {
+            let stalled = isStalled(at: currentNow)
+            HStack(spacing: 6) {
+                Text(lastActivityLabel(at: currentNow))
+                    .font(.caption2)
+                    .foregroundStyle(stalled ? Color.orange : Color.secondary)
+                if stalled {
+                    Text("stalled")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(Color.orange.opacity(0.14), in: Capsule())
+                }
+                if task.isBackgrounded {
+                    Text("background")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(.secondary.opacity(0.12), in: Capsule())
+                }
+            }
+        } else if task.state == .paused {
+            HStack(spacing: 6) {
+                Text("paused")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(.secondary.opacity(0.12), in: Capsule())
+                if task.isBackgrounded {
+                    Text("background")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(.secondary.opacity(0.12), in: Capsule())
+                }
+            }
+        } else if task.isBackgrounded {
+            Text("background")
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 1)
+                .background(.secondary.opacity(0.12), in: Capsule())
+        }
+    }
+
+    @ViewBuilder
+    private var expandedBody: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let lastTool = nonEmpty(task.lastToolName) {
+                metaLine(label: "Last tool", value: lastTool)
+            }
+            if let usage = nonEmpty(task.usageSummary) {
+                metaLine(label: "Usage", value: usage)
+            }
+            if let error = nonEmpty(task.error) {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !task.progressLog.isEmpty {
+                progressLogBody
+            }
+        }
+        .padding(.leading, 25)
+        .padding(.top, 2)
+    }
+
+    private func metaLine(label: String, value: String) -> some View {
+        HStack(spacing: 6) {
+            Text(label)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.tertiary)
+            Text(value)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .lineLimit(2)
         }
     }
 
@@ -585,8 +775,6 @@ private struct SubagentTaskRow: View {
                 progressLogLine(entry, emphasize: isNewest)
             }
         }
-        .padding(.leading, 25)
-        .padding(.top, 2)
     }
 
     private func progressLogLine(_ entry: SubagentTaskProgressEntry, emphasize: Bool)
@@ -623,15 +811,33 @@ private struct SubagentTaskRow: View {
             : "Subagent task"
     }
 
-    private var taskTypeLabel: String? {
-        guard let type = task.taskType?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !type.isEmpty
-        else { return nil }
-        return type.replacingOccurrences(of: "-", with: " ")
+    /// Compact identity badge: "Explore · sonnet-5" or "workflow · opus-4.8".
+    private var identityBadge: String? {
+        var parts: [String] = []
+        if let workflow = nonEmpty(task.workflowName) {
+            parts.append(workflow)
+        } else if let subagent = nonEmpty(task.subagentType) {
+            parts.append(subagent)
+        } else if let type = nonEmpty(task.taskType) {
+            parts.append(type.replacingOccurrences(of: "-", with: " "))
+        }
+        if let model = nonEmpty(task.model) {
+            parts.append(shortModelName(model))
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private func lastActivityLabel(at currentNow: Date) -> String {
+        let seconds = max(0, Int(currentNow.timeIntervalSince(task.lastActivityAt)))
+        if seconds < 5 { return "last activity just now" }
+        if seconds < 60 { return "last activity \(seconds)s ago" }
+        let minutes = seconds / 60
+        if minutes < 60 { return "last activity \(minutes)m ago" }
+        return "last activity \(minutes / 60)h ago"
     }
 
     private var subtitle: String? {
-        // Completed/failed/stopped: prefer completion summary via latestProgress.
+        // Terminal (and paused): prefer completion/latest summary when present.
         if task.state != .running {
             if let progress = task.latestProgress?.trimmingCharacters(in: .whitespacesAndNewlines),
                 !progress.isEmpty
@@ -640,6 +846,7 @@ private struct SubagentTaskRow: View {
             }
             switch task.state {
             case .running: return nil
+            case .paused: return "Paused"
             case .completed: return "Completed"
             case .failed: return "Failed"
             case .stopped: return "Stopped"
@@ -663,38 +870,57 @@ private struct SubagentTaskRow: View {
         return "Working..."
     }
 
-    private var statusIcon: some View {
-        Image(systemName: iconName)
-            .symbolEffect(.pulse, isActive: task.state == .running)
-            .foregroundStyle(iconTint)
+    private func statusIcon(stalled: Bool) -> some View {
+        Image(systemName: iconName(stalled: stalled))
+            .symbolEffect(.pulse, isActive: task.state == .running && !stalled)
+            .foregroundStyle(iconTint(stalled: stalled))
             .contentTransition(.symbolEffect(.replace))
     }
 
-    private var iconName: String {
+    private func iconName(stalled: Bool) -> String {
         switch task.state {
-        case .running: "circle.dotted"
+        case .running: stalled ? "exclamationmark.circle" : "circle.dotted"
+        case .paused: "pause.circle.fill"
         case .completed: "checkmark.circle.fill"
         case .failed: "xmark.circle.fill"
         case .stopped: "stop.circle.fill"
         }
     }
 
-    private var iconTint: Color {
+    private func iconTint(stalled: Bool) -> Color {
         switch task.state {
-        case .running: .secondary
+        case .running: stalled ? .orange : .secondary
+        case .paused: .secondary
         case .completed: .green
         case .failed: .red
         case .stopped: .secondary
         }
     }
 
-    private var backgroundTint: Color {
+    private func backgroundTint(stalled: Bool) -> Color {
         switch task.state {
-        case .running: Color.accentColor.opacity(0.08)
+        case .running: stalled ? Color.orange.opacity(0.08) : Color.accentColor.opacity(0.08)
+        case .paused: Color.secondary.opacity(0.08)
         case .completed: Color.green.opacity(0.08)
         case .failed: Color.red.opacity(0.08)
         case .stopped: Color.secondary.opacity(0.08)
         }
+    }
+
+    private func shortModelName(_ model: String) -> String {
+        // Prefer a readable short id when the wire form is a long Claude slug.
+        let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("claude-") {
+            return String(trimmed.dropFirst("claude-".count))
+        }
+        return trimmed
+    }
+
+    private func nonEmpty(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !trimmed.isEmpty
+        else { return nil }
+        return trimmed
     }
 
     private static func relativeOffset(from start: Date, to date: Date) -> String {

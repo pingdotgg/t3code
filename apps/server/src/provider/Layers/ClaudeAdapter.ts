@@ -58,6 +58,7 @@ import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -187,6 +188,12 @@ interface ClaudeSessionContext {
   readonly basePermissionMode: PermissionMode | undefined;
   currentApiModelId: string | undefined;
   resumeSessionId: string | undefined;
+  /**
+   * When true, the next user prompt should include a one-shot note that
+   * background shells/tasks from before the resume are dead. Only set when
+   * the SDK query was started with `resume:`.
+   */
+  pendingResumeDeadShellNote: boolean;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
   readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
   readonly turns: Array<{
@@ -194,6 +201,24 @@ interface ClaudeSessionContext {
     items: Array<unknown>;
   }>;
   readonly inFlightTools: Map<number, ToolInFlight>;
+  /**
+   * Assistant Task/Agent tool_use id → parsed tool input. Used to resolve
+   * the subagent model (SDK task_* messages do not carry it). Pruned when
+   * the correlated task reaches a terminal state, on turn completion, and
+   * on session stop.
+   */
+  readonly taskToolInputsByUseId: Map<string, Record<string, unknown>>;
+  /** task_id → tool_use_id for pruning taskToolInputsByUseId on terminal. */
+  readonly taskToolUseIdByTaskId: Map<string, string>;
+  /** task_id values that have started but not yet completed/stopped. */
+  readonly openTaskIds: Set<string>;
+  /**
+   * Tasks for which we already emitted a synthetic `task.completed`
+   * status `"stopped"` (stopTask grace / session close). Native terminal
+   * events for these ids are suppressed so a delayed SDK completion cannot
+   * flip the UI back to completed or double-emit.
+   */
+  readonly syntheticallyStoppedTaskIds: Set<string>;
   readonly claudeTasks: Map<string, ClaudeTaskState>;
   claudeTaskPlanFingerprint: string | undefined;
   turnState: ClaudeTurnState | undefined;
@@ -206,14 +231,23 @@ interface ClaudeSessionContext {
   stopped: boolean;
 }
 
+/** SDK task_updated statuses that mean the task is terminal. */
+function isTerminalTaskUpdatedStatus(status: string | undefined): boolean {
+  return status === "completed" || status === "failed" || status === "killed";
+}
+
 interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
   readonly interrupt: () => Promise<void>;
+  readonly stopTask: (taskId: string) => Promise<void>;
   readonly setModel: (model?: string) => Promise<void>;
   readonly setPermissionMode: (mode: PermissionMode) => Promise<void>;
   readonly setMaxThinkingTokens: (maxThinkingTokens: number | null) => Promise<void>;
   readonly getContextUsage?: () => Promise<SDKControlGetContextUsageResponse>;
   readonly close: () => void;
 }
+
+/** How long to wait for the SDK's own terminal task event after stopTask. */
+const STOP_TASK_TERMINAL_GRACE = Duration.seconds(3);
 
 export interface ClaudeAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
@@ -600,6 +634,92 @@ function readClaudeResumeState(resumeCursor: unknown): ClaudeResumeState | undef
       ? { turnCount: turnCountValue }
       : {}),
   };
+}
+
+/** True when the tool is a Claude Task/Agent (subagent spawn) tool. */
+function isClaudeSubagentToolName(toolName: string): boolean {
+  return classifyToolItemType(toolName) === "collab_agent_tool_call";
+}
+
+/**
+ * Remember Task/Agent tool inputs keyed by tool_use id so later
+ * `task_started` events can resolve the requested subagent model.
+ */
+function rememberTaskToolInput(
+  context: ClaudeSessionContext,
+  tool: Pick<ToolInFlight, "itemId" | "toolName" | "input">,
+): void {
+  if (!isClaudeSubagentToolName(tool.toolName)) {
+    return;
+  }
+  if (!tool.itemId || tool.itemId.length === 0) {
+    return;
+  }
+  context.taskToolInputsByUseId.set(tool.itemId, tool.input);
+}
+
+function rememberTaskToolUseId(
+  context: ClaudeSessionContext,
+  taskId: string,
+  toolUseId: string | undefined,
+): void {
+  if (!toolUseId) {
+    return;
+  }
+  context.taskToolUseIdByTaskId.set(taskId, toolUseId);
+}
+
+/** Drop remembered Task tool input once the correlated subagent is terminal. */
+function forgetTaskToolInputForTask(
+  context: ClaudeSessionContext,
+  taskId: string,
+  toolUseIdFromMessage?: string,
+): void {
+  const toolUseId = toolUseIdFromMessage ?? context.taskToolUseIdByTaskId.get(taskId);
+  context.taskToolUseIdByTaskId.delete(taskId);
+  if (toolUseId) {
+    context.taskToolInputsByUseId.delete(toolUseId);
+  }
+}
+
+function clearTaskToolInputMemory(context: ClaudeSessionContext): void {
+  context.taskToolInputsByUseId.clear();
+  context.taskToolUseIdByTaskId.clear();
+}
+
+function readOptionalTrimmedString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/**
+ * Resolve the model string for a subagent task. Prefer the Task tool input's
+ * `model` field (looked up via tool_use_id); fall back to the session model.
+ * Always returns a non-empty string.
+ */
+function resolveSubagentTaskModel(
+  context: ClaudeSessionContext,
+  toolUseId: string | undefined,
+): string {
+  if (toolUseId) {
+    const input = context.taskToolInputsByUseId.get(toolUseId);
+    const fromInput = readOptionalTrimmedString(input?.model);
+    if (fromInput) {
+      return fromInput;
+    }
+  }
+  const fromSession = readOptionalTrimmedString(context.session.model);
+  if (fromSession) {
+    return fromSession;
+  }
+  const fromApi = readOptionalTrimmedString(context.currentApiModelId);
+  if (fromApi) {
+    return fromApi;
+  }
+  return "default";
 }
 
 function classifyToolItemType(toolName: string): CanonicalItemType {
@@ -1237,9 +1357,15 @@ const CLAUDE_SETTING_SOURCES = [
   "local",
 ] as const satisfies ReadonlyArray<SettingSource>;
 
+const RESUME_DEAD_SHELL_NOTE =
+  "[Note: this session was resumed after a restart. Any background shells or background tasks from before the restart are dead — do not poll or wait on them; restart that work if still needed.]";
+
 function buildPromptText(
   input: ProviderSendTurnInput,
   boundInstanceId: ProviderInstanceId,
+  options?: {
+    readonly appendResumeDeadShellNote?: boolean;
+  },
 ): string {
   const rawEffort =
     input.modelSelection?.instanceId === boundInstanceId
@@ -1250,7 +1376,14 @@ function buildPromptText(
   const caps = getClaudeModelCapabilities(claudeModel);
 
   const promptEffort = resolvePromptInjectedEffort(caps, rawEffort);
-  return applyClaudePromptEffortPrefix(input.input?.trim() ?? "", promptEffort);
+  const base = applyClaudePromptEffortPrefix(input.input?.trim() ?? "", promptEffort);
+  if (!options?.appendResumeDeadShellNote) {
+    return base;
+  }
+  if (base.length === 0) {
+    return RESUME_DEAD_SHELL_NOTE;
+  }
+  return `${base}\n\n${RESUME_DEAD_SHELL_NOTE}`;
 }
 
 function buildUserMessage(input: {
@@ -1300,9 +1433,12 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
     readonly attachmentsDir: string;
     readonly boundInstanceId: ProviderInstanceId;
     readonly provider: ProviderDriverKind;
+    readonly appendResumeDeadShellNote?: boolean;
   },
 ) {
-  const text = buildPromptText(input, dependencies.boundInstanceId);
+  const text = buildPromptText(input, dependencies.boundInstanceId, {
+    appendResumeDeadShellNote: dependencies.appendResumeDeadShellNote === true,
+  });
   const sdkContent: Array<Record<string, unknown>> = [];
 
   if (text.length > 0) {
@@ -2277,12 +2413,63 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     });
   });
 
+  /**
+   * Emit synthetic `task.completed` (status "stopped") for every still-open
+   * subagent task so the projection/UI stop treating them as running.
+   */
+  const closeOpenSubagentTasks = Effect.fn("closeOpenSubagentTasks")(function* (
+    context: ClaudeSessionContext,
+    summary: string,
+  ) {
+    if (context.openTaskIds.size === 0) {
+      return;
+    }
+    const openIds = Array.from(context.openTaskIds);
+    context.openTaskIds.clear();
+    for (const taskId of openIds) {
+      context.syntheticallyStoppedTaskIds.add(taskId);
+      forgetTaskToolInputForTask(context, taskId);
+      const stamp = yield* makeEventStamp();
+      yield* offerRuntimeEvent({
+        type: "task.completed",
+        eventId: stamp.eventId,
+        provider: PROVIDER,
+        createdAt: stamp.createdAt,
+        threadId: context.session.threadId,
+        ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+        payload: {
+          taskId: RuntimeTaskId.make(taskId),
+          status: "stopped",
+          summary,
+        },
+        providerRefs: nativeProviderRefs(context),
+        raw: {
+          source: "claude.sdk.message",
+          method: "claude/synthetic/task_stopped",
+          payload: { taskId, reason: summary },
+        },
+      });
+    }
+  });
+
   const completeTurn = Effect.fn("completeTurn")(function* (
     context: ClaudeSessionContext,
     status: ProviderRuntimeTurnStatus,
     errorMessage?: string,
     result?: SDKResultMessage,
   ) {
+    if (status === "interrupted" || status === "cancelled") {
+      yield* closeOpenSubagentTasks(
+        context,
+        status === "cancelled"
+          ? "Task stopped (turn cancelled)."
+          : "Task stopped (turn interrupted).",
+      );
+    }
+    // Turn is finished — drop any leftover Task tool input memory so the map
+    // cannot grow across multi-turn sessions.
+    clearTaskToolInputMemory(context);
+
     const resultContextWindow = maxClaudeContextWindowFromModelUsage(result?.modelUsage);
     if (resultContextWindow !== undefined) {
       context.lastKnownContextWindow = resultContextWindow;
@@ -2585,6 +2772,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           lastEmittedInputFingerprint: nextFingerprint,
         };
         context.inFlightTools.set(event.index, nextTool);
+        rememberTaskToolInput(context, nextTool);
 
         const stamp = yield* makeEventStamp();
         yield* offerRuntimeEvent({
@@ -2691,6 +2879,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(inputFingerprint ? { lastEmittedInputFingerprint: inputFingerprint } : {}),
       };
       context.inFlightTools.set(index, tool);
+      rememberTaskToolInput(context, tool);
 
       const stamp = yield* makeEventStamp();
       yield* offerRuntimeEvent({
@@ -2932,6 +3121,20 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           name?: unknown;
           input?: unknown;
         };
+        if (toolUse.type === "tool_use" && typeof toolUse.name === "string") {
+          const toolUseId = typeof toolUse.id === "string" ? toolUse.id : undefined;
+          const toolInput =
+            typeof toolUse.input === "object" && toolUse.input !== null
+              ? (toolUse.input as Record<string, unknown>)
+              : {};
+          if (toolUseId) {
+            rememberTaskToolInput(context, {
+              itemId: toolUseId,
+              toolName: toolUse.name,
+              input: toolInput,
+            });
+          }
+        }
         if (toolUse.type !== "tool_use" || toolUse.name !== "ExitPlanMode") {
           continue;
         }
@@ -3095,18 +3298,41 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           },
         });
         return;
-      case "task_started":
+      case "task_started": {
+        const toolUseId = readOptionalTrimmedString(
+          (message as { tool_use_id?: unknown }).tool_use_id,
+        );
+        const subagentType = readOptionalTrimmedString(
+          (message as { subagent_type?: unknown }).subagent_type,
+        );
+        const workflowName = readOptionalTrimmedString(
+          (message as { workflow_name?: unknown }).workflow_name,
+        );
+        const model = resolveSubagentTaskModel(context, toolUseId);
+        context.openTaskIds.add(message.task_id);
+        rememberTaskToolUseId(context, message.task_id, toolUseId);
         yield* offerRuntimeEvent({
           ...base,
           type: "task.started",
           payload: {
             taskId: RuntimeTaskId.make(message.task_id),
             description: message.description,
+            model,
             ...(message.task_type ? { taskType: message.task_type } : {}),
+            ...(subagentType ? { subagentType } : {}),
+            ...(workflowName ? { workflowName } : {}),
+            ...(toolUseId ? { toolUseId } : {}),
           },
         });
         return;
-      case "task_progress":
+      }
+      case "task_progress": {
+        const toolUseId = readOptionalTrimmedString(
+          (message as { tool_use_id?: unknown }).tool_use_id,
+        );
+        const subagentType = readOptionalTrimmedString(
+          (message as { subagent_type?: unknown }).subagent_type,
+        );
         yield* emitThreadTokenUsage(
           context,
           normalizeClaudeTaskProgressTokenUsage(message.usage, context),
@@ -3124,10 +3350,74 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             ...(message.summary ? { summary: message.summary } : {}),
             ...(message.usage ? { usage: message.usage } : {}),
             ...(message.last_tool_name ? { lastToolName: message.last_tool_name } : {}),
+            ...(subagentType ? { subagentType } : {}),
+            ...(toolUseId ? { toolUseId } : {}),
           },
         });
         return;
-      case "task_notification":
+      }
+      case "task_updated": {
+        const patch =
+          (message as { patch?: Record<string, unknown> }).patch &&
+          typeof (message as { patch?: unknown }).patch === "object"
+            ? ((message as { patch: Record<string, unknown> }).patch ?? {})
+            : {};
+        const status = readOptionalTrimmedString(patch.status) as
+          | "pending"
+          | "running"
+          | "completed"
+          | "failed"
+          | "killed"
+          | "paused"
+          | undefined;
+        const description = readOptionalTrimmedString(patch.description);
+        const error = readOptionalTrimmedString(patch.error);
+        const endTime = typeof patch.end_time === "number" ? patch.end_time : undefined;
+        const totalPausedMs =
+          typeof patch.total_paused_ms === "number" ? patch.total_paused_ms : undefined;
+        const isBackgrounded =
+          typeof patch.is_backgrounded === "boolean" ? patch.is_backgrounded : undefined;
+        if (isTerminalTaskUpdatedStatus(status)) {
+          context.openTaskIds.delete(message.task_id);
+          forgetTaskToolInputForTask(
+            context,
+            message.task_id,
+            readOptionalTrimmedString((message as { tool_use_id?: unknown }).tool_use_id),
+          );
+          // Late native terminal after synthetic stop: keep bookkeeping clean
+          // but do not publish a second terminal state to the UI.
+          if (context.syntheticallyStoppedTaskIds.delete(message.task_id)) {
+            return;
+          }
+        }
+        yield* offerRuntimeEvent({
+          ...base,
+          type: "task.updated",
+          payload: {
+            taskId: RuntimeTaskId.make(message.task_id),
+            ...(status ? { status } : {}),
+            ...(description ? { description } : {}),
+            ...(error ? { error } : {}),
+            ...(isBackgrounded !== undefined ? { isBackgrounded } : {}),
+            ...(endTime !== undefined ? { endTime } : {}),
+            ...(totalPausedMs !== undefined ? { totalPausedMs } : {}),
+          },
+        });
+        return;
+      }
+      case "task_notification": {
+        const outputFile = readOptionalTrimmedString(
+          (message as { output_file?: unknown }).output_file,
+        );
+        const toolUseId = readOptionalTrimmedString(
+          (message as { tool_use_id?: unknown }).tool_use_id,
+        );
+        context.openTaskIds.delete(message.task_id);
+        forgetTaskToolInputForTask(context, message.task_id, toolUseId);
+        // Late native completion after synthetic stop: drop without re-emitting.
+        if (context.syntheticallyStoppedTaskIds.delete(message.task_id)) {
+          return;
+        }
         yield* emitThreadTokenUsage(
           context,
           normalizeClaudeTaskProgressTokenUsage(message.usage, context),
@@ -3144,9 +3434,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             status: message.status,
             ...(message.summary ? { summary: message.summary } : {}),
             ...(message.usage ? { usage: message.usage } : {}),
+            ...(outputFile ? { outputFile } : {}),
           },
         });
         return;
+      }
       case "files_persisted":
         yield* offerRuntimeEvent({
           ...base,
@@ -3408,6 +3700,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     if (context.stopped) return;
 
     context.stopped = true;
+    clearTaskToolInputMemory(context);
+    // Session is gone; drop synthetic-stop markers so they cannot leak.
+    context.syntheticallyStoppedTaskIds.clear();
 
     for (const [requestId, pending] of context.pendingApprovals) {
       yield* Deferred.succeed(pending.decision, "cancel");
@@ -3431,6 +3726,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     if (context.turnState) {
       yield* completeTurn(context, "interrupted", "Session stopped.");
+    } else {
+      // No active turn (e.g. background tasks after the parent turn ended).
+      yield* closeOpenSubagentTasks(context, "Task stopped (session stopped).");
     }
 
     yield* Queue.shutdown(context.promptQueue);
@@ -4003,10 +4301,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         basePermissionMode: permissionMode,
         currentApiModelId: apiModelId,
         resumeSessionId: sessionId,
+        // Only when the SDK query was actually started with resume:.
+        pendingResumeDeadShellNote: existingResumeSessionId !== undefined,
         pendingApprovals,
         pendingUserInputs,
         turns: [],
         inFlightTools,
+        taskToolInputsByUseId: new Map(),
+        taskToolUseIdByTaskId: new Map(),
+        openTaskIds: new Set(),
+        syntheticallyStoppedTaskIds: new Set(),
         claudeTasks,
         claudeTaskPlanFingerprint: undefined,
         turnState: undefined,
@@ -4178,11 +4482,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       });
     }
 
+    // Keep the one-shot flag set until the prompt is successfully queued so a
+    // validation / offer failure can still attach the note on the next attempt.
+    const appendResumeDeadShellNote = context.pendingResumeDeadShellNote;
+
     const message = yield* buildUserMessageEffect(input, {
       fileSystem,
       attachmentsDir: serverConfig.attachmentsDir,
       boundInstanceId,
       provider: PROVIDER,
+      appendResumeDeadShellNote,
     }).pipe(
       Effect.mapError((cause) => toRequestError(PROVIDER, input.threadId, "turn/start", cause)),
     );
@@ -4193,6 +4502,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }).pipe(
       Effect.mapError((cause) => toRequestError(PROVIDER, input.threadId, "turn/start", cause)),
     );
+
+    if (appendResumeDeadShellNote) {
+      context.pendingResumeDeadShellNote = false;
+    }
 
     return {
       threadId: context.session.threadId,
@@ -4212,6 +4525,60 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       });
     },
   );
+
+  /**
+   * Stop one subagent task via the Claude Agent SDK. If the SDK does not emit
+   * a terminal task event within a short grace period, synthesize
+   * task.completed status "stopped" so the UI settles.
+   */
+  const stopTask: ClaudeAdapterShape["stopTask"] = Effect.fn("stopTask")(function* (
+    threadId,
+    taskId,
+  ) {
+    const context = yield* requireSession(threadId);
+    yield* Effect.tryPromise({
+      try: () => context.query.stopTask(taskId),
+      catch: (cause) => toRequestError(PROVIDER, threadId, "task/stop", cause),
+    });
+
+    // Safety net: race a short wait against natural terminal emission.
+    // Detached so the RPC returns immediately and does not require a Scope.
+    yield* Effect.forkDetach(
+      Effect.sleep(STOP_TASK_TERMINAL_GRACE).pipe(
+        Effect.flatMap(() =>
+          Effect.gen(function* () {
+            if (context.stopped || !context.openTaskIds.has(taskId)) {
+              return;
+            }
+            context.openTaskIds.delete(taskId);
+            context.syntheticallyStoppedTaskIds.add(taskId);
+            forgetTaskToolInputForTask(context, taskId);
+            const stamp = yield* makeEventStamp();
+            yield* offerRuntimeEvent({
+              type: "task.completed",
+              eventId: stamp.eventId,
+              provider: PROVIDER,
+              createdAt: stamp.createdAt,
+              threadId: context.session.threadId,
+              ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+              payload: {
+                taskId: RuntimeTaskId.make(taskId),
+                status: "stopped",
+                summary: "Task stopped (stopTask grace elapsed).",
+              },
+              providerRefs: nativeProviderRefs(context),
+              raw: {
+                source: "claude.sdk.message",
+                method: "claude/synthetic/task_stopped",
+                payload: { taskId, reason: "stopTask grace elapsed" },
+              },
+            });
+          }),
+        ),
+        Effect.catchCause(() => Effect.void),
+      ),
+    );
+  });
 
   const readThread: ClaudeAdapterShape["readThread"] = Effect.fn("readThread")(
     function* (threadId) {
@@ -4316,6 +4683,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     startSession,
     sendTurn,
     interruptTurn,
+    stopTask,
     readThread,
     rollbackThread,
     respondToRequest,

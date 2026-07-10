@@ -18,7 +18,7 @@ const dependencies = [McpInvocationContext.McpInvocationContext, SubAgentCoordin
 
 export const AgentListTool = Tool.make("agent_list", {
   description:
-    "List the coding-agent providers configured on this server (e.g. Codex, Claude, Cursor) that can run sub-agent threads via agent_spawn. Shows each instance id, driver, readiness, available model slugs, and which instance is running the current session.",
+    "List coding-agent providers configured on this server (instance id, driver, readiness, model slugs) and the sub-agents this session has already spawned via agent_spawn (threadId, optional name, title, status). Status is running while a turn is in progress, otherwise completed/interrupted/error. Use providers to pick a spawnable providerInstanceId; use agents to recall named workers for agent_send/agent_wait. Spawned handles do not survive server restarts.",
   parameters: Schema.Struct({}),
   success: SubAgentListResult,
   failure: SubAgentError,
@@ -31,7 +31,7 @@ export const AgentListTool = Tool.make("agent_list", {
 
 export const AgentSpawnTool = Tool.make("agent_spawn", {
   description:
-    "Spawn a sub-agent: start a new thread on any configured provider instance (including a different agent than yourself — e.g. delegate from Claude to Codex or vice versa) and send it an initial prompt. The sub-agent works in this thread's project and worktree. Returns immediately with the new threadId; use agent_wait to collect the result and agent_send for follow-up prompts. Use agent_list first to pick a spawnable providerInstanceId.",
+    'Spawn a sub-agent: start a new thread on any configured provider instance (including a different agent than yourself — e.g. delegate from Claude to Codex or vice versa) and send it an initial prompt. Optional name sets the thread title to "Agent: <name>" for easy identification in the UI and agent_list. The sub-agent works in this thread\'s project and worktree. Returns immediately with the new threadId; use agent_wait to collect the result and agent_send for follow-up prompts. Use agent_list first to pick a spawnable providerInstanceId.',
   parameters: SubAgentSpawnInput,
   success: SubAgentSpawnResult,
   failure: SubAgentError,

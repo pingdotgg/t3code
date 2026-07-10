@@ -528,6 +528,7 @@ const buildAppUnderTest = (options?: {
       startSession: () => unsupportedProviderServiceCall(),
       sendTurn: () => unsupportedProviderServiceCall(),
       interruptTurn: () => unsupportedProviderServiceCall(),
+      stopTask: () => unsupportedProviderServiceCall(),
       respondToRequest: () => unsupportedProviderServiceCall(),
       respondToUserInput: () => unsupportedProviderServiceCall(),
       stopSession: () => unsupportedProviderServiceCall(),

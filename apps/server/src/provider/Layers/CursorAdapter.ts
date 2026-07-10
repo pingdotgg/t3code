@@ -1071,6 +1071,15 @@ export function makeCursorAdapter(
         );
       });
 
+    const stopTask: CursorAdapterShape["stopTask"] = (_threadId, _taskId) =>
+      Effect.fail(
+        new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "task/stop",
+          detail: "Per-task stop is not supported for Cursor sessions.",
+        }),
+      );
+
     const respondToRequest: CursorAdapterShape["respondToRequest"] = (
       threadId,
       requestId,
@@ -1167,6 +1176,7 @@ export function makeCursorAdapter(
       startSession,
       sendTurn,
       interruptTurn,
+      stopTask,
       readThread,
       rollbackThread,
       respondToRequest,

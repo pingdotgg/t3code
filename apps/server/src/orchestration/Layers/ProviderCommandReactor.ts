@@ -55,6 +55,7 @@ type ProviderIntentEvent = Extract<
       | "thread.runtime-mode-set"
       | "thread.turn-start-requested"
       | "thread.turn-interrupt-requested"
+      | "thread.task-stop-requested"
       | "thread.approval-response-requested"
       | "thread.user-input-response-requested"
       | "thread.session-stop-requested";
@@ -93,6 +94,56 @@ const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 const DEFAULT_THREAD_TITLE = "New thread";
 const STALE_RUNNING_SESSION_DETAIL =
   "Provider process was not running after server restart; the in-flight turn was interrupted.";
+
+const STALE_SUBAGENT_TASK_DETAIL =
+  "Subagent task was still in progress after server restart; marked stopped.";
+
+/**
+ * Derive still-open subagent task IDs from projected activity rows.
+ * A task opens on task.started / task.progress / non-terminal task.updated
+ * and closes on task.completed or terminal task.updated (completed/failed/killed).
+ */
+export function openSubagentTaskIdsFromActivities(
+  activities: ReadonlyArray<{
+    readonly kind: string;
+    readonly payload: unknown;
+  }>,
+): string[] {
+  const open = new Set<string>();
+  for (const activity of activities) {
+    if (
+      activity.kind !== "task.started" &&
+      activity.kind !== "task.progress" &&
+      activity.kind !== "task.updated" &&
+      activity.kind !== "task.completed"
+    ) {
+      continue;
+    }
+    const payload =
+      activity.payload && typeof activity.payload === "object"
+        ? (activity.payload as { readonly taskId?: unknown; readonly status?: unknown })
+        : undefined;
+    const taskId = typeof payload?.taskId === "string" ? payload.taskId.trim() : "";
+    if (taskId.length === 0) {
+      continue;
+    }
+    if (activity.kind === "task.completed") {
+      open.delete(taskId);
+      continue;
+    }
+    if (activity.kind === "task.updated") {
+      const status = typeof payload?.status === "string" ? payload.status : undefined;
+      if (status === "completed" || status === "failed" || status === "killed") {
+        open.delete(taskId);
+      } else {
+        open.add(taskId);
+      }
+      continue;
+    }
+    open.add(taskId);
+  }
+  return Array.from(open);
+}
 
 export function providerErrorLabel(value: string | undefined): string {
   const normalized = value?.trim();
@@ -256,6 +307,7 @@ const make = Effect.gen(function* () {
     readonly kind:
       | "provider.turn.start.failed"
       | "provider.turn.interrupt.failed"
+      | "provider.task.stop.failed"
       | "provider.approval.respond.failed"
       | "provider.user-input.respond.failed"
       | "provider.session.stop.failed";
@@ -264,6 +316,8 @@ const make = Effect.gen(function* () {
     readonly turnId: TurnId | null;
     readonly createdAt: string;
     readonly requestId?: string;
+    /** Present for `provider.task.stop.failed` so clients can key the error to a task row. */
+    readonly taskId?: string;
   }) =>
     Effect.all({
       commandId: serverCommandId("provider-failure-activity"),
@@ -282,6 +336,7 @@ const make = Effect.gen(function* () {
             payload: {
               detail: input.detail,
               ...(input.requestId ? { requestId: input.requestId } : {}),
+              ...(input.taskId ? { taskId: input.taskId } : {}),
             },
             turnId: input.turnId,
             createdAt: input.createdAt,
@@ -383,6 +438,77 @@ const make = Effect.gen(function* () {
     if (interruptedCount > 0) {
       yield* Effect.logInfo("provider command reactor interrupted stale running sessions", {
         interruptedCount,
+      });
+    }
+  });
+
+  /**
+   * Crash-safety: close any in-progress task activities left over from a
+   * previous process (graceful stopSessionInternal cannot run if the server
+   * was killed). Uses the same thread.activity.append path as live ingestion.
+   */
+  const closeDanglingSubagentTaskActivitiesOnStartup = Effect.fn(
+    "closeDanglingSubagentTaskActivitiesOnStartup",
+  )(function* () {
+    const snapshot = yield* projectionSnapshotQuery.getShellSnapshot();
+    let closedCount = 0;
+
+    for (const shell of snapshot.threads) {
+      const closed = yield* Effect.gen(function* () {
+        const thread = yield* resolveThread(shell.id);
+        if (!thread) {
+          return 0;
+        }
+        const openTaskIds = openSubagentTaskIdsFromActivities(thread.activities);
+        if (openTaskIds.length === 0) {
+          return 0;
+        }
+        const createdAt = yield* nowIso;
+        let count = 0;
+        for (const taskId of openTaskIds) {
+          const { commandId, eventId } = yield* Effect.all({
+            commandId: serverCommandId("stale-subagent-task-stop"),
+            eventId: serverEventId(),
+          });
+          yield* orchestrationEngine.dispatch({
+            type: "thread.activity.append",
+            commandId,
+            threadId: thread.id,
+            activity: {
+              id: eventId,
+              tone: "info",
+              kind: "task.completed",
+              summary: "Task stopped",
+              payload: {
+                taskId,
+                status: "stopped",
+                detail: STALE_SUBAGENT_TASK_DETAIL,
+              },
+              turnId: null,
+              createdAt,
+            },
+            createdAt,
+          });
+          count += 1;
+        }
+        return count;
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning(
+            "provider command reactor failed to close dangling subagent task activities",
+            {
+              threadId: shell.id,
+              cause: Cause.pretty(cause),
+            },
+          ).pipe(Effect.as(0)),
+        ),
+      );
+      closedCount += closed;
+    }
+
+    if (closedCount > 0) {
+      yield* Effect.logInfo("provider command reactor closed dangling subagent task activities", {
+        closedCount,
       });
     }
   });
@@ -993,6 +1119,47 @@ const make = Effect.gen(function* () {
     yield* providerService.interruptTurn({ threadId: event.payload.threadId });
   });
 
+  const processTaskStopRequested = Effect.fn("processTaskStopRequested")(function* (
+    event: Extract<ProviderIntentEvent, { type: "thread.task-stop-requested" }>,
+  ) {
+    const thread = yield* resolveThread(event.payload.threadId);
+    if (!thread) {
+      return;
+    }
+    const hasSession = thread.session && thread.session.status !== "stopped";
+    if (!hasSession) {
+      return yield* appendProviderFailureActivity({
+        threadId: event.payload.threadId,
+        kind: "provider.task.stop.failed",
+        summary: "Provider task stop failed",
+        detail: "No active provider session is bound to this thread.",
+        turnId: event.payload.turnId ?? null,
+        createdAt: event.payload.createdAt,
+        taskId: event.payload.taskId,
+      });
+    }
+
+    yield* providerService
+      .stopTask({
+        threadId: event.payload.threadId,
+        taskId: event.payload.taskId,
+        ...(event.payload.turnId !== undefined ? { turnId: event.payload.turnId } : {}),
+      })
+      .pipe(
+        Effect.catchCause((cause) =>
+          appendProviderFailureActivity({
+            threadId: event.payload.threadId,
+            kind: "provider.task.stop.failed",
+            summary: "Provider task stop failed",
+            detail: formatFailureDetail(cause),
+            turnId: event.payload.turnId ?? null,
+            createdAt: event.payload.createdAt,
+            taskId: event.payload.taskId,
+          }),
+        ),
+      );
+  });
+
   const processApprovalResponseRequested = Effect.fn("processApprovalResponseRequested")(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.approval-response-requested" }>,
   ) {
@@ -1143,6 +1310,9 @@ const make = Effect.gen(function* () {
       case "thread.turn-interrupt-requested":
         yield* processTurnInterruptRequested(event);
         return;
+      case "thread.task-stop-requested":
+        yield* processTaskStopRequested(event);
+        return;
       case "thread.approval-response-requested":
         yield* processApprovalResponseRequested(event);
         return;
@@ -1176,6 +1346,7 @@ const make = Effect.gen(function* () {
         event.type === "thread.runtime-mode-set" ||
         event.type === "thread.turn-start-requested" ||
         event.type === "thread.turn-interrupt-requested" ||
+        event.type === "thread.task-stop-requested" ||
         event.type === "thread.approval-response-requested" ||
         event.type === "thread.user-input-response-requested" ||
         event.type === "thread.session-stop-requested"
@@ -1191,6 +1362,14 @@ const make = Effect.gen(function* () {
       Effect.catchCause((cause) =>
         Effect.logWarning(
           "provider command reactor failed to interrupt stale running sessions on startup",
+          { cause: Cause.pretty(cause) },
+        ),
+      ),
+    );
+    yield* closeDanglingSubagentTaskActivitiesOnStartup().pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning(
+          "provider command reactor failed to close dangling subagent task activities on startup",
           { cause: Cause.pretty(cause) },
         ),
       ),

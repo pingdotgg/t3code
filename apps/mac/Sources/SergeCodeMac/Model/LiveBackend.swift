@@ -1047,6 +1047,23 @@ public actor LiveBackend: BackendService {
                         usedTokens: payload.usedTokens, maxTokens: payload.maxTokens)))
             return true
 
+        case ActivityKind.providerTaskStopFailed:
+            // Route to the per-task inline error when taskId is present;
+            // otherwise fall through to a generic timeline notice.
+            let object = activity.payload.objectValue
+            let taskId = object?["taskId"]?.stringValue?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let detail = object?["detail"]?.stringValue?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let taskId, !taskId.isEmpty else { return false }
+            let message =
+                (detail?.isEmpty == false ? detail! : activity.summary.isEmpty
+                    ? "Failed to stop task" : activity.summary)
+            emitOrdered(
+                threadID: threadID,
+                event: .subagentStopFailed(taskId: taskId, message: message))
+            return true
+
         default:
             return false
         }
@@ -1505,6 +1522,11 @@ public actor LiveBackend: BackendService {
     public func cancelTurn(threadID: String) async throws {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
         _ = try await client.interruptTurn(threadId: threadID)
+    }
+
+    public func stopTask(threadID: String, taskId: String) async throws {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        _ = try await client.stopTask(threadId: threadID, taskId: taskId)
     }
 
     public func respondToApproval(id: String, approve: Bool) async throws {
@@ -2267,7 +2289,10 @@ public actor LiveBackend: BackendService {
                 }
                 return .usageLimit(notice)
             case ActivityKind.userInputResolved, ActivityKind.turnPlanUpdated,
-                ActivityKind.contextWindowUpdated:
+                ActivityKind.contextWindowUpdated,
+                // Live path routes this to per-task stop-error UI only; a
+                // stale failure must not reappear as a timeline row on reopen.
+                ActivityKind.providerTaskStopFailed:
                 return nil
             default:
                 return mapActivity(activity, at: at)
@@ -2324,7 +2349,8 @@ public actor LiveBackend: BackendService {
 
     private static func isTaskLifecycleActivity(_ activity: OrchestrationThreadActivity) -> Bool {
         switch activity.kind {
-        case ActivityKind.taskStarted, ActivityKind.taskProgress, ActivityKind.taskCompleted:
+        case ActivityKind.taskStarted, ActivityKind.taskProgress, ActivityKind.taskUpdated,
+            ActivityKind.taskCompleted:
             return true
         default:
             return false
@@ -2367,18 +2393,48 @@ public actor LiveBackend: BackendService {
     private func mapSubagentTask(_ task: T3SubagentTaskItem) -> TimelineItem {
         .subagentTask(
             SubagentTaskItem(
-                taskId: task.taskId, taskType: task.taskType, description: task.description,
+                taskId: task.taskId,
+                taskType: task.taskType,
+                description: task.description,
+                subagentType: task.subagentType,
+                model: task.model,
+                workflowName: task.workflowName,
+                toolUseId: task.toolUseId,
                 state: Self.uiSubagentTaskState(task.state),
                 latestProgress: task.completionSummary ?? task.latestProgress,
-                startedAt: task.startedAt, duration: task.duration,
+                lastToolName: task.lastToolName,
+                usageSummary: Self.usageSummary(from: task.usage),
+                isBackgrounded: task.isBackgrounded,
+                error: task.error,
+                startedAt: task.startedAt,
+                lastActivityAt: task.lastActivityAt,
+                duration: task.duration,
                 progressLog: task.progressLog.map {
                     SubagentTaskProgressEntry(at: $0.at, toolName: $0.toolName, text: $0.text)
                 }))
     }
 
+    private static func usageSummary(from usage: JSONValue?) -> String? {
+        guard let usage, case .object(let object) = usage else { return nil }
+        var parts: [String] = []
+        if let total = object["total_tokens"]?.intValue ?? object["totalTokens"]?.intValue {
+            parts.append("\(total) tokens")
+        } else {
+            let input = object["input_tokens"]?.intValue ?? object["inputTokens"]?.intValue
+            let output = object["output_tokens"]?.intValue ?? object["outputTokens"]?.intValue
+            if let input { parts.append("\(input) in") }
+            if let output { parts.append("\(output) out") }
+        }
+        if let tools = object["tool_uses"]?.intValue ?? object["toolUses"]?.intValue {
+            parts.append("\(tools) tools")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
     private static func uiSubagentTaskState(_ state: T3SubagentTaskState) -> SubagentTaskState {
         switch state {
         case .running: .running
+        case .paused: .paused
         case .completed: .completed
         case .failed: .failed
         case .stopped: .stopped

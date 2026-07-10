@@ -47,7 +47,8 @@ public enum ActivityRows {
         case ActivityKind.toolStarted, ActivityKind.contextWindowUpdated:
             return nil
 
-        case ActivityKind.taskStarted, ActivityKind.taskProgress, ActivityKind.taskCompleted:
+        case ActivityKind.taskStarted, ActivityKind.taskProgress, ActivityKind.taskUpdated,
+            ActivityKind.taskCompleted:
             // Task lifecycle rows are stateful. LiveBackend folds them through
             // T3SubagentTaskActivityState before calling this generic mapper;
             // mapping one event here would split/lose lifecycle aggregation.

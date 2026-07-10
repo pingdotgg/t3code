@@ -1,7 +1,11 @@
 import Foundation
 
 public enum T3SubagentTaskState: String, Sendable, Equatable {
-    case running, completed, failed, stopped
+    /// Actively working (counts toward activeSubagentCount).
+    case running
+    /// Non-terminal pause from the provider; not active for counts/stalled timers.
+    case paused
+    case completed, failed, stopped
 }
 
 /// One progress update for a subagent task. Consecutive identical
@@ -28,11 +32,19 @@ public struct T3SubagentTaskItem: Sendable, Equatable {
     public var taskId: String
     public var taskType: String?
     public var description: String?
+    public var subagentType: String?
+    public var model: String?
+    public var workflowName: String?
+    public var toolUseId: String?
     public var state: T3SubagentTaskState
     public var latestProgress: String?
     public var lastToolName: String?
+    public var usage: JSONValue?
+    public var isBackgrounded: Bool
+    public var error: String?
     public var startedAt: Date
     public var completedAt: Date?
+    public var lastActivityAt: Date
     public var completionSummary: String?
     /// Ordered progress updates (oldest first). Rebuild replays events in
     /// sequence so this matches incremental apply.
@@ -49,22 +61,38 @@ public struct T3SubagentTaskItem: Sendable, Equatable {
         taskId: String,
         taskType: String?,
         description: String?,
+        subagentType: String? = nil,
+        model: String? = nil,
+        workflowName: String? = nil,
+        toolUseId: String? = nil,
         state: T3SubagentTaskState,
         latestProgress: String?,
         lastToolName: String?,
+        usage: JSONValue? = nil,
+        isBackgrounded: Bool = false,
+        error: String? = nil,
         startedAt: Date,
         completedAt: Date?,
+        lastActivityAt: Date? = nil,
         completionSummary: String?,
         progressLog: [T3SubagentTaskProgressEntry] = []
     ) {
         self.taskId = taskId
         self.taskType = taskType
         self.description = description
+        self.subagentType = subagentType
+        self.model = model
+        self.workflowName = workflowName
+        self.toolUseId = toolUseId
         self.state = state
         self.latestProgress = latestProgress
         self.lastToolName = lastToolName
+        self.usage = usage
+        self.isBackgrounded = isBackgrounded
+        self.error = error
         self.startedAt = startedAt
         self.completedAt = completedAt
+        self.lastActivityAt = lastActivityAt ?? startedAt
         self.completionSummary = completionSummary
         self.progressLog = progressLog
     }
@@ -112,8 +140,14 @@ public struct T3SubagentTaskActivityState: Sendable, Equatable {
             var item = existingOrNew(taskId: taskId, at: at)
             startedTaskIDs.insert(taskId)
             item.taskType = nonEmpty(payload?.taskType) ?? item.taskType
-            item.description = nonEmpty(payload?.description) ?? item.description
+            item.description =
+                nonEmpty(payload?.description) ?? nonEmpty(payload?.detail) ?? item.description
+            item.subagentType = nonEmpty(payload?.subagentType) ?? item.subagentType
+            item.model = nonEmpty(payload?.model) ?? item.model
+            item.workflowName = nonEmpty(payload?.workflowName) ?? item.workflowName
+            item.toolUseId = nonEmpty(payload?.toolUseId) ?? item.toolUseId
             item.startedAt = min(item.startedAt, at)
+            item.lastActivityAt = max(item.lastActivityAt, at)
             if item.completedAt == nil {
                 item.state = .running
             }
@@ -130,7 +164,12 @@ public struct T3SubagentTaskActivityState: Sendable, Equatable {
             var item = existingOrNew(taskId: taskId, at: at)
             item.taskType = nonEmpty(payload?.taskType) ?? item.taskType
             item.description = nonEmpty(payload?.description) ?? item.description
+            item.subagentType = nonEmpty(payload?.subagentType) ?? item.subagentType
+            item.toolUseId = nonEmpty(payload?.toolUseId) ?? item.toolUseId
             item.lastToolName = nonEmpty(payload?.lastToolName) ?? item.lastToolName
+            if let usage = payload?.usage {
+                item.usage = usage
+            }
             item.latestProgress =
                 progressLine(lastToolName: payload?.lastToolName, summary: payload?.summary)
                 ?? nonEmpty(payload?.detail)
@@ -140,8 +179,56 @@ public struct T3SubagentTaskActivityState: Sendable, Equatable {
                 at: at,
                 toolName: payload?.lastToolName,
                 text: nonEmpty(payload?.summary) ?? nonEmpty(payload?.detail))
+            item.lastActivityAt = max(item.lastActivityAt, at)
             if item.completedAt == nil {
                 item.state = .running
+            }
+            store(item)
+            return item
+
+        case ActivityKind.taskUpdated:
+            let payload = activity.decodePayload(TaskUpdatedActivityPayload.self)
+            guard
+                let taskId =
+                    nonEmpty(payload?.taskId) ?? latestRunningStartedTaskID()
+                    ?? nonEmptyTaskIDFallback(activity)
+            else { return nil }
+            var item = existingOrNew(taskId: taskId, at: at)
+            item.description =
+                nonEmpty(payload?.description) ?? nonEmpty(payload?.detail) ?? item.description
+            if let isBackgrounded = payload?.isBackgrounded {
+                item.isBackgrounded = isBackgrounded
+            }
+            item.error = nonEmpty(payload?.error) ?? item.error
+            item.lastActivityAt = max(item.lastActivityAt, at)
+
+            let status = nonEmpty(payload?.status)
+            // Already terminal: keep state/completedAt stable so a late
+            // coalesced patch cannot flip completed → stopped/failed.
+            // Non-state fields (error, isBackgrounded, description) still fold.
+            if item.completedAt == nil {
+                if isTerminalTaskUpdatedStatus(status) {
+                    item.completedAt = at
+                    item.state = state(forStatus: status == "killed" ? "stopped" : status)
+                    if let error = nonEmpty(payload?.error) {
+                        item.completionSummary = error
+                        item.latestProgress = error
+                    }
+                } else if status == "paused" {
+                    // Non-terminal: keep completedAt nil so a later running
+                    // update can un-pause. Not counted as active.
+                    item.state = .paused
+                } else {
+                    // pending/running/nil (and unknown non-terminal) → running,
+                    // which also un-pauses a previously paused task.
+                    item.state = .running
+                }
+            } else if isTerminalTaskUpdatedStatus(status),
+                let error = nonEmpty(payload?.error)
+            {
+                // Late terminal patch may still refine the error summary.
+                item.error = error
+                item.completionSummary = item.completionSummary ?? error
             }
             store(item)
             return item
@@ -157,6 +244,9 @@ public struct T3SubagentTaskActivityState: Sendable, Equatable {
             item.taskType = nonEmpty(payload?.taskType) ?? item.taskType
             item.description = nonEmpty(payload?.description) ?? item.description
             item.lastToolName = nonEmpty(payload?.lastToolName) ?? item.lastToolName
+            if let usage = payload?.usage {
+                item.usage = usage
+            }
             item.completionSummary =
                 nonEmpty(payload?.summary) ?? nonEmpty(payload?.detail) ?? item.completionSummary
             item.latestProgress = item.completionSummary ?? item.latestProgress
@@ -172,6 +262,7 @@ public struct T3SubagentTaskActivityState: Sendable, Equatable {
                     text: item.completionSummary)
             }
             item.completedAt = at
+            item.lastActivityAt = max(item.lastActivityAt, at)
             item.state = state(forStatus: payload?.status)
             store(item)
             return item
@@ -200,7 +291,7 @@ public struct T3SubagentTaskActivityState: Sendable, Equatable {
         return T3SubagentTaskItem(
             taskId: taskId, taskType: nil, description: nil, state: .running,
             latestProgress: nil, lastToolName: nil, startedAt: at, completedAt: nil,
-            completionSummary: nil, progressLog: [])
+            lastActivityAt: at, completionSummary: nil, progressLog: [])
     }
 
     private mutating func store(_ item: T3SubagentTaskItem) {
@@ -208,7 +299,9 @@ public struct T3SubagentTaskActivityState: Sendable, Equatable {
         switch item.state {
         case .running:
             activeTaskIDsStorage.insert(item.taskId)
-        case .completed, .failed, .stopped:
+        case .paused, .completed, .failed, .stopped:
+            // Paused is non-terminal for state machine purposes but does not
+            // count as actively working (sidebar badge / stalled timers).
             activeTaskIDsStorage.remove(item.taskId)
         }
     }
@@ -260,8 +353,15 @@ private func progressLine(lastToolName: String?, summary: String?) -> String? {
 private func state(forStatus status: String?) -> T3SubagentTaskState {
     switch status {
     case "failed", "error": .failed
-    case "stopped", "interrupted", "cancelled", "canceled": .stopped
+    case "stopped", "interrupted", "cancelled", "canceled", "killed": .stopped
     default: .completed
+    }
+}
+
+private func isTerminalTaskUpdatedStatus(_ status: String?) -> Bool {
+    switch status {
+    case "completed", "failed", "killed": true
+    default: false
     }
 }
 
