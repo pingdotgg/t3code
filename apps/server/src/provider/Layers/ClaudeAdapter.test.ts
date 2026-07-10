@@ -2237,6 +2237,230 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("forwards full subagent task metadata and correlates model via tool_use_id", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "task.completed",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-sonnet-4-5",
+        },
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "spawn a reviewer",
+        attachments: [],
+      });
+
+      // Task tool use with an explicit model override for the subagent.
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-task-meta",
+        uuid: "stream-task-tool",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: {
+            type: "tool_use",
+            id: "toolu-task-1",
+            name: "Task",
+            input: {
+              description: "Review the migration",
+              subagent_type: "Explore",
+              model: "claude-opus-4-6",
+              prompt: "Review edge cases",
+            },
+          },
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-meta-1",
+        tool_use_id: "toolu-task-1",
+        description: "Review the migration",
+        subagent_type: "Explore",
+        task_type: "local_agent",
+        workflow_name: "spec",
+        session_id: "sdk-session-task-meta",
+        uuid: "task-started-meta-1",
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_progress",
+        task_id: "task-meta-1",
+        tool_use_id: "toolu-task-1",
+        description: "Review the migration",
+        subagent_type: "Explore",
+        last_tool_name: "Read",
+        summary: "Reading migration files",
+        usage: {
+          total_tokens: 50,
+          tool_uses: 1,
+          duration_ms: 100,
+        },
+        session_id: "sdk-session-task-meta",
+        uuid: "task-progress-meta-1",
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_updated",
+        task_id: "task-meta-1",
+        patch: {
+          status: "running",
+          is_backgrounded: true,
+          description: "Review the migration (bg)",
+        },
+        session_id: "sdk-session-task-meta",
+        uuid: "task-updated-meta-1",
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_notification",
+        task_id: "task-meta-1",
+        tool_use_id: "toolu-task-1",
+        status: "completed",
+        output_file: "/tmp/task-meta-1-output.txt",
+        summary: "Review complete",
+        usage: {
+          total_tokens: 80,
+          tool_uses: 2,
+          duration_ms: 200,
+        },
+        session_id: "sdk-session-task-meta",
+        uuid: "task-completed-meta-1",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const started = runtimeEvents.find((event) => event.type === "task.started");
+      const progress = runtimeEvents.find((event) => event.type === "task.progress");
+      const updated = runtimeEvents.find((event) => event.type === "task.updated");
+      const completed = runtimeEvents.find((event) => event.type === "task.completed");
+
+      assert.equal(started?.type, "task.started");
+      if (started?.type === "task.started") {
+        assert.equal(started.payload.taskId, "task-meta-1");
+        assert.equal(started.payload.subagentType, "Explore");
+        assert.equal(started.payload.workflowName, "spec");
+        assert.equal(started.payload.toolUseId, "toolu-task-1");
+        assert.equal(started.payload.taskType, "local_agent");
+        // Model from Task tool input, not the parent session model.
+        assert.equal(started.payload.model, "claude-opus-4-6");
+      }
+
+      assert.equal(progress?.type, "task.progress");
+      if (progress?.type === "task.progress") {
+        assert.equal(progress.payload.subagentType, "Explore");
+        assert.equal(progress.payload.toolUseId, "toolu-task-1");
+        assert.equal(progress.payload.lastToolName, "Read");
+      }
+
+      assert.equal(updated?.type, "task.updated");
+      if (updated?.type === "task.updated") {
+        assert.equal(updated.payload.status, "running");
+        assert.equal(updated.payload.isBackgrounded, true);
+        assert.equal(updated.payload.description, "Review the migration (bg)");
+      }
+
+      assert.equal(completed?.type, "task.completed");
+      if (completed?.type === "task.completed") {
+        assert.equal(completed.payload.status, "completed");
+        assert.equal(completed.payload.outputFile, "/tmp/task-meta-1-output.txt");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("falls back to session model when Task tool input has no model", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "task.started",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-sonnet-4-5",
+        },
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "spawn explore",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-task-fallback",
+        uuid: "stream-task-tool-fallback",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: {
+            type: "tool_use",
+            id: "toolu-task-2",
+            name: "Task",
+            input: {
+              description: "Explore the repo",
+              subagent_type: "Explore",
+              prompt: "Find auth code",
+            },
+          },
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-fallback-1",
+        tool_use_id: "toolu-task-2",
+        description: "Explore the repo",
+        subagent_type: "Explore",
+        session_id: "sdk-session-task-fallback",
+        uuid: "task-started-fallback-1",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const started = runtimeEvents.find((event) => event.type === "task.started");
+      assert.equal(started?.type, "task.started");
+      if (started?.type === "task.started") {
+        assert.equal(started.payload.model, "claude-sonnet-4-5");
+        assert.equal(started.payload.subagentType, "Explore");
+        assert.equal(started.payload.toolUseId, "toolu-task-2");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("emits Claude context window on result completion usage snapshots", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

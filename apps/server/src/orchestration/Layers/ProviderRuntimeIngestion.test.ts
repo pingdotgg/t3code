@@ -2947,6 +2947,99 @@ describe("ProviderRuntimeIngestion", () => {
     ).toBe("# Plan title");
   });
 
+  it("projects full subagent task metadata and task.updated patches", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "task.started",
+      eventId: asEventId("evt-task-meta-started"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-task-meta"),
+      payload: {
+        taskId: "task-meta-1",
+        taskType: "local_agent",
+        description: "Explore auth",
+        subagentType: "Explore",
+        workflowName: "spec",
+        toolUseId: "toolu-1",
+        model: "claude-opus-4-6",
+      },
+    });
+
+    harness.emit({
+      type: "task.updated",
+      eventId: asEventId("evt-task-meta-updated"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-task-meta"),
+      payload: {
+        taskId: "task-meta-1",
+        status: "running",
+        isBackgrounded: true,
+        error: undefined,
+        description: "Explore auth (background)",
+      },
+    });
+
+    harness.emit({
+      type: "task.completed",
+      eventId: asEventId("evt-task-meta-completed"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-task-meta"),
+      payload: {
+        taskId: "task-meta-1",
+        status: "completed",
+        summary: "Found the auth module",
+        outputFile: "/tmp/task-meta-1.txt",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-task-meta-completed",
+      ),
+    );
+
+    const started = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-task-meta-started",
+    );
+    const updated = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-task-meta-updated",
+    );
+    const completed = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-task-meta-completed",
+    );
+
+    const startedPayload =
+      started?.payload && typeof started.payload === "object"
+        ? (started.payload as Record<string, unknown>)
+        : undefined;
+    const updatedPayload =
+      updated?.payload && typeof updated.payload === "object"
+        ? (updated.payload as Record<string, unknown>)
+        : undefined;
+    const completedPayload =
+      completed?.payload && typeof completed.payload === "object"
+        ? (completed.payload as Record<string, unknown>)
+        : undefined;
+
+    expect(startedPayload?.model).toBe("claude-opus-4-6");
+    expect(startedPayload?.subagentType).toBe("Explore");
+    expect(startedPayload?.workflowName).toBe("spec");
+    expect(startedPayload?.toolUseId).toBe("toolu-1");
+    expect(startedPayload?.description).toBe("Explore auth");
+    expect(updated?.kind).toBe("task.updated");
+    expect(updatedPayload?.isBackgrounded).toBe(true);
+    expect(updatedPayload?.description).toBe("Explore auth (background)");
+    expect(completedPayload?.outputFile).toBe("/tmp/task-meta-1.txt");
+  });
+
   it("projects structured user input request and resolution as thread activities", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
