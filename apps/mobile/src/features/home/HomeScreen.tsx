@@ -12,6 +12,8 @@ import type {
   SidebarProjectGroupingMode,
   SidebarThreadSortOrder,
 } from "@t3tools/contracts";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Platform, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
@@ -22,6 +24,7 @@ import { EmptyState } from "../../components/EmptyState";
 import type { WorkspaceState } from "../../state/workspaceModel";
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { scopedProjectKey } from "../../lib/scopedEntities";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
   PendingTaskListRow,
@@ -154,21 +157,48 @@ export function HomeScreen(props: HomeScreenProps) {
   const [groupDisplayStates, setGroupDisplayStates] = useState<
     ReadonlyMap<string, HomeGroupDisplayState>
   >(() => new Map());
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const listRef = useRef<LegendListRef | null>(null);
   const insets = useSafeAreaInsets();
   const accentColor = useThemeColor("--color-icon-muted");
 
-  const updateGroupDisplay = useCallback((key: string, action: HomeGroupDisplayAction) => {
-    setGroupDisplayStates((previous) => {
-      const next = new Map(previous);
-      next.set(
-        key,
-        nextGroupDisplayState(previous.get(key) ?? DEFAULT_GROUP_DISPLAY_STATE, action),
-      );
+  const effectiveGroupDisplayStates = useMemo(() => {
+    const next = new Map(groupDisplayStates);
+    if (!AsyncResult.isSuccess(preferencesResult)) {
       return next;
-    });
-  }, []);
+    }
+    for (const key of preferencesResult.value.collapsedProjectGroups ?? []) {
+      const existing = next.get(key);
+      next.set(key, {
+        ...(existing ?? DEFAULT_GROUP_DISPLAY_STATE),
+        collapsed: true,
+      });
+    }
+    return next;
+  }, [groupDisplayStates, preferencesResult]);
+  const effectiveGroupDisplayStatesRef = useRef(effectiveGroupDisplayStates);
+  effectiveGroupDisplayStatesRef.current = effectiveGroupDisplayStates;
+
+  const updateGroupDisplay = useCallback(
+    (key: string, action: HomeGroupDisplayAction) => {
+      const next = new Map(effectiveGroupDisplayStatesRef.current);
+      next.set(key, nextGroupDisplayState(next.get(key) ?? DEFAULT_GROUP_DISPLAY_STATE, action));
+      effectiveGroupDisplayStatesRef.current = next;
+      setGroupDisplayStates(next);
+      if (action === "toggle-collapsed") {
+        const collapsedProjectGroups: string[] = [];
+        for (const [groupKey, state] of next) {
+          if (state.collapsed) {
+            collapsedProjectGroups.push(groupKey);
+          }
+        }
+        savePreferences({ collapsedProjectGroups });
+      }
+    },
+    [savePreferences],
+  );
 
   const handleSwipeableWillOpen = useCallback((methods: SwipeableMethods) => {
     if (openSwipeableRef.current !== methods) {
@@ -219,10 +249,10 @@ export function HomeScreen(props: HomeScreenProps) {
     () =>
       buildHomeListLayout({
         groups: projectGroups,
-        displayStates: groupDisplayStates,
+        displayStates: effectiveGroupDisplayStates,
         showAllThreads: hasSearchQuery,
       }),
-    [projectGroups, groupDisplayStates, hasSearchQuery],
+    [projectGroups, effectiveGroupDisplayStates, hasSearchQuery],
   );
 
   const projectCwdByKey = useMemo(() => {
@@ -382,7 +412,7 @@ export function HomeScreen(props: HomeScreenProps) {
       {Platform.OS === "ios" ? null : <HomeTopContentSpacer topInset={insets.top} />}
 
       {shouldShowConnectionStatus && Platform.OS === "ios" ? (
-        <View style={{ paddingBottom: 16 }}>
+        <View className="pb-4">
           <WorkspaceConnectionStatus
             state={props.catalogState}
             onPress={props.onOpenEnvironments}

@@ -224,14 +224,7 @@ function FilesToolbarBottomFade() {
       pointerEvents="none"
       accessibilityElementsHidden
       importantForAccessibility="no-hide-descendants"
-      style={{
-        bottom: 0,
-        height: 112,
-        left: 0,
-        position: "absolute",
-        right: 0,
-        zIndex: 1,
-      }}
+      className="absolute inset-x-0 bottom-0 z-[1] h-28"
     >
       <Svg width="100%" height="100%">
         <Defs>

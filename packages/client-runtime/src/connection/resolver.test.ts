@@ -84,6 +84,7 @@ function relayClient(
     registerDevice: () => unsupported("registerDevice"),
     unregisterDevice: () => unsupported("unregisterDevice"),
     registerLiveActivity: () => unsupported("registerLiveActivity"),
+    getAgentActivitySnapshot: () => unsupported("getAgentActivitySnapshot"),
     resetTokenCache: Effect.void,
   });
 }
@@ -449,6 +450,7 @@ describe("ConnectionResolver", () => {
             new ManagedRelay.ManagedRelayRequestTimeoutError({
               activity: "Relay environment connection",
               timeoutMs: ManagedRelay.MANAGED_RELAY_REQUEST_TIMEOUT_MS,
+              traceId: null,
             }),
           ),
       });

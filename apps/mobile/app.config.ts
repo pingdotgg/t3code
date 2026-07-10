@@ -15,6 +15,7 @@ const VARIANT_CONFIG: Record<
     readonly appName: string;
     readonly scheme: string;
     readonly iosIcon: string;
+    readonly splashIcon: string;
     readonly iosBundleIdentifier: string;
     readonly androidPackage: string;
     readonly relyingParty?: string;
@@ -24,6 +25,7 @@ const VARIANT_CONFIG: Record<
     appName: "T3 Code Dev",
     scheme: "t3code-dev",
     iosIcon: "./assets/icon-composer-dev.icon",
+    splashIcon: "./assets/splash-icon-dev.png",
     iosBundleIdentifier: "com.t3tools.t3code.dev",
     androidPackage: "com.t3tools.t3code.dev",
     relyingParty: "clerk.t3.codes",
@@ -32,6 +34,7 @@ const VARIANT_CONFIG: Record<
     appName: "T3 Code Preview",
     scheme: "t3code-preview",
     iosIcon: "./assets/icon-composer-prod.icon",
+    splashIcon: "./assets/splash-icon-prod.png",
     iosBundleIdentifier: "com.t3tools.t3code.preview",
     androidPackage: "com.t3tools.t3code.preview",
     relyingParty: "clerk.t3.codes",
@@ -40,6 +43,7 @@ const VARIANT_CONFIG: Record<
     appName: "T3 Code",
     scheme: "t3code",
     iosIcon: "./assets/icon-composer-prod.icon",
+    splashIcon: "./assets/splash-icon-prod.png",
     iosBundleIdentifier: "com.t3tools.t3code",
     androidPackage: "com.t3tools.t3code",
     relyingParty: "clerk.t3.codes",
@@ -59,6 +63,16 @@ function resolveAppVariant(value: string | undefined): AppVariant {
 
 const variant = VARIANT_CONFIG[APP_VARIANT];
 
+const dmSansFonts = {
+  regular: "@expo-google-fonts/dm-sans/400Regular/DMSans_400Regular.ttf",
+  medium: "@expo-google-fonts/dm-sans/500Medium/DMSans_500Medium.ttf",
+  bold: "@expo-google-fonts/dm-sans/700Bold/DMSans_700Bold.ttf",
+} as const;
+
+// These aliases match the fonts' PostScript names on iOS. Register the same
+// names on Android so React Native and the native composer use one set of
+// family names without waiting for runtime font loading.
+
 const config: ExpoConfig = {
   name: variant.appName,
   slug: "t3-code",
@@ -66,7 +80,11 @@ const config: ExpoConfig = {
   scheme: variant.scheme,
   version: "0.1.0",
   runtimeVersion: {
-    policy: process.env.MOBILE_VERSION_POLICY ?? "appVersion",
+    // Fingerprint (not appVersion) so an OTA only reaches binaries whose native
+    // project — native deps, config plugins, AND patches/ — matches the update.
+    // With appVersion, every 0.1.0 build shares a runtime version, so a JS update
+    // could land on a binary missing the native changes it needs and crash.
+    policy: process.env.MOBILE_VERSION_POLICY ?? "fingerprint",
   },
   orientation: "portrait",
   icon: "./assets/icon.png",
@@ -113,8 +131,32 @@ const config: ExpoConfig = {
     favicon: "./assets/favicon.png",
   },
   plugins: [
-    "expo-font",
+    [
+      "expo-font",
+      {
+        ios: {
+          fonts: [dmSansFonts.regular, dmSansFonts.medium, dmSansFonts.bold],
+        },
+        android: {
+          fonts: [
+            {
+              fontFamily: "DMSans-Regular",
+              fontDefinitions: [{ path: dmSansFonts.regular, weight: 400 }],
+            },
+            {
+              fontFamily: "DMSans-Medium",
+              fontDefinitions: [{ path: dmSansFonts.medium, weight: 500 }],
+            },
+            {
+              fontFamily: "DMSans-Bold",
+              fontDefinitions: [{ path: dmSansFonts.bold, weight: 700 }],
+            },
+          ],
+        },
+      },
+    ],
     "expo-secure-store",
+    "expo-sqlite",
     ["@clerk/expo", { theme: "./clerk-theme.json" }],
     "expo-web-browser",
     [
@@ -127,12 +169,12 @@ const config: ExpoConfig = {
     [
       "expo-splash-screen",
       {
-        image: "./assets/splash-icon.png",
+        image: variant.splashIcon,
         resizeMode: "contain",
         backgroundColor: "#ffffff",
         imageWidth: 220,
         dark: {
-          image: "./assets/splash-icon.png",
+          image: variant.splashIcon,
           backgroundColor: "#0a0a0a",
         },
       },
@@ -151,12 +193,21 @@ const config: ExpoConfig = {
       },
     ],
     "./plugins/withIosCocoaPodsUuidCache.cjs",
+    // Must be listed BEFORE expo-widgets: same-type mods run last-registered-
+    // first, so registering earlier makes this plugin's mods run AFTER
+    // expo-widgets' — its dangerous mod wipes ios/ExpoWidgetsTarget/ (which
+    // would delete the asset catalog) and its xcodeproj mod creates the widget
+    // target (which must exist before the compile phase can be attached).
+    "./plugins/withWidgetLogoAsset.cjs",
     [
       "expo-widgets",
       {
         bundleIdentifier: `${variant.iosBundleIdentifier}.widgets`,
         groupIdentifier: `group.${variant.iosBundleIdentifier}`,
         enablePushNotifications: true,
+        // Agent activity can update many times an hour; without the
+        // frequent-updates entitlement iOS throttles the update budget sooner.
+        frequentUpdates: true,
         widgets: [
           {
             name: "AgentActivity",
@@ -179,6 +230,15 @@ const config: ExpoConfig = {
       publishableKey: repoEnv.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ?? null,
       jwtTemplate: repoEnv.EXPO_PUBLIC_CLERK_JWT_TEMPLATE ?? null,
     },
+    // Native Google sign-in credentials. @clerk/expo reads these from `extra`
+    // under their exact env-var names (not nested), and its config plugin reads
+    // the iOS URL scheme at prebuild to register it in Info.plist.
+    // Unset values must be omitted (not null): the public manifest serializes
+    // null to {}, which is truthy and would defeat Clerk's fallback checks.
+    EXPO_PUBLIC_CLERK_GOOGLE_WEB_CLIENT_ID: repoEnv.EXPO_PUBLIC_CLERK_GOOGLE_WEB_CLIENT_ID,
+    EXPO_PUBLIC_CLERK_GOOGLE_IOS_CLIENT_ID: repoEnv.EXPO_PUBLIC_CLERK_GOOGLE_IOS_CLIENT_ID,
+    EXPO_PUBLIC_CLERK_GOOGLE_ANDROID_CLIENT_ID: repoEnv.EXPO_PUBLIC_CLERK_GOOGLE_ANDROID_CLIENT_ID,
+    EXPO_PUBLIC_CLERK_GOOGLE_IOS_URL_SCHEME: repoEnv.EXPO_PUBLIC_CLERK_GOOGLE_IOS_URL_SCHEME,
     observability: {
       tracesUrl: repoEnv.EXPO_PUBLIC_OTLP_TRACES_URL ?? "https://api.axiom.co/v1/traces",
       tracesDataset: repoEnv.EXPO_PUBLIC_OTLP_TRACES_DATASET ?? null,
