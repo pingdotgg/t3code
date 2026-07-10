@@ -12,7 +12,9 @@ struct VcsToolbar: View {
     @UIState private var newBranchName = ""
     @UIState private var pendingAction: GitAction?
     @UIState private var commitMessage = ""
-    @UIState private var isRunningAction = false
+    @UIState private var runningAction: GitAction?
+
+    private var isRunningAction: Bool { runningAction != nil }
 
     var body: some View {
         if let status = model.selectedVcsStatus(), status.isRepo {
@@ -46,10 +48,22 @@ struct VcsToolbar: View {
                     Button {
                         run(.mergePR, message: nil)
                     } label: {
-                        Label("Merge PR", systemImage: "arrow.triangle.merge")
+                        if runningAction == .mergePR {
+                            HStack(spacing: 6) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .tint(.black)
+                                Text("Merging…")
+                            }
+                            .transition(.opacity)
+                        } else {
+                            Label("Merge PR", systemImage: "arrow.triangle.merge")
+                                .transition(.opacity)
+                        }
                     }
                     .buttonStyle(VcsMergePillButtonStyle())
                     .disabled(isRunningAction)
+                    .animation(Motion.fade, value: runningAction)
                     .help("Merge the open pull request")
                 }
                 actionMenu(status)
@@ -156,7 +170,8 @@ struct VcsToolbar: View {
                 }
             }
         } label: {
-            if isRunningAction {
+            // Merge owns its own in-button spinner; only show menu spinner for other actions.
+            if let runningAction, runningAction != .mergePR {
                 ProgressView()
                     .controlSize(.small)
                     .transition(.opacity)
@@ -169,7 +184,7 @@ struct VcsToolbar: View {
         .menuStyle(.borderlessButton)
         .fixedSize()
         .disabled(isRunningAction)
-        .animation(Motion.fade, value: isRunningAction)
+        .animation(Motion.fade, value: runningAction)
     }
 
     private var commitSheetBinding: Binding<Bool> {
@@ -212,11 +227,11 @@ struct VcsToolbar: View {
     }
 
     private func run(_ action: GitAction, message: String?) {
-        guard !isRunningAction else { return }
-        isRunningAction = true
+        guard runningAction == nil else { return }
+        runningAction = action
         Task {
             await model.runGitAction(action, commitMessage: message)
-            isRunningAction = false
+            runningAction = nil
         }
     }
 
