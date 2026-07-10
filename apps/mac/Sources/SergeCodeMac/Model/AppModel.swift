@@ -250,6 +250,11 @@ public final class AppModel {
     /// for it.
     private func applyBatch(_ events: [BackendEvent]) {
         var touched: [String: [TimelineItem]] = [:]
+        // Only full snapshots (timelineReset) mark history loaded. Plain
+        // appends / deltas must not set hasLoadedTimeline — otherwise a
+        // stream event for a not-yet-selected thread suppresses the later
+        // history fetch forever.
+        var resetThreads: Set<String> = []
 
         func currentItems(_ threadID: String) -> [TimelineItem] {
             touched[threadID] ?? threadStates[threadID]?.timeline ?? []
@@ -322,6 +327,7 @@ public final class AppModel {
             case .timelineReset(let threadID, let items):
                 let filtered = items.filter { !isDismissedUsageLimit($0) }
                 touched[threadID] = filtered
+                resetThreads.insert(threadID)
                 streamingIndex[threadID] = nil
                 for item in filtered { recordInteraction(item, threadID: threadID) }
             case .assistantCompleted(let threadID, let messageID, let markdown):
@@ -341,7 +347,9 @@ public final class AppModel {
             let state = self.state(creating: threadID)
             state.timeline = items
             state.timelineVersion += 1
-            state.hasLoadedTimeline = true
+            if resetThreads.contains(threadID) {
+                state.hasLoadedTimeline = true
+            }
         }
     }
 

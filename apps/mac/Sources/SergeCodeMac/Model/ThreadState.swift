@@ -44,8 +44,10 @@ public final class ThreadState {
     /// reuse prior work. Ignored by Observation — readers go through
     /// `AppModel.timelineVersion(threadID:)`.
     @ObservationIgnored var timelineVersion = 0
-    /// True once a timeline has been loaded or written via events. Mirrors
-    /// the old "key exists in `timelines`" gate for `loadTimelineIfNeeded`.
+    /// True once full history is present — either from `loadTimelineIfNeeded`
+    /// or a `.timelineReset` snapshot. Plain appends/deltas do not set this,
+    /// so a stream event for a not-yet-selected thread cannot suppress the
+    /// later history fetch. Gates `loadTimelineIfNeeded`.
     @ObservationIgnored var hasLoadedTimeline = false
 
     public init() {}
