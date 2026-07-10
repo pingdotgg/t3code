@@ -316,6 +316,8 @@ const make = Effect.gen(function* () {
     readonly turnId: TurnId | null;
     readonly createdAt: string;
     readonly requestId?: string;
+    /** Present for `provider.task.stop.failed` so clients can key the error to a task row. */
+    readonly taskId?: string;
   }) =>
     Effect.all({
       commandId: serverCommandId("provider-failure-activity"),
@@ -334,6 +336,7 @@ const make = Effect.gen(function* () {
             payload: {
               detail: input.detail,
               ...(input.requestId ? { requestId: input.requestId } : {}),
+              ...(input.taskId ? { taskId: input.taskId } : {}),
             },
             turnId: input.turnId,
             createdAt: input.createdAt,
@@ -1132,6 +1135,7 @@ const make = Effect.gen(function* () {
         detail: "No active provider session is bound to this thread.",
         turnId: event.payload.turnId ?? null,
         createdAt: event.payload.createdAt,
+        taskId: event.payload.taskId,
       });
     }
 
@@ -1147,9 +1151,10 @@ const make = Effect.gen(function* () {
             threadId: event.payload.threadId,
             kind: "provider.task.stop.failed",
             summary: "Provider task stop failed",
-            detail: Cause.pretty(cause),
+            detail: formatFailureDetail(cause),
             turnId: event.payload.turnId ?? null,
             createdAt: event.payload.createdAt,
+            taskId: event.payload.taskId,
           }),
         ),
       );

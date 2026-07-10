@@ -2454,6 +2454,83 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("suppresses late native terminal events after synthetic stopTask", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "spawn a long task",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-late-1",
+        description: "Long runner",
+        session_id: "sdk-session-late-stop",
+        uuid: "task-started-late-1",
+      } as unknown as SDKMessage);
+
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      yield* adapter.stopTask(THREAD_ID, "task-late-1");
+      yield* TestClock.adjust("3 seconds");
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      // Delayed SDK completion arrives after the synthetic stopped event.
+      harness.query.emit({
+        type: "system",
+        subtype: "task_notification",
+        task_id: "task-late-1",
+        status: "completed",
+        summary: "Finished after stop",
+        session_id: "sdk-session-late-stop",
+        uuid: "task-notification-late-1",
+      } as unknown as SDKMessage);
+
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      runtimeEventsFiber.interruptUnsafe();
+
+      const terminals = runtimeEvents.filter(
+        (event) =>
+          (event.type === "task.completed" ||
+            (event.type === "task.updated" &&
+              (event.payload.status === "completed" ||
+                event.payload.status === "failed" ||
+                event.payload.status === "killed"))) &&
+          event.payload.taskId === "task-late-1",
+      );
+      assert.equal(terminals.length, 1);
+      assert.equal(terminals[0]?.type, "task.completed");
+      if (terminals[0]?.type === "task.completed") {
+        assert.equal(terminals[0].payload.status, "stopped");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("forgets Task tool input after terminal task_notification", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

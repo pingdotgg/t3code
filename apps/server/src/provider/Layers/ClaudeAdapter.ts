@@ -212,6 +212,13 @@ interface ClaudeSessionContext {
   readonly taskToolUseIdByTaskId: Map<string, string>;
   /** task_id values that have started but not yet completed/stopped. */
   readonly openTaskIds: Set<string>;
+  /**
+   * Tasks for which we already emitted a synthetic `task.completed`
+   * status `"stopped"` (stopTask grace / session close). Native terminal
+   * events for these ids are suppressed so a delayed SDK completion cannot
+   * flip the UI back to completed or double-emit.
+   */
+  readonly syntheticallyStoppedTaskIds: Set<string>;
   readonly claudeTasks: Map<string, ClaudeTaskState>;
   claudeTaskPlanFingerprint: string | undefined;
   turnState: ClaudeTurnState | undefined;
@@ -2420,6 +2427,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     const openIds = Array.from(context.openTaskIds);
     context.openTaskIds.clear();
     for (const taskId of openIds) {
+      context.syntheticallyStoppedTaskIds.add(taskId);
       forgetTaskToolInputForTask(context, taskId);
       const stamp = yield* makeEventStamp();
       yield* offerRuntimeEvent({
@@ -3376,6 +3384,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             message.task_id,
             readOptionalTrimmedString((message as { tool_use_id?: unknown }).tool_use_id),
           );
+          // Late native terminal after synthetic stop: keep bookkeeping clean
+          // but do not publish a second terminal state to the UI.
+          if (context.syntheticallyStoppedTaskIds.delete(message.task_id)) {
+            return;
+          }
         }
         yield* offerRuntimeEvent({
           ...base,
@@ -3401,6 +3414,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         );
         context.openTaskIds.delete(message.task_id);
         forgetTaskToolInputForTask(context, message.task_id, toolUseId);
+        // Late native completion after synthetic stop: drop without re-emitting.
+        if (context.syntheticallyStoppedTaskIds.delete(message.task_id)) {
+          return;
+        }
         yield* emitThreadTokenUsage(
           context,
           normalizeClaudeTaskProgressTokenUsage(message.usage, context),
@@ -3684,6 +3701,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     context.stopped = true;
     clearTaskToolInputMemory(context);
+    // Session is gone; drop synthetic-stop markers so they cannot leak.
+    context.syntheticallyStoppedTaskIds.clear();
 
     for (const [requestId, pending] of context.pendingApprovals) {
       yield* Deferred.succeed(pending.decision, "cancel");
@@ -4291,6 +4310,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         taskToolInputsByUseId: new Map(),
         taskToolUseIdByTaskId: new Map(),
         openTaskIds: new Set(),
+        syntheticallyStoppedTaskIds: new Set(),
         claudeTasks,
         claudeTaskPlanFingerprint: undefined,
         turnState: undefined,
@@ -4462,10 +4482,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       });
     }
 
+    // Keep the one-shot flag set until the prompt is successfully queued so a
+    // validation / offer failure can still attach the note on the next attempt.
     const appendResumeDeadShellNote = context.pendingResumeDeadShellNote;
-    if (appendResumeDeadShellNote) {
-      context.pendingResumeDeadShellNote = false;
-    }
 
     const message = yield* buildUserMessageEffect(input, {
       fileSystem,
@@ -4483,6 +4502,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }).pipe(
       Effect.mapError((cause) => toRequestError(PROVIDER, input.threadId, "turn/start", cause)),
     );
+
+    if (appendResumeDeadShellNote) {
+      context.pendingResumeDeadShellNote = false;
+    }
 
     return {
       threadId: context.session.threadId,
@@ -4528,6 +4551,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
               return;
             }
             context.openTaskIds.delete(taskId);
+            context.syntheticallyStoppedTaskIds.add(taskId);
             forgetTaskToolInputForTask(context, taskId);
             const stamp = yield* makeEventStamp();
             yield* offerRuntimeEvent({
