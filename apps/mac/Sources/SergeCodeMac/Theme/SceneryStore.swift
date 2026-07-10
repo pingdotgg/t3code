@@ -333,15 +333,59 @@ public final class SceneryStore {
     }
 
     private func baseSceneName(_ name: String, setId: String?) -> String {
+        let resolved = setId.flatMap { set(id: $0) }
+        let setTitle = resolved?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        // Pool-index labels ("Iceland 5") must never become thread titles.
+        // Prefer the set title when the photo name is the title or title+" N".
+        if !setTitle.isEmpty {
+            if name == setTitle || Self.isPoolNumberedSceneName(name, base: setTitle) {
+                return setTitle
+            }
+        }
+
         let sceneNames =
-            setId.flatMap { set(id: $0)?.sceneNames }
+            resolved?.sceneNames
             ?? ScenerySet.makeBuiltinDolomites().sceneNames
-        for base in sceneNames.sorted(by: { $0.count > $1.count }) {
+        // Ignore polluted sceneNames entries that are themselves pool-index
+        // labels of the set title, so an exact match on "Iceland 5" cannot win.
+        let authenticBases = sceneNames.filter { candidate in
+            setTitle.isEmpty || !Self.isPoolNumberedSceneName(candidate, base: setTitle)
+        }
+        for base in authenticBases.sorted(by: { $0.count > $1.count }) {
             if name == base || Self.isLegacyNumberedSceneTitle(name, base: base) {
                 return base
             }
         }
+
+        // Defense in depth for older on-disk pools: strip trailing " N"
+        // (N in 1...maxPhotos) even when set title / sceneNames did not match.
+        if let stripped = Self.stripPoolNumberSuffix(name) {
+            return stripped
+        }
         return name
+    }
+
+    /// Pool-builder / legacy labels: `"Iceland 1"`…`"Iceland 24"`.
+    /// Includes index 1 (unlike reuse lap names, which started at 2).
+    private static func isPoolNumberedSceneName(_ title: String, base: String) -> Bool {
+        guard !base.isEmpty else { return false }
+        let separator = " "
+        guard title.hasPrefix(base + separator) else { return false }
+        let suffix = title.dropFirst(base.count + separator.count)
+        guard let index = Int(suffix), String(index) == suffix else { return false }
+        return (1...SceneryPoolBuilder.maxPhotos).contains(index)
+    }
+
+    /// `"Iceland 5"` → `"Iceland"` when the trailing token is a pool index.
+    private static func stripPoolNumberSuffix(_ name: String) -> String? {
+        guard let space = name.lastIndex(of: " ") else { return nil }
+        let suffix = name[name.index(after: space)...]
+        guard let index = Int(suffix), String(index) == suffix,
+            (1...SceneryPoolBuilder.maxPhotos).contains(index)
+        else { return nil }
+        let base = String(name[..<space]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return base.isEmpty ? nil : base
     }
 
     /// Legacy scene numbering started at 2 (`<base> 1` was never produced).

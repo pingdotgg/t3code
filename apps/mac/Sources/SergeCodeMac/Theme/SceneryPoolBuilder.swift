@@ -21,9 +21,9 @@ enum SceneryPoolBuilder {
 
     /// One deduped photo per location (name from location, never captions),
     /// then top up from general queries only when named photos fall short of
-    /// `minNamedPhotos`. Top-up names use Unsplash location metadata or
-    /// numbered set-title labels — never captions, never curated-name
-    /// round-robin.
+    /// `minNamedPhotos`. Top-up names use Unsplash location metadata or the
+    /// bare set title — never captions, never pool-index numbering
+    /// (`"Iceland 5"`), never curated-name round-robin.
     nonisolated static func buildFromLocations(
         client: UnsplashClient,
         locations: [SceneryLocation],
@@ -33,6 +33,7 @@ enum SceneryPoolBuilder {
     ) async throws -> BuildResult {
         let totalSteps = max(locations.count + queries.count, 1)
         await onProgress?(0, totalSteps)
+        let fallbackName = SceneSetComposer.bareSetTitle(setTitle)
 
         var photos: [SceneryPhoto] = []
         var photoTags: [String: SceneryPhotoTags] = [:]
@@ -75,11 +76,9 @@ enum SceneryPoolBuilder {
                         for apiPhoto in results {
                             guard photos.count < maxPhotos else { break }
                             guard seen.insert(apiPhoto.id).inserted else { continue }
-                            let name =
-                                apiPhoto.suggestedSceneName
-                                ?? SceneSetComposer.numberedNames(
-                                    location: setTitle, count: photos.count + 1
-                                ).last!
+                            // Bare set title — never "Iceland 1"…"Iceland N". Pool
+                            // index must not leak into thread titles.
+                            let name = apiPhoto.suggestedSceneName ?? fallbackName
                             photos.append(sceneryPhoto(from: apiPhoto, name: name))
                             if let queryTags { photoTags[apiPhoto.id] = queryTags }
                         }
