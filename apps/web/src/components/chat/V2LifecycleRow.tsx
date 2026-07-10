@@ -29,11 +29,11 @@ export function isV2LifecycleItem(item: OrchestrationV2TurnItem): boolean {
   return LIFECYCLE_TYPES.has(item.type);
 }
 
-const TERMINAL_SUBAGENT_STATUSES = new Set<OrchestrationV2TurnItem["status"]>([
+// Aborted subagents (cancelled/interrupted) keep whatever result text had
+// streamed before the abort, so only completed/failed results are final.
+const FINAL_RESULT_SUBAGENT_STATUSES = new Set<OrchestrationV2TurnItem["status"]>([
   "completed",
   "failed",
-  "cancelled",
-  "interrupted",
 ]);
 
 export function V2LifecycleRow(props: {
@@ -123,14 +123,14 @@ export function V2LifecycleRow(props: {
     );
   }
   if (item.type === "subagent") {
-    const finalResult =
-      TERMINAL_SUBAGENT_STATUSES.has(item.status) && item.result?.trim() ? item.result : null;
+    const streamedResult = item.result?.trim() ? item.result : null;
+    const finalResult = FINAL_RESULT_SUBAGENT_STATUSES.has(item.status) ? streamedResult : null;
     return (
       <RelatedThreadCard
         itemType={item.type}
         icon={BotIcon}
         title={subagentDisplayTitle(item.title ?? "Subagent")}
-        detail={finalResult ?? item.progress ?? item.prompt}
+        detail={finalResult ?? item.progress ?? streamedResult ?? item.prompt}
         badge={item.status}
         threadId={item.childThreadId}
         expandedDetail={finalResult}
