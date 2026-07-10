@@ -848,7 +848,63 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('aria-label="Open Package audit"');
     expect(markup).toContain("Reading src/index.ts");
     expect(markup).not.toContain("Inspect the package");
+    expect(markup).not.toContain('data-v2-subagent-result-disclosure="true"');
     expect(markup).not.toContain("Work Log");
+  });
+
+  it("discloses the full Codex subagent result without projecting child events", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "codex-subagent-result",
+            kind: "event",
+            createdAt: MESSAGE_CREATED_AT,
+            projectedItem: {
+              position: 0,
+              visibility: "local",
+              sourceThreadId: "thread-1",
+              sourceItemId: "codex-subagent-result",
+              item: {
+                id: "codex-subagent-result",
+                threadId: "thread-1",
+                runId: "run-1",
+                nodeId: "node-subagent-1",
+                providerThreadId: "provider-thread-1",
+                providerTurnId: "provider-turn-1",
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 1,
+                status: "completed",
+                title: "Isolation report",
+                startedAt: null,
+                completedAt: null,
+                updatedAt: {},
+                type: "subagent",
+                subagentId: "node-subagent-1",
+                origin: "provider_native",
+                driver: "codex",
+                providerInstanceId: "codex",
+                childThreadId: "thread-subagent-1",
+                prompt: "Explain test isolation",
+                result: "Tests should be isolated.\n\nResult: no shared state.",
+              },
+            } as never,
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-v2-item-type="subagent"');
+    expect(markup).toContain('data-v2-subagent-result-disclosure="true"');
+    expect(markup).toContain('data-v2-subagent-result="true"');
+    expect(markup).toContain('aria-label="Show full result for Isolation report"');
+    expect(markup).toContain('aria-label="Open Isolation report"');
+    expect(markup).toContain("Tests should be isolated.");
+    expect(markup).toContain("Result: no shared state.");
+    expect(markup).not.toContain("Explain test isolation");
   });
 
   it("renders V2 provider failures as standalone error rows", async () => {
