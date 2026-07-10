@@ -535,6 +535,43 @@ struct SubagentTaskActivityStateTests {
         #expect(item?.toolUseId == "toolu-1")
     }
 
+    @Test func taskUpdatedAppliesModelAndPreservesWhenOmitted() {
+        let started = activity(
+            id: "act-start", kind: ActivityKind.taskStarted,
+            at: "2026-07-04T10:00:00.000Z",
+            payload: .object([
+                "taskId": .string("task-1"),
+                "description": .string("Explore without model yet"),
+            ]))
+        let modelUpdate = activity(
+            id: "act-model", kind: ActivityKind.taskUpdated,
+            at: "2026-07-04T10:00:03.000Z",
+            payload: .object([
+                "taskId": .string("task-1"),
+                "model": .string("grok-4-5"),
+            ]))
+        let statusOnly = activity(
+            id: "act-status", kind: ActivityKind.taskUpdated,
+            at: "2026-07-04T10:00:05.000Z",
+            payload: .object([
+                "taskId": .string("task-1"),
+                "status": .string("running"),
+                "isBackgrounded": .bool(true),
+            ]))
+
+        var state = T3SubagentTaskActivityState()
+        let initial = state.apply(activity: started, at: WireDate.parse(started.createdAt)!)
+        #expect(initial?.model == nil)
+
+        let withModel = state.apply(activity: modelUpdate, at: WireDate.parse(modelUpdate.createdAt)!)
+        #expect(withModel?.model == "grok-4-5")
+
+        let preserved = state.apply(activity: statusOnly, at: WireDate.parse(statusOnly.createdAt)!)
+        #expect(preserved?.model == "grok-4-5")
+        #expect(preserved?.isBackgrounded == true)
+        #expect(preserved?.state == .running)
+    }
+
     @Test func taskUpdatedPatchesBackgroundErrorAndTerminalStatus() {
         let started = activity(
             id: "act-start", kind: ActivityKind.taskStarted,

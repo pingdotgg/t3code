@@ -622,6 +622,7 @@ function runtimeEventToActivities(
           payload: {
             taskId: event.payload.taskId,
             ...(status ? { status } : {}),
+            ...(event.payload.model ? { model: event.payload.model } : {}),
             ...(event.payload.description
               ? {
                   description: truncateDetail(event.payload.description),

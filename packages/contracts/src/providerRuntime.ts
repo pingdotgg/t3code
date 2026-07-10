@@ -481,8 +481,9 @@ const TaskStartedPayload = Schema.Struct({
   workflowName: Schema.optional(TrimmedNonEmptyStringSchema),
   toolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
   /**
-   * Claude adapter always populates this (tool input model or session model).
-   * Optional on the wire so older emitters / other providers remain valid.
+   * Authoritative per-task model when known (e.g. Task tool `input.model`
+   * override). Omitted when nothing authoritative is available at start;
+   * clients may learn the true model later via `task.updated`.
    */
   model: Schema.optional(TrimmedNonEmptyStringSchema),
 });
@@ -509,6 +510,11 @@ const TaskUpdatedPayload = Schema.Struct({
   isBackgrounded: Schema.optional(Schema.Boolean),
   endTime: Schema.optional(Schema.Number),
   totalPausedMs: Schema.optional(Schema.Number),
+  /**
+   * Authoritative model observed after start (e.g. mined from a subagent
+   * assistant message). Optional patch field — omit when unchanged.
+   */
+  model: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type TaskUpdatedPayload = typeof TaskUpdatedPayload.Type;
 

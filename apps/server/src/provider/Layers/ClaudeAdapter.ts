@@ -203,13 +203,19 @@ interface ClaudeSessionContext {
   readonly inFlightTools: Map<number, ToolInFlight>;
   /**
    * Assistant Task/Agent tool_use id → parsed tool input. Used to resolve
-   * the subagent model (SDK task_* messages do not carry it). Pruned when
-   * the correlated task reaches a terminal state, on turn completion, and
-   * on session stop.
+   * an explicit subagent model override from Task tool input (SDK task_*
+   * messages do not carry model). Pruned when the correlated task reaches
+   * a terminal state, on turn completion, and on session stop.
    */
   readonly taskToolInputsByUseId: Map<string, Record<string, unknown>>;
   /** task_id → tool_use_id for pruning taskToolInputsByUseId on terminal. */
   readonly taskToolUseIdByTaskId: Map<string, string>;
+  /**
+   * task_id → last known authoritative model (Task tool input override and/or
+   * mined from subagent assistant messages). Used to emit task.updated only
+   * when the model changes.
+   */
+  readonly taskModelByTaskId: Map<string, string>;
   /** task_id values that have started but not yet completed/stopped. */
   readonly openTaskIds: Set<string>;
   /**
@@ -677,6 +683,7 @@ function forgetTaskToolInputForTask(
 ): void {
   const toolUseId = toolUseIdFromMessage ?? context.taskToolUseIdByTaskId.get(taskId);
   context.taskToolUseIdByTaskId.delete(taskId);
+  context.taskModelByTaskId.delete(taskId);
   if (toolUseId) {
     context.taskToolInputsByUseId.delete(toolUseId);
   }
@@ -685,6 +692,7 @@ function forgetTaskToolInputForTask(
 function clearTaskToolInputMemory(context: ClaudeSessionContext): void {
   context.taskToolInputsByUseId.clear();
   context.taskToolUseIdByTaskId.clear();
+  context.taskModelByTaskId.clear();
 }
 
 function readOptionalTrimmedString(value: unknown): string | undefined {
@@ -696,30 +704,43 @@ function readOptionalTrimmedString(value: unknown): string | undefined {
 }
 
 /**
- * Resolve the model string for a subagent task. Prefer the Task tool input's
- * `model` field (looked up via tool_use_id); fall back to the session model.
- * Always returns a non-empty string.
+ * Resolve the model for a subagent task from authoritative per-task sources
+ * only. Today that is the Task tool input's `model` override (looked up via
+ * tool_use_id). Do not fall back to the parent session model — that fabricates
+ * a badge value when the subagent actually ran something else. Returns
+ * undefined when nothing authoritative is known yet; ground truth may arrive
+ * later from subagent assistant messages.
  */
 function resolveSubagentTaskModel(
   context: ClaudeSessionContext,
   toolUseId: string | undefined,
-): string {
-  if (toolUseId) {
-    const input = context.taskToolInputsByUseId.get(toolUseId);
-    const fromInput = readOptionalTrimmedString(input?.model);
-    if (fromInput) {
-      return fromInput;
+): string | undefined {
+  if (!toolUseId) {
+    return undefined;
+  }
+  const input = context.taskToolInputsByUseId.get(toolUseId);
+  return readOptionalTrimmedString(input?.model);
+}
+
+function findTaskIdForToolUseId(
+  context: ClaudeSessionContext,
+  toolUseId: string,
+): string | undefined {
+  for (const [taskId, mappedToolUseId] of context.taskToolUseIdByTaskId) {
+    if (mappedToolUseId === toolUseId) {
+      return taskId;
     }
   }
-  const fromSession = readOptionalTrimmedString(context.session.model);
-  if (fromSession) {
-    return fromSession;
+  return undefined;
+}
+
+/** Record a task model; returns true when the stored value changed. */
+function rememberTaskModel(context: ClaudeSessionContext, taskId: string, model: string): boolean {
+  if (context.taskModelByTaskId.get(taskId) === model) {
+    return false;
   }
-  const fromApi = readOptionalTrimmedString(context.currentApiModelId);
-  if (fromApi) {
-    return fromApi;
-  }
-  return "default";
+  context.taskModelByTaskId.set(taskId, model);
+  return true;
 }
 
 function classifyToolItemType(toolName: string): CanonicalItemType {
@@ -3067,6 +3088,42 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return;
     }
 
+    // Subagent completions carry parent_tool_use_id + the actual model that
+    // produced the turn. Mine it into task.updated when it differs from what
+    // we already recorded (tool-input override or a prior assistant message).
+    const parentToolUseId = readOptionalTrimmedString(
+      (message as { parent_tool_use_id?: unknown }).parent_tool_use_id,
+    );
+    if (parentToolUseId) {
+      const observedModel = readOptionalTrimmedString(
+        (message.message as { model?: unknown } | undefined)?.model,
+      );
+      if (observedModel) {
+        const taskId = findTaskIdForToolUseId(context, parentToolUseId);
+        if (taskId && rememberTaskModel(context, taskId, observedModel)) {
+          const modelStamp = yield* makeEventStamp();
+          yield* offerRuntimeEvent({
+            type: "task.updated",
+            eventId: modelStamp.eventId,
+            provider: PROVIDER,
+            createdAt: modelStamp.createdAt,
+            threadId: context.session.threadId,
+            ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+            providerRefs: nativeProviderRefs(context),
+            raw: {
+              source: "claude.sdk.message",
+              method: "claude/assistant/subagent-model",
+              payload: message,
+            },
+            payload: {
+              taskId: RuntimeTaskId.make(taskId),
+              model: observedModel,
+            },
+          });
+        }
+      }
+    }
+
     // Auto-start a synthetic turn for assistant messages that arrive without
     // an active turn (e.g., background agent/subagent responses between user prompts).
     if (!context.turnState) {
@@ -3311,13 +3368,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         const model = resolveSubagentTaskModel(context, toolUseId);
         context.openTaskIds.add(message.task_id);
         rememberTaskToolUseId(context, message.task_id, toolUseId);
+        if (model) {
+          context.taskModelByTaskId.set(message.task_id, model);
+        }
         yield* offerRuntimeEvent({
           ...base,
           type: "task.started",
           payload: {
             taskId: RuntimeTaskId.make(message.task_id),
             description: message.description,
-            model,
+            ...(model ? { model } : {}),
             ...(message.task_type ? { taskType: message.task_type } : {}),
             ...(subagentType ? { subagentType } : {}),
             ...(workflowName ? { workflowName } : {}),
@@ -4309,6 +4369,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         inFlightTools,
         taskToolInputsByUseId: new Map(),
         taskToolUseIdByTaskId: new Map(),
+        taskModelByTaskId: new Map(),
         openTaskIds: new Set(),
         syntheticallyStoppedTaskIds: new Set(),
         claudeTasks,
@@ -4531,54 +4592,55 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
    * a terminal task event within a short grace period, synthesize
    * task.completed status "stopped" so the UI settles.
    */
-  const stopTask: ClaudeAdapterShape["stopTask"] = Effect.fn("stopTask")(function* (
-    threadId,
-    taskId,
-  ) {
-    const context = yield* requireSession(threadId);
-    yield* Effect.tryPromise({
-      try: () => context.query.stopTask(taskId),
-      catch: (cause) => toRequestError(PROVIDER, threadId, "task/stop", cause),
-    });
+  const stopTask: ClaudeAdapterShape["stopTask"] = Effect.fn("stopTask")(
+    function* (threadId, taskId) {
+      const context = yield* requireSession(threadId);
+      yield* Effect.tryPromise({
+        try: () => context.query.stopTask(taskId),
+        catch: (cause) => toRequestError(PROVIDER, threadId, "task/stop", cause),
+      });
 
-    // Safety net: race a short wait against natural terminal emission.
-    // Detached so the RPC returns immediately and does not require a Scope.
-    yield* Effect.forkDetach(
-      Effect.sleep(STOP_TASK_TERMINAL_GRACE).pipe(
-        Effect.flatMap(() =>
-          Effect.gen(function* () {
-            if (context.stopped || !context.openTaskIds.has(taskId)) {
-              return;
-            }
-            context.openTaskIds.delete(taskId);
-            context.syntheticallyStoppedTaskIds.add(taskId);
-            forgetTaskToolInputForTask(context, taskId);
-            const stamp = yield* makeEventStamp();
-            yield* offerRuntimeEvent({
-              type: "task.completed",
-              eventId: stamp.eventId,
-              provider: PROVIDER,
-              createdAt: stamp.createdAt,
-              threadId: context.session.threadId,
-              ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
-              payload: {
-                taskId: RuntimeTaskId.make(taskId),
-                status: "stopped",
-                summary: "Task stopped (stopTask grace elapsed).",
-              },
-              providerRefs: nativeProviderRefs(context),
-              raw: {
-                source: "claude.sdk.message",
-                method: "claude/synthetic/task_stopped",
-                payload: { taskId, reason: "stopTask grace elapsed" },
-              },
-            });
-          }),
+      // Safety net: race a short wait against natural terminal emission.
+      // Detached so the RPC returns immediately and does not require a Scope.
+      yield* Effect.forkDetach(
+        Effect.sleep(STOP_TASK_TERMINAL_GRACE).pipe(
+          Effect.flatMap(() =>
+            Effect.gen(function* () {
+              if (context.stopped || !context.openTaskIds.has(taskId)) {
+                return;
+              }
+              context.openTaskIds.delete(taskId);
+              context.syntheticallyStoppedTaskIds.add(taskId);
+              forgetTaskToolInputForTask(context, taskId);
+              const stamp = yield* makeEventStamp();
+              yield* offerRuntimeEvent({
+                type: "task.completed",
+                eventId: stamp.eventId,
+                provider: PROVIDER,
+                createdAt: stamp.createdAt,
+                threadId: context.session.threadId,
+                ...(context.turnState
+                  ? { turnId: asCanonicalTurnId(context.turnState.turnId) }
+                  : {}),
+                payload: {
+                  taskId: RuntimeTaskId.make(taskId),
+                  status: "stopped",
+                  summary: "Task stopped (stopTask grace elapsed).",
+                },
+                providerRefs: nativeProviderRefs(context),
+                raw: {
+                  source: "claude.sdk.message",
+                  method: "claude/synthetic/task_stopped",
+                  payload: { taskId, reason: "stopTask grace elapsed" },
+                },
+              });
+            }),
+          ),
+          Effect.catchCause(() => Effect.void),
         ),
-        Effect.catchCause(() => Effect.void),
-      ),
-    );
-  });
+      );
+    },
+  );
 
   const readThread: ClaudeAdapterShape["readThread"] = Effect.fn("readThread")(
     function* (threadId) {
