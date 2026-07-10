@@ -59,6 +59,10 @@ public struct SettingsScene: View {
                 .tag(SettingsTab.connection)
         }
         .frame(width: 560, height: 420)
+        // Composer is owned by this scene only. Cancel in-flight create when
+        // the Settings window closes so Unsplash work does not keep running
+        // (and so `runCreate` can drop its self retain → deinit cancel).
+        .onDisappear { sceneSetComposer.cancel() }
     }
 }
 

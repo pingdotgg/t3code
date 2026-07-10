@@ -49,7 +49,10 @@ public final class SceneSetComposer {
     private let store: SceneryStore
     private let backend: any BackendService
     private let client: UnsplashClient?
-    private var workTask: Task<Void, Never>?
+    /// Accessed from MainActor methods and from `deinit` (cancel only).
+    /// `Task.cancel()` is thread-safe; only the create/cancel writers mutate.
+    @ObservationIgnored
+    nonisolated(unsafe) private var workTask: Task<Void, Never>?
 
     public init(
         store: SceneryStore,
@@ -59,6 +62,14 @@ public final class SceneSetComposer {
         self.store = store
         self.backend = backend
         self.client = client
+    }
+
+    deinit {
+        // Task.cancel is thread-safe. State is not updated here (deinit is
+        // nonisolated); SettingsScene also cancels on disappear so in-flight
+        // create runs are stopped when the window goes away even while
+        // `runCreate` still holds self for the active method frame.
+        workTask?.cancel()
     }
 
     /// Start creating a custom set for `location`. Cancels any in-flight run.

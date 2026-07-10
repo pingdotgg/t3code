@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SwiftUI
 import Testing
@@ -60,6 +61,29 @@ struct SceneryAccentColorCodecTests {
     func rgbHexString() {
         let rgb = AlpineTheme.RGB(red: 1, green: 0, blue: 0.5)
         #expect(rgb.hexString == "#FF0080")
+    }
+
+    @Test("convertible color updates accent over previous")
+    func accentHexUpdatesWhenConvertible() throws {
+        let color = Color(red: 1, green: 0, blue: 0)
+        let next = try #require(
+            SceneryAccentColorCodec.accentHex(from: color, preserving: "#000000"))
+        #expect(next.uppercased() == "#FF0000")
+    }
+
+    @Test("conversion failure preserves previous accent (wide-gamut / non-RGB path)")
+    func accentHexPreservesOnConversionFailure() {
+        // Pattern colors have no RGB components — AppKit's sRGB conversion is nil.
+        let pattern = NSColor(patternImage: NSImage(size: NSSize(width: 1, height: 1)))
+        #expect(pattern.usingColorSpace(.sRGB) == nil)
+
+        let previous = "#4C755C"
+        let color = Color(nsColor: pattern)
+        // Color-well write path must not clear a saved accent when hex fails.
+        #expect(SceneryAccentColorCodec.hex(from: color) == nil)
+        #expect(
+            SceneryAccentColorCodec.accentHex(from: color, preserving: previous) == previous)
+        #expect(SceneryAccentColorCodec.accentHex(from: color, preserving: nil) == nil)
     }
 }
 

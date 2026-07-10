@@ -27,13 +27,20 @@ enum SceneryAccentColorCodec {
     }
 
     /// Converts a SwiftUI `Color` to `#RRGGBB` via sRGB. Returns nil if the
-    /// color cannot be represented in sRGB.
+    /// color cannot be represented in sRGB (e.g. pattern colors, some
+    /// wide-gamut samples that AppKit refuses to convert).
     static func hex(from color: Color) -> String? {
         let ns = NSColor(color)
         guard let rgb = ns.usingColorSpace(.sRGB) else { return nil }
         let value = AlpineTheme.RGB(
             red: rgb.redComponent, green: rgb.greenComponent, blue: rgb.blueComponent)
         return value.hexString
+    }
+
+    /// Color-well write path: keep the previous stored accent when conversion
+    /// fails so a wide-gamut pick cannot clear a saved `accentHex`.
+    static func accentHex(from color: Color, preserving previous: String?) -> String? {
+        hex(from: color) ?? previous
     }
 }
 
@@ -534,7 +541,8 @@ private struct ProjectSceneryPrefsRow: View {
             },
             set: { newColor in
                 var next = prefs
-                next.accentHex = SceneryAccentColorCodec.hex(from: newColor)
+                next.accentHex = SceneryAccentColorCodec.accentHex(
+                    from: newColor, preserving: next.accentHex)
                 scenery.setProjectPrefs(next, forProjectPath: project.path)
             })
     }
