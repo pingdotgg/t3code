@@ -133,6 +133,9 @@ public final class SceneSetComposer {
         let setId = ScenerySetSlug.make(from: location)
         let title = location
         var sceneNames = Self.normalizeSceneNames(generated.sceneNames)
+        /// Set only after `registerSet` succeeds for this run — used to roll
+        /// back if cancel lands during palette extraction.
+        var registeredSetId: String?
 
         do {
             let (photos, metaNames, photoTags) = try await fetchPool(
@@ -166,10 +169,16 @@ public final class SceneSetComposer {
             }
 
             store.registerSet(set, pool: namedPhotos, photoTags: photoTags)
+            registeredSetId = setId
             await store.generatePaletteIfNeeded(for: setId, downloadSamples: true)
             try Task.checkCancellation()
             state = .finished(setId: setId)
         } catch is CancellationError {
+            // Choice: roll back (not treat-as-success). Cancel after register
+            // must not leave a set on disk while state is .failed(.cancelled).
+            if let registeredSetId {
+                try? store.deleteCustomSet(id: registeredSetId)
+            }
             state = .failed(.cancelled)
         } catch let err as SceneSetComposerError {
             state = .failed(err)

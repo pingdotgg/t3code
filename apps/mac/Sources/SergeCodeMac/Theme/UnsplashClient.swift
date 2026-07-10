@@ -30,12 +30,17 @@ public actor UnsplashClient {
     public static let appName = "SergeCode"
 
     private let accessKey: String
-    private let session = URLSession.shared
+    private let session: URLSession
 
     /// nil when no key is configured — callers degrade to gradient washes.
-    public init?(accessKey: String? = UnsplashClient.resolveAccessKey()) {
+    /// `session` is injectable for tests (URLProtocol stubs).
+    public init?(
+        accessKey: String? = UnsplashClient.resolveAccessKey(),
+        session: URLSession = .shared
+    ) {
         guard let accessKey, !accessKey.isEmpty else { return nil }
         self.accessKey = accessKey
+        self.session = session
     }
 
     /// Key lookup: `SERGECODE_UNSPLASH_KEY` env var, then
@@ -152,11 +157,15 @@ public actor UnsplashClient {
     }
 
     /// Ping `links.download_location` — required by the Unsplash guidelines
-    /// whenever a photo is put to use. Fire-and-forget; failures are benign.
-    public func registerDownload(_ url: URL) async {
+    /// whenever a photo is put to use. Throws on transport or non-2xx so
+    /// callers can avoid recording a successful registration and retry later.
+    public func registerDownload(_ url: URL) async throws {
         var request = URLRequest(url: url)
         request.setValue("Client-ID \(accessKey)", forHTTPHeaderField: "Authorization")
-        _ = try? await session.data(for: request)
+        let (_, response) = try await session.data(for: request)
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            throw UnsplashError.badStatus(http.statusCode)
+        }
     }
 
     /// Plain CDN fetch (images.unsplash.com needs no auth header).

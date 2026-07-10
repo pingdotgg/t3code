@@ -345,3 +345,122 @@ struct SceneryStoreMultiSetTests {
         #expect(store.photo(for: "thread-legacy")?.id == "legacy-photo")
     }
 }
+
+@Suite("SceneryStore download registration")
+@MainActor
+struct SceneryStoreDownloadRegistrationTests {
+    private enum PingError: Error { case boom }
+
+    private func tempRoot() throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("scenery-reg-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    @Test("ping failure does not persist registration")
+    func pingFailureLeavesUnregistered() async throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = SceneryStore(client: nil, root: root)
+        store.reloadFromDiskForTesting()
+        store.registerSetForTesting(ScenerySet.makeBuiltinDolomites(), pool: [])
+
+        let setId = ScenerySet.dolomitesID
+        let photoId = "photo-fail"
+        let ping = URL(string: "https://api.unsplash.com/photos/photo-fail/download")!
+
+        await store.registerDownloadIfNeeded(
+            setId: setId,
+            photoId: photoId,
+            downloadLocationURL: ping
+        ) { _ in
+            throw PingError.boom
+        }
+
+        #expect(store.registeredDownloadIDsForTesting(setId: setId).isEmpty)
+        let diskURL = root
+            .appendingPathComponent("sets/\(setId)/registered-downloads.json")
+        #expect(!FileManager.default.fileExists(atPath: diskURL.path))
+    }
+
+    @Test("ping success persists registration in memory and on disk")
+    func pingSuccessPersists() async throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = SceneryStore(client: nil, root: root)
+        store.reloadFromDiskForTesting()
+        store.registerSetForTesting(ScenerySet.makeBuiltinDolomites(), pool: [])
+
+        let setId = ScenerySet.dolomitesID
+        let photoId = "photo-ok"
+        let ping = URL(string: "https://api.unsplash.com/photos/photo-ok/download")!
+        var pingCalls = 0
+
+        await store.registerDownloadIfNeeded(
+            setId: setId,
+            photoId: photoId,
+            downloadLocationURL: ping
+        ) { url in
+            pingCalls += 1
+            #expect(url == ping)
+        }
+
+        #expect(pingCalls == 1)
+        #expect(store.registeredDownloadIDsForTesting(setId: setId) == [photoId])
+
+        let diskURL = root
+            .appendingPathComponent("sets/\(setId)/registered-downloads.json")
+        let data = try Data(contentsOf: diskURL)
+        let ids = try JSONDecoder().decode(Set<String>.self, from: data)
+        #expect(ids == [photoId])
+    }
+
+    @Test("already-registered photo skips ping")
+    func alreadyRegisteredSkipsPing() async throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = SceneryStore(client: nil, root: root)
+        store.reloadFromDiskForTesting()
+        store.registerSetForTesting(ScenerySet.makeBuiltinDolomites(), pool: [])
+
+        let setId = ScenerySet.dolomitesID
+        let photoId = "photo-once"
+        let ping = URL(string: "https://api.unsplash.com/photos/photo-once/download")!
+        var pingCalls = 0
+
+        await store.registerDownloadIfNeeded(
+            setId: setId, photoId: photoId, downloadLocationURL: ping
+        ) { _ in pingCalls += 1 }
+
+        await store.registerDownloadIfNeeded(
+            setId: setId, photoId: photoId, downloadLocationURL: ping
+        ) { _ in pingCalls += 1 }
+
+        #expect(pingCalls == 1)
+        #expect(store.registeredDownloadIDsForTesting(setId: setId) == [photoId])
+    }
+
+    @Test("nil download location is a no-op")
+    func nilLocationNoOp() async throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = SceneryStore(client: nil, root: root)
+        store.reloadFromDiskForTesting()
+        store.registerSetForTesting(ScenerySet.makeBuiltinDolomites(), pool: [])
+
+        var pingCalls = 0
+        await store.registerDownloadIfNeeded(
+            setId: ScenerySet.dolomitesID,
+            photoId: "x",
+            downloadLocationURL: nil
+        ) { _ in pingCalls += 1 }
+
+        #expect(pingCalls == 0)
+        #expect(store.registeredDownloadIDsForTesting(setId: ScenerySet.dolomitesID).isEmpty)
+    }
+}

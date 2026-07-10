@@ -83,6 +83,7 @@ struct ScenerySettingsTab: View {
     @UIState private var locationName = ""
     @UIState private var setPendingDelete: ScenerySet?
     @UIState private var showDeleteConfirm = false
+    @UIState private var deleteError: String?
 
     private var isComposerBusy: Bool {
         switch composer.state {
@@ -118,6 +119,17 @@ struct ScenerySettingsTab: View {
             Text(
                 "Threads using “\(set.title)” will fall back to the default scenery set. This cannot be undone."
             )
+        }
+        .alert(
+            "Couldn't delete scenery set",
+            isPresented: Binding(
+                get: { deleteError != nil },
+                set: { if !$0 { deleteError = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) { deleteError = nil }
+        } message: {
+            Text(deleteError ?? "Something went wrong while deleting the scenery set.")
         }
     }
 
@@ -281,12 +293,20 @@ struct ScenerySettingsTab: View {
     }
 
     private func deleteSet(_ set: ScenerySet) {
+        defer { setPendingDelete = nil }
         do {
             try scenery.deleteCustomSet(id: set.id)
+        } catch let err as SceneryStore.DeleteSetError {
+            // Dialog only offers custom sets; not-found / builtin are no-ops.
+            switch err {
+            case .notFound, .builtinProtected:
+                break
+            }
         } catch {
-            // Builtin/not-found — dialog only offers custom sets.
+            deleteError =
+                (error as? LocalizedError)?.errorDescription
+                ?? error.localizedDescription
         }
-        setPendingDelete = nil
     }
 }
 

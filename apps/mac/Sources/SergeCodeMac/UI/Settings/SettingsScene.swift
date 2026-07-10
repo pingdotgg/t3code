@@ -13,7 +13,9 @@ public struct SettingsScene: View {
     private let model: AppModel
     private let scenery: SceneryStore
     /// Mounted here (not at app root): Phase 5 Create Set flow only.
-    private let sceneSetComposer: SceneSetComposer
+    /// Held in `@UIState` so App.body redraws that reconstruct `Settings {
+    /// SettingsScene(...) }` do not drop in-flight create-set work.
+    @UIState private var sceneSetComposer: SceneSetComposer
     @UIState private var selectedTab: SettingsTab
 
     public init(
@@ -24,7 +26,8 @@ public struct SettingsScene: View {
     ) {
         self.model = model
         self.scenery = scenery
-        self.sceneSetComposer = SceneSetComposer(store: scenery, backend: backend)
+        _sceneSetComposer = UIState(
+            initialValue: SceneSetComposer(store: scenery, backend: backend))
         _selectedTab = UIState(initialValue: initialTab)
     }
 

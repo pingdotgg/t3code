@@ -407,12 +407,14 @@ public final class SceneryStore {
                         withIntermediateDirectories: true)
                     try? data.write(to: fileURL, options: .atomic)
                 }.value
-                var registered = registeredBySet[setId] ?? []
-                if let ping = photo.downloadLocationURL, !registered.contains(photo.id) {
-                    registered.insert(photo.id)
-                    registeredBySet[setId] = registered
-                    saveRegisteredDownloads(for: setId)
-                    await client.registerDownload(ping)
+                // Ping first; only persist registration on success so a
+                // transient Unsplash failure is retried on the next load.
+                await registerDownloadIfNeeded(
+                    setId: setId,
+                    photoId: photo.id,
+                    downloadLocationURL: photo.downloadLocationURL
+                ) { ping in
+                    try await client.registerDownload(ping)
                 }
             }
         }
@@ -854,6 +856,34 @@ public final class SceneryStore {
         }
     }
 
+    /// Unsplash download_location ping + local registration bookkeeping.
+    /// Awaits `register` first; mutates `registeredBySet` and disk only on
+    /// success. Failures leave the photo unregistered (natural retry) and
+    /// are not surfaced to the user.
+    func registerDownloadIfNeeded(
+        setId: String,
+        photoId: String,
+        downloadLocationURL: URL?,
+        register: (URL) async throws -> Void
+    ) async {
+        guard let ping = downloadLocationURL else { return }
+        var registered = registeredBySet[setId] ?? []
+        guard !registered.contains(photoId) else { return }
+        do {
+            try await register(ping)
+            registered.insert(photoId)
+            registeredBySet[setId] = registered
+            saveRegisteredDownloads(for: setId)
+        } catch {
+            // Transient ping failure — retry on a later ensureImage.
+        }
+    }
+
+    /// Test helper: photo IDs already recorded as download-registered for a set.
+    func registeredDownloadIDsForTesting(setId: String) -> Set<String> {
+        registeredBySet[setId] ?? []
+    }
+
     // MARK: - Registry mutations (Phase 2+)
 
     /// Writes project-prefs (used by Phase 5 UI; available now for tests).
@@ -969,7 +999,11 @@ public final class SceneryStore {
         }
 
         let dir = setDirectory(id)
-        try? FileManager.default.removeItem(at: dir)
+        // Surface real disk failures to callers (Settings shows an alert).
+        // Skip when the directory is already gone so re-delete is clean.
+        if FileManager.default.fileExists(atPath: dir.path) {
+            try FileManager.default.removeItem(at: dir)
+        }
         syncDefaultPool()
     }
 
