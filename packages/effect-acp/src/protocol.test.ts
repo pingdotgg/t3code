@@ -3,6 +3,7 @@ import * as AcpError from "./errors.ts";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -648,5 +649,74 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
       assert.instanceOf(error, AcpError.AcpProcessExitedError);
       assert.equal(error.code, 0);
     }),
+  );
+
+  it.effect(
+    "drops unsolicited non-numeric response ids (Grok skills-reload) without terminating the protocol",
+    () =>
+      Effect.gen(function* () {
+        assert.equal(AcpProtocol.isRpcClientSafeRequestId("skills-reload"), false);
+        assert.equal(AcpProtocol.isRpcClientSafeRequestId("42"), true);
+        assert.equal(AcpProtocol.isRpcClientSafeRequestId(""), false);
+
+        const { stdio, input, output } = yield* makeInMemoryStdio();
+        const termination = yield* Deferred.make<AcpError.AcpError>();
+        const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+          stdio,
+          serverRequestMethods: new Set(),
+          onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+        });
+
+        // Grok emits these during ACP startup; RpcClient would BigInt() the id and die.
+        yield* Queue.offer(
+          input,
+          encoder.encode(
+            `${encodeUnknownJsonString({
+              jsonrpc: "2.0",
+              id: "skills-reload",
+              result: { result: { reloaded: 0 } },
+            })}\n`,
+          ),
+        );
+        yield* Queue.offer(
+          input,
+          encoder.encode(
+            `${encodeUnknownJsonString({
+              jsonrpc: "2.0",
+              id: "skills-reload",
+              result: { result: { reloaded: 0 } },
+            })}\n`,
+          ),
+        );
+
+        // Protocol must still accept a normal extension request after the noise.
+        const responseFiber = yield* transport
+          .request("x/test", { hello: "world" })
+          .pipe(Effect.forkScoped);
+        const outbound = yield* Queue.take(output);
+        const decoded = JSON.parse(String(outbound)) as {
+          readonly id: string;
+          readonly method: string;
+        };
+        assert.equal(decoded.method, "x/test");
+        assert.isTrue(AcpProtocol.isRpcClientSafeRequestId(String(decoded.id)));
+
+        yield* Queue.offer(
+          input,
+          encoder.encode(
+            `${encodeUnknownJsonString({
+              jsonrpc: "2.0",
+              id: decoded.id,
+              result: { ok: true },
+            })}\n`,
+          ),
+        );
+
+        const response = yield* Fiber.join(responseFiber);
+        assert.deepEqual(response, { ok: true });
+
+        // Protocol must not have terminated from the skills-reload noise.
+        assert.isTrue(Option.isNone(yield* Deferred.poll(termination)));
+      }),
   );
 });

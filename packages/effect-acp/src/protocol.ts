@@ -77,6 +77,30 @@ const decodeElicitationComplete = Schema.decodeUnknownEffect(
 );
 const parserFactory = RpcSerialization.ndJsonRpc();
 
+/**
+ * Effect's RpcMessage.RequestId coerces wire ids with `BigInt(id)`. Agents such
+ * as Grok emit unsolicited JSON-RPC *responses* with non-numeric ids (e.g.
+ * `"skills-reload"`). Forwarding those to RpcClient dies with:
+ *   SyntaxError: Cannot convert skills-reload to a BigInt
+ * which tears down the ACP protocol mid-session.
+ *
+ * Drop orphan Exit/Chunk messages whose request ids cannot be coerced, before
+ * they reach RpcClient. Pending extension requests still match by string id.
+ *
+ * @see https://github.com/pingdotgg/t3code/issues/3666
+ */
+export function isRpcClientSafeRequestId(requestId: string): boolean {
+  if (requestId.length === 0) {
+    return false;
+  }
+  try {
+    BigInt(requestId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(function* (
   options: AcpPatchedProtocolOptions,
 ): Effect.fn.Return<AcpPatchedProtocol, never, Scope.Scope> {
@@ -342,6 +366,12 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
       Effect.flatMap((pending) => {
         const pendingRequest = pending.get(message.requestId);
         if (!pendingRequest) {
+          // Unsolicited / non-pending responses with non-numeric ids (Grok
+          // `skills-reload`) must not reach RpcClient — BigInt coercion throws
+          // and kills the protocol loop.
+          if (!isRpcClientSafeRequestId(message.requestId)) {
+            return Effect.void;
+          }
           return Queue.offer(clientQueue, message).pipe(Effect.asVoid);
         }
         if (message.exit._tag === "Success") {
@@ -381,15 +411,19 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
         return Ref.get(extPending).pipe(
           Effect.flatMap((pending) => {
             const pendingRequest = pending.get(message.requestId);
-            return pendingRequest
-              ? completeExtPendingFailure(
+            if (pendingRequest) {
+              return completeExtPendingFailure(
+                message.requestId,
+                AcpError.AcpRequestError.unsupportedStreamingResponse(
+                  pendingRequest.method,
                   message.requestId,
-                  AcpError.AcpRequestError.unsupportedStreamingResponse(
-                    pendingRequest.method,
-                    message.requestId,
-                  ),
-                )
-              : Queue.offer(clientQueue, message).pipe(Effect.asVoid);
+                ),
+              );
+            }
+            if (!isRpcClientSafeRequestId(message.requestId)) {
+              return Effect.void;
+            }
+            return Queue.offer(clientQueue, message).pipe(Effect.asVoid);
           }),
         );
       case "Defect":

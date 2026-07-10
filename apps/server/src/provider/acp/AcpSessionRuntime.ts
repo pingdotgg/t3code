@@ -733,7 +733,13 @@ export const make = (
               ),
               Effect.ensuring(
                 Effect.gen(function* () {
-                  yield* Fiber.interrupt(promptRpcFiber).pipe(Effect.ignore);
+                  // Only interrupt a still-running RPC fiber. After a successful
+                  // join, re-interrupting is unnecessary; when the parent race
+                  // (xAI prompt_complete fallback) abandons a loser mid-flight
+                  // we still need to interrupt so the permit is released.
+                  if (promptRpcFiber.pollUnsafe() === undefined) {
+                    yield* Fiber.interrupt(promptRpcFiber).pipe(Effect.ignore);
+                  }
                   yield* Ref.set(activePromptFiberRef, Option.none());
                 }),
               ),
