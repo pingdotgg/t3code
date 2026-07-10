@@ -9,6 +9,7 @@
  * Keep this module schema-only; the runtime lives in
  * `apps/server/src/mcp/toolkits/agents/`.
  */
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
@@ -40,8 +41,24 @@ export const SubAgentProviderSummary = Schema.Struct({
 });
 export type SubAgentProviderSummary = typeof SubAgentProviderSummary.Type;
 
+/** Spawned sub-agent handle returned by `agent_list` for the calling session. */
+export const SubAgentSpawnedSummary = Schema.Struct({
+  threadId: ThreadId,
+  /** Optional short name passed to `agent_spawn` (without the `Agent: ` prefix). */
+  name: Schema.optional(TrimmedNonEmptyString),
+  title: TrimmedNonEmptyString,
+  providerInstanceId: ProviderInstanceId,
+  model: TrimmedNonEmptyString,
+});
+export type SubAgentSpawnedSummary = typeof SubAgentSpawnedSummary.Type;
+
 export const SubAgentListResult = Schema.Struct({
   providers: Schema.Array(SubAgentProviderSummary),
+  /**
+   * Sub-agents spawned by the calling session via `agent_spawn` in this
+   * server process. Empty after a restart (handles do not survive restarts).
+   */
+  agents: Schema.Array(SubAgentSpawnedSummary).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 export type SubAgentListResult = typeof SubAgentListResult.Type;
 
@@ -59,9 +76,16 @@ export const SubAgentSpawnInput = Schema.Struct({
       description: "Model slug from agent_list. Defaults to the target provider's first model.",
     }),
   ),
+  name: Schema.optional(
+    TrimmedNonEmptyString.annotate({
+      description:
+        'Short agent name shown in the UI as the thread title "Agent: <name>". Prefer this over title for named workers.',
+    }),
+  ),
   title: Schema.optional(
     TrimmedNonEmptyString.annotate({
-      description: "Thread title shown in the UI. Defaults to the first line of the prompt.",
+      description:
+        "Thread title shown in the UI. Defaults to `Agent: <name>` when name is set, otherwise the first line of the prompt.",
     }),
   ),
 });
@@ -72,6 +96,7 @@ export const SubAgentSpawnResult = Schema.Struct({
   providerInstanceId: ProviderInstanceId,
   model: TrimmedNonEmptyString,
   title: TrimmedNonEmptyString,
+  name: Schema.optional(TrimmedNonEmptyString),
   status: SubAgentStatus,
 });
 export type SubAgentSpawnResult = typeof SubAgentSpawnResult.Type;

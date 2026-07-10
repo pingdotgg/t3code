@@ -202,6 +202,7 @@ it.effect("spawns a sub-agent thread next to the caller's thread on another prov
     expect(result.providerInstanceId).toBe("codex");
     expect(result.model).toBe("default-model");
     expect(result.title).toBe("Review the auth module for bugs.");
+    expect(result.name).toBeUndefined();
 
     expect(harness.dispatched).toHaveLength(2);
     const [create, turnStart] = harness.dispatched;
@@ -219,6 +220,61 @@ it.effect("spawns a sub-agent thread next to the caller's thread on another prov
       expect(turnStart.threadId).toBe(result.threadId);
       expect(turnStart.message.text).toBe("Review the auth module for bugs.");
       expect(turnStart.runtimeMode).toBe("approval-required");
+    }
+  }),
+);
+
+it.effect("names a spawned agent and surfaces it on agent_list", () =>
+  Effect.gen(function* () {
+    const [coordinator, harness] = yield* makeCoordinator();
+
+    const result = yield* coordinator.spawn(makeScope(), {
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      prompt: "Audit the payments module carefully.",
+      name: "payments-auditor",
+    });
+
+    expect(result.name).toBe("payments-auditor");
+    expect(result.title).toBe("Agent: payments-auditor");
+
+    const create = harness.dispatched.find((command) => command.type === "thread.create");
+    expect(create?.type).toBe("thread.create");
+    if (create?.type === "thread.create") {
+      expect(create.title).toBe("Agent: payments-auditor");
+    }
+
+    const listed = yield* coordinator.list(makeScope());
+    expect(listed.agents).toEqual([
+      {
+        threadId: result.threadId,
+        name: "payments-auditor",
+        title: "Agent: payments-auditor",
+        providerInstanceId: "codex",
+        model: "default-model",
+      },
+    ]);
+
+    // Other sessions do not see this caller's spawned agents.
+    const foreign = yield* coordinator.list(makeScope(ThreadId.make("other-parent")));
+    expect(foreign.agents).toEqual([]);
+  }),
+);
+
+it.effect("prefers name over an explicit title for the Agent: prefix", () =>
+  Effect.gen(function* () {
+    const [coordinator, harness] = yield* makeCoordinator();
+
+    const result = yield* coordinator.spawn(makeScope(), {
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      prompt: "Do the work.",
+      name: "worker-a",
+      title: "Custom title that should lose",
+    });
+
+    expect(result.title).toBe("Agent: worker-a");
+    const create = harness.dispatched.find((command) => command.type === "thread.create");
+    if (create?.type === "thread.create") {
+      expect(create.title).toBe("Agent: worker-a");
     }
   }),
 );

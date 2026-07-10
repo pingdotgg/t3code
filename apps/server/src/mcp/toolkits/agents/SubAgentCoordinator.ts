@@ -54,6 +54,11 @@ interface SubAgentRecord {
   readonly depth: number;
   /** `createdAt` of the most recent turn-start command sent to this child. */
   readonly lastTurnRequestedAt: string;
+  /** Optional short name from `agent_spawn` (without `Agent: ` prefix). */
+  readonly name?: string;
+  readonly title: string;
+  readonly providerInstanceId: SubAgentSpawnInput["providerInstanceId"];
+  readonly model: string;
 }
 
 export interface SubAgentCoordinatorShape {
@@ -90,6 +95,17 @@ const defaultTitleForPrompt = (prompt: string): string => {
   return seed.length > DEFAULT_TITLE_MAX_LENGTH
     ? `${seed.slice(0, DEFAULT_TITLE_MAX_LENGTH - 1).trimEnd()}…`
     : seed;
+};
+
+/** Prefer `Agent: <name>` when named; else explicit title; else prompt seed. */
+const resolveSpawnTitle = (input: SubAgentSpawnInput): string => {
+  if (input.name !== undefined) {
+    const titled = `Agent: ${input.name}`;
+    return titled.length > DEFAULT_TITLE_MAX_LENGTH
+      ? `${titled.slice(0, DEFAULT_TITLE_MAX_LENGTH - 1).trimEnd()}…`
+      : titled;
+  }
+  return input.title ?? defaultTitleForPrompt(input.prompt);
 };
 
 const finalAssistantText = (thread: OrchestrationThread): string | null => {
@@ -205,6 +221,16 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
   const list: SubAgentCoordinatorShape["list"] = Effect.fn("SubAgentCoordinator.list")(
     function* (scope) {
       const providers = yield* providerRegistry.getProviders;
+      const childRecords = yield* SynchronizedRef.get(children);
+      const agents = [...childRecords.entries()]
+        .filter(([, record]) => record.parentThreadId === scope.threadId)
+        .map(([threadId, record]) => ({
+          threadId,
+          ...(record.name !== undefined ? { name: record.name } : {}),
+          title: record.title,
+          providerInstanceId: record.providerInstanceId,
+          model: record.model,
+        }));
       return {
         providers: providers.map((provider) => ({
           instanceId: provider.instanceId,
@@ -216,6 +242,7 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
           models: provider.models.map((model) => model.slug),
           isCaller: provider.instanceId === scope.providerInstanceId,
         })),
+        agents,
       };
     },
   );
@@ -268,7 +295,7 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
       const commandUuid = yield* randomUuid;
       const threadUuid = yield* randomUuid;
       const childThreadId = ThreadId.make(threadUuid);
-      const title = input.title ?? defaultTitleForPrompt(input.prompt);
+      const title = resolveSpawnTitle(input);
 
       yield* engine
         .dispatch({
@@ -294,6 +321,10 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
           parentThreadId: scope.threadId,
           depth: callerDepth + 1,
           lastTurnRequestedAt,
+          ...(input.name !== undefined ? { name: input.name } : {}),
+          title,
+          providerInstanceId: target.instanceId,
+          model,
         });
         return next;
       });
@@ -303,6 +334,7 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
         providerInstanceId: target.instanceId,
         model,
         title,
+        ...(input.name !== undefined ? { name: input.name } : {}),
         status: "running" as const,
       };
     },
@@ -319,7 +351,10 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
       );
       yield* SynchronizedRef.update(children, (current) => {
         const next = new Map(current);
-        next.set(input.threadId, { ...record, lastTurnRequestedAt });
+        next.set(input.threadId, {
+          ...record,
+          lastTurnRequestedAt,
+        });
         return next;
       });
       return { threadId: input.threadId, status: "running" as const };
