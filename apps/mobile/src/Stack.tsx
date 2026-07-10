@@ -17,6 +17,8 @@ import { AppText as Text } from "./components/AppText";
 import { ArchivedThreadsRouteScreen } from "./features/archive/ArchivedThreadsRouteScreen";
 import { useAgentNotificationNavigation } from "./features/agent-awareness/notificationNavigation";
 import { ClerkSettingsSheetDetentProvider } from "./features/cloud/ClerkSettingsSheetDetent";
+import { ConnectOnboardingRouteScreen } from "./features/cloud/ConnectOnboardingRouteScreen";
+import { useConnectOnboardingNavigation } from "./features/cloud/connectOnboardingNavigation";
 import { ThreadFilesTreeScreen, ThreadFileScreen } from "./features/files/ThreadFilesRouteScreen";
 import { AdaptiveWorkspaceLayout } from "./features/layout/AdaptiveWorkspaceLayout";
 import { HardwareKeyboardCommandProvider } from "./features/keyboard/HardwareKeyboardCommandProvider";
@@ -39,6 +41,7 @@ import { NewTaskDraftRouteScreen } from "./features/threads/NewTaskDraftRouteScr
 import { NewTaskFlowProvider } from "./features/threads/new-task-flow-provider";
 import { NewTaskRouteScreen } from "./features/threads/NewTaskRouteScreen";
 import { SettingsAppearanceRouteScreen } from "./features/settings/SettingsAppearanceRouteScreen";
+import { SettingsClientStorageRouteScreen } from "./features/settings/SettingsClientStorageRouteScreen";
 import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteScreen";
 import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnvironmentsRouteScreen";
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
@@ -145,6 +148,13 @@ const SettingsSheetStack = createNativeStackNavigator({
         title: "Appearance",
       },
     }),
+    SettingsClientStorage: createNativeStackScreen({
+      screen: SettingsClientStorageRouteScreen,
+      linking: "client-storage",
+      options: {
+        title: "Client Storage",
+      },
+    }),
     SettingsAuth: createNativeStackScreen({
       screen: SettingsAuthRouteScreen,
       linking: "auth",
@@ -220,6 +230,7 @@ const NewTaskSheetStack = createNativeStackNavigator({
 // influence the adaptive workspace layout: opening Settings over Home should
 // not flip the sidebar in or change the active thread.
 const WORKSPACE_OVERLAY_ROUTES = new Set([
+  "ConnectOnboarding",
   "Connections",
   "ConnectionsNew",
   "GitBranches",
@@ -251,6 +262,8 @@ function RootStackLayout(props: {
 }) {
   useAgentNotificationNavigation();
   useThreadOutboxDrain();
+  // Presents the T3 Connect onboarding sheet after an in-session sign-in.
+  useConnectOnboardingNavigation();
   // Full pathname (sheets included) for keyboard-command scoping; the
   // workspace layout only reacts to the underlying non-overlay route.
   const path = getPathFromState(props.state, navigationPathConfig);
@@ -409,6 +422,20 @@ export const RootStack = createNativeStackNavigator({
         headerShown: false,
         presentation: "formSheet",
         sheetAllowedDetents: [0.7, 0.92],
+        sheetGrabberVisible: true,
+      },
+    }),
+    ConnectOnboarding: createNativeStackScreen({
+      screen: ConnectOnboardingRouteScreen,
+      linking: "connect-onboarding",
+      options: {
+        // Root screenOptions hide headers; formSheets that want the native
+        // title bar opt back in with the sheet header preset.
+        ...SHEET_SOLID_HEADER_OPTIONS,
+        title: "Set up T3 Connect",
+        gestureEnabled: true,
+        presentation: "formSheet",
+        sheetAllowedDetents: [0.6, 0.95],
         sheetGrabberVisible: true,
       },
     }),

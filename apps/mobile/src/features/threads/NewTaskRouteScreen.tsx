@@ -6,6 +6,7 @@ import { useMemo } from "react";
 import { ActivityIndicator, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
+import { cn } from "../../lib/cn";
 
 import { AppText as Text } from "../../components/AppText";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
@@ -79,7 +80,6 @@ export function NewTaskRouteScreen() {
   const insets = useSafeAreaInsets();
   const chevronColor = useThemeColor("--color-chevron");
   const accentColor = useThemeColor("--color-icon-muted");
-  const borderSubtleColor = useThemeColor("--color-border-subtle");
   const repositoryGroups = useMemo(
     () => groupProjectsByRepository({ projects, threads }),
     [projects, threads],
@@ -130,7 +130,7 @@ export function NewTaskRouteScreen() {
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
-        style={{ flex: 1 }}
+        className="flex-1"
         contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
         contentContainerStyle={{
           paddingHorizontal: 20,
@@ -175,7 +175,6 @@ export function NewTaskRouteScreen() {
               return (
                 <Pressable
                   key={item.key}
-                  className="bg-card"
                   onPress={() =>
                     navigation.navigate("NewTaskSheet", {
                       screen: "NewTaskDraft",
@@ -186,16 +185,12 @@ export function NewTaskRouteScreen() {
                       },
                     })
                   }
-                  style={{
-                    paddingHorizontal: 16,
-                    paddingVertical: 14,
-                    borderTopWidth: isFirst ? 0 : 1,
-                    borderTopColor: borderSubtleColor,
-                    borderTopLeftRadius: isFirst ? 24 : 0,
-                    borderTopRightRadius: isFirst ? 24 : 0,
-                    borderBottomLeftRadius: isLast ? 24 : 0,
-                    borderBottomRightRadius: isLast ? 24 : 0,
-                  }}
+                  className={cn(
+                    "bg-card px-4 py-3.5",
+                    !isFirst && "border-t border-border-subtle",
+                    isFirst && "rounded-t-[24px]",
+                    isLast && "rounded-b-[24px]",
+                  )}
                 >
                   <View className="flex-row items-center justify-between gap-3">
                     <View className="h-7 w-7 items-center justify-center">

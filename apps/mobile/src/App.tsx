@@ -1,11 +1,6 @@
-import {
-  DMSans_400Regular,
-  DMSans_500Medium,
-  DMSans_700Bold,
-  useFonts,
-} from "@expo-google-fonts/dm-sans";
 import * as Linking from "expo-linking";
 import * as SplashScreen from "expo-splash-screen";
+import { useEffect } from "react";
 import { StatusBar, useColorScheme } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
@@ -13,7 +8,6 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { createStaticNavigation, DarkTheme, DefaultTheme } from "@react-navigation/native";
 
 import { RegistryContext } from "@effect/atom-react";
-import { useEffect } from "react";
 import { CloudAuthProvider } from "./features/cloud/CloudAuthProvider";
 import { AppearancePreferencesProvider } from "./features/settings/appearance/AppearancePreferencesProvider";
 import { RootStack } from "./Stack";
@@ -29,17 +23,12 @@ const appLinking = {
 const Navigation = createStaticNavigation(RootStack);
 
 export default function App() {
-  const [fontsLoaded] = useFonts({
-    DMSans_400Regular,
-    DMSans_500Medium,
-    DMSans_700Bold,
-  });
   const colorScheme = useColorScheme();
   const statusBarBg = useThemeColor("--color-status-bar");
 
   useEffect(() => {
-    if (fontsLoaded) SplashScreen.hide();
-  }, [fontsLoaded]);
+    SplashScreen.hide();
+  }, []);
 
   return (
     <RegistryContext.Provider value={appAtomRegistry}>

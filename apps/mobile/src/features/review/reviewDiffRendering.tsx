@@ -48,8 +48,8 @@ export function ReviewChangeBar(props: {
         <View>
           {Array.from({ length: Math.ceil(height / 2) }, (_, index) => (
             <View key={index}>
-              <View className="w-[5px] bg-rose-400" style={{ height: 1 }} />
-              <View style={{ height: 1 }} />
+              <View className="h-px w-[5px] bg-rose-400" />
+              <View className="h-px" />
             </View>
           ))}
         </View>

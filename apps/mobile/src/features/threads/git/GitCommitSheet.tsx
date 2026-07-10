@@ -1,10 +1,10 @@
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useCallback, useState } from "react";
-import { Pressable, ScrollView, View, useColorScheme } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useThemeColor } from "../../../lib/useThemeColor";
 
 import { AppText as Text, AppTextInput as TextInput } from "../../../components/AppText";
+import { cn } from "../../../lib/cn";
 import { useEnvironmentQuery } from "../../../state/query";
 import { useThreadSelection } from "../../../state/use-thread-selection";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
@@ -21,17 +21,10 @@ type GitCommitSheetProps = StaticScreenProps<{
 export function GitCommitSheet(_props: GitCommitSheetProps) {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const isDarkMode = useColorScheme() === "dark";
   const { selectedThread } = useThreadSelection();
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
-
-  const borderColor = useThemeColor("--color-border");
-  const borderSubtleColor = useThemeColor("--color-border-subtle");
-  const inputBorderColor = useThemeColor("--color-input-border");
-  const inputBg = useThemeColor("--color-input");
-  const foregroundColor = useThemeColor("--color-foreground");
 
   const gitStatus = useEnvironmentQuery(
     selectedThread !== null && selectedThreadCwd !== null
@@ -90,10 +83,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
           </Text>
         </View>
         {isDefaultRef ? (
-          <Text
-            className="text-xs leading-normal"
-            style={{ color: isDarkMode ? "#fbbf24" : "#b45309" }}
-          >
+          <Text className="text-xs leading-normal text-amber-700 dark:text-amber-400">
             Warning: this is the default branch.
           </Text>
         ) : null}
@@ -138,12 +128,8 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                 <Text className="text-foreground flex-1 text-sm font-medium" numberOfLines={1}>
                   {file.path}
                 </Text>
-                <Text className="text-xs font-t3-bold" style={{ color: "#10b981" }}>
-                  +{file.insertions}
-                </Text>
-                <Text className="text-xs font-t3-bold" style={{ color: "#f43f5e" }}>
-                  -{file.deletions}
-                </Text>
+                <Text className="text-xs font-t3-bold text-emerald-500">+{file.insertions}</Text>
+                <Text className="text-xs font-t3-bold text-rose-500">-{file.deletions}</Text>
               </View>
             ))}
             {selectedFiles.length > selectedFilePreview.length ? (
@@ -159,10 +145,10 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
               return (
                 <Pressable
                   key={file.path}
-                  className="rounded-[18px] border px-4 py-3"
-                  style={{
-                    borderColor: included ? borderColor : borderSubtleColor,
-                  }}
+                  className={cn(
+                    "rounded-[18px] border px-4 py-3",
+                    included ? "border-border" : "border-border-subtle",
+                  )}
                   onPress={() => {
                     setExcludedFiles((current) => {
                       const next = new Set(current);
@@ -193,12 +179,10 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                       ) : null}
                     </View>
                     <View className="items-end gap-1">
-                      <Text className="text-xs font-t3-bold" style={{ color: "#10b981" }}>
+                      <Text className="text-xs font-t3-bold text-emerald-500">
                         +{file.insertions}
                       </Text>
-                      <Text className="text-xs font-t3-bold" style={{ color: "#f43f5e" }}>
-                        -{file.deletions}
-                      </Text>
+                      <Text className="text-xs font-t3-bold text-rose-500">-{file.deletions}</Text>
                     </View>
                   </View>
                 </Pressable>
@@ -216,14 +200,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
           onChangeText={setDialogCommitMessage}
           placeholder="Leave empty to auto-generate"
           textAlignVertical="top"
-          className="min-h-[128px] rounded-[20px] px-4 py-3.5 font-sans text-base"
-          style={{
-            minHeight: 128,
-            borderWidth: 1,
-            borderColor: inputBorderColor,
-            backgroundColor: inputBg,
-            color: foregroundColor,
-          }}
+          className="min-h-[128px] rounded-[20px] px-4 py-3.5"
         />
       </View>
 

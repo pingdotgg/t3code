@@ -7,10 +7,7 @@ export function SettingsSection(props: { readonly title: string; readonly childr
   return (
     <View className="gap-2">
       <Text className="px-2 text-sm font-t3-medium text-foreground-muted">{props.title}</Text>
-      <View
-        className="overflow-hidden rounded-[28px] bg-card"
-        style={{ borderCurve: "continuous" }}
-      >
+      <View className="overflow-hidden rounded-[28px] border-continuous bg-card">
         {props.children}
       </View>
     </View>
