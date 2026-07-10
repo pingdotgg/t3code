@@ -94,6 +94,7 @@ struct ScenerySettingsTab: View {
 
     var body: some View {
         Form {
+            appearanceSection
             createSetSection
             photoSetsSection
             projectsSection
@@ -103,6 +104,7 @@ struct ScenerySettingsTab: View {
         .animation(Motion.settle, value: scenery.availableSets.map(\.id))
         .animation(Motion.settle, value: scenery.defaultSetId)
         .animation(Motion.fade, value: composer.state)
+        .animation(Motion.settle, value: scenery.sceneryTranslucency)
         .confirmationDialog(
             "Delete scenery set?",
             isPresented: $showDeleteConfirm,
@@ -131,6 +133,57 @@ struct ScenerySettingsTab: View {
         } message: {
             Text(deleteError ?? "Something went wrong while deleting the scenery set.")
         }
+    }
+
+    // MARK: Appearance
+
+    private var appearanceSection: some View {
+        Section {
+            HStack(spacing: 12) {
+                Slider(
+                    value: translucencyBinding,
+                    in: ScenerySettingsFile.translucencyRange
+                ) {
+                    Text("Scenery opacity")
+                } minimumValueLabel: {
+                    Text("50%")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                } maximumValueLabel: {
+                    Text("100%")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+                .accessibilityLabel("Scenery opacity")
+                .accessibilityValue("\(percentLabel) percent")
+
+                Text("\(percentLabel)%")
+                    .font(.body.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(minWidth: 40, alignment: .trailing)
+                    .accessibilityHidden(true)
+            }
+        } header: {
+            Text("Window glass")
+        } footer: {
+            Text(
+                "How solid the scenery photo is over the blurred desktop. 100% matches the previous fully solid look; lower values let the window glass show through."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    private var percentLabel: Int {
+        Int((scenery.sceneryTranslucency * 100).rounded())
+    }
+
+    private var translucencyBinding: Binding<Double> {
+        Binding(
+            get: { scenery.sceneryTranslucency },
+            set: { scenery.setSceneryTranslucency($0) })
     }
 
     // MARK: Create

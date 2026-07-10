@@ -223,9 +223,55 @@ public struct ScenerySet: Codable, Hashable, Sendable, Identifiable {
 /// Global scenery settings (`scenery/settings.json`).
 public struct ScenerySettingsFile: Codable, Hashable, Sendable {
     public var defaultSetId: String
+    /// Opacity of the scenery photo layer over the window material.
+    /// `1.0` = fully solid (historical look); lower values let the
+    /// behind-window glass base show through. Clamped to `translucencyRange`.
+    public var sceneryTranslucency: Double
 
-    public init(defaultSetId: String = ScenerySet.dolomitesID) {
+    public static let defaultTranslucency: Double = 0.85
+    public static let translucencyRange: ClosedRange<Double> = 0.5...1.0
+
+    public init(
+        defaultSetId: String = ScenerySet.dolomitesID,
+        sceneryTranslucency: Double = Self.defaultTranslucency
+    ) {
         self.defaultSetId = defaultSetId
+        self.sceneryTranslucency = Self.clampTranslucency(sceneryTranslucency)
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        defaultSetId =
+            try container.decodeIfPresent(String.self, forKey: .defaultSetId)
+            ?? ScenerySet.dolomitesID
+        let raw =
+            try container.decodeIfPresent(Double.self, forKey: .sceneryTranslucency)
+            ?? Self.defaultTranslucency
+        sceneryTranslucency = Self.clampTranslucency(raw)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(defaultSetId, forKey: .defaultSetId)
+        try container.encode(sceneryTranslucency, forKey: .sceneryTranslucency)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case defaultSetId
+        case sceneryTranslucency
+    }
+
+    /// Clamps a raw translucency to the supported range.
+    public static func clampTranslucency(_ value: Double) -> Double {
+        min(max(value, translucencyRange.lowerBound), translucencyRange.upperBound)
+    }
+
+    /// Legibility-wash multiplier for a given translucency.
+    /// At `1.0` the factor is `1.0` (pixel-identical wash); at `0.5` it stays
+    /// high enough that `.primary` text remains readable over a bright desktop.
+    public static func washScale(forTranslucency value: Double) -> Double {
+        let t = clampTranslucency(value)
+        return 0.7 + 0.3 * t
     }
 }
 

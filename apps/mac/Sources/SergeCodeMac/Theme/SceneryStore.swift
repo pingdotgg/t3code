@@ -9,7 +9,7 @@ import SwiftUI
 ///
 /// Disk layout (`~/Library/Application Support/SergeCode/scenery/`):
 /// - `assignments.json` — global thread → { photoID, setId? }
-/// - `settings.json` — `{ defaultSetId }`
+/// - `settings.json` — `{ defaultSetId, sceneryTranslucency }`
 /// - `project-prefs.json` — projectPath → `{ setId?, accentHex?, sfSymbol? }`
 /// - `sets/<setId>/` — manifest.json, pool.json, photo-tags.json,
 ///   names.json, registered-downloads.json, images/
@@ -194,6 +194,12 @@ public final class SceneryStore {
 
     public var defaultSetId: String {
         settings.defaultSetId
+    }
+
+    /// Opacity of scenery photo layers over the window material (`0.5...1.0`).
+    /// Global appearance setting; live-observed by wallpaper views.
+    public var sceneryTranslucency: Double {
+        settings.sceneryTranslucency
     }
 
     public func projectPrefs(for path: String) -> ProjectSceneryPrefs? {
@@ -897,6 +903,15 @@ public final class SceneryStore {
         settings.defaultSetId = setId
         saveSettings()
         syncDefaultPool()
+    }
+
+    /// Updates the global scenery photo opacity (window glass bleed-through).
+    /// Values outside `0.5...1.0` are clamped; no-op when unchanged after clamp.
+    public func setSceneryTranslucency(_ value: Double) {
+        let clamped = ScenerySettingsFile.clampTranslucency(value)
+        guard settings.sceneryTranslucency != clamped else { return }
+        settings.sceneryTranslucency = clamped
+        saveSettings()
     }
 
     /// Installs a set manifest into the registry (disk + memory).

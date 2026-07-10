@@ -13,14 +13,22 @@ struct EmptyStateView: View {
         // dailyFeatured() reads rotationBucket/rotationDayKey via @Observable,
         // so a bucket/day change from App.onReceive reevaluates this body.
         let featured = scenery.dailyFeatured()
+        let translucency = scenery.sceneryTranslucency
+        let wash = ScenerySettingsFile.washScale(forTranslucency: translucency)
         ZStack {
             SceneryImageView(scenery: scenery, photo: featured, fallbackSeed: "empty-state")
                 // Recreate the image subtree when the rotation seed changes so
                 // a cached hero for the previous bucket cannot stick.
                 .id(featured?.id ?? "empty-\(scenery.rotationDayKey)")
+                // Photo fades over the window material; gradient scrim stays
+                // above and is only gently scaled for legibility.
+                .opacity(translucency)
                 .overlay(
                     LinearGradient(
-                        colors: [.black.opacity(0.10), .black.opacity(0.30)],
+                        colors: [
+                            .black.opacity(0.10 * wash),
+                            .black.opacity(0.30 * wash),
+                        ],
                         startPoint: .top, endPoint: .bottom))
                 .ignoresSafeArea()
 
