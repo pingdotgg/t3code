@@ -146,6 +146,8 @@ private struct ProjectSectionHeader: View {
                 }
             } label: {
                 Image(systemName: "plus")
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.primary)
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
