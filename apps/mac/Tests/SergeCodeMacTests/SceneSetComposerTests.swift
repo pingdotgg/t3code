@@ -521,10 +521,12 @@ struct SceneSetComposerPipelineTests {
             #expect(!photo.name.lowercased().contains("highway"))
         }
         // Caption-only photo gets the bare set title (not "Iceland N").
-        if let cap = photos.first(where: { $0.id == "cap-1" }) {
-            #expect(cap.name == "Iceland")
-            #expect(store.threadTitle(for: cap) == "Iceland")
+        guard let cap = photos.first(where: { $0.id == "cap-1" }) else {
+            Issue.record("expected caption-only photo cap-1")
+            return
         }
+        #expect(cap.name == "Iceland")
+        #expect(store.threadTitle(for: cap) == "Iceland")
     }
 
     @Test("legacy path with empty locations never titles threads Iceland N")

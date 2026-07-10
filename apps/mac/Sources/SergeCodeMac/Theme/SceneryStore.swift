@@ -359,11 +359,10 @@ public final class SceneryStore {
             }
         }
 
-        // Defense in depth for older on-disk pools: strip trailing " N"
-        // (N in 1...maxPhotos) even when set title / sceneNames did not match.
-        if let stripped = Self.stripPoolNumberSuffix(name) {
-            return stripped
-        }
+        // Do not unconditionally strip trailing small integers — authentic
+        // titles like "Route 1" must survive when set title / sceneNames miss.
+        // Pool-index pollution ("Iceland N") is already handled above via the
+        // set-title-gated `isPoolNumberedSceneName` branch.
         return name
     }
 
@@ -376,17 +375,6 @@ public final class SceneryStore {
         let suffix = title.dropFirst(base.count + separator.count)
         guard let index = Int(suffix), String(index) == suffix else { return false }
         return (1...SceneryPoolBuilder.maxPhotos).contains(index)
-    }
-
-    /// `"Iceland 5"` → `"Iceland"` when the trailing token is a pool index.
-    private static func stripPoolNumberSuffix(_ name: String) -> String? {
-        guard let space = name.lastIndex(of: " ") else { return nil }
-        let suffix = name[name.index(after: space)...]
-        guard let index = Int(suffix), String(index) == suffix,
-            (1...SceneryPoolBuilder.maxPhotos).contains(index)
-        else { return nil }
-        let base = String(name[..<space]).trimmingCharacters(in: .whitespacesAndNewlines)
-        return base.isEmpty ? nil : base
     }
 
     /// Legacy scene numbering started at 2 (`<base> 1` was never produced).

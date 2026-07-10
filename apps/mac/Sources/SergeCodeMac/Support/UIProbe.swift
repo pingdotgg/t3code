@@ -256,6 +256,16 @@
         /// pool so Unsplash is not required. New pools use the bare place
         /// name; historical pool-index names still strip via `threadTitle`.
         private static func probeIcelandSceneSetCreate(model: AppModel, scenery: SceneryStore) async {
+            let previousDefaultSetId = scenery.defaultSetId
+            let probeRunID = UUID().uuidString
+            let setId = "probe-iceland-\(probeRunID)"
+            let pollutedSetId = "probe-iceland-polluted-\(probeRunID)"
+            defer {
+                scenery.setDefaultSetId(previousDefaultSetId)
+                try? scenery.deleteCustomSet(id: pollutedSetId)
+                try? scenery.deleteCustomSet(id: setId)
+            }
+
             let backend = MockBackend()
             do {
                 let generated = try await backend.generateScenerySet(location: "Iceland")
@@ -268,7 +278,6 @@
             }
 
             // New create path: bare set title for metadata-less pool photos.
-            let setId = "probe-iceland"
             let barePhotos: [SceneryPhoto] = (1...5).map { i in
                 SceneryPhoto(
                     id: "probe-ice-\(i)",
@@ -323,7 +332,7 @@
                 photographerName: "Probe",
                 photographerProfileURL: nil)
             let pollutedSet = ScenerySet(
-                id: "probe-iceland-polluted",
+                id: pollutedSetId,
                 title: "Iceland",
                 origin: .custom,
                 createdAt: Date(),
