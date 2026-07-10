@@ -1,5 +1,8 @@
 import {
   MessageId,
+  NodeId,
+  ProviderDriverKind,
+  ProviderInstanceId,
   RunId,
   ThreadId,
   TurnItemId,
@@ -87,6 +90,22 @@ function assistantMessage(updatedAt = "2026-06-20T00:00:03.000Z") {
   };
 }
 
+function completedSubagent(updatedAt = "2026-06-20T00:00:02.000Z") {
+  const subagentNodeId = NodeId.make("node-subagent");
+  return {
+    ...base("item-subagent", updatedAt, 1),
+    nodeId: subagentNodeId,
+    type: "subagent" as const,
+    subagentId: subagentNodeId,
+    origin: "provider_native" as const,
+    driver: ProviderDriverKind.make("codex"),
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    childThreadId: ThreadId.make("thread-subagent"),
+    prompt: "Explain test isolation",
+    result: "Tests should be independent and isolated.",
+  };
+}
+
 describe("buildThreadFeed", () => {
   it("preserves authoritative V2 order instead of sorting reconstructed collections", () => {
     const rows = [
@@ -135,6 +154,19 @@ describe("buildThreadFeed", () => {
       "synthetic",
     ]);
     expect(activities.at(-1)?.prominent).toBe(true);
+  });
+
+  it("projects a Codex subagent result onto the parent activity card", () => {
+    const feed = buildThreadFeed([projected(completedSubagent(), 0)]);
+    const activity = feed[0]?.type === "activity-group" ? feed[0].activities[0] : undefined;
+
+    expect(activity).toMatchObject({
+      summary: "Subagent",
+      detail: "Tests should be independent and isolated.",
+      prominent: true,
+      status: "success",
+    });
+    expect(activity?.projectedItem.item.type).toBe("subagent");
   });
 
   it("keeps orchestration relationship cards visible when a completed run is folded", () => {

@@ -225,4 +225,36 @@ describe("buildThreadActivityInspector", () => {
       monospaced: false,
     });
   });
+
+  it("shows the live Codex subagent result without reading child-thread events", () => {
+    const item: OrchestrationV2TurnItem = {
+      ...itemBase("codex-subagent"),
+      type: "subagent",
+      subagentId: nodeId,
+      origin: "provider_native",
+      driver: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      childThreadId: ThreadId.make("thread-codex-subagent"),
+      prompt: "Explain test isolation",
+      result: "Projected result",
+    };
+    const model = buildThreadActivityInspector(activityFor(item), {
+      ...EMPTY_V2_ITEM_SUPPORT,
+      item,
+      subagent: {
+        origin: "provider_native",
+        status: "completed",
+        result: "Tests should be independent and isolated.",
+      } as never,
+    });
+
+    expect(model.blocks).toContainEqual({
+      label: "Result",
+      value: "Tests should be independent and isolated.",
+      monospaced: false,
+    });
+    expect(model.blocks).not.toContainEqual(
+      expect.objectContaining({ label: "Result", value: "Projected result" }),
+    );
+  });
 });
