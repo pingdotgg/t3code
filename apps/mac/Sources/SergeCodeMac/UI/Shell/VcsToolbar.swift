@@ -42,6 +42,16 @@ struct VcsToolbar: View {
                     .foregroundStyle(isMerged ? AnyShapeStyle(.purple) : AnyShapeStyle(.tint))
                     .help(status.prTitle ?? "Open pull request")
                 }
+                if MergeReadiness.isReady(for: status) {
+                    Button {
+                        run(.mergePR, message: nil)
+                    } label: {
+                        Label("Merge PR", systemImage: "arrow.triangle.merge")
+                    }
+                    .buttonStyle(VcsMergePillButtonStyle())
+                    .disabled(isRunningAction)
+                    .help("Merge the open pull request")
+                }
                 actionMenu(status)
             }
             .padding(.horizontal, 16)
@@ -135,7 +145,7 @@ struct VcsToolbar: View {
 
     private func actionMenu(_ status: VcsStatus) -> some View {
         Menu {
-            ForEach(GitAction.allCases) { action in
+            ForEach(GitAction.menuActions) { action in
                 Button(action.displayName) {
                     if action.needsCommitMessage {
                         commitMessage = ""
@@ -245,5 +255,21 @@ struct VcsToolbar: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 5)
         .background(.quaternary.opacity(0.3))
+    }
+}
+
+/// Emphasized pill for the one-click merge affordance (matches follow-up bar).
+private struct VcsMergePillButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.caption.weight(.medium))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background {
+                Capsule()
+                    .fill(.white.opacity(configuration.isPressed ? 0.75 : 0.92))
+            }
+            .foregroundStyle(.black)
+            .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
     }
 }

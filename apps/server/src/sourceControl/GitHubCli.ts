@@ -190,6 +190,13 @@ export interface GitHubPullRequestSummary {
   readonly headRepositoryOwnerLogin?: string | null;
 }
 
+export type GitHubPullRequestReviewDecision = "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED";
+
+export interface GitHubPullRequestReviewStatus {
+  readonly reviewDecision: GitHubPullRequestReviewDecision | null;
+  readonly unresolvedReviewThreadCount: number | null;
+}
+
 export interface GitHubRepositoryCloneUrls {
   readonly nameWithOwner: string;
   readonly url: string;
@@ -244,6 +251,16 @@ export class GitHubCli extends Context.Service<
       readonly reference: string;
       readonly force?: boolean;
     }) => Effect.Effect<void, GitHubCliError>;
+
+    readonly getPullRequestReviewStatus: (input: {
+      readonly cwd: string;
+      readonly reference: string;
+    }) => Effect.Effect<GitHubPullRequestReviewStatus, GitHubCliError>;
+
+    readonly mergePullRequest: (input: {
+      readonly cwd: string;
+      readonly reference: string;
+    }) => Effect.Effect<void, GitHubCliError>;
   }
 >()("t3/sourceControl/GitHubCli") {}
 
@@ -255,6 +272,71 @@ const RawGitHubRepositoryCloneUrlsSchema = Schema.Struct({
 const decodeRawGitHubRepositoryCloneUrls = Schema.decodeEffect(
   Schema.fromJsonString(RawGitHubRepositoryCloneUrlsSchema),
 );
+
+const RawGitHubReviewDecisionSchema = Schema.Struct({
+  reviewDecision: Schema.optional(Schema.NullOr(Schema.String)),
+});
+const decodeRawGitHubReviewDecision = Schema.decodeEffect(
+  Schema.fromJsonString(RawGitHubReviewDecisionSchema),
+);
+
+const RawGitHubNameWithOwnerSchema = Schema.Struct({
+  nameWithOwner: TrimmedNonEmptyString,
+});
+const decodeRawGitHubNameWithOwner = Schema.decodeEffect(
+  Schema.fromJsonString(RawGitHubNameWithOwnerSchema),
+);
+
+function normalizeReviewDecision(
+  value: string | null | undefined,
+): GitHubPullRequestReviewDecision | null {
+  const normalized = value?.trim().toUpperCase() ?? "";
+  if (normalized === "APPROVED") return "APPROVED";
+  if (normalized === "CHANGES_REQUESTED") return "CHANGES_REQUESTED";
+  if (normalized === "REVIEW_REQUIRED") return "REVIEW_REQUIRED";
+  return null;
+}
+
+function parsePullRequestNumber(reference: string): number | null {
+  const trimmed = reference.trim();
+  const hashMatch = /^#?(\d+)$/.exec(trimmed);
+  if (hashMatch?.[1]) {
+    const number = Number(hashMatch[1]);
+    return Number.isFinite(number) && number > 0 ? number : null;
+  }
+  const urlMatch = /\/pull\/(\d+)(?:\/|$)/i.exec(trimmed);
+  if (urlMatch?.[1]) {
+    const number = Number(urlMatch[1]);
+    return Number.isFinite(number) && number > 0 ? number : null;
+  }
+  return null;
+}
+
+function countUnresolvedReviewThreads(raw: string): number | null {
+  try {
+    const parsed = JSON.parse(raw) as {
+      data?: {
+        repository?: {
+          pullRequest?: {
+            reviewThreads?: {
+              nodes?: ReadonlyArray<{ isResolved?: boolean }> | null;
+              pageInfo?: {
+                hasNextPage?: boolean;
+              } | null;
+            } | null;
+          } | null;
+        } | null;
+      } | null;
+    };
+    const reviewThreads = parsed.data?.repository?.pullRequest?.reviewThreads;
+    const nodes = reviewThreads?.nodes;
+    if (!Array.isArray(nodes)) return null;
+    if (reviewThreads?.pageInfo?.hasNextPage === true) return null;
+    return nodes.filter((thread) => thread?.isResolved !== true).length;
+  } catch {
+    return null;
+  }
+}
 
 function normalizeRepositoryCloneUrls(
   raw: Schema.Schema.Type<typeof RawGitHubRepositoryCloneUrlsSchema>,
@@ -449,6 +531,76 @@ export const make = Effect.gen(function* () {
       execute({
         cwd: input.cwd,
         args: ["pr", "checkout", input.reference, ...(input.force ? ["--force"] : [])],
+      }).pipe(Effect.asVoid),
+    getPullRequestReviewStatus: (input) =>
+      Effect.gen(function* () {
+        // Best-effort: a failed decision or thread lookup must not fail status.
+        // Callers treat nulls as "not ready / unknown".
+        const reviewDecision = yield* execute({
+          cwd: input.cwd,
+          args: ["pr", "view", input.reference, "--json", "reviewDecision"],
+        }).pipe(
+          Effect.flatMap((result) =>
+            decodeRawGitHubReviewDecision(result.stdout.trim() || "{}").pipe(
+              Effect.map((raw) => normalizeReviewDecision(raw.reviewDecision)),
+            ),
+          ),
+          Effect.orElseSucceed(() => null),
+        );
+
+        const prNumber = parsePullRequestNumber(input.reference);
+        if (prNumber === null) {
+          return { reviewDecision, unresolvedReviewThreadCount: null };
+        }
+
+        const nameWithOwner = yield* execute({
+          cwd: input.cwd,
+          args: ["repo", "view", "--json", "nameWithOwner"],
+        }).pipe(
+          Effect.flatMap((result) =>
+            decodeRawGitHubNameWithOwner(result.stdout.trim() || "{}").pipe(
+              Effect.map((raw) => raw.nameWithOwner),
+            ),
+          ),
+          Effect.orElseSucceed(() => null),
+        );
+        if (!nameWithOwner) {
+          return { reviewDecision, unresolvedReviewThreadCount: null };
+        }
+
+        const [owner, name] = nameWithOwner.split("/", 2);
+        if (!owner || !name) {
+          return { reviewDecision, unresolvedReviewThreadCount: null };
+        }
+
+        const graphqlQuery =
+          "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewThreads(first: 100) { nodes { isResolved } pageInfo { hasNextPage } } } } }";
+
+        const unresolvedReviewThreadCount = yield* execute({
+          cwd: input.cwd,
+          args: [
+            "api",
+            "graphql",
+            "-f",
+            `query=${graphqlQuery}`,
+            "-F",
+            `owner=${owner}`,
+            "-F",
+            `name=${name}`,
+            "-F",
+            `number=${prNumber}`,
+          ],
+        }).pipe(
+          Effect.map((result) => countUnresolvedReviewThreads(result.stdout.trim() || "{}")),
+          Effect.orElseSucceed(() => null),
+        );
+
+        return { reviewDecision, unresolvedReviewThreadCount };
+      }),
+    mergePullRequest: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: ["pr", "merge", input.reference, "--merge"],
       }).pipe(Effect.asVoid),
   });
 });

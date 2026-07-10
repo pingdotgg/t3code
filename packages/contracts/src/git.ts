@@ -14,9 +14,10 @@ export const GitStackedAction = Schema.Literals([
   "create_pr",
   "commit_push",
   "commit_push_pr",
+  "merge_pr",
 ]);
 export type GitStackedAction = typeof GitStackedAction.Type;
-export const GitActionProgressPhase = Schema.Literals(["branch", "commit", "push", "pr"]);
+export const GitActionProgressPhase = Schema.Literals(["branch", "commit", "push", "pr", "merge"]);
 export type GitActionProgressPhase = typeof GitActionProgressPhase.Type;
 export const GitActionProgressKind = Schema.Literals([
   "action_started",
@@ -41,8 +42,19 @@ const GitPushStepStatus = Schema.Literals([
   "skipped_up_to_date",
 ]);
 const GitBranchStepStatus = Schema.Literals(["created", "skipped_not_requested"]);
-const GitPrStepStatus = Schema.Literals(["created", "opened_existing", "skipped_not_requested"]);
+const GitPrStepStatus = Schema.Literals([
+  "created",
+  "opened_existing",
+  "merged",
+  "skipped_not_requested",
+]);
 const VcsStatusChangeRequestState = Schema.Literals(["open", "closed", "merged"]);
+export const GitPullRequestReviewDecision = Schema.Literals([
+  "APPROVED",
+  "CHANGES_REQUESTED",
+  "REVIEW_REQUIRED",
+]);
+export type GitPullRequestReviewDecision = typeof GitPullRequestReviewDecision.Type;
 const GitPullRequestReference = TrimmedNonEmptyStringSchema;
 const GitPullRequestState = Schema.Literals(["open", "closed", "merged"]);
 const GitPreparePullRequestThreadMode = Schema.Literals(["local", "worktree"]);
@@ -196,6 +208,17 @@ const VcsStatusChangeRequest = Schema.Struct({
   baseRef: TrimmedNonEmptyStringSchema,
   headRef: TrimmedNonEmptyStringSchema,
   state: VcsStatusChangeRequestState,
+  /**
+   * GitHub reviewDecision, or null when the repo has no required reviewers,
+   * the value is unavailable, the provider is not GitHub, or the fetch failed.
+   * A null decision is not a not-ready signal by itself.
+   */
+  reviewDecision: Schema.NullOr(GitPullRequestReviewDecision),
+  /**
+   * Count of unresolved review threads, or null when unavailable / fetch failed.
+   * Nil-or-unknown must be treated as not merge-ready by clients.
+   */
+  unresolvedReviewThreadCount: Schema.NullOr(NonNegativeInt),
 });
 
 const VcsStatusLocalShape = {

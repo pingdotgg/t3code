@@ -117,6 +117,17 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         threadID: String, action: GitAction, commitMessage: String?
     ) async throws -> GitActionOutcome {
         try? await Task.sleep(nanoseconds: 400_000_000)
+        if action == .mergePR {
+            await state.emitVcsStatus(
+                threadID: threadID,
+                branch: "feat/native-mac-app",
+                prState: .merged,
+                reviewDecision: .approved,
+                unresolvedReviewThreadCount: 0)
+            return GitActionOutcome(
+                success: true, title: "Merged PR #1",
+                prURL: "https://github.com/SergeSerb2/SergeCode/pull/1")
+        }
         return GitActionOutcome(
             success: true, title: "\(action.displayName) finished",
             detail: commitMessage,
@@ -524,14 +535,30 @@ private actor MockState {
         ]
     }
 
-    func emitVcsStatus(threadID: String, branch: String = "feat/native-mac-app") {
+    func emitVcsStatus(
+        threadID: String,
+        branch: String = "feat/native-mac-app",
+        prState: PullRequestState? = nil,
+        reviewDecision: PullRequestReviewDecision? = nil,
+        unresolvedReviewThreadCount: Int? = nil
+    ) {
+        let hasOpenPR = prState == .open || prState == .merged
         emit(
             .vcsStatusChanged(
                 threadID: threadID,
                 status: VcsStatus(
                     isRepo: true, branch: branch, isDefaultBranch: branch == "main",
-                    changedFileCount: 3, insertions: 120, deletions: 14, aheadCount: 2,
-                    behindCount: 0, hasUpstream: true)))
+                    changedFileCount: prState == .merged ? 0 : 3,
+                    insertions: prState == .merged ? 0 : 120,
+                    deletions: prState == .merged ? 0 : 14,
+                    aheadCount: prState == .merged ? 0 : 2,
+                    behindCount: 0, hasUpstream: true,
+                    prNumber: hasOpenPR ? 1 : nil,
+                    prTitle: hasOpenPR ? "Native mac app" : nil,
+                    prURL: hasOpenPR ? "https://github.com/SergeSerb2/SergeCode/pull/1" : nil,
+                    prState: prState,
+                    reviewDecision: reviewDecision,
+                    unresolvedReviewThreadCount: unresolvedReviewThreadCount)))
     }
 
     func respondToUserInput(id: String, answers: [String: [String]]) {

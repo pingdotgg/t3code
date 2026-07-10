@@ -7,6 +7,7 @@ import {
   GitRunStackedActionResult,
   GitRunStackedActionInput,
   GitResolvePullRequestResult,
+  VcsStatusResult,
 } from "./git.ts";
 
 const decodeCreateWorktreeInput = Schema.decodeUnknownSync(VcsCreateWorktreeInput);
@@ -16,6 +17,7 @@ const decodePreparePullRequestThreadInput = Schema.decodeUnknownSync(
 const decodeRunStackedActionInput = Schema.decodeUnknownSync(GitRunStackedActionInput);
 const decodeRunStackedActionResult = Schema.decodeUnknownSync(GitRunStackedActionResult);
 const decodeResolvePullRequestResult = Schema.decodeUnknownSync(GitResolvePullRequestResult);
+const decodeVcsStatusResult = Schema.decodeUnknownSync(VcsStatusResult);
 
 describe("VcsCreateWorktreeInput", () => {
   it("accepts omitted newRefName for existing-refName worktrees", () => {
@@ -83,6 +85,72 @@ describe("GitRunStackedActionInput", () => {
 
     expect(parsed.actionId).toBe("action-1");
     expect(parsed.action).toBe("create_pr");
+  });
+
+  it("accepts the merge_pr stacked action", () => {
+    const parsed = decodeRunStackedActionInput({
+      actionId: "action-merge",
+      cwd: "/repo",
+      action: "merge_pr",
+    });
+
+    expect(parsed.action).toBe("merge_pr");
+  });
+});
+
+describe("VcsStatusResult pull request review fields", () => {
+  it("decodes reviewDecision and unresolvedReviewThreadCount on the PR", () => {
+    const parsed = decodeVcsStatusResult({
+      isRepo: true,
+      hasPrimaryRemote: true,
+      isDefaultRef: false,
+      refName: "feature/merge-ready",
+      hasWorkingTreeChanges: false,
+      workingTree: { files: [], insertions: 0, deletions: 0 },
+      hasUpstream: true,
+      aheadCount: 0,
+      behindCount: 0,
+      pr: {
+        number: 42,
+        title: "Ready to merge",
+        url: "https://github.com/SergeSerb2/SergeCode/pull/42",
+        baseRef: "main",
+        headRef: "feature/merge-ready",
+        state: "open",
+        reviewDecision: "APPROVED",
+        unresolvedReviewThreadCount: 0,
+      },
+    });
+
+    expect(parsed.pr?.reviewDecision).toBe("APPROVED");
+    expect(parsed.pr?.unresolvedReviewThreadCount).toBe(0);
+  });
+
+  it("accepts null review fields when status is unknown", () => {
+    const parsed = decodeVcsStatusResult({
+      isRepo: true,
+      hasPrimaryRemote: true,
+      isDefaultRef: false,
+      refName: "feature/unknown-review",
+      hasWorkingTreeChanges: false,
+      workingTree: { files: [], insertions: 0, deletions: 0 },
+      hasUpstream: true,
+      aheadCount: 0,
+      behindCount: 0,
+      pr: {
+        number: 7,
+        title: "Unknown review",
+        url: "https://github.com/SergeSerb2/SergeCode/pull/7",
+        baseRef: "main",
+        headRef: "feature/unknown-review",
+        state: "open",
+        reviewDecision: null,
+        unresolvedReviewThreadCount: null,
+      },
+    });
+
+    expect(parsed.pr?.reviewDecision).toBeNull();
+    expect(parsed.pr?.unresolvedReviewThreadCount).toBeNull();
   });
 });
 

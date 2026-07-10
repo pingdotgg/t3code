@@ -1908,7 +1908,10 @@ public actor LiveBackend: BackendService {
             aheadOfDefaultCount: remote?.aheadOfDefaultCount,
             prNumber: remote?.pr?.number,
             prTitle: remote?.pr?.title, prURL: remote?.pr?.url,
-            prState: (remote?.pr?.state).flatMap(PullRequestState.init(rawValue:)))
+            prState: (remote?.pr?.state).flatMap(PullRequestState.init(rawValue:)),
+            reviewDecision: (remote?.pr?.reviewDecision).flatMap(
+                PullRequestReviewDecision.init(rawValue:)),
+            unresolvedReviewThreadCount: remote?.pr?.unresolvedReviewThreadCount)
     }
 
     /// The directory a thread's workspace/VCS calls operate on: its worktree
@@ -1958,6 +1961,7 @@ public actor LiveBackend: BackendService {
             case .push: .push
             case .commitPush: .commitPush
             case .commitPushPR: .commitPushPR
+            case .mergePR: .mergePR
             }
         let stream = await client.runStackedAction(
             cwd: try threadCwd(threadID), action: wireAction, commitMessage: commitMessage)

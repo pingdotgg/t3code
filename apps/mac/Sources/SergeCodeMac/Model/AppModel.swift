@@ -52,19 +52,22 @@ public final class AppModel {
 
     public struct ComposerPrefill: Equatable, Sendable {
         public let id: UUID
+        public let threadID: String
         public let text: String
         /// When set, the next send rewinds the thread to just before this
         /// message (server revert) and the edited text replaces it.
         public let editedMessageID: String?
         /// Thread the edited message belongs to — discarded if the send
-        /// targets a different thread (composer is not keyed per thread).
+        /// targets a different thread, so edit-resend cannot rewind another
+        /// thread even though composer drafts themselves are per-thread.
         public let editedMessageThreadID: String?
 
         public init(
-            id: UUID, text: String, editedMessageID: String? = nil,
+            id: UUID, threadID: String, text: String, editedMessageID: String? = nil,
             editedMessageThreadID: String? = nil
         ) {
             self.id = id
+            self.threadID = threadID
             self.text = text
             self.editedMessageID = editedMessageID
             self.editedMessageThreadID = editedMessageThreadID
@@ -149,6 +152,35 @@ public final class AppModel {
 
     public var selectedQueuedMessages: [QueuedOutgoingMessage] {
         selectedThreadID.flatMap { queuedMessagesByThread[$0] } ?? []
+    }
+
+    public func composerDraft(for threadID: String) -> ComposerDraft {
+        threadStates[threadID]?.composerDraft ?? ComposerDraft()
+    }
+
+    public func setComposerDraftText(_ text: String, for threadID: String) {
+        state(creating: threadID).composerDraft.text = text
+    }
+
+    public func setComposerDraftAttachments(
+        _ attachments: [OutgoingAttachment], for threadID: String
+    ) {
+        state(creating: threadID).composerDraft.attachments = attachments
+    }
+
+    public func clearComposerDraft(for threadID: String) {
+        guard let threadState = threadStates[threadID] else { return }
+        threadState.composerDraft = ComposerDraft()
+    }
+
+    /// Restores a failed submission unless the user has started a new draft.
+    @discardableResult
+    public func restoreComposerDraft(_ draft: ComposerDraft, for threadID: String) -> Bool {
+        guard let threadState = threadStates[threadID], threadState.composerDraft.isEmpty else {
+            return false
+        }
+        threadState.composerDraft = draft
+        return true
     }
 
     // MARK: - Lifecycle
@@ -354,6 +386,8 @@ public final class AppModel {
             }
         case .threadRemoved(let id):
             threads.removeAll { $0.id == id }
+            // ThreadState owns the in-memory composer draft, so removing the
+            // child also drops that thread's text and staged attachments.
             threadStates[id] = nil
             effectiveUpdatedAt[id] = nil
             recentlySelected.removeAll { $0 == id }
@@ -361,6 +395,7 @@ public final class AppModel {
             queuedMessagesByThread[id] = nil
             queuedSendInFlightThreadIDs.remove(id)
             queuedRetryTokensByThread[id] = nil
+            if composerPrefill?.threadID == id { composerPrefill = nil }
             TimelineDisplayCache.evict(threadID: id)
             if selectedThreadID == id { selectedThreadID = nil }
         case .approvalRequested, .userInputRequested:
@@ -604,11 +639,14 @@ public final class AppModel {
     /// When `editedMessageID` is set, a subsequent send rewinds the thread
     /// so the edited text replaces that message instead of appending.
     public func stageComposerText(_ text: String, editedMessageID: String? = nil) {
+        guard let threadID = selectedThreadID else { return }
+        setComposerDraftText(text, for: threadID)
         composerPrefill = ComposerPrefill(
             id: UUID(),
+            threadID: threadID,
             text: text,
             editedMessageID: editedMessageID,
-            editedMessageThreadID: editedMessageID != nil ? selectedThreadID : nil
+            editedMessageThreadID: editedMessageID != nil ? threadID : nil
         )
     }
 
@@ -647,13 +685,28 @@ public final class AppModel {
         await sendQueuedMessage(message, threadID: threadID)
     }
 
+    @discardableResult
     public func send(
         text: String,
         attachments: [OutgoingAttachment] = [],
         replacingMessageID: String? = nil,
         replacingMessageThreadID: String? = nil
-    ) async {
-        guard let threadID = selectedThreadID else { return }
+    ) async -> Bool {
+        guard let threadID = selectedThreadID else { return false }
+        return await send(
+            threadID: threadID, text: text, attachments: attachments,
+            replacingMessageID: replacingMessageID,
+            replacingMessageThreadID: replacingMessageThreadID)
+    }
+
+    @discardableResult
+    public func send(
+        threadID: String,
+        text: String,
+        attachments: [OutgoingAttachment] = [],
+        replacingMessageID: String? = nil,
+        replacingMessageThreadID: String? = nil
+    ) async -> Bool {
         await sendAndReport(
             threadID: threadID, text: text, attachments: attachments,
             replacingMessageID: replacingMessageID,
@@ -721,14 +774,16 @@ public final class AppModel {
     private func sendAndReport(
         threadID: String, text: String, attachments: [OutgoingAttachment],
         replacingMessageID: String? = nil, replacingMessageThreadID: String? = nil
-    ) async {
+    ) async -> Bool {
         do {
             try await sendMessage(
                 threadID: threadID, text: text, attachments: attachments,
                 replacingMessageID: replacingMessageID,
                 replacingMessageThreadID: replacingMessageThreadID)
+            return true
         } catch {
             lastError = String(describing: error)
+            return false
         }
     }
 
@@ -1247,6 +1302,11 @@ public final class AppModel {
         do {
             lastGitActionOutcome = try await backend.runGitAction(
                 threadID: threadID, action: action, commitMessage: commitMessage)
+            // Merge (and other actions that change remote PR state) need a
+            // fresh VCS snapshot so dedicated buttons disappear promptly.
+            if action == .mergePR, lastGitActionOutcome?.success == true {
+                try? await backend.watchVcsStatus(threadID: threadID)
+            }
         } catch {
             lastGitActionOutcome = GitActionOutcome(
                 success: false, title: "Git action failed", detail: String(describing: error))

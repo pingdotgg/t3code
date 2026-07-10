@@ -48,6 +48,10 @@ interface FakeGhScenario {
     headRepositoryNameWithOwner?: string | null;
     headRepositoryOwnerLogin?: string | null;
   };
+  reviewDecision?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
+  unresolvedReviewThreadCount?: number | null;
+  mergeShouldFail?: boolean;
+  mergeErrorDetail?: string;
   repositoryCloneUrls?: Record<string, { url: string; sshUrl: string }>;
   failWith?: GitHubCli.GitHubCliError;
 }
@@ -413,6 +417,15 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
     }
 
     if (args[0] === "pr" && args[1] === "view") {
+      if (args.includes("reviewDecision")) {
+        return Effect.succeed(
+          fakeGhOutput(
+            JSON.stringify({
+              reviewDecision: scenario.reviewDecision ?? null,
+            }) + "\n",
+          ),
+        );
+      }
       const pullRequest: FakePullRequest = scenario.pullRequest ?? {
         number: 101,
         title: "Pull request",
@@ -439,6 +452,44 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
                   },
                 }
               : {}),
+          }) + "\n",
+        ),
+      );
+    }
+
+    if (args[0] === "pr" && args[1] === "merge") {
+      if (scenario.mergeShouldFail) {
+        return Effect.fail(
+          new GitHubCli.GitHubCliCommandError({
+            command: "gh",
+            cwd: input.cwd,
+            cause: new Error(scenario.mergeErrorDetail ?? "Merge blocked by branch protection."),
+          }),
+        );
+      }
+      return Effect.succeed(fakeGhOutput(""));
+    }
+
+    if (args[0] === "api" && args[1] === "graphql") {
+      const unresolved = scenario.unresolvedReviewThreadCount ?? null;
+      const nodes =
+        unresolved === null
+          ? null
+          : Array.from({ length: Math.max(unresolved, 0) }, () => ({ isResolved: false })).concat(
+              unresolved === 0 ? [{ isResolved: true }] : [],
+            );
+      return Effect.succeed(
+        fakeGhOutput(
+          JSON.stringify({
+            data: {
+              repository: {
+                pullRequest: {
+                  reviewThreads: {
+                    nodes: nodes ?? [],
+                  },
+                },
+              },
+            },
           }) + "\n",
         ),
       );
@@ -495,6 +546,15 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
               nameWithOwner: repository,
               url: cloneUrls.url,
               sshUrl: cloneUrls.sshUrl,
+            }) + "\n",
+          ),
+        );
+      }
+      if (args.includes("nameWithOwner") && !args.includes("defaultBranchRef")) {
+        return Effect.succeed(
+          fakeGhOutput(
+            JSON.stringify({
+              nameWithOwner: "pingdotgg/codething-mvp",
             }) + "\n",
           ),
         );
@@ -594,6 +654,36 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
           cwd: input.cwd,
           args: ["pr", "checkout", input.reference, ...(input.force ? ["--force"] : [])],
         }).pipe(Effect.asVoid),
+      getPullRequestReviewStatus: (input) =>
+        execute({
+          cwd: input.cwd,
+          args: ["pr", "view", input.reference, "--json", "reviewDecision"],
+        }).pipe(
+          Effect.flatMap(() =>
+            execute({
+              cwd: input.cwd,
+              args: ["repo", "view", "--json", "nameWithOwner"],
+            }),
+          ),
+          Effect.flatMap(() =>
+            execute({
+              cwd: input.cwd,
+              args: ["api", "graphql", "-f", "query=reviewThreads"],
+            }),
+          ),
+          Effect.map(() => ({
+            reviewDecision: scenario.reviewDecision ?? null,
+            unresolvedReviewThreadCount:
+              scenario.unresolvedReviewThreadCount === undefined
+                ? null
+                : scenario.unresolvedReviewThreadCount,
+          })),
+        ),
+      mergePullRequest: (input) =>
+        execute({
+          cwd: input.cwd,
+          args: ["pr", "merge", input.reference, "--merge"],
+        }).pipe(Effect.asVoid),
     },
     ghCalls,
   };
@@ -603,7 +693,7 @@ function runStackedAction(
   manager: GitManager.GitManager["Service"],
   input: {
     cwd: string;
-    action: "commit" | "push" | "create_pr" | "commit_push" | "commit_push_pr";
+    action: "commit" | "push" | "create_pr" | "commit_push" | "commit_push_pr" | "merge_pr";
     actionId?: string;
     commitMessage?: string;
     featureBranch?: boolean;
@@ -669,6 +759,7 @@ function makeManager(input?: {
 
   const managerLayer = Layer.mergeAll(
     Layer.succeed(TextGeneration.TextGeneration, textGeneration),
+    Layer.succeed(GitHubCli.GitHubCli, gitHubCli),
     Layer.succeed(
       ProjectSetupScriptRunner.ProjectSetupScriptRunner,
       input?.setupScriptRunner ?? {
@@ -732,6 +823,8 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         baseRef: "main",
         headRef: "feature/status-open-pr",
         state: "open",
+        reviewDecision: null,
+        unresolvedReviewThreadCount: null,
       });
     }),
   );
@@ -771,6 +864,8 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         baseRef: "main",
         headRef: "feature/status-trimmed-pr",
         state: "open",
+        reviewDecision: null,
+        unresolvedReviewThreadCount: null,
       });
     }),
   );
@@ -823,6 +918,8 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         baseRef: "main",
         headRef: "feature/status-valid-pr-entry",
         state: "open",
+        reviewDecision: null,
+        unresolvedReviewThreadCount: null,
       });
     }),
   );
@@ -873,6 +970,8 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         baseRef: "main",
         headRef: "feature/status-lowercase-state",
         state: "merged",
+        reviewDecision: null,
+        unresolvedReviewThreadCount: null,
       });
     }),
   );
@@ -1069,6 +1168,8 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           baseRef: "main",
           headRef: "statemachine",
           state: "open",
+          reviewDecision: null,
+          unresolvedReviewThreadCount: null,
         });
         expect(ghCalls).toContain(
           "pr list --head jasonLaster:statemachine --state all --limit 20 --json number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
@@ -1177,6 +1278,8 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           baseRef: "main",
           headRef: "effect-atom",
           state: "open",
+          reviewDecision: null,
+          unresolvedReviewThreadCount: null,
         });
         expect(ghCalls.some((call) => call.includes("pr list --head upstream/effect-atom "))).toBe(
           false,
@@ -1228,6 +1331,8 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         baseRef: "main",
         headRef: "feature/status-merged-pr",
         state: "merged",
+        reviewDecision: null,
+        unresolvedReviewThreadCount: null,
       });
     }),
   );
@@ -1307,6 +1412,8 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         baseRef: "main",
         headRef: "feature/status-open-over-merged",
         state: "open",
+        reviewDecision: null,
+        unresolvedReviewThreadCount: null,
       });
     }),
   );
@@ -1333,6 +1440,214 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       const status = yield* manager.status({ cwd: repoDir });
       expect(status.refName).toBe("feature/status-no-gh");
       expect(status.pr).toBeNull();
+    }),
+  );
+
+  it.effect("status includes review decision and unresolved review thread count for open PRs", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/status-review-ready"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/status-review-ready"]);
+
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 88,
+                title: "Ready to merge",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/88",
+                baseRefName: "main",
+                headRefName: "feature/status-review-ready",
+                state: "OPEN",
+              },
+            ]),
+          ],
+          reviewDecision: "APPROVED",
+          unresolvedReviewThreadCount: 0,
+        },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+      expect(status.pr).toEqual({
+        number: 88,
+        title: "Ready to merge",
+        url: "https://github.com/pingdotgg/codething-mvp/pull/88",
+        baseRef: "main",
+        headRef: "feature/status-review-ready",
+        state: "open",
+        reviewDecision: "APPROVED",
+        unresolvedReviewThreadCount: 0,
+      });
+      expect(ghCalls.some((call) => call.includes("reviewDecision"))).toBe(true);
+      expect(ghCalls.some((call) => call.startsWith("api graphql"))).toBe(true);
+    }),
+  );
+
+  it.effect("review status treats a truncated review thread page as unknown", () =>
+    Effect.gen(function* () {
+      const ghCalls: ReadonlyArray<string>[] = [];
+      const stdoutSequence = [
+        '{"reviewDecision":"APPROVED"}',
+        '{"nameWithOwner":"SergeSerb2/SergeCode"}',
+        '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"isResolved":true}],"pageInfo":{"hasNextPage":true}}}}}}',
+      ];
+      const gitHubCliLayer = GitHubCli.layer.pipe(
+        Layer.provide(
+          Layer.mock(VcsProcess.VcsProcess)({
+            run: (input) => {
+              ghCalls.push(input.args);
+              return Effect.succeed(fakeGhOutput(stdoutSequence[ghCalls.length - 1] ?? ""));
+            },
+          }),
+        ),
+      );
+      const gitHubCli = yield* GitHubCli.GitHubCli.pipe(Effect.provide(gitHubCliLayer));
+
+      const status = yield* gitHubCli.getPullRequestReviewStatus({
+        cwd: "/repo",
+        reference: "#88",
+      });
+
+      expect(status).toEqual({
+        reviewDecision: "APPROVED",
+        unresolvedReviewThreadCount: null,
+      });
+      expect(ghCalls[2]?.join(" ")).toContain("pageInfo { hasNextPage }");
+    }),
+  );
+
+  it.effect("status keeps PR metadata when review status enrichment fails", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/status-review-fail"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/status-review-fail"]);
+
+      // First list succeeds via prListSequence; review enrichment is forced null by omitting fields.
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 89,
+                title: "Still open",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/89",
+                baseRefName: "main",
+                headRefName: "feature/status-review-fail",
+                state: "OPEN",
+              },
+            ]),
+          ],
+        },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+      expect(status.pr).toEqual({
+        number: 89,
+        title: "Still open",
+        url: "https://github.com/pingdotgg/codething-mvp/pull/89",
+        baseRef: "main",
+        headRef: "feature/status-review-fail",
+        state: "open",
+        reviewDecision: null,
+        unresolvedReviewThreadCount: null,
+      });
+    }),
+  );
+
+  it.effect("merge_pr merges the open PR for the current branch", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/merge-pr"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/merge-pr"]);
+
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 42,
+                title: "Ship it",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/42",
+                baseRefName: "main",
+                headRefName: "feature/merge-pr",
+                state: "OPEN",
+              },
+            ]),
+          ],
+        },
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "merge_pr",
+      });
+
+      expect(result.action).toBe("merge_pr");
+      expect(result.pr).toEqual({
+        status: "merged",
+        url: "https://github.com/pingdotgg/codething-mvp/pull/42",
+        number: 42,
+        baseBranch: "main",
+        headBranch: "feature/merge-pr",
+        title: "Ship it",
+      });
+      expect(result.toast.title).toContain("Merged");
+      expect(ghCalls).toContain("pr merge 42 --merge");
+    }),
+  );
+
+  it.effect("merge_pr surfaces gh merge failures", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/merge-pr-fail"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/merge-pr-fail"]);
+
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 43,
+                title: "Blocked",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/43",
+                baseRefName: "main",
+                headRefName: "feature/merge-pr-fail",
+                state: "OPEN",
+              },
+            ]),
+          ],
+          mergeShouldFail: true,
+          mergeErrorDetail: "Merge blocked by required status checks.",
+        },
+      });
+
+      const errorMessage = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "merge_pr",
+      }).pipe(
+        Effect.map(() => null as string | null),
+        Effect.catch((error) => Effect.succeed(error.message)),
+      );
+
+      expect(errorMessage).toContain("Git manager failed");
+      expect(errorMessage).toContain("Merge blocked by required status checks.");
     }),
   );
 
