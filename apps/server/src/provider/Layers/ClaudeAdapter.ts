@@ -202,9 +202,13 @@ interface ClaudeSessionContext {
   readonly inFlightTools: Map<number, ToolInFlight>;
   /**
    * Assistant Task/Agent tool_use id → parsed tool input. Used to resolve
-   * the subagent model (SDK task_* messages do not carry it).
+   * the subagent model (SDK task_* messages do not carry it). Pruned when
+   * the correlated task reaches a terminal state, on turn completion, and
+   * on session stop.
    */
   readonly taskToolInputsByUseId: Map<string, Record<string, unknown>>;
+  /** task_id → tool_use_id for pruning taskToolInputsByUseId on terminal. */
+  readonly taskToolUseIdByTaskId: Map<string, string>;
   /** task_id values that have started but not yet completed/stopped. */
   readonly openTaskIds: Set<string>;
   readonly claudeTasks: Map<string, ClaudeTaskState>;
@@ -640,6 +644,35 @@ function rememberTaskToolInput(
     return;
   }
   context.taskToolInputsByUseId.set(tool.itemId, tool.input);
+}
+
+function rememberTaskToolUseId(
+  context: ClaudeSessionContext,
+  taskId: string,
+  toolUseId: string | undefined,
+): void {
+  if (!toolUseId) {
+    return;
+  }
+  context.taskToolUseIdByTaskId.set(taskId, toolUseId);
+}
+
+/** Drop remembered Task tool input once the correlated subagent is terminal. */
+function forgetTaskToolInputForTask(
+  context: ClaudeSessionContext,
+  taskId: string,
+  toolUseIdFromMessage?: string,
+): void {
+  const toolUseId = toolUseIdFromMessage ?? context.taskToolUseIdByTaskId.get(taskId);
+  context.taskToolUseIdByTaskId.delete(taskId);
+  if (toolUseId) {
+    context.taskToolInputsByUseId.delete(toolUseId);
+  }
+}
+
+function clearTaskToolInputMemory(context: ClaudeSessionContext): void {
+  context.taskToolInputsByUseId.clear();
+  context.taskToolUseIdByTaskId.clear();
 }
 
 function readOptionalTrimmedString(value: unknown): string | undefined {
@@ -2382,6 +2415,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     const openIds = Array.from(context.openTaskIds);
     context.openTaskIds.clear();
     for (const taskId of openIds) {
+      forgetTaskToolInputForTask(context, taskId);
       const stamp = yield* makeEventStamp();
       yield* offerRuntimeEvent({
         type: "task.completed",
@@ -2419,6 +2453,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           : "Task stopped (turn interrupted).",
       );
     }
+    // Turn is finished — drop any leftover Task tool input memory so the map
+    // cannot grow across multi-turn sessions.
+    clearTaskToolInputMemory(context);
 
     const resultContextWindow = maxClaudeContextWindowFromModelUsage(result?.modelUsage);
     if (resultContextWindow !== undefined) {
@@ -3260,6 +3297,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         );
         const model = resolveSubagentTaskModel(context, toolUseId);
         context.openTaskIds.add(message.task_id);
+        rememberTaskToolUseId(context, message.task_id, toolUseId);
         yield* offerRuntimeEvent({
           ...base,
           type: "task.started",
@@ -3328,6 +3366,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           typeof patch.is_backgrounded === "boolean" ? patch.is_backgrounded : undefined;
         if (isTerminalTaskUpdatedStatus(status)) {
           context.openTaskIds.delete(message.task_id);
+          forgetTaskToolInputForTask(
+            context,
+            message.task_id,
+            readOptionalTrimmedString((message as { tool_use_id?: unknown }).tool_use_id),
+          );
         }
         yield* offerRuntimeEvent({
           ...base,
@@ -3348,7 +3391,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         const outputFile = readOptionalTrimmedString(
           (message as { output_file?: unknown }).output_file,
         );
+        const toolUseId = readOptionalTrimmedString(
+          (message as { tool_use_id?: unknown }).tool_use_id,
+        );
         context.openTaskIds.delete(message.task_id);
+        forgetTaskToolInputForTask(context, message.task_id, toolUseId);
         yield* emitThreadTokenUsage(
           context,
           normalizeClaudeTaskProgressTokenUsage(message.usage, context),
@@ -3631,6 +3678,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     if (context.stopped) return;
 
     context.stopped = true;
+    clearTaskToolInputMemory(context);
 
     for (const [requestId, pending] of context.pendingApprovals) {
       yield* Deferred.succeed(pending.decision, "cancel");
@@ -4236,6 +4284,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         turns: [],
         inFlightTools,
         taskToolInputsByUseId: new Map(),
+        taskToolUseIdByTaskId: new Map(),
         openTaskIds: new Set(),
         claudeTasks,
         claudeTaskPlanFingerprint: undefined,

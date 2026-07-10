@@ -199,15 +199,26 @@ public struct T3SubagentTaskActivityState: Sendable, Equatable {
             item.lastActivityAt = max(item.lastActivityAt, at)
 
             let status = nonEmpty(payload?.status)
-            if isTerminalTaskUpdatedStatus(status) {
-                item.completedAt = at
-                item.state = state(forStatus: status == "killed" ? "stopped" : status)
-                if let error = nonEmpty(payload?.error) {
-                    item.completionSummary = error
-                    item.latestProgress = error
+            // Already terminal: keep state/completedAt stable so a late
+            // coalesced patch cannot flip completed → stopped/failed.
+            // Non-state fields (error, isBackgrounded, description) still fold.
+            if item.completedAt == nil {
+                if isTerminalTaskUpdatedStatus(status) {
+                    item.completedAt = at
+                    item.state = state(forStatus: status == "killed" ? "stopped" : status)
+                    if let error = nonEmpty(payload?.error) {
+                        item.completionSummary = error
+                        item.latestProgress = error
+                    }
+                } else {
+                    item.state = .running
                 }
-            } else if item.completedAt == nil {
-                item.state = .running
+            } else if isTerminalTaskUpdatedStatus(status),
+                let error = nonEmpty(payload?.error)
+            {
+                // Late terminal patch may still refine the error summary.
+                item.error = error
+                item.completionSummary = item.completionSummary ?? error
             }
             store(item)
             return item

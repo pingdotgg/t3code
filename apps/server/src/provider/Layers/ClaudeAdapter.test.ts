@@ -2389,6 +2389,108 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("forgets Task tool input after terminal task_notification", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "task.completed",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-sonnet-4-5",
+        },
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "spawn a reviewer",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-tool-input-prune",
+        uuid: "stream-task-tool-prune",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: {
+            type: "tool_use",
+            id: "toolu-reuse-1",
+            name: "Task",
+            input: {
+              description: "Review with opus",
+              model: "claude-opus-4-6",
+              prompt: "Review",
+            },
+          },
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-prune-1",
+        tool_use_id: "toolu-reuse-1",
+        description: "Review with opus",
+        session_id: "sdk-session-tool-input-prune",
+        uuid: "task-started-prune-1",
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_notification",
+        task_id: "task-prune-1",
+        tool_use_id: "toolu-reuse-1",
+        status: "completed",
+        summary: "done",
+        session_id: "sdk-session-tool-input-prune",
+        uuid: "task-completed-prune-1",
+      } as unknown as SDKMessage);
+
+      yield* Fiber.join(runtimeEventsFiber);
+
+      // After terminal, the same tool_use_id must not resolve the old model —
+      // entry was pruned. A fresh task_started without a new tool_use remember
+      // should fall back to the session model.
+      const secondStartedFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "task.started" && event.payload.taskId === "task-prune-2",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-prune-2",
+        tool_use_id: "toolu-reuse-1",
+        description: "Second task reusing tool id",
+        session_id: "sdk-session-tool-input-prune",
+        uuid: "task-started-prune-2",
+      } as unknown as SDKMessage);
+
+      const secondEvents = Array.from(yield* Fiber.join(secondStartedFiber));
+      const secondStarted = secondEvents.find(
+        (event) => event.type === "task.started" && event.payload.taskId === "task-prune-2",
+      );
+      assert.equal(secondStarted?.type, "task.started");
+      if (secondStarted?.type === "task.started") {
+        assert.equal(secondStarted.payload.model, "claude-sonnet-4-5");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("emits synthetic task.completed stopped for open tasks on session stop", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

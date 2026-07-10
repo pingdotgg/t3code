@@ -456,8 +456,6 @@ private struct SubagentTaskRow: View {
     @UIState private var isExpanded = false
     @UIState private var isHovering = false
     @UIState private var showStopTurnConfirm = false
-    /// Tick so "last activity Xs ago" / stalled refresh while running.
-    @UIState private var now = Date()
 
     private var hasExpandableContent: Bool {
         !task.progressLog.isEmpty
@@ -466,19 +464,35 @@ private struct SubagentTaskRow: View {
             || task.usageSummary != nil
     }
 
-    private var isStalled: Bool {
+    private func isStalled(at currentNow: Date) -> Bool {
         guard task.state == .running else { return false }
-        return now.timeIntervalSince(task.lastActivityAt) > Self.stalledThreshold
+        return currentNow.timeIntervalSince(task.lastActivityAt) > Self.stalledThreshold
     }
 
     var body: some View {
+        // TimelineView owns the 1Hz tick only while the task is running;
+        // terminal rows never attach a live timer subscription.
+        Group {
+            if task.state == .running {
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    rowChrome(now: context.date)
+                }
+            } else {
+                rowChrome(now: Date())
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func rowChrome(now currentNow: Date) -> some View {
+        let stalled = isStalled(at: currentNow)
         VStack(alignment: .leading, spacing: 4) {
             Button {
                 guard hasExpandableContent else { return }
                 withAnimation(Motion.snap) { isExpanded.toggle() }
             } label: {
                 HStack(alignment: .top, spacing: 9) {
-                    statusIcon
+                    statusIcon(stalled: stalled)
                         .frame(width: 16, height: 16)
                         .padding(.top, 1)
 
@@ -512,7 +526,7 @@ private struct SubagentTaskRow: View {
                                 .lineLimit(1)
                         }
 
-                        healthTags
+                        healthTags(now: currentNow)
 
                         if let subtitle {
                             Text(subtitle)
@@ -535,7 +549,7 @@ private struct SubagentTaskRow: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
-        .background(backgroundTint, in: RoundedRectangle(cornerRadius: 10))
+        .background(backgroundTint(stalled: stalled), in: RoundedRectangle(cornerRadius: 10))
         .animation(Motion.ambient, value: task.state)
         .onHover { isHovering = $0 }
         .contextMenu {
@@ -558,13 +572,6 @@ private struct SubagentTaskRow: View {
             Text(
                 "Stopping interrupts the whole turn, including all running agents — not just this one. The Claude SDK has no per-subagent stop."
             )
-        }
-        .onAppear { now = Date() }
-        .onReceive(
-            Timer.publish(every: 1, on: .main, in: .common).autoconnect()
-        ) { date in
-            guard task.state == .running else { return }
-            now = date
         }
     }
 
@@ -596,13 +603,14 @@ private struct SubagentTaskRow: View {
     }
 
     @ViewBuilder
-    private var healthTags: some View {
+    private func healthTags(now currentNow: Date) -> some View {
         if task.state == .running {
+            let stalled = isStalled(at: currentNow)
             HStack(spacing: 6) {
-                Text(lastActivityLabel)
+                Text(lastActivityLabel(at: currentNow))
                     .font(.caption2)
-                    .foregroundStyle(isStalled ? Color.orange : Color.secondary)
-                if isStalled {
+                    .foregroundStyle(stalled ? Color.orange : Color.secondary)
+                if stalled {
                     Text("stalled")
                         .font(.caption2.weight(.medium))
                         .foregroundStyle(.orange)
@@ -737,8 +745,8 @@ private struct SubagentTaskRow: View {
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
-    private var lastActivityLabel: String {
-        let seconds = max(0, Int(now.timeIntervalSince(task.lastActivityAt)))
+    private func lastActivityLabel(at currentNow: Date) -> String {
+        let seconds = max(0, Int(currentNow.timeIntervalSince(task.lastActivityAt)))
         if seconds < 5 { return "last activity just now" }
         if seconds < 60 { return "last activity \(seconds)s ago" }
         let minutes = seconds / 60
@@ -779,34 +787,34 @@ private struct SubagentTaskRow: View {
         return "Working..."
     }
 
-    private var statusIcon: some View {
-        Image(systemName: iconName)
-            .symbolEffect(.pulse, isActive: task.state == .running && !isStalled)
-            .foregroundStyle(iconTint)
+    private func statusIcon(stalled: Bool) -> some View {
+        Image(systemName: iconName(stalled: stalled))
+            .symbolEffect(.pulse, isActive: task.state == .running && !stalled)
+            .foregroundStyle(iconTint(stalled: stalled))
             .contentTransition(.symbolEffect(.replace))
     }
 
-    private var iconName: String {
+    private func iconName(stalled: Bool) -> String {
         switch task.state {
-        case .running: isStalled ? "exclamationmark.circle" : "circle.dotted"
+        case .running: stalled ? "exclamationmark.circle" : "circle.dotted"
         case .completed: "checkmark.circle.fill"
         case .failed: "xmark.circle.fill"
         case .stopped: "stop.circle.fill"
         }
     }
 
-    private var iconTint: Color {
+    private func iconTint(stalled: Bool) -> Color {
         switch task.state {
-        case .running: isStalled ? .orange : .secondary
+        case .running: stalled ? .orange : .secondary
         case .completed: .green
         case .failed: .red
         case .stopped: .secondary
         }
     }
 
-    private var backgroundTint: Color {
+    private func backgroundTint(stalled: Bool) -> Color {
         switch task.state {
-        case .running: isStalled ? Color.orange.opacity(0.08) : Color.accentColor.opacity(0.08)
+        case .running: stalled ? Color.orange.opacity(0.08) : Color.accentColor.opacity(0.08)
         case .completed: Color.green.opacity(0.08)
         case .failed: Color.red.opacity(0.08)
         case .stopped: Color.secondary.opacity(0.08)

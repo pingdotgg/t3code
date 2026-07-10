@@ -56,11 +56,12 @@ const BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY = 10_000;
 const BUFFERED_PROPOSED_PLAN_BY_ID_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
 const STRICT_PROVIDER_LIFECYCLE_GUARD = process.env.T3CODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
-// tool.updated / task.progress / task.updated / context-window.updated
-// activities are full-snapshot latest-wins payloads that stream at
-// token-ish rates. Each one used to be its own command (SQLite txn + full
-// subscriber fan-out); they are coalesced per (thread, row) and flushed on
-// this cadence instead.
+// tool.updated / task.progress / context-window.updated are full-snapshot
+// latest-wins payloads that stream at token-ish rates. task.updated is a
+// PARTIAL patch (only changed fields), so coalescing merges defined fields
+// shallowly instead of replacing the whole payload. Each of these used to
+// be its own command (SQLite txn + full subscriber fan-out); they are
+// coalesced per (thread, row) and flushed on this cadence instead.
 const ACTIVITY_COALESCE_FLUSH_INTERVAL = Duration.millis(200);
 
 type TurnStartRequestedDomainEvent = Extract<
@@ -83,7 +84,7 @@ type RuntimeIngestionInput =
       source: "flush";
     };
 
-/** A coalescible activity held back for the next flush; latest state wins. */
+/** A coalescible activity held back for the next flush. */
 interface PendingActivity {
   readonly threadId: ThreadId;
   readonly activity: OrchestrationThreadActivity;
@@ -91,8 +92,8 @@ interface PendingActivity {
 }
 
 /**
- * Buffer key for activities where only the latest state matters. Anything
- * returning null dispatches immediately (and in order).
+ * Buffer key for activities that may collapse within a flush window.
+ * Anything returning null dispatches immediately (and in order).
  */
 function activityCoalesceKey(
   event: ProviderRuntimeEvent,
@@ -111,6 +112,39 @@ function activityCoalesceKey(
     default:
       return null;
   }
+}
+
+/**
+ * Merge a newly arrived coalescible activity into one already buffered.
+ * Full-snapshot kinds (tool.updated, task.progress, context-window) are
+ * latest-wins. task.updated is a partial patch — shallow-merge defined
+ * fields so earlier patch keys are not silently dropped.
+ */
+function mergePendingActivity(existing: PendingActivity, next: PendingActivity): PendingActivity {
+  if (existing.activity.kind !== "task.updated" || next.activity.kind !== "task.updated") {
+    return next;
+  }
+
+  const existingPayload =
+    existing.activity.payload && typeof existing.activity.payload === "object"
+      ? (existing.activity.payload as Record<string, unknown>)
+      : {};
+  const nextPayload =
+    next.activity.payload && typeof next.activity.payload === "object"
+      ? (next.activity.payload as Record<string, unknown>)
+      : {};
+
+  return {
+    threadId: next.threadId,
+    event: next.event,
+    activity: {
+      ...next.activity,
+      payload: {
+        ...existingPayload,
+        ...nextPayload,
+      },
+    },
+  };
 }
 
 function toTurnId(value: TurnId | string | undefined): TurnId | undefined {
@@ -1816,7 +1850,12 @@ const make = Effect.gen(function* () {
         if (pendingKey !== null) {
           const threadPending =
             pendingActivities.get(thread.id) ?? new Map<string, PendingActivity>();
-          threadPending.set(pendingKey, { threadId: thread.id, activity, event });
+          const incoming: PendingActivity = { threadId: thread.id, activity, event };
+          const existing = threadPending.get(pendingKey);
+          threadPending.set(
+            pendingKey,
+            existing !== undefined ? mergePendingActivity(existing, incoming) : incoming,
+          );
           pendingActivities.set(thread.id, threadPending);
           continue;
         }

@@ -575,4 +575,47 @@ struct SubagentTaskActivityStateTests {
         #expect(finished?.completionSummary == "aborted by host")
         #expect(state.activeTaskIDs.isEmpty)
     }
+
+    @Test func terminalTaskUpdatedDoesNotFlipAlreadyCompletedState() {
+        let started = activity(
+            id: "act-start", kind: ActivityKind.taskStarted,
+            at: "2026-07-04T10:00:00.000Z",
+            payload: .object([
+                "taskId": .string("task-1"),
+                "description": .string("Review"),
+            ]))
+        let completed = activity(
+            id: "act-done", kind: ActivityKind.taskCompleted,
+            at: "2026-07-04T10:00:08.000Z",
+            payload: .object([
+                "taskId": .string("task-1"),
+                "status": .string("completed"),
+                "summary": .string("All good"),
+            ]))
+        // Late/coalesced terminal patch must not overwrite completed → stopped.
+        let lateTerminal = activity(
+            id: "act-late", kind: ActivityKind.taskUpdated,
+            at: "2026-07-04T10:00:09.000Z",
+            payload: .object([
+                "taskId": .string("task-1"),
+                "status": .string("killed"),
+                "error": .string("stale stop race"),
+                "isBackgrounded": .bool(true),
+            ]))
+
+        var state = T3SubagentTaskActivityState()
+        _ = state.apply(activity: started, at: WireDate.parse(started.createdAt)!)
+        let done = state.apply(activity: completed, at: WireDate.parse(completed.createdAt)!)
+        #expect(done?.state == .completed)
+        #expect(done?.completionSummary == "All good")
+
+        let afterLate = state.apply(
+            activity: lateTerminal, at: WireDate.parse(lateTerminal.createdAt)!)
+        #expect(afterLate?.state == .completed)
+        #expect(afterLate?.completedAt == done?.completedAt)
+        // Non-state fields still fold.
+        #expect(afterLate?.isBackgrounded == true)
+        #expect(afterLate?.error == "stale stop race")
+        #expect(afterLate?.completionSummary == "All good")
+    }
 }
