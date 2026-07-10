@@ -26,7 +26,8 @@ import { OrchestrationEngineService } from "../../../orchestration/Services/Orch
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
 import type { McpInvocationScope } from "../../McpInvocationContext.ts";
-import { SubAgentCoordinator, __testing } from "./SubAgentCoordinator.ts";
+import { __testing } from "./SubAgentCoordinator.ts";
+import type { SubAgentCoordinator } from "./SubAgentCoordinator.ts";
 
 const emptyCapabilities = createModelCapabilities({ optionDescriptors: [] });
 
@@ -251,6 +252,7 @@ it.effect("names a spawned agent and surfaces it on agent_list", () =>
         title: "Agent: payments-auditor",
         providerInstanceId: "codex",
         model: "default-model",
+        status: "running",
       },
     ]);
 
@@ -469,5 +471,169 @@ it.effect("reports error when the provider fails before the turn is created", ()
     });
     expect(result.status).toBe("error");
     expect(result.finalText).toBeNull();
+  }),
+);
+
+const completedTurnDetail = (threadId: ThreadId) => {
+  const assistantMessageId = MessageId.make("assistant-message-completed");
+  const turnId = TurnId.make("turn-completed");
+  return makeThreadDetail(threadId, {
+    latestTurn: {
+      turnId,
+      state: "completed",
+      requestedAt: "9999-01-01T00:00:00.000Z",
+      startedAt: "9999-01-01T00:00:00.000Z",
+      completedAt: "9999-01-01T00:00:01.000Z",
+      assistantMessageId,
+    },
+    messages: [
+      {
+        id: assistantMessageId,
+        role: "assistant",
+        text: "Done.",
+        turnId,
+        streaming: false,
+        createdAt: "9999-01-01T00:00:01.000Z",
+        updatedAt: "9999-01-01T00:00:01.000Z",
+      },
+    ],
+  });
+};
+
+it.effect("truncates name-driven Agent: titles at the title cap", () =>
+  Effect.gen(function* () {
+    const [coordinator, harness] = yield* makeCoordinator();
+    const longName = "x".repeat(80);
+
+    const result = yield* coordinator.spawn(makeScope(), {
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      prompt: "Work.",
+      name: longName,
+    });
+
+    expect(result.title.length).toBe(__testing.DEFAULT_TITLE_MAX_LENGTH);
+    expect(result.title.endsWith("…")).toBe(true);
+    expect(result.title.startsWith("Agent: ")).toBe(true);
+
+    const create = harness.dispatched.find((command) => command.type === "thread.create");
+    if (create?.type === "thread.create") {
+      expect(create.title).toBe(result.title);
+      expect(create.title.length).toBe(__testing.DEFAULT_TITLE_MAX_LENGTH);
+    }
+  }),
+);
+
+it.effect("sanitizes control characters and whitespace runs in agent names", () =>
+  Effect.gen(function* () {
+    const [coordinator, harness] = yield* makeCoordinator();
+
+    const result = yield* coordinator.spawn(makeScope(), {
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      prompt: "Work.",
+      name: "pay\nments\t  auditor\u0000bot",
+    });
+
+    expect(result.name).toBe("pay ments auditor bot");
+    expect(result.title).toBe("Agent: pay ments auditor bot");
+
+    const create = harness.dispatched.find((command) => command.type === "thread.create");
+    if (create?.type === "thread.create") {
+      expect(create.title).toBe("Agent: pay ments auditor bot");
+      expect(create.title).not.toMatch(/[\n\t\u0000]/);
+    }
+
+    const listed = yield* coordinator.list(makeScope());
+    expect(listed.agents[0]?.name).toBe("pay ments auditor bot");
+  }),
+);
+
+it.effect("lists a completed agent with its terminal status", () =>
+  Effect.gen(function* () {
+    const [coordinator, harness] = yield* makeCoordinator();
+
+    const spawned = yield* coordinator.spawn(makeScope(), {
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      prompt: "Finish quickly.",
+      name: "finisher",
+    });
+
+    harness.setThreadDetail((threadId) =>
+      threadId === spawned.threadId
+        ? Option.some(completedTurnDetail(spawned.threadId))
+        : Option.none(),
+    );
+
+    // First wait observes completion and records terminal status.
+    const waited = yield* coordinator.wait(makeScope(), {
+      threadId: spawned.threadId,
+      timeoutSeconds: 5,
+    });
+    expect(waited.status).toBe("completed");
+
+    const listed = yield* coordinator.list(makeScope());
+    expect(listed.agents).toEqual([
+      {
+        threadId: spawned.threadId,
+        name: "finisher",
+        title: "Agent: finisher",
+        providerInstanceId: "codex",
+        model: "default-model",
+        status: "completed",
+      },
+    ]);
+  }),
+);
+
+it.effect("refuses send while running and wait on an already-terminal handle", () =>
+  Effect.gen(function* () {
+    const [coordinator, harness] = yield* makeCoordinator();
+
+    const spawned = yield* coordinator.spawn(makeScope(), {
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      prompt: "Long task.",
+    });
+
+    // Still running (no latest turn yet) — send must refuse.
+    harness.setThreadDetail((threadId) =>
+      threadId === spawned.threadId
+        ? Option.some(makeThreadDetail(spawned.threadId, { latestTurn: null }))
+        : Option.none(),
+    );
+
+    const sendWhileRunning = yield* expectSubAgentError(
+      coordinator.send(makeScope(), {
+        threadId: spawned.threadId,
+        prompt: "Also do this.",
+      }),
+    );
+    expect(sendWhileRunning.reason).toBe("invalid-status");
+    expect(sendWhileRunning.description).toMatch(/still running/i);
+    expect(sendWhileRunning.description).toMatch(/status: running/);
+
+    // Complete the turn, wait once (records terminal), then refuse a second wait.
+    harness.setThreadDetail((threadId) =>
+      threadId === spawned.threadId
+        ? Option.some(completedTurnDetail(spawned.threadId))
+        : Option.none(),
+    );
+    const firstWait = yield* coordinator.wait(makeScope(), {
+      threadId: spawned.threadId,
+      timeoutSeconds: 5,
+    });
+    expect(firstWait.status).toBe("completed");
+
+    const waitWhenTerminal = yield* expectSubAgentError(
+      coordinator.wait(makeScope(), { threadId: spawned.threadId, timeoutSeconds: 5 }),
+    );
+    expect(waitWhenTerminal.reason).toBe("invalid-status");
+    expect(waitWhenTerminal.description).toMatch(/not running/i);
+    expect(waitWhenTerminal.description).toMatch(/status: completed/);
+
+    // Follow-up send after terminal is allowed (starts a new turn).
+    const sent = yield* coordinator.send(makeScope(), {
+      threadId: spawned.threadId,
+      prompt: "One more thing.",
+    });
+    expect(sent.status).toBe("running");
   }),
 );

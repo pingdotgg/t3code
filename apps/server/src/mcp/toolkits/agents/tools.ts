@@ -18,7 +18,7 @@ const dependencies = [McpInvocationContext.McpInvocationContext, SubAgentCoordin
 
 export const AgentListTool = Tool.make("agent_list", {
   description:
-    "List coding-agent providers configured on this server (instance id, driver, readiness, model slugs) and the sub-agents this session has already spawned via agent_spawn (threadId, optional name, title). Use providers to pick a spawnable providerInstanceId; use agents to recall named workers for agent_send/agent_wait. Spawned handles do not survive server restarts.",
+    "List coding-agent providers configured on this server (instance id, driver, readiness, model slugs) and the sub-agents this session has already spawned via agent_spawn (threadId, optional name, title, status). Status is running while a turn is in progress, otherwise completed/interrupted/error. Use providers to pick a spawnable providerInstanceId; use agents to recall named workers for agent_send/agent_wait. Spawned handles do not survive server restarts.",
   parameters: Schema.Struct({}),
   success: SubAgentListResult,
   failure: SubAgentError,
