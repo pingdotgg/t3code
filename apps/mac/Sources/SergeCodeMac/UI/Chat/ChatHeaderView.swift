@@ -12,9 +12,18 @@ struct ChatHeaderView: View {
         HStack(spacing: 12) {
             let names = scenery.displayNames(for: thread)
             VStack(alignment: .leading, spacing: 3) {
-                Text(names.primary)
-                    .font(.headline)
-                    .lineLimit(1)
+                Group {
+                    if let prefs = projectPrefs, prefs.showsProjectBadge {
+                        HStack(spacing: 6) {
+                            ProjectSceneryBadge(prefs: prefs, symbolSize: 12, dotSize: 6)
+                            Text(names.primary)
+                        }
+                    } else {
+                        Text(names.primary)
+                    }
+                }
+                .font(.headline)
+                .lineLimit(1)
                 if let description = names.description {
                     Text(description)
                         .font(.caption)
@@ -36,6 +45,13 @@ struct ChatHeaderView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .animation(Motion.enter, value: thread.status)
+    }
+
+    private var projectPrefs: ProjectSceneryPrefs? {
+        guard let project = model.projects.first(where: { $0.id == thread.projectID }) else {
+            return nil
+        }
+        return scenery.projectPrefs(for: project.path)
     }
 }
 

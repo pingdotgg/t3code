@@ -557,6 +557,34 @@ export const ServerProviderUpdateInput = Schema.Struct({
 });
 export type ServerProviderUpdateInput = typeof ServerProviderUpdateInput.Type;
 
+// ---------------------------------------------------------------------------
+// Scenery set generation (mac personalization; server-side model completion)
+// ---------------------------------------------------------------------------
+
+export const SceneryTimeOfDay = Schema.Literals(["dawn", "day", "dusk", "night"]);
+export type SceneryTimeOfDay = typeof SceneryTimeOfDay.Type;
+
+export const ScenerySeason = Schema.Literals(["spring", "summer", "autumn", "winter"]);
+export type ScenerySeason = typeof ScenerySeason.Type;
+
+export const GenerateScenerySetQuery = Schema.Struct({
+  text: TrimmedNonEmptyString,
+  timeOfDay: Schema.optional(SceneryTimeOfDay),
+  season: Schema.optional(ScenerySeason),
+});
+export type GenerateScenerySetQuery = typeof GenerateScenerySetQuery.Type;
+
+export const GenerateScenerySetInput = Schema.Struct({
+  location: TrimmedNonEmptyString,
+});
+export type GenerateScenerySetInput = typeof GenerateScenerySetInput.Type;
+
+export const GenerateScenerySetResult = Schema.Struct({
+  sceneNames: Schema.Array(TrimmedNonEmptyString),
+  queries: Schema.Array(GenerateScenerySetQuery),
+});
+export type GenerateScenerySetResult = typeof GenerateScenerySetResult.Type;
+
 export class ServerProviderUpdateError extends Schema.TaggedErrorClass<ServerProviderUpdateError>()(
   "ServerProviderUpdateError",
   {

@@ -30,12 +30,17 @@ public actor UnsplashClient {
     public static let appName = "SergeCode"
 
     private let accessKey: String
-    private let session = URLSession.shared
+    private let session: URLSession
 
     /// nil when no key is configured — callers degrade to gradient washes.
-    public init?(accessKey: String? = UnsplashClient.resolveAccessKey()) {
+    /// `session` is injectable for tests (URLProtocol stubs).
+    public init?(
+        accessKey: String? = UnsplashClient.resolveAccessKey(),
+        session: URLSession = .shared
+    ) {
         guard let accessKey, !accessKey.isEmpty else { return nil }
         self.accessKey = accessKey
+        self.session = session
     }
 
     /// Key lookup: `SERGECODE_UNSPLASH_KEY` env var, then
@@ -80,12 +85,51 @@ public actor UnsplashClient {
             var name: String
             var links: UserLinks?
         }
+        struct Location: Decodable, Sendable {
+            var name: String?
+            var city: String?
+            var country: String?
+        }
 
         var id: String
         var color: String?
+        var description: String?
+        var altDescription: String?
+        var location: Location?
         var urls: URLs
         var links: Links?
         var user: User
+
+        /// Best-effort place label from Unsplash metadata (for fallback scene names).
+        var suggestedSceneName: String? {
+            if let name = location?.name?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !name.isEmpty
+            {
+                return Self.shortenSceneName(name)
+            }
+            let city = location?.city?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let country = location?.country?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let city, !city.isEmpty {
+                return Self.shortenSceneName(city)
+            }
+            if let country, !country.isEmpty {
+                return Self.shortenSceneName(country)
+            }
+            for candidate in [description, altDescription] {
+                if let text = candidate?.trimmingCharacters(in: .whitespacesAndNewlines),
+                    !text.isEmpty
+                {
+                    return Self.shortenSceneName(text)
+                }
+            }
+            return nil
+        }
+
+        private static func shortenSceneName(_ raw: String) -> String {
+            let collapsed = raw.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            if collapsed.count <= 48 { return collapsed }
+            return String(collapsed.prefix(45)).trimmingCharacters(in: .whitespaces) + "..."
+        }
     }
 
     public enum UnsplashError: Error {
@@ -113,11 +157,15 @@ public actor UnsplashClient {
     }
 
     /// Ping `links.download_location` — required by the Unsplash guidelines
-    /// whenever a photo is put to use. Fire-and-forget; failures are benign.
-    public func registerDownload(_ url: URL) async {
+    /// whenever a photo is put to use. Throws on transport or non-2xx so
+    /// callers can avoid recording a successful registration and retry later.
+    public func registerDownload(_ url: URL) async throws {
         var request = URLRequest(url: url)
         request.setValue("Client-ID \(accessKey)", forHTTPHeaderField: "Authorization")
-        _ = try? await session.data(for: request)
+        let (_, response) = try await session.data(for: request)
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            throw UnsplashError.badStatus(http.statusCode)
+        }
     }
 
     /// Plain CDN fetch (images.unsplash.com needs no auth header).

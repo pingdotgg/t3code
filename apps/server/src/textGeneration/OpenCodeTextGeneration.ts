@@ -22,12 +22,14 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildScenerySetPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import {
   sanitizeCommitSubject,
   sanitizePrTitle,
+  sanitizeScenerySetResult,
   sanitizeThreadTitle,
 } from "./TextGenerationUtils.ts";
 import * as OpenCodeRuntime from "../provider/opencodeRuntime.ts";
@@ -39,6 +41,7 @@ const OpenCodeTextGenerationOperation = Schema.Literals([
   "generatePrContent",
   "generateBranchName",
   "generateThreadTitle",
+  "generateScenerySet",
 ]);
 
 type OpenCodeTextGenerationOperation = typeof OpenCodeTextGenerationOperation.Type;
@@ -253,7 +256,8 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateScenerySet";
   }) =>
     sharedServerMutex.withPermit(
       Effect.gen(function* () {
@@ -611,10 +615,40 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
       };
     });
 
+  const generateScenerySet: TextGeneration.TextGeneration["Service"]["generateScenerySet"] =
+    Effect.fn("OpenCodeTextGeneration.generateScenerySet")(function* (input) {
+      const location = input.location.trim();
+      if (location.length === 0) {
+        return yield* new TextGenerationError({
+          operation: "generateScenerySet",
+          detail: "Location must not be empty.",
+        });
+      }
+
+      const { prompt, outputSchema } = buildScenerySetPrompt({ location });
+      const generated = yield* runOpenCodeJson({
+        operation: "generateScenerySet",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+
+      const sanitized = sanitizeScenerySetResult(generated);
+      if (sanitized.sceneNames.length === 0 || sanitized.queries.length === 0) {
+        return yield* new TextGenerationError({
+          operation: "generateScenerySet",
+          detail: "OpenCode returned an empty scenery set.",
+        });
+      }
+      return sanitized;
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateScenerySet,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

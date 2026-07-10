@@ -39,22 +39,53 @@ struct SergeCodeApp: App {
     var body: some Scene {
         WindowGroup {
             RootView(model: model, scenery: scenery)
-                .tint(AlpineTheme.accent)
+                .tint(AlpineTheme.accent(palette: activeSceneryPalette))
                 .containerBackground(.thinMaterial, for: .window)
                 .onAppear {
+                    // Thread → project path so scenery set resolution can read
+                    // per-project prefs (Phase 1 multi-set).
+                    scenery.projectPathForThread = { [model] threadID in
+                        guard let thread = model.threads.first(where: { $0.id == threadID }),
+                            let project = model.projects.first(where: { $0.id == thread.projectID })
+                        else { return nil }
+                        return project.path
+                    }
                     model.start()
                     appDelegate.backend = SergeCodeApp.backend
                     #if DEBUG
-                        UIProbe.runIfRequested(model: model)
+                        UIProbe.runIfRequested(model: model, scenery: scenery)
                     #endif
                 }
                 .task { await scenery.start() }
+                .onReceive(
+                    NotificationCenter.default.publisher(
+                        for: NSApplication.didBecomeActiveNotification)
+                ) { _ in
+                    scenery.reevaluateRotation()
+                }
+                .onReceive(
+                    NotificationCenter.default.publisher(for: .NSCalendarDayChanged)
+                ) { _ in
+                    scenery.reevaluateRotation()
+                }
         }
         .defaultSize(width: 1100, height: 720)
 
         Settings {
-            SettingsScene(model: model)
+            SettingsScene(
+                model: model,
+                scenery: scenery,
+                backend: SergeCodeApp.backend)
         }
+    }
+
+    private var activeSceneryPalette: SceneryPalette? {
+        guard let threadID = model.selectedThreadID else {
+            return scenery.palette(for: nil)
+        }
+        return scenery.palette(
+            for: scenery.photo(for: threadID),
+            setId: scenery.resolvedSetId(forThread: threadID))
     }
 }
 

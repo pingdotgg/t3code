@@ -2043,6 +2043,11 @@ public actor LiveBackend: BackendService {
         applyProviders(payload.providers)
     }
 
+    public func generateScenerySet(location: String) async throws -> GeneratedScenerySet {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        return try await client.generateScenerySet(location: location)
+    }
+
     private static func uiSettings(_ settings: ServerSettings) -> AppSettings {
         AppSettings(
             assistantStreaming: settings.enableAssistantStreaming,

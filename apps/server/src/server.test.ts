@@ -74,6 +74,7 @@ import * as ServerConfig from "./config.ts";
 import { makeRoutesLayer } from "./server.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as GitManager from "./git/GitManager.ts";
+import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
@@ -657,7 +658,26 @@ const buildAppUnderTest = (options?: {
             }),
         }),
       ),
-      Layer.provide(gitManagerLayer),
+      Layer.provide(
+        Layer.mergeAll(
+          gitManagerLayer,
+          Layer.succeed(TextGeneration.TextGeneration, {
+            generateCommitMessage: () =>
+              Effect.die("TextGeneration.generateCommitMessage not stubbed in this test"),
+            generatePrContent: () =>
+              Effect.die("TextGeneration.generatePrContent not stubbed in this test"),
+            generateBranchName: () =>
+              Effect.die("TextGeneration.generateBranchName not stubbed in this test"),
+            generateThreadTitle: () =>
+              Effect.die("TextGeneration.generateThreadTitle not stubbed in this test"),
+            generateScenerySet: () =>
+              Effect.succeed({
+                sceneNames: ["Test Peak"],
+                queries: [{ text: "test landscape" }],
+              }),
+          }),
+        ),
+      ),
       Layer.provide(gitVcsDriverLayer),
       Layer.provide(gitWorkflowLayer),
       Layer.provide(reviewLayer),

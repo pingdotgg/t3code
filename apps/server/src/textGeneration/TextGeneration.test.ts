@@ -21,6 +21,7 @@ const makeStubTextGeneration = (
     generatePrContent: () => Effect.die("generatePrContent stub not configured for this test"),
     generateBranchName: () => Effect.die("generateBranchName stub not configured for this test"),
     generateThreadTitle: () => Effect.die("generateThreadTitle stub not configured for this test"),
+    generateScenerySet: () => Effect.die("generateScenerySet stub not configured for this test"),
     ...overrides,
   });
 
@@ -116,6 +117,33 @@ describe("makeTextGenerationFromRegistry", () => {
         expect(result.failure.operation).toBe("generateBranchName");
         expect(result.failure.detail).toContain("missing_instance");
       }
+    }),
+  );
+
+  it.effect("delegates generateScenerySet to the matching instance", () =>
+    Effect.gen(function* () {
+      const personalId = ProviderInstanceId.make("codex_personal");
+      const personal = makeStubInstance(
+        personalId,
+        makeStubTextGeneration({
+          generateScenerySet: (input) =>
+            Effect.succeed({
+              sceneNames: [`${input.location} Peak`],
+              queries: [{ text: `${input.location} landscape`, timeOfDay: "dawn" as const }],
+            }),
+        }),
+      );
+
+      const tg = TextGeneration.makeTextGenerationFromRegistry(makeStubRegistry([personal]));
+      const result = yield* tg.generateScenerySet({
+        cwd: process.cwd(),
+        location: "Kyoto",
+        modelSelection: createModelSelection(personalId, "gpt-5"),
+      });
+
+      expect(result.sceneNames).toEqual(["Kyoto Peak"]);
+      expect(result.queries[0]?.text).toBe("Kyoto landscape");
+      expect(result.queries[0]?.timeOfDay).toBe("dawn");
     }),
   );
 });

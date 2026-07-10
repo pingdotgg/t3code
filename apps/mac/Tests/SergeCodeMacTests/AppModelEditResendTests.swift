@@ -1,4 +1,5 @@
 import Foundation
+import T3Kit
 import Testing
 
 @testable import SergeCodeMac
@@ -270,6 +271,9 @@ private final class RecordingBackend: BackendService, @unchecked Sendable {
     func archiveThread(id: String) async throws {}
     func unarchiveThread(id: String) async throws {}
     func deleteThread(id: String) async throws {}
+    func generateScenerySet(location: String) async throws -> GeneratedScenerySet {
+        fatalError("unused")
+    }
 
     func sendMessage(threadID: String, text: String, attachments: [OutgoingAttachment]) async throws
     {
