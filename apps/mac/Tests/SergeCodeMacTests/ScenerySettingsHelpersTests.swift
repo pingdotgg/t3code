@@ -100,6 +100,109 @@ struct SceneryProjectSymbolsTests {
     }
 }
 
+@Suite("Scenery translucency settings")
+struct SceneryTranslucencySettingsTests {
+    @Test("clamp keeps legal values and bounds extremes")
+    func clamp() {
+        #expect(ScenerySettingsFile.clampTranslucency(0.85) == 0.85)
+        #expect(ScenerySettingsFile.clampTranslucency(0.5) == 0.5)
+        #expect(ScenerySettingsFile.clampTranslucency(1.0) == 1.0)
+        #expect(ScenerySettingsFile.clampTranslucency(0.0) == 0.5)
+        #expect(ScenerySettingsFile.clampTranslucency(-1) == 0.5)
+        #expect(ScenerySettingsFile.clampTranslucency(1.5) == 1.0)
+        #expect(ScenerySettingsFile.clampTranslucency(2) == 1.0)
+    }
+
+    @Test("init clamps translucency")
+    func initClamps() {
+        #expect(ScenerySettingsFile(sceneryTranslucency: 0.2).sceneryTranslucency == 0.5)
+        #expect(ScenerySettingsFile(sceneryTranslucency: 1.2).sceneryTranslucency == 1.0)
+        #expect(
+            ScenerySettingsFile().sceneryTranslucency
+                == ScenerySettingsFile.defaultTranslucency)
+    }
+
+    @Test("wash scale is 1.0 at full opacity and stays high at 50%")
+    func washScale() {
+        #expect(ScenerySettingsFile.washScale(forTranslucency: 1.0) == 1.0)
+        #expect(ScenerySettingsFile.washScale(forTranslucency: 0.85) == 0.7 + 0.3 * 0.85)
+        let half = ScenerySettingsFile.washScale(forTranslucency: 0.5)
+        #expect(half == 0.85)
+        // Below range clamps first, so wash still matches the floor.
+        #expect(ScenerySettingsFile.washScale(forTranslucency: 0.0) == half)
+    }
+
+    @Test("decode missing translucency uses default; out-of-range is clamped")
+    func decode() throws {
+        let decoder = JSONDecoder()
+        let legacy = Data(#"{"defaultSetId":"dolomites"}"#.utf8)
+        let fromLegacy = try decoder.decode(ScenerySettingsFile.self, from: legacy)
+        #expect(fromLegacy.defaultSetId == "dolomites")
+        #expect(fromLegacy.sceneryTranslucency == ScenerySettingsFile.defaultTranslucency)
+
+        let high = Data(#"{"defaultSetId":"dolomites","sceneryTranslucency":1.4}"#.utf8)
+        #expect(
+            try decoder.decode(ScenerySettingsFile.self, from: high).sceneryTranslucency == 1.0)
+
+        let low = Data(#"{"defaultSetId":"dolomites","sceneryTranslucency":0.1}"#.utf8)
+        #expect(
+            try decoder.decode(ScenerySettingsFile.self, from: low).sceneryTranslucency == 0.5)
+    }
+
+    @Test("encode/decode round-trip")
+    func roundTrip() throws {
+        let original = ScenerySettingsFile(
+            defaultSetId: "patagonia", sceneryTranslucency: 0.62)
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(ScenerySettingsFile.self, from: data)
+        #expect(decoded == original)
+    }
+}
+
+@Suite("SceneryStore translucency persistence")
+@MainActor
+struct SceneryStoreTranslucencyPersistenceTests {
+    private func tempRoot() throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("scenery-translucency-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    @Test("default translucency and disk round-trip")
+    func persist() throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let writer = SceneryStore(client: nil, root: root)
+        writer.reloadFromDiskForTesting()
+        #expect(writer.sceneryTranslucency == ScenerySettingsFile.defaultTranslucency)
+
+        writer.setSceneryTranslucency(0.55)
+        // In-memory update is immediate; disk write is debounced.
+        #expect(writer.sceneryTranslucency == 0.55)
+
+        let beforeFlush = SceneryStore(client: nil, root: root)
+        beforeFlush.reloadFromDiskForTesting()
+        #expect(beforeFlush.sceneryTranslucency == ScenerySettingsFile.defaultTranslucency)
+
+        // Out of range clamps in memory; flush persists the final value once.
+        writer.setSceneryTranslucency(0.1)
+        #expect(writer.sceneryTranslucency == 0.5)
+        writer.flushPendingSettingsSave()
+
+        let reader = SceneryStore(client: nil, root: root)
+        reader.reloadFromDiskForTesting()
+        #expect(reader.sceneryTranslucency == 0.5)
+
+        // Second flush with nothing pending is a no-op.
+        writer.flushPendingSettingsSave()
+        let readerAgain = SceneryStore(client: nil, root: root)
+        readerAgain.reloadFromDiskForTesting()
+        #expect(readerAgain.sceneryTranslucency == 0.5)
+    }
+}
+
 @Suite("SceneryStore photos for set")
 @MainActor
 struct SceneryStorePhotosForSetTests {

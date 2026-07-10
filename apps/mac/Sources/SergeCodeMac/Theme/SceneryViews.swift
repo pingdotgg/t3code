@@ -50,6 +50,10 @@ struct SceneryImageView: View {
 /// the backdrop behind them (near-opaque gray on macOS), hiding the photo
 /// entirely. Pair with `.sceneryChrome()` on the foreground content. Long-form
 /// text never sits on this (Liquid Glass rule).
+///
+/// Photo opacity follows `scenery.sceneryTranslucency` so the window's
+/// `.containerBackground` material can bleed through; the scrim is scaled
+/// gently so chrome labels stay readable at the 50% extreme.
 struct FrostedSceneryBackdrop: View {
     let scenery: SceneryStore
     let photo: SceneryPhoto?
@@ -59,6 +63,8 @@ struct FrostedSceneryBackdrop: View {
     var blurRadius: CGFloat = 9
 
     var body: some View {
+        let translucency = scenery.sceneryTranslucency
+        let wash = ScenerySettingsFile.washScale(forTranslucency: translucency)
         SceneryImageView(
             scenery: scenery,
             photo: photo,
@@ -66,9 +72,14 @@ struct FrostedSceneryBackdrop: View {
             fallbackSeed: fallbackSeed)
             .blur(radius: blurRadius, opaque: true)
             .saturation(1.08)
+            // Fade photo only — scrim stays above so chrome stays legible.
+            .opacity(translucency)
             .overlay(
                 LinearGradient(
-                    colors: [.black.opacity(0.34), .black.opacity(0.18)],
+                    colors: [
+                        .black.opacity(0.34 * wash),
+                        .black.opacity(0.18 * wash),
+                    ],
                     startPoint: .top, endPoint: .bottom))
             .clipped()
     }
@@ -88,6 +99,11 @@ extension View {
 /// toward the appearance's background tone (black-ish in dark mode, white-ish
 /// in light) far enough that standard `.primary`/`.secondary` text stays
 /// readable everywhere on top, while the scene stays clearly visible.
+///
+/// Photo opacity is `scenery.sceneryTranslucency` (default 0.85) so the
+/// window material underneath shows through. Wash layers sit above the
+/// opacity and are only gently scaled — they must not collapse with the
+/// photo at 50% translucency.
 struct SceneryChatBackground: View {
     let scenery: SceneryStore
     let photo: SceneryPhoto?
@@ -97,6 +113,8 @@ struct SceneryChatBackground: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
+        let translucency = scenery.sceneryTranslucency
+        let wash = ScenerySettingsFile.washScale(forTranslucency: translucency)
         SceneryImageView(
             scenery: scenery,
             photo: photo,
@@ -104,13 +122,19 @@ struct SceneryChatBackground: View {
             fallbackSeed: fallbackSeed)
             .blur(radius: 4, opaque: true)
             .saturation(1.05)
-            .overlay(colorScheme == .dark ? Color.black.opacity(0.50) : .white.opacity(0.58))
+            // Fade photo/gradient only; wash overlays stay above for contrast.
+            .opacity(translucency)
+            .overlay(
+                colorScheme == .dark
+                    ? Color.black.opacity(0.50 * wash)
+                    : Color.white.opacity(0.58 * wash))
             // Slightly heavier at the top so header text always clears the
             // brightest part of a sky.
             .overlay(
                 LinearGradient(
                     colors: [
-                        washEdge.opacity(0.35), .clear, .clear, washEdge.opacity(0.25),
+                        washEdge.opacity(0.35 * wash), .clear, .clear,
+                        washEdge.opacity(0.25 * wash),
                     ],
                     startPoint: .top, endPoint: .bottom))
             .clipped()
