@@ -55,6 +55,31 @@ describe("orchestrator MCP contracts", () => {
     expect(result.summary).toBe("Workspace inspected.");
   });
 
+  it("decodes target model options in canonical and shorthand shapes", () => {
+    const canonical = decodeDelegateTaskInput({
+      task: "Say hello.",
+      target: {
+        providerInstanceId: "codex",
+        model: "gpt-5.6-luna",
+        options: [{ id: "reasoning", value: "low" }],
+      },
+    });
+    const shorthand = decodeDelegateTaskInput({
+      task: "Say hello.",
+      target: {
+        providerInstanceId: "codex",
+        model: "gpt-5.6-luna",
+        options: { reasoning: "low", fastMode: true },
+      },
+    });
+
+    expect(canonical.target?.options).toEqual([{ id: "reasoning", value: "low" }]);
+    expect(shorthand.target?.options).toEqual([
+      { id: "reasoning", value: "low" },
+      { id: "fastMode", value: true },
+    ]);
+  });
+
   it("decodes mixed prompted and empty thread batches", () => {
     const request = decodeCreateThreadsInput({
       clientRequestId: "threads-1",

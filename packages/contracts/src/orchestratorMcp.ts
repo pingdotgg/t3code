@@ -22,6 +22,7 @@ import {
   OrchestrationV2RunStatus,
   OrchestrationV2TurnItemStatus,
 } from "./orchestrationV2.ts";
+import { ProviderOptionDescriptor, ProviderOptionSelections } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 const OrchestratorMcpPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(120_000));
@@ -32,6 +33,14 @@ export const OrchestratorMcpTarget = Schema.Struct({
   providerInstanceId: Schema.optional(ProviderInstanceId),
   driverKind: Schema.optional(ProviderDriverKind),
   model: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * Model option selections for the child (for example reasoning effort).
+   * Accepts the canonical `[{ id, value }]` array or the shorthand
+   * `{ id: value }` record; valid ids come from the option descriptors
+   * advertised by orchestrator_capabilities. When omitted, options inherit
+   * from the parent only when the child runs the parent's provider and model.
+   */
+  options: Schema.optional(ProviderOptionSelections),
 });
 export type OrchestratorMcpTarget = typeof OrchestratorMcpTarget.Type;
 
@@ -343,6 +352,8 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
     Schema.Struct({
       id: Schema.String,
       label: Schema.NullOr(Schema.String),
+      /** Model options a target may select (for example reasoning effort). */
+      options: Schema.optional(Schema.Array(ProviderOptionDescriptor)),
     }),
   ),
   canRunChildTask: Schema.Boolean,
