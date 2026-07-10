@@ -111,6 +111,7 @@ private struct UserMessageBubble: View {
     /// Local double-click guard: `canResend` flips only after the thread's
     /// status round-trips to `.running`, which is async.
     @UIState private var isResending = false
+    @Environment(\.openSelectText) private var openSelectText
 
     /// Resending mid-turn would interleave with the running agent; the
     /// composer's send path has the same gate.
@@ -160,6 +161,10 @@ private struct UserMessageBubble: View {
                     .disabled(!canResend)
                     Button("Retry") { resend() }
                         .disabled(!canResend)
+                    if let openSelectText {
+                        Divider()
+                        Button("Select Text…") { openSelectText() }
+                    }
                 }
         }
     }
@@ -760,48 +765,22 @@ private struct SubagentTaskRow: View {
     private var progressLogBody: some View {
         let log = task.progressLog
         let hidden = max(0, log.count - Self.maxVisibleLogEntries)
-        let visible = log.suffix(Self.maxVisibleLogEntries)
+        let visible = Array(log.suffix(Self.maxVisibleLogEntries))
         VStack(alignment: .leading, spacing: 4) {
             if hidden > 0 {
                 Text("… \(hidden) earlier update\(hidden == 1 ? "" : "s")")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
-            ForEach(Array(visible.enumerated()), id: \.offset) { index, entry in
-                let isNewest =
-                    task.state == .running
-                    && index == visible.count - 1
-                    && hidden + index == log.count - 1
-                progressLogLine(entry, emphasize: isNewest)
-            }
-        }
-    }
-
-    private func progressLogLine(_ entry: SubagentTaskProgressEntry, emphasize: Bool)
-        -> some View
-    {
-        HStack(alignment: .top, spacing: 6) {
-            Text(Self.relativeOffset(from: task.startedAt, to: entry.at))
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .frame(width: 36, alignment: .trailing)
-            if let tool = entry.toolName?.trimmingCharacters(in: .whitespacesAndNewlines),
-                !tool.isEmpty
-            {
-                Text(tool)
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(.secondary.opacity(0.12), in: Capsule())
-            }
-            Text(entry.text)
-                .font(.caption)
-                .foregroundStyle(emphasize ? .primary : .secondary)
-                .lineLimit(2)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
+            // One Text so drag-selection spans the whole visible log.
+            Text(
+                SubagentProgressLogText.attributedBody(
+                    entries: visible,
+                    startedAt: task.startedAt,
+                    emphasizeLast: task.state == .running)
+            )
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -923,13 +902,6 @@ private struct SubagentTaskRow: View {
         return trimmed
     }
 
-    private static func relativeOffset(from start: Date, to date: Date) -> String {
-        let seconds = max(0, Int(date.timeIntervalSince(start)))
-        let minutes = seconds / 60
-        let rem = seconds % 60
-        return String(format: "%d:%02d", minutes, rem)
-    }
-
     private static func format(duration: TimeInterval) -> String {
         if duration < 1 { return "<1s" }
         if duration < 60 { return "\(Int(duration.rounded()))s" }
@@ -983,6 +955,14 @@ private struct FileChangeDiffView: View {
         let id: Int
         let kind: Kind
         let text: String
+
+        var textLine: (kind: FileChangeDiffText.Kind, text: String) {
+            switch kind {
+            case .removed: (.removed, text)
+            case .added: (.added, text)
+            case .separator: (.separator, text)
+            }
+        }
     }
 
     private var displayPath: String {
@@ -1042,9 +1022,15 @@ private struct FileChangeDiffView: View {
             .padding(.vertical, 5)
             .background(Color.secondary.opacity(0.12))
 
-            ForEach(visible) { line in
-                diffLine(line)
-            }
+            // One Text so drag-selection spans every visible line (SwiftUI
+            // selection is scoped per Text view). Line tints ride attribute
+            // runs rather than full-width row backgrounds.
+            Text(FileChangeDiffText.attributedBody(visible.map(\.textLine)))
+                .textSelection(.enabled)
+                .font(.system(.caption, design: .monospaced))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
 
             if hidden > 0 {
                 Text("… \(hidden) more line\(hidden == 1 ? "" : "s")")
@@ -1059,28 +1045,97 @@ private struct FileChangeDiffView: View {
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.separator, lineWidth: 1))
     }
+}
 
-    @ViewBuilder
-    private func diffLine(_ line: Line) -> some View {
-        switch line.kind {
-        case .separator:
-            Text(line.text)
-                .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(.tertiary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 1)
-        case .removed, .added:
-            Text((line.kind == .added ? "+ " : "- ") + line.text)
-                .font(.system(.caption, design: .monospaced))
-                .textSelection(.enabled)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    line.kind == .added ? Color.green.opacity(0.12) : Color.red.opacity(0.12))
+/// Pure attributed-string builder for inline file-change diffs. Kept free of
+/// SwiftUI view state so selection can be unit-tested without a host window.
+enum FileChangeDiffText {
+    enum Kind { case removed, added, separator }
+
+    static func attributedBody(_ lines: [(kind: Kind, text: String)]) -> AttributedString {
+        var result = AttributedString()
+        for (index, line) in lines.enumerated() {
+            if index > 0 {
+                result.append(AttributedString("\n"))
+            }
+            result.append(attributedLine(line.kind, text: line.text))
         }
+        return result
+    }
+
+    private static func attributedLine(_ kind: Kind, text: String) -> AttributedString {
+        switch kind {
+        case .separator:
+            var piece = AttributedString(text)
+            piece.font = .system(.caption, design: .monospaced)
+            piece.foregroundColor = Color.secondary.opacity(0.55)
+            return piece
+        case .removed:
+            var piece = AttributedString("- " + text)
+            piece.font = .system(.caption, design: .monospaced)
+            piece.backgroundColor = Color.red.opacity(0.12)
+            return piece
+        case .added:
+            var piece = AttributedString("+ " + text)
+            piece.font = .system(.caption, design: .monospaced)
+            piece.backgroundColor = Color.green.opacity(0.12)
+            return piece
+        }
+    }
+}
+
+/// Pure builder for the subagent progress log: one attributed string so the
+/// whole tail can be drag-selected.
+enum SubagentProgressLogText {
+    static func attributedBody(
+        entries: [SubagentTaskProgressEntry],
+        startedAt: Date,
+        emphasizeLast: Bool
+    ) -> AttributedString {
+        var result = AttributedString()
+        for (index, entry) in entries.enumerated() {
+            if index > 0 {
+                result.append(AttributedString("\n"))
+            }
+            let emphasize = emphasizeLast && index == entries.count - 1
+            result.append(attributedEntry(entry, startedAt: startedAt, emphasize: emphasize))
+        }
+        return result
+    }
+
+    private static func attributedEntry(
+        _ entry: SubagentTaskProgressEntry,
+        startedAt: Date,
+        emphasize: Bool
+    ) -> AttributedString {
+        var line = AttributedString()
+
+        var offset = AttributedString(relativeOffset(from: startedAt, to: entry.at))
+        offset.font = .caption2.monospacedDigit()
+        offset.foregroundColor = .secondary
+        line.append(offset)
+
+        if let tool = entry.toolName?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !tool.isEmpty
+        {
+            var toolRun = AttributedString("  \(tool)")
+            toolRun.font = .caption2.weight(.medium)
+            toolRun.foregroundColor = .secondary
+            line.append(toolRun)
+        }
+
+        var body = AttributedString("  \(entry.text)")
+        body.font = .caption
+        body.foregroundColor = emphasize ? .primary : .secondary
+        line.append(body)
+        return line
+    }
+
+    private static func relativeOffset(from start: Date, to date: Date) -> String {
+        let seconds = max(0, Int(date.timeIntervalSince(start)))
+        let minutes = seconds / 60
+        let rem = seconds % 60
+        return String(format: "%d:%02d", minutes, rem)
     }
 }
 
