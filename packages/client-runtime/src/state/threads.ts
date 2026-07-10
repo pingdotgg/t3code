@@ -225,7 +225,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               Stream.runHead,
             );
             return Option.isSome(prepared)
-              ? yield* snapshotLoader.load(prepared.value, threadId)
+              ? yield* snapshotLoader
+                  .load(prepared.value, threadId)
+                  .pipe(
+                    Effect.orElseSucceed(() => Option.none<OrchestrationV2ThreadDetailSnapshot>()),
+                  )
               : Option.none<OrchestrationV2ThreadDetailSnapshot>();
           });
 

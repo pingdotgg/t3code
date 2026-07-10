@@ -171,7 +171,9 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
               Stream.runHead,
             );
             return Option.isSome(prepared)
-              ? yield* snapshotLoader.load(prepared.value)
+              ? yield* snapshotLoader
+                  .load(prepared.value)
+                  .pipe(Effect.orElseSucceed(() => Option.none<OrchestrationV2ShellSnapshot>()))
               : Option.none<OrchestrationV2ShellSnapshot>();
           });
 

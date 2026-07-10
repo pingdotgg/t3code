@@ -26,6 +26,10 @@ import {
 } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as Persistence from "../platform/persistence.ts";
+import {
+  RemoteEnvironmentAuthFetchError,
+  type RemoteEnvironmentRequestError,
+} from "../rpc/http.ts";
 import * as RpcSession from "../rpc/session.ts";
 import { v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
 import {
@@ -82,6 +86,7 @@ function awaitThreadState(
 const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (options?: {
   readonly cached?: OrchestrationV2ThreadProjection;
   readonly httpSnapshot?: Option.Option<OrchestrationV2ThreadDetailSnapshot>;
+  readonly httpSnapshotFailure?: RemoteEnvironmentRequestError;
 }) {
   const inputs = yield* Queue.unbounded<TestThreadInput>();
   const observed = yield* Queue.unbounded<EnvironmentThreadState>();
@@ -119,10 +124,14 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const snapshotLoader = ThreadSnapshotLoader.of({
     load: (_prepared, threadId) =>
       Ref.update(loaderCalls, (count) => count + 1).pipe(
-        Effect.as(
-          threadId === THREAD_ID
-            ? (options?.httpSnapshot ?? Option.none<OrchestrationV2ThreadDetailSnapshot>())
-            : Option.none<OrchestrationV2ThreadDetailSnapshot>(),
+        Effect.andThen(
+          options?.httpSnapshotFailure === undefined
+            ? Effect.succeed(
+                threadId === THREAD_ID
+                  ? (options?.httpSnapshot ?? Option.none<OrchestrationV2ThreadDetailSnapshot>())
+                  : Option.none<OrchestrationV2ThreadDetailSnapshot>(),
+              )
+            : Effect.fail(options.httpSnapshotFailure),
         ),
       ),
   });
@@ -303,6 +312,35 @@ describe("EnvironmentThreads", () => {
       // resumed from that snapshot's sequence.
       expect(yield* Ref.get(harness.loaderCalls)).toBeGreaterThanOrEqual(1);
       expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(1);
+    }),
+  );
+
+  it.effect("uses the socket snapshot when the HTTP snapshot load fails", () =>
+    Effect.gen(function* () {
+      const socketProjection: OrchestrationV2ThreadProjection = {
+        ...BASE_PROJECTION,
+        thread: { ...BASE_PROJECTION.thread, title: "Socket title" },
+      };
+      const harness = yield* makeHarness({
+        httpSnapshotFailure: new RemoteEnvironmentAuthFetchError({
+          message: "HTTP snapshot failed",
+          cause: null,
+        }),
+      });
+      yield* Queue.offer(harness.inputs, snapshot(socketProjection, 1));
+
+      const state = yield* awaitThreadState(
+        harness.observed,
+        (value) =>
+          value.status === "live" &&
+          Option.isSome(value.data) &&
+          value.data.value.thread.title === "Socket title",
+      );
+
+      expect(Option.getOrThrow(state.data)).toEqual(socketProjection);
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(1);
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(1);
+      expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBeUndefined();
     }),
   );
 
