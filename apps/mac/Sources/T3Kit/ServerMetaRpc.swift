@@ -126,13 +126,40 @@ public struct GeneratedSceneryQuery: Codable, Sendable, Hashable {
     }
 }
 
+/// One iconic place with a place-specific Unsplash search query.
+public struct GeneratedSceneryLocation: Codable, Sendable, Hashable {
+    public var name: String
+    public var query: String
+    public var timeOfDay: GeneratedSceneryTimeOfDay?
+    public var season: GeneratedScenerySeason?
+
+    public init(
+        name: String,
+        query: String,
+        timeOfDay: GeneratedSceneryTimeOfDay? = nil,
+        season: GeneratedScenerySeason? = nil
+    ) {
+        self.name = name
+        self.query = query
+        self.timeOfDay = timeOfDay
+        self.season = season
+    }
+}
+
 /// Success payload for `server.generateScenerySet`.
 public struct GeneratedScenerySet: Codable, Sendable, Hashable {
     public var sceneNames: [String]
     public var queries: [GeneratedSceneryQuery]
+    /// Per-location fetch targets. Nil/empty → legacy query-pool path.
+    public var locations: [GeneratedSceneryLocation]?
 
-    public init(sceneNames: [String], queries: [GeneratedSceneryQuery]) {
+    public init(
+        sceneNames: [String],
+        queries: [GeneratedSceneryQuery],
+        locations: [GeneratedSceneryLocation]? = nil
+    ) {
         self.sceneNames = sceneNames
         self.queries = queries
+        self.locations = locations
     }
 }
