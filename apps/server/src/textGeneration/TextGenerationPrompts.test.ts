@@ -223,6 +223,26 @@ describe("sanitizeScenerySetResult", () => {
     ]);
     expect(result.sceneNames).toEqual(["Kirkjufell", "Jökulsárlón"]);
   });
+
+  it("caps general queries at 6", () => {
+    const queries = Array.from({ length: 12 }, (_, i) => ({
+      text: `iceland landscape ${i + 1}`,
+    }));
+    const result = sanitizeScenerySetResult({
+      sceneNames: ["Kirkjufell"],
+      queries,
+    });
+
+    expect(result.queries).toHaveLength(6);
+    expect(result.queries.map((q) => q.text)).toEqual([
+      "iceland landscape 1",
+      "iceland landscape 2",
+      "iceland landscape 3",
+      "iceland landscape 4",
+      "iceland landscape 5",
+      "iceland landscape 6",
+    ]);
+  });
 });
 
 describe("normalizeCliError", () => {

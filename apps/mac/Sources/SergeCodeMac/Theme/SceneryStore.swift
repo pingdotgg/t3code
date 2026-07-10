@@ -551,36 +551,54 @@ public final class SceneryStore {
     private func refreshPool(for setId: String) async {
         guard let client else { return }
         guard let set = set(id: setId) else { return }
-        var fetched: [(photo: UnsplashClient.APIPhoto, tags: SceneryPhotoTags?)] = []
-        for query in set.queries {
-            let take = max(1, query.take)
-            guard let results = try? await client.searchPhotos(query: query.text, count: take)
-            else { continue }
-            let tags = SceneryPhotoTags(query: query)
-            fetched.append(contentsOf: results.map { (photo: $0, tags: tags) })
-        }
-        var seen: Set<String> = []
-        let unique = Array(
-            fetched.filter { seen.insert($0.photo.id).inserted }.prefix(Self.poolCap))
-        guard !unique.isEmpty else { return }
 
-        let sceneNames = set.sceneNames.isEmpty
-            ? ScenerySet.makeBuiltinDolomites().sceneNames
-            : set.sceneNames
-        let refreshed = unique.enumerated().map { index, entry in
-            let photo = entry.photo
-            let base = sceneNames[index % sceneNames.count]
-            return SceneryPhoto(
-                id: photo.id,
-                name: base,
-                averageColorHex: photo.color,
-                heroURL: photo.urls.regular,
-                thumbURL: photo.urls.thumb,
-                rawURL: photo.urls.raw,
-                downloadLocationURL: photo.links?.downloadLocation,
-                photographerName: photo.user.name,
-                photographerProfileURL: photo.user.links?.html)
+        let refreshed: [SceneryPhoto]
+        var refreshedTags: [String: SceneryPhotoTags] = [:]
+
+        if let locations = set.locations, !locations.isEmpty {
+            // Per-location path: re-fetch by place query and keep authentic names.
+            // Never round-robin sceneNames onto generic top-up photos.
+            guard
+                let built = try? await SceneryPoolBuilder.buildFromLocations(
+                    client: client,
+                    locations: locations,
+                    queries: set.queries,
+                    setTitle: set.title)
+            else { return }
+            refreshed = built.photos
+            refreshedTags = built.photoTags
+        } else {
+            // Legacy path (builtin Dolomites, older custom sets without locations):
+            // query-pool fetch + curated sceneNames round-robin.
+            var fetched: [(photo: UnsplashClient.APIPhoto, tags: SceneryPhotoTags?)] = []
+            for query in set.queries {
+                let take = max(1, query.take)
+                guard let results = try? await client.searchPhotos(query: query.text, count: take)
+                else { continue }
+                let tags = SceneryPhotoTags(query: query)
+                fetched.append(contentsOf: results.map { (photo: $0, tags: tags) })
+            }
+            var seen: Set<String> = []
+            let unique = Array(
+                fetched.filter { seen.insert($0.photo.id).inserted }.prefix(Self.poolCap))
+            guard !unique.isEmpty else { return }
+
+            let sceneNames =
+                set.sceneNames.isEmpty
+                ? ScenerySet.makeBuiltinDolomites().sceneNames
+                : set.sceneNames
+            refreshed = unique.enumerated().map { index, entry in
+                let photo = entry.photo
+                let base = sceneNames[index % sceneNames.count]
+                return SceneryPoolBuilder.sceneryPhoto(from: photo, name: base)
+            }
+            for entry in unique {
+                if let tags = entry.tags {
+                    refreshedTags[entry.photo.id] = tags
+                }
+            }
         }
+
         // Carry over photos still assigned to threads but missing from the new
         // results, so a refresh never swaps an existing thread's scene out from
         // under its scene-derived title.
@@ -592,12 +610,6 @@ public final class SceneryStore {
         let previous = pools[setId] ?? []
         let kept = previous.filter { assignedIDs.contains($0.id) && !refreshedIDs.contains($0.id) }
         let previousTags = photoTagsBySet[setId] ?? [:]
-        var refreshedTags: [String: SceneryPhotoTags] = [:]
-        for entry in unique {
-            if let tags = entry.tags {
-                refreshedTags[entry.photo.id] = tags
-            }
-        }
         for photo in kept {
             if let tags = previousTags[photo.id] {
                 refreshedTags[photo.id] = tags
@@ -614,6 +626,11 @@ public final class SceneryStore {
         if setId == settings.defaultSetId || setId == ScenerySet.dolomitesID {
             syncDefaultPool()
         }
+    }
+
+    /// Test hook for `refreshPool` (stale/empty pool rebuild).
+    func refreshPoolForTesting(setId: String) async {
+        await refreshPool(for: setId)
     }
 
     private func syncDefaultPool() {

@@ -192,7 +192,8 @@ export function sanitizeScenerySetResult(input: {
       text,
       ...sanitizeOptionalTags(raw),
     });
-    if (queries.length >= 12) break;
+    // Cap general top-up queries (prompt asks 4–6) to bound Unsplash volume.
+    if (queries.length >= 6) break;
   }
 
   return {

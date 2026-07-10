@@ -88,6 +88,29 @@ struct ScenerySetFallbackTests {
         let plain = GeneratedSceneryLocation(name: "Skógafoss", query: "Skógafoss waterfall Iceland")
         #expect(SceneSetComposer.tags(from: plain) == nil)
     }
+
+    @Test("makeStoreLocations maps and dedupes generated locations")
+    func makeStoreLocations() {
+        let mapped = SceneSetComposer.makeStoreLocations(from: [
+            GeneratedSceneryLocation(
+                name: " Kirkjufell ", query: " Kirkjufell mountain Iceland ", timeOfDay: .dusk),
+            GeneratedSceneryLocation(name: "kirkjufell", query: "duplicate"),
+            GeneratedSceneryLocation(name: "Skógafoss", query: "  "),
+            GeneratedSceneryLocation(name: "Jökulsárlón", query: "Jökulsárlón lagoon"),
+        ])
+        #expect(mapped.count == 2)
+        #expect(mapped[0].name == "Kirkjufell")
+        #expect(mapped[0].query == "Kirkjufell mountain Iceland")
+        #expect(mapped[0].timeOfDay == .dusk)
+        #expect(mapped[1].name == "Jökulsárlón")
+    }
+
+    @Test("makeStoreQueries caps general queries at 6")
+    func makeStoreQueriesCap() {
+        let generated = (1...10).map { GeneratedSceneryQuery(text: "iceland landscape \($0)") }
+        let queries = SceneSetComposer.makeStoreQueries(from: generated, location: "Iceland")
+        #expect(queries.count == 6)
+    }
 }
 
 @Suite("Unsplash suggested scene names")
@@ -384,6 +407,18 @@ struct SceneSetComposerPipelineTests {
             "Kirkjufell", "Skógafoss", "Reynisfjara",
         ])
         #expect(store.photoTagsForTesting(setId: setId)["photo-kirk"]?.timeOfDay == .dusk)
+        // Locations persisted on the set for refreshPool re-fetch.
+        let persisted = store.set(id: setId)?.locations
+        #expect(persisted?.count == 3)
+        #expect(persisted?.map(\.name) == ["Kirkjufell", "Skógafoss", "Reynisfjara"])
+        #expect(persisted?.first?.query == "Kirkjufell mountain Iceland")
+        // Manifest on disk includes locations.
+        let manifestURL = root.appendingPathComponent("sets/\(setId)/manifest.json")
+        let manifestData = try Data(contentsOf: manifestURL)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(ScenerySet.self, from: manifestData)
+        #expect(decoded.locations?.map(\.name) == ["Kirkjufell", "Skógafoss", "Reynisfjara"])
         // No caption names anywhere (top-up is numbered when metadata is absent).
         for photo in photos {
             #expect(!photo.name.lowercased().contains("image describes"))
@@ -575,6 +610,117 @@ struct SceneSetComposerPipelineTests {
         #expect(!FileManager.default.fileExists(atPath: staleFile.path))
         // Palette cleared for recompute (new set registered with nil palette).
         #expect(store.set(id: setId)?.palette == nil)
+        // Regenerated set persists locations for future refresh.
+        #expect(store.set(id: setId)?.locations?.map(\.name) == ["Kirkjufell", "Skógafoss"])
+    }
+
+    @Test("refreshPool with locations keeps place names on matching photos (no round-robin)")
+    func refreshPoolPerLocationNames() async throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        UnsplashSearchStub.resultsByQuery = [
+            "Kirkjufell mountain Iceland": [
+                UnsplashSearchStub.photoJSON(
+                    id: "fresh-kirk",
+                    description: "this image describes a highway"),
+            ],
+            "Skógafoss waterfall Iceland": [
+                UnsplashSearchStub.photoJSON(id: "fresh-skog"),
+            ],
+            "iceland landscape": [
+                UnsplashSearchStub.photoJSON(
+                    id: "fresh-top-1", description: "caption must not become a name"),
+                UnsplashSearchStub.photoJSON(
+                    id: "fresh-top-2", description: "another caption"),
+            ],
+        ]
+
+        let client = makeClient()
+        let store = SceneryStore(client: client, root: root)
+        store.reloadFromDiskForTesting()
+
+        // Seed a custom set with locations + stale pool that would be wrong if
+        // refresh round-robined sceneNames onto generic query results.
+        let setId = "iceland-rfr1"
+        let set = ScenerySet(
+            id: setId,
+            title: "Iceland",
+            origin: .custom,
+            createdAt: Date(timeIntervalSince1970: 1),
+            queries: [SceneryQuery(text: "iceland landscape", take: 12)],
+            sceneNames: ["Kirkjufell", "Skógafoss"],
+            locations: [
+                SceneryLocation(
+                    name: "Kirkjufell", query: "Kirkjufell mountain Iceland", timeOfDay: .dusk),
+                SceneryLocation(name: "Skógafoss", query: "Skógafoss waterfall Iceland"),
+            ])
+        let stale = SceneryPhoto(
+            id: "stale",
+            name: "Stale",
+            averageColorHex: "#000000",
+            heroURL: URL(string: "https://images.unsplash.com/stale")!,
+            thumbURL: URL(string: "https://images.unsplash.com/stale-t")!,
+            rawURL: nil,
+            downloadLocationURL: nil,
+            photographerName: "Old",
+            photographerProfileURL: nil)
+        store.registerSet(set, pool: [stale])
+
+        await store.refreshPoolForTesting(setId: setId)
+
+        let photos = store.photos(forSetId: setId)
+        #expect(!photos.isEmpty)
+        // Named location photos keep their authentic place names (not rotated).
+        let kirk = photos.first { $0.id == "fresh-kirk" }
+        let skog = photos.first { $0.id == "fresh-skog" }
+        #expect(kirk?.name == "Kirkjufell")
+        #expect(skog?.name == "Skógafoss")
+        // Round-robin of sceneNames onto top-up would put Kirkjufell/Skógafoss
+        // on random top-up ids — ensure top-ups are numbered (no location meta).
+        for photo in photos where photo.id.hasPrefix("fresh-top") {
+            #expect(photo.name != "Kirkjufell")
+            #expect(photo.name != "Skógafoss")
+            #expect(!photo.name.lowercased().contains("caption"))
+            #expect(!photo.name.lowercased().contains("image describes"))
+            #expect(photo.name.hasPrefix("Iceland "))
+        }
+        #expect(store.photoTagsForTesting(setId: setId)["fresh-kirk"]?.timeOfDay == .dusk)
+    }
+
+    @Test("refreshPool without locations still round-robins curated sceneNames")
+    func refreshPoolLegacyRoundRobin() async throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        UnsplashSearchStub.resultsByQuery = [
+            "dolomites italy mountains": [
+                UnsplashSearchStub.photoJSON(id: "p1"),
+                UnsplashSearchStub.photoJSON(id: "p2"),
+                UnsplashSearchStub.photoJSON(id: "p3"),
+            ],
+        ]
+
+        let client = makeClient()
+        let store = SceneryStore(client: client, root: root)
+        store.reloadFromDiskForTesting()
+
+        let setId = "legacy-set1"
+        let set = ScenerySet(
+            id: setId,
+            title: "Legacy",
+            origin: .custom,
+            createdAt: Date(timeIntervalSince1970: 1),
+            queries: [SceneryQuery(text: "dolomites italy mountains", take: 3)],
+            sceneNames: ["Alpha", "Beta"],
+            locations: nil)
+        store.registerSet(set, pool: [])
+
+        await store.refreshPoolForTesting(setId: setId)
+
+        let photos = store.photos(forSetId: setId)
+        #expect(photos.count == 3)
+        #expect(photos.map(\.name) == ["Alpha", "Beta", "Alpha"])
     }
 }
 
