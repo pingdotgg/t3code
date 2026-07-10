@@ -511,4 +511,68 @@ struct SubagentTaskActivityStateTests {
         #expect(left.latestProgress == right.latestProgress)
         #expect(left.duration == right.duration)
     }
+
+    @Test func startedStoresIdentityMetadata() {
+        let started = activity(
+            id: "act-start", kind: ActivityKind.taskStarted,
+            at: "2026-07-04T10:00:00.000Z",
+            payload: .object([
+                "taskId": .string("task-1"),
+                "taskType": .string("local_agent"),
+                "description": .string("Explore auth"),
+                "subagentType": .string("Explore"),
+                "model": .string("claude-opus-4-6"),
+                "workflowName": .string("spec"),
+                "toolUseId": .string("toolu-1"),
+            ]))
+
+        var state = T3SubagentTaskActivityState()
+        let item = state.apply(activity: started, at: WireDate.parse(started.createdAt)!)
+
+        #expect(item?.subagentType == "Explore")
+        #expect(item?.model == "claude-opus-4-6")
+        #expect(item?.workflowName == "spec")
+        #expect(item?.toolUseId == "toolu-1")
+    }
+
+    @Test func taskUpdatedPatchesBackgroundErrorAndTerminalStatus() {
+        let started = activity(
+            id: "act-start", kind: ActivityKind.taskStarted,
+            at: "2026-07-04T10:00:00.000Z",
+            payload: .object([
+                "taskId": .string("task-1"),
+                "description": .string("Long runner"),
+            ]))
+        let updated = activity(
+            id: "act-updated", kind: ActivityKind.taskUpdated,
+            at: "2026-07-04T10:00:05.000Z",
+            payload: .object([
+                "taskId": .string("task-1"),
+                "status": .string("running"),
+                "isBackgrounded": .bool(true),
+                "error": .string("soft warning"),
+            ]))
+        let terminal = activity(
+            id: "act-terminal", kind: ActivityKind.taskUpdated,
+            at: "2026-07-04T10:00:09.000Z",
+            payload: .object([
+                "taskId": .string("task-1"),
+                "status": .string("killed"),
+                "error": .string("aborted by host"),
+            ]))
+
+        var state = T3SubagentTaskActivityState()
+        _ = state.apply(activity: started, at: WireDate.parse(started.createdAt)!)
+        let running = state.apply(activity: updated, at: WireDate.parse(updated.createdAt)!)
+        #expect(running?.isBackgrounded == true)
+        #expect(running?.error == "soft warning")
+        #expect(running?.state == .running)
+        #expect(state.activeTaskIDs == Set(["task-1"]))
+
+        let finished = state.apply(activity: terminal, at: WireDate.parse(terminal.createdAt)!)
+        #expect(finished?.state == .stopped)
+        #expect(finished?.error == "aborted by host")
+        #expect(finished?.completionSummary == "aborted by host")
+        #expect(state.activeTaskIDs.isEmpty)
+    }
 }

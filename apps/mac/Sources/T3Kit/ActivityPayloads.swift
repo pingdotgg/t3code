@@ -30,6 +30,7 @@ public enum ActivityKind {
     /// These rows are aggregated by `taskId` before they reach the UI.
     public static let taskStarted = "task.started"
     public static let taskProgress = "task.progress"
+    public static let taskUpdated = "task.updated"
     public static let taskCompleted = "task.completed"
     /// Tone `.info`: adapter-side warning about a provider message the
     /// server couldn't project (ProviderRuntimeIngestion.ts).
@@ -47,18 +48,24 @@ public struct ToolLifecycleActivityPayload: Decodable, Sendable {
     public var detail: String?
 }
 
-// MARK: - task.started / task.progress / task.completed
+// MARK: - task.started / task.progress / task.updated / task.completed
 
 /// Activity payload for kind `task.started`:
-/// `{ taskId, description, taskType? }`.
+/// `{ taskId, description?, taskType?, subagentType?, model?, workflowName?, toolUseId? }`.
+/// All identity fields are optional so older persisted activities still decode.
 public struct TaskStartedActivityPayload: Decodable, Sendable {
     public var taskId: String?
     public var taskType: String?
     public var description: String?
+    public var detail: String?
+    public var subagentType: String?
+    public var model: String?
+    public var workflowName: String?
+    public var toolUseId: String?
 }
 
 /// Activity payload for kind `task.progress`:
-/// `{ taskId, description, summary?, lastToolName?, usage? }`.
+/// `{ taskId, description, summary?, lastToolName?, usage?, subagentType?, toolUseId? }`.
 public struct TaskProgressActivityPayload: Decodable, Sendable {
     public var taskId: String?
     public var taskType: String?
@@ -67,10 +74,25 @@ public struct TaskProgressActivityPayload: Decodable, Sendable {
     public var summary: String?
     public var lastToolName: String?
     public var usage: JSONValue?
+    public var subagentType: String?
+    public var toolUseId: String?
+}
+
+/// Activity payload for kind `task.updated`:
+/// `{ taskId, status?, description?, error?, isBackgrounded?, endTime?, totalPausedMs? }`.
+public struct TaskUpdatedActivityPayload: Decodable, Sendable {
+    public var taskId: String?
+    public var status: String?
+    public var description: String?
+    public var detail: String?
+    public var error: String?
+    public var isBackgrounded: Bool?
+    public var endTime: Double?
+    public var totalPausedMs: Double?
 }
 
 /// Activity payload for kind `task.completed`:
-/// `{ taskId, status, summary?, usage? }`.
+/// `{ taskId, status, summary?, usage?, outputFile? }`.
 public struct TaskCompletedActivityPayload: Decodable, Sendable {
     public var taskId: String?
     public var taskType: String?
@@ -80,6 +102,7 @@ public struct TaskCompletedActivityPayload: Decodable, Sendable {
     public var summary: String?
     public var lastToolName: String?
     public var usage: JSONValue?
+    public var outputFile: String?
 }
 
 // MARK: - user-input.requested / user-input.resolved

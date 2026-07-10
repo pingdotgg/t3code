@@ -133,13 +133,40 @@ struct ActivityPayloadTests {
                 {
                   "taskId": "task-1",
                   "taskType": "general-purpose",
-                  "description": "Inspect timeline mapping"
+                  "description": "Inspect timeline mapping",
+                  "subagentType": "Explore",
+                  "model": "claude-sonnet-4-5",
+                  "workflowName": "spec",
+                  "toolUseId": "toolu-1"
                 }
                 """)
         let payload = try #require(activity.decodePayload(TaskStartedActivityPayload.self))
         #expect(payload.taskId == "task-1")
         #expect(payload.taskType == "general-purpose")
         #expect(payload.description == "Inspect timeline mapping")
+        #expect(payload.subagentType == "Explore")
+        #expect(payload.model == "claude-sonnet-4-5")
+        #expect(payload.workflowName == "spec")
+        #expect(payload.toolUseId == "toolu-1")
+    }
+
+    @Test("task.started decodes legacy payloads without new identity fields")
+    func taskStartedLegacy() throws {
+        let activity = try activity(
+            kind: ActivityKind.taskStarted,
+            payloadJSON: """
+                {
+                  "taskId": "task-1",
+                  "taskType": "general-purpose",
+                  "description": "Inspect timeline mapping"
+                }
+                """)
+        let payload = try #require(activity.decodePayload(TaskStartedActivityPayload.self))
+        #expect(payload.taskId == "task-1")
+        #expect(payload.subagentType == nil)
+        #expect(payload.model == nil)
+        #expect(payload.workflowName == nil)
+        #expect(payload.toolUseId == nil)
     }
 
     @Test("task.progress decodes description, summary, last tool and usage")
@@ -152,6 +179,8 @@ struct ActivityPayloadTests {
                   "description": "Inspect timeline mapping",
                   "summary": "Reading the mapper",
                   "lastToolName": "Read",
+                  "subagentType": "Explore",
+                  "toolUseId": "toolu-1",
                   "usage": {"input_tokens": 12, "output_tokens": 4}
                 }
                 """)
@@ -160,7 +189,34 @@ struct ActivityPayloadTests {
         #expect(payload.description == "Inspect timeline mapping")
         #expect(payload.summary == "Reading the mapper")
         #expect(payload.lastToolName == "Read")
+        #expect(payload.subagentType == "Explore")
+        #expect(payload.toolUseId == "toolu-1")
         #expect(payload.usage?["input_tokens"]?.intValue == 12)
+    }
+
+    @Test("task.updated decodes patch fields")
+    func taskUpdated() throws {
+        let activity = try activity(
+            kind: ActivityKind.taskUpdated,
+            payloadJSON: """
+                {
+                  "taskId": "task-1",
+                  "status": "running",
+                  "description": "Still going",
+                  "error": "transient blip",
+                  "isBackgrounded": true,
+                  "endTime": 1710000000,
+                  "totalPausedMs": 1200
+                }
+                """)
+        let payload = try #require(activity.decodePayload(TaskUpdatedActivityPayload.self))
+        #expect(payload.taskId == "task-1")
+        #expect(payload.status == "running")
+        #expect(payload.description == "Still going")
+        #expect(payload.error == "transient blip")
+        #expect(payload.isBackgrounded == true)
+        #expect(payload.endTime == 1_710_000_000)
+        #expect(payload.totalPausedMs == 1200)
     }
 
     @Test("task.completed decodes status, summary and usage")
@@ -172,7 +228,8 @@ struct ActivityPayloadTests {
                   "taskId": "task-1",
                   "status": "completed",
                   "summary": "Found the right mapping point",
-                  "usage": {"input_tokens": 20}
+                  "usage": {"input_tokens": 20},
+                  "outputFile": "/tmp/out.txt"
                 }
                 """)
         let payload = try #require(activity.decodePayload(TaskCompletedActivityPayload.self))
@@ -180,6 +237,7 @@ struct ActivityPayloadTests {
         #expect(payload.status == "completed")
         #expect(payload.summary == "Found the right mapping point")
         #expect(payload.usage?["input_tokens"]?.intValue == 20)
+        #expect(payload.outputFile == "/tmp/out.txt")
     }
 
     @Test("mismatched payload degrades to nil instead of throwing")

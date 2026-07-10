@@ -2367,13 +2367,42 @@ public actor LiveBackend: BackendService {
     private func mapSubagentTask(_ task: T3SubagentTaskItem) -> TimelineItem {
         .subagentTask(
             SubagentTaskItem(
-                taskId: task.taskId, taskType: task.taskType, description: task.description,
+                taskId: task.taskId,
+                taskType: task.taskType,
+                description: task.description,
+                subagentType: task.subagentType,
+                model: task.model,
+                workflowName: task.workflowName,
+                toolUseId: task.toolUseId,
                 state: Self.uiSubagentTaskState(task.state),
                 latestProgress: task.completionSummary ?? task.latestProgress,
-                startedAt: task.startedAt, duration: task.duration,
+                lastToolName: task.lastToolName,
+                usageSummary: Self.usageSummary(from: task.usage),
+                isBackgrounded: task.isBackgrounded,
+                error: task.error,
+                startedAt: task.startedAt,
+                lastActivityAt: task.lastActivityAt,
+                duration: task.duration,
                 progressLog: task.progressLog.map {
                     SubagentTaskProgressEntry(at: $0.at, toolName: $0.toolName, text: $0.text)
                 }))
+    }
+
+    private static func usageSummary(from usage: JSONValue?) -> String? {
+        guard let usage, case .object(let object) = usage else { return nil }
+        var parts: [String] = []
+        if let total = object["total_tokens"]?.intValue ?? object["totalTokens"]?.intValue {
+            parts.append("\(total) tokens")
+        } else {
+            let input = object["input_tokens"]?.intValue ?? object["inputTokens"]?.intValue
+            let output = object["output_tokens"]?.intValue ?? object["outputTokens"]?.intValue
+            if let input { parts.append("\(input) in") }
+            if let output { parts.append("\(output) out") }
+        }
+        if let tools = object["tool_uses"]?.intValue ?? object["toolUses"]?.intValue {
+            parts.append("\(tools) tools")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     private static func uiSubagentTaskState(_ state: T3SubagentTaskState) -> SubagentTaskState {

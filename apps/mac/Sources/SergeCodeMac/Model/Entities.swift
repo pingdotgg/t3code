@@ -229,9 +229,18 @@ public struct SubagentTaskItem: Hashable, Sendable {
     public var taskId: String
     public var taskType: String?
     public var description: String?
+    public var subagentType: String?
+    public var model: String?
+    public var workflowName: String?
+    public var toolUseId: String?
     public var state: SubagentTaskState
     public var latestProgress: String?
+    public var lastToolName: String?
+    public var usageSummary: String?
+    public var isBackgrounded: Bool
+    public var error: String?
     public var startedAt: Date
+    public var lastActivityAt: Date
     public var duration: TimeInterval?
     /// Ordered progress updates (oldest first). Empty when no progress has
     /// been streamed yet.
@@ -240,16 +249,39 @@ public struct SubagentTaskItem: Hashable, Sendable {
     public var id: String { "subagent-task:\(taskId)" }
 
     public init(
-        taskId: String, taskType: String?, description: String?, state: SubagentTaskState,
-        latestProgress: String?, startedAt: Date, duration: TimeInterval?,
+        taskId: String,
+        taskType: String?,
+        description: String?,
+        subagentType: String? = nil,
+        model: String? = nil,
+        workflowName: String? = nil,
+        toolUseId: String? = nil,
+        state: SubagentTaskState,
+        latestProgress: String?,
+        lastToolName: String? = nil,
+        usageSummary: String? = nil,
+        isBackgrounded: Bool = false,
+        error: String? = nil,
+        startedAt: Date,
+        lastActivityAt: Date? = nil,
+        duration: TimeInterval?,
         progressLog: [SubagentTaskProgressEntry] = []
     ) {
         self.taskId = taskId
         self.taskType = taskType
         self.description = description
+        self.subagentType = subagentType
+        self.model = model
+        self.workflowName = workflowName
+        self.toolUseId = toolUseId
         self.state = state
         self.latestProgress = latestProgress
+        self.lastToolName = lastToolName
+        self.usageSummary = usageSummary
+        self.isBackgrounded = isBackgrounded
+        self.error = error
         self.startedAt = startedAt
+        self.lastActivityAt = lastActivityAt ?? startedAt
         self.duration = duration
         self.progressLog = progressLog
     }
