@@ -7,12 +7,22 @@ struct ChatTimelineRowView: View {
     let threadID: String
     let model: AppModel
 
+    /// Project cwd for path shortening in tool rows; plain String? so child
+    /// views never need AppModel.
+    private var projectRoot: String? {
+        guard let thread = model.threads.first(where: { $0.id == threadID }) else { return nil }
+        return model.projects.first { $0.id == thread.projectID }?.path
+    }
+
     var body: some View {
         switch item {
         case .single(let item):
             singleRow(item)
         case .toolGroup(_, let items, let summary):
-            ToolGroupRow(items: items, summary: summary, threadStatus: model.selectedThread?.status)
+            ToolGroupRow(
+                items: items, summary: summary,
+                threadStatus: model.selectedThread?.status,
+                projectRoot: projectRoot)
         }
     }
 
@@ -28,7 +38,8 @@ struct ChatTimelineRowView: View {
             ToolEventRow(
                 name: name, detail: detail, kind: kind, status: status,
                 output: output, outputIsError: outputIsError,
-                threadStatus: model.selectedThread?.status)
+                threadStatus: model.selectedThread?.status,
+                projectRoot: projectRoot)
         case .subagentTask(let task):
             SubagentTaskRow(task: task)
         case .approval(let request):
@@ -161,6 +172,7 @@ private struct ToolGroupRow: View {
     let items: [TimelineItem]
     let summary: ToolGroupSummary
     let threadStatus: ThreadStatus?
+    let projectRoot: String?
 
     @UIState private var isExpanded = false
 
@@ -227,7 +239,8 @@ private struct ToolGroupRow: View {
             ToolEventRow(
                 name: name, detail: detail, kind: kind, status: status,
                 output: output, outputIsError: outputIsError,
-                threadStatus: threadStatus)
+                threadStatus: threadStatus,
+                projectRoot: projectRoot)
         case .reasoning(_, let text, _):
             ReasoningRow(text: text)
         default:
@@ -253,6 +266,7 @@ private struct ToolEventRow: View {
     let output: String?
     let outputIsError: Bool
     let threadStatus: ThreadStatus?
+    let projectRoot: String?
 
     @UIState private var isExpanded = false
 
@@ -292,17 +306,26 @@ private struct ToolEventRow: View {
         !detail.isEmpty || !(output?.isEmpty ?? true)
     }
 
-    private var preview: String? {
-        let line: String? =
-            switch parsed {
-            case .command(let command): command
-            case .fileChange(let path, _): path
-            case .plain(let text): text
-            }
-        guard let first = line?.split(separator: "\n", omittingEmptySubsequences: true).first
-        else { return nil }
-        let trimmed = first.trimmingCharacters(in: .whitespaces)
-        return trimmed.isEmpty ? nil : trimmed
+    /// One-line preview text plus optional full path for the tooltip when a
+    /// file path was shortened for display.
+    private var preview: (text: String, fullPath: String?)? {
+        switch parsed {
+        case .command(let command):
+            guard let first = command.split(separator: "\n", omittingEmptySubsequences: true).first
+            else { return nil }
+            let trimmed = first.trimmingCharacters(in: .whitespaces)
+            return trimmed.isEmpty ? nil : (trimmed, nil)
+        case .fileChange(let path, _):
+            let trimmed = path.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { return nil }
+            let short = PathDisplay.short(trimmed, projectRoot: projectRoot)
+            return (short, trimmed)
+        case .plain(let text):
+            guard let first = text.split(separator: "\n", omittingEmptySubsequences: true).first
+            else { return nil }
+            let trimmed = first.trimmingCharacters(in: .whitespaces)
+            return trimmed.isEmpty ? nil : (trimmed, nil)
+        }
     }
 
     var body: some View {
@@ -320,11 +343,7 @@ private struct ToolEventRow: View {
                         .font(.callout.weight(.medium))
                         .layoutPriority(1)
                     if let preview {
-                        Text(preview)
-                            .font(.system(.caption, design: kind == .command ? .monospaced : .default))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
+                        previewLabel(preview)
                     }
                     Spacer(minLength: 8)
                     if hasExpandableContent {
@@ -360,7 +379,7 @@ private struct ToolEventRow: View {
                 case .command(let command):
                     monospacedBody(command, foreground: .primary)
                 case .fileChange(let path, let edits):
-                    FileChangeDiffView(path: path, edits: edits)
+                    FileChangeDiffView(path: path, projectRoot: projectRoot, edits: edits)
                 case .plain(let text):
                     monospacedBody(text, foreground: .secondary)
                 }
@@ -368,6 +387,22 @@ private struct ToolEventRow: View {
             if let output, !output.isEmpty {
                 outputSection(output)
             }
+        }
+    }
+
+    @ViewBuilder
+    private func previewLabel(_ preview: (text: String, fullPath: String?)) -> some View {
+        let label = Text(preview.text)
+            .font(.system(
+                .caption,
+                design: kind == .command || kind == .fileChange ? .monospaced : .default))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.middle)
+        if let fullPath = preview.fullPath {
+            label.help(fullPath)
+        } else {
+            label
         }
     }
 
@@ -712,6 +747,7 @@ extension ToolEventKind {
 /// are capped — the Diff inspector remains the full view.
 private struct FileChangeDiffView: View {
     let path: String
+    let projectRoot: String?
     let edits: [ToolFileEdit]
 
     private static let maxLines = 60
@@ -721,6 +757,10 @@ private struct FileChangeDiffView: View {
         let id: Int
         let kind: Kind
         let text: String
+    }
+
+    private var displayPath: String {
+        PathDisplay.short(path, projectRoot: projectRoot)
     }
 
     private var lines: [Line] {
@@ -755,10 +795,11 @@ private struct FileChangeDiffView: View {
 
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
-                Text(path)
+                Text(displayPath)
                     .font(.system(.caption, design: .monospaced))
                     .lineLimit(1)
                     .truncationMode(.middle)
+                    .help(path)
                 Spacer(minLength: 4)
                 if additions > 0 {
                     Text("+\(additions)")
