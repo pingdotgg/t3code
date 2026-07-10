@@ -20,7 +20,7 @@ struct EmptyStateView: View {
                 // Recreate the image subtree when the rotation seed changes so
                 // a cached hero for the previous bucket cannot stick.
                 .id(featured?.id ?? "empty-\(scenery.rotationDayKey)")
-                // Photo fades over the window material; gradient scrim stays
+                // Photo fades over behind-window glass; gradient scrim stays
                 // above and is only gently scaled for legibility.
                 .opacity(translucency)
                 .overlay(

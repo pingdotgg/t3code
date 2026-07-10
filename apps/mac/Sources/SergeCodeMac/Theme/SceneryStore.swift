@@ -200,8 +200,9 @@ public final class SceneryStore {
         settings.defaultSetId
     }
 
-    /// Opacity of scenery photo layers over the window material (`0.5...1.0`).
-    /// Global appearance setting; live-observed by wallpaper views.
+    /// Opacity of scenery photo layers and solidifying strength of the
+    /// behind-window glass (`0.5...1.0`). Global appearance setting;
+    /// live-observed by wallpaper views and `WindowGlassBackground`.
     public var sceneryTranslucency: Double {
         settings.sceneryTranslucency
     }

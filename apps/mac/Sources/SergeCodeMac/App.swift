@@ -40,7 +40,14 @@ struct SergeCodeApp: App {
         WindowGroup {
             RootView(model: model, scenery: scenery)
                 .tint(AlpineTheme.accent(palette: activeSceneryPalette))
-                .containerBackground(.thinMaterial, for: .window)
+                // Behind-window liquid glass: strength tracks sceneryTranslucency
+                // (1.0 = solid plate; lower = desktop visible through blur).
+                // Requires TransparentWindowConfigurator (isOpaque=false).
+                .containerBackground(for: .window) {
+                    WindowGlassBackground(translucency: scenery.sceneryTranslucency)
+                }
+                // Punch the NSWindow so container glass can sample the desktop.
+                .background(TransparentWindowConfigurator())
                 .onAppear {
                     // Thread → project path so scenery set resolution can read
                     // per-project prefs (Phase 1 multi-set).

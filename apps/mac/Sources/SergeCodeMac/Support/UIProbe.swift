@@ -167,6 +167,12 @@
                     tab: .scenery, name: "12-settings-scenery", model: model, scenery: scenery,
                     dir: dir)
 
+                // Window glass translucency: capture solid (1.0) and floor
+                // (0.5) states, logging NSWindow isOpaque/clear + behind-window
+                // effect presence. Self-capture cannot prove desktop bleed, but
+                // it confirms the hierarchy is wired for it.
+                await probeWindowTranslucency(scenery: scenery, dir: dir)
+
                 // Create-image-set naming: mock backend returns locations;
                 // register the resulting bare-title pool and create a thread.
                 // Confirms new threads get "Iceland", not "Iceland 5".
@@ -198,6 +204,50 @@
 
             print("UIProbe: done")
             NSApp.terminate(nil)
+        }
+
+        /// Captures the main window at translucency 1.0 and 0.5 and logs
+        /// window/glass configuration for verification.
+        private static func probeWindowTranslucency(scenery: SceneryStore, dir: String) async {
+            let previous = scenery.sceneryTranslucency
+
+            scenery.setSceneryTranslucency(1.0)
+            try? await Task.sleep(for: .seconds(1))
+            logWindowGlassState(label: "translucency=1.0")
+            snapshot("13-glass-opaque", dir: dir)
+
+            scenery.setSceneryTranslucency(0.5)
+            try? await Task.sleep(for: .seconds(1))
+            logWindowGlassState(label: "translucency=0.5")
+            snapshot("14-glass-see-through", dir: dir)
+
+            scenery.setSceneryTranslucency(previous)
+            scenery.flushPendingSettingsSave()
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+
+        private static func logWindowGlassState(label: String) {
+            guard let window = NSApp.windows.first(where: {
+                $0.isVisible && $0.styleMask.contains(.titled) && $0.styleMask.contains(.resizable)
+            }) else {
+                print("UIProbe: \(label) no main window")
+                return
+            }
+            let opaque = window.isOpaque
+            let clearBG = window.backgroundColor == .clear
+            let configured = TransparentWindowConfigurator.isConfigured(window)
+            let behindCount = TransparentWindowConfigurator.behindWindowEffectCount(
+                in: window.contentView)
+            print(
+                "UIProbe: \(label) isOpaque=\(opaque) clearBackground=\(clearBG) "
+                    + "configured=\(configured) behindWindowEffects=\(behindCount)")
+            if !configured {
+                print("UIProbe: FAIL expected non-opaque clear window for glass translucency")
+            } else if behindCount == 0 {
+                print("UIProbe: FAIL expected ≥1 behind-window NSVisualEffectView")
+            } else {
+                print("UIProbe: PASS window glass hierarchy ready (\(label))")
+            }
         }
 
         /// Exercises custom scenery set create → first thread title.
