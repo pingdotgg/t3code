@@ -237,8 +237,13 @@ public final class SceneryStore {
         return setPool[AlpineTheme.stableIndex(threadID, setPool.count)]
     }
 
-    /// The scene the next created thread will get. The preview and subsequent
-    /// assignment use the same cached bucket and deterministic FNV seed.
+    /// The scene the next created thread will get. The preview
+    /// (`NewSessionSheet`) and the actual commit (`AppModel.createSceneThread`,
+    /// which calls this once and reuses the returned `SceneryPhoto` for both
+    /// the title and the `assign` call) both funnel through this single
+    /// function, so as long as the observable state (bucket, assignment
+    /// count, pool) hasn't changed between calls they deterministically
+    /// agree — there is no separate "commit-time" selection to keep in sync.
     public func peekNextScene(
         projectPath: String? = nil,
         setIdOverride: String? = nil
@@ -250,16 +255,33 @@ public final class SceneryStore {
             setId = setIdOverride
         }
         let setPool = pools[setId] ?? []
+        let candidatePool = distinctlyNamedCandidates(in: setPool, setId: setId)
         let assignmentCount = assignments.values.count { $0.resolvedSetId == setId }
         let seed = [
             "next", setId, projectPath ?? "", String(assignmentCount),
             rotationBucket.timeOfDay.rawValue, rotationBucket.season.rawValue,
         ].joined(separator: "|")
         return SceneryPhotoSelection.select(
-            photos: setPool,
+            photos: candidatePool,
             tagsByPhotoID: photoTagsBySet[setId] ?? [:],
             bucket: rotationBucket,
             seed: seed)
+    }
+
+    /// New threads should be named after a distinct place, not the bare set
+    /// title ("Iceland"). Filters `pool` down to photos whose resolved name
+    /// (via `baseSceneName`) differs from the set's bare title, and falls
+    /// back to the full pool when no distinctly-named candidate exists —
+    /// e.g. built-in sets where every photo legitimately shares the set name,
+    /// or a still-thin custom pool that hasn't topped up with named photos
+    /// yet. Never returns an empty array when `pool` is non-empty, so
+    /// `SceneryPhotoSelection.select` always has candidates to choose from.
+    private func distinctlyNamedCandidates(in pool: [SceneryPhoto], setId: String) -> [SceneryPhoto]
+    {
+        let setTitle = set(id: setId)?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !setTitle.isEmpty else { return pool }
+        let named = pool.filter { baseSceneName($0.name, setId: setId) != setTitle }
+        return named.isEmpty ? pool : named
     }
 
     /// Thread title for a scene: the plain place name, even when reused.
