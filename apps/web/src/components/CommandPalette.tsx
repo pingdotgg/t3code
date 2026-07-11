@@ -478,6 +478,7 @@ function OpenCommandPaletteDialog(props: {
     defaultThreadEnvMode,
     handleNewThread,
     resolveDefaultMainCheckout,
+    resolveNewThreadDefaults,
   } = useHandleNewThread();
   const projects = useProjects();
   const threads = useThreadShells();
@@ -701,6 +702,7 @@ function OpenCommandPaletteDialog(props: {
               defaultNewWorktreesStartFromOrigin,
               handleNewThread,
               resolveDefaultMainCheckout,
+              resolveNewThreadDefaults,
             },
             scopeProjectRef(project.environmentId, project.id),
           );
@@ -715,6 +717,7 @@ function OpenCommandPaletteDialog(props: {
       handleNewThread,
       projects,
       resolveDefaultMainCheckout,
+      resolveNewThreadDefaults,
     ],
   );
 
@@ -1017,6 +1020,7 @@ function OpenCommandPaletteDialog(props: {
             defaultNewWorktreesStartFromOrigin,
             handleNewThread,
             resolveDefaultMainCheckout,
+            resolveNewThreadDefaults,
           });
         },
       });

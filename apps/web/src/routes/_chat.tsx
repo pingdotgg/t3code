@@ -30,6 +30,7 @@ function ChatRouteGlobalShortcuts() {
     defaultThreadEnvMode,
     handleNewThread,
     resolveDefaultMainCheckout,
+    resolveNewThreadDefaults,
     routeThreadRef,
   } = useHandleNewThread();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -79,6 +80,7 @@ function ChatRouteGlobalShortcuts() {
           defaultNewWorktreesStartFromOrigin,
           handleNewThread,
           resolveDefaultMainCheckout,
+          resolveNewThreadDefaults,
         });
         return;
       }
@@ -94,6 +96,7 @@ function ChatRouteGlobalShortcuts() {
           defaultNewWorktreesStartFromOrigin,
           handleNewThread,
           resolveDefaultMainCheckout,
+          resolveNewThreadDefaults,
         });
         return;
       }
@@ -109,6 +112,7 @@ function ChatRouteGlobalShortcuts() {
           defaultNewWorktreesStartFromOrigin,
           handleNewThread,
           resolveDefaultMainCheckout,
+          resolveNewThreadDefaults,
         });
         return;
       }
@@ -169,6 +173,7 @@ function ChatRouteGlobalShortcuts() {
     clearSelection,
     handleNewThread,
     resolveDefaultMainCheckout,
+    resolveNewThreadDefaults,
     keybindings,
     defaultProjectRef,
     previewOpen,
