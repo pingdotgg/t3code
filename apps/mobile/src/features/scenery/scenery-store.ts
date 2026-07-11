@@ -144,6 +144,19 @@ function isLegacyNumberedSceneTitle(title: string, base: string): boolean {
   return Number.isInteger(lap) && lap >= 2 && lap <= 9;
 }
 
+// Polluted SCENE_NAMES entries that are themselves pool-index labels of the
+// set title, so an exact match on "Dolomites 5" cannot win (SCENE_NAMES
+// never legitimately contains such entries today, but this keeps the guard
+// future-proof if the curated list changes). Longest-first so a longer base
+// name wins over a shorter one that happens to be a prefix. Hoisted to
+// module scope: inputs are only the module-level SCENE_NAMES constant, and
+// `baseSceneName` runs per-row per-render.
+const AUTHENTIC_BASES: ReadonlyArray<string> = SCENE_NAMES.filter(
+  (candidate) => !isPoolNumberedSceneName(candidate, SET_TITLE),
+)
+  .slice()
+  .sort((a, b) => b.length - a.length);
+
 /**
  * Normalizes a possibly-polluted photo/thread name back to its canonical
  * base place name: the set title (if the name is exactly that or a
@@ -161,14 +174,7 @@ function baseSceneName(name: string): string {
   if (name === SET_TITLE || isPoolNumberedSceneName(name, SET_TITLE)) {
     return SET_TITLE;
   }
-  // Ignore polluted SCENE_NAMES entries that are themselves pool-index
-  // labels of the set title, so an exact match on "Dolomites 5" cannot win
-  // (SCENE_NAMES never legitimately contains such entries today, but this
-  // keeps the guard future-proof if the curated list changes).
-  const authenticBases = SCENE_NAMES.filter(
-    (candidate) => !isPoolNumberedSceneName(candidate, SET_TITLE),
-  );
-  for (const base of [...authenticBases].sort((a, b) => b.length - a.length)) {
+  for (const base of AUTHENTIC_BASES) {
     if (
       name === base ||
       isPoolNumberedSceneName(name, base) ||
