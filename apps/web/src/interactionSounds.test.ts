@@ -62,9 +62,20 @@ describe("interaction sounds", () => {
     ).toEqual(["bloom"]);
   });
 
+  it("plays bloom when a thread starts requesting approval", () => {
+    const thread = makeThread();
+
+    expect(
+      deriveInteractionSoundCues(captureThreadSoundState([thread]), [
+        makeThread({ hasPendingApprovals: true }),
+      ]),
+    ).toEqual(["bloom"]);
+  });
+
   it("does not replay cues for unchanged state", () => {
     const thread = makeThread({
       hasPendingUserInput: true,
+      hasPendingApprovals: true,
       latestTurn: {
         turnId: TurnId.make("turn-1"),
         state: "completed",

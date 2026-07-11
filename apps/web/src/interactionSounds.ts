@@ -4,7 +4,7 @@ export type InteractionSoundCue = "bloom" | "success";
 
 interface ThreadSoundState {
   readonly completedTurn: string | null;
-  readonly hasPendingUserInput: boolean;
+  readonly hasPendingUserAction: boolean;
 }
 
 export type ThreadSoundStateByKey = ReadonlyMap<string, ThreadSoundState>;
@@ -29,7 +29,7 @@ export function captureThreadSoundState(
       threadKey(thread),
       {
         completedTurn: completedTurn(thread),
-        hasPendingUserInput: thread.hasPendingUserInput,
+        hasPendingUserAction: thread.hasPendingUserInput || thread.hasPendingApprovals,
       },
     ]),
   );
@@ -48,7 +48,8 @@ export function deriveInteractionSoundCues(
     if (prior && nextCompletedTurn !== null && prior.completedTurn !== nextCompletedTurn) {
       cues.push("success");
     }
-    if (prior && thread.hasPendingUserInput && !prior.hasPendingUserInput) {
+    const hasPendingUserAction = thread.hasPendingUserInput || thread.hasPendingApprovals;
+    if (prior && hasPendingUserAction && !prior.hasPendingUserAction) {
       cues.push("bloom");
     }
   }
