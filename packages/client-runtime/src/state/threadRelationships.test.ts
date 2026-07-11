@@ -4,13 +4,17 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   deriveThreadRelationshipGraph,
   flattenSubagentThreadTree,
+  getOwnedSubagentDescendants,
+  getOwnedSubagentSubtree,
   getSubagentThreadAncestorKeys,
   getSubagentThreadTreeRoots,
+  hasUnavailableSubagentParent,
   immediateThreadRelationships,
   isSubagentThread,
   relatedThreadIds,
   resolveMergeBackTargetThreadId,
   subagentThreadKey,
+  threadSubtreeActionCopy,
   type SubagentThreadTreeInput,
   walkThreadRelationships,
 } from "./threadRelationships.ts";
@@ -83,6 +87,73 @@ describe("thread relationships", () => {
     );
   });
 
+  it("walks only recursively owned subagents and stays scoped to the environment", () => {
+    const root = treeThread({ id: "root" });
+    const child = treeThread({ id: "child", parentId: "root", relationship: "subagent" });
+    const grandchild = treeThread({
+      id: "grandchild",
+      parentId: "child",
+      relationship: "subagent",
+    });
+    const fork = treeThread({ id: "fork", parentId: "root", relationship: "fork" });
+    const otherEnvironmentChild = {
+      ...treeThread({ id: "other-child", parentId: "root", relationship: "subagent" }),
+      environmentId: EnvironmentId.make("environment-2"),
+    };
+    const threads = [root, child, grandchild, fork, otherEnvironmentChild];
+
+    expect(getOwnedSubagentDescendants(threads, root).map((thread) => thread.id)).toEqual([
+      child.id,
+      grandchild.id,
+    ]);
+    expect(getOwnedSubagentSubtree(threads, root).map((thread) => thread.id)).toEqual([
+      root.id,
+      child.id,
+      grandchild.id,
+    ]);
+  });
+
+  it("bounds malformed ownership cycles", () => {
+    const root = treeThread({ id: "root", parentId: "child", relationship: "subagent" });
+    const child = treeThread({ id: "child", parentId: "root", relationship: "subagent" });
+
+    expect(getOwnedSubagentDescendants([root, child], root).map((thread) => thread.id)).toEqual([
+      child.id,
+    ]);
+  });
+
+  it("uses consistent subtree action copy", () => {
+    expect(
+      threadSubtreeActionCopy({
+        action: "delete",
+        threadTitle: "Parent",
+        descendantCount: 2,
+      }),
+    ).toEqual({
+      title: "Delete thread and 2 subagent threads?",
+      message:
+        "“Parent” and its 2 subagent threads will be permanently deleted, including their conversation and terminal history.",
+      confirmText: "Delete",
+    });
+    expect(
+      threadSubtreeActionCopy({
+        action: "unarchive",
+        threadTitle: "Parent",
+        descendantCount: 1,
+      }).message,
+    ).toBe("“Parent” and its 1 subagent thread archived with it will be restored.");
+    expect(
+      threadSubtreeActionCopy({
+        action: "archive",
+        threadTitle: "Parent",
+        descendantCount: 1,
+        activeThreadCount: 2,
+      }).message,
+    ).toBe(
+      "“Parent” and its 1 subagent thread will be moved to the archive. Active work in 2 threads will be cancelled.",
+    );
+  });
+
   it("keeps orphans and rootless cycles visible exactly once", () => {
     const orphan = treeThread({
       id: "orphan",
@@ -104,6 +175,8 @@ describe("thread relationships", () => {
     expect(rows.map((row) => row.thread.id)).toEqual([orphan.id, first.id, second.id]);
     expect(new Set(rows.map((row) => subagentThreadKey(row.thread))).size).toBe(3);
     expect(rows.at(-1)?.hasSubagentChildren).toBe(false);
+    expect(hasUnavailableSubagentParent(threads, orphan)).toBe(true);
+    expect(hasUnavailableSubagentParent(threads, second)).toBe(false);
   });
 
   it("only returns ancestors from the projected tree", () => {

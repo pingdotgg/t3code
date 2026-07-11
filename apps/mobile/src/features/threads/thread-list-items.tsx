@@ -421,6 +421,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   readonly hasSubagentChildren?: boolean;
   readonly isSubagentBranchExpanded?: boolean;
   readonly subagentTreeVisible?: boolean;
+  readonly hasUnavailableSubagentParent?: boolean;
   readonly onToggleSubagentBranch?: (thread: EnvironmentThreadShell) => void;
   /** Sidebar only: the thread currently open in the detail pane. */
   readonly selected?: boolean;
@@ -456,9 +457,12 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   const timestamp = relativeTime(
     thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
   );
-  const threadAccessibilityLabel = pr ? `${thread.title}, ${pr.accessibilityLabel}` : thread.title;
-  const subtitleParts = [props.environmentLabel, thread.branch].filter((part): part is string =>
-    Boolean(part),
+  const unavailableParentLabel = props.hasUnavailableSubagentParent ? "Parent unavailable" : null;
+  const threadAccessibilityLabel = [thread.title, unavailableParentLabel, pr?.accessibilityLabel]
+    .filter((part): part is string => Boolean(part))
+    .join(", ");
+  const subtitleParts = [props.environmentLabel, thread.branch, unavailableParentLabel].filter(
+    (part): part is string => Boolean(part),
   );
 
   const backgroundColor = compact ? screenColor : drawerColor;

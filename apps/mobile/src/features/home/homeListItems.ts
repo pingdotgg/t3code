@@ -3,6 +3,7 @@ import {
   flattenSubagentThreadTree,
   getSubagentThreadAncestorKeys,
   getSubagentThreadTreeRoots,
+  hasUnavailableSubagentParent,
   subagentThreadKey,
   type SubagentThreadTreeRow,
 } from "@t3tools/client-runtime/state/thread-relationships";
@@ -43,6 +44,7 @@ export interface HomeThreadListItem {
   readonly hasSubagentChildren: boolean;
   readonly isSubagentBranchExpanded: boolean;
   readonly subagentTreeVisible: boolean;
+  readonly hasUnavailableSubagentParent: boolean;
   readonly isLast: boolean;
 }
 
@@ -120,6 +122,7 @@ export function homeListItemsAreEqual(previous: HomeListItem, item: HomeListItem
         previous.hasSubagentChildren === item.hasSubagentChildren &&
         previous.isSubagentBranchExpanded === item.isSubagentBranchExpanded &&
         previous.subagentTreeVisible === item.subagentTreeVisible &&
+        previous.hasUnavailableSubagentParent === item.hasUnavailableSubagentParent &&
         previous.isLast === item.isLast
       );
     case "show-more":
@@ -152,6 +155,7 @@ export function buildHomeListLayout(input: {
 }): HomeListLayout {
   const items: HomeListItem[] = [];
   const stickyHeaderIndices: number[] = [];
+  const allThreads = input.groups.flatMap((group) => group.threads);
 
   for (const [groupIndex, group] of input.groups.entries()) {
     const display = input.displayStates.get(group.key) ?? DEFAULT_GROUP_DISPLAY_STATE;
@@ -255,6 +259,7 @@ export function buildHomeListLayout(input: {
         hasSubagentChildren: row.hasSubagentChildren,
         isSubagentBranchExpanded: row.isSubagentBranchExpanded,
         subagentTreeVisible: nested,
+        hasUnavailableSubagentParent: hasUnavailableSubagentParent(allThreads, row.thread),
         isLast: threadIndex === visibleThreadRows.length - 1 && !hasShowMoreRow,
       });
     }

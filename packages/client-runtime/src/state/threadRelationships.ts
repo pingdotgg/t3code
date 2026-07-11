@@ -42,6 +42,121 @@ export function subagentParentThreadKey(thread: SubagentThreadTreeInput): string
     : scopedThreadKey(scopeThreadRef(thread.environmentId, parentThreadId));
 }
 
+/**
+ * Identifies recovery roots whose declared subagent parent is not present in
+ * the supplied shell view (for example because it is deleted or archived).
+ */
+export function hasUnavailableSubagentParent<Thread extends SubagentThreadTreeInput>(
+  threads: readonly Thread[],
+  thread: Thread,
+): boolean {
+  const parentKey = subagentParentThreadKey(thread);
+  return (
+    parentKey !== null && !threads.some((candidate) => subagentThreadKey(candidate) === parentKey)
+  );
+}
+
+/**
+ * Returns the transitive set of threads owned by `root` through subagent
+ * lineage. Forks and context-transfer relationships are intentionally not
+ * ownership edges and are therefore never included. Malformed cycles are
+ * bounded by the visited set.
+ */
+export function getOwnedSubagentDescendants<Thread extends SubagentThreadTreeInput>(
+  threads: readonly Thread[],
+  root: Pick<Thread, "environmentId" | "id">,
+): readonly Thread[] {
+  const childrenByParentKey = new Map<string, Thread[]>();
+  for (const thread of threads) {
+    const parentKey = subagentParentThreadKey(thread);
+    if (parentKey === null) continue;
+    const children = childrenByParentKey.get(parentKey);
+    if (children === undefined) childrenByParentKey.set(parentKey, [thread]);
+    else children.push(thread);
+  }
+
+  const rootKey = subagentThreadKey(root);
+  const visited = new Set<string>([rootKey]);
+  const descendants: Thread[] = [];
+  const pending = [...(childrenByParentKey.get(rootKey) ?? [])];
+  while (pending.length > 0) {
+    const thread = pending.shift();
+    if (thread === undefined) continue;
+    const key = subagentThreadKey(thread);
+    if (visited.has(key)) continue;
+    visited.add(key);
+    descendants.push(thread);
+    pending.push(...(childrenByParentKey.get(key) ?? []));
+  }
+  return descendants;
+}
+
+/** Returns `root` followed by every recursively owned subagent descendant. */
+export function getOwnedSubagentSubtree<Thread extends SubagentThreadTreeInput>(
+  threads: readonly Thread[],
+  root: Thread,
+): readonly Thread[] {
+  return [root, ...getOwnedSubagentDescendants(threads, root)];
+}
+
+export type ThreadSubtreeAction = "archive" | "unarchive" | "delete";
+
+export interface ThreadSubtreeActionCopy {
+  readonly title: string;
+  readonly message: string;
+  readonly confirmText: "Archive" | "Unarchive" | "Delete";
+}
+
+/**
+ * Shared action copy keeps web and mobile explicit about recursive ownership
+ * semantics. `descendantCount` excludes the selected root thread.
+ */
+export function threadSubtreeActionCopy(input: {
+  readonly action: ThreadSubtreeAction;
+  readonly threadTitle: string;
+  readonly descendantCount: number;
+  readonly activeThreadCount?: number;
+}): ThreadSubtreeActionCopy {
+  const count = Math.max(0, input.descendantCount);
+  const activeCount = Math.max(0, input.activeThreadCount ?? 0);
+  const childLabel = `${count} subagent thread${count === 1 ? "" : "s"}`;
+  const quotedTitle = `“${input.threadTitle}”`;
+  const activeWarning =
+    activeCount === 0 || input.action === "unarchive"
+      ? ""
+      : ` Active work in ${activeCount} thread${activeCount === 1 ? "" : "s"} will be cancelled.`;
+
+  switch (input.action) {
+    case "archive":
+      return {
+        title: count === 0 ? "Archive thread?" : `Archive thread and ${childLabel}?`,
+        message:
+          count === 0
+            ? `${quotedTitle} will be moved to the archive.${activeWarning}`
+            : `${quotedTitle} and its ${childLabel} will be moved to the archive.${activeWarning}`,
+        confirmText: "Archive",
+      };
+    case "unarchive":
+      return {
+        title: count === 0 ? "Unarchive thread?" : `Unarchive thread and ${childLabel}?`,
+        message:
+          count === 0
+            ? `${quotedTitle} will be restored.`
+            : `${quotedTitle} and its ${childLabel} archived with it will be restored.`,
+        confirmText: "Unarchive",
+      };
+    case "delete":
+      return {
+        title: count === 0 ? "Delete thread?" : `Delete thread and ${childLabel}?`,
+        message:
+          count === 0
+            ? `${quotedTitle} will be permanently deleted, including its conversation and terminal history.${activeWarning}`
+            : `${quotedTitle} and its ${childLabel} will be permanently deleted, including their conversation and terminal history.${activeWarning}`,
+        confirmText: "Delete",
+      };
+  }
+}
+
 function indexSubagentThreads<Thread extends SubagentThreadTreeInput>(threads: readonly Thread[]) {
   const threadKeys = new Set(threads.map(subagentThreadKey));
   const childrenByParentKey = new Map<string, Thread[]>();

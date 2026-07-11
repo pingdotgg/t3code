@@ -502,6 +502,7 @@ function ThreadNavigationSidebarPane(
               hasSubagentChildren={item.hasSubagentChildren}
               isSubagentBranchExpanded={item.isSubagentBranchExpanded}
               subagentTreeVisible={item.subagentTreeVisible}
+              hasUnavailableSubagentParent={item.hasUnavailableSubagentParent}
               onToggleSubagentBranch={toggleSubagentBranch}
               selected={
                 scopedThreadKey(thread.environmentId, thread.id) === props.selectedThreadKey

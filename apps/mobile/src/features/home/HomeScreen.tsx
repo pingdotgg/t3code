@@ -352,6 +352,7 @@ export function HomeScreen(props: HomeScreenProps) {
               hasSubagentChildren={item.hasSubagentChildren}
               isSubagentBranchExpanded={item.isSubagentBranchExpanded}
               subagentTreeVisible={item.subagentTreeVisible}
+              hasUnavailableSubagentParent={item.hasUnavailableSubagentParent}
               onToggleSubagentBranch={toggleSubagentBranch}
               onArchiveThread={props.onArchiveThread}
               onDeleteThread={props.onDeleteThread}

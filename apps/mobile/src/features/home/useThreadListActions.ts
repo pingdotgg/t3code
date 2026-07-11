@@ -1,4 +1,9 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { presentThreadShell, threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
+import {
+  getOwnedSubagentSubtree,
+  threadSubtreeActionCopy,
+} from "@t3tools/client-runtime/state/thread-relationships";
 import * as Cause from "effect/Cause";
 import * as Haptics from "expo-haptics";
 import { useCallback, useRef } from "react";
@@ -6,6 +11,8 @@ import { Alert } from "react-native";
 
 import { showConfirmDialog } from "../../components/ConfirmDialogHost";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import { appAtomRegistry } from "../../state/atom-registry";
+import { environmentSnapshotAtom } from "../../state/shell";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 
@@ -29,6 +36,30 @@ function actionFailureTitle(action: ThreadListAction): string {
   if (action === "archive") return "Could not archive thread";
   if (action === "unarchive") return "Could not unarchive thread";
   return "Could not delete thread";
+}
+
+function readThreadSubtree(thread: EnvironmentThreadShell): readonly EnvironmentThreadShell[] {
+  const snapshot = appAtomRegistry.get(environmentSnapshotAtom(thread.environmentId));
+  if (snapshot === null) return [thread];
+  const threads = [...snapshot.threads, ...snapshot.archivedThreads].map((entry) =>
+    presentThreadShell(thread.environmentId, entry),
+  );
+  const root = threads.find((entry) => entry.id === thread.id) ?? thread;
+  return getOwnedSubagentSubtree(threads, root);
+}
+
+function actionSubagentDescendants(
+  action: ThreadListAction,
+  thread: EnvironmentThreadShell,
+): readonly EnvironmentThreadShell[] {
+  const descendants = readThreadSubtree(thread).slice(1);
+  if (action === "archive") {
+    return descendants.filter((entry) => entry.archivedAt === null);
+  }
+  if (action === "unarchive") {
+    return descendants.filter((entry) => entry.archivedAt === thread.archivedAt);
+  }
+  return descendants;
 }
 
 function useThreadActionExecutor(
@@ -74,37 +105,52 @@ function useThreadActionExecutor(
   return executeAction;
 }
 
-function useConfirmDeleteThread(
+function useThreadAction(
+  action: ThreadListAction,
   executeAction: (action: ThreadListAction, thread: EnvironmentThreadShell) => Promise<void>,
+  options: { readonly alwaysConfirm?: boolean } = {},
 ) {
   return useCallback(
     (thread: EnvironmentThreadShell) => {
-      const title = "Delete thread?";
-      const message = `“${thread.title}” will be permanently deleted, including its terminal history.`;
+      const descendants = actionSubagentDescendants(action, thread);
+      const descendantCount = descendants.length;
+      const activeThreadCount = [thread, ...descendants].filter((entry) =>
+        threadRuntimeIsActive(entry.runtime),
+      ).length;
+      if (options.alwaysConfirm !== true && descendantCount === 0 && activeThreadCount === 0) {
+        void executeAction(action, thread);
+        return;
+      }
+      const copy = threadSubtreeActionCopy({
+        action,
+        threadTitle: thread.title,
+        descendantCount,
+        activeThreadCount,
+      });
       if (process.env.EXPO_OS === "ios") {
-        Alert.alert(title, message, [
+        Alert.alert(copy.title, copy.message, [
           { text: "Cancel", style: "cancel" },
           {
-            text: "Delete",
-            style: "destructive",
+            text: copy.confirmText,
+            style: action === "delete" ? "destructive" : "default",
             onPress: () => {
-              void executeAction("delete", thread);
+              void executeAction(action, thread);
             },
           },
         ]);
         return;
       }
       showConfirmDialog({
-        title,
-        message,
-        confirmText: "Delete",
-        destructive: true,
+        title: copy.title,
+        message: copy.message,
+        confirmText: copy.confirmText,
+        destructive: action === "delete",
         onConfirm: () => {
-          void executeAction("delete", thread);
+          void executeAction(action, thread);
         },
       });
     },
-    [executeAction],
+    [action, executeAction, options.alwaysConfirm],
   );
 }
 
@@ -113,15 +159,10 @@ export function useThreadListActions(): {
   readonly confirmDeleteThread: (thread: EnvironmentThreadShell) => void;
 } {
   const executeAction = useThreadActionExecutor();
-
-  const archiveThread = useCallback(
-    (thread: EnvironmentThreadShell) => {
-      void executeAction("archive", thread);
-    },
-    [executeAction],
-  );
-
-  const confirmDeleteThread = useConfirmDeleteThread(executeAction);
+  const archiveThread = useThreadAction("archive", executeAction);
+  const confirmDeleteThread = useThreadAction("delete", executeAction, {
+    alwaysConfirm: true,
+  });
 
   return { archiveThread, confirmDeleteThread };
 }
@@ -139,13 +180,10 @@ export function useArchivedThreadListActions(
     [onCompleted],
   );
   const executeAction = useThreadActionExecutor(handleCompleted);
-  const unarchiveThread = useCallback(
-    (thread: EnvironmentThreadShell) => {
-      void executeAction("unarchive", thread);
-    },
-    [executeAction],
-  );
-  const confirmDeleteThread = useConfirmDeleteThread(executeAction);
+  const unarchiveThread = useThreadAction("unarchive", executeAction);
+  const confirmDeleteThread = useThreadAction("delete", executeAction, {
+    alwaysConfirm: true,
+  });
 
   return { unarchiveThread, confirmDeleteThread };
 }
