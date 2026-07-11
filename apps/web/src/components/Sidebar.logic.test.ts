@@ -170,13 +170,18 @@ describe("groupSidebarThreadsByWorktree", () => {
     };
 
     expect(
-      groupSidebarThreadsByWorktree([linkedCheckoutThread, mainCheckoutThread], {
-        environmentId: "local",
-        projectId: "project",
-        projectCheckoutPath: "/repo/.t3/worktrees/group-threads-worktrees",
-        projectCheckoutLabel: "t3code/group-threads-worktrees",
-        mainCheckoutPath: "/repo",
-      }),
+      groupSidebarThreadsByWorktree(
+        [linkedCheckoutThread, mainCheckoutThread],
+        [
+          {
+            environmentId: "local",
+            projectId: "project",
+            projectCheckoutPath: "/repo/.t3/worktrees/group-threads-worktrees",
+            projectCheckoutLabel: "t3code/group-threads-worktrees",
+            mainCheckoutPath: "/repo",
+          },
+        ],
+      ),
     ).toEqual([
       {
         key: "local:worktree:/repo/.t3/worktrees/group-threads-worktrees",
@@ -187,6 +192,60 @@ describe("groupSidebarThreadsByWorktree", () => {
         key: "local:worktree:/repo",
         label: "Main checkout",
         threads: [mainCheckoutThread],
+      },
+    ]);
+  });
+
+  it("reconciles each logical-project member with its own checkout", () => {
+    const memberOneImplicit = {
+      environmentId: "local",
+      projectId: "one",
+      branch: "feature/one",
+      worktreePath: null,
+    };
+    const memberTwoImplicit = {
+      environmentId: "local",
+      projectId: "two",
+      branch: "feature/two",
+      worktreePath: null,
+    };
+    const memberTwoExplicit = {
+      environmentId: "local",
+      projectId: "two",
+      branch: "feature/two",
+      worktreePath: "/repo-two",
+    };
+
+    const groups = groupSidebarThreadsByWorktree(
+      [memberOneImplicit, memberTwoImplicit, memberTwoExplicit],
+      [
+        {
+          environmentId: "local",
+          projectId: "one",
+          projectCheckoutPath: "/repo-one",
+          projectCheckoutLabel: "feature/one",
+          mainCheckoutPath: "/repo-one",
+        },
+        {
+          environmentId: "local",
+          projectId: "two",
+          projectCheckoutPath: "/repo-two",
+          projectCheckoutLabel: "feature/two",
+          mainCheckoutPath: "/main-two",
+        },
+      ],
+    );
+
+    expect(groups).toEqual([
+      {
+        key: "local:worktree:/repo-one",
+        label: "Main checkout",
+        threads: [memberOneImplicit],
+      },
+      {
+        key: "local:worktree:/repo-two",
+        label: "feature/two",
+        threads: [memberTwoImplicit, memberTwoExplicit],
       },
     ]);
   });
