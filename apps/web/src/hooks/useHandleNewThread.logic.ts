@@ -2,14 +2,14 @@ import type { VcsRef } from "@t3tools/contracts";
 
 import { resolveMainCheckoutTarget } from "../components/BranchToolbar.logic";
 
-interface MainCheckoutTarget {
+export interface MainCheckoutTarget {
   readonly branch: string;
   readonly path: string | null;
 }
 
 interface RefSnapshot {
   readonly refs: readonly VcsRef[];
-  readonly mainCheckoutPath?: string | null;
+  readonly mainCheckoutPath?: string | null | undefined;
 }
 
 export async function resolveProjectMainCheckout(input: {
