@@ -59,6 +59,7 @@ import {
 } from "../state/entities";
 import {
   captureThreadSoundState,
+  captureThreadSoundStateWhileSettingsHydrating,
   deriveInteractionSoundCues,
   type ThreadSoundStateByKey,
 } from "../interactionSounds";
@@ -211,8 +212,16 @@ function InteractionSoundCoordinator() {
   const previousStateRef = useRef<ThreadSoundStateByKey | null>(null);
 
   useEffect(() => {
+    if (!settingsHydrated) {
+      previousStateRef.current = captureThreadSoundStateWhileSettingsHydrating(
+        previousStateRef.current,
+        threads,
+      );
+      return;
+    }
+
     const previous = previousStateRef.current;
-    if (settingsHydrated && completionSoundEnabled && previous !== null) {
+    if (completionSoundEnabled && previous !== null) {
       for (const cue of deriveInteractionSoundCues(previous, threads)) {
         play(cue);
       }

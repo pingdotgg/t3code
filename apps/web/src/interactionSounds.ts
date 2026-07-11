@@ -35,6 +35,29 @@ export function captureThreadSoundState(
   );
 }
 
+/**
+ * While client settings are still hydrating, keep a sound baseline without
+ * advancing known thread state. Newly seen threads are admitted so later
+ * transitions can still produce cues once hydration completes.
+ */
+export function captureThreadSoundStateWhileSettingsHydrating(
+  previous: ThreadSoundStateByKey | null,
+  threads: ReadonlyArray<EnvironmentThreadShell>,
+): ThreadSoundStateByKey {
+  const next = captureThreadSoundState(threads);
+  if (previous === null) {
+    return next;
+  }
+
+  const merged = new Map(previous);
+  for (const [key, state] of next) {
+    if (!merged.has(key)) {
+      merged.set(key, state);
+    }
+  }
+  return merged;
+}
+
 export function deriveInteractionSoundCues(
   previous: ThreadSoundStateByKey,
   threads: ReadonlyArray<EnvironmentThreadShell>,
