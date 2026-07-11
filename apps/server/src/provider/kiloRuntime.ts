@@ -133,6 +133,15 @@ export function buildKiloPermissionRules(runtimeMode: RuntimeMode): PermissionRu
   if (runtimeMode === "full-access") {
     return [{ permission: "*", pattern: "*", action: "allow" }];
   }
+  if (runtimeMode === "auto-accept-edits") {
+    return [
+      { permission: "*", pattern: "*", action: "ask" },
+      { permission: "edit", pattern: "*", action: "allow" },
+      { permission: "write", pattern: "*", action: "allow" },
+      { permission: "patch", pattern: "*", action: "allow" },
+      { permission: "question", pattern: "*", action: "allow" },
+    ];
+  }
   return [
     { permission: "*", pattern: "*", action: "ask" },
     { permission: "question", pattern: "*", action: "allow" },
@@ -276,7 +285,7 @@ const makeKiloRuntime = Effect.gen(function* () {
       const stdout = yield* Ref.make("");
       const stderr = yield* Ref.make("");
       const ready = yield* Deferred.make<string, KiloRuntimeError>();
-      const stdoutFiber = yield* child.stdout.pipe(
+      yield* child.stdout.pipe(
         Stream.decodeText(),
         Stream.runForEach((chunk) =>
           Ref.updateAndGet(stdout, (value) => value + chunk).pipe(
@@ -289,7 +298,7 @@ const makeKiloRuntime = Effect.gen(function* () {
         Effect.ignore,
         Effect.forkIn(scope),
       );
-      const stderrFiber = yield* child.stderr.pipe(
+      yield* child.stderr.pipe(
         Stream.decodeText(),
         Stream.runForEach((chunk) => Ref.update(stderr, (value) => value + chunk)),
         Effect.ignore,
@@ -318,8 +327,6 @@ const makeKiloRuntime = Effect.gen(function* () {
           Effect.timeoutOption(input.timeoutMs ?? DEFAULT_KILO_SERVER_TIMEOUT_MS),
         ),
       );
-      yield* Fiber.interrupt(stdoutFiber).pipe(Effect.ignore);
-      yield* Fiber.interrupt(stderrFiber).pipe(Effect.ignore);
       if (Exit.isFailure(result)) {
         yield* Fiber.interrupt(exitFiber).pipe(Effect.ignore);
         const cause = Cause.squash(result.cause);

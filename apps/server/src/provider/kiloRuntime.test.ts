@@ -32,6 +32,13 @@ describe("kiloRuntime", () => {
       { permission: "*", pattern: "*", action: "ask" },
       { permission: "question", pattern: "*", action: "allow" },
     ]);
+    expect(buildKiloPermissionRules("auto-accept-edits")).toEqual([
+      { permission: "*", pattern: "*", action: "ask" },
+      { permission: "edit", pattern: "*", action: "allow" },
+      { permission: "write", pattern: "*", action: "allow" },
+      { permission: "patch", pattern: "*", action: "allow" },
+      { permission: "question", pattern: "*", action: "allow" },
+    ]);
   });
 
   it("keeps Kilo as one top-level instance while model slugs remain upstream-qualified", () => {

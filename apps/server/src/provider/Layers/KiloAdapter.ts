@@ -461,6 +461,13 @@ export function makeKiloAdapter(settings: KiloSettings, options?: KiloAdapterOpt
             type: "runtime.error",
             payload: { message, class: "provider_error", detail: event.properties.error },
           });
+          if (turnId) {
+            yield* emit({
+              ...(yield* eventBase({ threadId: context.session.threadId, turnId, raw: event })),
+              type: "turn.completed",
+              payload: { state: "failed", errorMessage: message },
+            });
+          }
           break;
         }
         default:
@@ -491,18 +498,39 @@ export function makeKiloAdapter(settings: KiloSettings, options?: KiloAdapterOpt
         Effect.catchCause((cause) =>
           abort.signal.aborted
             ? Effect.void
-            : eventBase({ threadId: context.session.threadId }).pipe(
-                Effect.flatMap((base) =>
-                  emit({
-                    ...base,
-                    type: "runtime.error",
-                    payload: {
-                      message: kiloRuntimeErrorDetail(Cause.squash(cause)),
-                      class: "transport_error",
-                    },
-                  }),
-                ),
-              ),
+            : Effect.gen(function* () {
+                const message = kiloRuntimeErrorDetail(Cause.squash(cause));
+                const activeTurnId = context.activeTurnId;
+                context.activeTurnId = undefined;
+                yield* Ref.set(context.stopped, true);
+                yield* updateSession(context, { status: "error", lastError: message }, true);
+                sessions.delete(context.session.threadId);
+                if (activeTurnId) {
+                  yield* emit({
+                    ...(yield* eventBase({
+                      threadId: context.session.threadId,
+                      turnId: activeTurnId,
+                    })),
+                    type: "turn.completed",
+                    payload: { state: "failed", errorMessage: message },
+                  });
+                }
+                yield* emit({
+                  ...(yield* eventBase({ threadId: context.session.threadId })),
+                  type: "runtime.error",
+                  payload: { message, class: "transport_error" },
+                });
+                yield* emit({
+                  ...(yield* eventBase({ threadId: context.session.threadId })),
+                  type: "session.exited",
+                  payload: {
+                    reason: message,
+                    recoverable: true,
+                    exitKind: "error",
+                  },
+                });
+                yield* Scope.close(context.scope, Exit.void).pipe(Effect.ignore, Effect.forkDetach);
+              }),
         ),
         Effect.forkIn(context.scope),
       );
