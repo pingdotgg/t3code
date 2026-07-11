@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
+  buildMultiSelectThreadContextMenuItems,
   createThreadJumpHintVisibilityController,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
@@ -36,6 +37,20 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("buildMultiSelectThreadContextMenuItems", () => {
+  it("offers bulk archive with the selected count", () => {
+    expect(
+      buildMultiSelectThreadContextMenuItems({ count: 3, hasRunningThread: false }),
+    ).toContainEqual({ id: "archive", label: "Archive (3)", disabled: false });
+  });
+
+  it("disables bulk archive when a selected thread is running", () => {
+    expect(
+      buildMultiSelectThreadContextMenuItems({ count: 2, hasRunningThread: true }),
+    ).toContainEqual({ id: "archive", label: "Archive (2)", disabled: true });
+  });
+});
 
 describe("resolveSidebarStageBadgeLabel", () => {
   it("returns Nightly for nightly primary server versions", () => {
