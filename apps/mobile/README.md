@@ -1,7 +1,7 @@
-# T3 Code Mobile
+# SurgeCode Mobile
 
 > [!WARNING]
-> T3 Code Mobile is currently in development and is not distributed yet. If you want to try it out, you can build it from source.
+> SurgeCode Mobile is currently in development and is not distributed yet. If you want to try it out, you can build it from source.
 
 ## Quickstart
 
@@ -10,9 +10,9 @@
 
 This app has three variants:
 
-- `development`: Expo dev client, installable side-by-side as `T3 Code Dev`
-- `preview`: persistent internal preview build, installable side-by-side as `T3 Code Preview`
-- `production`: store/release build as `T3 Code`
+- `development`: Expo dev client, installable side-by-side as `SurgeCode Dev`
+- `preview`: persistent internal preview build, installable side-by-side as `SurgeCode Preview`
+- `production`: store/release build as `SurgeCode`
 
 Run commands from `apps/mobile`.
 
@@ -75,21 +75,21 @@ export SERGECODE_PERSONAL_SIGNING=1 SERGECODE_PERSONAL_TEAM_ID=<your-team-id>
 export UDID=<device-udid>
 APP_VARIANT=development EXPO_NO_GIT_STATUS=1 \
   npx expo prebuild --clean --platform ios --no-install
-cd ios && pod install && xcodebuild -workspace T3CodeDev.xcworkspace \
-  -scheme T3CodeDev -configuration Debug -destination "id=$UDID" \
+cd ios && pod install && xcodebuild -workspace SurgeCodeDev.xcworkspace \
+  -scheme SurgeCodeDev -configuration Debug -destination "id=$UDID" \
   -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
   -derivedDataPath build build
 xcrun devicectl device install app --device "$UDID" \
-  build/Build/Products/Debug-iphoneos/T3CodeDev.app
+  build/Build/Products/Debug-iphoneos/SurgeCodeDev.app
 xcrun devicectl device process launch --device "$UDID" \
-  "dev.$(echo "$SERGECODE_PERSONAL_TEAM_ID" | tr '[:upper:]' '[:lower:]').t3code.development"
+  "dev.$(echo "$SERGECODE_PERSONAL_TEAM_ID" | tr '[:upper:]' '[:lower:]').sergecode.development"
 ```
 
 Then start Metro (`APP_VARIANT=development npx expo start --dev-client`) and
 pick the server in the dev launcher on the phone (same WiFi).
 
 This signs with your Personal Team, derives a per-team bundle id
-(`dev.<teamid>.t3code.development`, override with
+(`dev.<teamid>.sergecode.development`, override with
 `SERGECODE_PERSONAL_BUNDLE_ID`), and drops what free accounts cannot sign:
 the widgets extension, app groups, push, Sign in with Apple, and associated
 domains. Signatures expire after 7 days — rebuild to refresh. Trust the

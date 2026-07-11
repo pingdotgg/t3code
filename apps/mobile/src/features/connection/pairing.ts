@@ -63,7 +63,9 @@ export function extractPairingUrlFromQrPayload(payload: string): string {
 
   try {
     const url = new URL(trimmed);
-    if (url.protocol === "t3code:") {
+    // "surgecode:" is the current deep-link scheme; "t3code:" is accepted
+    // for backward compatibility with links minted before the rebrand.
+    if (url.protocol === "surgecode:" || url.protocol === "t3code:") {
       const pairingUrl = url.searchParams.get(MOBILE_PAIRING_URL_PARAM)?.trim() ?? "";
       if (pairingUrl.length > 0) {
         return pairingUrl;
