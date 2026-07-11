@@ -159,6 +159,34 @@ describe("chatThreadActions", () => {
     });
   });
 
+  it("resolves thread defaults for the target project", async () => {
+    const handleNewThread = vi.fn<ChatThreadActionContext["handleNewThread"]>(async () => {});
+    const targetProjectRef = scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID);
+    const resolveNewThreadDefaults = vi.fn(() => ({
+      envMode: "worktree" as const,
+      newWorktreesStartFromOrigin: true,
+    }));
+
+    await startNewThreadFromContext(
+      createContext({
+        defaultProjectRef: targetProjectRef,
+        defaultThreadEnvMode: "local",
+        defaultNewWorktreesStartFromOrigin: false,
+        resolveNewThreadDefaults,
+        resolveDefaultMainCheckout: async () => ({ branch: "main", path: "/repo/main" }),
+        handleNewThread,
+      }),
+    );
+
+    expect(resolveNewThreadDefaults).toHaveBeenCalledWith(targetProjectRef);
+    expect(handleNewThread).toHaveBeenCalledWith(targetProjectRef, {
+      branch: "main",
+      worktreePath: null,
+      envMode: "worktree",
+      startFromOrigin: true,
+    });
+  });
+
   it("still starts an ordinary new thread when main-checkout discovery is unavailable", async () => {
     const handleNewThread = vi.fn<ChatThreadActionContext["handleNewThread"]>(async () => {});
 

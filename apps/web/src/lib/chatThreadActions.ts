@@ -26,6 +26,11 @@ type NewThreadHandler = (
 
 type NewThreadOptions = NonNullable<Parameters<NewThreadHandler>[1]>;
 
+interface NewThreadDefaults {
+  readonly envMode: DraftThreadEnvMode;
+  readonly newWorktreesStartFromOrigin: boolean;
+}
+
 export interface ChatThreadActionContext {
   readonly activeDraftThread: DraftThreadContextLike | null;
   readonly activeThread: ThreadContextLike | undefined;
@@ -33,6 +38,9 @@ export interface ChatThreadActionContext {
   readonly handleNewThread: NewThreadHandler;
   readonly defaultThreadEnvMode?: DraftThreadEnvMode;
   readonly defaultNewWorktreesStartFromOrigin?: boolean;
+  readonly resolveNewThreadDefaults?: (
+    projectRef: ScopedProjectRef,
+  ) => NewThreadDefaults | Promise<NewThreadDefaults>;
   readonly defaultMainCheckout?: {
     readonly branch: string;
     readonly path: string | null;
@@ -40,6 +48,24 @@ export interface ChatThreadActionContext {
   readonly resolveDefaultMainCheckout?: (
     projectRef: ScopedProjectRef,
   ) => Promise<{ readonly branch: string; readonly path: string | null } | null | undefined>;
+}
+
+async function resolveThreadDefaults(
+  context: ChatThreadActionContext,
+  projectRef: ScopedProjectRef,
+): Promise<NewThreadDefaults | null> {
+  if (context.resolveNewThreadDefaults) {
+    try {
+      return await context.resolveNewThreadDefaults(projectRef);
+    } catch {
+      // Fall through to the captured defaults so thread creation remains available.
+    }
+  }
+  if (context.defaultThreadEnvMode === undefined) return null;
+  return {
+    envMode: context.defaultThreadEnvMode,
+    newWorktreesStartFromOrigin: context.defaultNewWorktreesStartFromOrigin ?? false,
+  };
 }
 
 async function resolveMainCheckout(
@@ -101,12 +127,13 @@ export async function startNewThreadInProjectFromContext(
   context: ChatThreadActionContext,
   projectRef: ScopedProjectRef,
 ): Promise<void> {
-  if (context.defaultThreadEnvMode === undefined) {
+  const defaults = await resolveThreadDefaults(context, projectRef);
+  if (defaults === null) {
     await context.handleNewThread(projectRef);
     return;
   }
 
-  const threadEnvMode: DraftThreadEnvMode = context.defaultThreadEnvMode;
+  const threadEnvMode = defaults.envMode;
   const mainCheckout = await resolveMainCheckout(context, projectRef);
   await context.handleNewThread(projectRef, {
     branch: mainCheckout?.branch ?? null,
@@ -114,7 +141,7 @@ export async function startNewThreadInProjectFromContext(
     envMode: threadEnvMode,
     startFromOrigin: resolveNewDraftStartFromOrigin({
       envMode: threadEnvMode,
-      newWorktreesStartFromOrigin: context.defaultNewWorktreesStartFromOrigin ?? false,
+      newWorktreesStartFromOrigin: defaults.newWorktreesStartFromOrigin,
     }),
   });
 }
