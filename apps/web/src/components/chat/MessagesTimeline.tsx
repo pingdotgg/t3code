@@ -537,40 +537,19 @@ const ConversationTimeline = memo(function ConversationTimeline({
     });
   };
 
-  // An interrupted run opens its fold; a newer run closes the previous run's.
-  const [observedLatestRun, setObservedLatestRun] = useState({
+  const activeRunId = runningRunId ?? (latestRun?.status === "running" ? latestRun.runId : null);
+  const [observedActiveRun, setObservedActiveRun] = useState({
     identity: listIdentityKey,
-    runId: latestRun?.runId,
-    status: latestRun?.status,
+    runId: activeRunId,
   });
-  if (
-    observedLatestRun.identity !== listIdentityKey ||
-    observedLatestRun.runId !== latestRun?.runId ||
-    observedLatestRun.status !== latestRun?.status
-  ) {
-    setObservedLatestRun({
-      identity: listIdentityKey,
-      runId: latestRun?.runId,
-      status: latestRun?.status,
-    });
-    const previousRunId = observedLatestRun.runId;
-    if (
-      observedLatestRun.identity === listIdentityKey &&
-      latestRun &&
-      previousRunId !== undefined
-    ) {
-      if (latestRun.runId === previousRunId) {
-        if (observedLatestRun.status === "running" && latestRun.status === "interrupted") {
-          setExpandedRunIds((existing) => new Set(existing).add(latestRun.runId));
-        }
-      } else {
-        setExpandedRunIds((existing) => {
-          if (!existing.has(previousRunId)) return existing;
-          const next = new Set(existing);
-          next.delete(previousRunId);
-          return next;
-        });
-      }
+  let effectiveExpandedRunIds = paintedExpandedRunIds;
+  if (observedActiveRun.identity !== listIdentityKey || observedActiveRun.runId !== activeRunId) {
+    setObservedActiveRun({ identity: listIdentityKey, runId: activeRunId });
+    // Keep a just-finished turn open in this render so its rows do not disappear and reinsert.
+    if (observedActiveRun.identity === listIdentityKey && observedActiveRun.runId !== null) {
+      const completedRunId = observedActiveRun.runId;
+      effectiveExpandedRunIds = new Set(paintedExpandedRunIds).add(completedRunId);
+      setExpandedRunIds((existing) => new Set(existing).add(completedRunId));
     }
   }
 
@@ -647,9 +626,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
     }
   }
   const visibleExpandedRunIds =
-    !activeFindRunId || paintedExpandedRunIds.has(activeFindRunId)
-      ? paintedExpandedRunIds
-      : new Set(paintedExpandedRunIds).add(activeFindRunId);
+    !activeFindRunId || effectiveExpandedRunIds.has(activeFindRunId)
+      ? effectiveExpandedRunIds
+      : new Set(effectiveExpandedRunIds).add(activeFindRunId);
 
   const activeFindAttemptId = activeFindMatch
     ? timelineEntries.find((entry) => entry.id === activeFindMatch.entryId)?.attempt?.id
