@@ -49,7 +49,7 @@ enum SceneryPoolBuilder {
             if photos.count < maxPhotos {
                 let queryText = loc.query.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !queryText.isEmpty,
-                    let results = try? await client.searchPhotos(query: queryText, count: 2),
+                    let results = try await search(client: client, query: queryText, count: 2),
                     let apiPhoto = results.first(where: { !seen.contains($0.id) })
                 {
                     seen.insert(apiPhoto.id)
@@ -83,7 +83,8 @@ enum SceneryPoolBuilder {
                     let queryText = loc.query.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !queryText.isEmpty else { continue }
                     let take = 2 + (lap + 1) * 2
-                    if let results = try? await client.searchPhotos(query: queryText, count: take),
+                    if let results = try await search(
+                        client: client, query: queryText, count: take),
                         let apiPhoto = results.first(where: { !seen.contains($0.id) })
                     {
                         seen.insert(apiPhoto.id)
@@ -109,7 +110,8 @@ enum SceneryPoolBuilder {
 
                 if photos.count < maxPhotos {
                     let take = max(1, min(query.take, maxPhotos - photos.count))
-                    if let results = try? await client.searchPhotos(query: query.text, count: take)
+                    if let results = try await search(
+                        client: client, query: query.text, count: take)
                     {
                         let queryTags = SceneryPhotoTags(query: query)
                         for apiPhoto in results {
@@ -135,6 +137,26 @@ enum SceneryPoolBuilder {
 
         let sceneNames = SceneSetComposer.normalizeSceneNames(photos.map(\.name))
         return BuildResult(photos: photos, sceneNames: sceneNames, photoTags: photoTags)
+    }
+
+    /// Cancellation-aware search: rethrows cancellation (either
+    /// `CancellationError` or the `URLError.cancelled` that `URLSession`'s
+    /// async `data(for:)` surfaces when its task is cancelled) so a cancelled
+    /// build aborts instead of silently degrading to a partial pool, but
+    /// swallows ordinary API errors (returns nil) so one flaky query keeps
+    /// the existing partial-result behavior.
+    private nonisolated static func search(
+        client: UnsplashClient, query: String, count: Int
+    ) async throws -> [UnsplashClient.APIPhoto]? {
+        do {
+            return try await client.searchPhotos(query: query, count: count)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as URLError where error.code == .cancelled {
+            throw CancellationError()
+        } catch {
+            return nil
+        }
     }
 
     nonisolated static func sceneryPhoto(from photo: UnsplashClient.APIPhoto, name: String)

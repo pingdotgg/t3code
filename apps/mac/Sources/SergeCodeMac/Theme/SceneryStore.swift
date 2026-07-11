@@ -241,9 +241,10 @@ public final class SceneryStore {
     /// (`NewSessionSheet`) and the actual commit (`AppModel.createSceneThread`,
     /// which calls this once and reuses the returned `SceneryPhoto` for both
     /// the title and the `assign` call) both funnel through this single
-    /// function, so as long as the observable state (bucket, assignment
-    /// count, pool) hasn't changed between calls they deterministically
-    /// agree — there is no separate "commit-time" selection to keep in sync.
+    /// function, so as long as every input it reads (pool, set metadata used
+    /// by the name filter, photo tags, rotation bucket, assignment count)
+    /// hasn't changed between calls they deterministically agree — there is
+    /// no separate "commit-time" selection to keep in sync.
     public func peekNextScene(
         projectPath: String? = nil,
         setIdOverride: String? = nil
@@ -280,8 +281,22 @@ public final class SceneryStore {
     {
         let setTitle = set(id: setId)?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !setTitle.isEmpty else { return pool }
-        let named = pool.filter { baseSceneName($0.name, setId: setId) != setTitle }
+        let titleKey = Self.sceneNameComparisonKey(setTitle)
+        let named = pool.filter {
+            Self.sceneNameComparisonKey(baseSceneName($0.name, setId: setId)) != titleKey
+        }
         return named.isEmpty ? pool : named
+    }
+
+    /// Canonical comparison key for scene names — the same trimmed,
+    /// whitespace-collapsed, lowercased form
+    /// `SceneSetComposer.normalizeSceneNames` uses for its dedupe keys — so
+    /// case/whitespace variants ("iceland" vs "Iceland") are not treated as
+    /// distinct place names.
+    private static func sceneNameComparisonKey(_ name: String) -> String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .lowercased()
     }
 
     /// Thread title for a scene: the plain place name, even when reused.

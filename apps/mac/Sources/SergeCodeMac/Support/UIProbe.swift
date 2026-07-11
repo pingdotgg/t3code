@@ -334,9 +334,19 @@
             let pollutedSetId = "probe-iceland-polluted-\(probeRunID)"
             defer {
                 scenery.setDefaultSetId(previousDefaultSetId)
-                try? scenery.deleteCustomSet(id: pollutedSetId)
-                try? scenery.deleteCustomSet(id: mixedSetId)
-                try? scenery.deleteCustomSet(id: setId)
+                // Early-return paths reach this defer before some sets were
+                // ever registered — `.notFound` is expected there and stays
+                // silent. Anything else (e.g. a disk error) would leave a
+                // probe set persisted, so surface it.
+                for probeSetId in [pollutedSetId, mixedSetId, setId] {
+                    do {
+                        try scenery.deleteCustomSet(id: probeSetId)
+                    } catch SceneryStore.DeleteSetError.notFound {
+                        // Set was never registered on this run.
+                    } catch {
+                        print("UIProbe: WARN failed to delete probe set \(probeSetId): \(error)")
+                    }
+                }
             }
 
             let backend = MockBackend()
@@ -442,12 +452,17 @@
                     provider: .codex,
                     scenery: scenery,
                     scenerySetId: mixedSetId)
-                let title = thread?.title ?? "nil"
-                print("UIProbe: iceland mixed-pool thread title=\(title)")
-                if title == "Iceland" || title == "nil" {
-                    print("UIProbe: FAIL expected a distinct place name, got \(title)")
+                // The pool has exactly one distinctly-named photo, so the
+                // filtered selection must land on it — assert exact title.
+                if let title = thread?.title {
+                    print("UIProbe: iceland mixed-pool thread title=\(title)")
+                    if title == "Skógafoss" {
+                        print("UIProbe: PASS iceland mixed-pool thread title is place-specific")
+                    } else {
+                        print("UIProbe: FAIL expected thread title Skógafoss, got \(title)")
+                    }
                 } else {
-                    print("UIProbe: PASS iceland mixed-pool thread title is place-specific")
+                    print("UIProbe: FAIL iceland mixed-pool thread creation returned no thread")
                 }
             } else {
                 print("UIProbe: no project for iceland mixed-pool createSceneThread")
