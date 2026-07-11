@@ -661,6 +661,13 @@ export function makeKiloAdapter(settings: KiloSettings, options?: KiloAdapterOpt
         resolveAttachmentPath: (attachment) =>
           resolveAttachmentPath({ attachmentsDir: serverConfig.attachmentsDir, attachment }),
       });
+      if (files.length !== (input.attachments?.length ?? 0)) {
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "sendTurn",
+          issue: "Kilo could not resolve one or more attachments.",
+        });
+      }
       if (!text && files.length === 0) {
         return yield* new ProviderAdapterValidationError({
           provider: PROVIDER,
