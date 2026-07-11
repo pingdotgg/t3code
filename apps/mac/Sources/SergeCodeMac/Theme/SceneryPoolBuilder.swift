@@ -20,10 +20,13 @@ enum SceneryPoolBuilder {
     }
 
     /// One deduped photo per location (name from location, never captions),
-    /// then top up from general queries only when named photos fall short of
-    /// `minNamedPhotos`. Top-up names use Unsplash location metadata or the
-    /// bare set title — never captions, never pool-index numbering
-    /// (`"Iceland 5"`), never curated-name round-robin.
+    /// then top up in two phases when named photos fall short of
+    /// `minNamedPhotos`: first cycle additional fetches back across the same
+    /// named locations (round-robin, still location-named), then — only if
+    /// still short — fall back to the general queries with the bare set
+    /// title. Top-up names use Unsplash location metadata or the bare set
+    /// title — never captions, never pool-index numbering (`"Iceland 5"`),
+    /// never curated-name round-robin.
     nonisolated static func buildFromLocations(
         client: UnsplashClient,
         locations: [SceneryLocation],
@@ -46,7 +49,7 @@ enum SceneryPoolBuilder {
             if photos.count < maxPhotos {
                 let queryText = loc.query.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !queryText.isEmpty,
-                    let results = try? await client.searchPhotos(query: queryText, count: 2),
+                    let results = try await search(client: client, query: queryText, count: 2),
                     let apiPhoto = results.first(where: { !seen.contains($0.id) })
                 {
                     seen.insert(apiPhoto.id)
@@ -63,14 +66,52 @@ enum SceneryPoolBuilder {
             await onProgress?(completed, totalSteps)
         }
 
-        // Top up from general queries only when named photos fall short of 12.
+        // Top up STILL-named photos first: cycle additional fetches across the
+        // same locations (round-robin, deduped by photo id) so the extra
+        // photos keep their place name instead of falling straight to the
+        // bare set title. Bounded to a couple of laps with modestly larger
+        // `count` per lap (existing per-location fetch already only asks for
+        // 2) so a thin location list can't spin unbounded API calls.
+        if photos.count < minNamedPhotos, !locations.isEmpty {
+            let maxLaps = 2
+            var lap = 0
+            while photos.count < minNamedPhotos, photos.count < maxPhotos, lap < maxLaps {
+                var madeProgress = false
+                for loc in locations {
+                    try Task.checkCancellation()
+                    guard photos.count < minNamedPhotos, photos.count < maxPhotos else { break }
+                    let queryText = loc.query.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !queryText.isEmpty else { continue }
+                    let take = 2 + (lap + 1) * 2
+                    if let results = try await search(
+                        client: client, query: queryText, count: take),
+                        let apiPhoto = results.first(where: { !seen.contains($0.id) })
+                    {
+                        seen.insert(apiPhoto.id)
+                        let placeName =
+                            SceneSetComposer.normalizeSceneNames([loc.name]).first ?? loc.name
+                        photos.append(sceneryPhoto(from: apiPhoto, name: placeName))
+                        if let tags = tags(from: loc) {
+                            photoTags[apiPhoto.id] = tags
+                        }
+                        madeProgress = true
+                    }
+                }
+                lap += 1
+                if !madeProgress { break }
+            }
+        }
+
+        // Top up from general queries only when named photos still fall short
+        // of 12 after the named-location round-robin above.
         if photos.count < minNamedPhotos {
             for query in queries {
                 try Task.checkCancellation()
 
                 if photos.count < maxPhotos {
                     let take = max(1, min(query.take, maxPhotos - photos.count))
-                    if let results = try? await client.searchPhotos(query: query.text, count: take)
+                    if let results = try await search(
+                        client: client, query: query.text, count: take)
                     {
                         let queryTags = SceneryPhotoTags(query: query)
                         for apiPhoto in results {
@@ -96,6 +137,26 @@ enum SceneryPoolBuilder {
 
         let sceneNames = SceneSetComposer.normalizeSceneNames(photos.map(\.name))
         return BuildResult(photos: photos, sceneNames: sceneNames, photoTags: photoTags)
+    }
+
+    /// Cancellation-aware search: rethrows cancellation (either
+    /// `CancellationError` or the `URLError.cancelled` that `URLSession`'s
+    /// async `data(for:)` surfaces when its task is cancelled) so a cancelled
+    /// build aborts instead of silently degrading to a partial pool, but
+    /// swallows ordinary API errors (returns nil) so one flaky query keeps
+    /// the existing partial-result behavior.
+    private nonisolated static func search(
+        client: UnsplashClient, query: String, count: Int
+    ) async throws -> [UnsplashClient.APIPhoto]? {
+        do {
+            return try await client.searchPhotos(query: query, count: count)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as URLError where error.code == .cancelled {
+            throw CancellationError()
+        } catch {
+            return nil
+        }
     }
 
     nonisolated static func sceneryPhoto(from photo: UnsplashClient.APIPhoto, name: String)

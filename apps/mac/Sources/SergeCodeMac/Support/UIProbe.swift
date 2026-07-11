@@ -324,16 +324,29 @@
         ///
         /// Uses MockBackend for AI names (locations present) and a synthetic
         /// pool so Unsplash is not required. New pools use the bare place
-        /// name; historical pool-index names still strip via `threadTitle`.
+        /// name only when no distinctly-named candidate exists; historical
+        /// pool-index names still strip via `threadTitle`.
         private static func probeIcelandSceneSetCreate(model: AppModel, scenery: SceneryStore) async {
             let previousDefaultSetId = scenery.defaultSetId
             let probeRunID = UUID().uuidString
             let setId = "probe-iceland-\(probeRunID)"
+            let mixedSetId = "probe-iceland-mixed-\(probeRunID)"
             let pollutedSetId = "probe-iceland-polluted-\(probeRunID)"
             defer {
                 scenery.setDefaultSetId(previousDefaultSetId)
-                try? scenery.deleteCustomSet(id: pollutedSetId)
-                try? scenery.deleteCustomSet(id: setId)
+                // Early-return paths reach this defer before some sets were
+                // ever registered — `.notFound` is expected there and stays
+                // silent. Anything else (e.g. a disk error) would leave a
+                // probe set persisted, so surface it.
+                for probeSetId in [pollutedSetId, mixedSetId, setId] {
+                    do {
+                        try scenery.deleteCustomSet(id: probeSetId)
+                    } catch SceneryStore.DeleteSetError.notFound {
+                        // Set was never registered on this run.
+                    } catch {
+                        print("UIProbe: WARN failed to delete probe set \(probeSetId): \(error)")
+                    }
+                }
             }
 
             let backend = MockBackend()
@@ -388,6 +401,71 @@
                 }
             } else {
                 print("UIProbe: no project for iceland createSceneThread")
+            }
+
+            // Bug-fix coverage: a pool mixing distinctly-named photos
+            // ("Skógafoss") with bare-named top-up photos ("Iceland") must
+            // prefer the distinct place name for a new thread — this is the
+            // exact "Iceland"-instead-of-"Skógafoss" regression.
+            let mixedPhotos: [SceneryPhoto] =
+                (1...3).map { i in
+                    SceneryPhoto(
+                        id: "probe-ice-mixed-bare-\(i)",
+                        name: "Iceland",
+                        averageColorHex: "#1a3a4a",
+                        heroURL: URL(string: "https://images.unsplash.com/probe-ice-mixed-\(i)")!,
+                        thumbURL: URL(string: "https://images.unsplash.com/probe-ice-mixed-\(i)-t")!,
+                        rawURL: nil,
+                        downloadLocationURL: nil,
+                        photographerName: "Probe",
+                        photographerProfileURL: nil)
+                }
+                + [
+                    SceneryPhoto(
+                        id: "probe-ice-mixed-named",
+                        name: "Skógafoss",
+                        averageColorHex: "#1a3a4a",
+                        heroURL: URL(string: "https://images.unsplash.com/probe-ice-mixed-named")!,
+                        thumbURL: URL(
+                            string: "https://images.unsplash.com/probe-ice-mixed-named-t")!,
+                        rawURL: nil,
+                        downloadLocationURL: nil,
+                        photographerName: "Probe",
+                        photographerProfileURL: nil)
+                ]
+            let mixedSet = ScenerySet(
+                id: mixedSetId,
+                title: "Iceland",
+                origin: .custom,
+                createdAt: Date(),
+                queries: [SceneryQuery(text: "iceland landscape")],
+                sceneNames: ["Iceland", "Skógafoss"],
+                locations: [
+                    SceneryLocation(name: "Skógafoss", query: "skogafoss waterfall")
+                ])
+            scenery.registerSet(mixedSet, pool: mixedPhotos, replacePoolResidue: true)
+            scenery.setDefaultSetId(mixedSetId)
+
+            if let project = model.projects.first {
+                let thread = await model.createSceneThread(
+                    projectID: project.id,
+                    provider: .codex,
+                    scenery: scenery,
+                    scenerySetId: mixedSetId)
+                // The pool has exactly one distinctly-named photo, so the
+                // filtered selection must land on it — assert exact title.
+                if let title = thread?.title {
+                    print("UIProbe: iceland mixed-pool thread title=\(title)")
+                    if title == "Skógafoss" {
+                        print("UIProbe: PASS iceland mixed-pool thread title is place-specific")
+                    } else {
+                        print("UIProbe: FAIL expected thread title Skógafoss, got \(title)")
+                    }
+                } else {
+                    print("UIProbe: FAIL iceland mixed-pool thread creation returned no thread")
+                }
+            } else {
+                print("UIProbe: no project for iceland mixed-pool createSceneThread")
             }
 
             // Defense in depth: polluted on-disk pool still strips to "Iceland".
