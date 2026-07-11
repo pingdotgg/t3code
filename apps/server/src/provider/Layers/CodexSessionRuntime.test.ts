@@ -14,6 +14,7 @@ import {
 } from "../CodexDeveloperInstructions.ts";
 import {
   buildTurnStartParams,
+  findActiveCodexTurnId,
   hasConfiguredMcpServer,
   isRecoverableThreadResumeError,
   openCodexThread,
@@ -191,6 +192,35 @@ describe("buildTurnStartParams", () => {
         },
       ],
     });
+  });
+});
+
+describe("findActiveCodexTurnId", () => {
+  it("selects the newest in-progress turn from a thread snapshot", () => {
+    const response = makeThreadOpenResponse(
+      "provider-thread-1",
+    ) as unknown as CodexRpc.ClientRequestResponsesByMethod["thread/read"];
+    const turns = [
+      { id: "turn-completed", status: "completed", items: [] },
+      { id: "turn-active-old", status: "inProgress", items: [] },
+      { id: "turn-active-new", status: "inProgress", items: [] },
+    ];
+    const snapshot = {
+      ...response,
+      thread: {
+        ...response.thread,
+        turns,
+      },
+    } as CodexRpc.ClientRequestResponsesByMethod["thread/read"];
+
+    NodeAssert.equal(findActiveCodexTurnId(snapshot), "turn-active-new");
+  });
+
+  it("returns undefined when no turn is active", () => {
+    const response = makeThreadOpenResponse(
+      "provider-thread-1",
+    ) as unknown as CodexRpc.ClientRequestResponsesByMethod["thread/read"];
+    NodeAssert.equal(findActiveCodexTurnId(response), undefined);
   });
 });
 
