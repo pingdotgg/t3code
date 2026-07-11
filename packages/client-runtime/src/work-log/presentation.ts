@@ -21,7 +21,7 @@ import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
 import { formatTokens } from "@t3tools/shared/usageFormat";
-import { classifyToolActivity } from "@t3tools/shared/toolActivity";
+import { classifyToolActivity, deriveToolActivityPresentation } from "@t3tools/shared/toolActivity";
 import { toolOutputIndicatesFailure } from "@t3tools/shared/toolOutput";
 
 import {
@@ -32,6 +32,58 @@ import {
 
 export type WorkLogToolLifecycleStatus = RuntimeItemStatus | "stopped" | "idle";
 
+/** Lifecycle headings and structured details for tools in the V2 timeline, shared by both clients. */
+export function turnItemToolActivityPresentation(item: OrchestrationV2TurnItem) {
+  if (item.status === "idle" || item.status === "cancelled" || item.status === "interrupted") {
+    return undefined;
+  }
+  const status =
+    item.status === "completed" || item.status === "failed" ? item.status : "inProgress";
+  switch (item.type) {
+    case "command_execution":
+      return deriveToolActivityPresentation({
+        itemType: item.type,
+        status,
+        title: item.title,
+        data: { command: item.input },
+      });
+    case "file_change":
+      return deriveToolActivityPresentation({
+        itemType: item.type,
+        status,
+        title: item.title,
+        data: item,
+      });
+    case "file_search":
+      return deriveToolActivityPresentation({
+        status,
+        title: item.title,
+        data: { ...item, kind: "search" },
+      });
+    case "web_search":
+      return deriveToolActivityPresentation({
+        itemType: item.type,
+        status,
+        title: item.title,
+        data: { input: { queries: item.patterns } },
+      });
+    case "dynamic_tool": {
+      const data = { toolName: item.toolName ?? undefined, input: item.input };
+      if (classifyToolActivity({ data }) === "other" && item.viewedImagePath === undefined)
+        return undefined;
+      return deriveToolActivityPresentation({
+        itemType: item.viewedImagePath === undefined ? "dynamic_tool_call" : "image_view",
+        status,
+        title: item.title,
+        data: { ...data, ...(item.viewedImagePath ? { path: item.viewedImagePath } : {}) },
+      });
+    }
+    default:
+      return undefined;
+  }
+}
+
+/** Inspection and copying omit raw outputs, including values from older caches. */
 export function toolItemForDisplay(item: OrchestrationV2TurnItem): OrchestrationV2TurnItem {
   switch (item.type) {
     case "command_execution":

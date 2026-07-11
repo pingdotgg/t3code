@@ -19,6 +19,7 @@ import {
 import {
   contextCompactionLabel,
   liveThoughtLine,
+  turnItemToolActivityPresentation,
   toolItemForDisplay,
   workEntryDisplayIndicatesToolFailure,
   liveActivityToolStatus,
@@ -796,10 +797,15 @@ function toFeedActivity(
 ): ThreadFeedActivity {
   const item = row.item;
   const toolPresentation = itemToolPresentation(item);
-  const summary = itemSummary(item, toolPresentation);
-  const detail = item.type === "notification" ? null : itemPreview(item);
+  const lifecyclePresentation = turnItemToolActivityPresentation(item);
+  const summary = lifecyclePresentation?.summary ?? itemSummary(item, toolPresentation);
+  const detail =
+    lifecyclePresentation?.detail ?? (item.type === "notification" ? null : itemPreview(item));
   const createdAt = DateTime.formatIso(item.startedAt ?? item.updatedAt);
-  const workEntry = toWorkLogEntry(item, createdAt, summary, detail);
+  const workEntry = {
+    ...toWorkLogEntry(item, createdAt, summary, detail),
+    ...(lifecyclePresentation?.detail ? { detail: lifecyclePresentation.detail } : {}),
+  };
   const readPaths =
     item.type === "dynamic_tool" && toolGroupAction(workEntry) === "read"
       ? collectToolFilePaths(item)

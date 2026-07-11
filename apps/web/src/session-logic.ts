@@ -29,6 +29,7 @@ import type { McpAppReference } from "@t3tools/shared/mcpApp";
 import { htmlRenderFromToolItem, mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
 import {
   contextCompactionLabel,
+  turnItemToolActivityPresentation,
   workEntryIndicatesToolFailure,
 } from "@t3tools/client-runtime/work-log/presentation";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
@@ -397,7 +398,7 @@ export function providerErrorPresentation(
   };
 }
 
-function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry {
+function projectedWorkEntryBase(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry {
   const { item } = row;
   const title = item.title?.trim() || null;
   const common = {
@@ -548,7 +549,25 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
   }
 }
 
-/** Preserve visibleTurnItems' committed order; interleave client messages by timestamp. */
+function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry {
+  const entry = projectedWorkEntryBase(row);
+  const presentation = turnItemToolActivityPresentation(row.item);
+  return presentation === undefined
+    ? entry
+    : {
+        ...entry,
+        label: presentation.summary,
+        ...(presentation.detail ? { detail: presentation.detail } : {}),
+      };
+}
+
+/**
+ * Builds the web timeline in the exact order committed by `visibleTurnItems`.
+ * Committed rows are presented directly from their projected item. Queued
+ * input is absent by construction until dispatch creates its user turn item.
+ * Persistent client-owned messages are inserted by timestamp without sorting
+ * the canonical sequence. True optimistic sends remain appended afterward.
+ */
 export interface TimelineEntriesInput {
   readonly visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
   readonly optimisticMessages: ReadonlyArray<ChatMessage>;

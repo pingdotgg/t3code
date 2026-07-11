@@ -6,6 +6,7 @@ import * as DateTime from "effect/DateTime";
 import {
   resolveWorkEntryToolPresentation,
   toolItemForDisplay,
+  turnItemToolActivityPresentation,
   type WorkLogPresentationEntry,
   workEntryIndicatesToolFailure,
   workEntryDisplayIndicatesToolFailure,
@@ -34,6 +35,45 @@ function commandItem(
     ...fields,
   };
 }
+
+describe("turnItemToolActivityPresentation", () => {
+  it("keeps the command while its V2 item moves from running to failed", () => {
+    expect(turnItemToolActivityPresentation(commandItem({ status: "running" }))).toEqual({
+      summary: "Running command",
+      detail: 'rg "command not found"',
+    });
+    expect(turnItemToolActivityPresentation(commandItem({ status: "failed" }))).toEqual({
+      summary: "Command failed",
+      detail: 'rg "command not found"',
+    });
+  });
+
+  it("keeps dynamic read paths while preserving foreign tools' own presentation", () => {
+    const {
+      type: _type,
+      input: _input,
+      exitCode: _exitCode,
+      ...base
+    } = commandItem() as Extract<OrchestrationV2TurnItem, { type: "command_execution" }>;
+    expect(
+      turnItemToolActivityPresentation({
+        ...base,
+        type: "dynamic_tool",
+        status: "running",
+        toolName: "Read",
+        input: { file_path: "README" },
+      }),
+    ).toEqual({ summary: "Reading file", detail: "README" });
+    expect(
+      turnItemToolActivityPresentation({
+        ...base,
+        type: "dynamic_tool",
+        toolName: "github.read_file",
+        input: { path: "README" },
+      }),
+    ).toBeUndefined();
+  });
+});
 
 describe("workEntryIndicatesToolFailure", () => {
   const base = {
