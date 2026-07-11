@@ -56,6 +56,20 @@ function readEnvironmentThreads(environmentId: EnvironmentId) {
   return [...active, ...archived];
 }
 
+/**
+ * Client-side approximation of "archived together": the archive cascade
+ * issues one command per subtree member, so `archivedAt` stamps differ by
+ * command latency rather than matching exactly.
+ */
+const ARCHIVED_TOGETHER_TOLERANCE_MS = 60_000;
+
+function wasArchivedWith(rootArchivedAt: string | null, archivedAt: string | null): boolean {
+  if (rootArchivedAt === null || archivedAt === null) return false;
+  return (
+    Math.abs(Date.parse(archivedAt) - Date.parse(rootArchivedAt)) <= ARCHIVED_TOGETHER_TOLERANCE_MS
+  );
+}
+
 /** Reads the complete active + archived owned-subagent subtree from the shell cache. */
 export function readThreadSubtree(
   target: ScopedThreadRef,
@@ -147,6 +161,23 @@ export function useThreadActions() {
       if (archiveResult._tag === "Failure") {
         return archiveResult;
       }
+      // Archiving a root archives the subagent threads it recursively owns.
+      // Each member gets its own command; attempt the full subtree before
+      // reporting the first failure so one refusal cannot strand the rest.
+      let descendantFailure: Awaited<ReturnType<typeof archiveThreadMutation>> | null = null;
+      for (const entry of subtree.slice(1).filter((entry) => entry.archivedAt === null)) {
+        const result = await archiveThreadMutation({
+          environmentId: threadRef.environmentId,
+          input: { threadId: entry.id },
+        });
+        if (result._tag === "Failure") {
+          descendantFailure ??= result;
+        }
+      }
+      if (descendantFailure !== null) {
+        refreshArchivedThreadsForEnvironment(threadRef.environmentId);
+        return descendantFailure;
+      }
 
       if (shouldNavigateToDraft) {
         const navigationResult = await settlePromise(() =>
@@ -198,16 +229,34 @@ export function useThreadActions() {
 
   const unarchiveThread = useCallback(
     async (target: ScopedThreadRef) => {
+      const resolved = resolveThreadTarget(target);
+      const subtree = resolved === null ? [] : readThreadSubtree(target, resolved.thread);
+      const rootArchivedAt = resolved?.thread.archivedAt ?? null;
       const result = await unarchiveThreadMutation({
         environmentId: target.environmentId,
         input: { threadId: target.threadId },
       });
-      if (result._tag === "Success") {
-        refreshArchivedThreadsForEnvironment(target.environmentId);
+      if (result._tag === "Failure") {
+        return result;
       }
-      return result;
+      // Restore the owned subagent threads that were archived together with
+      // the root, mirroring the cascade in archiveThread.
+      let descendantFailure: Awaited<ReturnType<typeof unarchiveThreadMutation>> | null = null;
+      for (const entry of subtree
+        .slice(1)
+        .filter((entry) => wasArchivedWith(rootArchivedAt, entry.archivedAt))) {
+        const descendantResult = await unarchiveThreadMutation({
+          environmentId: target.environmentId,
+          input: { threadId: entry.id },
+        });
+        if (descendantResult._tag === "Failure") {
+          descendantFailure ??= descendantResult;
+        }
+      }
+      refreshArchivedThreadsForEnvironment(target.environmentId);
+      return descendantFailure ?? result;
     },
-    [unarchiveThreadMutation],
+    [resolveThreadTarget, unarchiveThreadMutation],
   );
 
   const deleteThread = useCallback(
@@ -314,6 +363,23 @@ export function useThreadActions() {
       });
       if (deleteResult._tag === "Failure") {
         return deleteResult;
+      }
+      // Deleting a root deletes the subagent threads it recursively owns.
+      // Attempt every member before reporting the first failure; survivors
+      // stay visible as recovery roots rather than silently lingering.
+      let descendantDeleteFailure: Awaited<ReturnType<typeof deleteThreadMutation>> | null = null;
+      for (const entry of subtree.slice(1)) {
+        const result = await deleteThreadMutation({
+          environmentId: threadRef.environmentId,
+          input: { threadId: entry.id },
+        });
+        if (result._tag === "Failure") {
+          descendantDeleteFailure ??= result;
+        }
+      }
+      if (descendantDeleteFailure !== null) {
+        refreshArchivedThreadsForEnvironment(threadRef.environmentId);
+        return descendantDeleteFailure;
       }
       refreshArchivedThreadsForEnvironment(threadRef.environmentId);
       for (const deletedThread of subtree) {
@@ -464,7 +530,9 @@ export function useThreadActions() {
       const descendantCount =
         resolved === null
           ? 0
-          : subtree.slice(1).filter((entry) => entry.archivedAt === resolved.thread.archivedAt)
+          : subtree
+              .slice(1)
+              .filter((entry) => wasArchivedWith(resolved.thread.archivedAt, entry.archivedAt))
               .length;
       if (descendantCount > 0 && localApi) {
         const copy = threadSubtreeActionCopy({
