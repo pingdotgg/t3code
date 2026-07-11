@@ -1017,29 +1017,26 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
   const workspaceRefResults = useAtomValue(workspaceRefsAtom);
   const workspaceIdentities = useMemo(
     () =>
-      workspaceRefResults.flatMap(({ member, result }) => {
+      workspaceRefResults.map(({ member, result }) => {
         const data = Option.getOrNull(AsyncResult.value(result));
-        if (!data) return [];
-        const options = deriveWorkspaceOptions(
-          data.refs,
-          member.workspaceRoot,
-          data.mainCheckoutPath,
-        );
+        const options = data
+          ? deriveWorkspaceOptions(data.refs, member.workspaceRoot, data.mainCheckoutPath)
+          : null;
         const normalizedProjectCwd = member.workspaceRoot.replaceAll("\\", "/").replace(/\/+$/, "");
         const projectCheckoutRef = data?.refs.find(
           (ref) =>
             ref.worktreePath?.replaceAll("\\", "/").replace(/\/+$/, "") === normalizedProjectCwd,
         );
-        return [
-          {
-            environmentId: member.environmentId,
-            projectId: member.id,
-            projectCheckoutPath: member.workspaceRoot,
-            projectCheckoutLabel: projectCheckoutRef?.name ?? null,
-            mainCheckoutPath:
-              data.mainCheckoutPath ?? options.mainCheckout?.path ?? member.workspaceRoot,
-          },
-        ];
+        return {
+          environmentId: member.environmentId,
+          projectId: member.id,
+          projectCheckoutPath: member.workspaceRoot,
+          projectCheckoutLabel: projectCheckoutRef?.name ?? null,
+          mainCheckoutPath:
+            data?.mainCheckoutPath ??
+            options?.mainCheckout?.path ??
+            (data ? member.workspaceRoot : null),
+        };
       }),
     [workspaceRefResults],
   );

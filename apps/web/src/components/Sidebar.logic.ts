@@ -30,7 +30,7 @@ export interface SidebarWorkspaceIdentity {
   readonly projectId: string;
   readonly projectCheckoutPath: string;
   readonly projectCheckoutLabel: string | null;
-  readonly mainCheckoutPath: string;
+  readonly mainCheckoutPath: string | null;
 }
 
 function normalizeWorkspacePath(path: string): string {
@@ -67,6 +67,7 @@ export function groupSidebarThreadsByWorktree<
     const normalizedEffectivePath = effectivePath ? normalizeWorkspacePath(effectivePath) : null;
     const isMainCheckout =
       matchesWorkspaceIdentity &&
+      workspaceIdentity.mainCheckoutPath !== null &&
       normalizedEffectivePath === normalizeWorkspacePath(workspaceIdentity.mainCheckoutPath);
     const key = normalizedEffectivePath
       ? `${thread.environmentId}:worktree:${normalizedEffectivePath}`

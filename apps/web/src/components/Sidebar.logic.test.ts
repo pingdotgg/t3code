@@ -231,7 +231,7 @@ describe("groupSidebarThreadsByWorktree", () => {
           projectId: "two",
           projectCheckoutPath: "/repo-two",
           projectCheckoutLabel: "feature/two",
-          mainCheckoutPath: "/main-two",
+          mainCheckoutPath: null,
         },
       ],
     );
