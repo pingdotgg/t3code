@@ -72,6 +72,7 @@ export function DiffWorkerPoolProvider({ children }: { children?: ReactNode }) {
         totalASTLRUCacheSize: 240,
       }}
       highlighterOptions={{
+        preferredHighlighter: "shiki-wasm",
         theme: diffThemeName,
         tokenizeMaxLineLength: 1_000,
         useTokenTransformer: true,
