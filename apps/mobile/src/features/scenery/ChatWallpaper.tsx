@@ -19,8 +19,12 @@ export const ChatWallpaper = memo(function ChatWallpaper(props: { readonly threa
   const isDark = useColorScheme() === "dark";
   const insets = useSafeAreaInsets();
   // Matches --color-scenery-scrim; literal here because CSS-gradient strings
-  // can't reference theme variables.
-  const edge = isDark ? "rgba(0, 0, 0, 0.55)" : "rgba(255, 255, 255, 0.72)";
+  // can't reference theme variables. Heavier at the top (mirrors mac's
+  // SceneryChatBackground: top 0.35×wash vs bottom 0.25×wash, a ~1.4× ratio)
+  // so header text always clears the brightest part of a sky; the transparent
+  // glass header samples this edge directly.
+  const edgeTop = isDark ? "rgba(0, 0, 0, 0.55)" : "rgba(255, 255, 255, 0.72)";
+  const edgeBottom = isDark ? "rgba(0, 0, 0, 0.39)" : "rgba(255, 255, 255, 0.51)";
 
   return (
     <View
@@ -43,7 +47,7 @@ export const ChatWallpaper = memo(function ChatWallpaper(props: { readonly threa
           left: 0,
           right: 0,
           bottom: 0,
-          experimental_backgroundImage: `linear-gradient(180deg, ${edge} 0%, transparent 28%, transparent 78%, ${edge} 100%)`,
+          experimental_backgroundImage: `linear-gradient(180deg, ${edgeTop} 0%, transparent 28%, transparent 78%, ${edgeBottom} 100%)`,
         }}
       />
       {photo ? (

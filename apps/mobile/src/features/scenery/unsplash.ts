@@ -20,6 +20,14 @@ export interface SceneryPhoto {
   readonly id: string;
   /** Curated Dolomites display name paired with the photo at pool build. */
   readonly name: string;
+  /**
+   * Real place label resolved from Unsplash *location* metadata only (mirrors
+   * `UnsplashClient.APIPhoto.suggestedSceneName` on mac) — never `description`
+   * / `alt_description` captions, which are machine prose and must not become
+   * scene names. Null when Unsplash reported no location for the photo; the
+   * pool then falls back to the curated `SCENE_NAMES` cycle for `name`.
+   */
+  readonly placeName: string | null;
   /** Average color reported by Unsplash ("#RRGGBB"); wash while loading. */
   readonly averageColorHex: string | null;
   /** `urls.regular` (1080w) — legacy fallback when rawURL is absent. */
@@ -37,12 +45,45 @@ export interface SceneryPhoto {
 interface UnsplashSearchResult {
   readonly id: string;
   readonly color?: string | null;
+  readonly location?: {
+    readonly name?: string | null;
+    readonly city?: string | null;
+    readonly country?: string | null;
+  } | null;
   readonly urls: { readonly raw: string; readonly regular: string; readonly thumb: string };
   readonly links?: { readonly download_location?: string | null } | null;
   readonly user: {
     readonly name: string;
     readonly links?: { readonly html?: string | null } | null;
   };
+}
+
+/**
+ * Best-effort place label from Unsplash *location* metadata only — the
+ * mobile port of `UnsplashClient.APIPhoto.suggestedSceneName` on mac. Never
+ * falls back to `description` / `alt_description` captions; those are
+ * machine prose and must not become scene names.
+ */
+export function extractPlaceName(location: UnsplashSearchResult["location"]): string | null {
+  const name = location?.name?.trim();
+  if (name !== undefined && name.length > 0) {
+    return shortenSceneName(name);
+  }
+  const city = location?.city?.trim();
+  if (city !== undefined && city.length > 0) {
+    return shortenSceneName(city);
+  }
+  const country = location?.country?.trim();
+  if (country !== undefined && country.length > 0) {
+    return shortenSceneName(country);
+  }
+  return null;
+}
+
+function shortenSceneName(raw: string): string {
+  const collapsed = raw.replace(/\s+/g, " ");
+  if (collapsed.length <= 48) return collapsed;
+  return `${collapsed.slice(0, 45).trimEnd()}...`;
 }
 
 /**
@@ -101,6 +142,7 @@ export function makeUnsplashClient(
         id: photo.id,
         // Placeholder; SceneryStore pairs curated scene names at pool build.
         name: "",
+        placeName: extractPlaceName(photo.location),
         averageColorHex: photo.color ?? null,
         heroURL: photo.urls.regular,
         thumbURL: photo.urls.thumb,
@@ -120,16 +162,21 @@ export function makeUnsplashClient(
   };
 }
 
-const SIZING_PARAMS = ["w", "h", "q", "fm", "fit", "crop", "blur"];
+const SIZING_PARAMS = ["w", "h", "q", "fm", "fit", "crop", "blur", "sat"];
 
 /**
  * Rewrites an Unsplash/imgix URL to a specific render width (and optional
- * pre-blur): replaces any existing sizing params, keeps identity params
- * (ixid) intact. `fit=max` never upscales past the original asset. Pre-blur
- * on the CDN replaces a runtime gaussian — deterministic, free on-device,
- * and identical on Android.
+ * pre-blur/saturation): replaces any existing sizing params, keeps identity
+ * params (ixid) intact. `fit=max` never upscales past the original asset.
+ * Pre-blur on the CDN replaces a runtime gaussian — deterministic, free
+ * on-device, and identical on Android. `saturation` (imgix `sat`, -100..100)
+ * mirrors the mac chat wallpaper's `.saturation(1.05)` boost, which has no
+ * direct RN/Image equivalent.
  */
-export function sizedImageURL(url: string, options: { width: number; blur?: number }): string {
+export function sizedImageURL(
+  url: string,
+  options: { width: number; blur?: number; saturation?: number },
+): string {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -145,6 +192,9 @@ export function sizedImageURL(url: string, options: { width: number; blur?: numb
   parsed.searchParams.set("fit", "max");
   if (options.blur !== undefined && options.blur > 0) {
     parsed.searchParams.set("blur", String(options.blur));
+  }
+  if (options.saturation !== undefined && options.saturation !== 0) {
+    parsed.searchParams.set("sat", String(options.saturation));
   }
   return parsed.toString();
 }
