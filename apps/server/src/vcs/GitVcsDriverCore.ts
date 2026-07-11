@@ -2622,6 +2622,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     // Only do this after confirming the path is a registered *linked* worktree.
     // Otherwise a mistyped/non-worktree path would be recursively deleted before
     // `git worktree remove` could reject it.
+    //
+    // Listing is best-effort: timeout/failure here skips the filesystem
+    // pre-delete and still falls through to `git worktree remove`.
     if (input.force) {
       const worktreeList = yield* executeGit(
         "GitVcsDriver.removeWorktree.list",
@@ -2632,8 +2635,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           allowNonZeroExit: true,
           fallbackErrorDetail: "git worktree list failed",
         },
-      );
-      if (worktreeList.exitCode === 0) {
+      ).pipe(Effect.orElseSucceed(() => null));
+      if (worktreeList !== null && worktreeList.exitCode === 0) {
         const registeredPaths = parsePorcelainWorktreePaths(worktreeList.stdout);
         const canonicalize = (value: string) =>
           fileSystem.realPath(value).pipe(Effect.orElseSucceed(() => path.resolve(value)));
