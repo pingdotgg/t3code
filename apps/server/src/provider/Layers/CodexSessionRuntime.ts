@@ -54,6 +54,7 @@ const BENIGN_ERROR_LOG_SNIPPETS = [
   "state db record_discrepancy: find_thread_path_by_id_str_in_subdir, falling_back",
 ];
 const CODEX_APP_SERVER_FORCE_KILL_AFTER = "2 seconds" as const;
+const CODEX_INTERRUPT_THREAD_READ_TIMEOUT = "2 seconds" as const;
 const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
   "not found",
   "missing thread",
@@ -695,13 +696,57 @@ function parseThreadSnapshot(
 export function findActiveCodexTurnId(
   response: EffectCodexSchema.V2ThreadReadResponse,
 ): TurnId | undefined {
-  for (let index = response.thread.turns.length - 1; index >= 0; index -= 1) {
-    const turn = response.thread.turns[index];
-    if (turn?.status === "inProgress") {
-      return TurnId.make(turn.id);
+  let activeTurn: EffectCodexSchema.V2ThreadReadResponse["thread"]["turns"][number] | undefined;
+  for (const turn of response.thread.turns) {
+    if (turn.status !== "inProgress") {
+      continue;
+    }
+    if (
+      activeTurn === undefined ||
+      (turn.startedAt !== undefined &&
+        turn.startedAt !== null &&
+        (activeTurn.startedAt === undefined ||
+          activeTurn.startedAt === null ||
+          turn.startedAt >= activeTurn.startedAt)) ||
+      ((turn.startedAt === undefined || turn.startedAt === null) &&
+        (activeTurn.startedAt === undefined || activeTurn.startedAt === null))
+    ) {
+      activeTurn = turn;
     }
   }
-  return undefined;
+  return activeTurn === undefined ? undefined : TurnId.make(activeTurn.id);
+}
+
+export function resolveCodexInterruptTurnId<E>(input: {
+  readonly providerThreadId: string;
+  readonly requestedTurnId: TurnId | undefined;
+  readonly sessionActiveTurnId: TurnId | undefined;
+  readonly readThread: (
+    params: CodexRpc.ClientRequestParamsByMethod["thread/read"],
+  ) => Effect.Effect<CodexRpc.ClientRequestResponsesByMethod["thread/read"], E>;
+}): Effect.Effect<TurnId | undefined> {
+  if (input.requestedTurnId !== undefined) {
+    return Effect.succeed(input.requestedTurnId);
+  }
+
+  return input
+    .readThread({
+      threadId: input.providerThreadId,
+      includeTurns: true,
+    })
+    .pipe(
+      Effect.timeout(CODEX_INTERRUPT_THREAD_READ_TIMEOUT),
+      Effect.map(findActiveCodexTurnId),
+      Effect.tapError((cause) =>
+        Effect.logWarning("Failed to resolve active Codex turn before interrupt.", {
+          providerThreadId: input.providerThreadId,
+          cause,
+        }),
+      ),
+      // A failed lookup can still use the locally projected id. A successful
+      // lookup with no active turn must not revive a stale local id.
+      Effect.orElseSucceed(() => input.sessionActiveTurnId),
+    );
 }
 
 export const makeCodexSessionRuntime = (
@@ -1328,19 +1373,12 @@ export const makeCodexSessionRuntime = (
         Effect.gen(function* () {
           const providerThreadId = yield* readProviderThreadId;
           const session = yield* Ref.get(sessionRef);
-          const runtimeActiveTurnId =
-            turnId === undefined
-              ? yield* client
-                  .request("thread/read", {
-                    threadId: providerThreadId,
-                    includeTurns: true,
-                  })
-                  .pipe(
-                    Effect.map(findActiveCodexTurnId),
-                    Effect.orElseSucceed(() => undefined),
-                  )
-              : undefined;
-          const effectiveTurnId = turnId ?? runtimeActiveTurnId ?? session.activeTurnId;
+          const effectiveTurnId = yield* resolveCodexInterruptTurnId({
+            providerThreadId,
+            requestedTurnId: turnId,
+            sessionActiveTurnId: session.activeTurnId,
+            readThread: (params) => client.request("thread/read", params),
+          });
           if (!effectiveTurnId) {
             return;
           }

@@ -388,7 +388,7 @@ export async function waitForStartedServerThread(
 export interface LocalDispatchSnapshot {
   startedAt: string;
   preparingWorktree: boolean;
-  latestUserMessageId: MessageId | null;
+  expectedUserMessageId: MessageId | null;
   latestTurnTurnId: TurnId | null;
   latestTurnRequestedAt: string | null;
   latestTurnStartedAt: string | null;
@@ -411,14 +411,14 @@ export function getLatestUserMessageId(
 
 export function createLocalDispatchSnapshot(
   activeThread: Thread | undefined,
-  options?: { preparingWorktree?: boolean },
+  options?: { preparingWorktree?: boolean; expectedUserMessageId?: MessageId },
 ): LocalDispatchSnapshot {
   const latestTurn = activeThread?.latestTurn ?? null;
   const session = activeThread?.session ?? null;
   return {
     startedAt: new Date().toISOString(),
     preparingWorktree: Boolean(options?.preparingWorktree),
-    latestUserMessageId: getLatestUserMessageId(activeThread?.messages ?? []),
+    expectedUserMessageId: options?.expectedUserMessageId ?? null,
     latestTurnTurnId: latestTurn?.turnId ?? null,
     latestTurnRequestedAt: latestTurn?.requestedAt ?? null,
     latestTurnStartedAt: latestTurn?.startedAt ?? null,
@@ -451,7 +451,8 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   // The projected user message is the server acknowledgement in that case.
   if (
     input.localDispatch.sessionStatus === "running" &&
-    input.localDispatch.latestUserMessageId !== input.latestUserMessageId
+    input.localDispatch.expectedUserMessageId !== null &&
+    input.localDispatch.expectedUserMessageId === input.latestUserMessageId
   ) {
     return true;
   }

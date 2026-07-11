@@ -1,12 +1,12 @@
 import * as NodeAssert from "node:assert/strict";
 
-import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { describe } from "vite-plus/test";
-import { ThreadId } from "@t3tools/contracts";
+import { describe, it } from "@effect/vitest";
+import { ThreadId, TurnId } from "@t3tools/contracts";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
+import type * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import {
   CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
@@ -18,6 +18,7 @@ import {
   hasConfiguredMcpServer,
   isRecoverableThreadResumeError,
   openCodexThread,
+  resolveCodexInterruptTurnId,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
 
@@ -59,6 +60,27 @@ function makeThreadOpenResponse(
       },
     },
   } as unknown as CodexRpc.ClientRequestResponsesByMethod["thread/start"];
+}
+
+function makeThreadReadResponse(
+  turns: EffectCodexSchema.V2ThreadReadResponse["thread"]["turns"],
+): EffectCodexSchema.V2ThreadReadResponse {
+  return {
+    thread: {
+      cliVersion: "0.0.0-test",
+      createdAt: 1,
+      cwd: "/tmp/project",
+      ephemeral: false,
+      id: "provider-thread-1",
+      modelProvider: "openai",
+      preview: "test thread",
+      sessionId: "session-1",
+      source: "appServer",
+      status: { type: "active", activeFlags: [] },
+      turns,
+      updatedAt: 2,
+    },
+  };
 }
 
 describe("buildTurnStartParams", () => {
@@ -196,32 +218,59 @@ describe("buildTurnStartParams", () => {
 });
 
 describe("findActiveCodexTurnId", () => {
-  it("selects the newest in-progress turn from a thread snapshot", () => {
-    const response = makeThreadOpenResponse(
-      "provider-thread-1",
-    ) as unknown as CodexRpc.ClientRequestResponsesByMethod["thread/read"];
-    const turns = [
-      { id: "turn-completed", status: "completed", items: [] },
-      { id: "turn-active-old", status: "inProgress", items: [] },
-      { id: "turn-active-new", status: "inProgress", items: [] },
-    ];
-    const snapshot = {
-      ...response,
-      thread: {
-        ...response.thread,
-        turns,
-      },
-    } as CodexRpc.ClientRequestResponsesByMethod["thread/read"];
+  it("selects the most recently started in-progress turn", () => {
+    const snapshot = makeThreadReadResponse([
+      { id: "turn-active-new", status: "inProgress", startedAt: 30, items: [] },
+      { id: "turn-completed", status: "completed", startedAt: 20, items: [] },
+      { id: "turn-active-old", status: "inProgress", startedAt: 10, items: [] },
+    ]);
 
     NodeAssert.equal(findActiveCodexTurnId(snapshot), "turn-active-new");
   });
 
   it("returns undefined when no turn is active", () => {
-    const response = makeThreadOpenResponse(
-      "provider-thread-1",
-    ) as unknown as CodexRpc.ClientRequestResponsesByMethod["thread/read"];
+    const response = makeThreadReadResponse([]);
     NodeAssert.equal(findActiveCodexTurnId(response), undefined);
   });
+
+  it.effect("requests turns when resolving an interrupt without a projected turn id", () => {
+    let requestedParams: CodexRpc.ClientRequestParamsByMethod["thread/read"] | undefined;
+
+    return Effect.gen(function* () {
+      const turnId = yield* resolveCodexInterruptTurnId({
+        providerThreadId: "provider-thread-1",
+        requestedTurnId: undefined,
+        sessionActiveTurnId: undefined,
+        readThread: (params) => {
+          requestedParams = params;
+          return Effect.succeed(
+            makeThreadReadResponse([
+              { id: "turn-active", status: "inProgress", startedAt: 10, items: [] },
+            ]),
+          );
+        },
+      });
+
+      NodeAssert.deepStrictEqual(requestedParams, {
+        threadId: "provider-thread-1",
+        includeTurns: true,
+      });
+      NodeAssert.equal(turnId, "turn-active");
+    });
+  });
+
+  it.effect("does not revive a stale projected turn after a successful empty read", () =>
+    Effect.gen(function* () {
+      const turnId = yield* resolveCodexInterruptTurnId({
+        providerThreadId: "provider-thread-1",
+        requestedTurnId: undefined,
+        sessionActiveTurnId: TurnId.make("turn-stale"),
+        readThread: () => Effect.succeed(makeThreadReadResponse([])),
+      });
+
+      NodeAssert.equal(turnId, undefined);
+    }),
+  );
 });
 
 describe("T3 browser developer instructions", () => {

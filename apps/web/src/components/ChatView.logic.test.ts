@@ -495,6 +495,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         latestTurn: runningTurn,
         session: runningSession,
       }),
+      { expectedUserMessageId: steerMessageId },
     );
 
     expect(
@@ -522,5 +523,36 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         threadError: null,
       }),
     ).toBe(true);
+
+    const alreadyProjected = createLocalDispatchSnapshot(
+      makeThread({
+        messages: [
+          {
+            id: steerMessageId,
+            role: "user",
+            text: "steer",
+            turnId: runningTurn.turnId,
+            streaming: false,
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+        latestTurn: runningTurn,
+        session: runningSession,
+      }),
+      { expectedUserMessageId: MessageId.make("message-next-steer") },
+    );
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        localDispatch: alreadyProjected,
+        phase: "running",
+        latestTurn: runningTurn,
+        session: runningSession,
+        latestUserMessageId: steerMessageId,
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        threadError: null,
+      }),
+    ).toBe(false);
   });
 });
