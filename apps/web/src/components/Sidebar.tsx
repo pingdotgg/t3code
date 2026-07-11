@@ -153,6 +153,7 @@ import {
   isContextMenuPointerDown,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
+  orderSidebarThreadsByWorktree,
   resolveAdjacentThreadId,
   resolveProjectStatusIndicator,
   resolveSidebarStageBadgeLabel,
@@ -1332,6 +1333,17 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     }
     return counts;
   }, [memberProjectByScopedKey, project.memberProjects, projectThreads]);
+  const fallbackWorkspaceIdentities = useMemo(
+    () =>
+      project.memberProjects.map((member) => ({
+        environmentId: member.environmentId,
+        projectId: member.id,
+        projectCheckoutPath: member.workspaceRoot,
+        projectCheckoutLabel: null,
+        mainCheckoutPath: null,
+      })),
+    [project.memberProjects],
+  );
 
   const { projectStatus, visibleProjectThreads, orderedProjectThreadKeys } = useMemo(() => {
     const lastVisitedAtByThreadKey = new Map(
@@ -1358,14 +1370,24 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     const projectStatus = resolveProjectStatusIndicator(
       visibleProjectThreads.map((thread) => resolveProjectThreadStatus(thread)),
     );
+    const orderedVisibleProjectThreads =
+      threadGroupingMode === "worktree"
+        ? orderSidebarThreadsByWorktree(visibleProjectThreads, fallbackWorkspaceIdentities)
+        : visibleProjectThreads;
     return {
-      orderedProjectThreadKeys: visibleProjectThreads.map((thread) =>
+      orderedProjectThreadKeys: orderedVisibleProjectThreads.map((thread) =>
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
       ),
       projectStatus,
       visibleProjectThreads,
     };
-  }, [projectThreads, threadLastVisitedAts, threadSortOrder]);
+  }, [
+    fallbackWorkspaceIdentities,
+    projectThreads,
+    threadGroupingMode,
+    threadLastVisitedAts,
+    threadSortOrder,
+  ]);
   const pinnedCollapsedThread = useMemo(() => {
     const activeThreadKey = activeRouteThreadKey ?? undefined;
     if (!activeThreadKey || projectExpanded) {
@@ -3602,7 +3624,20 @@ export default function Sidebar() {
             ? projectThreads
             : projectThreads.slice(0, sidebarThreadPreviewCount);
         const renderedThreads = pinnedCollapsedThread ? [pinnedCollapsedThread] : previewThreads;
-        return renderedThreads.map((thread) =>
+        const orderedRenderedThreads =
+          sidebarThreadGroupingMode === "worktree"
+            ? orderSidebarThreadsByWorktree(
+                renderedThreads,
+                project.memberProjects.map((member) => ({
+                  environmentId: member.environmentId,
+                  projectId: member.id,
+                  projectCheckoutPath: member.workspaceRoot,
+                  projectCheckoutLabel: null,
+                  mainCheckoutPath: null,
+                })),
+              )
+            : renderedThreads;
+        return orderedRenderedThreads.map((thread) =>
           scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
         );
       }),
@@ -3612,6 +3647,7 @@ export default function Sidebar() {
       expandedThreadListsByProject,
       projectExpandedById,
       routeThreadKey,
+      sidebarThreadGroupingMode,
       sortedProjects,
       threadsByProjectKey,
     ],

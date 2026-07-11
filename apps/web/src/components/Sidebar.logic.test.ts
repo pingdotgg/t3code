@@ -26,6 +26,7 @@ import {
   isContextMenuPointerDown,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
+  orderSidebarThreadsByWorktree,
   resolveAdjacentThreadId,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadEnvMode,
@@ -248,6 +249,26 @@ describe("groupSidebarThreadsByWorktree", () => {
         threads: [memberTwoImplicit, memberTwoExplicit],
       },
     ]);
+  });
+});
+
+describe("orderSidebarThreadsByWorktree", () => {
+  it("matches the visual grouped-row order for interleaved worktrees", () => {
+    const first = {
+      environmentId: "local",
+      projectId: "project",
+      branch: "feature/one",
+      worktreePath: "/repo/one",
+    };
+    const second = {
+      environmentId: "local",
+      projectId: "project",
+      branch: "feature/two",
+      worktreePath: "/repo/two",
+    };
+    const third = { ...first, branch: "feature/one-again" };
+
+    expect(orderSidebarThreadsByWorktree([first, second, third])).toEqual([first, third, second]);
   });
 });
 

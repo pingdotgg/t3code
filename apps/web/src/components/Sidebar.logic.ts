@@ -93,6 +93,22 @@ export function groupSidebarThreadsByWorktree<
 
   return [...groups].map(([key, group]) => ({ key, ...group }));
 }
+
+export function orderSidebarThreadsByWorktree<
+  TThread extends {
+    readonly environmentId: string;
+    readonly projectId: string;
+    readonly branch: string | null;
+    readonly worktreePath: string | null;
+  },
+>(
+  threads: readonly TThread[],
+  workspaceIdentities: readonly SidebarWorkspaceIdentity[] = [],
+): TThread[] {
+  return groupSidebarThreadsByWorktree(threads, workspaceIdentities).flatMap(
+    (group) => group.threads,
+  );
+}
 type SidebarProject = {
   id: string;
   title: string;
