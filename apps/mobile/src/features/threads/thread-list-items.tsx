@@ -16,7 +16,7 @@ import { scopedThreadKey } from "../../lib/scopedEntities";
 import { relativeTime } from "../../lib/time";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { SceneryImage } from "../scenery/SceneryImage";
-import { useSceneryPhoto } from "../scenery/use-scenery";
+import { useSceneryPhoto, useThreadDisplayNames } from "../scenery/use-scenery";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useThreadPr } from "../../state/use-thread-pr";
 import type { HomeGroupDisplayAction } from "../home/homeListItems";
@@ -425,6 +425,12 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   const { thread, onSelectThread, onArchiveThread, onDeleteThread } = props;
   const threadKey = scopedThreadKey(thread.environmentId, thread.id);
   const scenePhoto = useSceneryPhoto(threadKey);
+  // Two-line scene naming (mac parity): primary is the stable scene place
+  // name, description is the server-generated title once it has replaced the
+  // scene seed. Falls back to `{ primary: thread.title, description: null }`
+  // when the thread has no resolvable scene, so the row renders exactly as
+  // before (title only).
+  const names = useThreadDisplayNames(threadKey, thread.title);
   const status = resolveThreadStatus(thread);
   const pr = useThreadPr(thread, props.projectCwd);
   const timestamp = relativeTime(
@@ -505,6 +511,20 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
       </View>
     ) : null;
 
+  // Server-generated title, once first-turn titling has replaced the scene
+  // seed — the mac sidebar's "description" line, directly under the scene
+  // name.
+  const descriptionRow =
+    names.description !== null ? (
+      <Text
+        className={compact ? "text-sm text-foreground-muted" : "text-xs"}
+        numberOfLines={1}
+        style={compact ? { marginTop: 1 } : { marginTop: 1, color: effectiveMuted }}
+      >
+        {names.description}
+      </Text>
+    ) : null;
+
   const rowContent = (close: () => void) =>
     compact ? (
       <Pressable
@@ -544,7 +564,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
             <View style={{ flex: 1, gap: 3 }}>
               <View className="flex-row items-center justify-between gap-2">
                 <Text className="flex-1 text-lg font-t3-bold text-foreground" numberOfLines={1}>
-                  {thread.title}
+                  {names.primary}
                 </Text>
                 <View className="flex-row items-center gap-2">
                   {statusPill}
@@ -562,6 +582,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
                   />
                 </View>
               </View>
+              {descriptionRow}
               {subtitleRow}
             </View>
           </View>
@@ -607,7 +628,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
                 numberOfLines={1}
                 style={{ color: effectiveForeground }}
               >
-                {thread.title}
+                {names.primary}
               </Text>
               <View className="flex-row items-center gap-2">
                 {statusPill}
@@ -620,6 +641,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
                 </Text>
               </View>
             </View>
+            {descriptionRow}
             {subtitleRow}
           </View>
         </View>

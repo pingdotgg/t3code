@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import { SymbolView } from "expo-symbols";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -23,6 +24,7 @@ import { StatusPill } from "../../components/StatusPill";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { relativeTime } from "../../lib/time";
+import { displayNamesFromState, sceneryStateAtom } from "../scenery/scenery-store";
 import { resolveThreadStatus } from "./threadPresentation";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { buildThreadNavigationGroups } from "./thread-navigation-groups";
@@ -179,6 +181,7 @@ function ThreadNavigationDrawerContent(props: {
 }) {
   const projects = useProjects();
   const threads = useThreadShells();
+  const sceneryState = useAtomValue(sceneryStateAtom);
   const groupedThreads = useMemo(
     () => buildThreadNavigationGroups({ projects, threads }),
     [projects, threads],
@@ -212,6 +215,9 @@ function ThreadNavigationDrawerContent(props: {
                 const threadKey = scopedThreadKey(thread.environmentId, thread.id);
                 const selected = props.selectedThreadKey === threadKey;
                 const status = resolveThreadStatus(thread);
+                // Two-line scene naming (mac parity); falls back to the raw
+                // title when the thread has no resolvable scene.
+                const names = displayNamesFromState(sceneryState, threadKey, thread.title);
 
                 return (
                   <Pressable
@@ -232,8 +238,16 @@ function ThreadNavigationDrawerContent(props: {
                     <View className="flex-row items-start justify-between gap-3">
                       <View className="flex-1 gap-1">
                         <Text className="text-base font-t3-bold" numberOfLines={1}>
-                          {thread.title}
+                          {names.primary}
                         </Text>
+                        {names.description !== null ? (
+                          <Text
+                            className="text-sm font-medium text-foreground-muted"
+                            numberOfLines={1}
+                          >
+                            {names.description}
+                          </Text>
+                        ) : null}
                         <Text
                           className="text-sm font-medium text-foreground-muted"
                           numberOfLines={1}

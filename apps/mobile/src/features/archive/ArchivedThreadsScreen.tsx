@@ -23,10 +23,12 @@ import { AppText as Text } from "../../components/AppText";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { EmptyState } from "../../components/EmptyState";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
+import { scopedThreadKey } from "../../lib/scopedEntities";
 import { relativeTime } from "../../lib/time";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { createNativeMailSearchToolbarItem } from "../layout/native-mail-search-toolbar";
+import { useThreadDisplayNames } from "../scenery/use-scenery";
 import type { ArchivedThreadGroup, ArchivedThreadSortOrder } from "./archivedThreadList";
 
 export interface ArchivedThreadsHeaderEnvironment {
@@ -280,6 +282,10 @@ function ArchivedThreadRow(props: {
   const subtitle = [props.environmentLabel, props.thread.branch].filter((part): part is string =>
     Boolean(part),
   );
+  const threadKey = scopedThreadKey(props.thread.environmentId, props.thread.id);
+  // Two-line scene naming (mac parity); falls back to the raw title when the
+  // thread has no resolvable scene.
+  const names = useThreadDisplayNames(threadKey, props.thread.title);
   const handleMenuAction = useCallback(
     (event: { nativeEvent: { event: string } }) => {
       if (event.nativeEvent.event === "unarchive") {
@@ -329,7 +335,7 @@ function ArchivedThreadRow(props: {
                 className="min-w-0 flex-1 text-base font-t3-bold leading-snug text-foreground"
                 numberOfLines={1}
               >
-                {props.thread.title}
+                {names.primary}
               </Text>
               <Text
                 className="text-xs text-foreground-tertiary"
@@ -338,6 +344,11 @@ function ArchivedThreadRow(props: {
                 {timestamp}
               </Text>
             </View>
+            {names.description !== null ? (
+              <Text className="min-w-0 text-sm text-foreground-muted" numberOfLines={1}>
+                {names.description}
+              </Text>
+            ) : null}
             {subtitle.length > 0 ? (
               <View className="flex-row items-center gap-1.5">
                 <SymbolView

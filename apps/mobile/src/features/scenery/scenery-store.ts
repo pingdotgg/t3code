@@ -196,6 +196,44 @@ function distinctlyNamedCandidates(pool: ReadonlyArray<SceneryPhoto>): ReadonlyA
   return named.length === 0 ? pool : named;
 }
 
+/**
+ * Pure resolution of a thread key's stable scene name from published
+ * `SceneryState`, mirroring `SceneryStore.sceneName` above but without an
+ * instance — duplicated here (rather than reusing `photoFromState` in
+ * use-scenery.ts) because it needs the private `baseSceneName` normalizer.
+ * Used by `displayNamesFromState`.
+ */
+function sceneNameFromState(state: SceneryState, threadKey: string): string | null {
+  if (state.pool.length === 0) return null;
+  const assignedId = state.assignments[threadKey];
+  const assigned =
+    assignedId !== undefined ? state.pool.find((photo) => photo.id === assignedId) : undefined;
+  const photo = assigned ?? state.pool[stableIndex(threadKey, state.pool.length)];
+  return photo ? baseSceneName(photo.name) : null;
+}
+
+/**
+ * Two-line naming for a thread computed directly from published
+ * `SceneryState`, for reactive hooks (`useThreadDisplayNames` in
+ * use-scenery.ts) that only subscribe to `sceneryStateAtom` rather than
+ * holding a `SceneryStore` instance. Same semantics as
+ * `SceneryStore.displayNames` below — keep the two in sync.
+ */
+export function displayNamesFromState(
+  state: SceneryState,
+  threadKey: string,
+  title: string,
+): { readonly primary: string; readonly description: string | null } {
+  const trimmedTitle = title.trim();
+  const scene = sceneNameFromState(state, threadKey);
+  if (scene === null) return { primary: trimmedTitle, description: null };
+  if (trimmedTitle.length === 0) return { primary: scene, description: null };
+  if (trimmedTitle === scene || isLegacyNumberedSceneTitle(trimmedTitle, scene)) {
+    return { primary: scene, description: null };
+  }
+  return { primary: scene, description: trimmedTitle };
+}
+
 export interface SceneryStoreOptions {
   readonly registry?: AtomRegistry.AtomRegistry;
   readonly storage?: SceneryStorage;

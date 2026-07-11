@@ -10,7 +10,12 @@ vi.mock("react-native", () => ({
 
 import { ALPINE_WASHES, stableIndex, washColors } from "./alpine-theme";
 import { makeMemorySceneryStorage } from "./scenery-storage";
-import { SceneryStore, SCENE_NAMES, sceneryStateAtom } from "./scenery-store";
+import {
+  displayNamesFromState,
+  SceneryStore,
+  SCENE_NAMES,
+  sceneryStateAtom,
+} from "./scenery-store";
 import type { SceneryPhoto, UnsplashClient } from "./unsplash";
 import { extractPlaceName, makeUnsplashClient, sizedImageURL } from "./unsplash";
 
@@ -442,6 +447,31 @@ describe("SceneryStore", () => {
     const { store: emptyStore } = makeStore({ client: null });
     await emptyStore.start();
     expect(emptyStore.displayNames("thread-x", "Some title")).toEqual({
+      primary: "Some title",
+      description: null,
+    });
+  });
+
+  it("displayNamesFromState mirrors displayNames from published SceneryState (thread-list-row hook path)", async () => {
+    const client = makeClient([photo("p0")]);
+    const { store, registry } = makeStore({ client });
+    await store.start();
+
+    const scene = store.peekNextScene()!;
+    store.assign(scene.id, "thread-1");
+    const state = registry.get(sceneryStateAtom);
+    const seedTitle = store.threadTitle(scene);
+
+    expect(displayNamesFromState(state, "thread-1", seedTitle)).toEqual(
+      store.displayNames("thread-1", seedTitle),
+    );
+    expect(displayNamesFromState(state, "thread-1", "Fix the flaky retry test")).toEqual(
+      store.displayNames("thread-1", "Fix the flaky retry test"),
+    );
+    // Empty pool: no resolvable scene, so the title passes through untouched
+    // — the fallback row components rely on to render exactly as before.
+    const emptyState = { ready: true, pool: [], assignments: {}, featuredPhotoId: null };
+    expect(displayNamesFromState(emptyState, "thread-x", "Some title")).toEqual({
       primary: "Some title",
       description: null,
     });
