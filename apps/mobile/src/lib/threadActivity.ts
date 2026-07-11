@@ -12,6 +12,8 @@ import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 
+import { deriveSubagentTasks, type SubagentTaskItem } from "./subagentTaskActivity";
+
 export interface PendingApproval {
   readonly requestId: ApprovalRequestId;
   readonly requestKind: "command" | "file-read" | "file-change";
@@ -94,10 +96,18 @@ type RawThreadFeedEntry =
       readonly createdAt: string;
       readonly turnId: TurnId | null;
       readonly activity: ThreadFeedActivity;
+    }
+  | {
+      readonly type: "subagent-task";
+      readonly id: string;
+      readonly createdAt: string;
+      readonly turnId: TurnId | null;
+      readonly task: SubagentTaskItem;
     };
 
 export type ThreadFeedEntry =
   | Extract<RawThreadFeedEntry, { type: "message" }>
+  | Extract<RawThreadFeedEntry, { type: "subagent-task" }>
   | {
       readonly type: "activity-group";
       readonly id: string;
@@ -236,7 +246,16 @@ function deriveWorkLogEntries(
   const entries: DerivedWorkLogEntry[] = [];
   for (const activity of ordered) {
     if (activity.kind === "tool.started") continue;
-    if (activity.kind === "task.started") continue;
+    // Subagent task lifecycle activities render as dedicated SubagentTaskRow
+    // entries (see deriveSubagentTasks below) instead of generic work-log rows.
+    if (
+      activity.kind === "task.started" ||
+      activity.kind === "task.progress" ||
+      activity.kind === "task.updated" ||
+      activity.kind === "task.completed"
+    ) {
+      continue;
+    }
     if (activity.kind === "context-window.updated") continue;
     if (activity.summary === "Checkpoint captured") continue;
     if (isPlanBoundaryToolActivity(activity)) continue;
@@ -1022,7 +1041,7 @@ function deriveThreadFeedTurnFolds(
     const turnId =
       entry.type === "message" && entry.message.role === "assistant"
         ? entry.message.turnId
-        : entry.type === "activity-group"
+        : entry.type === "activity-group" || entry.type === "subagent-task"
           ? entry.turnId
           : null;
     if (!turnId) {
@@ -1319,6 +1338,7 @@ export function buildThreadFeed(
   const oldestLoadedMessageCreatedAt =
     options?.loadedMessages !== undefined ? (loadedMessages[0]?.createdAt ?? null) : null;
   const workLogEntries = deriveWorkLogEntries(thread.activities);
+  const subagentTasks = deriveSubagentTasks(thread.activities);
   const entries = Arr.sortWith(
     [
       ...loadedMessages.map<RawThreadFeedEntry>((message) => ({
@@ -1327,6 +1347,22 @@ export function buildThreadFeed(
         createdAt: message.createdAt,
         message,
       })),
+      ...subagentTasks
+        .filter((task) => {
+          if (options?.loadedMessages === undefined) {
+            return true;
+          }
+          return (
+            oldestLoadedMessageCreatedAt === null || task.startedAt >= oldestLoadedMessageCreatedAt
+          );
+        })
+        .map<RawThreadFeedEntry>((task) => ({
+          type: "subagent-task",
+          id: task.id,
+          createdAt: task.startedAt,
+          turnId: task.turnId,
+          task,
+        })),
       ...workLogEntries
         .filter((entry) => {
           if (options?.loadedMessages === undefined) {
