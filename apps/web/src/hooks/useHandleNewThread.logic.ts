@@ -24,7 +24,7 @@ export async function resolveProjectMainCheckout(input: {
   }
 
   const snapshot = await input.loadRefs();
-  if (snapshot === null) return input.activeProjectMainCheckout ?? undefined;
+  if (snapshot === null) return undefined;
   const options = deriveWorkspaceOptions(
     snapshot.refs,
     input.projectWorkspaceRoot,
