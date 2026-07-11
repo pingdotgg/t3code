@@ -595,6 +595,66 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.equal(yield* fileSystem.exists(worktreePath), false);
       }),
     );
+
+    it.effect(
+      "copies ignored env files into a new worktree without descending into ignored dirs",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const pathService = yield* Path.Path;
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+
+          const cwd = yield* makeTmpDir();
+          yield* driver.initRepo({ cwd });
+          yield* git(cwd, ["config", "user.email", "test@test.com"]);
+          yield* git(cwd, ["config", "user.name", "Test"]);
+          // Tracked files: `.gitignore` plus a nested file so `apps/web` is a
+          // tracked directory that git will recurse into.
+          yield* writeTextFile(cwd, ".gitignore", "node_modules/\n.env\n.env.*\n");
+          yield* writeTextFile(cwd, "apps/web/index.ts", "export const x = 1;\n");
+          yield* git(cwd, ["add", "."]);
+          yield* git(cwd, ["commit", "-m", "initial commit"]);
+          const initialBranch = yield* git(cwd, ["branch", "--show-current"]);
+
+          // Ignored (untracked) env files at several levels, including one buried
+          // inside an ignored directory that must NOT be copied.
+          yield* writeTextFile(cwd, ".env", "ROOT=1\n");
+          yield* writeTextFile(cwd, ".env.local", "ROOT_LOCAL=1\n");
+          yield* writeTextFile(cwd, "apps/web/.env.local", "WEB_LOCAL=1\n");
+          yield* writeTextFile(cwd, "node_modules/pkg/.env", "NODE_MODULES=1\n");
+
+          const worktreePath = pathService.join(
+            yield* makeTmpDir("git-worktrees-"),
+            "env-worktree",
+          );
+          yield* driver.createWorktree({
+            cwd,
+            path: worktreePath,
+            refName: initialBranch,
+            newRefName: "feature/env-worktree",
+          });
+
+          assert.equal(
+            yield* fileSystem.readFileString(pathService.join(worktreePath, ".env")),
+            "ROOT=1\n",
+          );
+          assert.equal(
+            yield* fileSystem.readFileString(pathService.join(worktreePath, ".env.local")),
+            "ROOT_LOCAL=1\n",
+          );
+          assert.equal(
+            yield* fileSystem.readFileString(pathService.join(worktreePath, "apps/web/.env.local")),
+            "WEB_LOCAL=1\n",
+          );
+          // The `.env` under the ignored `node_modules/` directory is not copied.
+          assert.equal(
+            yield* fileSystem.exists(pathService.join(worktreePath, "node_modules/pkg/.env")),
+            false,
+          );
+
+          yield* driver.removeWorktree({ cwd, path: worktreePath });
+        }),
+    );
   });
 
   describe("commit context", () => {

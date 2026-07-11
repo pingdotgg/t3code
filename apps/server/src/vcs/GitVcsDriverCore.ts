@@ -47,6 +47,19 @@ const RANGE_DIFF_PATCH_MAX_OUTPUT_BYTES = 59_000;
 const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = 120_000;
 const REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES = 80_000;
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 120_000;
+// `.env` files are conventionally git-ignored, so `git worktree add` never
+// carries them into a freshly created worktree. Copy them from the source
+// working tree so dev servers and framework tooling (e.g. Next.js / AuthKit)
+// read the same environment they do in the primary checkout. The `--directory`
+// flag collapses ignored directories such as `node_modules/` into a single
+// entry, so `.env` files buried inside them are neither matched nor descended
+// into; only ignored env files that live in tracked directories are copied.
+const WORKTREE_ENV_FILE_PATHSPECS = [
+  ":(glob).env",
+  ":(glob).env.*",
+  ":(glob)**/.env",
+  ":(glob)**/.env.*",
+] as const;
 const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
 const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
 
@@ -2242,6 +2255,59 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
 
+  const copyIgnoredEnvFilesToWorktree = Effect.fn("copyIgnoredEnvFilesToWorktree")(function* (
+    sourceCwd: string,
+    worktreePath: string,
+  ) {
+    const listResult = yield* executeGit(
+      "GitVcsDriver.createWorktree.listEnvFiles",
+      sourceCwd,
+      [
+        "ls-files",
+        "-z",
+        "--others",
+        "--ignored",
+        "--exclude-standard",
+        "--directory",
+        "--",
+        ...WORKTREE_ENV_FILE_PATHSPECS,
+      ],
+      {
+        maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
+        fallbackErrorDetail: "git ls-files for worktree env files failed",
+      },
+    );
+    // `--directory` reports fully-ignored directories with a trailing slash;
+    // drop those so we only copy regular files.
+    const relativePaths = splitNullSeparatedGitStdoutPaths(listResult).filter(
+      (relativePath) => relativePath.length > 0 && !relativePath.endsWith("/"),
+    );
+
+    yield* Effect.forEach(
+      relativePaths,
+      (relativePath) =>
+        Effect.gen(function* () {
+          const destination = path.join(worktreePath, relativePath);
+          // Never clobber a file that the checkout already produced.
+          if (yield* fileSystem.exists(destination)) {
+            return;
+          }
+          const contents = yield* fileSystem.readFile(path.join(sourceCwd, relativePath));
+          yield* fileSystem.makeDirectory(path.dirname(destination), { recursive: true });
+          yield* fileSystem.writeFile(destination, contents);
+        }).pipe(
+          // Copy each file independently so one failure never skips the rest.
+          Effect.catchCause((cause) =>
+            Effect.logWarning(
+              "GitVcsDriver.createWorktree failed to copy an env file into the new worktree.",
+              { relativePath, worktreePath, cause },
+            ),
+          ),
+        ),
+      { concurrency: 4, discard: true },
+    );
+  });
+
   const createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"] = Effect.fn(
     "createWorktree",
   )(function* (input) {
@@ -2270,6 +2336,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         baseBranch,
       ]);
     }
+
+    // Best-effort: copying env files must never fail worktree creation, or the
+    // whole thread would be lost over a missing `.env`.
+    yield* copyIgnoredEnvFilesToWorktree(input.cwd, worktreePath).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning(
+          "GitVcsDriver.createWorktree failed to copy ignored env files into the new worktree.",
+          { cwd: input.cwd, worktreePath, cause },
+        ),
+      ),
+    );
 
     return {
       worktree: {
