@@ -12,7 +12,10 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { GitCommandError } from "@t3tools/contracts";
 import { ServerConfig } from "../config.ts";
-import { splitNullSeparatedGitStdoutPaths } from "./GitVcsDriverCore.ts";
+import {
+  parsePorcelainWorktreePaths,
+  splitNullSeparatedGitStdoutPaths,
+} from "./GitVcsDriverCore.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 
 const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
@@ -255,6 +258,48 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         });
         assert.notProperty(error, "cause");
         assert.notInclude(error.detail, "Git command failed in");
+      }),
+    );
+
+    it.effect("does not filesystem-delete a path that is not a registered worktree", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const decoyPath = pathService.join(cwd, "not-a-worktree");
+        yield* fileSystem.makeDirectory(decoyPath, { recursive: true });
+        yield* writeTextFile(decoyPath, "keep.txt", "keep\n");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const error = yield* driver
+          .removeWorktree({ cwd, path: decoyPath, force: true })
+          .pipe(Effect.flip);
+
+        assert.equal(error._tag, "GitCommandError");
+        assert.equal(yield* fileSystem.exists(pathService.join(decoyPath, "keep.txt")), true);
+      }),
+    );
+  });
+
+  describe("porcelain worktree parsing", () => {
+    it.effect("parses worktree paths from porcelain output", () =>
+      Effect.sync(() => {
+        assert.deepStrictEqual(
+          parsePorcelainWorktreePaths(
+            [
+              "worktree /repo",
+              "HEAD abc",
+              "branch refs/heads/main",
+              "",
+              "worktree /repo-feature",
+              "HEAD def",
+              "branch refs/heads/feature",
+              "",
+            ].join("\n"),
+          ),
+          ["/repo", "/repo-feature"],
+        );
       }),
     );
   });

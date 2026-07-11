@@ -232,6 +232,19 @@ export function splitNullSeparatedGitStdoutPaths(
   return splitNullSeparatedPaths(result.stdout, result.stdoutTruncated);
 }
 
+export function parsePorcelainWorktreePaths(stdout: string): string[] {
+  const paths: string[] = [];
+  for (const line of stdout.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      const worktreePath = line.slice("worktree ".length).trim();
+      if (worktreePath.length > 0) {
+        paths.push(worktreePath);
+      }
+    }
+  }
+  return paths;
+}
+
 function sanitizeRemoteName(value: string): string {
   const sanitized = value
     .trim()
@@ -2409,32 +2422,61 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     // has to clean up worktree registration metadata. That keeps the git step
     // fast even for multi-GB trees and avoids interrupting `git worktree remove`
     // mid-delete after a short timeout.
+    //
+    // Only do this after confirming the path is a registered *linked* worktree.
+    // Otherwise a mistyped/non-worktree path would be recursively deleted before
+    // `git worktree remove` could reject it.
     if (input.force) {
-      const exists = yield* fileSystem.exists(input.path).pipe(Effect.orElseSucceed(() => false));
-      if (exists) {
-        yield* fileSystem.remove(input.path, { recursive: true, force: true }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new GitCommandError({
-                ...commandContext,
-                detail: "Failed to delete worktree directory.",
-                cause,
-              }),
-          ),
-          Effect.timeoutOption(REMOVE_WORKTREE_DIRECTORY_TIMEOUT_MS),
-          Effect.flatMap((result) =>
-            Option.match(result, {
-              onNone: () =>
-                Effect.fail(
+      const worktreeList = yield* executeGit(
+        "GitVcsDriver.removeWorktree.list",
+        input.cwd,
+        ["worktree", "list", "--porcelain"],
+        {
+          timeoutMs: 5_000,
+          allowNonZeroExit: true,
+          fallbackErrorDetail: "git worktree list failed",
+        },
+      );
+      if (worktreeList.exitCode === 0) {
+        const registeredPaths = parsePorcelainWorktreePaths(worktreeList.stdout);
+        const canonicalize = (value: string) =>
+          fileSystem.realPath(value).pipe(Effect.orElseSucceed(() => path.resolve(value)));
+        const [canonicalTarget, ...canonicalRegistered] = yield* Effect.all(
+          [canonicalize(input.path), ...registeredPaths.map(canonicalize)],
+          { concurrency: "unbounded" },
+        );
+        // Porcelain lists the main working tree first; never filesystem-delete it.
+        const linkedWorktreePaths = new Set(canonicalRegistered.slice(1));
+        if (linkedWorktreePaths.has(canonicalTarget)) {
+          const exists = yield* fileSystem
+            .exists(input.path)
+            .pipe(Effect.orElseSucceed(() => false));
+          if (exists) {
+            yield* fileSystem.remove(input.path, { recursive: true, force: true }).pipe(
+              Effect.mapError(
+                (cause) =>
                   new GitCommandError({
                     ...commandContext,
-                    detail: "Timed out deleting worktree directory.",
+                    detail: "Failed to delete worktree directory.",
+                    cause,
                   }),
-                ),
-              onSome: () => Effect.void,
-            }),
-          ),
-        );
+              ),
+              Effect.timeoutOption(REMOVE_WORKTREE_DIRECTORY_TIMEOUT_MS),
+              Effect.flatMap((result) =>
+                Option.match(result, {
+                  onNone: () =>
+                    Effect.fail(
+                      new GitCommandError({
+                        ...commandContext,
+                        detail: "Timed out deleting worktree directory.",
+                      }),
+                    ),
+                  onSome: () => Effect.void,
+                }),
+              ),
+            );
+          }
+        }
       }
     }
 
