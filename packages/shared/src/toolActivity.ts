@@ -1,4 +1,4 @@
-import type { ToolLifecycleItemType } from "@t3tools/contracts";
+import type { RuntimeItemStatus, ToolLifecycleItemType } from "@t3tools/contracts";
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -184,6 +184,58 @@ function collectPaths(value: unknown, paths: string[], seen: Set<string>, depth:
   }
 }
 
+function normalizeStringList(value: unknown): string | undefined {
+  const direct = asTrimmedString(value);
+  if (direct) {
+    return direct;
+  }
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const values = value
+    .map((entry) => asTrimmedString(entry))
+    .filter((entry): entry is string => entry !== undefined);
+  return values.length > 0 ? values.join(", ") : undefined;
+}
+
+function extractSearchDetail(data: Record<string, unknown> | undefined): string | undefined {
+  const item = asRecord(data?.item);
+  const action = asRecord(item?.action);
+  const rawInput = asRecord(data?.rawInput);
+  const input = asRecord(data?.input);
+  const actionType = asTrimmedString(action?.type);
+
+  if (actionType === "findInPage") {
+    const pattern = asTrimmedString(action?.pattern);
+    const url = asTrimmedString(action?.url);
+    if (pattern && url) {
+      return `${pattern} in ${url}`;
+    }
+    return pattern ?? url;
+  }
+  if (actionType === "openPage") {
+    return asTrimmedString(action?.url);
+  }
+
+  const candidates = [
+    action?.queries,
+    action?.query,
+    item?.query,
+    rawInput?.query,
+    rawInput?.queries,
+    rawInput?.pattern,
+    rawInput?.searchTerm,
+    rawInput?.url,
+    input?.query,
+    input?.queries,
+    input?.pattern,
+    input?.searchTerm,
+    input?.url,
+  ];
+  return candidates.map(normalizeStringList).find((candidate) => candidate !== undefined);
+}
+
+/** Structured paths from tool input, never file-body text. */
 export function collectToolFilePaths(data: unknown): string[] {
   const paths: string[] = [];
   collectPaths(data, paths, new Set<string>(), 0);
@@ -392,8 +444,75 @@ export function formatReadToolLabel(path: string, extraCount = 0): string {
   return `Read ${trimmed}${suffix}`;
 }
 
+function classifyPresentationAction(input: Parameters<typeof classifyToolActivity>[0]) {
+  if (input.itemType === "web_search") return "web_search";
+  if (input.itemType === "image_view") return "image_view";
+  const action = classifyToolActivity(input);
+  return action === "search" ? "file_search" : action;
+}
+
+function lifecyclePhase(input: {
+  readonly status?: RuntimeItemStatus | null | undefined;
+  readonly lifecycle?: "started" | "updated" | "completed" | null | undefined;
+}): "inProgress" | "completed" | "failed" | "declined" {
+  if (input.status === "failed") return "failed";
+  if (input.status === "declined") return "declined";
+  if (input.status === "inProgress") return "inProgress";
+  if (input.lifecycle === "started" || input.lifecycle === "updated") return "inProgress";
+  return "completed";
+}
+
+function lifecycleSummary(input: {
+  readonly action: ReturnType<typeof classifyPresentationAction>;
+  readonly phase: ReturnType<typeof lifecyclePhase>;
+  readonly fallbackSummary: string;
+  readonly title: string | undefined;
+}): string | undefined {
+  const fallback = input.title ?? input.fallbackSummary;
+  if (input.phase === "failed") {
+    switch (input.action) {
+      case "command":
+        return "Command failed";
+      case "read":
+        return "Read failed";
+      case "file_change":
+        return "File change failed";
+      case "file_search":
+        return "File search failed";
+      case "web_search":
+        return "Web search failed";
+      case "image_view":
+        return "Image view failed";
+      case "other":
+        return fallback === "Tool" ? "Tool failed" : `${fallback} failed`;
+    }
+  }
+  if (input.phase === "declined") {
+    return fallback === "Tool" ? "Tool declined" : `${fallback} declined`;
+  }
+  const completed = input.phase === "completed";
+  switch (input.action) {
+    case "command":
+      return completed ? "Ran command" : "Running command";
+    case "read":
+      return completed ? "Read file" : "Reading file";
+    case "file_change":
+      return completed ? "Changed files" : "Editing files";
+    case "file_search":
+      return completed ? "Searched files" : "Searching files";
+    case "web_search":
+      return completed ? "Searched web" : "Searching web";
+    case "image_view":
+      return completed ? "Viewed image" : "Viewing image";
+    case "other":
+      return undefined;
+  }
+}
+
 export interface ToolActivityPresentationInput {
   readonly itemType?: ToolLifecycleItemType | null | undefined;
+  readonly status?: RuntimeItemStatus | null | undefined;
+  readonly lifecycle?: "started" | "updated" | "completed" | null | undefined;
   readonly title?: string | null | undefined;
   readonly detail?: string | null | undefined;
   readonly data?: unknown;
@@ -414,15 +533,25 @@ export function deriveToolActivityPresentation(
   const data = asRecord(input.data);
   const command = extractToolCommand(data, title);
   const primaryPath = extractPrimaryPath(data);
-  const action = classifyToolActivity({
+  const action = classifyPresentationAction({
     itemType: input.itemType,
     title,
     data,
   });
+  const phase = lifecyclePhase({
+    status: input.status,
+    lifecycle: input.lifecycle,
+  });
+  const summary = lifecycleSummary({
+    action,
+    phase,
+    fallbackSummary,
+    title,
+  });
 
   if (action === "command") {
     return {
-      summary: "Ran command",
+      summary: summary ?? fallbackSummary,
       ...(command ? { detail: command } : {}),
     };
   }
@@ -430,39 +559,48 @@ export function deriveToolActivityPresentation(
   if (action === "read") {
     if (primaryPath) {
       return {
-        summary: formatReadToolLabel(primaryPath),
+        summary: summary ?? fallbackSummary,
+        detail: primaryPath,
       };
     }
     return {
-      summary: "Read file",
+      summary: summary ?? fallbackSummary,
     };
   }
 
   if (action === "file_change") {
     return {
-      summary: "Changed files",
+      summary: summary ?? fallbackSummary,
       ...(primaryPath ? { detail: primaryPath } : {}),
     };
   }
 
-  if (action === "search") {
-    const searchLabel = formatSearchToolLabel(data);
-    if (searchLabel) {
-      return { summary: searchLabel };
-    }
+  if (action === "file_search" || action === "web_search") {
+    const query =
+      action === "file_search"
+        ? (formatSearchToolLabel(data)?.replace(/^Searched /u, "") ?? extractSearchDetail(data))
+        : extractSearchDetail(data);
     return {
-      summary: "Searched files",
+      summary: summary ?? fallbackSummary,
+      ...(query ? { detail: query } : {}),
+    };
+  }
+
+  if (action === "image_view") {
+    return {
+      summary: summary ?? fallbackSummary,
+      ...(primaryPath ? { detail: primaryPath } : {}),
     };
   }
 
   if (detail && !isEquivalent(detail, title) && !isEquivalent(detail, fallbackSummary)) {
     return {
-      summary: title ?? fallbackSummary,
+      summary: summary ?? title ?? fallbackSummary,
       detail,
     };
   }
 
   return {
-    summary: title ?? fallbackSummary,
+    summary: summary ?? title ?? fallbackSummary,
   };
 }

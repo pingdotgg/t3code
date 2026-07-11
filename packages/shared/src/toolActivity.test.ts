@@ -1,8 +1,95 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { classifyToolActivity, dynamicToolSurface, mergeToolActivityData } from "./toolActivity.ts";
+import { classifyToolActivity, dynamicToolSurface, mergeToolActivityData, deriveToolActivityPresentation } from "./toolActivity.ts";
 
 describe("toolActivity", () => {
+  it("normalizes command tools to a stable ran-command label", () => {
+    expect(
+      deriveToolActivityPresentation({
+        itemType: "command_execution",
+        title: "Terminal",
+        detail: "Terminal",
+        data: {
+          command: "bun run lint",
+        },
+        fallbackSummary: "Terminal",
+      }),
+    ).toEqual({
+      summary: "Ran command",
+      detail: "bun run lint",
+    });
+  });
+
+  it("uses structured file paths for read-file tools when available", () => {
+    expect(
+      deriveToolActivityPresentation({
+        itemType: "dynamic_tool_call",
+        title: "Read File",
+        detail: "Read File",
+        data: {
+          kind: "read",
+          locations: [{ path: "/tmp/app.ts" }],
+        },
+        fallbackSummary: "Read File",
+      }),
+    ).toEqual({
+      summary: "Read file",
+      detail: "/tmp/app.ts",
+    });
+  });
+
+  it("drops duplicated generic read-file detail when no path is available", () => {
+    expect(
+      deriveToolActivityPresentation({
+        itemType: "dynamic_tool_call",
+        title: "Read File",
+        detail: "Read File",
+        data: {
+          kind: "read",
+          rawInput: {},
+        },
+        fallbackSummary: "Read File",
+      }),
+    ).toEqual({
+      summary: "Read file",
+    });
+  });
+
+  it("retains read paths through progress and failure states", () => {
+    for (const [status, summary] of [
+      ["inProgress", "Reading file"],
+      ["completed", "Read file"],
+      ["failed", "Read failed"],
+      ["declined", "Read declined"],
+    ] as const) {
+      expect(
+        deriveToolActivityPresentation({
+          status,
+          title: "Read",
+          data: { toolName: "Read", rawInput: { file_path: "README" } },
+        }),
+      ).toEqual({ summary, detail: "README" });
+    }
+  });
+
+  it("keeps search details while distinguishing file and web lifecycles", () => {
+    expect(
+      deriveToolActivityPresentation({
+        lifecycle: "started",
+        data: { toolName: "Grep", input: { pattern: "TODO", path: "apps/web" } },
+      }),
+    ).toEqual({ summary: "Searching files", detail: "TODO in web" });
+    expect(
+      deriveToolActivityPresentation({
+        itemType: "web_search",
+        status: "failed",
+        data: {
+          item: { action: { type: "findInPage", pattern: "API", url: "https://example.com" } },
+        },
+      }),
+    ).toEqual({ summary: "Web search failed", detail: "API in https://example.com" });
+  });
+
   it("classifies from kind and toolName without sniffing titles", () => {
     expect(classifyToolActivity({ data: { kind: "read" } })).toBe("read");
     expect(classifyToolActivity({ data: { toolName: "Grep" } })).toBe("search");
