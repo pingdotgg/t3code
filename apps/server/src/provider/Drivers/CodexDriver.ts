@@ -166,6 +166,10 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       });
       const textGeneration = yield* makeCodexTextGeneration(effectiveConfig, processEnv);
       const listSkills = Effect.fn("CodexDriver.listSkills")(function* (cwd: string) {
+        if (!effectiveConfig.enabled) {
+          return [];
+        }
+
         return yield* probeCodexAppServerProvider({
           binaryPath: effectiveConfig.binaryPath,
           homePath: effectiveConfig.homePath,
