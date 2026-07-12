@@ -1268,7 +1268,6 @@ const makeWsRpcLayer = (
               return { skills };
             }).pipe(
               Effect.mapError((cause) =>
-                cause._tag === "ServerProviderSkillsError" ||
                 cause._tag === "ServerProviderSkillsUnsupportedError"
                   ? cause
                   : new ServerProviderSkillsError({
