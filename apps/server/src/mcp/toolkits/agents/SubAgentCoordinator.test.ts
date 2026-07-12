@@ -256,9 +256,10 @@ it.effect("inherits the caller model when the target instance exposes it", () =>
 
     expect(result.model).toBe("opus");
     const create = harness.dispatched.find((command) => command.type === "thread.create");
-    if (create?.type === "thread.create") {
-      expect(create.modelSelection).toEqual({ instanceId: "claude", model: "opus" });
-    }
+    expect(create).toMatchObject({
+      type: "thread.create",
+      modelSelection: { instanceId: "claude", model: "opus" },
+    });
   }),
 );
 
