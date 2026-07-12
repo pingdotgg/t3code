@@ -19,9 +19,11 @@ export interface DrainableWorker<A> {
    * Enqueue a work item and track it for `drain()`.
    *
    * This wraps `Queue.offer` so drain state is updated atomically with the
-   * enqueue path instead of inferring it from queue internals.
+   * enqueue path instead of inferring it from queue internals. Resolves
+   * `true` when the item was accepted and `false` when the queue is shut
+   * down (the item is dropped and drain state is left untouched).
    */
-  readonly enqueue: (item: A) => Effect.Effect<void>;
+  readonly enqueue: (item: A) => Effect.Effect<boolean>;
 
   /**
    * Resolves when the queue is empty and the worker is idle (not processing).
@@ -78,7 +80,12 @@ export const makeDrainableWorker = <A, E, R>(
 
     const enqueue = (element: A): Effect.Effect<boolean, never, never> =>
       TxQueue.offer(queue, element).pipe(
-        Effect.tap(() => TxRef.update(outstanding, (n) => n + 1)),
+        // `TxQueue.offer` resolves `false` (instead of failing) on a closing
+        // or shut-down queue; only track items the queue actually accepted so
+        // `drain` never waits on an item that will never be processed.
+        Effect.tap((accepted) =>
+          accepted ? TxRef.update(outstanding, (n) => n + 1) : Effect.void,
+        ),
         Effect.tx,
       );
 
@@ -128,9 +135,15 @@ export const makeKeyedDrainableWorker = <K, A, E, R>(
         // Reserve the item before offering it to the per-key queue so a
         // concurrent drain cannot observe a false idle state.
         yield* TxRef.update(outstanding, (n) => n + 1).pipe(Effect.tx);
-        yield* worker
+        const accepted = yield* worker
           .enqueue(item)
           .pipe(Effect.onError(() => TxRef.update(outstanding, (n) => n - 1).pipe(Effect.tx)));
+        if (!accepted) {
+          // The per-key queue rejected the offer (it resolves `false` on a
+          // shut-down queue rather than failing), so release the reservation
+          // or `drain` would wait forever on an item that was never queued.
+          yield* TxRef.update(outstanding, (n) => n - 1).pipe(Effect.tx);
+        }
       });
 
     const drain: KeyedDrainableWorker<K, A, R>["drain"] = TxRef.get(outstanding).pipe(

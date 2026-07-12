@@ -2,6 +2,8 @@ import { it } from "@effect/vitest";
 import { describe, expect } from "vite-plus/test";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Scope from "effect/Scope";
 
 import { makeDrainableWorker, makeKeyedDrainableWorker } from "./DrainableWorker.ts";
 
@@ -124,5 +126,30 @@ describe("makeKeyedDrainableWorker", () => {
         yield* Deferred.await(drained);
       }),
     ),
+  );
+
+  it.live("keeps drain resolving when an enqueue is rejected after shutdown", () =>
+    Effect.gen(function* () {
+      const processed: string[] = [];
+      const scope = yield* Scope.make();
+
+      const worker = yield* makeKeyedDrainableWorker((key: string, item: string) =>
+        Effect.sync(() => {
+          processed.push(`${key}:${item}`);
+        }),
+      ).pipe(Effect.provideService(Scope.Scope, scope));
+
+      yield* worker.enqueue("thread-1", "before-shutdown");
+      yield* worker.drain;
+
+      // Closing the scope shuts down the per-key queue; a later offer
+      // resolves `false` instead of failing and must not leave a stale
+      // reservation behind.
+      yield* Scope.close(scope, Exit.void);
+      yield* worker.enqueue("thread-1", "after-shutdown");
+      yield* worker.drain.pipe(Effect.timeout("1 second"));
+
+      expect(processed).toEqual(["thread-1:before-shutdown"]);
+    }),
   );
 });
