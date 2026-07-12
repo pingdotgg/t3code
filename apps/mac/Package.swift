@@ -8,8 +8,9 @@ let package = Package(
     ],
     dependencies: [
         // Local ASR (Parakeet TDT v3 CoreML) for the dictation feature — the
-        // app's only external dependency; coordinate before adding more.
-        .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.15.0")
+        // app's external dependencies.
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.15.0"),
+        .package(url: "https://github.com/swiftlang/swift-markdown.git", from: "0.5.0")
     ],
     targets: [
         .target(
@@ -26,6 +27,7 @@ let package = Package(
                 "T3Kit",
                 "SidecarKit",
                 .product(name: "FluidAudio", package: "FluidAudio"),
+                .product(name: "Markdown", package: "swift-markdown"),
             ],
             path: "Sources/SergeCodeMac"
         ),

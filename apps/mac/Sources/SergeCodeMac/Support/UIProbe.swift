@@ -219,6 +219,76 @@
                 "UIProbe: multi-line diff selectable block=\(multiLineOK) "
                     + "chars=\(multiLinePlain.count)")
 
+            // Markdown renderer smoke test: build the real assistant view and
+            // verify its AST contains the new GFM block kinds before taking
+            // the conversation-wide selection snapshot.
+            let markdownProbe = """
+            | Name | Status |
+            | :--- | ---: |
+            | Build | 1 |
+
+            - [ ] pending
+            - [x] done
+
+            ```swift
+            let answer = 42
+            ```
+            """
+            let markdownBlocks = parseMarkdownBlocks(markdownProbe)
+            let tableCount = markdownBlocks.reduce(into: 0) { count, block in
+                if case .table = block { count += 1 }
+            }
+            let taskCount = markdownBlocks.reduce(into: 0) { count, block in
+                if case .taskItem = block { count += 1 }
+            }
+            let codeValues = markdownBlocks.compactMap { block -> String? in
+                if case .codeBlock(_, let code) = block { return code }
+                return nil
+            }
+            let highlightedKinds = codeValues.flatMap {
+                SyntaxTint.tokenize($0, language: .swift).map(\.kind)
+            }
+            let renderedMarkdown = attributedMarkdownDocument(markdownProbe)
+            let markdownHosting = NSHostingView(
+                rootView: AssistantMarkdownView(
+                    markdown: markdownProbe,
+                    isStreaming: false,
+                    threadID: model.selectedThreadID ?? "ui-probe",
+                    model: model))
+            markdownHosting.frame = NSRect(x: 0, y: 0, width: 720, height: 360)
+            markdownHosting.layoutSubtreeIfNeeded()
+            let markdownFittingHeight = markdownHosting.fittingSize.height
+            let markdownAccessibleText = accessibleText(in: markdownHosting)
+            let markdownTextObserved =
+                markdownAccessibleText.contains("Name")
+                && markdownAccessibleText.contains("let answer = 42")
+            let markdownBitmapObserved =
+                !markdownTextObserved && bitmapContainsContent(in: markdownHosting)
+            let markdownViewEvidence: String
+            if markdownTextObserved {
+                markdownViewEvidence = "accessibility:Name+let answer = 42"
+            } else if markdownBitmapObserved {
+                markdownViewEvidence = "bitmap:non-background-pixels"
+            } else {
+                markdownViewEvidence = "none"
+            }
+            let markdownViewOK =
+                markdownFittingHeight > 100
+                && (markdownTextObserved || markdownBitmapObserved)
+            let markdownProbeOK =
+                tableCount == 1
+                && taskCount == 2
+                && codeValues.count == 1
+                && highlightedKinds.contains(.keyword)
+                && String(renderedMarkdown.characters).contains("Name\tStatus")
+                && markdownViewOK
+            print(
+                "UIProbe: markdown table=\(tableCount) tasks=\(taskCount) "
+                    + "code=\(codeValues.count) syntaxKeyword=\(highlightedKinds.contains(.keyword)) "
+                    + "rendered=\(markdownProbeOK) viewHeight=\(markdownFittingHeight) "
+                    + "viewEvidence=\(markdownViewEvidence) viewVerified=\(markdownViewOK)")
+            assert(markdownProbeOK, "Markdown UI probe failed")
+
             // Select Text overlay: use the pricing thread (thread-3) — earlier
             // probe steps mutate thread-1's timeline (queue/retry), so a still-
             // seeded conversation is a cleaner fixture for the sheet.
@@ -570,6 +640,91 @@
                 found += textViews(in: subview)
             }
             return found
+        }
+
+        /// SwiftUI's hosting view may expose Text through native text views,
+        /// accessibility elements, or neither in a headless probe. Try the
+        /// first two before falling back to the bitmap assertion below.
+        private static func accessibleText(in root: NSView) -> String {
+            var values: [String] = []
+            var visited = Set<ObjectIdentifier>()
+
+            func append(_ value: String?) {
+                guard let value, !value.isEmpty else { return }
+                values.append(value)
+            }
+
+            func visit(_ object: AnyObject) {
+                guard visited.insert(ObjectIdentifier(object)).inserted else { return }
+
+                if let view = object as? NSView {
+                    if let textView = view as? NSTextView { append(textView.string) }
+                    if let textField = view as? NSTextField { append(textField.stringValue) }
+                    append(view.accessibilityTitle())
+                    append(view.accessibilityValue() as? String)
+
+                    for subview in view.subviews {
+                        visit(subview)
+                    }
+                    for child in view.accessibilityChildren() ?? [] {
+                        if let childView = child as? NSView {
+                            visit(childView)
+                        } else if let childElement = child as? NSAccessibilityElement {
+                            visit(childElement)
+                        }
+                    }
+                } else if let element = object as? NSAccessibilityElement {
+                    append(element.accessibilityTitle())
+                    append(element.accessibilityValue() as? String)
+                    for child in element.accessibilityChildren() ?? [] {
+                        if let childView = child as? NSView {
+                            visit(childView)
+                        } else if let childElement = child as? NSAccessibilityElement {
+                            visit(childElement)
+                        }
+                    }
+                }
+            }
+
+            visit(root)
+            return values.joined(separator: "\n")
+        }
+
+        /// Render the hosted view into a bitmap when SwiftUI does not expose
+        /// text through its headless accessibility/subview tree. Compare
+        /// sampled pixels with the empty bottom-right background and require
+        /// at least one percent of the view to contain visible content.
+        private static func bitmapContainsContent(in view: NSView) -> Bool {
+            guard !view.bounds.isEmpty,
+                let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds),
+                rep.pixelsWide > 0,
+                rep.pixelsHigh > 0
+            else { return false }
+
+            view.cacheDisplay(in: view.bounds, to: rep)
+            guard let background = rep.colorAt(x: rep.pixelsWide - 1, y: rep.pixelsHigh - 1),
+                let backgroundRGB = background.usingColorSpace(.deviceRGB)
+            else { return false }
+
+            let stride = max(1, min(rep.pixelsWide, rep.pixelsHigh) / 180)
+            var sampledPixels = 0
+            var contentPixels = 0
+            for y in Swift.stride(from: 0, to: rep.pixelsHigh, by: stride) {
+                for x in Swift.stride(from: 0, to: rep.pixelsWide, by: stride) {
+                    guard let color = rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB)
+                    else { continue }
+                    sampledPixels += 1
+                    let distance = max(
+                        abs(color.redComponent - backgroundRGB.redComponent),
+                        abs(color.greenComponent - backgroundRGB.greenComponent),
+                        abs(color.blueComponent - backgroundRGB.blueComponent),
+                        abs(color.alphaComponent - backgroundRGB.alphaComponent))
+                    if distance > 0.08 { contentPixels += 1 }
+                }
+            }
+
+            return sampledPixels > 0
+                && Double(contentPixels) / Double(sampledPixels) > 0.01
         }
 
         private static func snapshotAllWindows(_ name: String, dir: String) {
