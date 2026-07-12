@@ -292,14 +292,17 @@ private struct SidebarStatusDot: View {
     var body: some View {
         Group {
             if thread.status == .backgroundWork {
-                backgroundWorkDot
+                backgroundWorkIndicator
             } else {
                 dot
             }
         }
-        .frame(width: 11, height: 11)
+        .frame(
+            minWidth: thread.backgroundAgentCount > 0 ? 27 : 11,
+            minHeight: 12)
         .accessibilityLabel(accessibilityLabel)
         .animation(Motion.ambient, value: thread.status)
+        .animation(Motion.ambient, value: thread.backgroundAgentCount)
         .onAppear { updatePulse(for: thread.status) }
         .onChange(of: thread.status) { _, status in
             updatePulse(for: status)
@@ -320,6 +323,22 @@ private struct SidebarStatusDot: View {
                 .opacity(backgroundPulseOpacity)
                 .scaleEffect(backgroundPulseScale)
             dot
+        }
+    }
+
+    private var backgroundWorkIndicator: some View {
+        HStack(spacing: 3) {
+            backgroundWorkDot
+            if thread.backgroundAgentCount > 0 {
+                Text("\(thread.backgroundAgentCount)")
+                    .font(
+                        .system(size: 9, weight: .semibold, design: .monospaced)
+                            .monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 3)
+                    .frame(minWidth: 12, minHeight: 12)
+                    .background(.background, in: Capsule())
+            }
         }
     }
 
@@ -347,8 +366,11 @@ private struct SidebarStatusDot: View {
     private var accessibilityLabel: String {
         switch thread.status {
         case .backgroundWork:
-            let count = max(1, thread.backgroundAgentCount)
-            return "\(count) background agent\(count == 1 ? "" : "s") running"
+            let count = thread.backgroundAgentCount
+            if count > 0 {
+                return "\(count) background agent\(count == 1 ? "" : "s") running"
+            }
+            return "Background work in progress"
         case .idle:
             return "Idle"
         case .running:
