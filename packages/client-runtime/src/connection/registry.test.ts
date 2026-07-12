@@ -138,6 +138,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     readonly beforeOwnedDataClear?: (
       environmentId: EnvironmentId,
     ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
+    readonly beforeCacheClear?: (environmentId: EnvironmentId) => Effect.Effect<void>;
   },
 ) {
   const storedTargets = yield* Ref.make(
@@ -256,11 +257,14 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     loadVcsRefs: () => Effect.succeed(Option.none()),
     saveVcsRefs: () => Effect.void,
     clear: (environmentId) =>
-      Ref.update(shellCache, (current) => {
-        const next = new Map(current);
-        next.delete(environmentId);
-        return next;
-      }).pipe(
+      (options?.beforeCacheClear?.(environmentId) ?? Effect.void).pipe(
+        Effect.andThen(
+          Ref.update(shellCache, (current) => {
+            const next = new Map(current);
+            next.delete(environmentId);
+            return next;
+          }),
+        ),
         Effect.andThen(
           Ref.update(cacheClears, (environmentIds) => [...environmentIds, environmentId]),
         ),
@@ -621,6 +625,46 @@ describe("EnvironmentRegistry", () => {
         expect(error).toBe(cleanupError);
         expect((yield* Ref.get(harness.storedTargets)).has(TARGET.environmentId)).toBe(true);
         expect((yield* SubscriptionRef.get(registry.entries)).has(TARGET.environmentId)).toBe(true);
+        expect(yield* Ref.get(harness.ownedDataClears)).toEqual([]);
+        expect(yield* Ref.get(harness.ownedDataResumes)).toEqual([TARGET.environmentId]);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("resumes owned data when removal is interrupted", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([TARGET], [], [], {
+        beforeRegistrationRemove: () => Effect.interrupt,
+      });
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+
+        const exit = yield* Effect.exit(registry.remove(TARGET.environmentId));
+
+        expect(exit._tag).toBe("Failure");
+        expect((yield* Ref.get(harness.storedTargets)).has(TARGET.environmentId)).toBe(true);
+        expect((yield* SubscriptionRef.get(registry.entries)).has(TARGET.environmentId)).toBe(true);
+        expect(yield* Ref.get(harness.ownedDataClears)).toEqual([]);
+        expect(yield* Ref.get(harness.ownedDataResumes)).toEqual([TARGET.environmentId]);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("resumes owned data when platform removal defects", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([], [], [], {
+        beforeCacheClear: () => Effect.die("cache defect"),
+      });
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.registerPlatform(new PrimaryConnectionRegistration({ target: TARGET }));
+
+        const exit = yield* Effect.exit(registry.reconcilePlatform([]));
+
+        expect(exit._tag).toBe("Failure");
         expect(yield* Ref.get(harness.ownedDataClears)).toEqual([]);
         expect(yield* Ref.get(harness.ownedDataResumes)).toEqual([TARGET.environmentId]);
       }).pipe(Effect.provide(harness.layer));

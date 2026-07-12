@@ -246,6 +246,16 @@ export const make = Effect.gen(function* () {
     yield* Scope.close(lease.scope, Exit.void);
   });
 
+  const resumeOwnedDataOnFailure = <A, E, R>(
+    environmentId: EnvironmentId,
+    effect: Effect.Effect<A, E, R>,
+  ): Effect.Effect<A, E, R> =>
+    effect.pipe(
+      Effect.onExit((exit) =>
+        Exit.isFailure(exit) ? ownedDataCleanup.resume(environmentId) : Effect.void,
+      ),
+    );
+
   const createServiceScope = Effect.fn("EnvironmentRegistry.createServiceScope")(
     (entry: ConnectionCatalogEntry) =>
       Effect.uninterruptible(
@@ -476,52 +486,49 @@ export const make = Effect.gen(function* () {
     function* (environmentId: EnvironmentId) {
       yield* withLeaseLock(
         environmentId,
-        Effect.gen(function* () {
-          const entry = (yield* SubscriptionRef.get(entries)).get(environmentId);
-          const serviceScope = (yield* SubscriptionRef.get(serviceScopes)).get(environmentId);
-          yield* ownedDataCleanup
-            .prepare(environmentId, serviceScope?.supervisor)
-            .pipe(
-              Effect.catch((error) =>
-                ownedDataCleanup.resume(environmentId).pipe(Effect.andThen(Effect.fail(error))),
-              ),
-            );
-          yield* Ref.update(platformEnvironmentIds, (current) => {
-            const next = new Set(current);
-            next.delete(environmentId);
-            return next;
-          });
-          yield* closeServiceScope(environmentId);
-          yield* SubscriptionRef.update(entries, (current) => {
-            const next = new Map(current);
-            next.delete(environmentId);
-            return next;
-          });
-          yield* ownedDataCleanup.clear(environmentId);
-          if (entry !== undefined && entry.target._tag === "BearerConnectionTarget") {
-            yield* credentials.remove(entry.target.connectionId).pipe(
-              Effect.catch((error) =>
-                Effect.logWarning("Could not clear the platform bearer credential.", {
-                  environmentId,
-                  error,
-                }),
-              ),
-            );
-          }
-          yield* Effect.all(
-            [
-              cache.clear(environmentId).pipe(
+        resumeOwnedDataOnFailure(
+          environmentId,
+          Effect.gen(function* () {
+            const entry = (yield* SubscriptionRef.get(entries)).get(environmentId);
+            const serviceScope = (yield* SubscriptionRef.get(serviceScopes)).get(environmentId);
+            yield* ownedDataCleanup.prepare(environmentId, serviceScope?.supervisor);
+            yield* Ref.update(platformEnvironmentIds, (current) => {
+              const next = new Set(current);
+              next.delete(environmentId);
+              return next;
+            });
+            yield* closeServiceScope(environmentId);
+            yield* SubscriptionRef.update(entries, (current) => {
+              const next = new Map(current);
+              next.delete(environmentId);
+              return next;
+            });
+            if (entry !== undefined && entry.target._tag === "BearerConnectionTarget") {
+              yield* credentials.remove(entry.target.connectionId).pipe(
                 Effect.catch((error) =>
-                  Effect.logWarning("Could not clear cached environment data after removal.", {
+                  Effect.logWarning("Could not clear the platform bearer credential.", {
                     environmentId,
                     error,
                   }),
                 ),
-              ),
-            ],
-            { concurrency: "unbounded", discard: true },
-          );
-        }),
+              );
+            }
+            yield* Effect.all(
+              [
+                cache.clear(environmentId).pipe(
+                  Effect.catch((error) =>
+                    Effect.logWarning("Could not clear cached environment data after removal.", {
+                      environmentId,
+                      error,
+                    }),
+                  ),
+                ),
+              ],
+              { concurrency: "unbounded", discard: true },
+            );
+            yield* ownedDataCleanup.clear(environmentId);
+          }),
+        ),
       );
     },
   );
@@ -567,61 +574,54 @@ export const make = Effect.gen(function* () {
             : Option.none();
 
         const serviceScope = (yield* SubscriptionRef.get(serviceScopes)).get(environmentId);
-        yield* ownedDataCleanup
-          .prepare(environmentId, serviceScope?.supervisor)
-          .pipe(
-            Effect.catch((error) =>
-              ownedDataCleanup.resume(environmentId).pipe(Effect.andThen(Effect.fail(error))),
-            ),
-          );
-        yield* registrations
-          .remove(target)
-          .pipe(
-            Effect.catch((error) =>
-              ownedDataCleanup.resume(environmentId).pipe(Effect.andThen(Effect.fail(error))),
-            ),
-          );
-        yield* Ref.update(persistedTargetsByEnvironment, (current) => {
-          const next = new Map(current);
-          next.delete(environmentId);
-          return next;
-        });
-        yield* closeServiceScope(environmentId);
-        yield* SubscriptionRef.update(entries, (current) => {
-          const next = new Map(current);
-          next.delete(environmentId);
-          return next;
-        });
-        yield* ownedDataCleanup.clear(environmentId);
-        yield* Effect.all(
-          [
-            cache.clear(environmentId).pipe(
-              Effect.catch((error) =>
-                Effect.logWarning("Could not clear cached environment data after removal.", {
-                  environmentId,
-                  error,
-                }),
-              ),
-            ),
-          ],
-          { concurrency: "unbounded", discard: true },
-        );
+        yield* resumeOwnedDataOnFailure(
+          environmentId,
+          Effect.gen(function* () {
+            yield* ownedDataCleanup.prepare(environmentId, serviceScope?.supervisor);
+            yield* registrations.remove(target);
+            yield* Ref.update(persistedTargetsByEnvironment, (current) => {
+              const next = new Map(current);
+              next.delete(environmentId);
+              return next;
+            });
+            yield* closeServiceScope(environmentId);
+            yield* SubscriptionRef.update(entries, (current) => {
+              const next = new Map(current);
+              next.delete(environmentId);
+              return next;
+            });
+            yield* Effect.all(
+              [
+                cache.clear(environmentId).pipe(
+                  Effect.catch((error) =>
+                    Effect.logWarning("Could not clear cached environment data after removal.", {
+                      environmentId,
+                      error,
+                    }),
+                  ),
+                ),
+              ],
+              { concurrency: "unbounded", discard: true },
+            );
 
-        if (
-          target._tag === "SshConnectionTarget" &&
-          Option.isSome(profile) &&
-          isSshConnectionProfile(profile.value)
-        ) {
-          yield* ssh.disconnect(profile.value.target).pipe(
-            Effect.tapError((error) =>
-              Effect.logWarning("Could not disconnect the managed SSH environment.", {
-                environmentId,
-                error,
-              }),
-            ),
-            Effect.ignore,
-          );
-        }
+            if (
+              target._tag === "SshConnectionTarget" &&
+              Option.isSome(profile) &&
+              isSshConnectionProfile(profile.value)
+            ) {
+              yield* ssh.disconnect(profile.value.target).pipe(
+                Effect.tapError((error) =>
+                  Effect.logWarning("Could not disconnect the managed SSH environment.", {
+                    environmentId,
+                    error,
+                  }),
+                ),
+                Effect.ignore,
+              );
+            }
+            yield* ownedDataCleanup.clear(environmentId);
+          }),
+        );
       }),
     );
   });
