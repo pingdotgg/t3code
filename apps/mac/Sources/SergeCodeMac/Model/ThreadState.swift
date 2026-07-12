@@ -39,16 +39,22 @@ public final class ThreadState {
     public internal(set) var reviewDiff: [DiffFile]?
     public internal(set) var isLoadingReviewDiff = false
 
-    /// Monotonic version bumped on every timeline write. Grouped-display
-    /// memo caches key on this so body re-evals without a timeline mutation
-    /// reuse prior work. Ignored by Observation — readers go through
-    /// `AppModel.timelineVersion(threadID:)`.
+    /// Monotonic version bumped on every timeline write. Ignored by
+    /// Observation — readers go through `AppModel.timelineVersion(threadID:)`.
     @ObservationIgnored var timelineVersion = 0
+    /// Monotonic version bumped when the timeline structure changes. Content
+    /// updates to an existing assistant row leave this unchanged so grouped
+    /// display can refresh without re-running its full structural pass.
+    @ObservationIgnored var structureVersion = 0
     /// True once full history is present — either from `loadTimelineIfNeeded`
     /// or a `.timelineReset` snapshot. Plain appends/deltas do not set this,
     /// so a stream event for a not-yet-selected thread cannot suppress the
     /// later history fetch. Gates `loadTimelineIfNeeded`.
     @ObservationIgnored var hasLoadedTimeline = false
+    /// True while a full timeline snapshot is being fetched for this thread.
+    /// Unlike `hasLoadedTimeline`, this stays observable so a cold selection
+    /// can show an inline loading affordance without masking retained content.
+    public internal(set) var isLoadingTimeline = false
 
     public init() {}
 }

@@ -73,7 +73,19 @@ enum MarkdownBlockCache {
     private static let store = MarkdownBlockCacheStore()
 
     static func document(for markdown: String) -> ParsedMarkdownDocument {
-        MarkdownASTParser(markdown: markdown).parse(using: store)
+        let missesBefore = store.misses
+        let document = PerfSignpost.interval("markdown.parse") {
+            PerfMetrics.measure("markdown.parse") {
+                MarkdownASTParser(markdown: markdown).parse(using: store)
+            }
+        }
+        // The cmark document is rebuilt for each call, while stable top-level
+        // blocks may still come from the block cache. Count source bytes only
+        // when this pass actually had an uncached block to materialize.
+        if store.misses > missesBefore {
+            PerfMetrics.count("markdown.bytesParsed", by: markdown.utf8.count)
+        }
+        return document
     }
 
     static var statistics: Statistics {
@@ -88,6 +100,7 @@ enum MarkdownBlockCache {
 private extension MarkdownBlockCacheStore {
     var entryCount: Int { storage.count }
 }
+
 
 /// Parse the complete Markdown document with swift-markdown/cmark-gfm.
 func parseMarkdownDocument(_ markdown: String) -> ParsedMarkdownDocument {
@@ -632,6 +645,7 @@ struct AssistantMarkdownView: View {
     let markdown: String
     let isStreaming: Bool
     let threadID: String
+    let messageID: String
     let model: AppModel
     let at: Date?
     let style: MarkdownRenderStyle
@@ -644,6 +658,7 @@ struct AssistantMarkdownView: View {
         markdown: String,
         isStreaming: Bool,
         threadID: String,
+        messageID: String = "",
         model: AppModel,
         at: Date? = nil,
         style: MarkdownRenderStyle = .assistant,
@@ -652,12 +667,24 @@ struct AssistantMarkdownView: View {
         self.markdown = markdown
         self.isStreaming = isStreaming
         self.threadID = threadID
+        self.messageID = messageID
         self.model = model
         self.at = at
         self.style = style
         self.showsRoleChrome = showsRoleChrome
-        let document = MarkdownBlockCache.document(for: markdown)
-        self.renderedBlocks = Self.renderedBlocks(from: document)
+        if isStreaming && style == .assistant && !messageID.isEmpty {
+            // Incremental parse: settled prefix cached per (thread, message)
+            // session; only the tail past the last safe boundary reparses.
+            let document = StreamingMarkdownCache.document(
+                threadID: threadID, messageID: messageID, markdown: markdown)
+            self.renderedBlocks = Self.renderedBlocks(from: document)
+        } else {
+            if !messageID.isEmpty {
+                StreamingMarkdownCache.finish(threadID: threadID, messageID: messageID)
+            }
+            let document = MarkdownBlockCache.document(for: markdown)
+            self.renderedBlocks = Self.renderedBlocks(from: document)
+        }
     }
 
     @UIState private var isHovering = false

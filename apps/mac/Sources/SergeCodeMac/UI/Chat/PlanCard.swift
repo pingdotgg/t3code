@@ -45,7 +45,7 @@ public struct PlanCard: View {
             if isExpanded {
                 AssistantMarkdownView(
                     markdown: plan.markdown, isStreaming: false,
-                    threadID: plan.threadID, model: model,
+                    threadID: plan.threadID, messageID: plan.id, model: model,
                     showsRoleChrome: false)
                     .padding(10)
                     .frame(maxWidth: .infinity, alignment: .leading)

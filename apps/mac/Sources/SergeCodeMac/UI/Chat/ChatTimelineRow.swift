@@ -90,10 +90,10 @@ struct ChatTimelineRowView: View {
         case .userMessage(let id, let text, let at):
             UserMessageBubble(
                 messageID: id, text: text, threadID: threadID, model: model, at: at)
-        case .assistantMessage(_, let markdown, let isStreaming, let at):
+        case .assistantMessage(let id, let markdown, let isStreaming, let at):
             AssistantMarkdownView(
-                markdown: markdown, isStreaming: isStreaming, threadID: threadID, model: model,
-                at: at, showsRoleChrome: true)
+                markdown: markdown, isStreaming: isStreaming, threadID: threadID,
+                messageID: id, model: model, at: at, showsRoleChrome: true)
         case .toolEvent(_, let name, let detail, let kind, let status, let at, let output, let outputIsError):
             ToolEventRow(
                 name: name, detail: detail, kind: kind, status: status,

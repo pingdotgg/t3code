@@ -9,7 +9,17 @@ if [[ "${1:-}" == "--debug" ]]; then
   CONFIG="debug"
 fi
 
-swift build --package-path "$MAC_DIR" -c "$CONFIG"
+# Cross-module optimization lets the app target inline/specialize across
+# T3Kit/SidecarKit (hot JSON decode + diff paths cross those boundaries).
+# LTO was evaluated and rejected: flaky with CLT-only linking. If a beta-SDK
+# compiler chokes on CMO, drop the flag — it is an optimization only.
+SWIFT_FLAGS=()
+if [[ "$CONFIG" == "release" ]]; then
+  SWIFT_FLAGS+=(-Xswiftc -cross-module-optimization)
+fi
+# ${arr[@]+...} guard: bash 3.2 (macOS default) treats expanding an empty
+# array as an unbound variable under `set -u`, which would break --debug.
+swift build --package-path "$MAC_DIR" -c "$CONFIG" ${SWIFT_FLAGS[@]+"${SWIFT_FLAGS[@]}"}
 
 BIN="$MAC_DIR/.build/$CONFIG/SergeCodeMac"
 RESOURCE_BUNDLE="$MAC_DIR/.build/$CONFIG/SergeCodeMac_SergeCodeMac.bundle"

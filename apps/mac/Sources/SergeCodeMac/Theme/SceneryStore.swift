@@ -1,4 +1,6 @@
 import AppKit
+import CoreImage
+import ImageIO
 import Observation
 import SwiftUI
 
@@ -22,6 +24,8 @@ public final class SceneryStore {
     public enum ImageVariant: String, Sendable {
         case hero  // CDN render sized to the display — wallpapers, empty-state hero
         case thumb  // urls.thumb (~200w) — sidebar rows
+        case heroBlurChat  // memory-only blur of the decoded hero for chat
+        case heroBlurChrome  // memory-only blur of the decoded hero for chrome
     }
 
     /// Default set's pool (kept for observation / source compatibility).
@@ -71,9 +75,21 @@ public final class SceneryStore {
     /// download size and decode memory sane. `urls.regular` is only 1080w —
     /// blurry the moment it stretches across a retina display.
     private let heroPixelWidth: Int
+    /// Backing scale used when computing `heroPixelWidth`; Core Image blur
+    /// radii are specified in pixels while the old SwiftUI radii were points.
+    private let heroBackingScale: CGFloat
 
     private static let poolCap = 24
     private static let poolMaxAge: TimeInterval = 14 * 24 * 3600
+    /// Tuned by eye to match the previous SwiftUI `.blur(radius: 4/9,
+    /// opaque: true)` plus saturation; these may be adjusted by eye.
+    private static let heroBlurChatRadiusPoints: CGFloat = 4
+    private static let heroBlurChromeRadiusPoints: CGFloat = 9
+    private static let heroBlurChatSaturation: CGFloat = 1.05
+    private static let heroBlurChromeSaturation: CGFloat = 1.08
+    /// A single shared context avoids creating an expensive Core Image
+    /// context for every wallpaper variant.
+    nonisolated private static let heroBlurContext = CIContext()
 
     /// Optional lookup: threadID → project workspace path. Wired from
     /// AppModel so set resolution can read `project-prefs.json`.
@@ -90,11 +106,12 @@ public final class SceneryStore {
         let calendar = Calendar.autoupdatingCurrent
         rotationBucket = SceneryBucket.compute(for: now, calendar: calendar)
         rotationDayKey = Self.dayKey(for: now, calendar: calendar)
-        let widestScreen =
-            NSScreen.screens
-            .map { $0.frame.width * $0.backingScaleFactor }
-            .max() ?? 2560
-        heroPixelWidth = min(Int(widestScreen.rounded()), 3840)
+        let screenMetrics = NSScreen.screens.map {
+            ($0.frame.width * $0.backingScaleFactor, $0.backingScaleFactor)
+        }
+        let widestScreen = screenMetrics.max { $0.0 < $1.0 }
+        heroPixelWidth = min(Int((widestScreen?.0 ?? 2560).rounded()), 3840)
+        heroBackingScale = widestScreen?.1 ?? 1
         if let root {
             self.root = root
         } else {
@@ -154,6 +171,42 @@ public final class SceneryStore {
         let parts = calendar.dateComponents([.year, .day], from: date)
         let ordinal = calendar.ordinality(of: .day, in: .year, for: date) ?? 0
         return "\(parts.year ?? 0)-\(ordinal)"
+    }
+
+    nonisolated private static func decodeImage(data: Data, maxPixelWidth: Int) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelWidth,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+    }
+
+    nonisolated private static func makeBlurredImage(
+        from cgImage: CGImage,
+        radiusPoints: CGFloat,
+        saturation: CGFloat,
+        backingScale: CGFloat
+    ) -> CGImage? {
+        let input = CIImage(cgImage: cgImage)
+        let originalExtent = input.extent
+        guard let blur = CIFilter(name: "CIGaussianBlur"),
+            let colorControls = CIFilter(name: "CIColorControls")
+        else { return nil }
+
+        blur.setValue(input.clampedToExtent(), forKey: kCIInputImageKey)
+        blur.setValue(radiusPoints * backingScale, forKey: kCIInputRadiusKey)
+        guard let blurred = blur.outputImage else { return nil }
+
+        colorControls.setValue(blurred, forKey: kCIInputImageKey)
+        colorControls.setValue(saturation, forKey: kCIInputSaturationKey)
+        guard let saturated = colorControls.outputImage else { return nil }
+
+        return heroBlurContext.createCGImage(
+            saturated.cropped(to: originalExtent),
+            from: originalExtent)
     }
 
     // MARK: - Set resolution
@@ -500,6 +553,16 @@ public final class SceneryStore {
             triggerPaletteBackfill: true)
     }
 
+    private func waitForImageLoad(_ key: String) async {
+        while loadingKeys.contains(key), !Task.isCancelled {
+            do {
+                try await Task.sleep(for: .milliseconds(1))
+            } catch {
+                return
+            }
+        }
+    }
+
     private func ensureImage(
         _ photo: SceneryPhoto?,
         variant: ImageVariant,
@@ -512,6 +575,63 @@ public final class SceneryStore {
         guard images[key] == nil, !loadingKeys.contains(key) else { return }
         loadingKeys.insert(key)
         defer { loadingKeys.remove(key) }
+
+        if variant == .heroBlurChat || variant == .heroBlurChrome {
+            // Derived variants are memory-only. Load the decoded hero through
+            // the normal path first, then rasterize the requested treatment
+            // once off the main actor.
+            await ensureImage(
+                photo,
+                variant: .hero,
+                setId: setId,
+                triggerPaletteBackfill: false)
+            let heroKey = cacheKey(setId, photo.id, .hero)
+            if images[heroKey] == nil {
+                // Chat and chrome can request different derived variants at
+                // the same time; wait for the deduplicated hero load instead
+                // of letting the second variant miss permanently.
+                await waitForImageLoad(heroKey)
+            }
+            guard let heroImage = images[heroKey],
+                let heroCGImage = heroImage.cgImage(
+                    forProposedRect: nil,
+                    context: nil,
+                    hints: nil)
+            else { return }
+
+            let radiusPoints: CGFloat
+            let saturation: CGFloat
+            switch variant {
+            case .heroBlurChat:
+                radiusPoints = Self.heroBlurChatRadiusPoints
+                saturation = Self.heroBlurChatSaturation
+            case .heroBlurChrome:
+                radiusPoints = Self.heroBlurChromeRadiusPoints
+                saturation = Self.heroBlurChromeSaturation
+            case .hero, .thumb:
+                return
+            }
+
+            let backingScale = heroBackingScale
+            let blurredCGImage = await Task.detached(priority: .userInitiated) {
+                Self.makeBlurredImage(
+                    from: heroCGImage,
+                    radiusPoints: radiusPoints,
+                    saturation: saturation,
+                    backingScale: backingScale)
+            }.value
+            if let blurredCGImage {
+                images[key] = NSImage(
+                    cgImage: blurredCGImage,
+                    size: NSSize(
+                        width: CGFloat(blurredCGImage.width),
+                        height: CGFloat(blurredCGImage.height)))
+                if triggerPaletteBackfill {
+                    await generatePaletteIfNeeded(for: setId)
+                }
+            }
+            return
+        }
 
         let fileURL = setDirectory(setId)
             .appendingPathComponent("images/\(fileName(photo.id, variant))")
@@ -537,10 +657,24 @@ public final class SceneryStore {
                 }
             }
         }
-        if let data, let image = NSImage(data: data) {
-            images[key] = image
-            if triggerPaletteBackfill {
-                await generatePaletteIfNeeded(for: setId)
+        let maxPixelWidth = variant == .hero ? heroPixelWidth : 512
+        if let data {
+            let cgImage = await Task.detached(priority: .userInitiated) {
+                let startedAt = PerfLog.now()
+                let decoded = Self.decodeImage(data: data, maxPixelWidth: maxPixelWidth)
+                PerfLog.event(
+                    "scenery.decode",
+                    ms: PerfLog.elapsedMilliseconds(since: startedAt),
+                    details: "pixel_width=\(maxPixelWidth)")
+                return decoded
+            }.value
+            if let cgImage {
+                images[key] = NSImage(
+                    cgImage: cgImage,
+                    size: NSSize(width: CGFloat(cgImage.width), height: CGFloat(cgImage.height)))
+                if triggerPaletteBackfill {
+                    await generatePaletteIfNeeded(for: setId)
+                }
             }
         }
     }
@@ -632,6 +766,8 @@ public final class SceneryStore {
         switch variant {
         case .thumb: "\(photoID)-thumb.jpg"
         case .hero: "\(photoID)-hero-w\(heroPixelWidth).jpg"
+        case .heroBlurChat, .heroBlurChrome:
+            preconditionFailure("Blurred scenery variants are memory-only")
         }
     }
 
@@ -646,6 +782,8 @@ public final class SceneryStore {
             // instead (same imgix pipeline).
             let base = photo.rawURL ?? photo.heroURL
             return Self.sizedImageURL(base, width: heroPixelWidth)
+        case .heroBlurChat, .heroBlurChrome:
+            preconditionFailure("Blurred scenery variants are memory-only")
         }
     }
 

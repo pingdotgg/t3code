@@ -115,6 +115,7 @@ public struct ChatScreen: View {
         }
     }
 
+
     private var selectedProjectRoot: String? {
         guard let thread = model.selectedThread else { return nil }
         return model.projects.first { $0.id == thread.projectID }?.path
@@ -125,10 +126,14 @@ public struct ChatScreen: View {
     }
 
     private var selectableTranscriptSheet: SelectableTranscriptSheet {
-        SelectableTranscriptSheet(
+        let threadID = model.selectedThreadID ?? ""
+        let contentKey =
+            "\(threadID):\(model.timelineVersion(threadID: threadID)):\(selectedThreadIsSettled)"
+        return SelectableTranscriptSheet(
             items: model.selectedTimeline(),
             projectRoot: selectedProjectRoot,
-            threadIsSettled: selectedThreadIsSettled)
+            threadIsSettled: selectedThreadIsSettled,
+            contentKey: contentKey)
     }
 }
 

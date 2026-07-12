@@ -185,6 +185,8 @@ public actor LiveBackend: BackendService {
     /// snapshots and advanced by live `task.*` activity events.
     private var subagentTasksByThread: [String: T3SubagentTaskActivityState] = [:]
 
+    private static let nodePathCacheKey = "sergecode.nodePathCache"
+
     /// Verification-only breadcrumb path (see `emit`), opt-in via
     /// `$SERGECODE_DEBUG_LOG` (e.g. for a manual `open`-launched run whose
     /// stdio isn't attached to a terminal). `nil` — the default for every
@@ -208,6 +210,9 @@ public actor LiveBackend: BackendService {
     /// Port of the running sidecar, captured at spawn for the mobile
     /// pairing URL.
     private var sidecarPort: Int?
+    /// Set immediately before the initial sidecar spawn and consumed by the
+    /// first ready transition so startup timing includes readiness polling.
+    private var sidecarSpawnStartedAt: ContinuousClock.Instant?
     private static let runningLivenessConfirmationDelay: Duration = .seconds(12)
 
     public init(mode: LiveBackendMode, baseDirectory: String? = nil) {
@@ -288,9 +293,25 @@ public actor LiveBackend: BackendService {
         let token = BootstrapTokenGenerator.generate()
 
         let nodePath: String
+        let locateStartedAt = PerfLog.now()
         do {
-            nodePath = try NodeRuntimeLocator().locate().path
+            let nodePathCacheKey = Self.nodePathCacheKey
+            let cachedNodePath = UserDefaults.standard.string(forKey: nodePathCacheKey)
+            nodePath = try NodeRuntimeLocator(
+                cachedPath: cachedNodePath,
+                onLocated: { path in
+                    UserDefaults.standard.set(path, forKey: nodePathCacheKey)
+                }
+            ).locate().path
+            PerfLog.event(
+                "startup.locate-node",
+                ms: PerfLog.elapsedMilliseconds(since: locateStartedAt),
+                details: "result=success")
         } catch {
+            PerfLog.event(
+                "startup.locate-node",
+                ms: PerfLog.elapsedMilliseconds(since: locateStartedAt),
+                details: "result=failure")
             emit(.connection(.failed("Could not locate a compatible Node.js runtime: \(error)")))
             return
         }
@@ -327,6 +348,7 @@ public actor LiveBackend: BackendService {
             }
         }
 
+        sidecarSpawnStartedAt = PerfLog.now()
         await process.start()
     }
 
@@ -365,7 +387,12 @@ public actor LiveBackend: BackendService {
             break
         case .launching(let attempt):
             emit(.connection(attempt == 0 ? .launchingServer : .reconnecting(attempt: attempt)))
-        case .ready:
+        case .ready(let pid):
+            PerfLog.event(
+                "startup.spawn-to-ready",
+                ms: PerfLog.elapsedMilliseconds(since: sidecarSpawnStartedAt),
+                details: "pid=\(pid)")
+            sidecarSpawnStartedAt = nil
             startSocketSession()
         case .crashed(_, let attempt):
             await teardownSocketSession()
@@ -773,6 +800,7 @@ public actor LiveBackend: BackendService {
     }
 
     private func applyThreadSnapshot(threadID: String, thread: OrchestrationThread) {
+        let startedAt = PerfLog.now()
         // Seed dedup + delta state so live events for already-shown items don't
         // duplicate and assistant deltas continue from the snapshot text.
         seenMessageIDs[threadID] = Set(thread.messages.map(\.id))
@@ -839,6 +867,7 @@ public actor LiveBackend: BackendService {
         // tool updated/completed for one call, subagent task lifecycle
         // updates — collapse into a single row, same as the live tail.
         var items: [TimelineItem] = []
+        var indexByID: [String: Int] = [:]
         var subagentState = T3SubagentTaskActivityState()
         let hadSubagentTasks = !(subagentTasksByThread[threadID]?.items.isEmpty ?? true)
         for entry in OrchestrationMapping.timeline(for: thread) {
@@ -846,7 +875,7 @@ public actor LiveBackend: BackendService {
                 Self.isTaskLifecycleActivity(activity),
                 let task = subagentState.apply(activity: activity, at: at)
             {
-                items.upsertTimelineItem(mapSubagentTask(task))
+                items.upsertTimelineItem(mapSubagentTask(task), indexByID: &indexByID)
                 continue
             }
             guard
@@ -854,7 +883,7 @@ public actor LiveBackend: BackendService {
                     entry, threadID: threadID, pendingUserInputIDs: pendingInputIDs,
                     pendingApprovalIDs: pendingApprovalIDs)
             else { continue }
-            items.upsertTimelineItem(item)
+            items.upsertTimelineItem(item, indexByID: &indexByID)
         }
         let hasSubagentTasks = !subagentState.items.isEmpty
         subagentTasksByThread[threadID] = hasSubagentTasks ? subagentState : nil
@@ -900,6 +929,10 @@ public actor LiveBackend: BackendService {
                     status: ContextWindowStatus(
                         usedTokens: payload.usedTokens, maxTokens: payload.maxTokens)))
         }
+        PerfLog.event(
+            "thread.snapshot-projection",
+            ms: PerfLog.elapsedMilliseconds(since: startedAt),
+            details: "thread=\(threadID) items=\(items.count)")
     }
 
     private func applyThreadEvent(threadID: String, event: OrchestrationEvent) {
@@ -1234,8 +1267,7 @@ public actor LiveBackend: BackendService {
                             isStreaming: payload.streaming, at: at)))
             } else if payload.streaming {
                 if !payload.text.isEmpty {
-                    let old = assistantTextByMessage[threadID]?[messageID] ?? ""
-                    assistantTextByMessage[threadID, default: [:]][messageID] = old + payload.text
+                    assistantTextByMessage[threadID, default: [:]][messageID, default: ""] += payload.text
                     // Buffer: merged at ~30Hz (or flushed before any non-delta).
                     bufferAssistantDelta(
                         threadID: threadID, messageID: messageID, delta: payload.text)
@@ -2211,11 +2243,15 @@ public actor LiveBackend: BackendService {
 
     /// Ordering barrier: any non-delta event for a thread must land after that
     /// thread's pending assistant deltas (in particular `assistantCompleted`
-    /// and `timelineReset`). Deltas themselves go through `bufferAssistantDelta`.
+    /// and `timelineReset`). Deltas themselves go through `bufferAssistantDelta`
+    /// and must never be routed through `emitOrdered`, which would recreate an
+    /// O(N²) scan+copy per delta.
     private func emitOrdered(threadID: String, event: BackendEvent) {
         flushDeltas(for: threadID)
-        // Keep `latestTimeline` current so `thread.reverted` can truncate a
-        // live-updated cache (not just the last snapshot).
+        // `latestTimeline` intentionally does not track streamed deltas. It is
+        // reconciled by the `.assistantCompleted` mirror case, so
+        // `thread.reverted` truncation may see a placeholder mid-stream
+        // (pre-existing behavior).
         mirrorTimelineCache(threadID: threadID, event: event)
         emit(event)
     }
@@ -2234,16 +2270,6 @@ public actor LiveBackend: BackendService {
             }), case .assistantMessage(let id, _, _, let at) = items[index] {
                 items[index] = .assistantMessage(
                     id: id, markdown: markdown, isStreaming: false, at: at)
-                latestTimeline[threadID] = items
-            }
-        case .assistantDelta(_, let messageID, let delta):
-            guard var items = latestTimeline[threadID] else { return }
-            if let index = items.firstIndex(where: {
-                if case .assistantMessage(let id, _, _, _) = $0 { return id == messageID }
-                return false
-            }), case .assistantMessage(let id, let markdown, _, let at) = items[index] {
-                items[index] = .assistantMessage(
-                    id: id, markdown: markdown + delta, isStreaming: true, at: at)
                 latestTimeline[threadID] = items
             }
         default:

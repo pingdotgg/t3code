@@ -53,6 +53,10 @@ public final class AppModel {
     /// Keep the selected thread plus this many other recently selected ones
     /// subscribed. Beyond that, `closeTimeline` drops the live subscription.
     static let timelineSubscriptionKeepCount = 4
+    /// Retained timeline history is bounded even after its live subscription
+    /// is closed. Keep the newest suffix so a later selection has useful
+    /// stale content to render immediately.
+    static let maxRetainedTimelineItems = 500
 
     /// In-app dictation (mic → local ASR → on-device cleanup → composer).
     /// Multiple device models may share one controller so ASR stays a single
@@ -217,6 +221,12 @@ public final class AppModel {
         threadStates[threadID]?.timelineVersion ?? 0
     }
 
+    /// Version of the stored timeline structure for `threadID` (0 if never
+    /// written).
+    public func timelineStructureVersion(threadID: String) -> Int {
+        threadStates[threadID]?.structureVersion ?? 0
+    }
+
     public var selectedThread: ChatThread? {
         threads.first { $0.id == selectedThreadID }
     }
@@ -330,15 +340,35 @@ public final class AppModel {
     /// invalidation on that child only), no matter how many events landed
     /// for it.
     private func applyBatch(_ events: [BackendEvent]) {
+        PerfSignpost.interval("applyBatch") {
+            PerfMetrics.measure("applyBatch") {
+                applyBatchImplementation(events)
+            }
+        }
+    }
+
+    private func applyBatchImplementation(_ events: [BackendEvent]) {
         var touched: [String: [TimelineItem]] = [:]
+        var indexByThread: [String: [String: Int]] = [:]
         // Only full snapshots (timelineReset) mark history loaded. Plain
         // appends / deltas must not set hasLoadedTimeline — otherwise a
         // stream event for a not-yet-selected thread suppresses the later
         // history fetch forever.
         var resetThreads: Set<String> = []
+        var structuralThreads: Set<String> = []
 
         func currentItems(_ threadID: String) -> [TimelineItem] {
             touched[threadID] ?? threadStates[threadID]?.timeline ?? []
+        }
+
+        func ensureTimelineIndex(_ threadID: String, items: [TimelineItem]) {
+            guard indexByThread[threadID] == nil else { return }
+            var indexByID: [String: Int] = [:]
+            indexByID.reserveCapacity(items.count)
+            for (index, item) in items.enumerated() {
+                indexByID[item.id] = index
+            }
+            indexByThread[threadID] = indexByID
         }
 
         // A run of deltas for the same message collapses to one string
@@ -349,18 +379,38 @@ public final class AppModel {
         func flushPendingDelta() {
             guard let threadID = deltaThreadID else { return }
             var items = currentItems(threadID)
-            applyDelta(threadID: threadID, messageID: deltaMessageID, delta: deltaText, items: &items)
+            if applyDelta(
+                threadID: threadID, messageID: deltaMessageID, delta: deltaText, items: &items,
+                indexByID: &indexByThread[threadID])
+            {
+                structuralThreads.insert(threadID)
+            }
             touched[threadID] = items
             deltaThreadID = nil
             deltaText = ""
         }
 
-        func resolveInteraction(_ id: String) {
+        func resolveInteraction(_ id: String) -> String? {
             func removeItem(threadID: String) -> Bool {
                 var items = currentItems(threadID)
-                guard let index = items.firstIndex(where: { $0.id == id }) else { return false }
+                let index: Int?
+                if let cachedIndex = indexByThread[threadID]?[id],
+                    items.indices.contains(cachedIndex), items[cachedIndex].id == id
+                {
+                    index = cachedIndex
+                } else {
+                    if indexByThread[threadID] != nil {
+                        indexByThread[threadID]![id] = nil
+                    }
+                    index = items.firstIndex(where: { $0.id == id })
+                    if let index, indexByThread[threadID] != nil {
+                        indexByThread[threadID]![id] = index
+                    }
+                }
+                guard let index else { return false }
                 items.remove(at: index)
                 touched[threadID] = items
+                indexByThread[threadID] = nil
                 // Removal shifts indices; the streaming index self-validates,
                 // but drop it so the next delta rescans instead of racing.
                 streamingIndex[threadID] = nil
@@ -370,15 +420,16 @@ public final class AppModel {
             if let threadID = interactionThreadByID.removeValue(forKey: id),
                 removeItem(threadID: threadID)
             {
-                return
+                return threadID
             }
             // Fallback for items that predate the map (e.g. from a snapshot
             // loaded via loadTimelineIfNeeded rather than an event).
             for threadID in Set(threadStates.keys).union(touched.keys) {
                 if removeItem(threadID: threadID) {
-                    return
+                    return threadID
                 }
             }
+            return nil
         }
 
         for event in events {
@@ -402,25 +453,37 @@ public final class AppModel {
                 // an earlier item (tool call updated -> completed, streaming
                 // reasoning text) and must replace it, not stack.
                 var items = currentItems(threadID)
-                items.upsertTimelineItem(item)
+                ensureTimelineIndex(threadID, items: items)
+                items.upsertTimelineItem(item, indexByID: &indexByThread[threadID]!)
                 touched[threadID] = items
+                structuralThreads.insert(threadID)
                 if case .subagentTask(let task) = item {
                     subagentTaskAggregator.upsert(task, for: threadID)
                 }
                 recordInteraction(item, threadID: threadID)
             case .timelineReset(let threadID, let items):
+                // A snapshot can truncate or replace an in-flight message;
+                // the old settled prefix is no longer valid for this thread.
+                StreamingMarkdownCache.evict(threadID: threadID)
                 let filtered = items.filter { !isDismissedUsageLimit($0) }
                 touched[threadID] = filtered
+                indexByThread[threadID] = nil
                 resetThreads.insert(threadID)
+                structuralThreads.insert(threadID)
                 streamingIndex[threadID] = nil
                 for item in filtered { recordInteraction(item, threadID: threadID) }
             case .assistantCompleted(let threadID, let messageID, let markdown):
+                // Assistant rows are always `.single`; grouping does not read
+                // their markdown or item-level isStreaming state.
                 var items = currentItems(threadID)
                 finishStreaming(
-                    threadID: threadID, messageID: messageID, markdown: markdown, items: &items)
+                    threadID: threadID, messageID: messageID, markdown: markdown, items: &items,
+                    indexByID: &indexByThread[threadID])
                 touched[threadID] = items
             case .approvalResolved(let id), .userInputResolved(let id):
-                resolveInteraction(id)
+                if let threadID = resolveInteraction(id) {
+                    structuralThreads.insert(threadID)
+                }
             default:
                 applyNonTimeline(event)
             }
@@ -431,6 +494,9 @@ public final class AppModel {
             let state = self.state(creating: threadID)
             state.timeline = items
             state.timelineVersion += 1
+            if structuralThreads.contains(threadID) {
+                state.structureVersion += 1
+            }
             if resetThreads.contains(threadID) {
                 state.hasLoadedTimeline = true
                 subagentTaskAggregator.replaceTasks(
@@ -502,6 +568,7 @@ public final class AppModel {
             projectPathByThreadKey[scopedThreadKey(id)] = nil
             if composerPrefill?.threadID == id { composerPrefill = nil }
             TimelineDisplayCache.evict(threadID: scopedThreadKey(id))
+            StreamingMarkdownCache.evict(threadID: id)
             if selectedThreadID == id { selectedThreadID = nil }
         case .approvalRequested, .userInputRequested:
             break
@@ -552,9 +619,11 @@ public final class AppModel {
         return dismissedUsageLimitIDs.contains(notice.id)
     }
 
+    @discardableResult
     private func applyDelta(
-        threadID: String, messageID: String, delta: String, items: inout [TimelineItem]
-    ) {
+        threadID: String, messageID: String, delta: String, items: inout [TimelineItem],
+        indexByID: inout [String: Int]?
+    ) -> Bool {
         if let cached = streamingIndex[threadID], cached.messageID == messageID,
             items.indices.contains(cached.index),
             case .assistantMessage(let id, let markdown, _, let at) = items[cached.index],
@@ -562,22 +631,39 @@ public final class AppModel {
         {
             items[cached.index] = .assistantMessage(
                 id: id, markdown: markdown + delta, isStreaming: true, at: at)
-            return
+            indexByID?[messageID] = cached.index
+            return false
+        }
+        if let indexed = indexByID?[messageID] {
+            if items.indices.contains(indexed),
+                case .assistantMessage(let id, let markdown, _, let at) = items[indexed],
+                id == messageID
+            {
+                items[indexed] = .assistantMessage(
+                    id: id, markdown: markdown + delta, isStreaming: true, at: at)
+                streamingIndex[threadID] = (messageID, indexed)
+                return false
+            }
+            indexByID?[messageID] = nil
         }
         for (index, item) in items.enumerated() {
             if case .assistantMessage(let id, let markdown, _, let at) = item, id == messageID {
                 items[index] = .assistantMessage(
                     id: id, markdown: markdown + delta, isStreaming: true, at: at)
                 streamingIndex[threadID] = (messageID, index)
-                return
+                indexByID?[messageID] = index
+                return false
             }
         }
         items.append(.assistantMessage(id: messageID, markdown: delta, isStreaming: true, at: Date()))
         streamingIndex[threadID] = (messageID, items.count - 1)
+        indexByID?[messageID] = items.count - 1
+        return true
     }
 
     private func finishStreaming(
-        threadID: String, messageID: String, markdown: String, items: inout [TimelineItem]
+        threadID: String, messageID: String, markdown: String, items: inout [TimelineItem],
+        indexByID: inout [String: Int]?
     ) {
         defer {
             if streamingIndex[threadID]?.messageID == messageID {
@@ -590,12 +676,24 @@ public final class AppModel {
         {
             items[cached.index] = .assistantMessage(
                 id: id, markdown: markdown, isStreaming: false, at: at)
+            indexByID?[messageID] = cached.index
             return
+        }
+        if let indexed = indexByID?[messageID] {
+            if items.indices.contains(indexed),
+                case .assistantMessage(let id, _, _, let at) = items[indexed], id == messageID
+            {
+                items[indexed] = .assistantMessage(
+                    id: id, markdown: markdown, isStreaming: false, at: at)
+                return
+            }
+            indexByID?[messageID] = nil
         }
         for (index, item) in items.enumerated() {
             if case .assistantMessage(let id, _, _, let at) = item, id == messageID {
                 items[index] = .assistantMessage(
                     id: id, markdown: markdown, isStreaming: false, at: at)
+                indexByID?[messageID] = index
                 return
             }
         }
@@ -675,11 +773,14 @@ public final class AppModel {
             subagentTaskAggregator.setLive(true, for: threadID)
             return
         }
+        state.isLoadingTimeline = true
+        defer { state.isLoadingTimeline = false }
         do {
             let items = try await backend.timeline(threadID: threadID)
             let filtered = items.filter { !isDismissedUsageLimit($0) }
             state.timeline = filtered
             state.timelineVersion += 1
+            state.structureVersion += 1
             state.hasLoadedTimeline = true
             subagentTaskAggregator.setLive(true, for: threadID)
             subagentTaskAggregator.replaceTasks(
@@ -1192,6 +1293,7 @@ public final class AppModel {
             if state.timeline.contains(where: { $0.id == notice.id }) {
                 state.timeline.removeAll { $0.id == notice.id }
                 state.timelineVersion += 1
+                state.structureVersion += 1
             }
         }
     }
@@ -1524,17 +1626,21 @@ public final class AppModel {
         return Array(recent.dropFirst(keep))
     }
 
-    /// Tear down backend timeline subscription and local timeline cache so a
-    /// later selection refetches via `loadTimelineIfNeeded`.
+    /// Tear down the backend timeline subscription while retaining a bounded
+    /// stale snapshot so a later selection can render immediately and then
+    /// refresh it through `loadTimelineIfNeeded`.
     private func releaseTimeline(threadID: String) async {
         recentlySelected.removeAll { $0 == threadID }
         subagentTaskAggregator.setLive(false, for: threadID)
         await backend.closeTimeline(threadID: threadID)
         if let state = threadStates[threadID] {
-            state.timeline = []
+            trimRetainedTimelineIfNeeded(state)
             state.hasLoadedTimeline = false
         }
-        TimelineDisplayCache.evict(threadID: scopedThreadKey(threadID))
+        // Stale-while-revalidate: keep the TimelineDisplayCache entry so a
+        // re-select renders the retained snapshot instantly; only streaming
+        // parse sessions are dropped.
+        StreamingMarkdownCache.evict(threadID: threadID)
     }
 
     private func pruneTimelineSubscriptions() {
@@ -1555,13 +1661,25 @@ public final class AppModel {
                 else { return }
                 self.subagentTaskAggregator.setLive(false, for: threadID)
                 if let state = self.threadStates[threadID] {
-                    state.timeline = []
+                    self.trimRetainedTimelineIfNeeded(state)
                     state.hasLoadedTimeline = false
                 }
-                TimelineDisplayCache.evict(threadID: self.scopedThreadKey(threadID))
+                // Stale-while-revalidate: keep the display cache (see
+                // releaseTimeline); only streaming parse sessions drop.
+                StreamingMarkdownCache.evict(threadID: threadID)
                 await self.backend.closeTimeline(threadID: threadID)
             }
         }
+    }
+
+    /// Trim only when needed. A real trim changes the cached shape, so bump
+    /// both monotonic versions instead of resetting them; the retained
+    /// `TimelineDisplayCache` entry will re-key on its next read.
+    private func trimRetainedTimelineIfNeeded(_ state: ThreadState) {
+        guard state.timeline.count > Self.maxRetainedTimelineItems else { return }
+        state.timeline = Array(state.timeline.suffix(Self.maxRetainedTimelineItems))
+        state.timelineVersion += 1
+        state.structureVersion += 1
     }
 
     private func subagentTasks(from items: [TimelineItem]) -> [SubagentTaskItem] {

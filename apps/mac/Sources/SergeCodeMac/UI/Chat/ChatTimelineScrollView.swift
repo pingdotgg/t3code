@@ -35,17 +35,29 @@ struct ChatTimelineScrollView: View {
         let items = model.selectedTimeline()
         // Finished tool bursts render condensed; grouping is pure render
         // sugar over the untouched timeline array. Memoized on
-        // (threadID, timelineVersion, settled) so body re-evals with an
-        // unchanged timeline reuse the last grouping pass.
+        // (threadID, structureVersion, settled), with timelineVersion used
+        // only for content refreshes when assistant markdown changes.
         let threadID = model.selectedThreadID ?? ""
         let threadKey = model.scopedThreadKey(threadID)
         let displayItems = TimelineDisplayCache.grouped(
             items: items,
             threadID: threadKey,
             version: model.timelineVersion(threadID: threadID),
+            structureVersion: model.timelineStructureVersion(threadID: threadID),
             threadIsSettled: threadIsSettled)
+        let isLoadingTimeline = model.threadState(threadID)?.isLoadingTimeline == true
 
-        ScrollViewReader { proxy in
+        if displayItems.isEmpty && isLoadingTimeline {
+            VStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Loading conversation…")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
                     ForEach(displayItems) { item in
@@ -142,6 +154,7 @@ struct ChatTimelineScrollView: View {
                 }
                 pendingInitialScrollThreadID = nil
                 proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+            }
             }
         }
     }

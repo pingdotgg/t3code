@@ -62,6 +62,7 @@ struct FrostedSceneryBackdrop: View {
     var setId: String?
     var fallbackSeed: String = "sergecode"
     /// Frost strength; lower shows more of the scene.
+    /// The compatibility value of 9 maps to the pre-blurred chrome variant.
     var blurRadius: CGFloat = 9
 
     var body: some View {
@@ -70,10 +71,9 @@ struct FrostedSceneryBackdrop: View {
         SceneryImageView(
             scenery: scenery,
             photo: photo,
+            variant: preblurredVariant,
             setId: setId,
             fallbackSeed: fallbackSeed)
-            .blur(radius: blurRadius, opaque: true)
-            .saturation(1.08)
             // Fade photo only — scrim stays above so chrome stays legible.
             .opacity(translucency)
             .overlay(
@@ -84,6 +84,12 @@ struct FrostedSceneryBackdrop: View {
                     ],
                     startPoint: .top, endPoint: .bottom))
             .clipped()
+    }
+
+    private var preblurredVariant: SceneryStore.ImageVariant {
+        // If an older caller supplies a non-default value, choose the nearest
+        // of the two baked radii (4 and 9); current call sites use 9.
+        blurRadius <= 6.5 ? .heroBlurChat : .heroBlurChrome
     }
 }
 
@@ -120,10 +126,9 @@ struct SceneryChatBackground: View {
         SceneryImageView(
             scenery: scenery,
             photo: photo,
+            variant: .heroBlurChat,
             setId: setId,
             fallbackSeed: fallbackSeed)
-            .blur(radius: 4, opaque: true)
-            .saturation(1.05)
             // Fade photo/gradient only; wash overlays stay above for contrast.
             .opacity(translucency)
             .overlay(

@@ -478,69 +478,8 @@ private struct UnifiedLineView: View {
         }
     }
 
-    private var highlightColor: Color {
-        switch row.lineKind {
-        case .addition: Color.green.opacity(0.28)
-        case .deletion: Color.red.opacity(0.28)
-        case .context: Color.clear
-        }
-    }
-
-    @ViewBuilder
     private var highlightedText: some View {
-        if let spans = row.intraline, !spans.isEmpty {
-            // Attributed string with background on changed spans.
-            Text(intralineAttributed(spans))
-        } else {
-            Text(syntaxAttributed(row.syntax, fallback: row.text))
-        }
-    }
-
-    private func intralineAttributed(_ spans: [IntralineSpan]) -> AttributedString {
-        // Walk syntax spans across the line and merge with change flags.
-        let full = spans.map(\.text).joined()
-        let syntax = row.syntax.isEmpty
-            ? SyntaxTint.tokenize(full, language: .plain)
-            : row.syntax
-        var result = AttributedString()
-        // Build a change mask per character via span walk.
-        var changeFlags: [Bool] = []
-        for span in spans {
-            changeFlags.append(contentsOf: Array(repeating: span.isChanged, count: span.text.count))
-        }
-        var charIndex = 0
-        for syn in syntax {
-            for ch in syn.text {
-                var piece = AttributedString(String(ch))
-                if charIndex < changeFlags.count, changeFlags[charIndex] {
-                    piece.backgroundColor = highlightColor
-                }
-                if let color = syntaxColor(syn.kind, lineKind: row.lineKind) {
-                    piece.foregroundColor = color
-                }
-                result.append(piece)
-                charIndex += 1
-            }
-        }
-        if result.characters.isEmpty {
-            result = AttributedString(full)
-        }
-        return result
-    }
-
-    private func syntaxAttributed(_ spans: [SyntaxSpan], fallback: String) -> AttributedString {
-        if spans.isEmpty {
-            return AttributedString(fallback)
-        }
-        var result = AttributedString()
-        for span in spans {
-            var piece = AttributedString(span.text)
-            if let color = syntaxColor(span.kind, lineKind: row.lineKind) {
-                piece.foregroundColor = color
-            }
-            result.append(piece)
-        }
-        return result
+        Text(row.attributed)
     }
 
     private func gutter(_ number: Int?) -> some View {
@@ -561,32 +500,26 @@ private struct SideBySideLineView: View {
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
             side(
-                text: row.oldText,
                 number: row.oldNumber,
                 kind: row.oldLineKind,
-                intraline: row.oldIntraline,
-                syntax: row.oldSyntax
+                attributed: row.oldAttributed
             )
             Rectangle()
                 .fill(Color.secondary.opacity(0.2))
                 .frame(width: 1)
             side(
-                text: row.newText,
                 number: row.newNumber,
                 kind: row.newLineKind,
-                intraline: row.newIntraline,
-                syntax: row.newSyntax
+                attributed: row.newAttributed
             )
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func side(
-        text: String?,
         number: Int?,
         kind: DiffLineKind?,
-        intraline: [IntralineSpan]?,
-        syntax: [SyntaxSpan]
+        attributed: AttributedString?
     ) -> some View {
         HStack(alignment: .top, spacing: 0) {
             Text(number.map(String.init) ?? "")
@@ -594,16 +527,13 @@ private struct SideBySideLineView: View {
                 .foregroundStyle(.secondary)
                 .frame(width: gutterWidth, alignment: .trailing)
             Group {
-                if let text {
-                    Text(
-                        attributed(
-                            text: text, kind: kind ?? .context, intraline: intraline, syntax: syntax)
-                    )
-                    .font(
-                        .system(
-                            size: DiffZoom.contentFontSize(for: zoomFactor), design: .monospaced)
-                    )
-                    .textSelection(.enabled)
+                if let attributed {
+                    Text(attributed)
+                        .font(
+                            .system(
+                                size: DiffZoom.contentFontSize(for: zoomFactor), design: .monospaced)
+                        )
+                        .textSelection(.enabled)
                     .lineLimit(nil)
                     .fixedSize(horizontal: false, vertical: true)
                 } else {
@@ -628,80 +558,5 @@ private struct SideBySideLineView: View {
         case .deletion: Color.red.opacity(0.10)
         case .context, .none: Color.clear
         }
-    }
-
-    private func highlightColor(_ kind: DiffLineKind) -> Color {
-        switch kind {
-        case .addition: Color.green.opacity(0.28)
-        case .deletion: Color.red.opacity(0.28)
-        case .context: Color.clear
-        }
-    }
-
-    private func attributed(
-        text: String, kind: DiffLineKind, intraline: [IntralineSpan]?, syntax: [SyntaxSpan]
-    ) -> AttributedString {
-        if let spans = intraline, !spans.isEmpty {
-            var changeFlags: [Bool] = []
-            for span in spans {
-                changeFlags.append(
-                    contentsOf: Array(repeating: span.isChanged, count: span.text.count))
-            }
-            let syn = syntax.isEmpty ? SyntaxTint.tokenize(text, language: .plain) : syntax
-            var result = AttributedString()
-            var charIndex = 0
-            for s in syn {
-                for ch in s.text {
-                    var piece = AttributedString(String(ch))
-                    if charIndex < changeFlags.count, changeFlags[charIndex] {
-                        piece.backgroundColor = highlightColor(kind)
-                    }
-                    if let color = syntaxColor(s.kind, lineKind: kind) {
-                        piece.foregroundColor = color
-                    }
-                    result.append(piece)
-                    charIndex += 1
-                }
-            }
-            return result.characters.isEmpty ? AttributedString(text) : result
-        }
-        if syntax.isEmpty {
-            return AttributedString(text)
-        }
-        var result = AttributedString()
-        for s in syntax {
-            var piece = AttributedString(s.text)
-            if let color = syntaxColor(s.kind, lineKind: kind) {
-                piece.foregroundColor = color
-            }
-            result.append(piece)
-        }
-        return result
-    }
-}
-
-// MARK: - Shared syntax colors
-
-/// Subtle syntax colors that stay readable over add/del row tints.
-private func syntaxColor(_ kind: SyntaxKind, lineKind: DiffLineKind) -> Color? {
-    // On add/del rows, keep contrast by using slightly muted colors.
-    let muted = lineKind != .context
-    switch kind {
-    case .plain:
-        return nil
-    case .keyword:
-        return muted
-            ? Color.purple.opacity(0.85)
-            : Color(red: 0.56, green: 0.25, blue: 0.68)
-    case .string:
-        return muted
-            ? Color.red.opacity(0.75)
-            : Color(red: 0.72, green: 0.22, blue: 0.25)
-    case .comment:
-        return Color.secondary.opacity(muted ? 0.9 : 1)
-    case .number:
-        return muted
-            ? Color.blue.opacity(0.8)
-            : Color(red: 0.15, green: 0.35, blue: 0.70)
     }
 }
