@@ -2427,8 +2427,8 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         ghScenario: {
           repositoryCloneUrls: {
             "pingdotgg/codething-mvp": {
-              url: "/missing/target-repository",
-              sshUrl: "/missing/target-repository",
+              url: `${remoteDir}.git`,
+              sshUrl: `${remoteDir}.git`,
             },
           },
           prListSequence: ["[]", "[]"],

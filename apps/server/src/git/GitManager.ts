@@ -32,6 +32,7 @@ import {
 import {
   detectSourceControlProviderFromGitRemoteUrl,
   mergeGitStatusParts,
+  normalizeGitRemoteUrl,
   parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
   resolveAutoFeatureBranchName,
   sanitizeBranchFragment,
@@ -1105,8 +1106,13 @@ export const make = Effect.gen(function* () {
       ? yield* provider.getTargetRepositoryCloneUrls({ cwd }).pipe(Effect.orElseSucceed(() => null))
       : null;
     if (targetCloneUrls) {
-      const targetBaseRangeRef = yield* Effect.gen(function* () {
-        const originUrl = yield* readConfigValueNullable(cwd, "remote.origin.url");
+      const originUrl = yield* readConfigValueNullable(cwd, "remote.origin.url");
+      const targetMatchesOrigin =
+        originUrl !== null &&
+        [targetCloneUrls.url, targetCloneUrls.sshUrl].some(
+          (targetUrl) => normalizeGitRemoteUrl(targetUrl) === normalizeGitRemoteUrl(originUrl),
+        );
+      const resolveTargetBaseRangeRef = Effect.gen(function* () {
         const targetUrl = shouldPreferSshRemote(originUrl)
           ? targetCloneUrls.sshUrl
           : targetCloneUrls.url;
@@ -1127,7 +1133,10 @@ export const make = Effect.gen(function* () {
             fallbackRemoteName: remoteName,
           })
           .pipe(Effect.map((resolved) => resolved.commitSha));
-      }).pipe(Effect.orElseSucceed(() => null));
+      });
+      const targetBaseRangeRef = targetMatchesOrigin
+        ? yield* resolveTargetBaseRangeRef.pipe(Effect.orElseSucceed(() => null))
+        : yield* resolveTargetBaseRangeRef;
       if (targetBaseRangeRef) return targetBaseRangeRef;
     }
 
