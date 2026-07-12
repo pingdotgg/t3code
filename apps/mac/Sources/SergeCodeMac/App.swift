@@ -11,6 +11,7 @@ struct SergeCodeApp: App {
     private let model = AppModel(backend: SergeCodeApp.backend)
     // Alpine identity: Dolomites photo pool + per-thread scene assignment.
     private let scenery = SceneryStore()
+    private let passport = PassportStore()
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     init() {
@@ -38,7 +39,8 @@ struct SergeCodeApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView(model: model, scenery: scenery)
+            RootView(model: model, scenery: scenery, passport: passport)
+                .environment(passport)
                 .tint(AlpineTheme.accent(palette: activeSceneryPalette))
                 // Behind-window liquid glass: strength tracks sceneryTranslucency
                 // (1.0 = solid plate; lower = desktop visible through blur).
@@ -63,7 +65,13 @@ struct SergeCodeApp: App {
                         UIProbe.runIfRequested(model: model, scenery: scenery)
                     #endif
                 }
-                .task { await scenery.start() }
+                .task {
+                    await scenery.start()
+                    passport.backfill(
+                        sets: scenery.availableSets,
+                        namesBySet: scenery.passportNamesBySet,
+                        assignments: scenery.passportAssignments)
+                }
                 .onReceive(
                     NotificationCenter.default.publisher(
                         for: NSApplication.didBecomeActiveNotification)
@@ -82,7 +90,8 @@ struct SergeCodeApp: App {
             SettingsScene(
                 model: model,
                 scenery: scenery,
-                backend: SergeCodeApp.backend)
+                backend: SergeCodeApp.backend,
+                passport: passport)
         }
     }
 

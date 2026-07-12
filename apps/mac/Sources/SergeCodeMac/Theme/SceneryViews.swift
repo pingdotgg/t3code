@@ -17,7 +17,7 @@ struct SceneryImageView: View {
             AlpineTheme.gradient(
                 seed: photo?.id ?? fallbackSeed,
                 palette: scenery.palette(for: photo, setId: setId))
-            if let photo, let image = scenery.image(photo, variant: variant) {
+            if let photo, let image = scenery.image(photo, variant: variant, setId: setId) {
                 Image(nsImage: image)
                     .resizable()
                     .scaledToFill()
@@ -30,17 +30,19 @@ struct SceneryImageView: View {
         .animation(.easeInOut(duration: 0.45), value: loadedPhotoID)
         .clipped()
         .task(id: taskKey) {
-            await scenery.ensureImage(photo, variant: variant)
+            await scenery.ensureImage(photo, variant: variant, setId: setId)
         }
     }
 
     private var loadedPhotoID: String? {
-        guard let photo, scenery.image(photo, variant: variant) != nil else { return nil }
+        guard let photo, scenery.image(photo, variant: variant, setId: setId) != nil else {
+            return nil
+        }
         return photo.id
     }
 
     private var taskKey: String {
-        "\(photo?.id ?? "-")/\(variant.rawValue)"
+        "\(setId ?? "-")/\(photo?.id ?? "-")/\(variant.rawValue)"
     }
 }
 

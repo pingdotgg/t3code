@@ -9,6 +9,7 @@ import SwiftUI
 struct SidebarView: View {
     let model: AppModel
     let scenery: SceneryStore
+    let passport: PassportStore
 
     @UIState private var renameTarget: Project?
     @UIState private var renameText = ""
@@ -51,7 +52,10 @@ struct SidebarView: View {
                         onNewSession: { provider in
                             Task {
                                 await model.createSceneThread(
-                                    projectID: project.id, provider: provider, scenery: scenery)
+                                    projectID: project.id,
+                                    provider: provider,
+                                    scenery: scenery,
+                                    passport: passport)
                             }
                         },
                         onRename: {

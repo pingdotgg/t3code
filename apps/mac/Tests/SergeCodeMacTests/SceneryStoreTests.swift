@@ -257,6 +257,7 @@ struct SceneryStoreMultiSetTests {
         #expect(store.resolvedSetId(projectPath: "/proj/kyoto") == "kyoto")
         #expect(store.resolvedSetId(forThread: "thread-kyoto") == "kyoto")
         #expect(store.resolvedSetId(forThread: "thread-other") == ScenerySet.dolomitesID)
+        #expect(store.effectiveSetId(projectPath: "/proj/kyoto") == "kyoto")
 
         let nextKyoto = store.peekNextScene(projectPath: "/proj/kyoto")
         #expect(nextKyoto?.id == "k1")
@@ -268,6 +269,10 @@ struct SceneryStoreMultiSetTests {
                 projectPath: "/proj/kyoto",
                 setIdOverride: ScenerySet.dolomitesID))
         #expect(overridden.id == "d1")
+        #expect(
+            store.effectiveSetId(
+                projectPath: "/proj/kyoto",
+                setIdOverride: ScenerySet.dolomitesID) == ScenerySet.dolomitesID)
         #expect(store.projectPrefs(for: "/proj/kyoto")?.setId == "kyoto")
         #expect(
             store.peekNextScene(projectPath: "/proj/kyoto", setIdOverride: "missing")?.id
@@ -312,6 +317,7 @@ struct SceneryStoreMultiSetTests {
 
         #expect(store.resolvedSetId(forThread: "thread-shared") == kyoto.id)
         #expect(store.photo(for: "thread-shared")?.name == "Arashiyama")
+        #expect(store.threadTitle(for: sharedKyotoPhoto, setId: kyoto.id) == "Arashiyama")
     }
 
     @Test("migration then store load keeps legacy assignment photo ids")

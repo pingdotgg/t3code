@@ -167,6 +167,16 @@ public final class SceneryStore {
             knownSetIds: Set(availableSets.map(\.id)))
     }
 
+    /// Resolves the set for a project, honoring an explicit valid override.
+    public func effectiveSetId(projectPath: String?, setIdOverride: String? = nil) -> String {
+        if let setIdOverride,
+            availableSets.contains(where: { $0.id == setIdOverride })
+        {
+            return setIdOverride
+        }
+        return resolvedSetId(projectPath: projectPath)
+    }
+
     /// Resolves the set for a thread via its project path (when wired) and
     /// assignment fallback.
     public func resolvedSetId(forThread threadID: String) -> String {
@@ -184,6 +194,13 @@ public final class SceneryStore {
     /// Photos currently registered for a set (may be empty before first fetch).
     public func photos(forSetId setId: String) -> [SceneryPhoto] {
         pools[setId] ?? []
+    }
+
+    /// Resolves a photo within an explicit set. Passport pages retain their
+    /// set id, so they must not infer ownership from a photo id that may be
+    /// shared by more than one pool.
+    public func photo(for photoID: String, inSet setId: String) -> SceneryPhoto? {
+        pools[setId]?.first { $0.id == photoID }
     }
 
     /// Palette for a resolved set. An explicit set id wins; otherwise the
@@ -209,6 +226,15 @@ public final class SceneryStore {
 
     public func projectPrefs(for path: String) -> ProjectSceneryPrefs? {
         projectPrefs[path]
+    }
+
+    /// Read-only snapshots consumed by Passport backfill at app startup.
+    public var passportNamesBySet: [String: [String: String]] {
+        namesBySet
+    }
+
+    public var passportAssignments: [String: SceneryAssignment] {
+        assignments
     }
 
     // MARK: - Assignment & naming
@@ -249,12 +275,9 @@ public final class SceneryStore {
         projectPath: String? = nil,
         setIdOverride: String? = nil
     ) -> SceneryPhoto? {
-        var setId = resolvedSetId(projectPath: projectPath)
-        if let setIdOverride,
-            availableSets.contains(where: { $0.id == setIdOverride })
-        {
-            setId = setIdOverride
-        }
+        let setId = effectiveSetId(
+            projectPath: projectPath,
+            setIdOverride: setIdOverride)
         let setPool = pools[setId] ?? []
         let candidatePool = distinctlyNamedCandidates(in: setPool, setId: setId)
         let assignmentCount = assignments.values.count { $0.resolvedSetId == setId }
@@ -300,8 +323,8 @@ public final class SceneryStore {
     }
 
     /// Thread title for a scene: the plain place name, even when reused.
-    public func threadTitle(for photo: SceneryPhoto) -> String {
-        baseSceneName(photo.name, setId: setIdContaining(photoID: photo.id))
+    public func threadTitle(for photo: SceneryPhoto, setId: String? = nil) -> String {
+        baseSceneName(photo.name, setId: setId ?? setIdContaining(photoID: photo.id))
     }
 
     /// Commit a thread → photo binding (after the backend confirmed create),
@@ -451,24 +474,37 @@ public final class SceneryStore {
 
     /// Cached image, if already decoded this session. Views pair this with
     /// `ensureImage` in a `.task`.
-    public func image(_ photo: SceneryPhoto, variant: ImageVariant) -> NSImage? {
-        let setId = setIdContaining(photoID: photo.id) ?? ScenerySet.dolomitesID
+    public func image(
+        _ photo: SceneryPhoto,
+        variant: ImageVariant,
+        setId explicitSetId: String? = nil
+    ) -> NSImage? {
+        let setId = explicitSetId ?? setIdContaining(photoID: photo.id) ?? ScenerySet.dolomitesID
         return images[cacheKey(setId, photo.id, variant)]
     }
 
     /// Load a photo's image into the in-memory cache: disk first, CDN on
     /// miss (writing back to disk). Safe to call repeatedly.
-    public func ensureImage(_ photo: SceneryPhoto?, variant: ImageVariant) async {
-        await ensureImage(photo, variant: variant, triggerPaletteBackfill: true)
+    public func ensureImage(
+        _ photo: SceneryPhoto?,
+        variant: ImageVariant,
+        setId explicitSetId: String? = nil
+    ) async {
+        await ensureImage(
+            photo,
+            variant: variant,
+            setId: explicitSetId,
+            triggerPaletteBackfill: true)
     }
 
     private func ensureImage(
         _ photo: SceneryPhoto?,
         variant: ImageVariant,
+        setId explicitSetId: String? = nil,
         triggerPaletteBackfill: Bool
     ) async {
         guard let photo else { return }
-        let setId = setIdContaining(photoID: photo.id) ?? ScenerySet.dolomitesID
+        let setId = explicitSetId ?? setIdContaining(photoID: photo.id) ?? ScenerySet.dolomitesID
         let key = cacheKey(setId, photo.id, variant)
         guard images[key] == nil, !loadingKeys.contains(key) else { return }
         loadingKeys.insert(key)
@@ -524,7 +560,11 @@ public final class SceneryStore {
                 SceneryPaletteExtractor.maximumImageCount))
             for photo in samplePhotos {
                 guard !Task.isCancelled else { return }
-                await ensureImage(photo, variant: .thumb, triggerPaletteBackfill: false)
+                await ensureImage(
+                    photo,
+                    variant: .thumb,
+                    setId: setId,
+                    triggerPaletteBackfill: false)
             }
         }
 
@@ -1228,16 +1268,20 @@ extension AppModel {
         projectID: String,
         provider: ProviderKind,
         scenery: SceneryStore,
+        passport: PassportStore? = nil,
         scenerySetId: String? = nil
     ) async -> ChatThread? {
         // First launch races the initial pool fetch; start() is idempotent and
         // waits for it, so early threads still get a scene name + assignment.
         await scenery.start()
         let projectPath = projects.first(where: { $0.id == projectID })?.path
-        let scene = scenery.peekNextScene(
+        let effectiveSetId = scenery.effectiveSetId(
             projectPath: projectPath,
             setIdOverride: scenerySetId)
-        let sceneTitle = scene.map { scenery.threadTitle(for: $0) }
+        let scene = scenery.peekNextScene(
+            projectPath: projectPath,
+            setIdOverride: effectiveSetId)
+        let sceneTitle = scene.map { scenery.threadTitle(for: $0, setId: effectiveSetId) }
         let thread = await createThread(
             projectID: projectID, provider: provider, title: sceneTitle)
         if let thread, let scene, let sceneTitle {
@@ -1246,7 +1290,20 @@ extension AppModel {
                 name: sceneTitle,
                 to: thread.id,
                 projectPath: projectPath,
-                setIdOverride: scenerySetId)
+                setIdOverride: effectiveSetId)
+            let setId = scenery.resolvedSetId(forThread: thread.id)
+            if let set = scenery.set(id: setId) {
+                // Builtin manifests pin createdAt to epoch 0; a visit that races
+                // the startup backfill must not issue a 1970-dated page.
+                let issuedAt = set.createdAt.timeIntervalSince1970 == 0 ? Date() : set.createdAt
+                passport?.ensurePage(setId: set.id, title: set.title, issuedAt: issuedAt)
+            }
+            passport?.recordVisit(
+                threadID: thread.id,
+                setId: setId,
+                placeName: sceneTitle,
+                photoID: scene.id,
+                date: Date())
         }
         return thread
     }

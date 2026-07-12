@@ -177,6 +177,10 @@
                 // register the resulting bare-title pool and create a thread.
                 // Confirms new threads get "Iceland", not "Iceland 5".
                 await probeIcelandSceneSetCreate(model: model, scenery: scenery)
+
+                // Passport sheet: seed a temp store with Dolomites visits and
+                // capture the sheet's view tree.
+                await probePassport(scenery: scenery, dir: dir)
             } else {
                 print("UIProbe: skipping settings snapshots (live backend run)")
             }
@@ -564,6 +568,79 @@
             } else {
                 print("UIProbe: PASS polluted pool-index title strips to Iceland")
             }
+        }
+
+        /// Seeds a throwaway PassportStore with a few Dolomites visits (one
+        /// place visited twice for the ×N badge) and captures PassportView
+        /// hosted in its own window — sheets can't be presented
+        /// programmatically here, and this exercises the identical view tree.
+        private static func probePassport(scenery: SceneryStore, dir: String) async {
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent("probe-passport-\(UUID().uuidString)", isDirectory: true)
+            defer { try? FileManager.default.removeItem(at: root) }
+
+            let passport = PassportStore(rootOverride: root)
+            let set = scenery.set(id: ScenerySet.dolomitesID)
+            passport.ensurePage(
+                setId: ScenerySet.dolomitesID,
+                title: set?.title ?? "Dolomites",
+                issuedAt: Date())
+            let configuredSceneNames = set?.sceneNames ?? []
+            let places = Array(
+                (configuredSceneNames.isEmpty
+                    ? ["Seceda", "Tre Cime", "Marmolada"]
+                    : configuredSceneNames).prefix(3))
+            for (index, place) in places.enumerated() {
+                passport.recordVisit(
+                    threadID: "probe-passport-\(index)",
+                    setId: ScenerySet.dolomitesID,
+                    placeName: place,
+                    photoID: nil,
+                    date: Date())
+            }
+            if let repeated = places.first {
+                passport.recordVisit(
+                    threadID: "probe-passport-repeat",
+                    setId: ScenerySet.dolomitesID,
+                    placeName: repeated,
+                    photoID: nil,
+                    date: Date())
+            }
+
+            let stamps = passport.pages.first?.stamps ?? []
+            let repeatOK = stamps.first?.visitCount == 2
+            let sceneNameCount = set?.sceneNames.count ?? 0
+            print(
+                "UIProbe: passport pages=\(passport.pages.count) stamps=\(stamps.count) "
+                    + "repeatBadge=\(repeatOK) sceneNames=\(sceneNameCount)")
+            if passport.pages.count == 1, stamps.count == places.count, repeatOK {
+                print("UIProbe: PASS passport page seeded with stamps + repeat visit")
+            } else {
+                print("UIProbe: FAIL passport seeding unexpected shape")
+            }
+
+            let hosting = NSHostingView(
+                rootView: PassportView(
+                    scenery: scenery,
+                    passport: passport,
+                    isPresented: .constant(true)))
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 640, height: 560),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            window.contentView = hosting
+            window.orderFront(nil)
+            try? await Task.sleep(for: .seconds(2))
+            if let view = window.contentView,
+                let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
+            {
+                view.cacheDisplay(in: view.bounds, to: rep)
+                if let data = rep.representation(using: .png, properties: [:]) {
+                    let url = URL(fileURLWithPath: dir).appendingPathComponent("15-passport.png")
+                    try? data.write(to: url)
+                    print("UIProbe: wrote \(url.path)")
+                }
+            }
+            window.orderOut(nil)
         }
 
         /// Hosts SettingsScene in its own window on `tab` and captures it —

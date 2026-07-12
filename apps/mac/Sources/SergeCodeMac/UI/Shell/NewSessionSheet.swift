@@ -7,6 +7,7 @@ import SwiftUI
 struct NewSessionSheet: View {
     let model: AppModel
     let scenery: SceneryStore
+    let passport: PassportStore
     @Binding var isPresented: Bool
 
     @UIState private var mode: Mode = .existing
@@ -46,7 +47,7 @@ struct NewSessionSheet: View {
                     Text("New Session")
                         .font(.title2.bold())
                     if let nextScene {
-                        Text(scenery.threadTitle(for: nextScene))
+                        Text(scenery.threadTitle(for: nextScene, setId: previewSetId))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -229,8 +230,9 @@ struct NewSessionSheet: View {
     }
 
     private var selectedScenerySetId: String {
-        validScenerySetOverride
-            ?? scenery.resolvedSetId(projectPath: selectedProjectPath)
+        scenery.effectiveSetId(
+            projectPath: selectedProjectPath,
+            setIdOverride: validScenerySetOverride)
     }
 
     private var scenerySetBinding: Binding<String> {
@@ -279,6 +281,7 @@ struct NewSessionSheet: View {
                 projectID: projectID,
                 provider: provider,
                 scenery: scenery,
+                passport: passport,
                 scenerySetId: validScenerySetOverride)
         case .new:
             let path = newProjectPath.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -289,6 +292,7 @@ struct NewSessionSheet: View {
                     projectID: project.id,
                     provider: provider,
                     scenery: scenery,
+                    passport: passport,
                     scenerySetId: validScenerySetOverride)
             }
         }
