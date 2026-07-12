@@ -242,6 +242,7 @@ public final class MockBackend: BackendService, @unchecked Sendable {
     }
 
     public func implementPlan(threadID: String, planID: String) async throws {
+        await state.setInteractionMode(threadID: threadID, mode: .normal)
         await state.sendMessage(threadID: threadID, text: "Implement the proposed plan.")
     }
 
