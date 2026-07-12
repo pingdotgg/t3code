@@ -128,6 +128,12 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { resolvePathLinkTarget } from "~/terminal-links";
 
 const TEXT_ATTACHMENT_MAX_BYTES = 1024 * 1024;
+
+function composerAttachmentTargetKey(target: ScopedThreadRef | DraftId): string {
+  return typeof target === "string"
+    ? `draft:${target}`
+    : `thread:${target.environmentId}:${target.threadId}`;
+}
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
 
@@ -887,8 +893,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
+  const [pendingAttachmentCounts, setPendingAttachmentCounts] = useState<Record<string, number>>(
+    {},
+  );
   const isMobileViewport = useMediaQuery("max-sm");
   const isComposerCollapsedMobile = isMobileViewport && !isComposerFocused;
+  const composerAttachmentKey = composerAttachmentTargetKey(composerDraftTarget);
+  const isAttachingFiles = (pendingAttachmentCounts[composerAttachmentKey] ?? 0) > 0;
 
   // ------------------------------------------------------------------
   // Refs
@@ -1142,7 +1153,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [activePendingIsResponding, activePendingProgress, activePendingResolvedAnswers],
   );
   const collapsedComposerPrimaryActionDisabled =
-    phase === "running" || isSendBusy || isConnecting || !composerSendState.hasSendableContent;
+    phase === "running" ||
+    isSendBusy ||
+    isAttachingFiles ||
+    isConnecting ||
+    !composerSendState.hasSendableContent;
   const collapsedComposerPrimaryActionLabel = "Send message";
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
@@ -1698,12 +1713,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const submitComposer = useCallback(
     (event?: { preventDefault: () => void }) => {
+      if (isAttachingFiles) {
+        event?.preventDefault();
+        return;
+      }
       onSend(event);
       if (shouldBlurMobileComposerOnSubmit()) {
         blurMobileComposerAfterSend();
       }
     },
-    [blurMobileComposerAfterSend, onSend, shouldBlurMobileComposerOnSubmit],
+    [blurMobileComposerAfterSend, isAttachingFiles, onSend, shouldBlurMobileComposerOnSubmit],
   );
   const expandMobileComposer = useCallback(() => {
     if (composerBlurFrameRef.current !== null) {
@@ -1846,8 +1865,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
 
   const enqueueComposerAttachments = (files: File[]) => {
+    const targetKey = composerAttachmentTargetKey(composerDraftTarget);
+    setPendingAttachmentCounts((current) => ({
+      ...current,
+      [targetKey]: (current[targetKey] ?? 0) + 1,
+    }));
     const pending = attachmentQueueRef.current.then(() => addComposerAttachments(files));
     attachmentQueueRef.current = pending.catch(() => undefined);
+    const settle = () => {
+      setPendingAttachmentCounts((current) => {
+        const nextCount = (current[targetKey] ?? 1) - 1;
+        if (nextCount > 0) return { ...current, [targetKey]: nextCount };
+        const { [targetKey]: _settled, ...remaining } = current;
+        return remaining;
+      });
+    };
+    void pending.then(settle, settle);
     return pending;
   };
 
@@ -2591,7 +2624,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   isRunning={phase === "running"}
                   showPlanFollowUpPrompt={pendingUserInputs.length === 0 && showPlanFollowUpPrompt}
                   promptHasText={prompt.trim().length > 0}
-                  isSendBusy={isSendBusy}
+                  isSendBusy={isSendBusy || isAttachingFiles}
                   isConnecting={isConnecting}
                   isEnvironmentUnavailable={environmentUnavailable !== null}
                   isPreparingWorktree={isPreparingWorktree}
