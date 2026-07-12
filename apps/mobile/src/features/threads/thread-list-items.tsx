@@ -431,6 +431,11 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   // when the thread has no resolvable scene, so the row renders exactly as
   // before (title only).
   const names = useThreadDisplayNames(threadKey, thread.title);
+  // Mirrors what the row actually renders (scene name, plus the
+  // server-generated description once titled), not the raw thread.title the
+  // row no longer displays on its own.
+  const rowAccessibilityLabel =
+    names.description !== null ? `${names.primary}, ${names.description}` : names.primary;
   const status = resolveThreadStatus(thread);
   const pr = useThreadPr(thread, props.projectCwd);
   const timestamp = relativeTime(
@@ -529,7 +534,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
     compact ? (
       <Pressable
         accessibilityHint="Swipe left for archive and delete actions"
-        accessibilityLabel={thread.title}
+        accessibilityLabel={rowAccessibilityLabel}
         accessibilityRole="button"
         className="bg-screen"
         onPress={() => {
@@ -591,7 +596,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
     ) : (
       <Pressable
         accessibilityHint="Opens the thread"
-        accessibilityLabel={thread.title}
+        accessibilityLabel={rowAccessibilityLabel}
         accessibilityRole="button"
         accessibilityState={{ selected }}
         onHoverIn={() => setHovered(true)}

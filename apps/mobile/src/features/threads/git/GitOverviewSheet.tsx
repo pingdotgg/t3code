@@ -245,7 +245,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
           label={isMergingPR ? "Merging…" : "Merge PR"}
           loading={isMergingPR}
           tone="primary"
-          disabled={busy}
+          disabled={busy || isMergingPR}
           onPress={onMergePR}
         />
       ) : null}

@@ -255,6 +255,28 @@ describe("SceneryStore", () => {
     expect(store.photoFor("thread-1")?.name).toBe("Marmolada");
   });
 
+  it("refreshing the pool keeps an assigned photo's name even when it reappears in the new results", async () => {
+    // Same photo id comes back from the refreshed search (e.g. Unsplash
+    // resurfaces it), but at a different index than before. Recomputing its
+    // name from the new index/placeName would silently rename thread-1's
+    // scene out from under it; the prior assigned name must win.
+    const client = makeClient([photo("fresh-0"), { ...photo("reused"), placeName: "Seiser Alm" }]);
+    const storage = makeMemorySceneryStorage();
+    storage.state.pool = {
+      fetchedAt: "2026-01-01T00:00:00Z",
+      photos: [{ ...photo("reused"), name: "Seceda" }],
+    };
+    storage.state.assignments = { "thread-1": "reused" };
+    const { store, registry } = makeStore({ client, storage });
+    await store.start();
+
+    const pool = registry.get(sceneryStateAtom).pool;
+    expect(pool.find((entry) => entry.id === "reused")?.name).toBe("Seceda");
+    expect(store.photoFor("thread-1")?.name).toBe("Seceda");
+    // Non-identity metadata still refreshes.
+    expect(pool.find((entry) => entry.id === "reused")?.placeName).toBe("Seiser Alm");
+  });
+
   it("rotates the daily featured photo by day of year", async () => {
     const client = makeClient([photo("p0"), photo("p1"), photo("p2")]);
     let now = new Date("2026-07-04T12:00:00Z");
@@ -448,6 +470,22 @@ describe("SceneryStore", () => {
     await emptyStore.start();
     expect(emptyStore.displayNames("thread-x", "Some title")).toEqual({
       primary: "Some title",
+      description: null,
+    });
+  });
+
+  it("displayNames suppresses a curated pool-index seed title, not just the bare scene name", async () => {
+    // A thread whose stored title is still the pool-builder's numbered
+    // fallback ("Tre Cime 2") for the scene it's assigned to ("Tre Cime")
+    // must read as "not yet titled" — the same as an exact or " · "-numbered
+    // match — not as a real server-generated description.
+    const client = makeClient([{ ...photo("p0"), name: "Tre Cime" }]);
+    const { store } = makeStore({ client });
+    await store.start();
+    store.assign("p0", "thread-1");
+
+    expect(store.displayNames("thread-1", "Tre Cime 2")).toEqual({
+      primary: "Tre Cime",
       description: null,
     });
   });

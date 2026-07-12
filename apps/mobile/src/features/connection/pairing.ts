@@ -3,6 +3,18 @@ import * as Schema from "effect/Schema";
 
 const MOBILE_PAIRING_URL_PARAM = "pairingUrl";
 
+// Mirrors the deep-link schemes registered in App.tsx's `appLinking.prefixes`:
+// the current SurgeCode scheme plus its dev/preview variants, and the legacy
+// T3 Code scheme plus its dev/preview variants for backward compatibility.
+const PAIRING_URL_PROTOCOLS = new Set([
+  "surgecode:",
+  "surgecode-dev:",
+  "surgecode-preview:",
+  "t3code:",
+  "t3code-dev:",
+  "t3code-preview:",
+]);
+
 export class PairingQrPayloadEmptyError extends Schema.TaggedErrorClass<PairingQrPayloadEmptyError>()(
   "PairingQrPayloadEmptyError",
   {},
@@ -63,9 +75,7 @@ export function extractPairingUrlFromQrPayload(payload: string): string {
 
   try {
     const url = new URL(trimmed);
-    // "surgecode:" is the current deep-link scheme; "t3code:" is accepted
-    // for backward compatibility with links minted before the rebrand.
-    if (url.protocol === "surgecode:" || url.protocol === "t3code:") {
+    if (PAIRING_URL_PROTOCOLS.has(url.protocol)) {
       const pairingUrl = url.searchParams.get(MOBILE_PAIRING_URL_PARAM)?.trim() ?? "";
       if (pairingUrl.length > 0) {
         return pairingUrl;

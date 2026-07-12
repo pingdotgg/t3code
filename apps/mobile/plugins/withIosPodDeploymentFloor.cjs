@@ -4,6 +4,7 @@ const path = require("node:path");
 const { withDangerousMod } = require("expo/config-plugins");
 
 const MARKER = "# sergecode: raise pod deployment targets to the Xcode-supported floor";
+const LEGACY_MARKER = "# t3code: raise pod deployment targets to the Xcode-supported floor";
 const FLOOR_BUMP = `${MARKER}
     # Xcode 27 refuses to build targets with IPHONEOS_DEPLOYMENT_TARGET below
     # 15.0, and several transitive pods (SDWebImage, GoogleUtilities, AppAuth,
@@ -26,7 +27,7 @@ module.exports = function withIosPodDeploymentFloor(config) {
       const podfilePath = path.join(nextConfig.modRequest.platformProjectRoot, "Podfile");
       const podfile = fs.readFileSync(podfilePath, "utf8");
 
-      if (podfile.includes(MARKER)) {
+      if (podfile.includes(MARKER) || podfile.includes(LEGACY_MARKER)) {
         return nextConfig;
       }
 

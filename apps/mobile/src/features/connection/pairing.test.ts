@@ -29,6 +29,17 @@ describe("extractPairingUrlFromQrPayload", () => {
     ).toBe("https://remote.example.com/pair#token=pairing-token");
   });
 
+  it.each(["surgecode-dev://", "surgecode-preview://", "t3code-dev://", "t3code-preview://"])(
+    "unwraps %s deep links registered as app dev/preview variants",
+    (prefix) => {
+      expect(
+        extractPairingUrlFromQrPayload(
+          `${prefix}pair?pairingUrl=https%3A%2F%2Fremote.example.com%2Fpair%23token%3Dpairing-token`,
+        ),
+      ).toBe("https://remote.example.com/pair#token=pairing-token");
+    },
+  );
+
   it("rejects empty qr payloads", () => {
     expect(() => extractPairingUrlFromQrPayload("   ")).toThrowError(PairingQrPayloadEmptyError);
     expect(() => extractPairingUrlFromQrPayload("   ")).toThrowError(

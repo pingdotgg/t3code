@@ -1187,6 +1187,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     readonly stopErrors: Record<string, string>;
     readonly stoppingTaskIds: ReadonlySet<string>;
   }>({ stopErrors: {}, stoppingTaskIds: new Set() });
+  // Synchronous re-entrancy guard for onStopSubagentTask: setState updaters
+  // run on React's schedule, not immediately, so a guard living only inside
+  // the updater can't stop a double-tap's second call from dispatching its
+  // own stopTask RPC before the first update commits. A ref is checked and
+  // mutated inline, before the dispatch, so the second call always sees it.
+  const stoppingTaskIdsRef = useRef<Set<string>>(new Set());
   const stopSubagentTaskCommand = useAtomCommand(threadEnvironment.stopTask, {
     label: "thread subagent task stop",
     reportFailure: false,
@@ -1499,10 +1505,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
 
   const onStopSubagentTask = useCallback(
     (taskId: string, turnId: TurnId | null) => {
+      if (stoppingTaskIdsRef.current.has(taskId)) {
+        return;
+      }
+      stoppingTaskIdsRef.current.add(taskId);
       setSubagentTaskState((current) => {
-        if (current.stoppingTaskIds.has(taskId)) {
-          return current;
-        }
         const stoppingTaskIds = new Set(current.stoppingTaskIds);
         stoppingTaskIds.add(taskId);
         const stopErrors = Object.fromEntries(
@@ -1519,6 +1526,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           ...(turnId ? { turnId } : {}),
         },
       }).then((result) => {
+        stoppingTaskIdsRef.current.delete(taskId);
         setSubagentTaskState((current) => {
           const stoppingTaskIds = new Set(current.stoppingTaskIds);
           stoppingTaskIds.delete(taskId);

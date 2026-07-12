@@ -234,7 +234,11 @@ export function displayNamesFromState(
   const scene = sceneNameFromState(state, threadKey);
   if (scene === null) return { primary: trimmedTitle, description: null };
   if (trimmedTitle.length === 0) return { primary: scene, description: null };
-  if (trimmedTitle === scene || isLegacyNumberedSceneTitle(trimmedTitle, scene)) {
+  if (
+    trimmedTitle === scene ||
+    isLegacyNumberedSceneTitle(trimmedTitle, scene) ||
+    isPoolNumberedSceneName(trimmedTitle, scene)
+  ) {
     return { primary: scene, description: null };
   }
   return { primary: scene, description: trimmedTitle };
@@ -395,7 +399,11 @@ export class SceneryStore {
     const scene = this.sceneName(threadKey);
     if (scene === null) return { primary: trimmedTitle, description: null };
     if (trimmedTitle.length === 0) return { primary: scene, description: null };
-    if (trimmedTitle === scene || isLegacyNumberedSceneTitle(trimmedTitle, scene)) {
+    if (
+      trimmedTitle === scene ||
+      isLegacyNumberedSceneTitle(trimmedTitle, scene) ||
+      isPoolNumberedSceneName(trimmedTitle, scene)
+    ) {
       return { primary: scene, description: null };
     }
     return { primary: scene, description: trimmedTitle };
@@ -507,6 +515,8 @@ export class SceneryStore {
     if (capped.length === 0) return;
 
     const titleKey = sceneNameComparisonKey(SET_TITLE);
+    const assignedIds = new Set(Object.values(this.assignments));
+    const priorById = new Map(this.pool.map((photo) => [photo.id, photo]));
     const refreshed = capped.map((photo, index) => {
       const base = SCENE_NAMES[index % SCENE_NAMES.length]!;
       const lap = Math.floor(index / SCENE_NAMES.length);
@@ -516,17 +526,23 @@ export class SceneryStore {
       // reads as a region, not a place). Mirrors mac's preference for
       // location-derived names over the built-in `sceneNames` list.
       const placeName = photo.placeName;
-      const name =
+      const computedName =
         placeName !== null && sceneNameComparisonKey(placeName) !== titleKey
           ? placeName
           : fallbackName;
+      const prior = priorById.get(photo.id);
+      // A photo still assigned to a thread that reappears in the refreshed
+      // results keeps its prior name — recomputing it here (index-based
+      // fallback shifts with pool position, and `placeName` can differ
+      // between fetches) would silently rename that thread's scene out from
+      // under it. Other metadata (URLs, placeName, ...) still refreshes.
+      const name = prior && assignedIds.has(photo.id) ? prior.name : computedName;
       return { ...photo, name };
     });
     // Carry over photos still assigned to threads but missing from the new
     // results, so a refresh never swaps an existing thread's scene out from
     // under its scene-derived title.
     const refreshedIds = new Set(refreshed.map((photo) => photo.id));
-    const assignedIds = new Set(Object.values(this.assignments));
     const kept = this.pool.filter(
       (photo) => assignedIds.has(photo.id) && !refreshedIds.has(photo.id),
     );
