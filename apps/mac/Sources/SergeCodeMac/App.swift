@@ -8,13 +8,36 @@ import SwiftUI
 @main
 struct SergeCodeApp: App {
     private static let backend: any BackendService = SergeCodeApp.makeBackend()
-    private let model = AppModel(backend: SergeCodeApp.backend)
+    private let dictation: DictationController
+    private let model: AppModel
+    private let multi: MultiDeviceModel
     // Alpine identity: Dolomites photo pool + per-thread scene assignment.
     private let scenery = SceneryStore()
     private let passport = PassportStore()
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     init() {
+        let sharedDictation = DictationController()
+        self.dictation = sharedDictation
+        let localModel = AppModel(backend: SergeCodeApp.backend, dictation: sharedDictation)
+        self.model = localModel
+        let multiModel = MultiDeviceModel(local: localModel)
+        if Self.shouldSeedMockRemote {
+            let descriptor = RemoteDeviceDescriptor(
+                id: DeviceID(rawValue: "mock-mac-2"),
+                name: "Mac mini — Studio",
+                host: "mac-mini.local")
+            let remoteModel = AppModel(
+                backend: MockBackend(seedVariant: "studio"),
+                deviceID: descriptor.id,
+                deviceName: descriptor.name,
+                capabilities: .remote,
+                dictation: sharedDictation)
+            multiModel.addSession(
+                RemoteDeviceSession(descriptor: descriptor, model: remoteModel))
+        }
+        self.multi = multiModel
+
         // macOS 26/27 beta: SwiftUI toolbar re-vends during an in-layout
         // render can raise NSInternalInconsistencyException from AppKit's
         // layout-feedback-loop guard. Registered (not set) so a user or
@@ -23,12 +46,23 @@ struct SergeCodeApp: App {
         UserDefaults.standard.register(defaults: ["NSApplicationCrashOnExceptions": false])
     }
 
-    // MockBackend when launched with `--mock` or `SERGECODE_MOCK=1`; otherwise
-    // the real sidecar-backed LiveBackend.
-    private static func makeBackend() -> any BackendService {
-        if CommandLine.arguments.contains("--mock")
+    private static var shouldUseMock: Bool {
+        CommandLine.arguments.contains("--mock")
+            || CommandLine.arguments.contains("--mock-remote")
             || ProcessInfo.processInfo.environment["SERGECODE_MOCK"] == "1"
-        {
+            || ProcessInfo.processInfo.environment["SERGECODE_MOCK_REMOTE"] == "1"
+    }
+
+    private static var shouldSeedMockRemote: Bool {
+        shouldUseMock
+            && (CommandLine.arguments.contains("--mock-remote")
+                || ProcessInfo.processInfo.environment["SERGECODE_MOCK_REMOTE"] == "1")
+    }
+
+    // MockBackend when launched with `--mock`/`--mock-remote` or the matching
+    // environment flags; otherwise the real sidecar-backed LiveBackend.
+    private static func makeBackend() -> any BackendService {
+        if shouldUseMock {
             return MockBackend()
         }
         // The LAN-access preference is applied at spawn (the bind host is
@@ -39,7 +73,7 @@ struct SergeCodeApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView(model: model, scenery: scenery, passport: passport)
+            RootView(multi: multi, scenery: scenery, passport: passport)
                 .environment(passport)
                 .tint(AlpineTheme.accent(palette: activeSceneryPalette))
                 // Behind-window liquid glass: strength tracks sceneryTranslucency
@@ -53,16 +87,23 @@ struct SergeCodeApp: App {
                 .onAppear {
                     // Thread → project path so scenery set resolution can read
                     // per-project prefs (Phase 1 multi-set).
-                    scenery.projectPathForThread = { [model] threadID in
-                        guard let thread = model.threads.first(where: { $0.id == threadID }),
-                            let project = model.projects.first(where: { $0.id == thread.projectID })
-                        else { return nil }
-                        return project.path
+                    scenery.projectPathForThread = { [multi] threadKey in
+                        for model in multi.allModels {
+                            guard let thread = model.threads.first(where: {
+                                model.scopedThreadKey($0.id) == threadKey
+                            }),
+                                let project = model.projects.first(where: {
+                                    $0.id == thread.projectID
+                                })
+                            else { continue }
+                            return project.path
+                        }
+                        return nil
                     }
-                    model.start()
-                    appDelegate.backend = SergeCodeApp.backend
+                    multi.start()
+                    appDelegate.multi = multi
                     #if DEBUG
-                        UIProbe.runIfRequested(model: model, scenery: scenery)
+                        UIProbe.runIfRequested(multi: multi, scenery: scenery)
                     #endif
                 }
                 .task {
@@ -88,7 +129,7 @@ struct SergeCodeApp: App {
 
         Settings {
             SettingsScene(
-                model: model,
+                model: multi.local,
                 scenery: scenery,
                 backend: SergeCodeApp.backend,
                 passport: passport)
@@ -96,12 +137,14 @@ struct SergeCodeApp: App {
     }
 
     private var activeSceneryPalette: SceneryPalette? {
+        let model = multi.activeModel
         guard let threadID = model.selectedThreadID else {
             return scenery.palette(for: nil)
         }
+        let threadKey = model.scopedThreadKey(threadID)
         return scenery.palette(
-            for: scenery.photo(for: threadID),
-            setId: scenery.resolvedSetId(forThread: threadID))
+            for: scenery.photo(for: threadKey),
+            setId: scenery.resolvedSetId(forThread: threadKey))
     }
 }
 
@@ -125,7 +168,7 @@ struct SergeCodeApp: App {
 ///   and never hops to the main actor; the UI is about to die anyway.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    var backend: (any BackendService)?
+    var multi: MultiDeviceModel?
     private var signalSources: [DispatchSourceSignal] = []
     private var didCleanup = false
 
@@ -140,16 +183,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let backend, !didCleanup else { return .terminateNow }
+        guard let multi, !didCleanup else { return .terminateNow }
         didCleanup = true
         let done = DispatchSemaphore(value: 0)
         Task.detached {
-            await backend.stop()
+            await multi.shutdown()
             done.signal()
         }
-        // ServerProcess.stop() SIGKILLs the child after a 2s grace, so 6s
-        // covers the worst legitimate case; a hung teardown must never
-        // wedge quit.
+        // Each backend may own a sidecar whose stop path has a 2s grace, so
+        // 6s covers the worst legitimate case while a hung teardown can
+        // never wedge quit.
         _ = done.wait(timeout: .now() + 6)
         return .terminateNow
     }

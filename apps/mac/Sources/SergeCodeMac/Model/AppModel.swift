@@ -4,6 +4,10 @@ import Observation
 @Observable
 @MainActor
 public final class AppModel {
+    public let deviceID: DeviceID
+    public let deviceName: String?
+    public let capabilities: BackendCapabilities
+
     public private(set) var connection: ConnectionPhase = .launchingServer
     public private(set) var projects: [Project] = []
     public private(set) var threads: [ChatThread] = []
@@ -43,7 +47,9 @@ public final class AppModel {
     static let timelineSubscriptionKeepCount = 4
 
     /// In-app dictation (mic → local ASR → on-device cleanup → composer).
-    public let dictation = DictationController()
+    /// Multiple device models may share one controller so ASR stays a single
+    /// process-wide resource.
+    public let dictation: DictationController
 
     /// Text staged for the composer by a timeline action (Edit on a sent
     /// message). The composer consumes it via `takeComposerPrefill`. A fresh
@@ -120,8 +126,26 @@ public final class AppModel {
     /// insertion still sorts against the real latest activity time.
     @ObservationIgnored private var effectiveUpdatedAt: [String: Date] = [:]
 
-    public init(backend: any BackendService) {
+    public init(
+        backend: any BackendService,
+        deviceID: DeviceID = .local,
+        deviceName: String? = nil,
+        capabilities: BackendCapabilities = .local,
+        dictation: DictationController? = nil
+    ) {
+        self.deviceID = deviceID
+        self.deviceName = deviceName
+        self.capabilities = capabilities
         self.backend = backend
+        self.dictation = dictation ?? DictationController()
+    }
+
+    public var isRemote: Bool { deviceID != .local }
+
+    /// Key used by shared UI stores whose lifetime spans multiple device
+    /// models. Local keys intentionally remain the historical raw thread id.
+    public func scopedThreadKey(_ threadID: String) -> String {
+        isRemote ? "\(deviceID.rawValue)/\(threadID)" : threadID
     }
 
     /// Lookup only — does not create a `ThreadState`.
@@ -407,7 +431,7 @@ public final class AppModel {
             queuedSendInFlightThreadIDs.remove(id)
             queuedRetryTokensByThread[id] = nil
             if composerPrefill?.threadID == id { composerPrefill = nil }
-            TimelineDisplayCache.evict(threadID: id)
+            TimelineDisplayCache.evict(threadID: scopedThreadKey(id))
             if selectedThreadID == id { selectedThreadID = nil }
         case .approvalRequested, .userInputRequested:
             break
@@ -1394,7 +1418,7 @@ public final class AppModel {
             state.timeline = []
             state.hasLoadedTimeline = false
         }
-        TimelineDisplayCache.evict(threadID: threadID)
+        TimelineDisplayCache.evict(threadID: scopedThreadKey(threadID))
     }
 
     private func pruneTimelineSubscriptions() {
@@ -1417,7 +1441,7 @@ public final class AppModel {
                     state.timeline = []
                     state.hasLoadedTimeline = false
                 }
-                TimelineDisplayCache.evict(threadID: threadID)
+                TimelineDisplayCache.evict(threadID: self.scopedThreadKey(threadID))
                 await self.backend.closeTimeline(threadID: threadID)
             }
         }

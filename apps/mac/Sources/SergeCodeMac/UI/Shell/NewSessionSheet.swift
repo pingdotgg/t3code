@@ -9,6 +9,7 @@ struct NewSessionSheet: View {
     let scenery: SceneryStore
     let passport: PassportStore
     @Binding var isPresented: Bool
+    var onCreated: ((ChatThread) -> Void)? = nil
 
     @UIState private var mode: Mode = .existing
     @UIState private var selectedProjectID: String?
@@ -297,6 +298,9 @@ struct NewSessionSheet: View {
             }
         }
         if createdThread != nil {
+            if let createdThread {
+                onCreated?(createdThread)
+            }
             isPresented = false
         } else {
             errorMessage =
