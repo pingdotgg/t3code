@@ -22,6 +22,7 @@ import {
   type AndroidHeaderAction,
 } from "../../components/AndroidScreenHeader";
 import { LoadingScreen } from "../../components/LoadingScreen";
+import { addBreadcrumb } from "../../lib/breadcrumbs";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { connectionTone } from "../connection/connectionTone";
 
@@ -563,6 +564,11 @@ function ThreadRouteContent(
     ) {
       return;
     }
+    addBreadcrumb("thread.stop", {
+      environmentId: selectedThread.environmentId,
+      threadId: selectedThread.id,
+      turnId: selectedThread.session.activeTurnId ?? null,
+    });
     return interruptThreadTurn({
       environmentId: selectedThread.environmentId,
       input: {
@@ -889,44 +895,57 @@ function ThreadRouteContent(
     </>
   );
 
+  const threadScreenOptions = useMemo(
+    () => ({
+      // Android draws its own in-flow header (AndroidScreenHeader below);
+      // the native stack header stays iOS-only.
+      headerShown: Platform.OS !== "android",
+      headerTitle: selectedThread.title,
+      headerTitleStyle: usesNativeHeaderGlass
+        ? ({
+            fontSize: 17,
+            fontWeight: "800" as const,
+          } as const)
+        : undefined,
+      title: selectedThread.title,
+      headerBackVisible: !layout.usesSplitView,
+      // Compact uses the NATIVE back button when a previous route exists;
+      // deep links / cold starts get an explicit Home button instead.
+      // Split view always uses its custom left items.
+      unstable_headerLeftItems:
+        Platform.OS === "ios"
+          ? layout.usesSplitView
+            ? () => splitLeftHeaderItems
+            : canGoBack
+              ? undefined
+              : () => compactHomeHeaderItems
+          : undefined,
+      // Search lives in the persistent sidebar, so the split header keeps
+      // the git controls on the RIGHT (no center items — center space is
+      // reserved for future breadcrumbs/status).
+      unstable_headerRightItems:
+        Platform.OS === "ios"
+          ? () => (layout.usesSplitView ? threadCenterHeaderItems : compactRightHeaderItems)
+          : undefined,
+      unstable_headerSubtitle: usesNativeHeaderGlass ? headerSubtitle : undefined,
+    }),
+    [
+      canGoBack,
+      compactHomeHeaderItems,
+      compactRightHeaderItems,
+      headerSubtitle,
+      layout.usesSplitView,
+      selectedThread.title,
+      splitLeftHeaderItems,
+      threadCenterHeaderItems,
+      usesNativeHeaderGlass,
+    ],
+  );
+
   return (
     <>
       {activeInspectorRenderer ? <InspectorPaneRoleActivation /> : null}
-      <NativeStackScreenOptions
-        options={{
-          // Android draws its own in-flow header (AndroidScreenHeader below);
-          // the native stack header stays iOS-only.
-          headerShown: Platform.OS !== "android",
-          headerTitle: selectedThread.title,
-          headerTitleStyle: usesNativeHeaderGlass
-            ? {
-                fontSize: 17,
-                fontWeight: "800",
-              }
-            : undefined,
-          title: selectedThread.title,
-          headerBackVisible: !layout.usesSplitView,
-          // Compact uses the NATIVE back button when a previous route exists;
-          // deep links / cold starts get an explicit Home button instead.
-          // Split view always uses its custom left items.
-          unstable_headerLeftItems:
-            Platform.OS === "ios"
-              ? layout.usesSplitView
-                ? () => splitLeftHeaderItems
-                : canGoBack
-                  ? undefined
-                  : () => compactHomeHeaderItems
-              : undefined,
-          // Search lives in the persistent sidebar, so the split header keeps
-          // the git controls on the RIGHT (no center items — center space is
-          // reserved for future breadcrumbs/status).
-          unstable_headerRightItems:
-            Platform.OS === "ios"
-              ? () => (layout.usesSplitView ? threadCenterHeaderItems : compactRightHeaderItems)
-              : undefined,
-          unstable_headerSubtitle: usesNativeHeaderGlass ? headerSubtitle : undefined,
-        }}
-      />
+      <NativeStackScreenOptions options={threadScreenOptions} />
 
       {Platform.OS === "android" ? (
         <AndroidScreenHeader

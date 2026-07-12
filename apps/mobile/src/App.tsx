@@ -1,12 +1,17 @@
 import { BlurTargetView } from "expo-blur";
 import * as Linking from "expo-linking";
 import * as SplashScreen from "expo-splash-screen";
-import { useEffect } from "react";
+import { useCallback, useEffect } from "react";
 import { StatusBar, useColorScheme } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { createStaticNavigation, DarkTheme, DefaultTheme } from "@react-navigation/native";
+import {
+  createStaticNavigation,
+  DarkTheme,
+  DefaultTheme,
+  type NavigationState,
+} from "@react-navigation/native";
 
 import { RegistryContext } from "@effect/atom-react";
 import { ConfirmDialogHost } from "./components/ConfirmDialogHost";
@@ -16,6 +21,7 @@ import { RootStack } from "./Stack";
 import { appAtomRegistry } from "./state/atom-registry";
 import { OverlayPortalHost } from "./components/OverlayPortal";
 import { appBlurTargetRef } from "./lib/appBlurTarget";
+import { recordNavigationBreadcrumb } from "./lib/navigationBreadcrumb";
 import { useThemeColor } from "./lib/useThemeColor";
 
 import "../global.css";
@@ -39,6 +45,10 @@ export default function App() {
     SplashScreen.hide();
   }, []);
 
+  const onNavigationStateChange = useCallback((state: NavigationState | undefined) => {
+    recordNavigationBreadcrumb(state);
+  }, []);
+
   return (
     <RegistryContext.Provider value={appAtomRegistry}>
       <CloudAuthProvider>
@@ -60,6 +70,7 @@ export default function App() {
                 <BlurTargetView ref={appBlurTargetRef} style={{ flex: 1 }}>
                   <Navigation
                     linking={appLinking}
+                    onStateChange={onNavigationStateChange}
                     theme={colorScheme === "dark" ? DarkTheme : DefaultTheme}
                   />
                   <ConfirmDialogHost />
