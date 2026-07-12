@@ -3073,7 +3073,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     }),
   );
 
-  it.effect("emits command metadata separately from command output", () =>
+  it.effect("emits command metadata and accumulates activity stream content", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
       const threadId = asThreadId("copilot-command-metadata");
@@ -3113,6 +3113,26 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         },
       } as SessionEvent);
       emit({
+        id: "evt-copilot-command-reasoning-1",
+        timestamp,
+        parentId: null,
+        type: "assistant.reasoning_delta",
+        data: {
+          reasoningId: "reasoning-command",
+          deltaContent: "Thinking through ",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-command-reasoning-2",
+        timestamp,
+        parentId: null,
+        type: "assistant.reasoning_delta",
+        data: {
+          reasoningId: "reasoning-command",
+          deltaContent: "the command",
+        },
+      } as SessionEvent);
+      emit({
         id: "evt-copilot-command-start",
         timestamp,
         parentId: null,
@@ -3123,6 +3143,26 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           arguments: {
             command: "git status --short",
           },
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-command-output-1",
+        timestamp,
+        parentId: null,
+        type: "tool.execution_partial_result",
+        data: {
+          toolCallId: "tool-command",
+          partialOutput: "On branch ",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-command-output-2",
+        timestamp,
+        parentId: null,
+        type: "tool.execution_partial_result",
+        data: {
+          toolCallId: "tool-command",
+          partialOutput: "main",
         },
       } as SessionEvent);
       for (
@@ -3189,6 +3229,28 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           },
         });
       }
+
+      const reasoningDeltas = runtimeEvents.filter(
+        (event) => event.type === "content.delta" && event.payload.streamKind === "reasoning_text",
+      );
+      NodeAssert.equal(reasoningDeltas.length, 2);
+      NodeAssert.equal(reasoningDeltas[0]?.eventId, reasoningDeltas[1]?.eventId);
+      NodeAssert.deepStrictEqual(
+        reasoningDeltas.map((event) => (event.type === "content.delta" ? event.payload.delta : "")),
+        ["Thinking through ", "Thinking through the command"],
+      );
+
+      const commandOutputDeltas = runtimeEvents.filter(
+        (event) => event.type === "content.delta" && event.payload.streamKind === "command_output",
+      );
+      NodeAssert.equal(commandOutputDeltas.length, 2);
+      NodeAssert.equal(commandOutputDeltas[0]?.eventId, commandOutputDeltas[1]?.eventId);
+      NodeAssert.deepStrictEqual(
+        commandOutputDeltas.map((event) =>
+          event.type === "content.delta" ? event.payload.delta : "",
+        ),
+        ["On branch ", "On branch main"],
+      );
 
       yield* adapter.stopSession(threadId);
     }),
