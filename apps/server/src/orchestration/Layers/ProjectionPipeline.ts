@@ -10,6 +10,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
@@ -592,6 +593,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const serverConfig = yield* ServerConfig;
+    const bootstrapComplete = yield* Ref.make(false);
 
     const reconcileTextAttachmentStore = Effect.gen(function* () {
       const retainedMessages = yield* projectionThreadMessageRepository.listRetained();
@@ -609,7 +611,16 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       Effect.catch((cause) => Effect.logWarning("failed to reconcile text attachments", { cause })),
     );
     yield* Effect.forkScoped(
-      Effect.sleep("30 seconds").pipe(Effect.andThen(reconcileTextAttachmentStore), Effect.forever),
+      Effect.sleep("30 seconds").pipe(
+        Effect.andThen(
+          Ref.get(bootstrapComplete).pipe(
+            Effect.flatMap((isComplete) =>
+              isComplete ? reconcileTextAttachmentStore : Effect.void,
+            ),
+          ),
+        ),
+        Effect.forever,
+      ),
     );
 
     const applyProjectsProjection: ProjectorDefinition["apply"] = Effect.fn(
@@ -1719,6 +1730,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
 
     const bootstrap: OrchestrationProjectionPipelineShape["bootstrap"] = Effect.gen(function* () {
       yield* Effect.forEach(projectors, bootstrapProjector, { concurrency: 1 });
+      yield* Ref.set(bootstrapComplete, true);
       yield* reconcileGeneratedAttachments(projectionThreadMessageRepository).pipe(
         Effect.catch((cause) =>
           Effect.logWarning("failed to reconcile generated attachments", { cause }),
