@@ -148,6 +148,10 @@ export async function retryTextAttachmentOperation(
   return false;
 }
 
+export function detachedTextAttachmentReleaseComplete(result: { readonly _tag: string }): boolean {
+  return result._tag === "Success";
+}
+
 export interface TextAttachmentClaimOperations {
   claim: (path: string, draftOwnerId: string) => Promise<boolean>;
   release: (path: string, draftOwnerId: string) => Promise<boolean>;

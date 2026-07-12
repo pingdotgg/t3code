@@ -9,6 +9,7 @@ import {
   textAttachmentDraftOwnerId,
   TextAttachmentClaimReconciler,
   detachTextAttachmentClaimOwner,
+  detachedTextAttachmentReleaseComplete,
   getTextAttachmentClaimReconciler,
   reconcileTextAttachmentClaimsEnvironment,
   resetTextAttachmentClaimRegistryForTest,
@@ -223,6 +224,20 @@ describe("text attachment claims", () => {
 
     await expect(result).resolves.toBe(true);
     expect(release).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry a permanently absent detached owner", async () => {
+    const releaseRpc = vi.fn(async () => ({
+      _tag: "Success" as const,
+      value: { released: false },
+    }));
+
+    const completed = await retryTextAttachmentOperation(async () =>
+      detachedTextAttachmentReleaseComplete(await releaseRpc()),
+    );
+
+    expect(completed).toBe(true);
+    expect(releaseRpc).toHaveBeenCalledOnce();
   });
 
   it("cancels pending retry timers when disposed on unmount", async () => {

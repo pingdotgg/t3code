@@ -121,6 +121,7 @@ import { vcsEnvironment } from "../state/vcs";
 import { useEnvironment, useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import {
   detachTextAttachmentClaimOwner,
+  detachedTextAttachmentReleaseComplete,
   retryTextAttachmentOperation,
   textAttachmentClaims,
   textAttachmentDraftOwnerId,
@@ -1480,7 +1481,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               environmentId: member.environmentId,
               input: { path, draftOwnerId },
             });
-            return result._tag === "Success" && result.value.released;
+            return detachedTextAttachmentReleaseComplete(result);
           }),
         ),
       );

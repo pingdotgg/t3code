@@ -29,6 +29,7 @@ import { useClientSettings } from "./useSettings";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
   detachTextAttachmentClaimOwner,
+  detachedTextAttachmentReleaseComplete,
   retryTextAttachmentOperation,
   textAttachmentClaims,
   textAttachmentDraftOwnerId,
@@ -263,7 +264,7 @@ export function useThreadActions() {
               environmentId: threadRef.environmentId,
               input: { path, draftOwnerId },
             });
-            return result._tag === "Success" && result.value.released;
+            return detachedTextAttachmentReleaseComplete(result);
           }),
         ),
       );
