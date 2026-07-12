@@ -180,9 +180,10 @@ struct UnsplashSuggestedSceneNameTests {
 // MARK: - Integration: per-location fetch + regenerate
 
 /// Minimal BackendService that returns a fixed GeneratedScenerySet.
-private final class FixedSceneryBackend: BackendService, @unchecked Sendable {
+final class FixedSceneryBackend: BackendService, @unchecked Sendable {
     var response: GeneratedScenerySet
     var shouldFail = false
+    var generationDelay: Duration?
 
     init(response: GeneratedScenerySet) {
         self.response = response
@@ -257,13 +258,16 @@ private final class FixedSceneryBackend: BackendService, @unchecked Sendable {
     func updateProvider(instanceID: String) async throws {}
 
     func generateScenerySet(location: String) async throws -> GeneratedScenerySet {
+        if let generationDelay {
+            try await Task.sleep(for: generationDelay)
+        }
         if shouldFail { throw URLError(.notConnectedToInternet) }
         return response
     }
 }
 
 /// URLProtocol that answers Unsplash search with query-keyed fixture photos.
-private final class UnsplashSearchStub: URLProtocol, @unchecked Sendable {
+final class UnsplashSearchStub: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var resultsByQuery: [String: [[String: Any]]] = [:]
 
     override class func canInit(with request: URLRequest) -> Bool {

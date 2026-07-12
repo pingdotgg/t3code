@@ -47,6 +47,7 @@ public final class SceneSetComposer {
     public private(set) var state: State = .idle
 
     private let store: SceneryStore
+    private let passport: PassportStore?
     private let backend: any BackendService
     private let client: UnsplashClient?
     /// Accessed from MainActor methods and from `deinit` (cancel only).
@@ -57,9 +58,11 @@ public final class SceneSetComposer {
     public init(
         store: SceneryStore,
         backend: any BackendService,
-        client: UnsplashClient? = UnsplashClient()
+        client: UnsplashClient? = UnsplashClient(),
+        passport: PassportStore? = nil
     ) {
         self.store = store
+        self.passport = passport
         self.backend = backend
         self.client = client
     }
@@ -189,6 +192,9 @@ public final class SceneSetComposer {
             }
             await store.generatePaletteIfNeeded(for: setId, downloadSamples: true)
             try Task.checkCancellation()
+            if replacingSetId == nil {
+                passport?.ensurePage(setId: set.id, title: set.title, issuedAt: set.createdAt)
+            }
             state = .finished(setId: setId)
         } catch is CancellationError {
             // Choice: roll back (not treat-as-success). Cancel after register

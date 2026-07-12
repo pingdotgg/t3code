@@ -7,6 +7,7 @@ import SwiftUI
 struct NewSessionSheet: View {
     let model: AppModel
     let scenery: SceneryStore
+    let passport: PassportStore
     @Binding var isPresented: Bool
 
     @UIState private var mode: Mode = .existing
@@ -279,6 +280,7 @@ struct NewSessionSheet: View {
                 projectID: projectID,
                 provider: provider,
                 scenery: scenery,
+                passport: passport,
                 scenerySetId: validScenerySetOverride)
         case .new:
             let path = newProjectPath.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -289,6 +291,7 @@ struct NewSessionSheet: View {
                     projectID: project.id,
                     provider: provider,
                     scenery: scenery,
+                    passport: passport,
                     scenerySetId: validScenerySetOverride)
             }
         }

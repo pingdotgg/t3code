@@ -5,6 +5,7 @@ import SwiftUI
 struct RootView: View {
     let model: AppModel
     let scenery: SceneryStore
+    let passport: PassportStore
 
     @UIState private var showInspector = true
     @UIState private var showNewSessionSheet = false
@@ -21,7 +22,7 @@ struct RootView: View {
                 }
             }
         )) {
-            SidebarView(model: model, scenery: scenery)
+            SidebarView(model: model, scenery: scenery, passport: passport)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 280)
         } detail: {
             Group {
@@ -82,7 +83,11 @@ struct RootView: View {
             }
         }
         .sheet(isPresented: $showNewSessionSheet) {
-            NewSessionSheet(model: model, scenery: scenery, isPresented: $showNewSessionSheet)
+            NewSessionSheet(
+                model: model,
+                scenery: scenery,
+                passport: passport,
+                isPresented: $showNewSessionSheet)
         }
     }
 
@@ -104,7 +109,10 @@ struct RootView: View {
                         Button {
                             Task {
                                 await model.createSceneThread(
-                                    projectID: project.id, provider: provider, scenery: scenery)
+                                    projectID: project.id,
+                                    provider: provider,
+                                    scenery: scenery,
+                                    passport: passport)
                             }
                         } label: {
                             Label(provider.displayName, systemImage: "bolt")

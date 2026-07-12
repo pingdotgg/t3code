@@ -22,12 +22,13 @@ public struct SettingsScene: View {
         model: AppModel,
         scenery: SceneryStore,
         backend: any BackendService,
+        passport: PassportStore? = nil,
         initialTab: SettingsTab = .general
     ) {
         self.model = model
         self.scenery = scenery
         _sceneSetComposer = UIState(
-            initialValue: SceneSetComposer(store: scenery, backend: backend))
+            initialValue: SceneSetComposer(store: scenery, backend: backend, passport: passport))
         _selectedTab = UIState(initialValue: initialTab)
     }
 

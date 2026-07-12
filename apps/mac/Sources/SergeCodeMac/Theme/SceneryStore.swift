@@ -211,6 +211,15 @@ public final class SceneryStore {
         projectPrefs[path]
     }
 
+    /// Read-only snapshots consumed by Passport backfill at app startup.
+    public var passportNamesBySet: [String: [String: String]] {
+        namesBySet
+    }
+
+    public var passportAssignments: [String: SceneryAssignment] {
+        assignments
+    }
+
     // MARK: - Assignment & naming
 
     /// The scene bound to a thread. Explicit assignment first (threads
@@ -1228,6 +1237,7 @@ extension AppModel {
         projectID: String,
         provider: ProviderKind,
         scenery: SceneryStore,
+        passport: PassportStore? = nil,
         scenerySetId: String? = nil
     ) async -> ChatThread? {
         // First launch races the initial pool fetch; start() is idempotent and
@@ -1247,6 +1257,19 @@ extension AppModel {
                 to: thread.id,
                 projectPath: projectPath,
                 setIdOverride: scenerySetId)
+            let setId = scenery.resolvedSetId(forThread: thread.id)
+            if let set = scenery.set(id: setId) {
+                // Builtin manifests pin createdAt to epoch 0; a visit that races
+                // the startup backfill must not issue a 1970-dated page.
+                let issuedAt = set.createdAt.timeIntervalSince1970 == 0 ? Date() : set.createdAt
+                passport?.ensurePage(setId: set.id, title: set.title, issuedAt: issuedAt)
+            }
+            passport?.recordVisit(
+                threadID: thread.id,
+                setId: setId,
+                placeName: sceneTitle,
+                photoID: scene.id,
+                date: Date())
         }
         return thread
     }
