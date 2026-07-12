@@ -9,7 +9,15 @@ if [[ "${1:-}" == "--debug" ]]; then
   CONFIG="debug"
 fi
 
-swift build --package-path "$MAC_DIR" -c "$CONFIG"
+# Cross-module optimization lets the app target inline/specialize across
+# T3Kit/SidecarKit (hot JSON decode + diff paths cross those boundaries).
+# LTO was evaluated and rejected: flaky with CLT-only linking. If a beta-SDK
+# compiler chokes on CMO, drop the flag — it is an optimization only.
+SWIFT_FLAGS=()
+if [[ "$CONFIG" == "release" ]]; then
+  SWIFT_FLAGS+=(-Xswiftc -cross-module-optimization)
+fi
+swift build --package-path "$MAC_DIR" -c "$CONFIG" "${SWIFT_FLAGS[@]}"
 
 BIN="$MAC_DIR/.build/$CONFIG/SergeCodeMac"
 APP="$MAC_DIR/dist/SurgeCode.app"
