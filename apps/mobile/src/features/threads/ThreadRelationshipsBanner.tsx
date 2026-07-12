@@ -8,6 +8,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-relationships";
 import { canDetachThreadProviderSession } from "@t3tools/client-runtime/state/thread-workflows";
 import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
+import { copySorted } from "@t3tools/shared/Array";
 import { useNavigation } from "@react-navigation/native";
 import { useMemo, useState } from "react";
 import { ActivityIndicator, Modal, Pressable, ScrollView, View } from "react-native";
@@ -78,7 +79,8 @@ export function ThreadRelationshipsBanner(props: {
   const mergeTargetThreadId = resolveMergeBackTargetThreadId(projection);
   const rows = useMemo(
     () =>
-      immediateThreadRelationships(graph, props.threadId).toSorted(
+      copySorted(
+        immediateThreadRelationships(graph, props.threadId),
         (left, right) =>
           Number(right.threadId === mergeTargetThreadId) -
           Number(left.threadId === mergeTargetThreadId),

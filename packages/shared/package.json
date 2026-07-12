@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./Array": {
+      "types": "./src/Array.ts",
+      "import": "./src/Array.ts"
+    },
     "./model": {
       "types": "./src/model.ts",
       "import": "./src/model.ts"

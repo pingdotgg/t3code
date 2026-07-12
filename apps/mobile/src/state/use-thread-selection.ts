@@ -13,6 +13,7 @@ import {
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import * as Option from "effect/Option";
+import { copySorted } from "@t3tools/shared/Array";
 
 import { useProject, useThreadShell } from "../state/entities";
 import { useEnvironmentThread } from "../state/threads";
@@ -56,7 +57,7 @@ function threadDetailToShell(
   projection: OrchestrationV2ThreadProjection,
 ): EnvironmentThreadShell {
   const thread = projection.thread;
-  const runsByOrdinal = projection.runs.toSorted((left, right) => right.ordinal - left.ordinal);
+  const runsByOrdinal = copySorted(projection.runs, (left, right) => right.ordinal - left.ordinal);
   const latestRun = runsByOrdinal[0] ?? null;
   const activeRun =
     runsByOrdinal.find(

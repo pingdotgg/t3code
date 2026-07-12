@@ -176,6 +176,54 @@ describe("buildHomeThreadGroups", () => {
     expect(groups[0]?.threads.map((thread) => thread.environmentId)).toEqual([remoteEnvironmentId]);
   });
 
+  it("excludes subagent threads", () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const project = makeProject({
+      environmentId,
+      id: ProjectId.make("project-1"),
+      title: "T3 Code",
+    });
+    const parentThreadId = ThreadId.make("thread-parent");
+    const forkThreadId = ThreadId.make("thread-fork");
+    const threads = [
+      makeThread({
+        environmentId,
+        id: parentThreadId,
+        projectId: project.id,
+        title: "Parent thread",
+      }),
+      makeThread({
+        environmentId,
+        id: forkThreadId,
+        projectId: project.id,
+        title: "Forked thread",
+        lineage: {
+          rootThreadId: parentThreadId,
+          parentThreadId,
+          relationshipToParent: "fork",
+        },
+      }),
+      makeThread({
+        environmentId,
+        id: ThreadId.make("thread-subagent"),
+        projectId: project.id,
+        title: "Continue the delegated task",
+        lineage: {
+          rootThreadId: parentThreadId,
+          parentThreadId,
+          relationshipToParent: "subagent",
+        },
+      }),
+    ];
+
+    const groups = buildGroups([project], threads);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.threads.map((thread) => thread.id).toSorted()).toEqual(
+      [parentThreadId, forkThreadId].toSorted(),
+    );
+  });
+
   it("matches web repository, repository-path, and separate grouping modes", () => {
     const environmentId = EnvironmentId.make("environment-1");
     const repositoryIdentity = {

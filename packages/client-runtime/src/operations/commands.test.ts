@@ -66,6 +66,11 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   readonly commands: OrchestrationV2Command[];
   readonly projects: ProjectMutation[];
   readonly launches?: OrchestrationV2ThreadLaunchInput[];
+  readonly persistedUploads?: Array<{
+    readonly threadId: string;
+    readonly messageId: string;
+    readonly attachments: ReadonlyArray<{ readonly name: string; readonly dataUrl: string }>;
+  }>;
   readonly projection?: OrchestrationV2ThreadProjection;
 }) {
   const client = {
@@ -83,6 +88,33 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
           threadId: launchInput.threadId ?? v2ThreadId,
           projection: input.projection ?? v2Projection,
           resumed: false,
+        };
+      }),
+    [WS_METHODS.assetsPersistChatAttachments]: (persistInput: {
+      readonly threadId: string;
+      readonly messageId: string;
+      readonly attachments: ReadonlyArray<{
+        readonly type: "image";
+        readonly name: string;
+        readonly mimeType: string;
+        readonly sizeBytes: number;
+        readonly dataUrl: string;
+      }>;
+    }) =>
+      Effect.sync(() => {
+        input.persistedUploads?.push({
+          threadId: persistInput.threadId,
+          messageId: persistInput.messageId,
+          attachments: persistInput.attachments.map(({ name, dataUrl }) => ({ name, dataUrl })),
+        });
+        return {
+          attachments: persistInput.attachments.map((attachment, index) => ({
+            type: "image" as const,
+            id: `server-attachment-${index}`,
+            name: attachment.name,
+            mimeType: attachment.mimeType,
+            sizeBytes: attachment.sizeBytes,
+          })),
         };
       }),
     [WS_METHODS.projectsMutate]: (mutation: ProjectMutation) =>
@@ -122,6 +154,83 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
 });
 
 describe("V2 environment commands", () => {
+  it.effect("remaps dual-tagged draft image uploads to server attachment ids", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const persistedUploads: Array<{
+        readonly threadId: string;
+        readonly messageId: string;
+        readonly attachments: ReadonlyArray<{ readonly name: string; readonly dataUrl: string }>;
+      }> = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [], persistedUploads });
+
+      yield* startThreadTurn({
+        commandId: CommandId.make("mobile-image-turn"),
+        threadId: v2ThreadId,
+        message: {
+          messageId: MessageId.make("message-mobile-image"),
+          role: "user",
+          text: "see this",
+          attachments: [
+            {
+              type: "image",
+              id: "stored-before",
+              name: "stored-before.png",
+              mimeType: "image/png",
+              sizeBytes: 8,
+            },
+            {
+              type: "image",
+              id: "local-preview-id",
+              name: "pasted-image.png",
+              mimeType: "image/png",
+              sizeBytes: 12,
+              dataUrl: "data:image/png;base64,AA==",
+              previewUri: "file:///tmp/pasted.png",
+            } as never,
+            {
+              type: "image",
+              name: "camera-image.png",
+              mimeType: "image/png",
+              sizeBytes: 16,
+              dataUrl: "data:image/png;base64,BB==",
+            },
+            {
+              type: "image",
+              id: "stored-after",
+              name: "stored-after.png",
+              mimeType: "image/png",
+              sizeBytes: 20,
+            },
+          ],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(persistedUploads).toEqual([
+        {
+          threadId: v2ThreadId,
+          messageId: "message-mobile-image",
+          attachments: [
+            { name: "pasted-image.png", dataUrl: "data:image/png;base64,AA==" },
+            { name: "camera-image.png", dataUrl: "data:image/png;base64,BB==" },
+          ],
+        },
+      ]);
+      expect(commands[0]).toMatchObject({
+        type: "message.dispatch",
+        attachments: [
+          { id: "stored-before" },
+          { id: "server-attachment-0" },
+          { id: "server-attachment-1" },
+          { id: "stored-after" },
+        ],
+      });
+      expect(commands[0]).not.toMatchObject({ attachments: [{ id: "local-preview-id" }] });
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
   it.effect("routes projects through the event-sourced project transport", () =>
     Effect.gen(function* () {
       const projects: ProjectMutation[] = [];

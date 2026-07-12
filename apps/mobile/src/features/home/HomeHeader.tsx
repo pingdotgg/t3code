@@ -4,7 +4,11 @@ import type {
   SidebarThreadSortOrder,
 } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
-import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
+import {
+  NativeHeaderToolbar,
+  NativeStackScreenOptions,
+  type AppNativeStackNavigationOptions,
+} from "../../native/StackHeader";
 import { useCallback, useMemo, useRef } from "react";
 import { Platform, Pressable, Text as RNText, TextInput, View } from "react-native";
 import type { SearchBarCommands } from "react-native-screens";
@@ -254,6 +258,8 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
 
 function IosHomeHeader(props: HomeHeaderProps) {
   const searchBarRef = useRef<SearchBarCommands>(null);
+  const propsRef = useRef(props);
+  propsRef.current = props;
   const iconColor = useThemeColor("--color-icon");
   const hasCustomListOptions = hasCustomHomeListOptions(props);
   const focusSearch = useCallback(() => {
@@ -261,63 +267,67 @@ function IosHomeHeader(props: HomeHeaderProps) {
     return searchBarRef.current !== null;
   }, []);
   useHardwareKeyboardCommand("focusSearch", focusSearch);
-  const filterMenu = buildHomeListFilterMenu(props);
+  const screenOptions = useMemo((): AppNativeStackNavigationOptions => {
+    return {
+      headerTintColor: iconColor,
+      unstable_headerRightItems:
+        Platform.OS === "ios"
+          ? () => [
+              withNativeGlassHeaderItem({
+                accessibilityLabel: "Open settings",
+                icon: { name: "ellipsis", type: "sfSymbol" } as const,
+                identifier: "home-settings",
+                label: "",
+                onPress: () => propsRef.current.onOpenSettings(),
+                type: "button",
+              }),
+            ]
+          : undefined,
+      unstable_headerToolbarItems:
+        Platform.OS === "ios"
+          ? () => [
+              createNativeMailSearchToolbarItem({
+                composeButtonId: "home-new-task",
+                composeSystemImageName: "square.and.pencil",
+                // Build at invocation time so filter onPress handlers always
+                // read current callbacks via propsRef, matching compose/settings.
+                filterMenu: buildHomeListFilterMenu(propsRef.current),
+                filterButtonId: "home-filter",
+                filterSystemImageName: hasCustomListOptions
+                  ? "line.3.horizontal.decrease.circle.fill"
+                  : "line.3.horizontal.decrease",
+                onComposePress: () => propsRef.current.onStartNewTask(),
+                onSearchTextChange: (query) => propsRef.current.onSearchQueryChange(query),
+                placeholder: "Search",
+                searchTextChangeId: "home-search-text",
+              }),
+            ]
+          : undefined,
+      headerSearchBarOptions:
+        Platform.OS === "ios"
+          ? undefined
+          : {
+              ref: searchBarRef,
+              allowToolbarIntegration: true,
+              hideNavigationBar: false,
+              placeholder: "Search",
+              onCancelButtonPress: () => propsRef.current.onSearchQueryChange(""),
+              onChangeText: (event) => propsRef.current.onSearchQueryChange(event.nativeEvent.text),
+            },
+    };
+  }, [
+    hasCustomListOptions,
+    iconColor,
+    props.environments,
+    props.projectGroupingMode,
+    props.projectSortOrder,
+    props.selectedEnvironmentId,
+    props.threadSortOrder,
+  ]);
 
   return (
     <>
-      <NativeStackScreenOptions
-        options={{
-          // Static header config (glass, title, fonts) lives in Stack.tsx
-          // (GLASS_HEADER_OPTIONS). Only dynamic values are set here.
-          headerTintColor: iconColor,
-          unstable_headerRightItems:
-            Platform.OS === "ios"
-              ? () => [
-                  withNativeGlassHeaderItem({
-                    accessibilityLabel: "Open settings",
-                    icon: { name: "ellipsis", type: "sfSymbol" } as const,
-                    identifier: "home-settings",
-                    label: "",
-                    onPress: props.onOpenSettings,
-                    type: "button",
-                  }),
-                ]
-              : undefined,
-          unstable_headerToolbarItems:
-            Platform.OS === "ios"
-              ? () => [
-                  createNativeMailSearchToolbarItem({
-                    composeButtonId: "home-new-task",
-                    composeSystemImageName: "square.and.pencil",
-                    filterMenu,
-                    filterButtonId: "home-filter",
-                    filterSystemImageName: hasCustomListOptions
-                      ? "line.3.horizontal.decrease.circle.fill"
-                      : "line.3.horizontal.decrease",
-                    onComposePress: props.onStartNewTask,
-                    onSearchTextChange: props.onSearchQueryChange,
-                    placeholder: "Search",
-                    searchTextChangeId: "home-search-text",
-                  }),
-                ]
-              : undefined,
-          headerSearchBarOptions:
-            Platform.OS === "ios"
-              ? undefined
-              : {
-                  ref: searchBarRef,
-                  allowToolbarIntegration: true,
-                  hideNavigationBar: false,
-                  placeholder: "Search",
-                  onCancelButtonPress: () => {
-                    props.onSearchQueryChange("");
-                  },
-                  onChangeText: (event) => {
-                    props.onSearchQueryChange(event.nativeEvent.text);
-                  },
-                },
-        }}
-      />
+      <NativeStackScreenOptions options={screenOptions} />
 
       {Platform.OS === "ios" ? null : (
         <NativeHeaderToolbar placement="right">

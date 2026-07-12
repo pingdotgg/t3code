@@ -184,31 +184,49 @@ const dispatch = (command: OrchestrationV2Command) =>
 const getProjection = (threadId: ThreadId) =>
   request(ORCHESTRATION_V2_WS_METHODS.getThreadProjection, { threadId });
 
+function isUploadChatAttachment(
+  attachment: ChatAttachment | UploadChatAttachment,
+): attachment is UploadChatAttachment {
+  return "dataUrl" in attachment;
+}
+
+function isStoredChatAttachment(
+  attachment: ChatAttachment | UploadChatAttachment,
+): attachment is ChatAttachment {
+  return "id" in attachment && !("dataUrl" in attachment);
+}
+
+function toUploadChatAttachmentPayload(attachment: UploadChatAttachment): UploadChatAttachment {
+  return {
+    type: "image",
+    name: attachment.name,
+    mimeType: attachment.mimeType,
+    sizeBytes: attachment.sizeBytes,
+    dataUrl: attachment.dataUrl,
+  };
+}
+
 const persistAttachments = Effect.fn("EnvironmentCommands.persistAttachments")(function* (
   threadId: ThreadId,
   messageId: MessageId,
   attachments: ReadonlyArray<ChatAttachment | UploadChatAttachment>,
 ) {
-  const stored = attachments.filter(
-    (attachment): attachment is ChatAttachment => "id" in attachment,
-  );
-  const uploads = attachments.filter(
-    (attachment): attachment is UploadChatAttachment => "dataUrl" in attachment,
-  );
-  if (uploads.length === 0) return stored;
+  const uploads = attachments.filter(isUploadChatAttachment);
+  const storedOnly = attachments.filter(isStoredChatAttachment);
+  if (uploads.length === 0) return storedOnly;
   const result = yield* request(WS_METHODS.assetsPersistChatAttachments, {
     threadId,
     messageId,
-    attachments: uploads,
+    attachments: uploads.map(toUploadChatAttachmentPayload),
   });
-  if (stored.length === 0) return result.attachments;
-  const byUpload = new Map(
-    uploads.map((attachment, index) => [attachment, result.attachments[index]]),
-  );
+  let uploadIndex = 0;
   return attachments.flatMap((attachment) => {
-    if ("id" in attachment) return [attachment];
-    const persisted = byUpload.get(attachment);
-    return persisted === undefined ? [] : [persisted];
+    if (isUploadChatAttachment(attachment)) {
+      const persisted = result.attachments[uploadIndex];
+      uploadIndex += 1;
+      return persisted === undefined ? [] : [persisted];
+    }
+    return isStoredChatAttachment(attachment) ? [attachment] : [];
   });
 });
 
