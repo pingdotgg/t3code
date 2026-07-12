@@ -5,8 +5,9 @@
     /// Debug-only UI verification hook for agent/CI runs without screen
     /// recording or accessibility permissions: `SERGECODE_UI_PROBE=<dir>`
     /// (typically with `--mock`) selects the first thread, self-captures the
-    /// window to PNGs in `<dir>` (in-process bitmap, no TCC prompt), opens
-    /// main-area diff review, logs probe steps to stdout, and quits.
+    /// window to PNGs in `<dir>` (in-process bitmap, no TCC prompt), verifies
+    /// the optional mock remote sidebar/chat, opens main-area diff review,
+    /// logs probe steps to stdout, and quits.
     @MainActor
     enum UIProbe {
         static func runIfRequested(multi: MultiDeviceModel, scenery: SceneryStore) {
@@ -44,6 +45,11 @@
             // Let the inspector timeline present and the diff refresh land.
             try? await Task.sleep(for: .seconds(2))
             snapshot("1-inspector-timeline", dir: dir)
+
+            if let remote = multi.remoteSessions.first {
+                await probeRemoteDevice(
+                    remote, multi: multi, scenery: scenery, passport: PassportStore(), dir: dir)
+            }
 
             // Plan strip above the composer: expand, snapshot, collapse.
             toggleSection("plan")
@@ -369,6 +375,62 @@
 
             print("UIProbe: done")
             NSApp.terminate(nil)
+        }
+
+        private static func probeRemoteDevice(
+            _ session: RemoteDeviceSession,
+            multi: MultiDeviceModel,
+            scenery: SceneryStore,
+            passport: PassportStore,
+            dir: String
+        ) async {
+            let previousSelection = multi.selection
+            defer { multi.selection = previousSelection }
+
+            // The mock remote briefly reconnects after startup. Wait for its
+            // ready state so the probe captures the enabled remote rows as
+            // well as the status-dot transition.
+            for _ in 0..<12 {
+                if case .ready = session.connection { break }
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+            await snapshotRemoteSidebar(
+                multi: multi, scenery: scenery, passport: passport, dir: dir)
+
+            guard let thread = session.model.threads.first(where: { $0.status != .archived }) else {
+                print("UIProbe: remote session has no selectable thread")
+                return
+            }
+            multi.select(threadID: thread.id, on: session.id)
+            await session.model.loadTimelineIfNeeded(threadID: thread.id)
+            try? await Task.sleep(for: .seconds(2))
+            snapshot("remote-chat-inspector", dir: dir)
+            print(
+                "UIProbe: remote device=\(session.descriptor.name) "
+                    + "projectCount=\(session.model.projects.count) "
+                    + "thread=\(thread.id) phase=\(session.connection)")
+        }
+
+        private static func snapshotRemoteSidebar(
+            multi: MultiDeviceModel,
+            scenery: SceneryStore,
+            passport: PassportStore,
+            dir: String
+        ) async {
+            let hosting = NSHostingView(
+                rootView: SidebarView(multi: multi, scenery: scenery, passport: passport))
+            hosting.frame = NSRect(x: 0, y: 0, width: 340, height: 760)
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 340, height: 760),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            window.contentView = hosting
+            window.orderFront(nil)
+            try? await Task.sleep(for: .seconds(1))
+            print(
+                "UIProbe: remote sidebar device=\(multi.remoteSessions.map { $0.descriptor.name }) "
+                    + "projects=\(multi.remoteSessions.flatMap { $0.model.projects.map(\.name) })")
+            snapshot("remote-sidebar", window: window, dir: dir)
+            window.orderOut(nil)
         }
 
         /// Captures the main window at translucency 1.0 and 0.5 and logs

@@ -21,7 +21,22 @@ struct SergeCodeApp: App {
         self.dictation = sharedDictation
         let localModel = AppModel(backend: SergeCodeApp.backend, dictation: sharedDictation)
         self.model = localModel
-        self.multi = MultiDeviceModel(local: localModel)
+        let multiModel = MultiDeviceModel(local: localModel)
+        if Self.shouldSeedMockRemote {
+            let descriptor = RemoteDeviceDescriptor(
+                id: DeviceID(rawValue: "mock-mac-2"),
+                name: "Mac mini — Studio",
+                host: "mac-mini.local")
+            let remoteModel = AppModel(
+                backend: MockBackend(seedVariant: "studio"),
+                deviceID: descriptor.id,
+                deviceName: descriptor.name,
+                capabilities: .remote,
+                dictation: sharedDictation)
+            multiModel.addSession(
+                RemoteDeviceSession(descriptor: descriptor, model: remoteModel))
+        }
+        self.multi = multiModel
 
         // macOS 26/27 beta: SwiftUI toolbar re-vends during an in-layout
         // render can raise NSInternalInconsistencyException from AppKit's
@@ -31,12 +46,23 @@ struct SergeCodeApp: App {
         UserDefaults.standard.register(defaults: ["NSApplicationCrashOnExceptions": false])
     }
 
-    // MockBackend when launched with `--mock` or `SERGECODE_MOCK=1`; otherwise
-    // the real sidecar-backed LiveBackend.
-    private static func makeBackend() -> any BackendService {
-        if CommandLine.arguments.contains("--mock")
+    private static var shouldUseMock: Bool {
+        CommandLine.arguments.contains("--mock")
+            || CommandLine.arguments.contains("--mock-remote")
             || ProcessInfo.processInfo.environment["SERGECODE_MOCK"] == "1"
-        {
+            || ProcessInfo.processInfo.environment["SERGECODE_MOCK_REMOTE"] == "1"
+    }
+
+    private static var shouldSeedMockRemote: Bool {
+        shouldUseMock
+            && (CommandLine.arguments.contains("--mock-remote")
+                || ProcessInfo.processInfo.environment["SERGECODE_MOCK_REMOTE"] == "1")
+    }
+
+    // MockBackend when launched with `--mock`/`--mock-remote` or the matching
+    // environment flags; otherwise the real sidecar-backed LiveBackend.
+    private static func makeBackend() -> any BackendService {
+        if shouldUseMock {
             return MockBackend()
         }
         // The LAN-access preference is applied at spawn (the bind host is
