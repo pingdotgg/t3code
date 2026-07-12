@@ -55,7 +55,7 @@ function metadataFromTranscript(transcript: ProviderReplayTranscript): {
   };
 }
 
-function makeReplayServerConfig(
+export function makeReplayServerConfig(
   scenario: string,
 ): Effect.Effect<
   ServerConfig["Service"],
