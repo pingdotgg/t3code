@@ -96,13 +96,10 @@ struct RootView: View {
         }
         .sheet(isPresented: $showNewSessionSheet) {
             NewSessionSheet(
-                model: localModel,
+                multi: multi,
                 scenery: scenery,
                 passport: passport,
-                isPresented: $showNewSessionSheet,
-                onCreated: { thread in
-                    multi.select(threadID: thread.id, on: localModel.deviceID)
-                })
+                isPresented: $showNewSessionSheet)
         }
         .sheet(isPresented: $showPassportSheet) {
             PassportView(
@@ -118,41 +115,101 @@ struct RootView: View {
     @ViewBuilder
     private var newSessionMenu: some View {
         Menu {
-            if localModel.projects.isEmpty {
-                Text("No projects yet")
-            }
-            ForEach(localModel.projects) { project in
-                Menu(project.name) {
-                    if localModel.configuredProviderKinds.isEmpty {
-                        Text("No providers found")
-                    }
-                    ForEach(localModel.configuredProviderKinds) { provider in
-                        Button {
-                            Task {
-                                if let thread = await localModel.createSceneThread(
-                                    projectID: project.id,
-                                    provider: provider,
-                                    scenery: scenery,
-                                    passport: passport)
-                                {
-                                    multi.select(threadID: thread.id, on: localModel.deviceID)
-                                }
-                            }
-                        } label: {
-                            Label(provider.displayName, systemImage: "bolt")
-                        }
-                        .disabled(!localModel.canCreateThread(with: provider))
-                    }
+            if multi.remoteSessions.isEmpty {
+                // Preserve the original flat menu while there are no remote
+                // targets. This is also the fast path for the common case.
+                localProjectMenus
+                Divider()
+                addProjectButton
+            } else {
+                Section("This Mac") {
+                    localProjectMenus
+                    addProjectButton
                 }
-            }
-            Divider()
-            Button {
-                showNewSessionSheet = true
-            } label: {
-                Label("Add Project…", systemImage: "folder.badge.plus")
+                Divider()
+                ForEach(multi.remoteSessions) { session in
+                    remoteProjectSection(session)
+                }
             }
         } label: {
             Label("New Session", systemImage: "plus")
+        }
+    }
+
+    @ViewBuilder
+    private var localProjectMenus: some View {
+        projectMenus(
+            for: localModel,
+            deviceID: localModel.deviceID)
+    }
+
+    private var addProjectButton: some View {
+        Button {
+            showNewSessionSheet = true
+        } label: {
+            Label("Add Project…", systemImage: "folder.badge.plus")
+        }
+    }
+
+    @ViewBuilder
+    private func remoteProjectSection(_ session: RemoteDeviceSession) -> some View {
+        Section {
+            if session.model.projects.isEmpty {
+                Text("No projects yet")
+            } else {
+                projectMenus(for: session.model, deviceID: session.id)
+            }
+        } header: {
+            Label(session.descriptor.name, systemImage: "laptopcomputer")
+        }
+    }
+
+    @ViewBuilder
+    private func projectMenus(for owner: AppModel, deviceID: DeviceID) -> some View {
+        if owner.projects.isEmpty {
+            Text("No projects yet")
+        }
+        ForEach(owner.projects) { project in
+            Menu(project.name) {
+                if owner.configuredProviderKinds.isEmpty {
+                    Text("No providers found")
+                }
+                ForEach(owner.configuredProviderKinds) { provider in
+                    Button {
+                        createSession(
+                            owner: owner,
+                            projectID: project.id,
+                            provider: provider,
+                            deviceID: deviceID)
+                    } label: {
+                        Label(provider.displayName, systemImage: "bolt")
+                    }
+                    .disabled(
+                        owner.deviceID != .local
+                            && owner.connection != .ready
+                            || !owner.canCreateThread(with: provider))
+                }
+            }
+            .disabled(owner.deviceID != .local && owner.connection != .ready)
+        }
+    }
+
+    private func createSession(
+        owner: AppModel,
+        projectID: String,
+        provider: ProviderKind,
+        deviceID: DeviceID
+    ) {
+        Task {
+            guard owner.deviceID == .local || owner.connection == .ready else { return }
+            if let thread = await owner.createSceneThread(
+                projectID: projectID,
+                provider: provider,
+                scenery: scenery,
+                passport: passport)
+            {
+                multi.select(threadID: thread.id, on: deviceID)
+            }
         }
     }
 }

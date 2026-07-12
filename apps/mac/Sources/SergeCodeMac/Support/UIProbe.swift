@@ -199,7 +199,7 @@
                 // Create-image-set naming: mock backend returns locations;
                 // register the resulting bare-title pool and create a thread.
                 // Confirms new threads get "Iceland", not "Iceland 5".
-                await probeIcelandSceneSetCreate(model: model, scenery: scenery)
+                await probeIcelandSceneSetCreate(model: model, multi: multi, scenery: scenery)
 
                 // Passport sheet: seed a temp store with Dolomites visits and
                 // capture the sheet's view tree.
@@ -483,7 +483,9 @@
         /// pool so Unsplash is not required. New pools use the bare place
         /// name only when no distinctly-named candidate exists; historical
         /// pool-index names still strip via `threadTitle`.
-        private static func probeIcelandSceneSetCreate(model: AppModel, scenery: SceneryStore) async {
+        private static func probeIcelandSceneSetCreate(
+            model: AppModel, multi: MultiDeviceModel, scenery: SceneryStore
+        ) async {
             let previousDefaultSetId = scenery.defaultSetId
             let probeRunID = UUID().uuidString
             let setId = "probe-iceland-\(probeRunID)"
@@ -550,6 +552,9 @@
                     scenery: scenery,
                     scenerySetId: setId)
                 let title = thread?.title ?? "nil"
+                if let thread {
+                    multi.select(threadID: thread.id, on: model.deviceID)
+                }
                 print("UIProbe: iceland new-set thread title=\(title)")
                 if title != "Iceland" {
                     print("UIProbe: FAIL expected thread title Iceland, got \(title)")
@@ -612,6 +617,9 @@
                 // The pool has exactly one distinctly-named photo, so the
                 // filtered selection must land on it — assert exact title.
                 if let title = thread?.title {
+                    if let thread {
+                        multi.select(threadID: thread.id, on: model.deviceID)
+                    }
                     print("UIProbe: iceland mixed-pool thread title=\(title)")
                     if title == "Skógafoss" {
                         print("UIProbe: PASS iceland mixed-pool thread title is place-specific")
