@@ -47,6 +47,17 @@ struct IntralineDiffTests {
         #expect(onlyNew.addition.contains { $0.isChanged })
     }
 
+    @Test("long lines fall back to whole-line spans")
+    func longLinesFallBackToWholeLineSpans() {
+        let old = String(repeating: "a", count: 10_000)
+        let new = String(repeating: "b", count: 10_000)
+
+        let pair = IntralineDiff.diffTokens(old: old, new: new)
+
+        #expect(pair.deletion == [IntralineSpan(text: old, isChanged: true)])
+        #expect(pair.addition == [IntralineSpan(text: new, isChanged: true)])
+    }
+
     @Test("pairs equal-length deletion/addition runs")
     func equalRunPairing() {
         let lines = [

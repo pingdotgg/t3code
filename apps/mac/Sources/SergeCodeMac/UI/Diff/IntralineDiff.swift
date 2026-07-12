@@ -27,6 +27,9 @@ public struct IntralinePair: Equatable, Sendable {
 }
 
 public enum IntralineDiff: Sendable {
+    static let maxIntralineLineLength = 2000
+    static let maxLCSTableCells = 250_000
+
     /// Split into word and separator tokens. Separators (whitespace +
     /// punctuation runs) are kept so the reconstructed line is exact.
     public static func tokenize(_ text: String) -> [String] {
@@ -65,6 +68,14 @@ public enum IntralineDiff: Sendable {
             return IntralinePair(
                 deletion: oldTokens.map { IntralineSpan(text: $0, isChanged: false) },
                 addition: newTokens.map { IntralineSpan(text: $0, isChanged: false) })
+        }
+        if old.count > maxIntralineLineLength
+            || new.count > maxIntralineLineLength
+            || oldTokens.count * newTokens.count > maxLCSTableCells
+        {
+            return IntralinePair(
+                deletion: [IntralineSpan(text: old, isChanged: true)],
+                addition: [IntralineSpan(text: new, isChanged: true)])
         }
 
         let lcs = longestCommonSubsequence(oldTokens, newTokens)
