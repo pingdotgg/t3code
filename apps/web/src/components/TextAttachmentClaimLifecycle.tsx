@@ -1,5 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
 import { composerDraftEntriesEnvironment } from "../composerDraftStore";
 import { useEnvironments } from "../state/environments";
@@ -18,6 +18,7 @@ interface TextAttachmentClaimLifecycleEnvironment {
 export function reconcileConnectedTextAttachmentClaimEnvironments(
   environments: ReadonlyArray<TextAttachmentClaimLifecycleEnvironment>,
   operationsForEnvironment: (environmentId: EnvironmentId) => TextAttachmentClaimOperations,
+  forceEnvironmentIds: ReadonlySet<EnvironmentId> = new Set(),
 ): void {
   for (const environment of environments) {
     if (environment.connection.phase !== "connected") continue;
@@ -25,12 +26,14 @@ export function reconcileConnectedTextAttachmentClaimEnvironments(
       environment.environmentId,
       composerDraftEntriesEnvironment(environment.environmentId),
       operationsForEnvironment(environment.environmentId),
+      { force: forceEnvironmentIds.has(environment.environmentId) },
     );
   }
 }
 
 export function TextAttachmentClaimLifecycle() {
   const { environments } = useEnvironments();
+  const connectedEnvironmentIdsRef = useRef(new Set<EnvironmentId>());
   const claimTextAttachment = useAtomCommand(assetEnvironment.claimTextAttachment, {
     reportFailure: false,
   });
@@ -58,7 +61,22 @@ export function TextAttachmentClaimLifecycle() {
   );
 
   useEffect(() => {
-    reconcileConnectedTextAttachmentClaimEnvironments(environments, operationsForEnvironment);
+    const connectedEnvironmentIds = new Set(
+      environments.flatMap((environment) =>
+        environment.connection.phase === "connected" ? [environment.environmentId] : [],
+      ),
+    );
+    const newlyConnectedEnvironmentIds = new Set(
+      [...connectedEnvironmentIds].filter(
+        (environmentId) => !connectedEnvironmentIdsRef.current.has(environmentId),
+      ),
+    );
+    reconcileConnectedTextAttachmentClaimEnvironments(
+      environments,
+      operationsForEnvironment,
+      newlyConnectedEnvironmentIds,
+    );
+    connectedEnvironmentIdsRef.current = connectedEnvironmentIds;
   }, [environments, operationsForEnvironment]);
 
   return null;

@@ -46,6 +46,8 @@ export class TextAttachmentClaimReconciler {
   #queue: Promise<void> = Promise.resolve();
   #retryTimer: ReturnType<typeof setTimeout> | null = null;
   #retryCount = 0;
+  #reconcilePending = false;
+  #reconcileRequested = false;
   #disposed = false;
   #paused = false;
 
@@ -63,8 +65,8 @@ export class TextAttachmentClaimReconciler {
     this.#operationTimeoutMs = options.operationTimeoutMs ?? 10_000;
   }
 
-  setDesiredPrompt(prompt: string): void {
-    this.setDesiredPaths(textAttachmentPaths(prompt));
+  setDesiredPrompt(prompt: string): boolean {
+    return this.setDesiredPaths(textAttachmentPaths(prompt));
   }
 
   setOperations(operations: {
@@ -75,12 +77,20 @@ export class TextAttachmentClaimReconciler {
     this.#release = operations.release;
   }
 
-  setDesiredPaths(paths: Iterable<string>): void {
-    if (this.#disposed) return;
-    this.#desired = new Set(paths);
+  setDesiredPaths(paths: Iterable<string>): boolean {
+    if (this.#disposed) return false;
+    const nextDesired = new Set(paths);
+    if (
+      nextDesired.size === this.#desired.size &&
+      [...nextDesired].every((path) => this.#desired.has(path))
+    ) {
+      return false;
+    }
+    this.#desired = nextDesired;
     this.#retryCount = 0;
     this.#clearRetry();
-    if (!this.#paused) this.#enqueueReconcile();
+    if (!this.#paused) this.#enqueueReconcile(true);
+    return true;
   }
 
   confirmPaths(paths: Iterable<string>): void {
@@ -95,19 +105,29 @@ export class TextAttachmentClaimReconciler {
 
   reconcileNow(): void {
     if (this.#disposed || this.#paused) return;
+    if (this.#reconcilePending) return;
     this.#retryCount = 0;
     this.#clearRetry();
-    this.#enqueueReconcile();
+    this.#enqueueReconcile(true);
+  }
+
+  reconcileIfNeeded(): void {
+    if (this.#disposed || this.#paused || this.#retryTimer !== null || !this.#hasPendingChanges()) {
+      return;
+    }
+    this.#enqueueReconcile(false);
   }
 
   dispose(): void {
     this.#disposed = true;
+    this.#reconcileRequested = false;
     this.#clearRetry();
   }
 
   async pause(): Promise<void> {
     if (this.#disposed) return;
     this.#paused = true;
+    this.#reconcileRequested = false;
     this.#clearRetry();
     await this.#queue;
   }
@@ -129,9 +149,24 @@ export class TextAttachmentClaimReconciler {
     await this.#queue;
   }
 
-  #enqueueReconcile(): void {
+  #enqueueReconcile(requestAfterPending: boolean): void {
     if (this.#disposed || this.#paused) return;
-    this.#queue = this.#queue.catch(() => undefined).then(() => this.#reconcile());
+    if (this.#reconcilePending) {
+      if (requestAfterPending) this.#reconcileRequested = true;
+      return;
+    }
+    this.#reconcilePending = true;
+    this.#queue = this.#queue
+      .catch(() => undefined)
+      .then(() => this.#reconcile())
+      .finally(() => {
+        this.#reconcilePending = false;
+        if (!this.#reconcileRequested || this.#disposed || this.#paused) return;
+        this.#reconcileRequested = false;
+        this.#retryCount = 0;
+        this.#clearRetry();
+        this.#enqueueReconcile(false);
+      });
   }
 
   async #reconcile(): Promise<void> {
@@ -159,7 +194,7 @@ export class TextAttachmentClaimReconciler {
     this.#retryCount += 1;
     this.#retryTimer = setTimeout(() => {
       this.#retryTimer = null;
-      this.#enqueueReconcile();
+      this.#enqueueReconcile(false);
     }, delay);
   }
 
@@ -181,6 +216,16 @@ export class TextAttachmentClaimReconciler {
     ]).finally(() => {
       if (timeout !== null) clearTimeout(timeout);
     });
+  }
+
+  #hasPendingChanges(): boolean {
+    for (const path of this.#desired) {
+      if (!this.#confirmed.has(path)) return true;
+    }
+    for (const path of this.#confirmed) {
+      if (!this.#desired.has(path)) return true;
+    }
+    return false;
   }
 }
 
@@ -314,6 +359,7 @@ export async function releaseTextAttachmentClaimsInBackground(input: {
   const reconciliations = owners.map(({ paths, reconciler }) => {
     reconciler.confirmPaths(paths);
     reconciler.setDesiredPaths([]);
+    reconciler.reconcileIfNeeded();
     return reconciler.settled();
   });
   if (reconciliations.length === 0) {
@@ -349,6 +395,7 @@ export function pendingTextAttachmentClaimReleases(
 function restorePendingTextAttachmentClaimReleases(
   environmentId: EnvironmentId,
   operations: TextAttachmentClaimOperations,
+  force: boolean,
 ): void {
   const claimsByOwner = new Map<string, Set<string>>();
   for (const { path, draftOwnerId } of pendingTextAttachmentReleasesEnvironment(environmentId)) {
@@ -372,6 +419,8 @@ function restorePendingTextAttachmentClaimReleases(
     });
     reconciler.confirmPaths(paths);
     reconciler.setDesiredPaths([]);
+    if (force) reconciler.reconcileNow();
+    else reconciler.reconcileIfNeeded();
   }
 }
 
@@ -379,6 +428,7 @@ export function reconcileTextAttachmentClaimsEnvironment(
   environmentId: EnvironmentId,
   entries: ReadonlyArray<{ target: ComposerThreadTarget; prompt: string }>,
   operations: TextAttachmentClaimOperations,
+  options: { readonly force?: boolean } = {},
 ): void {
   for (const { target, prompt } of entries) {
     const draftOwnerId = textAttachmentDraftOwnerId(target);
@@ -387,10 +437,10 @@ export function reconcileTextAttachmentClaimsEnvironment(
       draftOwnerId,
       operations,
     });
-    reconciler.setDesiredPrompt(prompt);
-    reconciler.reconcileNow();
+    const desiredChanged = reconciler.setDesiredPrompt(prompt);
+    if (options.force === true && !desiredChanged) reconciler.reconcileNow();
   }
-  restorePendingTextAttachmentClaimReleases(environmentId, operations);
+  restorePendingTextAttachmentClaimReleases(environmentId, operations, options.force === true);
 }
 
 export async function detachTextAttachmentClaimOwner(

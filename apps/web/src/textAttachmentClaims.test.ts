@@ -112,6 +112,36 @@ describe("text attachment claims", () => {
     expect(reconciler.snapshot().confirmed).toEqual(new Set([PATH]));
   });
 
+  it("coalesces mounted composer and lifecycle reconciliation for unchanged paths", async () => {
+    vi.useFakeTimers();
+    const environmentId = EnvironmentId.make("coalesced-lifecycle-environment");
+    const draft = DraftId.make("coalesced-draft");
+    const draftOwnerId = textAttachmentDraftOwnerId(draft);
+    const operations = {
+      claim: vi.fn(async () => false),
+      release: vi.fn(async () => true),
+    };
+    const reconciler = getTextAttachmentClaimReconciler({
+      environmentId,
+      draftOwnerId,
+      operations,
+    });
+    const entries = [{ target: draft, prompt: `[shared.txt](${PATH})` }];
+
+    reconciler.setDesiredPrompt(entries[0]!.prompt);
+    reconcileTextAttachmentClaimsEnvironment(environmentId, entries, operations);
+    reconcileTextAttachmentClaimsEnvironment(environmentId, entries, operations);
+    await reconciler.settled();
+    expect(operations.claim).toHaveBeenCalledOnce();
+
+    reconcileTextAttachmentClaimsEnvironment(environmentId, entries, operations);
+    await vi.advanceTimersByTimeAsync(249);
+    expect(operations.claim).toHaveBeenCalledOnce();
+
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.waitFor(() => expect(operations.claim).toHaveBeenCalledTimes(2));
+  });
+
   it("reconciles immediately when a connection resumes", async () => {
     vi.useFakeTimers();
     const claim = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
@@ -445,6 +475,7 @@ describe("text attachment claims", () => {
       environmentId,
       [{ target: draft, prompt: `[shared.txt](${PATH})` }],
       operations,
+      { force: true },
     );
     await background.settled();
 
