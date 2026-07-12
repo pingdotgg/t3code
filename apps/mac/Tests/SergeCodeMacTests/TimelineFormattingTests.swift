@@ -67,7 +67,7 @@ struct TimelineSeparatorFormattingTests {
             Issue.record("Expected a same-day separator before the second item")
             return
         }
-        #expect(id == "sep-second")
+        #expect(id == "day-separator:second")
         #expect(label == "9:30\u{202F}AM")
     }
 
@@ -91,8 +91,30 @@ struct TimelineSeparatorFormattingTests {
             Issue.record("Expected a calendar-day separator before today's item")
             return
         }
-        #expect(id == "sep-today")
+        #expect(id == "day-separator:today")
         #expect(label == "Today")
+    }
+
+    @Test("does not emit separators or lower the watermark for regressing times")
+    func regressingTimestampsDoNotCreateFalseSeparators() {
+        let calendar = testCalendar()
+        let now = testDate(2026, 7, 10, 12, calendar: calendar)
+        let items: [TimelineItem] = [
+            .userMessage(
+                id: "first", text: "First", at: testDate(
+                    2026, 7, 10, 10, calendar: calendar)),
+            .assistantMessage(
+                id: "regressed", markdown: "Older", isStreaming: false, at: testDate(
+                    2026, 7, 9, 10, calendar: calendar)),
+        ]
+
+        let display = items.groupedForDisplay(now: now, calendar: calendar)
+
+        #expect(display.count == 2)
+        #expect(display.allSatisfy {
+            if case .daySeparator = $0 { return false }
+            return true
+        })
     }
 
     @Test("exposes event times on timeline and display items")
@@ -124,5 +146,18 @@ struct TranscriptTimestampFormattingTests {
         #expect(
             TranscriptTimestamp.text(
                 for: older, relativeTo: now, calendar: calendar) == "Jul 4 at 1:05\u{202F}PM")
+    }
+
+    @Test("includes the year for timestamps from an older calendar year")
+    func olderYearIncludesYear() {
+        let calendar = testCalendar()
+        let now = testDate(2026, 7, 10, 14, 47, calendar: calendar)
+        let oldYear = testDate(2025, 7, 4, 13, 5, calendar: calendar)
+
+        #expect(
+            TranscriptTimestamp.text(
+                for: oldYear, relativeTo: now, calendar: calendar).contains("2025"))
+        #expect(
+            separatorLabel(for: oldYear, relativeTo: now, calendar: calendar).contains("2025"))
     }
 }

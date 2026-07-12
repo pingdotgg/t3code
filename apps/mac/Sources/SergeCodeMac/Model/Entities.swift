@@ -385,7 +385,10 @@ extension Array where Element == TimelineItem {
     /// merely share a name stay separate rows.
     public mutating func upsertTimelineItem(_ item: TimelineItem) {
         if let index = lastIndex(where: { $0.id == item.id }) {
-            self[index] = item.preservingToolMetadata(of: self[index])
+            let existing = self[index]
+            self[index] = item
+                .preservingToolMetadata(of: existing)
+                .preservingFirstLifecycleTimestamp(of: existing)
             return
         }
         // Searches backwards past interleaved rows (reasoning updates land
@@ -404,7 +407,10 @@ extension Array where Element == TimelineItem {
                 where existingName == name
                     && (existingDetail == detail
                         || (existingID.hasPrefix("tool:") && !id.hasPrefix("tool:"))):
-                    self[index] = item.preservingToolMetadata(of: self[index])
+                    let existing = self[index]
+                    self[index] = item
+                        .preservingToolMetadata(of: existing)
+                        .preservingFirstLifecycleTimestamp(of: existing)
                     return
                 default:
                     continue
@@ -416,6 +422,23 @@ extension Array where Element == TimelineItem {
 }
 
 extension TimelineItem {
+    /// Lifecycle updates keep the timestamp from the first event so an
+    /// in-place replacement cannot move a row across a day or gap boundary.
+    fileprivate func preservingFirstLifecycleTimestamp(of existing: TimelineItem) -> TimelineItem {
+        guard let firstAt = existing.at else { return self }
+        switch self {
+        case .toolEvent(
+            let id, let name, let detail, let kind, let status, _, let output, let outputIsError):
+            return .toolEvent(
+                id: id, name: name, detail: detail, kind: kind, status: status, at: firstAt,
+                output: output, outputIsError: outputIsError)
+        case .reasoning(let id, let text, _):
+            return .reasoning(id: id, text: text, at: firstAt)
+        default:
+            return self
+        }
+    }
+
     /// Lifecycle replacement keeps what the newer event omits: `tool.completed`
     /// often carries no `payload.detail` (blanking the row would drop the
     /// command/path shown while running), tone-fallback events carry no

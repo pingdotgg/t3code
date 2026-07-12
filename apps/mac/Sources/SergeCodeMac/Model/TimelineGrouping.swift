@@ -68,6 +68,15 @@ func separatorLabel(for date: Date, relativeTo now: Date, calendar: Calendar) ->
         return "Yesterday"
     }
 
+    let dateYear = calendar.component(.year, from: date)
+    let nowYear = calendar.component(.year, from: now)
+    if dateYear != nowYear {
+        return formattedTimelineDate(
+            date,
+            calendar: calendar,
+            style: .dateTime.month(.abbreviated).day().year())
+    }
+
     let dateDay = calendar.startOfDay(for: date)
     let nowDay = calendar.startOfDay(for: now)
     if let dayDistance = calendar.dateComponents([.day], from: dateDay, to: nowDay).day,
@@ -106,7 +115,8 @@ extension Array where Element == TimelineItem {
     public func groupedForDisplay(
         threadIsSettled: Bool = false,
         now: Date = Date(),
-        calendar: Calendar = .current
+        calendar: Calendar = .current,
+        includeSeparators: Bool = true
     ) -> [TimelineDisplayItem] {
         var result: [TimelineDisplayItem] = []
         var run: [TimelineItem] = []
@@ -140,6 +150,7 @@ extension Array where Element == TimelineItem {
 
         func separatorForItem(_ item: TimelineItem, previousAt: Date?) -> String? {
             guard let currentAt = item.at, let previousAt else { return nil }
+            guard currentAt >= previousAt else { return nil }
             if !calendar.isDate(currentAt, inSameDayAs: previousAt) {
                 return separatorLabel(
                     for: currentAt, relativeTo: now, calendar: calendar)
@@ -151,9 +162,9 @@ extension Array where Element == TimelineItem {
         var previousAt: Date?
 
         for item in self {
-            if let label = separatorForItem(item, previousAt: previousAt) {
+            if includeSeparators, let label = separatorForItem(item, previousAt: previousAt) {
                 flush(somethingFollows: true)
-                result.append(.daySeparator(id: "sep-\(item.id)", label: label))
+                result.append(.daySeparator(id: "day-separator:\(item.id)", label: label))
             }
 
             switch item {
@@ -164,7 +175,7 @@ extension Array where Element == TimelineItem {
                 result.append(.single(item))
             }
 
-            if let at = item.at {
+            if let at = item.at, previousAt.map({ at > $0 }) ?? true {
                 previousAt = at
             }
         }

@@ -16,6 +16,7 @@ actor CodeHighlighter {
     private let cacheCapacity = 256
     private var cache: [CacheKey: AttributedString] = [:]
     private var mostRecentlyUsed: [CacheKey] = []
+    private var inFlight: [CacheKey: Task<AttributedString?, Never>] = [:]
     private var didWarm = false
 
     /// Highlights a fenced code block when its language is explicitly
@@ -30,19 +31,32 @@ actor CodeHighlighter {
             return cached
         }
 
-        do {
-            let result = try await highlighter.request(
-                code,
-                mode: .languageAlias(mappedLanguage),
-                colors: dark ? .dark(.xcode) : .light(.xcode))
-            guard !result.isUndefined, !Task.isCancelled else { return nil }
-
-            let attributedText = swiftUIAttributedText(from: result.attributedText)
-            insert(attributedText, for: key)
-            return attributedText
-        } catch {
-            return nil
+        if let task = inFlight[key] {
+            return await task.value
         }
+
+        let highlighter = highlighter
+        let task: Task<AttributedString?, Never> = Task.detached(priority: nil) {
+            do {
+                let result = try await highlighter.request(
+                    code,
+                    mode: .languageAlias(mappedLanguage),
+                    colors: dark ? .dark(.xcode) : .light(.xcode))
+                guard !result.isUndefined else { return nil }
+                return Self.swiftUIAttributedText(from: result.attributedText)
+            } catch {
+                return nil
+            }
+        }
+        inFlight[key] = task
+
+        // Keep cache insertion independent of every caller. A cancelled view
+        // task must not poison the shared result for other awaiters.
+        Task.detached(priority: nil) { [weak self, task] in
+            let result = await task.value
+            await self?.finish(key: key, result: result)
+        }
+        return await task.value
     }
 
     /// Loads highlight.js into its JavaScriptCore context during app startup.
@@ -111,10 +125,19 @@ actor CodeHighlighter {
         mostRecentlyUsed.append(key)
     }
 
+    private func finish(key: CacheKey, result: AttributedString?) {
+        inFlight.removeValue(forKey: key)
+        if let result {
+            insert(result, for: key)
+        }
+    }
+
     /// HighlightSwift imports HTML attributes into the AppKit scope. SwiftUI
     /// Text reads the SwiftUI scope, so copy foreground colors across while
     /// discarding importer-owned background and font attributes.
-    private func swiftUIAttributedText(from attributed: AttributedString) -> AttributedString {
+    nonisolated private static func swiftUIAttributedText(
+        from attributed: AttributedString
+    ) -> AttributedString {
         var result = AttributedString()
         for run in attributed.runs {
             var piece = AttributedString(attributed[run.range])

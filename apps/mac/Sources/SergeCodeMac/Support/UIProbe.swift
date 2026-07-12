@@ -267,7 +267,8 @@
                     markdown: markdownProbe,
                     isStreaming: false,
                     threadID: model.selectedThreadID ?? "ui-probe",
-                    model: model))
+                    model: model,
+                    showsRoleChrome: true))
             markdownHosting.frame = NSRect(x: 0, y: 0, width: 720, height: 360)
             markdownHosting.layoutSubtreeIfNeeded()
             let markdownFittingHeight = markdownHosting.fittingSize.height

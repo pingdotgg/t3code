@@ -7,10 +7,16 @@ import SwiftUI
 /// here gives user, tool, and assistant rows one quiet visual treatment and
 /// makes the calendar boundary deterministic in tests.
 struct TranscriptTimestamp: View {
-    let date: Date
+    private let label: String
+
+    init(date: Date) {
+        // Cache formatting in the view value so body re-evaluation does not
+        // rebuild a Date.FormatStyle for the same event timestamp.
+        self.label = Self.text(for: date)
+    }
 
     var body: some View {
-        Text(Self.text(for: date))
+        Text(label)
             .font(.caption2)
             .foregroundStyle(.tertiary)
             .monospacedDigit()
@@ -25,6 +31,10 @@ struct TranscriptTimestamp: View {
         let baseFormat: Date.FormatStyle
         if calendar.isDate(date, inSameDayAs: now) {
             baseFormat = .dateTime.hour().minute()
+        } else if calendar.component(.year, from: date)
+            != calendar.component(.year, from: now)
+        {
+            baseFormat = .dateTime.month(.abbreviated).day().year().hour().minute()
         } else {
             baseFormat = .dateTime.month(.abbreviated).day().hour().minute()
         }

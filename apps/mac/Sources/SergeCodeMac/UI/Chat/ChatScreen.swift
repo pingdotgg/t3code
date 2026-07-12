@@ -89,7 +89,7 @@ public struct ChatScreen: View {
         }
         .sheet(isPresented: $showSelectableTranscript) {
             SelectableTranscriptSheet(
-                items: currentDisplayItems(),
+                items: model.selectedTimeline(),
                 projectRoot: selectedProjectRoot)
         }
         #if DEBUG
@@ -111,24 +111,6 @@ public struct ChatScreen: View {
             async let vcs: Void = model.watchVcsStatus()
             await model.loadTimelineIfNeeded(threadID: threadID)
             await vcs
-        }
-    }
-
-    /// Same display-item source the timeline scroll view uses (cached).
-    private func currentDisplayItems() -> [TimelineDisplayItem] {
-        let items = model.selectedTimeline()
-        let threadID = model.selectedThreadID ?? ""
-        return TimelineDisplayCache.grouped(
-            items: items,
-            threadID: threadID,
-            version: model.timelineVersion(threadID: threadID),
-            threadIsSettled: threadIsSettled)
-    }
-
-    private var threadIsSettled: Bool {
-        switch model.selectedThread?.status {
-        case .idle, .archived, .error: true
-        case .running, .waitingApproval, .backgroundWork, nil: false
         }
     }
 

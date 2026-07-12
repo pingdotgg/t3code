@@ -20,6 +20,20 @@ struct CodeHighlighterTests {
         #expect(colors.count > 1)
     }
 
+    @Test("preserves leading indentation and blank lines")
+    func preservesCodeWhitespace() async throws {
+        let code = "    let answer = 42\n\n    return answer"
+        let highlighted = try #require(
+            await CodeHighlighter.shared.highlighted(
+                code: code,
+                language: "swift",
+                dark: false))
+
+        let rendered = String(highlighted.characters)
+        #expect(rendered.hasPrefix("    "))
+        #expect(rendered.contains("\n\n"))
+    }
+
     @Test("unknown languages return nil")
     func unknownLanguage() async {
         let highlighted = await CodeHighlighter.shared.highlighted(
@@ -58,5 +72,14 @@ struct CodeHighlighterTests {
         #expect(CodeHighlighter.mappedLanguage(for: "py") == "python")
         #expect(CodeHighlighter.mappedLanguage(for: "tsx") == "typescript")
         #expect(CodeHighlighter.mappedLanguage(for: "notareallang") == nil)
+    }
+
+    @Test("bundled highlight.js includes TOML grammar")
+    func tomlGrammarIsBundled() async {
+        let highlighted = await CodeHighlighter.shared.highlighted(
+            code: "name = \"SergeCode\"",
+            language: "toml",
+            dark: false)
+        #expect(highlighted != nil)
     }
 }

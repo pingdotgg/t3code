@@ -187,6 +187,7 @@ struct AppModelBatchingTests {
             return
         }
         #expect(status == .succeeded)
+        #expect(items.first?.at == Date(timeIntervalSince1970: 1))
     }
 
     @Test("mutating thread B does not change thread A's identity or timeline")

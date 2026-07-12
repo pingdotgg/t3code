@@ -124,6 +124,33 @@ struct MarkdownContentTests {
         #expect(text(trailing) == "trailing paragraph")
     }
 
+    @Test("gates every block in the trailing streaming source span")
+    func streamingHighlightGateCoversNestedBlocks() throws {
+        let document = parseMarkdownDocument(
+            "- parent\n\n    ```swift\n    let answer = 42\n    ```\n\n    trailing paragraph")
+        let lastSourceKey = try #require(document.blockKeys.last)
+
+        #expect(document.blockKeys.dropLast().contains(lastSourceKey))
+        #expect(
+            !markdownBlockAllowsHighlight(
+                style: .assistant,
+                isStreaming: true,
+                sourceKey: lastSourceKey,
+                lastSourceKey: lastSourceKey))
+        #expect(
+            markdownBlockAllowsHighlight(
+                style: .assistant,
+                isStreaming: true,
+                sourceKey: "earlier-source",
+                lastSourceKey: lastSourceKey))
+        #expect(
+            markdownBlockAllowsHighlight(
+                style: .assistant,
+                isStreaming: false,
+                sourceKey: lastSourceKey,
+                lastSourceKey: lastSourceKey))
+    }
+
     @Test("keeps unsupported block text after the list item")
     func listItemUnsupportedBlockOrder() throws {
         let blocks = parseMarkdownBlocks(

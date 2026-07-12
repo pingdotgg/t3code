@@ -112,7 +112,7 @@ struct ChatTimelineRowView: View {
         case .assistantMessage(_, let markdown, let isStreaming, let at):
             AssistantMarkdownView(
                 markdown: markdown, isStreaming: isStreaming, threadID: threadID, model: model,
-                at: at)
+                at: at, showsRoleChrome: true)
         case .toolEvent(_, let name, let detail, let kind, let status, let at, let output, let outputIsError):
             ToolEventRow(
                 name: name, detail: detail, kind: kind, status: status,
@@ -210,7 +210,6 @@ private struct UserMessageBubble: View {
                     threadID: threadID,
                     model: model,
                     style: .userBubble)
-                    .frame(maxWidth: 560, alignment: .trailing)
                     .textSelection(.enabled)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
@@ -467,11 +466,6 @@ private struct ToolEventRow: View {
                         previewLabel(preview)
                     }
                     Spacer(minLength: 8)
-                    if let at {
-                        TranscriptTimestamp(date: at)
-                            .opacity(isHovering ? 1 : 0)
-                            .accessibilityHidden(!isHovering)
-                    }
                     if hasExpandableContent {
                         Image(systemName: "chevron.right")
                             .font(.caption2)
@@ -492,6 +486,13 @@ private struct ToolEventRow: View {
             }
         }
         .transcriptCard(fill: cardFill)
+        .overlay(alignment: .topTrailing) {
+            if isHovering, let at {
+                TranscriptTimestamp(date: at)
+                    .padding(.top, 7)
+                    .padding(.trailing, hasExpandableContent ? 24 : 10)
+            }
+        }
         .animation(Motion.ambient, value: displayState)
         .animation(Motion.fade, value: isHovering)
         .onHover { isHovering = $0 }
@@ -595,7 +596,8 @@ private struct ToolEventRow: View {
                 .pulse,
                 isActive: displayState == .running && !Motion.reduceMotion)
             .foregroundStyle(iconTint)
-            .contentTransition(.symbolEffect(.replace))
+            .contentTransition(
+                Motion.reduceMotion ? .identity : .symbolEffect(.replace))
         if Motion.reduceMotion {
             icon
         } else {
@@ -963,7 +965,8 @@ private struct SubagentTaskRow: View {
                 .pulse,
                 isActive: task.state == .running && !stalled && !Motion.reduceMotion)
             .foregroundStyle(iconTint(stalled: stalled))
-            .contentTransition(.symbolEffect(.replace))
+            .contentTransition(
+                Motion.reduceMotion ? .identity : .symbolEffect(.replace))
         if Motion.reduceMotion {
             icon
         } else {

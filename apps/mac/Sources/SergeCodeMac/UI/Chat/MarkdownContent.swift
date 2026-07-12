@@ -609,7 +609,18 @@ private func inlineAttributed(markup: Markup) -> AttributedString {
 /// reading; only the hover action chip floats above it.
 private struct MarkdownRenderedBlock: Identifiable {
     let id: String
+    let sourceKey: String
     let block: MarkdownBlock
+}
+
+func markdownBlockAllowsHighlight(
+    style: MarkdownRenderStyle,
+    isStreaming: Bool,
+    sourceKey: String,
+    lastSourceKey: String?
+) -> Bool {
+    guard style == .assistant else { return false }
+    return !isStreaming || sourceKey != lastSourceKey
 }
 
 @MainActor
@@ -624,9 +635,9 @@ struct AssistantMarkdownView: View {
     let model: AppModel
     let at: Date?
     let style: MarkdownRenderStyle
+    let showsRoleChrome: Bool
     // Parsing belongs in init, not body: body is evaluated for every timeline
     // mutation while the view value can remain otherwise unchanged.
-    private let blocks: [MarkdownBlock]
     private let renderedBlocks: [MarkdownRenderedBlock]
 
     init(
@@ -635,7 +646,8 @@ struct AssistantMarkdownView: View {
         threadID: String,
         model: AppModel,
         at: Date? = nil,
-        style: MarkdownRenderStyle = .assistant
+        style: MarkdownRenderStyle = .assistant,
+        showsRoleChrome: Bool = false
     ) {
         self.markdown = markdown
         self.isStreaming = isStreaming
@@ -643,8 +655,8 @@ struct AssistantMarkdownView: View {
         self.model = model
         self.at = at
         self.style = style
+        self.showsRoleChrome = showsRoleChrome
         let document = MarkdownBlockCache.document(for: markdown)
-        self.blocks = document.blocks
         self.renderedBlocks = Self.renderedBlocks(from: document)
     }
 
@@ -652,29 +664,38 @@ struct AssistantMarkdownView: View {
     @Environment(\.openSelectText) private var openSelectText
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if style == .assistant {
-                assistantRoleLine
+        AnyLayout(
+            MarkdownContentLayout(maxWidth: style == .userBubble ? 560 : nil)
+        ) {
+            VStack(alignment: .leading, spacing: 0) {
+                if showsRoleChrome && style == .assistant {
+                    assistantRoleLine
+                }
+                ForEach(Array(renderedBlocks.enumerated()), id: \.element.id) { index, entry in
+                    markdownBlockView(
+                        entry.block,
+                        allowsHighlight: markdownBlockAllowsHighlight(
+                            style: style,
+                            isStreaming: isStreaming,
+                            sourceKey: entry.sourceKey,
+                            lastSourceKey: renderedBlocks.last?.sourceKey))
+                        .padding(.top, blockGap(at: index))
+                }
+                if showsRoleChrome && style == .assistant && isStreaming {
+                    Image(systemName: "ellipsis")
+                        .symbolEffect(.variableColor.iterative, isActive: !Motion.reduceMotion)
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("Assistant is responding")
+                        .transition(.opacity)
+                        .padding(.top, streamingIndicatorGap)
+                }
             }
-            ForEach(Array(renderedBlocks.enumerated()), id: \.element.id) { index, entry in
-                markdownBlockView(
-                    entry.block,
-                    allowsHighlight: style == .assistant
-                        && !(isStreaming && index == renderedBlocks.count - 1))
-                    .padding(.top, blockGap(at: index))
-            }
-            if style == .assistant && isStreaming {
-                Image(systemName: "ellipsis")
-                    .symbolEffect(.variableColor.iterative, isActive: !Motion.reduceMotion)
-                    .foregroundStyle(.secondary)
-                    .accessibilityLabel("Assistant is responding")
-                    .transition(.opacity)
-                    .padding(.top, streamingIndicatorGap)
-            }
+            .frame(
+                maxWidth: style == .userBubble ? nil : .infinity,
+                alignment: .leading)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
         .overlay(alignment: .topTrailing) {
-            if style == .assistant && !isStreaming {
+            if showsRoleChrome && style == .assistant && !isStreaming {
                 // Copies the raw markdown, not the rendered text — pasted
                 // content survives round-trips into editors and issues.
                 MessageActionChip {
@@ -717,12 +738,6 @@ struct AssistantMarkdownView: View {
             Image(systemName: "sparkles")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(Color.accentColor.opacity(0.9))
-            if let assistantModelName {
-                Text(assistantModelName)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-            }
             if !isStreaming, isHovering, let at {
                 TranscriptTimestamp(date: at)
                     .transition(.opacity)
@@ -734,36 +749,6 @@ struct AssistantMarkdownView: View {
         .accessibilityElement(children: .combine)
     }
 
-    private var assistantModelName: String? {
-        guard let thread = model.threads.first(where: { $0.id == threadID }) else {
-            return nil
-        }
-
-        if let modelID = thread.modelID,
-            let option = model.models.first(where: {
-                $0.instanceID == thread.modelInstanceID && $0.modelID == modelID
-            })
-        {
-            return option.displayName
-        }
-
-        guard let modelID = thread.modelID else { return nil }
-        return Self.shortModelName(modelID)
-    }
-
-    private static func shortModelName(_ model: String) -> String? {
-        let component = model
-            .split(separator: "/")
-            .last
-            .map(String.init)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let component, !component.isEmpty else { return nil }
-        if component.hasPrefix("claude-") {
-            return String(component.dropFirst("claude-".count))
-        }
-        return component
-    }
-
     private static func renderedBlocks(from document: ParsedMarkdownDocument) -> [MarkdownRenderedBlock] {
         var occurrences: [String: Int] = [:]
         return document.blocks.indices.map { index in
@@ -773,7 +758,9 @@ struct AssistantMarkdownView: View {
             // One top-level Markdown node can expand into several blocks. Keep
             // its stable source key while disambiguating those siblings.
             return MarkdownRenderedBlock(
-                id: "\(sourceKey)\u{0}\(occurrence)", block: document.blocks[index])
+                id: "\(sourceKey)\u{0}\(occurrence)",
+                sourceKey: sourceKey,
+                block: document.blocks[index])
         }
     }
 
@@ -909,7 +896,9 @@ private struct MarkdownListRow: View {
             }
         }
         .padding(.leading, MarkdownTheme.listIndent(level: level))
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(
+            maxWidth: style == .userBubble ? nil : .infinity,
+            alignment: .leading)
     }
 
     @ViewBuilder
@@ -1046,13 +1035,49 @@ private struct MarkdownUserInlineText: View {
             }
         }
         .textSelection(.enabled)
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
 /// A small wrapping layout for user-bubble inline runs. Keeping code spans as
 /// separate subviews is what allows their rounded background without turning
 /// prose into a full-width panel.
+private struct MarkdownContentLayout: Layout {
+    let maxWidth: CGFloat?
+
+    typealias Cache = ()
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout Cache
+    ) -> CGSize {
+        guard let subview = subviews.first else { return .zero }
+        let width = constrainedWidth(for: proposal.width)
+        let size = subview.sizeThatFits(ProposedViewSize(width: width, height: nil))
+        guard let maxWidth else { return size }
+        return CGSize(width: min(size.width, maxWidth), height: size.height)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout Cache
+    ) {
+        guard let subview = subviews.first else { return }
+        subview.place(
+            at: CGPoint(x: bounds.minX, y: bounds.minY),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
+    }
+
+    private func constrainedWidth(for proposedWidth: CGFloat?) -> CGFloat? {
+        guard let maxWidth else { return proposedWidth }
+        guard let proposedWidth, proposedWidth.isFinite else { return maxWidth }
+        return min(max(0, proposedWidth), maxWidth)
+    }
+}
+
 private struct MarkdownInlineFlow: Layout {
     private struct Line {
         var indices: [Int] = []
@@ -1074,7 +1099,8 @@ private struct MarkdownInlineFlow: Layout {
         let contentHeight = lines.reduce(0) { total, line in
             total + line.height
         } + CGFloat(max(0, lines.count - 1)) * 2
-        let resultWidth = proposal.width.flatMap { $0.isFinite ? $0 : nil } ?? contentWidth
+        let resultWidth = proposal.width.flatMap { $0.isFinite ? min($0, contentWidth) : nil }
+            ?? contentWidth
         return CGSize(width: resultWidth, height: contentHeight)
     }
 

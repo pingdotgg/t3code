@@ -59,7 +59,7 @@ public final class Highlight: Sendable {
             attributedText = AttributedString(stringLiteral: text)
         } else {
             let data = try htmlDataFromText(hljsResult.value, selectors: colors.css)
-            attributedText = try attributedTextFromData(data)
+            attributedText = try await attributedTextFromData(data)
         }
         return HighlightResult(
             attributedText: attributedText,
@@ -73,11 +73,15 @@ public final class Highlight: Sendable {
             .appending(selectors)
             .appending("\n</style>")
             .appending("\n<pre><code class=\"hljs\">")
-            .appending(text.trimmingCharacters(in: .whitespacesAndNewlines))
+            // SergeCode: preserve code indentation and blank lines; the HTML
+            // importer is responsible for adding exactly one trailing newline.
+            .appending(text)
             .appending("</code></pre>")
         return html.data(using: .utf8) ?? Data()
     }
 
+    // SergeCode: AppKit's HTML importer is WebKit-backed and main-thread-only.
+    @MainActor
     private func attributedTextFromData(_ data: Data) throws -> AttributedString {
         let mutableString = try NSMutableAttributedString(
             data: data,
@@ -91,7 +95,13 @@ public final class Highlight: Sendable {
             .font,
             range: NSMakeRange(0, mutableString.length)
         )
-        let range = NSRange(location: 0, length: mutableString.length - 1)
+        // SergeCode: strip only the one newline inserted by the HTML importer;
+        // source trailing newlines remain because the importer leaves them
+        // immediately before its own final newline.
+        let importerNewline = mutableString.string.hasSuffix("\n") ? 1 : 0
+        let range = NSRange(
+            location: 0,
+            length: max(0, mutableString.length - importerNewline))
         let attributedString = mutableString.attributedSubstring(from: range)
 #if os(macOS)
         return try AttributedString(attributedString, including: \.appKit)
