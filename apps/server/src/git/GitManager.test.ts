@@ -1808,6 +1808,69 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("create_pr reuses an existing upstream PR from the origin fork", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const forkDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", forkDir]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "git@github.com:octocat/t3code.git",
+        forkDir,
+      );
+      yield* runGit(repoDir, ["config", "remote.origin.pushurl", forkDir]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/existing-upstream-pr"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/existing-upstream-pr"]);
+
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          baseRepository: "pingdotgg/t3code",
+          headRepositoryOwner: "octocat",
+          prListByHeadSelector: {
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            "feature/existing-upstream-pr": JSON.stringify([]),
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            "octocat:feature/existing-upstream-pr": JSON.stringify([
+              {
+                number: 3900,
+                title: "Existing upstream PR",
+                url: "https://github.com/pingdotgg/t3code/pull/3900",
+                baseRefName: "main",
+                headRefName: "feature/existing-upstream-pr",
+                state: "OPEN",
+                isCrossRepository: true,
+                headRepository: {
+                  nameWithOwner: "octocat/t3code",
+                },
+                headRepositoryOwner: {
+                  login: "octocat",
+                },
+              },
+            ]),
+          },
+        },
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "create_pr",
+      });
+
+      expect(result.pr.status).toBe("opened_existing");
+      expect(result.pr.number).toBe(3900);
+      expect(
+        ghCalls.some((call) =>
+          call.includes(
+            "pr list --head octocat:feature/existing-upstream-pr --state open --limit 1",
+          ),
+        ),
+      ).toBe(true);
+      expect(ghCalls.some((call) => call.startsWith("pr create "))).toBe(false);
+    }),
+  );
+
   it.effect("create_pr falls back to main when source control provider detection fails", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

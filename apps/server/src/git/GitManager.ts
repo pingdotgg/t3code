@@ -278,17 +278,10 @@ function matchesBranchHeadContext(
     if ((expectedHeadRepository || expectedHeadOwner) && !prHeadRepository && !prHeadOwner) {
       return false;
     }
-    if (expectedHeadRepository && prHeadRepository && expectedHeadRepository !== prHeadRepository) {
+  } else if (pr.isCrossRepository === true) {
+    if (!expectedHeadRepository || !prHeadRepository) {
       return false;
     }
-    if (expectedHeadOwner && prHeadOwner && expectedHeadOwner !== prHeadOwner) {
-      return false;
-    }
-    return true;
-  }
-
-  if (pr.isCrossRepository === true) {
-    return false;
   }
   if (expectedHeadRepository && prHeadRepository && expectedHeadRepository !== prHeadRepository) {
     return false;
