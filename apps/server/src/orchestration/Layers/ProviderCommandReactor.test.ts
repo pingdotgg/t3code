@@ -782,8 +782,8 @@ describe("ProviderCommandReactor", () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
     const fullPromptTitle =
-      "Please investigate reconnect failures after restarting the session and make the startup path reliable.";
-    const seededTitle = "Please investigate reconnect failures after restar...";
+      "Please investigate reconnect failures... after restarting the session and make the startup path reliable.";
+    const seededTitle = "Please investigate reconnect failures... after res...";
     harness.generateThreadTitle.mockReturnValue(
       Effect.succeed({
         title: "Reconnect startup reliability",

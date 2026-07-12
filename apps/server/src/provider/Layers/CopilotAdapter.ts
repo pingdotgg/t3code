@@ -345,6 +345,14 @@ function createBaseEvent(input: {
   };
 }
 
+function contentActivityEventId(input: {
+  readonly threadId: ThreadId;
+  readonly itemId: string;
+  readonly streamKind: "reasoning_text" | "command_output" | "file_change_output" | "unknown";
+}): EventId {
+  return EventId.make(`copilot-content:${input.threadId}:${input.itemId}:${input.streamKind}`);
+}
+
 function ensureTurnSnapshot(context: CopilotSessionContext, turnId: TurnId): CopilotTurnSnapshot {
   const existing = context.turns.find((turn) => turn.id === turnId);
   if (existing) {
@@ -1676,6 +1684,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       input.context.turnIdsWithAssistantText.add(input.turnId);
       input.context.assistantItemIdByTurnId.set(input.turnId, input.itemId);
     }
+    const isReasoning = input.streamKind === "reasoning_text";
     await emitAsync({
       ...createBaseEvent({
         threadId: input.context.threadId,
@@ -1683,10 +1692,19 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         itemId: input.itemId,
         raw: input.raw,
       }),
+      ...(isReasoning
+        ? {
+            eventId: contentActivityEventId({
+              threadId: input.context.threadId,
+              itemId: input.itemId,
+              streamKind: input.streamKind,
+            }),
+          }
+        : {}),
       type: "content.delta",
       payload: {
         streamKind: input.streamKind,
-        delta,
+        delta: isReasoning ? input.nextText : delta,
       },
     });
   };
@@ -2696,6 +2714,9 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         }
         const itemId = `copilot-tool-${event.data.toolCallId}`;
         const toolMeta = context.toolMetaById.get(event.data.toolCallId);
+        const streamKind = toolStreamKind(toolMeta?.itemType);
+        const output = `${context.emittedTextByItemId.get(itemId) ?? ""}${event.data.partialOutput}`;
+        context.emittedTextByItemId.set(itemId, output);
         await emitAsync({
           ...createBaseEvent({
             threadId: context.threadId,
@@ -2703,10 +2724,15 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
             itemId,
             raw: event,
           }),
+          eventId: contentActivityEventId({
+            threadId: context.threadId,
+            itemId,
+            streamKind,
+          }),
           type: "content.delta",
           payload: {
-            streamKind: toolStreamKind(toolMeta?.itemType),
-            delta: event.data.partialOutput,
+            streamKind,
+            delta: output,
           },
         });
         return;

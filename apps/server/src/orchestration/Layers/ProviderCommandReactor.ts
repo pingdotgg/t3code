@@ -143,10 +143,7 @@ function canReplaceThreadTitle(
     return false;
   }
 
-  const currentLooksUserEditedFromTruncatedSeed =
-    trimmedTitleSeed.endsWith("...") && trimmedCurrentTitle.includes("...");
   return (
-    !currentLooksUserEditedFromTruncatedSeed &&
     truncate(trimmedCurrentTitle, Math.max(0, trimmedTitleSeed.length - 3)) === trimmedTitleSeed
   );
 }
