@@ -88,7 +88,7 @@ import {
 import { ContextWindowMeter } from "./ContextWindowMeter";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
 import { basenameOfPath } from "../../pierre-icons";
-import { removedOwnedTextAttachmentPaths, textAttachmentPaths } from "../../textAttachmentPaths";
+import { removedTextAttachmentPaths, textAttachmentPaths } from "../../textAttachmentPaths";
 import {
   DeferredTextAttachmentCleanup,
   isTextAttachmentReferenced,
@@ -932,13 +932,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const attachmentQueueRef = useRef<Promise<void>>(Promise.resolve());
   const composerAttachmentKeyRef = useRef(composerAttachmentKey);
   composerAttachmentKeyRef.current = composerAttachmentKey;
-  const ownedTextAttachmentPathsRef = useRef(new Set<string>());
   const textAttachmentCleanupRef = useRef(new DeferredTextAttachmentCleanup());
-  const ownedTextAttachmentTargetKeyRef = useRef(composerAttachmentKey);
-  if (ownedTextAttachmentTargetKeyRef.current !== composerAttachmentKey) {
-    ownedTextAttachmentTargetKeyRef.current = composerAttachmentKey;
-    ownedTextAttachmentPathsRef.current = new Set();
-  }
 
   // ------------------------------------------------------------------
   // Derived: composer send state
@@ -1193,15 +1187,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       for (const path of textAttachmentPaths(nextPrompt)) {
         textAttachmentCleanupRef.current.cancel(path);
       }
-      const ownedPaths = ownedTextAttachmentPathsRef.current;
-      const removedPaths = removedOwnedTextAttachmentPaths(previousPrompt, nextPrompt, ownedPaths);
+      const removedPaths = removedTextAttachmentPaths(previousPrompt, nextPrompt);
       for (const path of removedPaths) {
         textAttachmentCleanupRef.current.schedule(path, {
           isReferenced: () =>
             isTextAttachmentReferenced(path, composerDraftPromptsEnvironment(environmentId)),
           deletePath: async () => {
             const result = await deleteTextAttachment({ environmentId, input: { path } });
-            if (result._tag === "Success") ownedPaths.delete(path);
+            return result._tag === "Success";
           },
         });
       }
@@ -1850,7 +1843,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (result === null) return `'${file.name}' is not a supported text file.`;
     if (result._tag === "Failure") return `Could not attach '${file.name}'.`;
 
-    ownedTextAttachmentPathsRef.current.add(result.value.path);
     const currentPrompt = getComposerDraft(composerDraftTarget)?.prompt ?? "";
     const separator = currentPrompt.length > 0 && !/\s$/.test(currentPrompt) ? " " : "";
     const nextPrompt = `${currentPrompt}${separator}${serializeComposerFileLink(

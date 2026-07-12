@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  removedOwnedTextAttachmentPaths,
+  removedTextAttachmentPaths,
   textAttachmentPaths,
   unreferencedTextAttachmentPaths,
 } from "./textAttachmentPaths";
@@ -21,48 +21,37 @@ describe("textAttachmentPaths", () => {
   });
 });
 
-describe("removedOwnedTextAttachmentPaths", () => {
-  it("collects an owned attachment after its generated link is removed", () => {
-    const ownedPath =
+describe("removedTextAttachmentPaths", () => {
+  it("collects a generated attachment after its link is removed", () => {
+    const removedPath =
       "/var/t3-data/attachments/text/12345678-1234-1234-1234-123456789abc/notes.txt";
-    const unrelatedPath =
+    const retainedPath =
       "/var/t3-data/attachments/text/87654321-4321-4321-4321-cba987654321/copied.txt";
 
     expect(
-      removedOwnedTextAttachmentPaths(
-        `[notes.txt](${ownedPath}) [copied.txt](${unrelatedPath})`,
-        `[copied.txt](${unrelatedPath})`,
-        new Set([ownedPath]),
+      removedTextAttachmentPaths(
+        `[notes.txt](${removedPath}) [copied.txt](${retainedPath})`,
+        `[copied.txt](${retainedPath})`,
       ),
-    ).toEqual([ownedPath]);
+    ).toEqual([removedPath]);
   });
 
-  it("keeps an owned attachment while its link remains", () => {
+  it("keeps a copied attachment while its link remains", () => {
     const path = "/var/t3-data/attachments/text/12345678-1234-1234-1234-123456789abc/notes.txt";
 
-    expect(
-      removedOwnedTextAttachmentPaths(`[notes.txt](${path})`, `[notes](${path})`, new Set([path])),
-    ).toEqual([]);
+    expect(removedTextAttachmentPaths(`[notes.txt](${path})`, `[notes](${path})`)).toEqual([]);
   });
 
-  it("detects removal when the previous attachment link ended at EOF", () => {
+  it("detects EOF removal after ownership state is lost on remount", () => {
     const path = "/var/t3-data/attachments/text/12345678-1234-1234-1234-123456789abc/notes.txt";
 
-    expect(removedOwnedTextAttachmentPaths(`[notes.txt](${path})`, "", new Set([path]))).toEqual([
-      path,
-    ]);
+    expect(removedTextAttachmentPaths(`[notes.txt](${path})`, "")).toEqual([path]);
   });
 
-  it("preserves an owned attachment whose next link ends at EOF", () => {
+  it("preserves an attachment whose next link ends at EOF", () => {
     const path = "/var/t3-data/attachments/text/12345678-1234-1234-1234-123456789abc/notes.txt";
 
-    expect(
-      removedOwnedTextAttachmentPaths(
-        `[notes.txt](${path}) `,
-        `[notes.txt](${path})`,
-        new Set([path]),
-      ),
-    ).toEqual([]);
+    expect(removedTextAttachmentPaths(`[notes.txt](${path}) `, `[notes.txt](${path})`)).toEqual([]);
   });
 });
 

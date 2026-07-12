@@ -31,15 +31,9 @@ export function textAttachmentPaths(prompt: string): string[] {
   return [...paths];
 }
 
-export function removedOwnedTextAttachmentPaths(
-  previousPrompt: string,
-  nextPrompt: string,
-  ownedPaths: ReadonlySet<string>,
-): string[] {
+export function removedTextAttachmentPaths(previousPrompt: string, nextPrompt: string): string[] {
   const nextPaths = new Set(textAttachmentPaths(nextPrompt));
-  return textAttachmentPaths(previousPrompt).filter(
-    (path) => ownedPaths.has(path) && !nextPaths.has(path),
-  );
+  return textAttachmentPaths(previousPrompt).filter((path) => !nextPaths.has(path));
 }
 
 export function unreferencedTextAttachmentPaths(
