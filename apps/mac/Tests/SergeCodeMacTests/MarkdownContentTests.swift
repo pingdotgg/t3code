@@ -288,6 +288,58 @@ struct MarkdownContentTests {
         #expect(!MarkdownTheme.headingHasRule(3))
     }
 
+    @Test("user bubble style downgrades code and table blocks while keeping list blocks")
+    func userBubbleRenderingTokens() {
+        let document = MarkdownBlockCache.document(
+            for: """
+            - keep this list item
+
+            | Name | Status |
+            | --- | --- |
+            | Build | ok |
+
+            ```swift
+            let answer = 42
+            ```
+            """)
+        #expect(document.blocks.contains {
+            if case .bulletItem = $0 { return true }
+            return false
+        })
+        #expect(document.blocks.contains {
+            if case .codeBlock = $0 { return true }
+            return false
+        })
+        #expect(document.blocks.contains {
+            if case .table = $0 { return true }
+            return false
+        })
+
+        let tokens = MarkdownTheme.tokens(for: .userBubble)
+        #expect(tokens.proseForeground == .white)
+        #expect(tokens.headingForeground == .white)
+        #expect(tokens.listMarkerForeground == .whiteOpacity(0.75))
+        #expect(tokens.taskCheckboxForeground == .whiteOpacity(0.75))
+        #expect(tokens.inlineCodeBackground == .whiteOpacity(0.18))
+        #expect(tokens.quoteBar == .whiteOpacity(0.6))
+        #expect(tokens.quoteText == .whiteOpacity(0.85))
+        #expect(tokens.quoteFill == .whiteOpacity(0.08))
+        #expect(tokens.rule == .whiteOpacity(0.35))
+        #expect(tokens.linksAreUnderlined)
+        #expect(
+            MarkdownTheme.blockRendering(for: .code, style: .userBubble)
+                == .plainPanel)
+        #expect(
+            MarkdownTheme.blockRendering(for: .table, style: .userBubble)
+                == .plainPanel)
+        #expect(
+            MarkdownTheme.blockRendering(for: .listItem, style: .userBubble)
+                == .rich)
+        #expect(
+            MarkdownTheme.blockRendering(for: .code, style: .assistant)
+                == .rich)
+    }
+
     @Test("parses a mixed GFM document into the extended IR")
     func mixedDocument() {
         let blocks = parseMarkdownBlocks(

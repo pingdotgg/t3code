@@ -622,16 +622,24 @@ struct AssistantMarkdownView: View {
     let isStreaming: Bool
     let threadID: String
     let model: AppModel
+    let style: MarkdownRenderStyle
     // Parsing belongs in init, not body: body is evaluated for every timeline
     // mutation while the view value can remain otherwise unchanged.
     private let blocks: [MarkdownBlock]
     private let renderedBlocks: [MarkdownRenderedBlock]
 
-    init(markdown: String, isStreaming: Bool, threadID: String, model: AppModel) {
+    init(
+        markdown: String,
+        isStreaming: Bool,
+        threadID: String,
+        model: AppModel,
+        style: MarkdownRenderStyle = .assistant
+    ) {
         self.markdown = markdown
         self.isStreaming = isStreaming
         self.threadID = threadID
         self.model = model
+        self.style = style
         let document = MarkdownBlockCache.document(for: markdown)
         self.blocks = document.blocks
         self.renderedBlocks = Self.renderedBlocks(from: document)
@@ -645,10 +653,11 @@ struct AssistantMarkdownView: View {
             ForEach(Array(renderedBlocks.enumerated()), id: \.element.id) { index, entry in
                 markdownBlockView(
                     entry.block,
-                    allowsHighlight: !(isStreaming && index == renderedBlocks.count - 1))
+                    allowsHighlight: style == .assistant
+                        && !(isStreaming && index == renderedBlocks.count - 1))
                     .padding(.top, blockGap(at: index))
             }
-            if isStreaming {
+            if style == .assistant && isStreaming {
                 Image(systemName: "ellipsis")
                     .symbolEffect(.variableColor.iterative)
                     .foregroundStyle(.secondary)
@@ -659,7 +668,7 @@ struct AssistantMarkdownView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .overlay(alignment: .topTrailing) {
-            if !isStreaming {
+            if style == .assistant && !isStreaming {
                 // Copies the raw markdown, not the rendered text — pasted
                 // content survives round-trips into editors and issues.
                 MessageActionChip {
@@ -729,30 +738,51 @@ struct AssistantMarkdownView: View {
     private func markdownBlockView(_ block: MarkdownBlock, allowsHighlight: Bool) -> some View {
         switch block {
         case .paragraph(let text):
-            MarkdownProseText(attributed: text)
+            if style == .userBubble {
+                MarkdownUserInlineText(attributed: text)
+            } else {
+                MarkdownProseText(attributed: text)
+            }
         case .heading(let level, let text):
-            MarkdownHeadingView(level: level, text: text)
+            MarkdownHeadingView(level: level, text: text, style: style)
         case .bulletItem(let indent, let text):
-            MarkdownListRow(level: indent, marker: .bullet, text: text)
+            MarkdownListRow(level: indent, marker: .bullet, text: text, style: style)
         case .orderedItem(let indent, let number, let text):
-            MarkdownListRow(level: indent, marker: .ordered(number), text: text)
+            MarkdownListRow(
+                level: indent, marker: .ordered(number), text: text, style: style)
         case .taskItem(let indent, let checked, let text):
-            MarkdownListRow(level: indent, marker: .task(checked: checked), text: text)
+            MarkdownListRow(
+                level: indent, marker: .task(checked: checked), text: text, style: style)
         case .quote(let paragraphs):
-            MarkdownQuoteView(paragraphs: paragraphs)
+            MarkdownQuoteView(paragraphs: paragraphs, style: style)
         case .rule:
-            Rectangle()
-                .fill(.separator)
-                .opacity(0.6)
-                .frame(height: 1)
-                .padding(.horizontal, 2)
+            if style == .userBubble {
+                Rectangle()
+                    .fill(MarkdownTheme.tokens(for: style).rule.color)
+                    .frame(height: 1)
+                    .padding(.horizontal, 2)
+            } else {
+                Rectangle()
+                    .fill(.separator)
+                    .opacity(0.6)
+                    .frame(height: 1)
+                    .padding(.horizontal, 2)
+            }
         case .codeBlock(let language, let code):
-            MarkdownCodeBlock(
-                language: language,
-                code: code,
-                allowsHighlight: allowsHighlight)
+            if MarkdownTheme.blockRendering(for: .code, style: style) == .plainPanel {
+                MarkdownPlainCodePanel(text: code)
+            } else {
+                MarkdownCodeBlock(
+                    language: language,
+                    code: code,
+                    allowsHighlight: allowsHighlight)
+            }
         case .table(let table):
-            MarkdownTableView(table: table)
+            if MarkdownTheme.blockRendering(for: .table, style: style) == .plainPanel {
+                MarkdownPlainCodePanel(text: plainTableText(table))
+            } else {
+                MarkdownTableView(table: table)
+            }
         }
     }
 }
@@ -760,19 +790,32 @@ struct AssistantMarkdownView: View {
 private struct MarkdownHeadingView: View {
     let level: Int
     let text: AttributedString
+    let style: MarkdownRenderStyle
 
     var body: some View {
         VStack(alignment: .leading, spacing: MarkdownTheme.headingHasRule(level) ? 6 : 0) {
-            Text(text)
-                .font(MarkdownTheme.headingFont(level))
-                .foregroundStyle(MarkdownTheme.headingForeground(level))
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            if style == .userBubble {
+                MarkdownUserInlineText(
+                    attributed: text,
+                    font: MarkdownTheme.headingFont(level))
+            } else {
+                Text(text)
+                    .font(MarkdownTheme.headingFont(level))
+                    .foregroundStyle(MarkdownTheme.headingForeground(level))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
             if MarkdownTheme.headingHasRule(level) {
-                Rectangle()
-                    .fill(.separator)
-                    .opacity(0.5)
-                    .frame(height: 1)
+                if style == .userBubble {
+                    Rectangle()
+                        .fill(MarkdownTheme.tokens(for: style).headingRule.color)
+                        .frame(height: 1)
+                } else {
+                    Rectangle()
+                        .fill(.separator)
+                        .opacity(0.5)
+                        .frame(height: 1)
+                }
             }
         }
     }
@@ -788,16 +831,23 @@ private struct MarkdownListRow: View {
     let level: Int
     let marker: Marker
     let text: AttributedString
+    let style: MarkdownRenderStyle
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             markerView
                 .frame(width: MarkdownTheme.listMarkerColumnWidth, alignment: .trailing)
-            Text(text)
-                .foregroundStyle(textForeground)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            if style == .userBubble {
+                MarkdownUserInlineText(
+                    attributed: text,
+                    foreground: MarkdownTheme.tokens(for: style).checkedTaskTextForeground)
+            } else {
+                Text(text)
+                    .foregroundStyle(textForeground)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .padding(.leading, MarkdownTheme.listIndent(level: level))
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -809,19 +859,36 @@ private struct MarkdownListRow: View {
         case .bullet:
             Text(MarkdownTheme.bulletGlyph(depth: level))
                 .font(.body)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(markerForeground)
         case .ordered(let number):
             Text("\(number).")
                 .font(.body.monospacedDigit())
-                .foregroundStyle(.secondary)
+                .foregroundStyle(markerForeground)
         case .task(let checked):
             Image(systemName: checked ? "checkmark.square.fill" : "square")
                 .font(.body)
-                .foregroundStyle(checked ? Color.accentColor : .secondary)
+                .foregroundStyle(taskMarkerForeground(checked: checked))
         }
     }
 
+    private var markerForeground: Color {
+        if style == .userBubble {
+            return MarkdownTheme.tokens(for: style).listMarkerForeground.color
+        }
+        return .secondary
+    }
+
+    private func taskMarkerForeground(checked: Bool) -> Color {
+        if style == .userBubble {
+            return MarkdownTheme.tokens(for: style).taskCheckboxForeground.color
+        }
+        return checked ? Color.accentColor : .secondary
+    }
+
     private var textForeground: Color {
+        if style == .userBubble {
+            return MarkdownTheme.tokens(for: style).proseForeground.color
+        }
         switch marker {
         case .task(let checked) where checked:
             return .secondary
@@ -833,26 +900,42 @@ private struct MarkdownListRow: View {
 
 private struct MarkdownQuoteView: View {
     let paragraphs: [AttributedString]
+    let style: MarkdownRenderStyle
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             RoundedRectangle(cornerRadius: MarkdownTheme.quoteCornerRadius)
-                .fill(Color.accentColor.opacity(MarkdownTheme.quoteAccentOpacity))
+                .fill(quoteBarColor)
                 .frame(width: MarkdownTheme.quoteBarWidth)
                 .frame(maxHeight: .infinity)
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(Array(paragraphs.enumerated()), id: \.offset) { _, paragraph in
-                    Text(paragraph)
-                        .foregroundStyle(.secondary)
-                        .italic()
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if style == .userBubble {
+                        MarkdownUserInlineText(
+                            attributed: paragraph,
+                            foreground: MarkdownTheme.tokens(for: style).quoteText,
+                            italic: true)
+                    } else {
+                        Text(paragraph)
+                            .foregroundStyle(.secondary)
+                            .italic()
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 2)
-        .background(MarkdownTheme.quoteFill, in: RoundedRectangle(cornerRadius: 6))
+        .background(quoteFillColor, in: RoundedRectangle(cornerRadius: 6))
+    }
+
+    private var quoteBarColor: Color {
+        MarkdownTheme.tokens(for: style).quoteBar.color
+    }
+
+    private var quoteFillColor: Color {
+        MarkdownTheme.tokens(for: style).quoteFill.color
     }
 }
 
@@ -863,6 +946,134 @@ private struct MarkdownProseText: View {
         Text(attributed)
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// User-bubble prose is made from individual attributed runs so inline code
+/// can get a small rounded chip while the whole paragraph still wraps at the
+/// bubble's width. Assistant prose intentionally keeps the single Text path
+/// above unchanged.
+private struct MarkdownUserInlineText: View {
+    let attributed: AttributedString
+    var foreground: MarkdownTheme.ForegroundToken? = nil
+    var font: Font? = nil
+    var italic = false
+
+    private var tokens: MarkdownTheme.StyleTokens {
+        MarkdownTheme.tokens(for: .userBubble)
+    }
+
+    var body: some View {
+        MarkdownInlineFlow {
+            ForEach(Array(attributed.runs.enumerated()), id: \.offset) { _, run in
+                let segment = AttributedString(attributed[run.range])
+                let isCode = run.inlinePresentationIntent?.contains(.code) == true
+                let isLink = run.link != nil && tokens.linksAreUnderlined
+                let foregroundColor = isLink
+                    ? tokens.proseForeground.color
+                    : (foreground ?? tokens.proseForeground).color
+                Text(segment)
+                    .font(isCode ? .system(.body, design: .monospaced) : font)
+                    .foregroundStyle(foregroundColor)
+                    .italic(italic && !isCode)
+                    .underline(isLink, color: tokens.proseForeground.color)
+                    .padding(.horizontal, isCode ? 4 : 0)
+                    .padding(.vertical, isCode ? 1 : 0)
+                    .background(
+                        isCode
+                            ? (tokens.inlineCodeBackground?.color ?? Color.clear)
+                            : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 4))
+            }
+        }
+        .textSelection(.enabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// A small wrapping layout for user-bubble inline runs. Keeping code spans as
+/// separate subviews is what allows their rounded background without turning
+/// prose into a full-width panel.
+private struct MarkdownInlineFlow: Layout {
+    private struct Line {
+        var indices: [Int] = []
+        var sizes: [CGSize] = []
+        var width: CGFloat = 0
+        var height: CGFloat = 0
+    }
+
+    typealias Cache = ()
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout Cache
+    ) -> CGSize {
+        let width = finiteWidth(from: proposal.width)
+        let lines = makeLines(subviews: subviews, maxWidth: width)
+        let contentWidth = lines.map(\.width).max() ?? 0
+        let contentHeight = lines.reduce(0) { total, line in
+            total + line.height
+        } + CGFloat(max(0, lines.count - 1)) * 2
+        let resultWidth = proposal.width.flatMap { $0.isFinite ? $0 : nil } ?? contentWidth
+        return CGSize(width: resultWidth, height: contentHeight)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout Cache
+    ) {
+        let lines = makeLines(subviews: subviews, maxWidth: bounds.width)
+        var y = bounds.minY
+        for line in lines {
+            var x = bounds.minX
+            for (offset, index) in line.indices.enumerated() {
+                let size = line.sizes[offset]
+                subviews[index].place(
+                    at: CGPoint(x: x, y: y),
+                    anchor: .topLeading,
+                    proposal: ProposedViewSize(width: size.width, height: size.height))
+                x += size.width
+            }
+            y += line.height + 2
+        }
+    }
+
+    private func finiteWidth(from proposedWidth: CGFloat?) -> CGFloat {
+        guard let proposedWidth, proposedWidth.isFinite else { return .infinity }
+        return max(0, proposedWidth)
+    }
+
+    private func makeLines(subviews: Subviews, maxWidth: CGFloat) -> [Line] {
+        var lines: [Line] = []
+        var current = Line()
+
+        for index in subviews.indices {
+            let intrinsic = subviews[index].sizeThatFits(.unspecified)
+            let size: CGSize
+            if maxWidth.isFinite && intrinsic.width > maxWidth {
+                size = subviews[index].sizeThatFits(
+                    ProposedViewSize(width: maxWidth, height: nil))
+            } else {
+                size = intrinsic
+            }
+
+            if !current.indices.isEmpty && current.width + size.width > maxWidth {
+                lines.append(current)
+                current = Line()
+            }
+            current.indices.append(index)
+            current.sizes.append(size)
+            current.width += size.width
+            current.height = max(current.height, size.height)
+        }
+
+        if !current.indices.isEmpty {
+            lines.append(current)
+        }
+        return lines
     }
 }
 
@@ -1029,6 +1240,32 @@ private func headingFont(_ level: Int) -> Font {
 }
 
 // MARK: - Basic code/table views (refined in the rendering commit)
+
+/// Deliberately minimal code/table treatment for user bubbles. It has no
+/// language header, copy/wrap controls, or asynchronous syntax highlighting.
+private struct MarkdownPlainCodePanel: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(.callout, design: .monospaced))
+            .foregroundStyle(.white)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(8)
+            .background(
+                Color.white.opacity(0.12),
+                in: RoundedRectangle(cornerRadius: 6))
+    }
+}
+
+private func plainTableText(_ table: MarkdownTable) -> String {
+    let lines = [table.header] + table.rows
+    return lines.map { row in
+        row.map { String($0.characters) }.joined(separator: "\t")
+    }.joined(separator: "\n")
+}
 
 private struct MarkdownCodeHighlightTaskID: Equatable {
     let code: String

@@ -30,7 +30,8 @@ struct ChatTimelineRowView: View {
     private func singleRow(_ item: TimelineItem) -> some View {
         switch item {
         case .userMessage(let id, let text, _):
-            UserMessageBubble(messageID: id, text: text, model: model)
+            UserMessageBubble(
+                messageID: id, text: text, threadID: threadID, model: model)
         case .assistantMessage(_, let markdown, let isStreaming, _):
             AssistantMarkdownView(
                 markdown: markdown, isStreaming: isStreaming, threadID: threadID, model: model)
@@ -105,6 +106,7 @@ struct ChatTimelineRowView: View {
 private struct UserMessageBubble: View {
     let messageID: String
     let text: String
+    let threadID: String
     let model: AppModel
 
     @UIState private var isHovering = false
@@ -122,7 +124,13 @@ private struct UserMessageBubble: View {
     var body: some View {
         HStack {
             Spacer(minLength: 48)
-            Text(text)
+            AssistantMarkdownView(
+                markdown: text,
+                isStreaming: false,
+                threadID: threadID,
+                model: model,
+                style: .userBubble)
+                .frame(maxWidth: 560, alignment: .trailing)
                 .textSelection(.enabled)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)

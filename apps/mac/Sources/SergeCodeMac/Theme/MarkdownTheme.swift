@@ -1,6 +1,6 @@
 import SwiftUI
 
-enum MarkdownRenderStyle {
+enum MarkdownRenderStyle: Equatable {
     case assistant
     case userBubble
 }
@@ -94,6 +94,57 @@ enum MarkdownBlockKind: Equatable {
 }
 
 enum MarkdownTheme {
+    enum ForegroundToken: Equatable {
+        case primary
+        case secondary
+        case secondaryOpacity(Double)
+        case white
+        case whiteOpacity(Double)
+        case accentOpacity(Double)
+        case separatorOpacity(Double)
+
+        var color: Color {
+            switch self {
+            case .primary:
+                return .primary
+            case .secondary:
+                return .secondary
+            case .secondaryOpacity(let opacity):
+                return .secondary.opacity(opacity)
+            case .white:
+                return .white
+            case .whiteOpacity(let opacity):
+                return .white.opacity(opacity)
+            case .accentOpacity(let opacity):
+                return Color.accentColor.opacity(opacity)
+            case .separatorOpacity(let opacity):
+                return Color(nsColor: .separatorColor).opacity(opacity)
+            }
+        }
+    }
+
+    enum BlockRendering: Equatable {
+        case rich
+        case plainPanel
+    }
+
+    struct StyleTokens: Equatable {
+        let proseForeground: ForegroundToken
+        let headingForeground: ForegroundToken
+        let listMarkerForeground: ForegroundToken
+        let taskCheckboxForeground: ForegroundToken
+        let checkedTaskTextForeground: ForegroundToken
+        let quoteBar: ForegroundToken
+        let quoteText: ForegroundToken
+        let quoteFill: ForegroundToken
+        let headingRule: ForegroundToken
+        let rule: ForegroundToken
+        let inlineCodeBackground: ForegroundToken?
+        let linksAreUnderlined: Bool
+        let codeBlock: BlockRendering
+        let table: BlockRendering
+    }
+
     static let listBaseIndent: CGFloat = 16
     static let listLevelIndent: CGFloat = 16
     static let listMarkerColumnWidth: CGFloat = 28
@@ -119,6 +170,57 @@ enum MarkdownTheme {
         return max(after.spaceAfter, before.spaceBefore)
     }
 
+    static func tokens(for style: MarkdownRenderStyle) -> StyleTokens {
+        switch style {
+        case .assistant:
+            return StyleTokens(
+                proseForeground: .primary,
+                headingForeground: .primary,
+                listMarkerForeground: .secondary,
+                taskCheckboxForeground: .secondary,
+                checkedTaskTextForeground: .secondary,
+                quoteBar: .accentOpacity(quoteAccentOpacity),
+                quoteText: .secondary,
+                quoteFill: .secondaryOpacity(0.05),
+                headingRule: .separatorOpacity(0.5),
+                rule: .separatorOpacity(0.6),
+                inlineCodeBackground: nil,
+                linksAreUnderlined: false,
+                codeBlock: .rich,
+                table: .rich)
+        case .userBubble:
+            return StyleTokens(
+                proseForeground: .white,
+                headingForeground: .white,
+                listMarkerForeground: .whiteOpacity(0.75),
+                taskCheckboxForeground: .whiteOpacity(0.75),
+                checkedTaskTextForeground: .white,
+                quoteBar: .whiteOpacity(0.6),
+                quoteText: .whiteOpacity(0.85),
+                quoteFill: .whiteOpacity(0.08),
+                headingRule: .whiteOpacity(0.35),
+                rule: .whiteOpacity(0.35),
+                inlineCodeBackground: .whiteOpacity(0.18),
+                linksAreUnderlined: true,
+                codeBlock: .plainPanel,
+                table: .plainPanel)
+        }
+    }
+
+    static func blockRendering(
+        for kind: MarkdownBlockKind,
+        style: MarkdownRenderStyle
+    ) -> BlockRendering {
+        switch kind {
+        case .code:
+            return tokens(for: style).codeBlock
+        case .table:
+            return tokens(for: style).table
+        default:
+            return .rich
+        }
+    }
+
     static func headingFont(_ level: Int) -> Font {
         switch max(1, min(level, 6)) {
         case 1:
@@ -138,6 +240,14 @@ enum MarkdownTheme {
 
     static func headingForeground(_ level: Int) -> Color {
         max(1, min(level, 6)) == 6 ? .secondary : .primary
+    }
+
+    static func headingForeground(
+        _ level: Int,
+        style: MarkdownRenderStyle
+    ) -> Color {
+        guard style == .userBubble else { return headingForeground(level) }
+        return tokens(for: style).headingForeground.color
     }
 
     static func headingHasRule(_ level: Int) -> Bool {
