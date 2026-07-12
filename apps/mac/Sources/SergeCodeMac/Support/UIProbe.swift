@@ -30,6 +30,16 @@
             }
             // Let the inspector timeline present and the diff refresh land.
             try? await Task.sleep(for: .seconds(2))
+            print(
+                "UIProbe: agents running=\(model.subagentTaskAggregator.runningCount) "
+                    + "entries=\(model.subagentTaskAggregator.entries.count)")
+            // The toolbar item owns the popover anchor. Toggle it through the
+            // same in-process harness used by the other popover probes.
+            toggleSection("agents")
+            try? await Task.sleep(for: .seconds(1))
+            snapshotAllWindows("2-agents-panel", dir: dir)
+            toggleSection("agents")
+            try? await Task.sleep(for: .seconds(1))
             snapshot("1-inspector-timeline", dir: dir)
 
             // Plan strip above the composer: expand, snapshot, collapse.
