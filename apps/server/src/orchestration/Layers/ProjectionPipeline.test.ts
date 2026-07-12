@@ -34,6 +34,12 @@ import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQu
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
 import { ServerConfig } from "../../config.ts";
+import {
+  claimTextAttachment,
+  reconcileTextAttachments,
+  textAttachmentRelativePath,
+  TEXT_ATTACHMENT_DELETE_GRACE_MS,
+} from "../../attachmentStore.ts";
 
 const makeProjectionPipelinePrefixedTestLayer = (prefix: string) =>
   OrchestrationProjectionPipelineLive.pipe(
@@ -938,8 +944,18 @@ it.layer(
         recursive: true,
       });
       yield* fileSystem.writeFileString(removeTextAttachmentPath, "remove after restart");
+      claimTextAttachment({
+        attachmentsDir,
+        path: removeTextAttachmentPath,
+        draftOwnerId: "copied-revert-draft",
+      });
 
       yield* projectionPipeline.bootstrap;
+      reconcileTextAttachments({
+        attachmentsDir,
+        retainedRelativePaths: new Set(),
+        nowMs: Date.now() + TEXT_ATTACHMENT_DELETE_GRACE_MS + 1,
+      });
 
       assert.isTrue(yield* exists(keepPath));
       assert.isFalse(yield* exists(removePath));
@@ -1260,8 +1276,23 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-atta
         yield* fileSystem.writeFileString(textAttachmentPath, "shared attachment");
         yield* fileSystem.writeFileString(deletedTextAttachmentPath, "deleted attachment");
         yield* fileSystem.writeFileString(deletedImageAttachmentPath, "deleted image");
+        claimTextAttachment({
+          attachmentsDir,
+          path: deletedTextAttachmentPath,
+          draftOwnerId: "copied-delete-draft",
+        });
 
         yield* projectionPipeline.bootstrap;
+        const retainedSharedPath = textAttachmentRelativePath({
+          attachmentsDir,
+          path: textAttachmentPath,
+        });
+        assert.isNotNull(retainedSharedPath);
+        reconcileTextAttachments({
+          attachmentsDir,
+          retainedRelativePaths: new Set(retainedSharedPath ? [retainedSharedPath] : []),
+          nowMs: Date.now() + TEXT_ATTACHMENT_DELETE_GRACE_MS + 1,
+        });
 
         assert.isTrue(yield* exists(textAttachmentPath));
         assert.isTrue(yield* exists(deletedTextAttachmentPath));
