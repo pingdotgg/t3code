@@ -1410,6 +1410,7 @@ describe("ProviderCommandReactor", () => {
     expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
       threadId: ThreadId.make("thread-1"),
       cwd: "/tmp/provider-project-worktree",
+      isWorktree: true,
       resumeCursor: { opaque: "resume-1" },
       modelSelection: {
         instanceId: ProviderInstanceId.make("claudeAgent"),
@@ -1859,6 +1860,112 @@ describe("ProviderCommandReactor", () => {
     expect(harness.interruptTurn.mock.calls[0]?.[0]).toEqual({
       threadId: "thread-1",
     });
+  });
+
+  it("times out a stuck session start without blocking another thread's interrupt", async () => {
+    const previousTimeout = process.env.T3_SESSION_START_TIMEOUT_MS;
+    process.env.T3_SESSION_START_TIMEOUT_MS = "25";
+
+    try {
+      const harness = await createHarness();
+      const now = "2026-01-01T00:00:00.000Z";
+      const modelSelection = {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+      };
+
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("cmd-thread-create-stuck-start-peer"),
+          threadId: ThreadId.make("thread-2"),
+          projectId: asProjectId("project-1"),
+          title: "Peer thread",
+          modelSelection,
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+        }),
+      );
+
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-peer-turn-start-before-stall"),
+          threadId: ThreadId.make("thread-2"),
+          message: {
+            messageId: asMessageId("peer-user-message"),
+            role: "user",
+            text: "Start the peer session.",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        }),
+      );
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+      harness.startSession.mockImplementationOnce(() => Effect.never);
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-stuck-turn-start"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("stuck-user-message"),
+            role: "user",
+            text: "This session startup will hang.",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        }),
+      );
+      await waitFor(() => harness.startSession.mock.calls.length === 2);
+
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.turn.interrupt",
+          commandId: CommandId.make("cmd-peer-interrupt-during-stuck-start"),
+          threadId: ThreadId.make("thread-2"),
+          turnId: asTurnId("peer-turn"),
+          createdAt: now,
+        }),
+      );
+      await waitFor(() => harness.interruptTurn.mock.calls.length === 1);
+
+      await waitFor(async () => {
+        const readModel = await harness.readModel();
+        const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+        return (
+          thread?.activities.some((activity) => activity.kind === "provider.turn.start.failed") ??
+          false
+        );
+      });
+
+      const readModel = await harness.readModel();
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      expect(
+        thread?.activities.find((activity) => activity.kind === "provider.turn.start.failed"),
+      ).toMatchObject({
+        payload: {
+          detail: expect.stringMatching(/codex.*session startup timed out/i),
+        },
+      });
+      expect(harness.stopSession).toHaveBeenCalledWith({
+        threadId: ThreadId.make("thread-1"),
+      });
+    } finally {
+      if (previousTimeout === undefined) {
+        delete process.env.T3_SESSION_START_TIMEOUT_MS;
+      } else {
+        process.env.T3_SESSION_START_TIMEOUT_MS = previousTimeout;
+      }
+    }
   });
 
   it("reacts to thread.task-stop-requested by calling provider stopTask", async () => {
