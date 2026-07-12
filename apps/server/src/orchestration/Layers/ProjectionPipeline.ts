@@ -371,6 +371,7 @@ function collectThreadTextAttachmentRelativePaths(
 
 const runAttachmentSideEffects = Effect.fn("runAttachmentSideEffects")(function* (
   sideEffects: AttachmentSideEffects,
+  projectionThreadMessageRepository: ProjectionThreadMessageRepository["Service"],
 ) {
   const serverConfig = yield* Effect.service(ServerConfig);
   const fileSystem = yield* Effect.service(FileSystem.FileSystem);
@@ -484,8 +485,16 @@ const runAttachmentSideEffects = Effect.fn("runAttachmentSideEffects")(function*
     { concurrency: 1 },
   );
 
+  const retainedTextAttachmentPaths = collectThreadTextAttachmentRelativePaths(
+    attachmentsRootDir,
+    (yield* projectionThreadMessageRepository.listRetained()).filter(
+      (message) => !sideEffects.deletedThreadIds.has(message.threadId),
+    ),
+  );
   yield* Effect.forEach(
-    sideEffects.textAttachmentRelativePathsToRemove,
+    [...sideEffects.textAttachmentRelativePathsToRemove].filter(
+      (relativePath) => !retainedTextAttachmentPaths.has(relativePath),
+    ),
     (relativePath) =>
       fileSystem.remove(path.join(attachmentsRootDir, path.dirname(relativePath)), {
         recursive: true,
@@ -840,6 +849,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     )(function* (event, attachmentSideEffects) {
       switch (event.type) {
         case "thread.deleted": {
+          attachmentSideEffects.deletedThreadIds.add(event.payload.threadId);
           const existingRows = yield* projectionThreadMessageRepository.listByThreadId({
             threadId: event.payload.threadId,
           });
@@ -1573,7 +1583,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         ),
       );
 
-      yield* runAttachmentSideEffects(attachmentSideEffects).pipe(
+      yield* runAttachmentSideEffects(
+        attachmentSideEffects,
+        projectionThreadMessageRepository,
+      ).pipe(
         Effect.catch((cause) =>
           Effect.logWarning("failed to apply projected attachment side-effects", {
             projector: projector.name,
@@ -1608,6 +1621,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
         Effect.provideService(ServerConfig, serverConfig),
+        Effect.provideService(ProjectionThreadMessageRepository, projectionThreadMessageRepository),
         Effect.asVoid,
         Effect.catchTag("SqlError", (sqlError) =>
           Effect.fail(toPersistenceSqlError("ProjectionPipeline.projectEvent:query")(sqlError)),
@@ -1622,6 +1636,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
       Effect.provideService(ServerConfig, serverConfig),
+      Effect.provideService(ProjectionThreadMessageRepository, projectionThreadMessageRepository),
       Effect.asVoid,
       Effect.tap(() =>
         Effect.logDebug("orchestration projection pipeline bootstrapped").pipe(

@@ -88,7 +88,12 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
-import { createTextAttachmentPath, textAttachmentDirectory } from "./attachmentStore.ts";
+import {
+  collectTextAttachmentRelativePaths,
+  createTextAttachmentPath,
+  textAttachmentDirectory,
+  textAttachmentRelativePath,
+} from "./attachmentStore.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
@@ -1561,6 +1566,27 @@ const makeWsRpcLayer = (
                 path: input.path,
               });
               if (!directory) return { removed: false };
+              const relativePath = textAttachmentRelativePath({
+                attachmentsDir: config.attachmentsDir,
+                path: input.path,
+              });
+              if (!relativePath) return { removed: false };
+              const retainedSnapshot = yield* projectionSnapshotQuery
+                .getSnapshot()
+                .pipe(
+                  Effect.mapError(
+                    (cause) => new AssetTextAttachmentDeleteError({ path: input.path, cause }),
+                  ),
+                );
+              const isDurable = retainedSnapshot.threads.some((thread) =>
+                thread.messages.some((message) =>
+                  collectTextAttachmentRelativePaths({
+                    attachmentsDir: config.attachmentsDir,
+                    text: message.text,
+                  }).has(relativePath),
+                ),
+              );
+              if (isDurable) return { removed: false };
               yield* fileSystem
                 .remove(directory, { recursive: true, force: true })
                 .pipe(

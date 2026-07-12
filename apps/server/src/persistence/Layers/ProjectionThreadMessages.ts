@@ -137,6 +137,27 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
       `,
   });
 
+  const listRetainedProjectionThreadMessageRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionThreadMessageDbRowSchema,
+    execute: () => sql`
+      SELECT
+        messages.message_id AS "messageId",
+        messages.thread_id AS "threadId",
+        messages.turn_id AS "turnId",
+        messages.role,
+        messages.text,
+        messages.attachments_json AS "attachments",
+        messages.is_streaming AS "isStreaming",
+        messages.created_at AS "createdAt",
+        messages.updated_at AS "updatedAt"
+      FROM projection_thread_messages AS messages
+      INNER JOIN projection_threads AS threads ON threads.thread_id = messages.thread_id
+      WHERE threads.deleted_at IS NULL
+      ORDER BY messages.created_at ASC, messages.message_id ASC
+    `,
+  });
+
   const deleteProjectionThreadMessageRows = SqlSchema.void({
     Request: DeleteProjectionThreadMessagesInput,
     execute: ({ threadId }) =>
@@ -167,6 +188,14 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
       Effect.map((rows) => rows.map(toProjectionThreadMessage)),
     );
 
+  const listRetained: ProjectionThreadMessageRepositoryShape["listRetained"] = () =>
+    listRetainedProjectionThreadMessageRows(undefined).pipe(
+      Effect.mapError(
+        toPersistenceSqlError("ProjectionThreadMessageRepository.listRetained:query"),
+      ),
+      Effect.map((rows) => rows.map(toProjectionThreadMessage)),
+    );
+
   const deleteByThreadId: ProjectionThreadMessageRepositoryShape["deleteByThreadId"] = (input) =>
     deleteProjectionThreadMessageRows(input).pipe(
       Effect.mapError(
@@ -178,6 +207,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
     upsert,
     getByMessageId,
     listByThreadId,
+    listRetained,
     deleteByThreadId,
   } satisfies ProjectionThreadMessageRepositoryShape;
 });

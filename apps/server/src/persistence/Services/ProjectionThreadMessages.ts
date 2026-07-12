@@ -78,6 +78,12 @@ export interface ProjectionThreadMessageRepositoryShape {
     input: ListProjectionThreadMessagesInput,
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadMessage>, ProjectionRepositoryError>;
 
+  /** List messages belonging to threads that have not been deleted. */
+  readonly listRetained: () => Effect.Effect<
+    ReadonlyArray<ProjectionThreadMessage>,
+    ProjectionRepositoryError
+  >;
+
   /**
    * Delete projected thread messages by thread.
    */
