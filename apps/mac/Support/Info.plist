@@ -32,7 +32,7 @@
         <true/>
     </dict>
     <key>NSLocalNetworkUsageDescription</key>
-    <string>SergeCode connects to other Macs on your network that you have paired.</string>
+    <string>SurgeCode connects to other Macs on your network that you have paired.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>SurgeCode uses the microphone for local, on-device dictation. Audio never leaves your Mac.</string>
 </dict>

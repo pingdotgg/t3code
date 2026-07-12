@@ -173,6 +173,7 @@ struct SidebarView: View {
                 ForEach(session.model.projects) { project in
                     RemoteProjectSubheaderRow(
                         project: project,
+                        isReady: session.model.connection == .ready,
                         onRename: {
                             renameText = project.name
                             renameTarget = ProjectActionTarget(
@@ -197,9 +198,11 @@ struct SidebarView: View {
                                 Button("Archive") {
                                     Task { await session.model.archiveThread(thread) }
                                 }
+                                .disabled(session.model.connection != .ready)
                                 Button("Delete", role: .destructive) {
                                     Task { await session.model.deleteThread(thread) }
                                 }
+                                .disabled(session.model.connection != .ready)
                             }
                     }
                     if threadsForProject.isEmpty {
@@ -222,6 +225,7 @@ struct SidebarView: View {
 
 private struct RemoteProjectSubheaderRow: View {
     let project: Project
+    let isReady: Bool
     let onRename: () -> Void
     let onDelete: () -> Void
 
@@ -238,8 +242,10 @@ private struct RemoteProjectSubheaderRow: View {
         .listRowSeparator(.hidden)
         .contextMenu {
             Button("Rename…") { onRename() }
+                .disabled(!isReady)
             Divider()
             Button("Delete Project…", role: .destructive) { onDelete() }
+                .disabled(!isReady)
         }
     }
 }

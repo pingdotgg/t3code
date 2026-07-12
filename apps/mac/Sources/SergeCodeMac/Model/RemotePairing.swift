@@ -41,8 +41,8 @@ public enum RemotePairing {
         deviceStore: RemoteDeviceStore = .init(),
         keychain: any KeychainStoreProtocol = KeychainStore()
     ) throws {
+        defer { deviceStore.remove(id: id) }
         try keychain.deleteToken(deviceID: id)
-        deviceStore.remove(id: id)
     }
 
     private static func localClientLabel() -> String {

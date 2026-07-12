@@ -165,15 +165,10 @@ struct SergeCodeApp: App {
 /// - Raw SIGTERM/SIGINT (kill, launchd, logout) bypass
 ///   `applicationShouldTerminate` entirely, so DispatchSourceSignal routes
 ///   them into `NSApp.terminate`.
-/// - `.terminateLater` + `reply(toApplicationShouldTerminate:)` is unusable
-///   for async cleanup: while AppKit waits for the reply it spins a modal
-///   run loop that services neither the main dispatch queue nor MainActor
-///   tasks (verified empirically — GCD asyncAfter and MainActor Tasks both
-///   starve), so the reply can never be sent from async work. Instead the
-///   delegate blocks the main thread on a semaphore, bounded at 6s, while
-///   `backend.stop()` runs on a detached task. That is safe precisely
-///   because `BackendService.stop()` is actor- (not MainActor-) isolated
-///   and never hops to the main actor; the UI is about to die anyway.
+/// - The delegate synchronously collects the backends and waits on a bounded
+///   semaphore while their actor-isolated stop paths run off-main. This keeps
+///   the sidecars from being orphaned without awaiting MainActor work while
+///   the main thread is blocked.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var multi: MultiDeviceModel?
@@ -193,14 +188,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let multi, !didCleanup else { return .terminateNow }
         didCleanup = true
+
+        let backends = multi.collectBackendsForShutdown()
         let done = DispatchSemaphore(value: 0)
         Task.detached {
-            await multi.shutdown()
+            await withTaskGroup(of: Void.self) { group in
+                for backend in backends {
+                    group.addTask { await backend.stop() }
+                }
+            }
             done.signal()
         }
-        // Each backend may own a sidecar whose stop path has a 2s grace, so
-        // 6s covers the worst legitimate case while a hung teardown can
-        // never wedge quit.
         _ = done.wait(timeout: .now() + 6)
         return .terminateNow
     }

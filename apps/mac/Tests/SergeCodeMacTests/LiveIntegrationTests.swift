@@ -96,6 +96,7 @@ struct LiveIntegrationTests {
             allowLanAccess: true,
             baseDirectory: scratchRoot + "/local-home")
         let localEvents = await local.events()
+        var remote: LiveBackend?
 
         do {
             // This is the same local-sidecar path used by the app. The LAN
@@ -120,21 +121,23 @@ struct LiveIntegrationTests {
             #expect(storedDeviceIDs == [device.id])
             #expect(try keychain.readToken(deviceID: device.id) != nil)
 
-            let remote = LiveBackend(
+            remote = LiveBackend(
                 mode: .remote(device: device, keychain: keychain))
-            let remoteEvents = await remote.events()
-            await remote.start()
+            let remoteBackend = try #require(remote)
+            let remoteEvents = await remoteBackend.events()
+            await remoteBackend.start()
             try await waitForReady(remoteEvents)
 
             let localProject = try await local.addProject(path: projectPath)
-            let remoteProjects = try await waitForProject(remote, id: localProject.id)
-            let remoteThreads = try await remote.threads()
+            let remoteProjects = try await waitForProject(remoteBackend, id: localProject.id)
+            let remoteThreads = try await remoteBackend.threads()
             #expect(remoteProjects.contains { $0.id == localProject.id })
             #expect(remoteThreads.isEmpty)
 
-            await remote.stop()
+            await remoteBackend.stop()
             await local.stop()
         } catch {
+            await remote?.stop()
             await local.stop()
             throw error
         }

@@ -62,7 +62,7 @@ public struct SettingsScene: View {
                 .tag(SettingsTab.devices)
 
             RemoteMacsSettingsTab(multi: self.multi)
-                .tabItem { Label("Remote Macs", systemImage: "macbook.and.iphone") }
+                .tabItem { Label("Remote Macs", systemImage: "network") }
                 .tag(SettingsTab.remoteMacs)
 
             ConnectionSettingsTab(model: model)
@@ -516,7 +516,7 @@ private struct PhoneSettingsTab: View {
                             MobileAccessPreference.setEnabled(newValue)
                         }))
                 Text(
-                    "Pair SergeCode on an iPhone or another Mac to chat with this Mac's sessions over Wi‑Fi. The same one-time link or QR code below works for either device; macOS may ask to allow incoming network connections."
+                    "Pair SurgeCode on an iPhone or another Mac to chat with this Mac's sessions over Wi‑Fi. The same one-time link or QR code below works for either device; macOS may ask to allow incoming network connections."
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -561,7 +561,7 @@ private struct PhoneSettingsTab: View {
                 QRCodePairingView(text: pairing.pairingURL.absoluteString)
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Open SergeCode on an iPhone or another Mac, then scan this QR code or paste the link.")
+                    Text("Open SurgeCode on an iPhone or another Mac, then scan this QR code or paste the link.")
                         .font(.callout)
                         .fixedSize(horizontal: false, vertical: true)
 

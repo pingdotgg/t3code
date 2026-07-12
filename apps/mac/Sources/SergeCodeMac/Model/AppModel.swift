@@ -227,10 +227,19 @@ public final class AppModel {
         }
     }
 
-    public func shutdown() async {
-        flushPendingEvents()
+    /// Cancels MainActor-owned lifecycle work before a caller tears down the
+    /// backend from a non-MainActor context.
+    func prepareForTermination() {
         eventTask?.cancel()
         eventTask = nil
+    }
+
+    /// Shutdown needs the backend after MainActor-owned tasks have stopped.
+    var backendForShutdown: any BackendService { backend }
+
+    public func shutdown() async {
+        flushPendingEvents()
+        prepareForTermination()
         await backend.stop()
     }
 

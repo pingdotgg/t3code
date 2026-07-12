@@ -2,11 +2,11 @@ import Observation
 
 @Observable
 @MainActor
-public final class RemoteDeviceSession: @MainActor Identifiable {
+public final class RemoteDeviceSession: Identifiable {
     public let descriptor: RemoteDeviceDescriptor
     public let model: AppModel
 
-    public var id: DeviceID { descriptor.id }
+    public nonisolated var id: DeviceID { descriptor.id }
     public var connection: ConnectionPhase { model.connection }
 
     public init(descriptor: RemoteDeviceDescriptor, model: AppModel) {
@@ -94,6 +94,7 @@ public final class MultiDeviceModel {
             return
         }
         await session.model.shutdown()
+        guard hasStarted, remoteSessions.contains(where: { $0 === session }) else { return }
         session.model.start()
     }
 
@@ -117,6 +118,17 @@ public final class MultiDeviceModel {
                 }
             }
         }
+    }
+
+    /// Synchronously stops MainActor-owned event consumers and returns the
+    /// backends for concurrent non-MainActor teardown during app termination.
+    public func collectBackendsForShutdown() -> [any BackendService] {
+        hasStarted = false
+        let models = allModels
+        for model in models {
+            model.prepareForTermination()
+        }
+        return models.map { $0.backendForShutdown }
     }
 
     /// Route a thread selection to its owning model and clear every other
