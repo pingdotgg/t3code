@@ -34,6 +34,13 @@ public struct Project: Identifiable, Hashable, Sendable {
 
 public enum ThreadStatus: String, Sendable {
     case idle, running, waitingApproval, backgroundWork, error, archived
+
+    public var isSettled: Bool {
+        switch self {
+        case .idle, .archived, .error: true
+        case .running, .waitingApproval, .backgroundWork: false
+        }
+    }
 }
 
 /// UI mirror of the wire `RuntimeMode` (how much the agent may do unprompted).
@@ -434,6 +441,9 @@ extension TimelineItem {
                 output: output, outputIsError: outputIsError)
         case .reasoning(let id, let text, _):
             return .reasoning(id: id, text: text, at: firstAt)
+        case .subagentTask(var task):
+            task.startedAt = firstAt
+            return .subagentTask(task)
         default:
             return self
         }

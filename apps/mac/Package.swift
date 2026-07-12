@@ -30,8 +30,10 @@ let package = Package(
                 .product(name: "Markdown", package: "swift-markdown"),
             ],
             path: "Sources/SergeCodeMac",
-            exclude: ["Vendor/HighlightSwift/LICENSE.md"],
-            resources: [.process("Vendor/HighlightSwift/HighlightJS")]
+            resources: [
+                .process("Vendor/HighlightSwift/HighlightJS"),
+                .process("Vendor/HighlightSwift/HighlightSwift-LICENSE.md"),
+            ]
         ),
         .testTarget(
             name: "SergeCodeMacTests",

@@ -3,11 +3,13 @@ public enum HighlightLanguage: String, Sendable {
         switch self {
         case .cPlusPlus: return "cpp"
         case .latex: return "tex"
-        case .phpTemplate: return "phptemp"
+        case .phpTemplate: // SergeCode: fix upstream alias
+            return "php-template"
         case .protocolBuffers: return "protobuf"
         case .pythonRepl: return "python-repl"
         case .visualBasic: return "vbnet"
-        case .webAssembly: return "webass"
+        case .webAssembly: // SergeCode: fix upstream alias
+            return "wasm"
         default:
             return rawValue.lowercased()
         }

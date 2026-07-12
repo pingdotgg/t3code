@@ -30,11 +30,23 @@ struct SelectableTranscriptSheet: View {
     let items: [TimelineItem]
     /// Optional project root for path shortening in tool rows.
     var projectRoot: String? = nil
+    let threadIsSettled: Bool
+
+    init(
+        items: [TimelineItem],
+        projectRoot: String? = nil,
+        threadIsSettled: Bool = false
+    ) {
+        self.items = items
+        self.projectRoot = projectRoot
+        self.threadIsSettled = threadIsSettled
+    }
 
     @Environment(\.dismiss) private var dismiss
 
     private var attributed: NSAttributedString {
-        TranscriptTextBuilder.attributedString(from: items, projectRoot: projectRoot)
+        TranscriptTextBuilder.attributedString(
+            from: items, projectRoot: projectRoot, threadIsSettled: threadIsSettled)
     }
 
     var body: some View {
@@ -124,11 +136,13 @@ enum TranscriptTextBuilder {
 
     static func attributedString(
         from items: [TimelineItem],
-        projectRoot: String? = nil
+        projectRoot: String? = nil,
+        threadIsSettled: Bool = false
     ) -> NSAttributedString {
         // Select Text intentionally uses the pre-separator grouping contract:
         // day rows are visual chrome and must not flush a tool burst.
-        let displayItems = items.groupedForDisplay(includeSeparators: false)
+        let displayItems = items.groupedForDisplay(
+            threadIsSettled: threadIsSettled, includeSeparators: false)
         return attributedString(fromDisplayItems: displayItems, projectRoot: projectRoot)
     }
 
@@ -137,7 +151,8 @@ enum TranscriptTextBuilder {
     /// affect serialization even when a caller passes the visual timeline.
     static func attributedString(
         from items: [TimelineDisplayItem],
-        projectRoot: String? = nil
+        projectRoot: String? = nil,
+        threadIsSettled: Bool = false
     ) -> NSAttributedString {
         let rawItems = items.flatMap { display -> [TimelineItem] in
             switch display {
@@ -146,7 +161,8 @@ enum TranscriptTextBuilder {
             case .daySeparator: []
             }
         }
-        return attributedString(from: rawItems, projectRoot: projectRoot)
+        return attributedString(
+            from: rawItems, projectRoot: projectRoot, threadIsSettled: threadIsSettled)
     }
 
     private static func attributedString(

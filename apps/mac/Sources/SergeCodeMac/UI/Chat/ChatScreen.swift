@@ -88,9 +88,7 @@ public struct ChatScreen: View {
                 .disabled(model.selectedThreadID == nil)
         }
         .sheet(isPresented: $showSelectableTranscript) {
-            SelectableTranscriptSheet(
-                items: model.selectedTimeline(),
-                projectRoot: selectedProjectRoot)
+            selectableTranscriptSheet
         }
         #if DEBUG
             .onReceive(NotificationCenter.default.publisher(for: .uiProbeToggleSection)) { note in
@@ -117,6 +115,17 @@ public struct ChatScreen: View {
     private var selectedProjectRoot: String? {
         guard let thread = model.selectedThread else { return nil }
         return model.projects.first { $0.id == thread.projectID }?.path
+    }
+
+    private var selectedThreadIsSettled: Bool {
+        model.selectedThread?.status.isSettled ?? false
+    }
+
+    private var selectableTranscriptSheet: SelectableTranscriptSheet {
+        SelectableTranscriptSheet(
+            items: model.selectedTimeline(),
+            projectRoot: selectedProjectRoot,
+            threadIsSettled: selectedThreadIsSettled)
     }
 }
 
