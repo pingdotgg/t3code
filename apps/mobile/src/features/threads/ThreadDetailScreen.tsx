@@ -28,6 +28,7 @@ import type { ComposerEditorHandle } from "../../components/ComposerEditor";
 import type { StatusTone } from "../../components/StatusPill";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import { CHAT_CONTENT_MAX_WIDTH, type LayoutVariant } from "../../lib/layout";
+import { buildModelDisplayNameMap } from "../../lib/modelOptions";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import type {
   PendingApproval,
@@ -263,6 +264,10 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
         ?.skills ?? [],
     [props.serverConfig, selectedInstanceId],
   );
+  const modelDisplayNames = useMemo(
+    () => buildModelDisplayNameMap(props.serverConfig),
+    [props.serverConfig],
+  );
 
   const completeDrawerGesture = useCallback(() => {
     void Haptics.selectionAsync();
@@ -394,6 +399,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               key={props.selectedThread.id}
               environmentId={props.environmentId}
               threadId={props.selectedThread.id}
+              modelDisplayNames={modelDisplayNames}
               workspaceRoot={props.threadCwd}
               feed={props.selectedThreadFeed}
               contentPresentation={props.contentPresentation}

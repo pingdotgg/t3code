@@ -30,6 +30,16 @@
             }
             // Let the inspector timeline present and the diff refresh land.
             try? await Task.sleep(for: .seconds(2))
+            print(
+                "UIProbe: agents running=\(model.subagentTaskAggregator.runningCount) "
+                    + "entries=\(model.subagentTaskAggregator.entries.count)")
+            // The toolbar item owns the popover anchor. Toggle it through the
+            // same in-process harness used by the other popover probes.
+            toggleSection("agents")
+            try? await Task.sleep(for: .seconds(1))
+            snapshotAllWindows("2-agents-panel", dir: dir)
+            toggleSection("agents")
+            try? await Task.sleep(for: .seconds(1))
             snapshot("1-inspector-timeline", dir: dir)
 
             // Plan strip above the composer: expand, snapshot, collapse.
@@ -181,6 +191,10 @@
                 // Passport sheet: seed a temp store with Dolomites visits and
                 // capture the sheet's view tree.
                 await probePassport(scenery: scenery, dir: dir)
+
+                // Brand surfaces: About window + empty state with the
+                // BrandMark/BrandWordmark treatment.
+                await probeBrand(model: model, scenery: scenery, dir: dir)
             } else {
                 print("UIProbe: skipping settings snapshots (live backend run)")
             }
@@ -653,6 +667,52 @@
                 }
             }
             window.orderOut(nil)
+        }
+
+        /// Hosts AboutView and EmptyStateView in throwaway windows and
+        /// captures them — the About window and no-selection empty state
+        /// can't be reached once the probe has selected a thread, and this
+        /// exercises the identical view trees.
+        private static func probeBrand(model: AppModel, scenery: SceneryStore, dir: String) async {
+            let aboutHosting = NSHostingView(rootView: AboutView())
+            let aboutWindow = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 380, height: 460),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            aboutWindow.contentView = aboutHosting
+            aboutWindow.orderFront(nil)
+            try? await Task.sleep(for: .seconds(2))
+            if let view = aboutWindow.contentView,
+                let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
+            {
+                view.cacheDisplay(in: view.bounds, to: rep)
+                if let data = rep.representation(using: .png, properties: [:]) {
+                    let url = URL(fileURLWithPath: dir).appendingPathComponent("16-about.png")
+                    try? data.write(to: url)
+                    print("UIProbe: wrote \(url.path)")
+                }
+            }
+            aboutWindow.orderOut(nil)
+
+            let emptyHosting = NSHostingView(
+                rootView: EmptyStateView(scenery: scenery, onNewSession: {}))
+            let emptyWindow = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            emptyWindow.contentView = emptyHosting
+            emptyWindow.orderFront(nil)
+            try? await Task.sleep(for: .seconds(2))
+            if let view = emptyWindow.contentView,
+                let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
+            {
+                view.cacheDisplay(in: view.bounds, to: rep)
+                if let data = rep.representation(using: .png, properties: [:]) {
+                    let url = URL(fileURLWithPath: dir).appendingPathComponent("17-empty-state.png")
+                    try? data.write(to: url)
+                    print("UIProbe: wrote \(url.path)")
+                }
+            }
+            emptyWindow.orderOut(nil)
+            print("UIProbe: brand about+empty snapshots captured")
         }
 
         /// Hosts SettingsScene in its own window on `tab` and captures it —

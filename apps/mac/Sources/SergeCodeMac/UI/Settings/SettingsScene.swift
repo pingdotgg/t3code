@@ -76,19 +76,6 @@ private struct GeneralSettingsTab: View {
     let model: AppModel
     @UIState private var draft: AppSettings?
 
-    private var appVersion: String {
-        let shortVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
-        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String
-        switch (shortVersion, build) {
-        case let (.some(v), .some(b)):
-            return "\(v) (\(b))"
-        case let (.some(v), .none):
-            return v
-        default:
-            return "—"
-        }
-    }
-
     var body: some View {
         Form {
             if let settings = draft {
@@ -129,7 +116,7 @@ private struct GeneralSettingsTab: View {
             Section {
                 LabeledContent("Appearance", value: "Follows System")
                     .help("SurgeCode does not offer a manual light/dark override; it follows macOS.")
-                LabeledContent("Version", value: appVersion)
+                LabeledContent("Version", value: Bundle.main.appVersionDisplay)
             }
         }
         .formStyle(.grouped)
@@ -509,7 +496,7 @@ private struct PhoneSettingsTab: View {
                             MobileAccessPreference.setEnabled(newValue)
                         }))
                 Text(
-                    "Pair the SergeCode app on your iPhone to chat with this Mac's sessions over Wi‑Fi. Every connection needs a one-time code from below; macOS may ask to allow incoming network connections."
+                    "Pair the SurgeCode app on your iPhone to chat with this Mac's sessions over Wi‑Fi. Every connection needs a one-time code from below; macOS may ask to allow incoming network connections."
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -554,7 +541,7 @@ private struct PhoneSettingsTab: View {
                 QRCodePairingView(text: pairing.pairingURL.absoluteString)
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Open SergeCode on your iPhone, choose Scan QR Code, and point it here.")
+                    Text("Open SurgeCode on your iPhone, choose Scan QR Code, and point it here.")
                         .font(.callout)
                         .fixedSize(horizontal: false, vertical: true)
 

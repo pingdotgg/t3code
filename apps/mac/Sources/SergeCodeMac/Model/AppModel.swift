@@ -12,11 +12,16 @@ public final class AppModel {
     public private(set) var pinnedThreadIDs: Set<String>
     public private(set) var providers: [ProviderInstance] = []
     public private(set) var models: [ModelOption] = []
+    /// Server-catalog display names keyed by model slug for timeline badges.
+    public private(set) var modelDisplayNames: [String: String] = [:]
     /// Low-frequency usage-limit card actions — stays flat on AppModel (not ThreadState).
     public private(set) var usageLimitActions: [String: UsageLimitActionState] = [:]
     /// Per-task stop failures for subagent rows (`taskId` → message). Transient;
     /// cleared on the next successful stop, a new stop attempt, or task state change.
     public private(set) var subagentStopErrors: [String: String] = [:]
+    /// Cross-thread task projection. The task rows survive timeline eviction;
+    /// only the live flag changes when a thread leaves the subscription LRU.
+    let subagentTaskAggregator = SubagentTaskAggregator()
     /// Outcome of the most recent git action, shown as a transient banner.
     public var lastGitActionOutcome: GitActionOutcome?
 
@@ -153,6 +158,15 @@ public final class AppModel {
 
     private func persistPinnedThreadIDs() {
         UserDefaults.standard.set(Array(pinnedThreadIDs), forKey: Self.pinnedThreadIDsKey)
+    }
+
+    private static func makeModelDisplayNames(from models: [ModelOption]) -> [String: String] {
+        models.reduce(into: [String: String]()) { displayNames, model in
+            let slug = model.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+            let displayName = model.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !slug.isEmpty, !displayName.isEmpty, displayNames[slug] == nil else { return }
+            displayNames[slug] = displayName
+        }
     }
 
     /// Lookup only — does not create a `ThreadState`.
@@ -354,6 +368,9 @@ public final class AppModel {
                 var items = currentItems(threadID)
                 items.upsertTimelineItem(item)
                 touched[threadID] = items
+                if case .subagentTask(let task) = item {
+                    subagentTaskAggregator.upsert(task, for: threadID)
+                }
                 recordInteraction(item, threadID: threadID)
             case .timelineReset(let threadID, let items):
                 let filtered = items.filter { !isDismissedUsageLimit($0) }
@@ -380,6 +397,8 @@ public final class AppModel {
             state.timelineVersion += 1
             if resetThreads.contains(threadID) {
                 state.hasLoadedTimeline = true
+                subagentTaskAggregator.replaceTasks(
+                    subagentTasks(from: items), for: threadID)
             }
         }
     }
@@ -394,6 +413,7 @@ public final class AppModel {
         case .projectsChanged(let list):
             projects = list
         case .threadUpserted(let thread):
+            subagentTaskAggregator.updateThread(thread)
             // Update in place: `updatedAt` bumps on every activity while a
             // thread runs, so resorting here made sidebar rows jump around
             // mid-conversation. Order is recomputed only on refreshAll.
@@ -427,6 +447,7 @@ public final class AppModel {
                 dequeueNextQueuedMessageIfNeeded(threadID: thread.id)
             }
         case .threadRemoved(let id):
+            subagentTaskAggregator.remove(threadID: id)
             threads.removeAll { $0.id == id }
             if pinnedThreadIDs.remove(id) != nil {
                 persistPinnedThreadIDs()
@@ -558,8 +579,13 @@ public final class AppModel {
                 pinnedThreadIDs.formIntersection(liveThreadIDs)
                 persistPinnedThreadIDs()
             }
+            for thread in refreshedThreads {
+                subagentTaskAggregator.updateThread(thread)
+            }
             self.providers = try await providers
-            self.models = try await models
+            let refreshedModels = try await models
+            self.models = refreshedModels
+            self.modelDisplayNames = Self.makeModelDisplayNames(from: refreshedModels)
             self.effectiveUpdatedAt.removeAll(keepingCapacity: true)
             for thread in refreshedThreads
             where shouldSendQueuedMessage(
@@ -574,7 +600,9 @@ public final class AppModel {
 
     public func refreshModels() async {
         do {
-            models = try await backend.models()
+            let refreshedModels = try await backend.models()
+            models = refreshedModels
+            modelDisplayNames = Self.makeModelDisplayNames(from: refreshedModels)
         } catch {
             lastError = String(describing: error)
         }
@@ -582,13 +610,20 @@ public final class AppModel {
 
     public func loadTimelineIfNeeded(threadID: String) async {
         let state = self.state(creating: threadID)
-        guard !state.hasLoadedTimeline else { return }
+        guard !state.hasLoadedTimeline else {
+            subagentTaskAggregator.setLive(true, for: threadID)
+            return
+        }
         do {
             let items = try await backend.timeline(threadID: threadID)
-            state.timeline = items.filter { !isDismissedUsageLimit($0) }
+            let filtered = items.filter { !isDismissedUsageLimit($0) }
+            state.timeline = filtered
             state.timelineVersion += 1
             state.hasLoadedTimeline = true
-            for item in state.timeline {
+            subagentTaskAggregator.setLive(true, for: threadID)
+            subagentTaskAggregator.replaceTasks(
+                subagentTasks(from: filtered), for: threadID)
+            for item in filtered {
                 recordInteraction(item, threadID: threadID)
             }
         } catch {
@@ -1170,8 +1205,8 @@ public final class AppModel {
         }
     }
 
-    public func stopSubagentTask(taskId: String) async {
-        guard let threadID = selectedThreadID else { return }
+    public func stopSubagentTask(taskId: String, threadID: String? = nil) async {
+        guard let threadID = threadID ?? selectedThreadID else { return }
         // Clear any prior stop error so a retry starts clean.
         subagentStopErrors[taskId] = nil
         do {
@@ -1428,6 +1463,7 @@ public final class AppModel {
     /// later selection refetches via `loadTimelineIfNeeded`.
     private func releaseTimeline(threadID: String) async {
         recentlySelected.removeAll { $0 == threadID }
+        subagentTaskAggregator.setLive(false, for: threadID)
         await backend.closeTimeline(threadID: threadID)
         if let state = threadStates[threadID] {
             state.timeline = []
@@ -1452,6 +1488,7 @@ public final class AppModel {
                 guard threadID != self.selectedThreadID
                     && !self.recentlySelected.contains(threadID)
                 else { return }
+                self.subagentTaskAggregator.setLive(false, for: threadID)
                 if let state = self.threadStates[threadID] {
                     state.timeline = []
                     state.hasLoadedTimeline = false
@@ -1459,6 +1496,13 @@ public final class AppModel {
                 TimelineDisplayCache.evict(threadID: threadID)
                 await self.backend.closeTimeline(threadID: threadID)
             }
+        }
+    }
+
+    private func subagentTasks(from items: [TimelineItem]) -> [SubagentTaskItem] {
+        items.compactMap { item in
+            guard case .subagentTask(let task) = item else { return nil }
+            return task
         }
     }
 }

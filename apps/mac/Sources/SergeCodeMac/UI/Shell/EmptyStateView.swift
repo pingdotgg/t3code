@@ -33,11 +33,9 @@ struct EmptyStateView: View {
                 .ignoresSafeArea()
 
             VStack(spacing: 16) {
-                Image(systemName: "mountain.2.fill")
-                    .font(.system(size: 44))
-                    .foregroundStyle(.tint)
-                Text("SurgeCode")
-                    .font(.largeTitle.bold())
+                BrandMarkView()
+                    .frame(width: 44, height: 44)
+                BrandWordmark(size: 26)
                 Text("Select a session, or start a new one.")
                     .foregroundStyle(.secondary)
                 Button("New Session", action: onNewSession)
