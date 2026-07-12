@@ -16,6 +16,15 @@
 
 import Foundation
 
+public enum AuthCredential: Sendable {
+    /// The one-shot token supplied to a locally spawned sidecar. It can be
+    /// exchanged again when a cached session expires.
+    case desktopBootstrap(String)
+    /// A persisted remote session token. It is already a bearer credential and
+    /// has no refresh grant; callers must re-pair after it expires.
+    case bearer(String)
+}
+
 /// Configuration required to bootstrap an authenticated WebSocket connection
 /// to a locally-spawned t3 server sidecar (§1.2).
 public struct AuthConfig: Sendable {
@@ -23,14 +32,45 @@ public struct AuthConfig: Sendable {
     public let httpBaseURL: URL
     /// e.g. `ws://127.0.0.1:3773` — path is forced to `/ws` by `AuthClient`.
     public let wsBaseURL: URL
-    /// One-shot bootstrap credential handed to the sidecar over stdin
-    /// (SidecarKit's `DesktopBackendBootstrap.desktopBootstrapToken`).
+    public let credential: AuthCredential
+    /// Backward-compatible view retained for callers that still inspect the
+    /// old configuration field. It is empty for a bearer credential.
     public let desktopBootstrapToken: String
 
-    public init(httpBaseURL: URL, wsBaseURL: URL, desktopBootstrapToken: String) {
+    public init(httpBaseURL: URL, wsBaseURL: URL, credential: AuthCredential) {
         self.httpBaseURL = httpBaseURL
         self.wsBaseURL = wsBaseURL
-        self.desktopBootstrapToken = desktopBootstrapToken
+        self.credential = credential
+        if case let .desktopBootstrap(token) = credential {
+            self.desktopBootstrapToken = token
+        } else {
+            self.desktopBootstrapToken = ""
+        }
+    }
+
+    public init(httpBaseURL: URL, wsBaseURL: URL, desktopBootstrapToken: String) {
+        self.init(
+            httpBaseURL: httpBaseURL,
+            wsBaseURL: wsBaseURL,
+            credential: .desktopBootstrap(desktopBootstrapToken))
+    }
+}
+
+/// Encodes the shared RFC-8693 form body exactly as the existing desktop
+/// bootstrap exchange does. Pairing redemption uses the same wire fields.
+internal enum AuthTokenExchangeFormEncoder {
+    static func encode(subjectToken: String, clientLabel: String) -> Data {
+        let bodyFields: [(String, String)] = [
+            ("grant_type", "urn:ietf:params:oauth:grant-type:token-exchange"),
+            ("subject_token", subjectToken),
+            ("subject_token_type", "urn:t3:params:oauth:token-type:environment-bootstrap"),
+            ("requested_token_type", "urn:t3:params:oauth:token-type:access_token"),
+            ("client_label", clientLabel),
+            ("client_device_type", "desktop"),
+        ]
+        var components = URLComponents()
+        components.queryItems = bodyFields.map { URLQueryItem(name: $0.0, value: $0.1) }
+        return Data((components.percentEncodedQuery ?? "").utf8)
     }
 }
 
@@ -86,8 +126,18 @@ public actor AuthClient {
     /// desktop client's behavior (`DesktopLocalEnvironmentAuth.ts`), since a
     /// sidecar process hands out exactly one bootstrap token per launch.
     public func acquireAccessToken() async throws -> String {
+        if case let .bearer(token) = config.credential {
+            return token
+        }
+
         if let cachedAccessToken {
             return cachedAccessToken
+        }
+
+        guard case let .desktopBootstrap(bootstrapToken) = config.credential else {
+            // The bearer branch returns above. Keep this guard explicit so a
+            // future credential kind cannot accidentally be exchanged.
+            throw T3Error.auth("Unsupported authentication credential")
         }
 
         let url = config.httpBaseURL.appendingPathComponent("oauth/token")
@@ -100,17 +150,8 @@ public actor AuthClient {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
 
         // AuthTokenExchangeRequest (packages/contracts/src/environmentHttp.ts:175-183).
-        let bodyFields: [(String, String)] = [
-            ("grant_type", "urn:ietf:params:oauth:grant-type:token-exchange"),
-            ("subject_token", config.desktopBootstrapToken),
-            ("subject_token_type", "urn:t3:params:oauth:token-type:environment-bootstrap"),
-            ("requested_token_type", "urn:ietf:params:oauth:token-type:access_token"),
-            ("client_label", "SergeCode"),
-            ("client_device_type", "desktop"),
-        ]
-        var comps = URLComponents()
-        comps.queryItems = bodyFields.map { URLQueryItem(name: $0.0, value: $0.1) }
-        request.httpBody = comps.percentEncodedQuery?.data(using: .utf8)
+        request.httpBody = AuthTokenExchangeFormEncoder.encode(
+            subjectToken: bootstrapToken, clientLabel: "SergeCode")
 
         let data = try await perform(request)
 
@@ -209,11 +250,21 @@ public actor AuthClient {
         do {
             let ticket = try await mintWebSocketTicket(accessToken: accessToken)
             return try socketURL(ticket: ticket)
-        } catch T3Error.auth {
-            cachedAccessToken = nil
-            let refreshedToken = try await acquireAccessToken()
-            let ticket = try await mintWebSocketTicket(accessToken: refreshedToken)
-            return try socketURL(ticket: ticket)
+        } catch let error as T3Error {
+            guard case .desktopBootstrap = config.credential else {
+                throw error
+            }
+            switch error {
+            case .auth, .unauthorized:
+                cachedAccessToken = nil
+                let refreshedToken = try await acquireAccessToken()
+                let ticket = try await mintWebSocketTicket(accessToken: refreshedToken)
+                return try socketURL(ticket: ticket)
+            default:
+                throw error
+            }
+        } catch {
+            throw error
         }
     }
 
@@ -247,6 +298,10 @@ public actor AuthClient {
         }
         guard (200..<300).contains(httpResponse.statusCode) else {
             let bodyText = String(data: data, encoding: .utf8) ?? "<non-utf8 body>"
+            if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
+                throw T3Error.unauthorized(
+                    "HTTP \(httpResponse.statusCode) from \(requestURL): \(bodyText)")
+            }
             throw T3Error.auth("HTTP \(httpResponse.statusCode) from \(requestURL): \(bodyText)")
         }
         return data
