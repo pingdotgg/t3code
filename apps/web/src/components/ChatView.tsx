@@ -231,6 +231,7 @@ import {
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
   resolveSendEnvMode,
+  shouldReleaseTextAttachmentClaims,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
   waitForStartedServerThread,
@@ -4069,7 +4070,7 @@ function ChatViewContent(props: ChatViewProps) {
         }),
       );
     }
-    composerRef.current?.releaseTextAttachmentClaims();
+    composerRef.current?.holdTextAttachmentClaims();
     promptRef.current = "";
     clearComposerDraftContent(composerDraftTarget);
     composerRef.current?.resetCursorState();
@@ -4188,6 +4189,9 @@ function ChatViewContent(props: ChatViewProps) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
+        if (shouldReleaseTextAttachmentClaims(turnStartSucceeded)) {
+          composerRef.current?.releaseTextAttachmentClaims();
+        }
       }
     }
 
@@ -4234,6 +4238,7 @@ function ChatViewContent(props: ChatViewProps) {
           error instanceof Error ? error.message : "Failed to send message.",
         );
       }
+      composerRef.current?.resumeTextAttachmentClaims();
     }
     sendInFlightRef.current = false;
     if (!turnStartSucceeded) {

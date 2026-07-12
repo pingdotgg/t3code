@@ -423,6 +423,10 @@ export interface ChatComposerHandle {
   addTerminalContext: (selection: TerminalContextSelection) => void;
   /** Release draft claims before the parent destructively clears composer content. */
   releaseTextAttachmentClaims: () => void;
+  /** Keep claims alive while a send is preparing and may still fail. */
+  holdTextAttachmentClaims: () => void;
+  /** Resume prompt-driven claim synchronization after a failed send. */
+  resumeTextAttachmentClaims: () => void;
   /** Get the current prompt/effort/model state for use in send. */
   getSendContext: () => {
     prompt: string;
@@ -909,6 +913,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [pendingAttachmentCounts, setPendingAttachmentCounts] = useState<Record<string, number>>(
     {},
   );
+  const [textAttachmentClaimsHeld, setTextAttachmentClaimsHeld] = useState(false);
   const isMobileViewport = useMediaQuery("max-sm");
   const isComposerCollapsedMobile = isMobileViewport && !isComposerFocused;
   const composerAttachmentKey = composerAttachmentTargetKey(composerDraftTarget);
@@ -939,6 +944,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   } | null>(null);
 
   useEffect(() => {
+    if (textAttachmentClaimsHeld) return;
     const draftOwnerId = textAttachmentDraftOwnerId(composerDraftTarget);
     const previous = textAttachmentClaimStateRef.current;
     const previousPaths =
@@ -955,7 +961,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           await releaseTextAttachment({ environmentId, input: { path, draftOwnerId } });
         }
       });
-  }, [claimTextAttachment, composerDraftTarget, environmentId, prompt, releaseTextAttachment]);
+  }, [
+    claimTextAttachment,
+    composerDraftTarget,
+    environmentId,
+    prompt,
+    releaseTextAttachment,
+    textAttachmentClaimsHeld,
+  ]);
 
   // ------------------------------------------------------------------
   // Derived: composer send state
@@ -2133,6 +2146,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
       },
       releaseTextAttachmentClaims: () => {
+        setTextAttachmentClaimsHeld(false);
         const draftOwnerId = textAttachmentDraftOwnerId(composerDraftTarget);
         const paths = new Set([
           ...textAttachmentClaimChanges(new Set(), promptRef.current).nextPaths,
@@ -2148,6 +2162,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               await releaseTextAttachment({ environmentId, input: { path, draftOwnerId } });
             }
           });
+      },
+      holdTextAttachmentClaims: () => {
+        setTextAttachmentClaimsHeld(true);
+      },
+      resumeTextAttachmentClaims: () => {
+        setTextAttachmentClaimsHeld(false);
       },
       getSendContext: () => ({
         prompt: promptRef.current,

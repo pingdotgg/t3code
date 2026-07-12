@@ -460,3 +460,7 @@ export function hasServerAcknowledgedLocalDispatch(input: {
     input.localDispatch.sessionUpdatedAt !== (session?.updatedAt ?? null)
   );
 }
+
+export function shouldReleaseTextAttachmentClaims(turnStartSucceeded: boolean): boolean {
+  return turnStartSucceeded;
+}

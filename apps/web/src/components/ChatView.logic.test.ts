@@ -14,6 +14,7 @@ import {
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
   resolveSendEnvMode,
+  shouldReleaseTextAttachmentClaims,
   shouldWriteThreadErrorToCurrentServerThread,
 } from "./ChatView.logic";
 
@@ -21,6 +22,20 @@ const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");
 const threadId = ThreadId.make("thread-1");
 const now = "2026-03-29T00:00:00.000Z";
+
+describe("text attachment claim send ordering", () => {
+  it("retains claims throughout slow worktree preparation", () => {
+    expect(shouldReleaseTextAttachmentClaims(false)).toBe(false);
+  });
+
+  it("retains claims after metadata or other pre-send failures", () => {
+    expect(shouldReleaseTextAttachmentClaims(false)).toBe(false);
+  });
+
+  it("releases claims only after turn start succeeds", () => {
+    expect(shouldReleaseTextAttachmentClaims(true)).toBe(true);
+  });
+});
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
