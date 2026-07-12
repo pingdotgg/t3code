@@ -15,11 +15,17 @@ public enum KeychainStoreError: Error, LocalizedError, Sendable {
     }
 }
 
+public protocol KeychainStoreProtocol: Sendable {
+    func readToken(deviceID: String) throws -> String?
+    func writeToken(_ token: String, deviceID: String, label: String) throws
+    func deleteToken(deviceID: String) throws
+}
+
 /// Minimal wrapper around the classic login keychain.
 ///
 /// This intentionally does not set `kSecUseDataProtectionKeychain`: the
 /// ad-hoc/dev-signed app has no entitlement for the data-protection keychain.
-public struct KeychainStore: Sendable {
+public struct KeychainStore: KeychainStoreProtocol {
     public static let service = "com.sergeserb.sergecode.remote-device"
 
     public init() {}

@@ -836,7 +836,7 @@ private struct ConnectionSettingsTab: View {
                     "Mode", value: lanReachable ? "remote-reachable" : "desktop-managed-local")
                 Text(
                     lanReachable
-                        ? "The t3 server runs as a supervised local child process and accepts paired devices from your local network (Settings ▸ iPhone)."
+                        ? "The t3 server runs as a supervised local child process and accepts paired devices from your local network (Settings ▸ Devices)."
                         : "The t3 server runs as a supervised local child process; no remote or cloud connection is used."
                 )
                 .font(.caption)

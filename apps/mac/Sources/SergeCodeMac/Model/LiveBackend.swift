@@ -68,7 +68,7 @@ import T3Kit
 
 public enum LiveBackendMode: Sendable {
     case localSidecar(allowLanAccess: Bool)
-    case remote(device: RemoteDevice, keychain: KeychainStore)
+    case remote(device: RemoteDevice, keychain: any KeychainStoreProtocol)
 }
 
 private extension LiveBackendMode {
@@ -205,13 +205,15 @@ public actor LiveBackend: BackendService {
     }()
 
     private let mode: LiveBackendMode
+    private let localBaseDirectory: String?
     /// Port of the running sidecar, captured at spawn for the mobile
     /// pairing URL.
     private var sidecarPort: Int?
     private static let runningLivenessConfirmationDelay: Duration = .seconds(12)
 
-    public init(mode: LiveBackendMode) {
+    public init(mode: LiveBackendMode, baseDirectory: String? = nil) {
         self.mode = mode
+        self.localBaseDirectory = baseDirectory
         if case let .remote(device, _) = mode {
             self.remoteDevice = device
         } else {
@@ -222,8 +224,10 @@ public actor LiveBackend: BackendService {
         self.continuation = continuation
     }
 
-    public init(allowLanAccess: Bool = false) {
-        self.init(mode: .localSidecar(allowLanAccess: allowLanAccess))
+    public init(allowLanAccess: Bool = false, baseDirectory: String? = nil) {
+        self.init(
+            mode: .localSidecar(allowLanAccess: allowLanAccess),
+            baseDirectory: baseDirectory)
     }
 
     private static func remoteURLs(for device: RemoteDevice) -> (http: URL, ws: URL)? {
@@ -295,7 +299,8 @@ public actor LiveBackend: BackendService {
         do {
             sidecarConfig = try SidecarConfig(
                 nodePath: nodePath, entryPath: entryPath,
-                host: mode.allowLanAccess ? "0.0.0.0" : "127.0.0.1")
+                host: mode.allowLanAccess ? "0.0.0.0" : "127.0.0.1",
+                baseDir: localBaseDirectory)
         } catch {
             emit(.connection(.failed("Could not configure the server sidecar: \(error)")))
             return
@@ -343,7 +348,9 @@ public actor LiveBackend: BackendService {
 
         failAllSnapshotWaiters(error: LiveBackendError.notConnected)
         failAllRevertWaiters(error: LiveBackendError.notConnected)
-        continuation.finish()
+        // Keep the event stream open so AppModel can start this backend again
+        // after a sidebar reconnect. The app's final process teardown cancels
+        // the event task before it needs stream completion.
     }
 
     // MARK: - Sidecar state -> connection phase

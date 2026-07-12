@@ -64,7 +64,7 @@ internal enum AuthTokenExchangeFormEncoder {
             ("grant_type", "urn:ietf:params:oauth:grant-type:token-exchange"),
             ("subject_token", subjectToken),
             ("subject_token_type", "urn:t3:params:oauth:token-type:environment-bootstrap"),
-            ("requested_token_type", "urn:t3:params:oauth:token-type:access_token"),
+            ("requested_token_type", "urn:ietf:params:oauth:token-type:access_token"),
             ("client_label", clientLabel),
             ("client_device_type", "desktop"),
         ]

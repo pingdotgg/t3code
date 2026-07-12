@@ -26,7 +26,8 @@ struct SergeCodeApp: App {
             let descriptor = RemoteDeviceDescriptor(
                 id: DeviceID(rawValue: "mock-mac-2"),
                 name: "Mac mini — Studio",
-                host: "mac-mini.local")
+                host: "mac-mini.local",
+                port: 3773)
             let remoteModel = AppModel(
                 backend: MockBackend(seedVariant: "studio"),
                 deviceID: descriptor.id,

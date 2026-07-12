@@ -141,7 +141,7 @@ struct SidebarView: View {
             Button("Forget", role: .destructive) {
                 if let session = forgetTarget {
                     forgetTarget = nil
-                    Task { await multi.removeSession(id: session.id) }
+                    Task { await multi.removeRemoteDevice(id: session.id) }
                 }
             }
             Button("Cancel", role: .cancel) {}
@@ -316,6 +316,8 @@ private struct DeviceStatusDot: View {
             return .green
         case .failed:
             return .red
+        case .unauthorized:
+            return .orange
         default:
             return .secondary
         }
@@ -327,6 +329,8 @@ private struct DeviceStatusDot: View {
             return "Ready"
         case .failed:
             return "Connection failed"
+        case .unauthorized:
+            return "Re-pairing required"
         case .launchingServer, .connecting, .reconnecting:
             return "Connecting"
         @unknown default:

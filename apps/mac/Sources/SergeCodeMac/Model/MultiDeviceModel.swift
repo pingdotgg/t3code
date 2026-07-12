@@ -21,11 +21,20 @@ public final class MultiDeviceModel {
     public let local: AppModel
     public private(set) var remoteSessions: [RemoteDeviceSession]
 
+    private let remoteDeviceStore: RemoteDeviceStore
+    private let keychain: any KeychainStoreProtocol
     @ObservationIgnored private var hasStarted = false
 
-    public init(local: AppModel, remoteSessions: [RemoteDeviceSession] = []) {
+    public init(
+        local: AppModel,
+        remoteSessions: [RemoteDeviceSession] = [],
+        remoteDeviceStore: RemoteDeviceStore = .init(),
+        keychain: any KeychainStoreProtocol = KeychainStore()
+    ) {
         self.local = local
         self.remoteSessions = remoteSessions.filter { $0.id != .local }
+        self.remoteDeviceStore = remoteDeviceStore
+        self.keychain = keychain
     }
 
     /// The one selection shared by all device models. The getter derives the
@@ -103,6 +112,7 @@ public final class MultiDeviceModel {
         guard !hasStarted else { return }
         hasStarted = true
         local.start()
+        restoreRemoteSessions()
         for session in remoteSessions {
             session.model.start()
         }
@@ -126,17 +136,68 @@ public final class MultiDeviceModel {
         selection = ThreadSelection(deviceID: deviceID, threadID: threadID)
     }
 
-    /// Pairing is wired in the final remote-device integration phase. Keeping
-    /// the async seam here lets Settings ship independently of transport
-    /// persistence and gives the tab an inline error until then.
     public func addRemoteDevice(pairingLink: String) async throws -> RemoteDeviceSession {
-        _ = pairingLink
-        throw LiveBackendError.remoteModeUnsupported
+        let device = try await RemotePairing.pair(
+            pairingURL: pairingLink,
+            deviceStore: remoteDeviceStore,
+            keychain: keychain)
+        let session = makeRemoteSession(for: device)
+
+        if let index = remoteSessions.firstIndex(where: { $0.id == session.id }) {
+            if selection?.deviceID == session.id {
+                selection = nil
+            }
+            let oldSession = remoteSessions[index]
+            remoteSessions[index] = session
+            await oldSession.model.shutdown()
+        } else {
+            remoteSessions.append(session)
+        }
+
+        if hasStarted {
+            session.model.start()
+        }
+        return session
     }
 
-    /// Settings and the sidebar share one removal entry point. The persistent
-    /// keychain/store cleanup is added with the real pairing implementation.
     public func removeRemoteDevice(id: DeviceID) async {
-        await removeSession(id: id)
+        guard id != .local, let index = remoteSessions.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+        if selection?.deviceID == id {
+            selection = nil
+        }
+        let session = remoteSessions.remove(at: index)
+        await session.model.shutdown()
+        try? RemotePairing.unpair(
+            id: id.rawValue,
+            deviceStore: remoteDeviceStore,
+            keychain: keychain)
+    }
+
+    private func restoreRemoteSessions() {
+        for device in remoteDeviceStore.all() {
+            let id = DeviceID(rawValue: device.id)
+            guard id != .local, model(for: id) == nil else { continue }
+            remoteSessions.append(makeRemoteSession(for: device))
+        }
+    }
+
+    private func makeRemoteSession(for device: RemoteDevice) -> RemoteDeviceSession {
+        let id = DeviceID(rawValue: device.id)
+        let descriptor = RemoteDeviceDescriptor(
+            id: id,
+            name: device.name,
+            host: device.host,
+            port: device.port,
+            sessionExpiresAt: device.sessionExpiresAt)
+        let backend = LiveBackend(mode: .remote(device: device, keychain: keychain))
+        let model = AppModel(
+            backend: backend,
+            deviceID: id,
+            deviceName: device.name,
+            capabilities: .remote,
+            dictation: local.dictation)
+        return RemoteDeviceSession(descriptor: descriptor, model: model)
     }
 }

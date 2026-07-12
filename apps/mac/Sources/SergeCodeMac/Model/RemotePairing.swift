@@ -5,7 +5,7 @@ public enum RemotePairing {
     public static func pair(
         pairingURL: String,
         deviceStore: RemoteDeviceStore = .init(),
-        keychain: KeychainStore = .init()
+        keychain: any KeychainStoreProtocol = KeychainStore()
     ) async throws -> RemoteDevice {
         let target = try PairingTarget.parse(pairingURL: pairingURL)
         let redemption = try await PairingClient.redeem(
@@ -36,7 +36,7 @@ public enum RemotePairing {
     public static func unpair(
         id: String,
         deviceStore: RemoteDeviceStore = .init(),
-        keychain: KeychainStore = .init()
+        keychain: any KeychainStoreProtocol = KeychainStore()
     ) throws {
         try keychain.deleteToken(deviceID: id)
         deviceStore.remove(id: id)
