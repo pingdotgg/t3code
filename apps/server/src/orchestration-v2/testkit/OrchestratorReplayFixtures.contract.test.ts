@@ -69,7 +69,12 @@ describe("orchestrator replay fixture contract", () => {
               throw new Error(`${fixture.name}/${provider.driver} must start with thread.create`);
             }
             assert.equal(firstCommand.threadId, materialized.projectionThreadIds[0]);
-            assert.equal(materialized.commands.length, fixture.buildInput().steps.length + 1);
+            // advance_clock only moves the test clock; every other input step
+            // dispatches a command.
+            const commandProducingSteps = fixture
+              .buildInput()
+              .steps.filter((step) => step.type !== "advance_clock");
+            assert.equal(materialized.commands.length, commandProducingSteps.length + 1);
             assert.isAtLeast(materialized.steps.length, materialized.commands.length);
             assert.equal(typeof provider.assertOutput, "function");
 
