@@ -607,6 +607,22 @@ private func inlineAttributed(markup: Markup) -> AttributedString {
 /// Full-width assistant message body: an AST-backed block list plus a
 /// streaming indicator. Content stays unframed and opaque for long-form
 /// reading; only the hover action chip floats above it.
+private struct MarkdownRenderedBlock: Identifiable {
+    let id: String
+    let sourceKey: String
+    let block: MarkdownBlock
+}
+
+func markdownBlockAllowsHighlight(
+    style: MarkdownRenderStyle,
+    isStreaming: Bool,
+    sourceKey: String,
+    lastSourceKey: String?
+) -> Bool {
+    guard style == .assistant else { return false }
+    return !isStreaming || sourceKey != lastSourceKey
+}
+
 @MainActor
 struct AssistantMarkdownView: View {
     // The mac client has no editor picker yet; Cursor is first in the shared
@@ -617,37 +633,69 @@ struct AssistantMarkdownView: View {
     let isStreaming: Bool
     let threadID: String
     let model: AppModel
+    let at: Date?
+    let style: MarkdownRenderStyle
+    let showsRoleChrome: Bool
     // Parsing belongs in init, not body: body is evaluated for every timeline
     // mutation while the view value can remain otherwise unchanged.
-    private let blocks: [MarkdownBlock]
+    private let renderedBlocks: [MarkdownRenderedBlock]
 
-    init(markdown: String, isStreaming: Bool, threadID: String, model: AppModel) {
+    init(
+        markdown: String,
+        isStreaming: Bool,
+        threadID: String,
+        model: AppModel,
+        at: Date? = nil,
+        style: MarkdownRenderStyle = .assistant,
+        showsRoleChrome: Bool = false
+    ) {
         self.markdown = markdown
         self.isStreaming = isStreaming
         self.threadID = threadID
         self.model = model
-        self.blocks = MarkdownBlockCache.document(for: markdown).blocks
+        self.at = at
+        self.style = style
+        self.showsRoleChrome = showsRoleChrome
+        let document = MarkdownBlockCache.document(for: markdown)
+        self.renderedBlocks = Self.renderedBlocks(from: document)
     }
 
     @UIState private var isHovering = false
     @Environment(\.openSelectText) private var openSelectText
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                markdownBlockView(block)
+        AnyLayout(
+            MarkdownContentLayout(maxWidth: style == .userBubble ? 560 : nil)
+        ) {
+            VStack(alignment: .leading, spacing: 0) {
+                if showsRoleChrome && style == .assistant {
+                    assistantRoleLine
+                }
+                ForEach(Array(renderedBlocks.enumerated()), id: \.element.id) { index, entry in
+                    markdownBlockView(
+                        entry.block,
+                        allowsHighlight: markdownBlockAllowsHighlight(
+                            style: style,
+                            isStreaming: isStreaming,
+                            sourceKey: entry.sourceKey,
+                            lastSourceKey: renderedBlocks.last?.sourceKey))
+                        .padding(.top, blockGap(at: index))
+                }
+                if showsRoleChrome && style == .assistant && isStreaming {
+                    Image(systemName: "ellipsis")
+                        .symbolEffect(.variableColor.iterative, isActive: !Motion.reduceMotion)
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("Assistant is responding")
+                        .transition(.opacity)
+                        .padding(.top, streamingIndicatorGap)
+                }
             }
-            if isStreaming {
-                Image(systemName: "ellipsis")
-                    .symbolEffect(.variableColor.iterative)
-                    .foregroundStyle(.secondary)
-                    .accessibilityLabel("Assistant is responding")
-                    .transition(.opacity)
-            }
+            .frame(
+                maxWidth: style == .userBubble ? nil : .infinity,
+                alignment: .leading)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
         .overlay(alignment: .topTrailing) {
-            if !isStreaming {
+            if showsRoleChrome && style == .assistant && !isStreaming {
                 // Copies the raw markdown, not the rendered text — pasted
                 // content survives round-trips into editors and issues.
                 MessageActionChip {
@@ -696,39 +744,136 @@ struct AssistantMarkdownView: View {
     }
 
     @ViewBuilder
-    private func markdownBlockView(_ block: MarkdownBlock) -> some View {
+    private var assistantRoleLine: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 5) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(Color.accentColor.opacity(0.9))
+            if !isStreaming, isHovering, let at {
+                TranscriptTimestamp(date: at)
+                    .transition(.opacity)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.bottom, 3)
+        .accessibilityElement(children: .combine)
+    }
+
+    private static func renderedBlocks(from document: ParsedMarkdownDocument) -> [MarkdownRenderedBlock] {
+        var occurrences: [String: Int] = [:]
+        return document.blocks.indices.map { index in
+            let sourceKey = document.blockKeys[index]
+            let occurrence = occurrences[sourceKey, default: 0]
+            occurrences[sourceKey] = occurrence + 1
+            // One top-level Markdown node can expand into several blocks. Keep
+            // its stable source key while disambiguating those siblings.
+            return MarkdownRenderedBlock(
+                id: "\(sourceKey)\u{0}\(occurrence)",
+                sourceKey: sourceKey,
+                block: document.blocks[index])
+        }
+    }
+
+    private func blockGap(at index: Int) -> CGFloat {
+        let before = MarkdownTheme.kind(of: renderedBlocks[index].block)
+        let after = index > 0
+            ? MarkdownTheme.kind(of: renderedBlocks[index - 1].block)
+            : nil
+        return MarkdownTheme.gap(after: after, before: before)
+    }
+
+    private var streamingIndicatorGap: CGFloat {
+        guard let last = renderedBlocks.last else {
+            return MarkdownTheme.gap(after: .paragraph, before: .paragraph)
+        }
+        return MarkdownTheme.gap(
+            after: MarkdownTheme.kind(of: last.block), before: .paragraph)
+    }
+
+    @ViewBuilder
+    private func markdownBlockView(_ block: MarkdownBlock, allowsHighlight: Bool) -> some View {
         switch block {
         case .paragraph(let text):
-            MarkdownProseText(attributed: text)
-        case .heading(let level, let text):
-            MarkdownProseText(attributed: styled(text, font: headingFont(level)))
-        case .bulletItem(let indent, let text):
-            MarkdownProseText(attributed: listAttributed(marker: "•", text: text, indent: indent))
-        case .orderedItem(let indent, let number, let text):
-            MarkdownProseText(
-                attributed: listAttributed(marker: "\(number).", text: text, indent: indent))
-        case .taskItem(let indent, let checked, let text):
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Image(systemName: checked ? "checkmark.square" : "square")
-                    .foregroundStyle(.secondary)
-                Text(text)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
+            if style == .userBubble {
+                MarkdownUserInlineText(attributed: text)
+            } else {
+                MarkdownProseText(attributed: text)
             }
-            .padding(.leading, CGFloat(indent) * 24)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        case .heading(let level, let text):
+            MarkdownHeadingView(level: level, text: text, style: style)
+        case .bulletItem(let indent, let text):
+            MarkdownListRow(level: indent, marker: .bullet, text: text, style: style)
+        case .orderedItem(let indent, let number, let text):
+            MarkdownListRow(
+                level: indent, marker: .ordered(number), text: text, style: style)
+        case .taskItem(let indent, let checked, let text):
+            MarkdownListRow(
+                level: indent, marker: .task(checked: checked), text: text, style: style)
         case .quote(let paragraphs):
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(Array(paragraphs.enumerated()), id: \.offset) { _, paragraph in
-                    MarkdownProseText(attributed: quotedAttributed(paragraph))
+            MarkdownQuoteView(paragraphs: paragraphs, style: style)
+        case .rule:
+            if style == .userBubble {
+                Rectangle()
+                    .fill(MarkdownTheme.tokens(for: style).rule.color)
+                    .frame(height: 1)
+                    .padding(.horizontal, 2)
+            } else {
+                Rectangle()
+                    .fill(.separator)
+                    .opacity(0.6)
+                    .frame(height: 1)
+                    .padding(.horizontal, 2)
+            }
+        case .codeBlock(let language, let code):
+            if MarkdownTheme.blockRendering(for: .code, style: style) == .plainPanel {
+                MarkdownPlainCodePanel(text: code)
+            } else {
+                MarkdownCodeBlock(
+                    language: language,
+                    code: code,
+                    allowsHighlight: allowsHighlight)
+            }
+        case .table(let table):
+            if MarkdownTheme.blockRendering(for: .table, style: style) == .plainPanel {
+                MarkdownPlainCodePanel(text: plainTableText(table))
+            } else {
+                MarkdownTableView(table: table)
+            }
+        }
+    }
+}
+
+private struct MarkdownHeadingView: View {
+    let level: Int
+    let text: AttributedString
+    let style: MarkdownRenderStyle
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MarkdownTheme.headingHasRule(level) ? 6 : 0) {
+            if style == .userBubble {
+                MarkdownUserInlineText(
+                    attributed: text,
+                    font: MarkdownTheme.headingFont(level))
+            } else {
+                Text(text)
+                    .font(MarkdownTheme.headingFont(level))
+                    .foregroundStyle(MarkdownTheme.headingForeground(level))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if MarkdownTheme.headingHasRule(level) {
+                if style == .userBubble {
+                    Rectangle()
+                        .fill(MarkdownTheme.tokens(for: style).headingRule.color)
+                        .frame(height: 1)
+                } else {
+                    Rectangle()
+                        .fill(.separator)
+                        .opacity(0.5)
+                        .frame(height: 1)
                 }
             }
-        case .rule:
-            Divider().padding(.vertical, 2)
-        case .codeBlock(let language, let code):
-            MarkdownCodeBlock(language: language, code: code)
-        case .table(let table):
-            MarkdownTableView(table: table)
         }
     }
 }
@@ -746,6 +891,126 @@ private struct RemoteFileLinkHelpModifier: ViewModifier {
     }
 }
 
+private struct MarkdownListRow: View {
+    enum Marker {
+        case bullet
+        case ordered(String)
+        case task(checked: Bool)
+    }
+
+    let level: Int
+    let marker: Marker
+    let text: AttributedString
+    let style: MarkdownRenderStyle
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            markerView
+                .frame(width: MarkdownTheme.listMarkerColumnWidth, alignment: .trailing)
+            if style == .userBubble {
+                MarkdownUserInlineText(
+                    attributed: text,
+                    foreground: MarkdownTheme.tokens(for: style).checkedTaskTextForeground)
+            } else {
+                Text(text)
+                    .foregroundStyle(textForeground)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.leading, MarkdownTheme.listIndent(level: level))
+        .frame(
+            maxWidth: style == .userBubble ? nil : .infinity,
+            alignment: .leading)
+    }
+
+    @ViewBuilder
+    private var markerView: some View {
+        switch marker {
+        case .bullet:
+            Text(MarkdownTheme.bulletGlyph(depth: level))
+                .font(.body)
+                .foregroundStyle(markerForeground)
+        case .ordered(let number):
+            Text("\(number).")
+                .font(.body.monospacedDigit())
+                .foregroundStyle(markerForeground)
+        case .task(let checked):
+            Image(systemName: checked ? "checkmark.square.fill" : "square")
+                .font(.body)
+                .foregroundStyle(taskMarkerForeground(checked: checked))
+        }
+    }
+
+    private var markerForeground: Color {
+        if style == .userBubble {
+            return MarkdownTheme.tokens(for: style).listMarkerForeground.color
+        }
+        return .secondary
+    }
+
+    private func taskMarkerForeground(checked: Bool) -> Color {
+        if style == .userBubble {
+            return MarkdownTheme.tokens(for: style).taskCheckboxForeground.color
+        }
+        return checked ? Color.accentColor : .secondary
+    }
+
+    private var textForeground: Color {
+        if style == .userBubble {
+            return MarkdownTheme.tokens(for: style).proseForeground.color
+        }
+        switch marker {
+        case .task(let checked) where checked:
+            return .secondary
+        default:
+            return .primary
+        }
+    }
+}
+
+private struct MarkdownQuoteView: View {
+    let paragraphs: [AttributedString]
+    let style: MarkdownRenderStyle
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            RoundedRectangle(cornerRadius: MarkdownTheme.quoteCornerRadius)
+                .fill(quoteBarColor)
+                .frame(width: MarkdownTheme.quoteBarWidth)
+                .frame(maxHeight: .infinity)
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(Array(paragraphs.enumerated()), id: \.offset) { _, paragraph in
+                    if style == .userBubble {
+                        MarkdownUserInlineText(
+                            attributed: paragraph,
+                            foreground: MarkdownTheme.tokens(for: style).quoteText,
+                            italic: true)
+                    } else {
+                        Text(paragraph)
+                            .foregroundStyle(.secondary)
+                            .italic()
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 2)
+        .background(quoteFillColor, in: RoundedRectangle(cornerRadius: 6))
+    }
+
+    private var quoteBarColor: Color {
+        MarkdownTheme.tokens(for: style).quoteBar.color
+    }
+
+    private var quoteFillColor: Color {
+        MarkdownTheme.tokens(for: style).quoteFill.color
+    }
+}
+
 private struct MarkdownProseText: View {
     let attributed: AttributedString
 
@@ -756,7 +1021,173 @@ private struct MarkdownProseText: View {
     }
 }
 
+/// User-bubble prose is made from individual attributed runs so inline code
+/// can get a small rounded chip while the whole paragraph still wraps at the
+/// bubble's width. Assistant prose intentionally keeps the single Text path
+/// above unchanged.
+private struct MarkdownUserInlineText: View {
+    let attributed: AttributedString
+    var foreground: MarkdownTheme.ForegroundToken? = nil
+    var font: Font? = nil
+    var italic = false
+
+    private var tokens: MarkdownTheme.StyleTokens {
+        MarkdownTheme.tokens(for: .userBubble)
+    }
+
+    var body: some View {
+        MarkdownInlineFlow {
+            ForEach(Array(attributed.runs.enumerated()), id: \.offset) { _, run in
+                let segment = AttributedString(attributed[run.range])
+                let isCode = run.inlinePresentationIntent?.contains(.code) == true
+                let isLink = run.link != nil && tokens.linksAreUnderlined
+                let foregroundColor = isLink
+                    ? tokens.proseForeground.color
+                    : (foreground ?? tokens.proseForeground).color
+                Text(segment)
+                    .font(isCode ? .system(.body, design: .monospaced) : font)
+                    .foregroundStyle(foregroundColor)
+                    .italic(italic && !isCode)
+                    .underline(isLink, color: tokens.proseForeground.color)
+                    .padding(.horizontal, isCode ? 4 : 0)
+                    .padding(.vertical, isCode ? 1 : 0)
+                    .background(
+                        isCode
+                            ? (tokens.inlineCodeBackground?.color ?? Color.clear)
+                            : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 4))
+            }
+        }
+        .textSelection(.enabled)
+    }
+}
+
+/// A small wrapping layout for user-bubble inline runs. Keeping code spans as
+/// separate subviews is what allows their rounded background without turning
+/// prose into a full-width panel.
+private struct MarkdownContentLayout: Layout {
+    let maxWidth: CGFloat?
+
+    typealias Cache = ()
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout Cache
+    ) -> CGSize {
+        guard let subview = subviews.first else { return .zero }
+        let width = constrainedWidth(for: proposal.width)
+        let size = subview.sizeThatFits(ProposedViewSize(width: width, height: nil))
+        guard let maxWidth else { return size }
+        return CGSize(width: min(size.width, maxWidth), height: size.height)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout Cache
+    ) {
+        guard let subview = subviews.first else { return }
+        subview.place(
+            at: CGPoint(x: bounds.minX, y: bounds.minY),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
+    }
+
+    private func constrainedWidth(for proposedWidth: CGFloat?) -> CGFloat? {
+        guard let maxWidth else { return proposedWidth }
+        guard let proposedWidth, proposedWidth.isFinite else { return maxWidth }
+        return min(max(0, proposedWidth), maxWidth)
+    }
+}
+
+private struct MarkdownInlineFlow: Layout {
+    private struct Line {
+        var indices: [Int] = []
+        var sizes: [CGSize] = []
+        var width: CGFloat = 0
+        var height: CGFloat = 0
+    }
+
+    typealias Cache = ()
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout Cache
+    ) -> CGSize {
+        let width = finiteWidth(from: proposal.width)
+        let lines = makeLines(subviews: subviews, maxWidth: width)
+        let contentWidth = lines.map(\.width).max() ?? 0
+        let contentHeight = lines.reduce(0) { total, line in
+            total + line.height
+        } + CGFloat(max(0, lines.count - 1)) * 2
+        let resultWidth = proposal.width.flatMap { $0.isFinite ? min($0, contentWidth) : nil }
+            ?? contentWidth
+        return CGSize(width: resultWidth, height: contentHeight)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout Cache
+    ) {
+        let lines = makeLines(subviews: subviews, maxWidth: bounds.width)
+        var y = bounds.minY
+        for line in lines {
+            var x = bounds.minX
+            for (offset, index) in line.indices.enumerated() {
+                let size = line.sizes[offset]
+                subviews[index].place(
+                    at: CGPoint(x: x, y: y),
+                    anchor: .topLeading,
+                    proposal: ProposedViewSize(width: size.width, height: size.height))
+                x += size.width
+            }
+            y += line.height + 2
+        }
+    }
+
+    private func finiteWidth(from proposedWidth: CGFloat?) -> CGFloat {
+        guard let proposedWidth, proposedWidth.isFinite else { return .infinity }
+        return max(0, proposedWidth)
+    }
+
+    private func makeLines(subviews: Subviews, maxWidth: CGFloat) -> [Line] {
+        var lines: [Line] = []
+        var current = Line()
+
+        for index in subviews.indices {
+            let intrinsic = subviews[index].sizeThatFits(.unspecified)
+            let size: CGSize
+            if maxWidth.isFinite && intrinsic.width > maxWidth {
+                size = subviews[index].sizeThatFits(
+                    ProposedViewSize(width: maxWidth, height: nil))
+            } else {
+                size = intrinsic
+            }
+
+            if !current.indices.isEmpty && current.width + size.width > maxWidth {
+                lines.append(current)
+                current = Line()
+            }
+            current.indices.append(index)
+            current.sizes.append(size)
+            current.width += size.width
+            current.height = max(current.height, size.height)
+        }
+
+        if !current.indices.isEmpty {
+            lines.append(current)
+        }
+        return lines
+    }
+}
+
 // MARK: - Selectable transcript serialization
+// Serialization-only: keep plain-text markers and separators stable.
 
 /// Stitches parsed blocks into one attributed string for multi-line selection
 /// within a prose run and for the conversation-wide Select Text overlay.
@@ -919,28 +1350,62 @@ private func headingFont(_ level: Int) -> Font {
 
 // MARK: - Basic code/table views (refined in the rendering commit)
 
+/// Deliberately minimal code/table treatment for user bubbles. It has no
+/// language header, copy/wrap controls, or asynchronous syntax highlighting.
+private struct MarkdownPlainCodePanel: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(.callout, design: .monospaced))
+            .foregroundStyle(.white)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(8)
+            .background(
+                Color.white.opacity(0.12),
+                in: RoundedRectangle(cornerRadius: 6))
+    }
+}
+
+private func plainTableText(_ table: MarkdownTable) -> String {
+    let lines = [table.header] + table.rows
+    return lines.map { row in
+        row.map { String($0.characters) }.joined(separator: "\t")
+    }.joined(separator: "\n")
+}
+
+private struct MarkdownCodeHighlightTaskID: Equatable {
+    let code: String
+    let language: String?
+    let dark: Bool
+    let allowsHighlight: Bool
+}
+
 private struct MarkdownCodeBlock: View {
     let language: String?
     let code: String
-    private let highlighted: AttributedString
+    let allowsHighlight: Bool
 
     @UIState private var isHovering = false
     @UIState private var isWrapped = false
+    @UIState private var displayedText: AttributedString
+    @Environment(\.colorScheme) private var colorScheme
 
-    init(language: String?, code: String) {
+    init(language: String?, code: String, allowsHighlight: Bool) {
         self.language = language
         self.code = code
-        self.highlighted = highlightedCode(code, language: language)
+        self.allowsHighlight = allowsHighlight
+        _displayedText = UIState(initialValue: Self.plainCode(code))
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
-                if let language, !language.isEmpty {
-                    Text(language.uppercased())
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                }
+                Text(languageLabel)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
                 Spacer(minLength: 0)
                 if isHovering {
                     MessageActionButton(
@@ -950,34 +1415,87 @@ private struct MarkdownCodeBlock: View {
                         withAnimation(Motion.fade) { isWrapped.toggle() }
                     }
                     .transition(.opacity)
-                    CopyActionButton(text: code)
-                        .transition(.opacity)
                 }
+                CopyActionButton(text: code)
+                    .opacity(isHovering ? 1 : 0.55)
             }
-            if isWrapped {
-                Text(highlighted)
-                    .font(.system(.body, design: .monospaced))
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    Text(highlighted)
-                        .font(.system(.body, design: .monospaced))
-                        .textSelection(.enabled)
-                        .fixedSize()
-                }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity)
+            .background(Color.secondary.opacity(0.06))
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(.separator)
+                    .frame(height: 0.5)
             }
+
+            codeContent
+                .padding(10)
         }
         .onHover { isHovering = $0 }
         .animation(Motion.fade, value: isHovering)
         .animation(Motion.fade, value: isWrapped)
-        .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         // Solid opaque fill — code blocks live inside long-form assistant
         // text, so no glass/material here per Liquid Glass content rules.
         .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator, lineWidth: 1))
+        .task(id: highlightTaskID) {
+            guard allowsHighlight,
+                let highlighted = await CodeHighlighter.shared.highlighted(
+                    code: code,
+                    language: language,
+                    dark: colorScheme == .dark)
+            else { return }
+            // Keep the state write out of an AppKit layout transaction. The
+            // macOS 27 SDK can trap when measured Text content changes while
+            // its hosting view is still laying out.
+            try? await Task.sleep(for: .milliseconds(1))
+            guard !Task.isCancelled else { return }
+            withAnimation(Motion.fade) {
+                displayedText = highlighted
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var codeContent: some View {
+        if isWrapped {
+            Text(displayedText)
+                .font(.system(.body, design: .monospaced))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            ScrollView(.horizontal, showsIndicators: false) {
+                Text(displayedText)
+                    .font(.system(.body, design: .monospaced))
+                    .textSelection(.enabled)
+                    .fixedSize()
+            }
+        }
+    }
+
+    private var highlightTaskID: MarkdownCodeHighlightTaskID {
+        MarkdownCodeHighlightTaskID(
+            code: code,
+            language: language,
+            dark: colorScheme == .dark,
+            allowsHighlight: allowsHighlight)
+    }
+
+    private var languageLabel: String {
+        guard let language = language?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !language.isEmpty
+        else { return "Code" }
+        return language.capitalized
+    }
+
+    private static func plainCode(_ code: String) -> AttributedString {
+        var result = AttributedString(code)
+        result.font = .system(.body, design: .monospaced)
+        return result
     }
 }
 
@@ -994,11 +1512,14 @@ private struct MarkdownTableView: View {
                 GridRow {
                     tableCells(table.header, isHeader: true)
                 }
-                Divider()
+                Rectangle()
+                    .fill(.separator)
+                    .opacity(0.5)
+                    .frame(height: 1)
                     .gridCellColumns(max(columnCount, 1))
-                ForEach(Array(table.rows.enumerated()), id: \.offset) { _, row in
+                ForEach(Array(table.rows.enumerated()), id: \.offset) { rowIndex, row in
                     GridRow {
-                        tableCells(row, isHeader: false)
+                        tableCells(row, isHeader: false, rowIndex: rowIndex)
                     }
                 }
             }
@@ -1009,18 +1530,31 @@ private struct MarkdownTableView: View {
     }
 
     @ViewBuilder
-    private func tableCells(_ cells: [AttributedString], isHeader: Bool) -> some View {
+    private func tableCells(
+        _ cells: [AttributedString],
+        isHeader: Bool,
+        rowIndex: Int = 0
+    ) -> some View {
         ForEach(0..<columnCount, id: \.self) { index in
             let cell = index < cells.count ? cells[index] : AttributedString()
             let columnAlignment = table.columnAlignments.indices.contains(index)
                 ? table.columnAlignments[index] : nil
             Text(cell)
                 .font(isHeader ? .body.weight(.semibold) : .body)
+                .textSelection(.enabled)
                 .multilineTextAlignment(columnAlignment ?? .leading)
-                .frame(minWidth: 96, alignment: alignment(columnAlignment))
-                .padding(.horizontal, 8)
+                .frame(minWidth: 72, alignment: alignment(columnAlignment))
+                .padding(.horizontal, 10)
                 .padding(.vertical, 6)
+                .background(cellBackground(isHeader: isHeader, rowIndex: rowIndex))
         }
+    }
+
+    private func cellBackground(isHeader: Bool, rowIndex: Int) -> Color {
+        if isHeader {
+            return MarkdownTheme.tableHeaderFill
+        }
+        return rowIndex.isMultiple(of: 2) ? MarkdownTheme.tableOddRowFill : .clear
     }
 
     private func alignment(_ alignment: TextAlignment?) -> Alignment {
@@ -1029,37 +1563,5 @@ private struct MarkdownTableView: View {
         case .trailing: return .trailing
         default: return .leading
         }
-    }
-}
-
-private func highlightedCode(_ code: String, language: String?) -> AttributedString {
-    let syntaxLanguage: SyntaxLanguage
-    switch language?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-    case "swift": syntaxLanguage = .swift
-    case "ts", "tsx", "typescript", "js", "jsx", "javascript", "mjs", "cjs":
-        syntaxLanguage = .typescript
-    case "json": syntaxLanguage = .json
-    default: syntaxLanguage = .plain
-    }
-
-    var result = AttributedString()
-    for span in SyntaxTint.tokenize(code, language: syntaxLanguage) {
-        var piece = AttributedString(span.text)
-        if let color = markdownSyntaxColor(span.kind) {
-            piece.foregroundColor = color
-        }
-        result.append(piece)
-    }
-    result.font = .system(.body, design: .monospaced)
-    return result
-}
-
-private func markdownSyntaxColor(_ kind: SyntaxKind) -> Color? {
-    switch kind {
-    case .plain: return nil
-    case .keyword: return Color(red: 0.56, green: 0.25, blue: 0.68)
-    case .string: return Color(red: 0.72, green: 0.22, blue: 0.25)
-    case .comment: return .secondary
-    case .number: return Color(red: 0.12, green: 0.42, blue: 0.62)
     }
 }

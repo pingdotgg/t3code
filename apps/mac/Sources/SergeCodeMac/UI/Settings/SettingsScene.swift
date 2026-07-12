@@ -83,19 +83,6 @@ private struct GeneralSettingsTab: View {
     let model: AppModel
     @UIState private var draft: AppSettings?
 
-    private var appVersion: String {
-        let shortVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
-        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String
-        switch (shortVersion, build) {
-        case let (.some(v), .some(b)):
-            return "\(v) (\(b))"
-        case let (.some(v), .none):
-            return v
-        default:
-            return "—"
-        }
-    }
-
     var body: some View {
         Form {
             if let settings = draft {
@@ -136,7 +123,7 @@ private struct GeneralSettingsTab: View {
             Section {
                 LabeledContent("Appearance", value: "Follows System")
                     .help("SurgeCode does not offer a manual light/dark override; it follows macOS.")
-                LabeledContent("Version", value: appVersion)
+                LabeledContent("Version", value: Bundle.main.appVersionDisplay)
             }
         }
         .formStyle(.grouped)

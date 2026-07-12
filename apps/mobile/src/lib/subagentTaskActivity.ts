@@ -421,7 +421,10 @@ function shortModelName(model: string): string {
 }
 
 /** Compact identity badge: "Explore · sonnet-5" or "workflow · opus-4.8". */
-export function subagentTaskIdentityBadge(task: SubagentTaskItem): string | null {
+export function subagentTaskIdentityBadge(
+  task: SubagentTaskItem,
+  modelDisplayNames?: ReadonlyMap<string, string>,
+): string | null {
   const parts: string[] = [];
   if (task.workflowName) {
     parts.push(task.workflowName);
@@ -431,7 +434,8 @@ export function subagentTaskIdentityBadge(task: SubagentTaskItem): string | null
     parts.push(task.taskType.replaceAll("-", " "));
   }
   if (task.model) {
-    parts.push(shortModelName(task.model));
+    const displayName = modelDisplayNames?.get(task.model.trim())?.trim();
+    parts.push(displayName || shortModelName(task.model));
   }
   return parts.length > 0 ? parts.join(" · ") : null;
 }

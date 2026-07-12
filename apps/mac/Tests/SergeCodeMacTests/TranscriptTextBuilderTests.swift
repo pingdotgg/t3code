@@ -90,6 +90,30 @@ struct TranscriptTextBuilderTests {
         #expect(plain.contains("- let a = 1\n- let b = 2"))
         #expect(plain.contains("+ let a = 2\n+ let b = 3"))
     }
+
+    @Test("ignores visual separators and preserves pre-branch tool grouping")
+    func separatorsDoNotChangeSerializedText() {
+        let firstAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let secondAt = firstAt.addingTimeInterval(2 * 60 * 60)
+        let rawItems: [TimelineItem] = [
+            .toolEvent(
+                id: "tool-1", name: "Bash", detail: "pwd", kind: .command,
+                status: .succeeded, at: firstAt, output: nil, outputIsError: false),
+            .toolEvent(
+                id: "tool-2", name: "Bash", detail: "ls", kind: .command,
+                status: .succeeded, at: secondAt, output: nil, outputIsError: false),
+            .assistantMessage(
+                id: "assistant", markdown: "Done", isStreaming: false, at: secondAt),
+        ]
+
+        let withVisualSeparator = rawItems.groupedForDisplay()
+        let rawText = TranscriptTextBuilder.attributedString(from: rawItems).string
+        let displayText = TranscriptTextBuilder.attributedString(from: withVisualSeparator).string
+
+        #expect(rawText == displayText)
+        #expect(rawText.contains("Tools"))
+        #expect(!rawText.contains("Today"))
+    }
 }
 
 @Suite("File change diff text")

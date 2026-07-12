@@ -1,4 +1,6 @@
+import * as Schema from "effect/Schema";
 import {
+  CustomInstructionsConfig,
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -11,6 +13,8 @@ import {
   normalizePersistedServerSettingString,
   parsePersistedServerObservabilitySettings,
 } from "./serverSettings.ts";
+
+const decodeCustomInstructions = Schema.decodeUnknownSync(CustomInstructionsConfig);
 
 describe("serverSettings helpers", () => {
   it("normalizes optional persisted strings", () => {
@@ -193,5 +197,51 @@ describe("serverSettings helpers", () => {
       enabled: true,
       config: { homePath: "~/.codex" },
     });
+  });
+
+  it("replaces customInstructions as a whole config", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      customInstructions: decodeCustomInstructions({
+        global: {
+          instructions: [{ id: "old", scope: { kind: "global" }, text: "old instructions" }],
+        },
+        projects: {
+          "project-1": {
+            instructions: [
+              { id: "project-old", scope: { kind: "global" }, text: "old project instructions" },
+            ],
+          },
+        },
+      }),
+    };
+    const replacement = decodeCustomInstructions({
+      global: {
+        agents: [
+          {
+            id: "new-agent",
+            name: "new agent",
+            target: { kind: "driver", driver: "codex" },
+            prompt: "new prompt",
+          },
+        ],
+      },
+      projects: {},
+    });
+
+    expect(
+      applyServerSettingsPatch(current, { customInstructions: replacement }).customInstructions,
+    ).toEqual(replacement);
+  });
+
+  it("leaves customInstructions unchanged when the patch omits it", () => {
+    const customInstructions = decodeCustomInstructions({
+      global: {
+        instructions: [{ id: "kept", scope: { kind: "global" }, text: "keep me" }],
+      },
+    });
+    const current = { ...DEFAULT_SERVER_SETTINGS, customInstructions };
+
+    expect(applyServerSettingsPatch(current, {}).customInstructions).toEqual(customInstructions);
   });
 });

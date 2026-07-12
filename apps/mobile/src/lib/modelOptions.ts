@@ -57,6 +57,23 @@ function normalizeSelectionOptions(
       };
 }
 
+/** Server-supplied display names for every model in every provider instance. */
+export function buildModelDisplayNameMap(
+  config: T3ServerConfig | null | undefined,
+): ReadonlyMap<string, string> {
+  const displayNames = new Map<string, string>();
+  for (const provider of config?.providers ?? []) {
+    for (const model of provider.models) {
+      // A task activity carries only the model slug, so keep the first
+      // catalog entry when multiple provider instances expose the same slug.
+      if (!displayNames.has(model.slug)) {
+        displayNames.set(model.slug, model.name);
+      }
+    }
+  }
+  return displayNames;
+}
+
 export function buildModelOptions(
   config: T3ServerConfig | null | undefined,
   fallbackModelSelection: ModelSelection | null,

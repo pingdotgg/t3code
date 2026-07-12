@@ -114,6 +114,7 @@ struct SergeCodeApp: App {
                     #endif
                 }
                 .task {
+                    Task { await CodeHighlighter.shared.warm() }
                     await scenery.start()
                     passport.backfill(
                         sets: scenery.availableSets,
@@ -133,6 +134,18 @@ struct SergeCodeApp: App {
                 }
         }
         .defaultSize(width: 1100, height: 720)
+        .commands {
+            CommandGroup(replacing: .appInfo) {
+                // Plain button + AppKit-managed window: a custom View with
+                // @Environment(\.openWindow) inside a CommandGroup crashes
+                // AppKit menu layout on the macOS 27 beta SDK (uncaught
+                // NSException in NSISEngine), so About avoids SwiftUI window
+                // scenes entirely.
+                Button("About SurgeCode") {
+                    AboutWindowController.shared.show()
+                }
+            }
+        }
 
         Settings {
             SettingsScene(

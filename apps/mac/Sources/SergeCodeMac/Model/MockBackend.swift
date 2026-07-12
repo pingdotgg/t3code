@@ -241,6 +241,7 @@ public final class MockBackend: BackendService, @unchecked Sendable {
     }
 
     public func implementPlan(threadID: String, planID: String) async throws {
+        await state.setInteractionMode(threadID: threadID, mode: .normal)
         await state.sendMessage(threadID: threadID, text: "Implement the proposed plan.")
     }
 
@@ -1243,7 +1244,9 @@ private actor MockState {
 
     private static func timelineForSidebarThread(at now: Date) -> [TimelineItem] {
         [
-            .userMessage(id: "t1-u1", text: "The sidebar list jumps around when new threads arrive. Can you fix it?", at: now.addingTimeInterval(-500)),
+            // Keep one early fixture item on yesterday's calendar day so the
+            // UI probe visibly exercises the transcript day separator.
+            .userMessage(id: "t1-u1", text: "The sidebar list jumps around when new threads arrive. Can you fix it?", at: now.addingTimeInterval(-26 * 3600)),
             .assistantMessage(
                 id: "t1-a1",
                 markdown: """

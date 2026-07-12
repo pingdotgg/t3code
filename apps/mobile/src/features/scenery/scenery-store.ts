@@ -456,7 +456,7 @@ export class SceneryStore {
         // Pre-blurred + lightly saturated on the CDN: replaces the mac chat
         // wallpaper's runtime `.blur(4).saturation(1.05)` at zero on-device
         // cost and renders identically on Android.
-        return sizedImageURL(base, { width: this.heroPixelWidth, blur: 35, saturation: 5 });
+        return sizedImageURL(base, { width: this.heroPixelWidth, blur: 50, saturation: 5 });
       case "frost":
         return sizedImageURL(base, { width: 800, blur: 90 });
     }

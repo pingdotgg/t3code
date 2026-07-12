@@ -1592,6 +1592,13 @@ public actor LiveBackend: BackendService {
     public func implementPlan(threadID: String, planID: String) async throws {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
         let thread = threadsByID[threadID]
+        // Persist the transition as well as patching the local projection. A
+        // later shell upsert must not restore plan mode after implementation
+        // starts.
+        _ = try await client.setInteractionMode(
+            threadId: threadID, interactionMode: .default)
+        updateCachedThread(threadID) { $0.interactionMode = .normal }
+
         // Implementation turns always run in the default interaction mode —
         // plan mode is what produced the plan being implemented.
         _ = try await client.startTurn(

@@ -691,6 +691,18 @@ function mapToRuntimeEvents(
     ];
   }
 
+  if (event.method === "session/sandbox-upgraded" && event.message) {
+    return [
+      {
+        ...runtimeEventBase(event, canonicalThreadId),
+        type: "runtime.warning",
+        payload: {
+          message: event.message,
+        },
+      },
+    ];
+  }
+
   if (event.method === "session/started") {
     return [
       {
@@ -1543,6 +1555,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           binaryPath: codexConfig.binaryPath,
           ...(options?.environment ? { environment: options.environment } : {}),
           ...(codexConfig.homePath ? { homePath: codexConfig.homePath } : {}),
+          ...(input.isWorktree ? { isWorktree: true } : {}),
           ...(isCodexResumeCursorSchema(input.resumeCursor)
             ? { resumeCursor: input.resumeCursor }
             : {}),

@@ -169,6 +169,22 @@ describe("buildTurnStartParams", () => {
     });
   });
 
+  it("upgrades auto-accept sandbox policy inside a worktree", () => {
+    const params = Effect.runSync(
+      buildTurnStartParams({
+        threadId: "provider-thread-worktree",
+        runtimeMode: "auto-accept-edits",
+        isWorktree: true,
+        prompt: "Implement it",
+      }),
+    );
+
+    NodeAssert.equal(params.approvalPolicy, "on-request");
+    NodeAssert.deepStrictEqual(params.sandboxPolicy, {
+      type: "dangerFullAccess",
+    });
+  });
+
   it("omits collaboration mode when interaction mode is absent", () => {
     const params = Effect.runSync(
       buildTurnStartParams({
@@ -267,6 +283,42 @@ describe("isRecoverableThreadResumeError", () => {
 });
 
 describe("openCodexThread", () => {
+  it.effect("upgrades the thread sandbox for an auto-accept worktree", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ method: "thread/start"; payload: unknown }> = [];
+      const client = {
+        request: <M extends "thread/start" | "thread/resume">(
+          method: M,
+          payload: CodexRpc.ClientRequestParamsByMethod[M],
+        ) => {
+          if (method === "thread/start") {
+            calls.push({ method, payload });
+          }
+          return Effect.succeed(
+            makeThreadOpenResponse("worktree-thread") as CodexRpc.ClientRequestResponsesByMethod[M],
+          );
+        },
+      };
+
+      yield* openCodexThread({
+        client,
+        threadId: ThreadId.make("thread-worktree"),
+        runtimeMode: "auto-accept-edits",
+        isWorktree: true,
+        cwd: "/tmp/project-worktree",
+        requestedModel: undefined,
+        serviceTier: undefined,
+        resumeThreadId: undefined,
+      });
+
+      NodeAssert.deepStrictEqual(calls[0]?.payload, {
+        cwd: "/tmp/project-worktree",
+        approvalPolicy: "on-request",
+        sandbox: "danger-full-access",
+      });
+    }),
+  );
+
   it.effect("falls back to thread/start when resume fails recoverably", () =>
     Effect.gen(function* () {
       const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];
