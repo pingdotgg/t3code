@@ -1083,6 +1083,127 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-atta
   },
 );
 
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-attachments-replay-")))(
+  "OrchestrationProjectionPipeline",
+  (it) => {
+    it.effect("does not delete shared text attachments while rebuilding projections", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const { attachmentsDir } = yield* ServerConfig;
+        const now = "2026-01-01T00:00:00.000Z";
+        const projectId = ProjectId.make("project-attachment-replay");
+        const deletedThreadId = ThreadId.make("thread-attachment-replay-deleted");
+        const retainedThreadId = ThreadId.make("thread-attachment-replay-retained");
+        const textAttachmentPath = path.join(
+          attachmentsDir,
+          "text",
+          "00000000-0000-4000-8000-000000000005",
+          "shared.txt",
+        );
+        const attachmentLink = `[shared.txt](${encodeURI(textAttachmentPath)})`;
+        const append = (event: Parameters<typeof eventStore.append>[0]) =>
+          eventStore.append(event).pipe(Effect.asVoid);
+
+        yield* append({
+          type: "project.created",
+          eventId: EventId.make("evt-attachment-replay-1"),
+          aggregateKind: "project",
+          aggregateId: projectId,
+          occurredAt: now,
+          commandId: CommandId.make("cmd-attachment-replay-1"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-attachment-replay-1"),
+          metadata: {},
+          payload: {
+            projectId,
+            title: "Attachment Replay",
+            workspaceRoot: "/tmp/project-attachment-replay",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+
+        for (const [index, threadId] of [deletedThreadId, retainedThreadId].entries()) {
+          yield* append({
+            type: "thread.created",
+            eventId: EventId.make(`evt-attachment-replay-thread-${index}`),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: now,
+            commandId: CommandId.make(`cmd-attachment-replay-thread-${index}`),
+            causationEventId: null,
+            correlationId: CorrelationId.make(`cmd-attachment-replay-thread-${index}`),
+            metadata: {},
+            payload: {
+              threadId,
+              projectId,
+              title: `Attachment Replay ${index}`,
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("codex"),
+                model: "gpt-5-codex",
+              },
+              runtimeMode: "full-access",
+              branch: null,
+              worktreePath: null,
+              createdAt: now,
+              updatedAt: now,
+            },
+          });
+          yield* append({
+            type: "thread.message-sent",
+            eventId: EventId.make(`evt-attachment-replay-message-${index}`),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: now,
+            commandId: CommandId.make(`cmd-attachment-replay-message-${index}`),
+            causationEventId: null,
+            correlationId: CorrelationId.make(`cmd-attachment-replay-message-${index}`),
+            metadata: {},
+            payload: {
+              threadId,
+              messageId: MessageId.make(`message-attachment-replay-${index}`),
+              role: "user",
+              text: attachmentLink,
+              turnId: null,
+              streaming: false,
+              createdAt: now,
+              updatedAt: now,
+            },
+          });
+        }
+
+        yield* append({
+          type: "thread.deleted",
+          eventId: EventId.make("evt-attachment-replay-delete"),
+          aggregateKind: "thread",
+          aggregateId: deletedThreadId,
+          occurredAt: now,
+          commandId: CommandId.make("cmd-attachment-replay-delete"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-attachment-replay-delete"),
+          metadata: {},
+          payload: {
+            threadId: deletedThreadId,
+            deletedAt: now,
+          },
+        });
+
+        yield* fileSystem.makeDirectory(path.dirname(textAttachmentPath), { recursive: true });
+        yield* fileSystem.writeFileString(textAttachmentPath, "shared attachment");
+
+        yield* projectionPipeline.bootstrap;
+
+        assert.isTrue(yield* exists(textAttachmentPath));
+      }),
+    );
+  },
+);
+
 it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-attachments-delete-")))(
   "OrchestrationProjectionPipeline",
   (it) => {
