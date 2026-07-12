@@ -43,6 +43,15 @@ Review changed TypeScript and directly affected call sites for the conventions b
 - Keep implementation-specific names when an abstract port module contains one of several possible implementations, for example `makeCloudflaredRelayClient` and `layerCloudflared` in `RelayClient.ts`.
 - `infra/relay/src/db.ts` is an intentional exception: an inline `Layer.succeed(RelayDb, db)` is acceptable without generic `make`/`layer` exports.
 
+## Dependency acquisition and runtime boundaries
+
+- Production service construction must acquire Effect service dependencies from the environment with `yield* Foo.Foo`, and its `make`/`layer` types must expose those requirements. Flag factories or constructors that accept `Foo["Service"]` (or a plain object whose methods return `Effect`) when that value is an implementation dependency owned by the service. Passing service instances explicitly is acceptable in tests and integration harnesses; passing pure configuration, immutable domain values, or deliberate callback strategies is not service injection.
+- Do not hide dependencies in module globals, closures over singleton services, or `Layer.succeed` implementations that call runtime-backed or imperative APIs. Trace helpers used by a supposedly synchronous layer far enough to verify that asynchronous services are represented in the Effect environment.
+- `ManagedRuntime.make`, `runPromise`, and `runPromiseExit` belong at explicit application/framework boundaries such as React, native callback, CLI, or HTTP adapters. Flag their use in domain services, repositories, persistence implementations, and service constructors. A clearly named imperative adapter may bridge an Effect service into a Promise API, but it must not become a dependency of another Effect service.
+- Do not create per-feature managed runtimes or Atom runtimes to smuggle the same owned resource into multiple consumers. Compose the resource once in an application-owned layer/runtime and provide its context to integration runtimes.
+- When acquisition can fail but a caller must retain fallback behavior, keep the failure typed in Effect rather than bypassing the layer through an imperative runtime. Model unavailability in service operations or with an explicit optional-service layer so downstream recovery remains visible and testable.
+- During review, search touched code and affected call sites for service-instance parameters, `Layer.succeed`, `ManagedRuntime.make`, and `.runPromise`/`.runPromiseExit`. Verify that each occurrence is a legitimate test seam, pure value injection, or application boundary—not fake dependency injection or a hidden runtime.
+
 ## Errors and predicates
 
 - Define service failures with `Schema.TaggedErrorClass` and structured attributes. Derive `message` from those attributes rather than storing an unstructured message as the only data.

@@ -7,7 +7,7 @@ import * as Function from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull, lt, sql } from "drizzle-orm";
 
 import * as RelayDb from "../db.ts";
 import { relayAgentActivityRows, relayEnvironmentLinks } from "../persistence/schema.ts";
@@ -38,6 +38,18 @@ export class AgentActivityRowDeletePersistenceError extends Schema.TaggedErrorCl
   }
 }
 
+export class AgentActivityRowPruneTerminalPersistenceError extends Schema.TaggedErrorClass<AgentActivityRowPruneTerminalPersistenceError>()(
+  "AgentActivityRowPruneTerminalPersistenceError",
+  {
+    updatedBefore: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to prune terminal agent activity rows updated before ${this.updatedBefore}.`;
+  }
+}
+
 export class AgentActivityRowListPersistenceError extends Schema.TaggedErrorClass<AgentActivityRowListPersistenceError>()(
   "AgentActivityRowListPersistenceError",
   {
@@ -57,6 +69,9 @@ export class AgentActivityRows extends Context.Service<
       readonly environmentPublicKey: string;
       readonly state: RelayAgentActivityState;
     }) => Effect.Effect<void, AgentActivityRowUpsertPersistenceError>;
+    readonly pruneTerminal: (input: {
+      readonly updatedBefore: string;
+    }) => Effect.Effect<void, AgentActivityRowPruneTerminalPersistenceError>;
     readonly remove: (input: {
       readonly environmentId: string;
       readonly environmentPublicKey: string;
@@ -157,6 +172,29 @@ export const make = Effect.gen(function* () {
               new AgentActivityRowDeletePersistenceError({
                 environmentId: input.environmentId,
                 threadId: input.threadId,
+                cause,
+              }),
+          ),
+        );
+    }),
+
+    pruneTerminal: Effect.fn("relay.agent_activity_rows.prune_terminal")(function* (input) {
+      yield* Effect.annotateCurrentSpan({
+        "relay.agent_activity_prune.before": input.updatedBefore,
+      });
+      yield* db
+        .delete(relayAgentActivityRows)
+        .where(
+          and(
+            sql`${relayAgentActivityRows.stateJson} ->> 'phase' IN ('completed', 'failed')`,
+            lt(relayAgentActivityRows.updatedAt, input.updatedBefore),
+          ),
+        )
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new AgentActivityRowPruneTerminalPersistenceError({
+                updatedBefore: input.updatedBefore,
                 cause,
               }),
           ),

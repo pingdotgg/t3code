@@ -14,9 +14,11 @@ import { runtime } from "../../lib/runtime";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
+  releaseAgentAwarenessRelayTokenProvider,
   setAgentAwarenessRelayTokenProvider,
   unregisterAgentAwarenessDeviceForCurrentUser,
 } from "../agent-awareness/remoteRegistration";
+import { clearConnectOnboardingRequest, requestConnectOnboarding } from "./connectOnboarding";
 import { resolveCloudPublicConfig, resolveRelayClerkTokenOptions } from "./publicConfig";
 
 function resetManagedRelayTokenCache() {
@@ -66,6 +68,19 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
     const nextAccount = isSignedIn && userId ? userId : null;
     observedAccountRef.current = nextAccount;
 
+    // Every sign-in or account switch that completes during this session (a
+    // cold start observes undefined → account and must not re-prompt) requests
+    // the T3 Connect onboarding sheet — account transitions clear the
+    // connected environments, so each new session starts with no devices to
+    // reach. The request itself is issued after the cleanup transition inside
+    // activateSession, so the sheet never lists the previous account's
+    // environments; sign-out drops any not-yet-presented request instead.
+    const isAccountTransition =
+      previousObservedAccount !== undefined && previousObservedAccount !== nextAccount;
+    if (isAccountTransition && nextAccount === null) {
+      clearConnectOnboardingRequest();
+    }
+
     const queueAccountCleanup = (
       previous: {
         readonly userId: string;
@@ -113,6 +128,9 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
       }
       previousTokenProviderRef.current = { userId, provider: tokenProvider };
       activateCloudRelayAccount(userId, tokenProvider);
+      if (isAccountTransition) {
+        requestConnectOnboarding(userId);
+      }
     };
     const activateAfterTransition = (transition: Promise<void>) => {
       void (async () => {
@@ -143,7 +161,11 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
   useEffect(
     () => () => {
       previousTokenProviderRef.current = null;
-      deactivateCloudRelayAccount();
+      // Unmounting is not a sign-out: the user is usually still signed in, so
+      // detach the provider without ending lock-screen activities or wiping the
+      // persisted registration (a remount reuses both).
+      releaseAgentAwarenessRelayTokenProvider();
+      setManagedRelaySession(appAtomRegistry, null);
     },
     [],
   );

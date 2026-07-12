@@ -1,0 +1,46 @@
+diff --git a/ios/Shared/MenuViewImplementation.swift b/ios/Shared/MenuViewImplementation.swift
+index 5c4e0da4292b15d3a27b5ea1555f11452a470815..ea19f2eec02dd78fbc78cc455c91b4e71e734d70 100644
+--- a/ios/Shared/MenuViewImplementation.swift
++++ b/ios/Shared/MenuViewImplementation.swift
+@@ -88,6 +88,41 @@ public class MenuViewImplementation: UIButton {
+ 
+         self.menu = menu
+         self.showsMenuAsPrimaryAction = !shouldOpenOnLongPress
++        // In long-press mode the button must not intercept touches: as a
++        // full-bounds contentView it sits IN FRONT of the React children of
++        // the hosting component view, which would swallow their taps (e.g. a
++        // row Pressable wrapped by MenuView). The context-menu interaction is
++        // hosted by the superview instead (see updateLongPressInteraction) so
++        // long-press and pointer secondary-click still present the menu, with
++        // the wrapped content as the zoom preview.
++        self.isUserInteractionEnabled = !shouldOpenOnLongPress
++        self.updateLongPressInteraction()
++    }
++
++    private var longPressInteraction: UIContextMenuInteraction?
++
++    public override func didMoveToSuperview() {
++        super.didMoveToSuperview()
++        self.updateLongPressInteraction()
++    }
++
++    private func updateLongPressInteraction() {
++        if shouldOpenOnLongPress, let host = self.superview {
++            if let existing = longPressInteraction, existing.view === host {
++                return
++            }
++            if let existing = longPressInteraction {
++                existing.view?.removeInteraction(existing)
++            }
++            let interaction = UIContextMenuInteraction(delegate: self)
++            host.addInteraction(interaction)
++            longPressInteraction = interaction
++            return
++        }
++        if let existing = longPressInteraction {
++            existing.view?.removeInteraction(existing)
++            longPressInteraction = nil
++        }
+     }
+ 
+     public override func reactSetFrame(_ frame: CGRect) {

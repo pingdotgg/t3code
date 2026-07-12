@@ -1,11 +1,11 @@
 import { sanitizeFeatureBranchName } from "@t3tools/shared/git";
-import { useRouter } from "expo-router";
+import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useThemeColor } from "../../../lib/useThemeColor";
 
 import { AppText as Text, AppTextInput as TextInput } from "../../../components/AppText";
+import { cn } from "../../../lib/cn";
 import { useEnvironmentQuery } from "../../../state/query";
 import { useThreadSelection } from "../../../state/use-thread-selection";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
@@ -14,19 +14,18 @@ import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-wo
 import { vcsEnvironment } from "../../../state/vcs";
 import { SheetActionButton } from "./gitSheetComponents";
 
-export function GitBranchesSheet() {
-  const router = useRouter();
+type GitBranchesSheetProps = StaticScreenProps<{
+  readonly environmentId: string;
+  readonly threadId: string;
+}>;
+
+export function GitBranchesSheet(_props: GitBranchesSheetProps) {
+  const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { selectedThread } = useThreadSelection();
   const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
-
-  const borderColor = useThemeColor("--color-border");
-  const inputBorderColor = useThemeColor("--color-input-border");
-  const inputBg = useThemeColor("--color-input");
-  const foregroundColor = useThemeColor("--color-foreground");
-  const subtleStrongColor = useThemeColor("--color-subtle-strong");
 
   const gitStatus = useEnvironmentQuery(
     selectedThread !== null && selectedThreadCwd !== null
@@ -61,30 +60,17 @@ export function GitBranchesSheet() {
     <ScrollView
       showsVerticalScrollIndicator={false}
       contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
-      contentContainerStyle={{
-        paddingHorizontal: 20,
-        paddingTop: 8,
-        gap: 16,
-      }}
+      contentContainerClassName="gap-4 px-5 pt-2"
     >
       <View className="gap-2 rounded-[18px] border border-border bg-card px-4 py-4">
-        <Text
-          className="text-foreground-secondary text-2xs font-t3-bold uppercase"
-          style={{ letterSpacing: 1 }}
-        >
+        <Text className="text-foreground-secondary text-2xs font-t3-bold tracking-[1px] uppercase">
           New branch
         </Text>
         <TextInput
           value={newBranchName}
           onChangeText={setNewBranchName}
           placeholder="feature/mobile-polish"
-          className="rounded-[18px] px-3.5 py-3 font-sans text-base"
-          style={{
-            borderWidth: 1,
-            borderColor: inputBorderColor,
-            backgroundColor: inputBg,
-            color: foregroundColor,
-          }}
+          className="rounded-[18px]"
         />
         <SheetActionButton
           icon="plus"
@@ -96,42 +82,27 @@ export function GitBranchesSheet() {
             if (branch.length === 0) return;
             void gitActions.onCreateSelectedThreadBranch(branch).then(() => {
               setNewBranchName("");
-              router.dismiss();
+              navigation.goBack();
             });
           }}
         />
       </View>
 
       <View className="gap-2 rounded-[18px] border border-border bg-card px-4 py-4">
-        <Text
-          className="text-foreground-secondary text-2xs font-t3-bold uppercase"
-          style={{ letterSpacing: 1 }}
-        >
+        <Text className="text-foreground-secondary text-2xs font-t3-bold tracking-[1px] uppercase">
           New worktree
         </Text>
         <TextInput
           value={worktreeBaseBranch}
           onChangeText={setWorktreeBaseBranch}
           placeholder="main"
-          className="rounded-[18px] px-3.5 py-3 font-sans text-base"
-          style={{
-            borderWidth: 1,
-            borderColor: inputBorderColor,
-            backgroundColor: inputBg,
-            color: foregroundColor,
-          }}
+          className="rounded-[18px]"
         />
         <TextInput
           value={worktreeBranchName}
           onChangeText={setWorktreeBranchName}
           placeholder="feature/mobile-thread"
-          className="rounded-[18px] px-3.5 py-3 font-sans text-base"
-          style={{
-            borderWidth: 1,
-            borderColor: inputBorderColor,
-            backgroundColor: inputBg,
-            color: foregroundColor,
-          }}
+          className="rounded-[18px]"
         />
         <SheetActionButton
           icon="square.split.2x1"
@@ -146,17 +117,14 @@ export function GitBranchesSheet() {
             if (baseBranch.length === 0 || newBranch.length === 0) return;
             void gitActions.onCreateSelectedThreadWorktree({ baseBranch, newBranch }).then(() => {
               setWorktreeBranchName("");
-              router.dismiss();
+              navigation.goBack();
             });
           }}
         />
       </View>
 
       <View className="gap-2">
-        <Text
-          className="text-foreground-secondary text-2xs font-t3-bold uppercase"
-          style={{ letterSpacing: 1 }}
-        >
+        <Text className="text-foreground-secondary text-2xs font-t3-bold tracking-[1px] uppercase">
           Existing branches
         </Text>
         {branchesLoading ? (
@@ -180,15 +148,14 @@ export function GitBranchesSheet() {
           return (
             <Pressable
               key={branch.name}
-              className="gap-1 rounded-[18px] border px-4 py-3"
+              className={cn(
+                "gap-1 rounded-[18px] border px-4 py-3 disabled:opacity-[0.45]",
+                branch.current ? "border-subtle-strong" : "border-border",
+              )}
               disabled={busy || disabled}
-              style={{
-                borderColor: branch.current ? subtleStrongColor : borderColor,
-                opacity: busy || disabled ? 0.45 : 1,
-              }}
               onPress={() => {
                 void gitActions.onCheckoutSelectedThreadBranch(branch.name).then(() => {
-                  router.dismiss();
+                  navigation.goBack();
                 });
               }}
             >

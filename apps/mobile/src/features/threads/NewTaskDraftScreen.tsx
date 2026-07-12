@@ -1,9 +1,11 @@
-import { Stack, useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useRef } from "react";
-import { Alert, InteractionManager, View, useColorScheme } from "react-native";
+import { NativeStackScreenOptions } from "../../native/StackHeader";
+import { StackActions, useNavigation } from "@react-navigation/native";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Alert, InteractionManager, Platform, View, useColorScheme } from "react-native";
 import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
+import { useFontFamily } from "../../lib/useFontFamily";
 
 import { EnvironmentId } from "@t3tools/contracts";
 import {
@@ -18,10 +20,13 @@ import {
   ComposerToolbarScroller,
   ComposerToolbarTrigger,
 } from "../../components/ComposerToolbarTrigger";
+import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
-import { ControlPillMenu } from "../../components/ControlPill";
+import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
 import { ProviderIcon } from "../../components/ProviderIcon";
+import { ComposerSurface } from "./ThreadComposer";
 
+import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { convertPastedImagesToAttachments, pickComposerImages } from "../../lib/composerImages";
 import {
   applyProviderOptionMenuEvent,
@@ -29,11 +34,13 @@ import {
   providerOptionsConfigurationLabel,
   resolveProviderOptionDescriptors,
 } from "../../lib/providerOptions";
-import { buildThreadRoutePath } from "../../lib/routes";
-import { scopedProjectKey } from "../../lib/scopedEntities";
-import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
+import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { getComposerDraftSnapshot } from "../../state/use-composer-drafts";
 import { useProjects } from "../../state/entities";
+import { deriveThreadTitleFromPrompt } from "../../lib/projectThreadStartTurn";
+import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
+import { enqueueThreadOutboxMessage, removeThreadOutboxMessage } from "../../state/thread-outbox";
+import { useRemoteConnectionStatus } from "../../state/use-remote-environment-registry";
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
 import { useCreateProjectThread } from "./use-project-actions";
 
@@ -54,33 +61,99 @@ export function NewTaskDraftScreen(props: {
     readonly environmentId?: string;
     readonly projectId?: string;
   };
+  /** Queued outbox message id when editing an existing pending task. */
+  readonly pendingTaskId?: string;
 }) {
   const projects = useProjects();
   const createProjectThread = useCreateProjectThread();
   const flow = useNewTaskFlow();
-  const router = useRouter();
+  const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
   const controlsBottomPadding = isKeyboardVisible ? 8 : Math.max(insets.bottom, 10);
   const { logicalProjects, selectedProject, setProject } = flow;
+  const { connectedEnvironments } = useRemoteConnectionStatus();
+  const environmentConnected =
+    selectedProject !== null &&
+    connectedEnvironments.find(
+      (environment) => environment.environmentId === selectedProject.environmentId,
+    )?.connectionState === "connected";
   const promptInputRef = useRef<ComposerEditorHandle>(null);
   const loadedBranchesProjectKeyRef = useRef<string | null>(null);
+  const [isComposerFocused, setIsComposerFocused] = useState(false);
+  const appliedInitialProjectKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    return () => {
+      appliedInitialProjectKeyRef.current = null;
+    };
+  }, []);
 
-  const borderColor = useThemeColor("--color-border");
+  const { beginEditingPendingTask, cancelEditingPendingTask, editingPendingTask } = flow;
+  const attemptedPendingTaskIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!props.pendingTaskId || editingPendingTask?.messageId === props.pendingTaskId) {
+      return;
+    }
+    // Attempt each pending task once: after it is delivered or deleted the
+    // editing session legitimately ends, and re-running must not navigate.
+    if (attemptedPendingTaskIdRef.current === props.pendingTaskId) {
+      return;
+    }
+    attemptedPendingTaskIdRef.current = props.pendingTaskId;
+    if (!beginEditingPendingTask(props.pendingTaskId)) {
+      // The queued task no longer exists (sent or deleted before opening).
+      navigation.dispatch(StackActions.replace("NewTask"));
+    }
+  }, [beginEditingPendingTask, editingPendingTask?.messageId, navigation, props.pendingTaskId]);
+
+  useEffect(() => {
+    if (!props.pendingTaskId) return;
+    return () => {
+      // Allow a later navigation for the same pending task to re-hydrate it.
+      attemptedPendingTaskIdRef.current = null;
+      cancelEditingPendingTask();
+    };
+  }, [props.pendingTaskId, cancelEditingPendingTask]);
+
+  const foregroundColor = useThemeColor("--color-foreground");
+  const regularFontFamily = useFontFamily("regular");
+  const bodyText = useScaledTextRole("body");
+  const headlineText = useScaledTextRole("headline");
   const sheetFadeOpaque = colorScheme === "dark" ? "rgba(14,14,14,0.98)" : "rgba(242,242,247,0.98)";
   const sheetFadeTransparent = colorScheme === "dark" ? "rgba(14,14,14,0)" : "rgba(242,242,247,0)";
 
+  // A new navigation to this mounted screen delivers a fresh initialProjectRef
+  // reference — treat it as a new request and let it apply again.
+  const lastInitialProjectRefRef = useRef(props.initialProjectRef);
+
   useEffect(() => {
-    if (props.initialProjectRef?.environmentId && props.initialProjectRef?.projectId) {
+    // Pending-task editing owns project selection (and must not fall through
+    // to the replace("NewTask") fallback while its hydration is in flight).
+    if (props.pendingTaskId) {
+      return;
+    }
+    if (lastInitialProjectRefRef.current !== props.initialProjectRef) {
+      lastInitialProjectRefRef.current = props.initialProjectRef;
+      appliedInitialProjectKeyRef.current = null;
+    }
+    const initialEnvironmentId = props.initialProjectRef?.environmentId;
+    const initialProjectId = props.initialProjectRef?.projectId;
+    if (initialEnvironmentId && initialProjectId) {
       const directProject =
         projects.find(
           (project) =>
-            project.environmentId === props.initialProjectRef?.environmentId &&
-            project.id === props.initialProjectRef?.projectId,
+            project.environmentId === initialEnvironmentId && project.id === initialProjectId,
         ) ?? null;
 
       if (directProject) {
+        // Apply the route's project once. Re-applying on every change would
+        // instantly revert environment/project switches made in the picker.
+        const directProjectKey = `${directProject.environmentId}:${directProject.id}`;
+        if (appliedInitialProjectKeyRef.current === directProjectKey) {
+          return;
+        }
+        appliedInitialProjectKeyRef.current = directProjectKey;
         if (
           selectedProject?.environmentId === directProject.environmentId &&
           selectedProject.id === directProject.id
@@ -101,13 +174,13 @@ export function NewTaskDraftScreen(props: {
       return;
     }
 
-    router.replace("/new");
+    navigation.dispatch(StackActions.replace("NewTask"));
   }, [
     logicalProjects,
     projects,
-    props.initialProjectRef?.environmentId,
-    props.initialProjectRef?.projectId,
-    router,
+    props.initialProjectRef,
+    props.pendingTaskId,
+    navigation,
     selectedProject,
     setProject,
   ]);
@@ -126,7 +199,9 @@ export function NewTaskDraftScreen(props: {
   }, [flow.loadBranches, selectedProject]);
 
   useEffect(() => {
-    if (!selectedProject) {
+    // Android starts with the collapsed composer pill (like an open thread)
+    // and only expands/focuses when tapped.
+    if (!selectedProject || Platform.OS === "android") {
       return;
     }
 
@@ -273,12 +348,24 @@ export function NewTaskDraftScreen(props: {
         subtitle: flow.selectedBranchName ?? "Choose branch",
         subactions: branchActions,
       },
+      ...(flow.workspaceMode === "worktree"
+        ? [
+            {
+              id: "workspace:start-from-origin",
+              title: "Start from origin",
+              subtitle: "Base the worktree on the latest origin branch",
+              image: "arrow.triangle.pull",
+              state: flow.startFromOrigin ? ("on" as const) : undefined,
+            },
+          ]
+        : []),
     ];
   }, [
     flow.availableBranches,
     flow.branchesLoading,
     flow.selectedBranchName,
     flow.selectedProject,
+    flow.startFromOrigin,
     flow.workspaceMode,
   ]);
 
@@ -343,6 +430,10 @@ export function NewTaskDraftScreen(props: {
       );
       return;
     }
+    if (event === "workspace:start-from-origin") {
+      flow.setStartFromOrigin(!flow.startFromOrigin);
+      return;
+    }
     if (event.startsWith("workspace:branch:")) {
       const branchName = event.slice("workspace:branch:".length);
       const branch = flow.availableBranches.find((candidate) => candidate.name === branchName);
@@ -378,17 +469,17 @@ export function NewTaskDraftScreen(props: {
 
   async function handleStart(): Promise<void> {
     const selectedProject = flow.selectedProject;
-    if (!selectedProject) {
+    const draftKey = flow.draftKey;
+    if (!selectedProject || !draftKey) {
       return;
     }
-    const draft = getComposerDraftSnapshot(
-      `new-task:${scopedProjectKey(selectedProject.environmentId, selectedProject.id)}`,
-    );
+    const draft = getComposerDraftSnapshot(draftKey);
     const modelSelection = draft.modelSelection ?? flow.selectedModel;
     const workspaceMode = draft.workspaceSelection?.mode ?? flow.workspaceMode;
     const selectedBranchName = draft.workspaceSelection?.branch ?? flow.selectedBranchName;
     const selectedWorktreePath =
       draft.workspaceSelection?.worktreePath ?? flow.selectedWorktreePath;
+    const startFromOrigin = draft.workspaceSelection?.startFromOrigin ?? flow.startFromOrigin;
     const runtimeMode = draft.runtimeMode ?? flow.runtimeMode;
     const interactionMode = draft.interactionMode ?? flow.interactionMode;
     const initialMessageText = draft.text.trim();
@@ -402,17 +493,76 @@ export function NewTaskDraftScreen(props: {
       return;
     }
 
+    const editingPendingTask = flow.editingPendingTask;
+
+    if (!environmentConnected) {
+      // Offline: park the task in the outbox; the drain sends it when the
+      // environment reconnects. Editing an existing pending task re-queues it
+      // under its original identifiers.
+      const metadata = editingPendingTask
+        ? {
+            threadId: editingPendingTask.threadId,
+            commandId: editingPendingTask.commandId,
+            messageId: editingPendingTask.messageId,
+            createdAt: editingPendingTask.createdAt,
+          }
+        : makeTurnCommandMetadata();
+      const message = flow.buildPendingTaskMessage(metadata);
+      if (!message) {
+        return;
+      }
+      flow.setSubmitting(true);
+      try {
+        await enqueueThreadOutboxMessage(message);
+      } catch (error) {
+        Alert.alert(
+          "Could not queue task",
+          error instanceof Error ? error.message : "The task could not be saved to the outbox.",
+        );
+        return;
+      } finally {
+        flow.setSubmitting(false);
+      }
+      if (editingPendingTask) {
+        flow.finishEditingPendingTask();
+      } else {
+        flow.setPrompt("");
+        flow.clearAttachments();
+      }
+      navigation.getParent()?.goBack();
+      return;
+    }
+
     flow.setSubmitting(true);
+    // Arm the lock-screen card before the async thread creation: backgrounding
+    // the app right after tapping submit would otherwise reject the foreground
+    // -only Activity start. If creation fails, the token registration's replay
+    // finds no work and ends the card within seconds.
+    armAgentAwarenessLiveActivityForLocalWork({
+      threadTitle: deriveThreadTitleFromPrompt(initialMessageText),
+      projectTitle: selectedProject.title,
+    });
     const result = await createProjectThread({
       project: selectedProject,
       modelSelection,
       envMode: workspaceMode,
       branch: selectedBranchName,
       worktreePath: workspaceMode === "worktree" ? null : selectedWorktreePath,
+      startFromOrigin,
       runtimeMode,
       interactionMode,
       initialMessageText,
       initialAttachments: draft.attachments,
+      ...(editingPendingTask
+        ? {
+            turnMetadata: {
+              threadId: editingPendingTask.threadId,
+              commandId: editingPendingTask.commandId,
+              messageId: editingPendingTask.messageId,
+              createdAt: editingPendingTask.createdAt,
+            },
+          }
+        : {}),
     });
     flow.setSubmitting(false);
 
@@ -427,49 +577,234 @@ export function NewTaskDraftScreen(props: {
       return;
     }
 
-    flow.setPrompt("");
-    flow.clearAttachments();
-    router.replace(buildThreadRoutePath(result.value));
+    if (editingPendingTask) {
+      try {
+        await removeThreadOutboxMessage(editingPendingTask);
+      } catch (error) {
+        console.warn("[new-task] failed to remove delivered pending task", error);
+      }
+      flow.finishEditingPendingTask();
+    } else {
+      flow.setPrompt("");
+      flow.clearAttachments();
+    }
+    navigation.dispatch(
+      StackActions.replace("Thread", {
+        environmentId: String(result.value.environmentId),
+        threadId: String(result.value.threadId),
+      }),
+    );
   }
 
   if (!selectedProject) {
     return (
       <View className="flex-1 bg-sheet">
-        <Stack.Screen options={{ title: "Loading task" }} />
+        {Platform.OS === "android" ? (
+          <>
+            <NativeStackScreenOptions options={{ headerShown: false }} />
+            <AndroidScreenHeader title="New Thread" onBack={() => navigation.goBack()} />
+          </>
+        ) : (
+          <NativeStackScreenOptions options={{ title: "Loading task" }} />
+        )}
+      </View>
+    );
+  }
+
+  const isAndroid = Platform.OS === "android";
+  const isDarkMode = colorScheme === "dark";
+  // Android expansion follows native editor focus so relayout cannot race
+  // the touch gesture that opens the keyboard.
+  const isExpanded = !isAndroid || isComposerFocused;
+  const canStart =
+    Boolean(flow.selectedProject) &&
+    Boolean(flow.selectedModel) &&
+    flow.prompt.trim().length > 0 &&
+    !flow.submitting &&
+    !(flow.workspaceMode === "worktree" && !flow.selectedBranchName);
+  const promptEditor = (
+    <ComposerEditor
+      ref={promptInputRef}
+      autoFocus={!isAndroid}
+      multiline
+      scrollEnabled={isExpanded}
+      value={flow.prompt}
+      skills={flow.selectedProviderSkills}
+      onChangeText={flow.setPrompt}
+      onFocus={() => setIsComposerFocused(true)}
+      onBlur={() => setIsComposerFocused(false)}
+      onPasteImages={(uris) => void handleNativePasteImages(uris)}
+      placeholder={`Describe a coding task in ${selectedProject.title}`}
+      // Same collapsed centering as ThreadComposer: native vertical gravity
+      // in a pill-height box.
+      singleLineCentered={!isExpanded}
+      contentInsetVertical={isAndroid ? 0 : undefined}
+      style={
+        isAndroid
+          ? isExpanded
+            ? { minHeight: 80, maxHeight: 160, paddingHorizontal: 4, paddingVertical: 4 }
+            : { height: 36 }
+          : { flex: 1, minHeight: 0 }
+      }
+      textStyle={
+        isAndroid
+          ? { ...bodyText, color: foregroundColor, fontFamily: regularFontFamily }
+          : headlineText
+      }
+    />
+  );
+
+  const toolbarPills = (
+    <>
+      <ComposerToolbarButton
+        icon="plus"
+        onPress={() => void handlePickImages()}
+        showChevron={false}
+      />
+      <ControlPillMenu
+        actions={modelMenuActions}
+        onPressAction={({ nativeEvent }) => handleModelMenuAction(nativeEvent.event)}
+      >
+        <ComposerToolbarTrigger
+          accessibilityLabel="Model"
+          iconNode={<ProviderIcon provider={flow.selectedModelOption?.providerDriver} size={16} />}
+          label={flow.selectedModelOption?.label ?? "Model"}
+        />
+      </ControlPillMenu>
+      <ControlPillMenu
+        actions={optionsMenuActions}
+        onPressAction={({ nativeEvent }) => handleOptionsMenuAction(nativeEvent.event)}
+      >
+        <ComposerToolbarTrigger
+          accessibilityLabel="Configuration"
+          icon="slider.horizontal.3"
+          label={configurationLabel}
+        />
+      </ControlPillMenu>
+      <ControlPillMenu
+        actions={environmentMenuActions}
+        onPressAction={({ nativeEvent }) => handleEnvironmentMenuAction(nativeEvent.event)}
+      >
+        <ComposerToolbarTrigger
+          accessibilityLabel="Environment"
+          icon="desktopcomputer"
+          label={selectedEnvironmentLabel}
+        />
+      </ControlPillMenu>
+      <ControlPillMenu
+        actions={workspaceMenuActions}
+        onPressAction={({ nativeEvent }) => handleWorkspaceMenuAction(nativeEvent.event)}
+      >
+        <ComposerToolbarTrigger
+          accessibilityLabel="Workspace"
+          icon="point.topleft.down.curvedto.point.bottomright.up"
+          label={workspaceLabel}
+        />
+      </ControlPillMenu>
+    </>
+  );
+
+  const startButton = (
+    <ComposerToolbarButton
+      accessibilityLabel={
+        flow.submitting ? "Starting task" : environmentConnected ? "Start task" : "Queue task"
+      }
+      icon={environmentConnected ? "arrow.up" : "tray.and.arrow.up"}
+      onPress={() => void handleStart()}
+      variant="primary"
+      showChevron={false}
+      disabled={!canStart}
+    />
+  );
+
+  if (isAndroid) {
+    // The draft is a thread that doesn't exist yet, so it mirrors the thread
+    // page: in-screen header, empty feed canvas above, and the same floating
+    // composer chrome as ThreadComposer (collapsed pill → expanded card).
+    return (
+      <View className="flex-1 bg-screen">
+        <NativeStackScreenOptions options={{ headerShown: false }} />
+        <AndroidScreenHeader title="New Thread" onBack={() => navigation.goBack()} />
+
+        <KeyboardAvoidingView automaticOffset behavior="padding" className="flex-1">
+          <View className="flex-1" />
+
+          <View
+            className="px-4 pt-2"
+            style={{
+              paddingBottom: controlsBottomPadding,
+              experimental_backgroundImage: isDarkMode
+                ? "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.85) 40%, rgba(0,0,0,0.95) 100%)"
+                : "linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,0.85) 40%, rgba(255,255,255,0.95) 100%)",
+            }}
+          >
+            <ComposerSurface
+              isDarkMode={isDarkMode}
+              style={
+                isExpanded
+                  ? {
+                      borderRadius: 20,
+                      overflow: "hidden",
+                      paddingHorizontal: 14,
+                      paddingVertical: 12,
+                    }
+                  : {
+                      borderRadius: 999,
+                      overflow: "hidden",
+                      flexDirection: "row",
+                      alignItems: "center",
+                      paddingLeft: 18,
+                      paddingRight: 5,
+                      paddingVertical: 5,
+                    }
+              }
+            >
+              {isExpanded && flow.attachments.length > 0 ? (
+                <View className="pb-2.5">
+                  <ComposerAttachmentStrip
+                    attachments={flow.attachments}
+                    onRemove={flow.removeAttachment}
+                  />
+                </View>
+              ) : null}
+              <View className={isExpanded ? undefined : "min-w-0 flex-1"}>{promptEditor}</View>
+              {!isExpanded ? (
+                <ControlPill
+                  icon="arrow.up"
+                  variant="primary"
+                  disabled={!canStart}
+                  onPress={() => void handleStart()}
+                />
+              ) : null}
+            </ComposerSurface>
+
+            {isExpanded ? (
+              <ComposerToolbarRow paddingBottom={8} paddingHorizontal={0} paddingTop={8}>
+                <ComposerToolbarScroller
+                  fadeOpaque={isDarkMode ? "rgba(0,0,0,0.95)" : "rgba(255,255,255,0.95)"}
+                  fadeTransparent={isDarkMode ? "rgba(0,0,0,0)" : "rgba(255,255,255,0)"}
+                >
+                  {toolbarPills}
+                </ComposerToolbarScroller>
+                {startButton}
+              </ComposerToolbarRow>
+            ) : null}
+          </View>
+        </KeyboardAvoidingView>
       </View>
     );
   }
 
   return (
     <View className="flex-1 bg-sheet">
-      <Stack.Screen options={{ title: selectedProject.title }} />
+      <NativeStackScreenOptions options={{ title: selectedProject.title }} />
 
-      <KeyboardAvoidingView automaticOffset behavior="padding" style={{ flex: 1 }}>
-        <View style={{ flex: 1, minHeight: 0, paddingHorizontal: 20, paddingTop: 8 }}>
-          <ComposerEditor
-            ref={promptInputRef}
-            autoFocus
-            multiline
-            scrollEnabled
-            value={flow.prompt}
-            skills={flow.selectedProviderSkills}
-            onChangeText={flow.setPrompt}
-            onPasteImages={(uris) => void handleNativePasteImages(uris)}
-            placeholder={`Describe a coding task in ${selectedProject.title}`}
-            style={{ flex: 1, minHeight: 0 }}
-            textStyle={MOBILE_TYPOGRAPHY.composer}
-          />
-        </View>
+      <KeyboardAvoidingView automaticOffset behavior="padding" className="flex-1">
+        <View className="min-h-0 flex-1 px-5 pt-2">{promptEditor}</View>
 
-        <View
-          style={{
-            borderTopWidth: 1,
-            borderTopColor: borderColor,
-            paddingBottom: controlsBottomPadding,
-          }}
-        >
+        <View className="border-t border-border" style={{ paddingBottom: controlsBottomPadding }}>
           {flow.attachments.length > 0 ? (
-            <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
+            <View className="px-4 pt-3">
               <ComposerAttachmentStrip
                 attachments={flow.attachments}
                 onRemove={flow.removeAttachment}
@@ -483,68 +818,9 @@ export function NewTaskDraftScreen(props: {
               fadeOpaque={sheetFadeOpaque}
               fadeTransparent={sheetFadeTransparent}
             >
-              <ComposerToolbarButton
-                icon="plus"
-                onPress={() => void handlePickImages()}
-                showChevron={false}
-              />
-              <ControlPillMenu
-                actions={modelMenuActions}
-                onPressAction={({ nativeEvent }) => handleModelMenuAction(nativeEvent.event)}
-              >
-                <ComposerToolbarTrigger
-                  accessibilityLabel="Model"
-                  iconNode={
-                    <ProviderIcon provider={flow.selectedModelOption?.providerDriver} size={16} />
-                  }
-                  label={flow.selectedModelOption?.label ?? "Model"}
-                />
-              </ControlPillMenu>
-              <ControlPillMenu
-                actions={optionsMenuActions}
-                onPressAction={({ nativeEvent }) => handleOptionsMenuAction(nativeEvent.event)}
-              >
-                <ComposerToolbarTrigger
-                  accessibilityLabel="Configuration"
-                  icon="slider.horizontal.3"
-                  label={configurationLabel}
-                />
-              </ControlPillMenu>
-              <ControlPillMenu
-                actions={environmentMenuActions}
-                onPressAction={({ nativeEvent }) => handleEnvironmentMenuAction(nativeEvent.event)}
-              >
-                <ComposerToolbarTrigger
-                  accessibilityLabel="Environment"
-                  icon="desktopcomputer"
-                  label={selectedEnvironmentLabel}
-                />
-              </ControlPillMenu>
-              <ControlPillMenu
-                actions={workspaceMenuActions}
-                onPressAction={({ nativeEvent }) => handleWorkspaceMenuAction(nativeEvent.event)}
-              >
-                <ComposerToolbarTrigger
-                  accessibilityLabel="Workspace"
-                  icon="point.topleft.down.curvedto.point.bottomright.up"
-                  label={workspaceLabel}
-                />
-              </ControlPillMenu>
+              {toolbarPills}
             </ComposerToolbarScroller>
-            <ComposerToolbarButton
-              accessibilityLabel={flow.submitting ? "Starting task" : "Start task"}
-              icon="arrow.up"
-              onPress={() => void handleStart()}
-              variant="primary"
-              showChevron={false}
-              disabled={
-                !flow.selectedProject ||
-                !flow.selectedModel ||
-                flow.prompt.trim().length === 0 ||
-                flow.submitting ||
-                (flow.workspaceMode === "worktree" && !flow.selectedBranchName)
-              }
-            />
+            {startButton}
           </ComposerToolbarRow>
         </View>
       </KeyboardAvoidingView>

@@ -58,12 +58,17 @@ export class ApnsDeliveryQueue extends Context.Service<
       readonly userId: string;
       readonly deviceId: string;
       readonly token: string;
+      readonly bundleId?: string | null;
+      readonly apsEnvironment?: "sandbox" | "production" | null;
       readonly aggregate: ApnsDeliveryJobPayload["aggregate"];
+      readonly alert?: ApnsDeliveryJobPayload["alert"];
     }) => Effect.Effect<RelayDeliveryResult, ApnsDeliveryQueueError>;
     readonly enqueuePushNotification: (input: {
       readonly userId: string;
       readonly deviceId: string;
       readonly token: string;
+      readonly bundleId?: string | null;
+      readonly apsEnvironment?: "sandbox" | "production" | null;
       readonly notification: NonNullable<ApnsDeliveryJobPayload["notification"]>;
     }) => Effect.Effect<RelayDeliveryResult, ApnsDeliveryQueueError>;
   }
@@ -160,6 +165,8 @@ export const make = Effect.gen(function* () {
           userId: input.userId,
           deviceId: input.deviceId,
           token: input.token,
+          bundleId: input.bundleId,
+          apsEnvironment: input.apsEnvironment,
           aggregate: null,
           notification: sanitizeApnsNotificationPayload(input.notification),
           jobId,

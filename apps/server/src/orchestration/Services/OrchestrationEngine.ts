@@ -26,10 +26,15 @@ export interface OrchestrationEngineShape {
    * Replay persisted orchestration events from an exclusive sequence cursor.
    *
    * @param fromSequenceExclusive - Sequence cursor (exclusive).
+   * @param limit - Maximum number of events to read. Defaults to the event
+   *   store's page-bounded default; pass a higher value when the caller must
+   *   read every event after the cursor (e.g. per-thread catch-up that filters
+   *   a small subset out of a potentially larger global range).
    * @returns Stream containing ordered events.
    */
   readonly readEvents: (
     fromSequenceExclusive: number,
+    limit?: number,
   ) => Stream.Stream<OrchestrationEvent, OrchestrationEventStoreError, never>;
 
   /**

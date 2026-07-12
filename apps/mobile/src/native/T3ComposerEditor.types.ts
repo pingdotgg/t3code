@@ -28,6 +28,8 @@ export interface ComposerEditorProps {
   readonly spellCheck?: boolean;
   readonly multiline?: boolean;
   readonly contentInsetVertical?: number;
+  /** Android: center a single line vertically (collapsed pill); no-op on iOS. */
+  readonly singleLineCentered?: boolean;
   readonly style?: StyleProp<ViewStyle>;
   readonly textStyle?: StyleProp<TextStyle>;
   readonly onChangeText: (value: string) => void;
@@ -35,4 +37,6 @@ export interface ComposerEditorProps {
   readonly onPasteImages?: (uris: ReadonlyArray<string>) => void;
   readonly onFocus?: () => void;
   readonly onBlur?: () => void;
+  /** Invoked by the native editor when Command-Return is pressed on a hardware keyboard. */
+  readonly onSubmit?: () => void;
 }
