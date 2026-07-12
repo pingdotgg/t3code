@@ -13,6 +13,7 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -44,6 +45,9 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 // routinely exceeds short command timeouts on developer machines.
 const REMOVE_WORKTREE_DIRECTORY_TIMEOUT_MS = 5 * 60_000;
 const REMOVE_WORKTREE_GIT_TIMEOUT_MS = 60_000;
+const REMOVE_WORKTREE_DIRECTORY_RETRY_SCHEDULE = Schedule.spaced("100 millis").pipe(
+  Schedule.take(50),
+);
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
 const PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES = 49_000;
@@ -3026,6 +3030,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             .pipe(Effect.orElseSucceed(() => false));
           if (exists) {
             yield* fileSystem.remove(input.path, { recursive: true, force: true }).pipe(
+              Effect.retry({
+                schedule: REMOVE_WORKTREE_DIRECTORY_RETRY_SCHEDULE,
+                while: (cause) =>
+                  cause.reason._tag === "Busy" ||
+                  cause.reason._tag === "WouldBlock" ||
+                  cause.reason._tag === "Unknown",
+              }),
               Effect.mapError(
                 (cause) =>
                   new GitCommandError({
