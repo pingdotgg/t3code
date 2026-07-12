@@ -1836,18 +1836,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     const nextImages: ComposerImageAttachment[] = [];
     let nextImageCount = composerImagesRef.current.length;
-    let error: string | null = null;
+    const errors: string[] = [];
+    let attachedCount = 0;
     for (const file of files) {
       if (!file.type.startsWith("image/")) {
-        error = await addComposerTextAttachment(file);
+        const error = await addComposerTextAttachment(file);
+        if (error) errors.push(error);
+        else attachedCount += 1;
         continue;
       }
       if (file.size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
-        error = `'${file.name}' exceeds the ${IMAGE_SIZE_LIMIT_LABEL} attachment limit.`;
+        errors.push(`'${file.name}' exceeds the ${IMAGE_SIZE_LIMIT_LABEL} attachment limit.`);
         continue;
       }
       if (nextImageCount >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
-        error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images per message.`;
+        errors.push(
+          `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images per message.`,
+        );
         continue;
       }
       const previewUrl = URL.createObjectURL(file);
@@ -1861,13 +1866,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         file,
       });
       nextImageCount += 1;
+      attachedCount += 1;
     }
     if (nextImages.length === 1 && nextImages[0]) {
       addComposerImage(nextImages[0]);
     } else if (nextImages.length > 1) {
       addComposerImagesToDraft(nextImages);
     }
-    setThreadError(activeThreadId, error);
+    if (attachedCount > 0 && errors.length > 0) {
+      toastManager.add({
+        type: "error",
+        title: "Some files could not be attached",
+        description: errors.join(" "),
+      });
+    }
+    setThreadError(
+      activeThreadId,
+      attachedCount === 0 ? (errors[errors.length - 1] ?? null) : null,
+    );
   };
 
   const enqueueComposerAttachments = (files: File[]) => {
