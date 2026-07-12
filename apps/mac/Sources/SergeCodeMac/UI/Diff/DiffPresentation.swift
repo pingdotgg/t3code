@@ -88,9 +88,16 @@ struct SideBySideDiffRow: Identifiable, Sendable {
 enum DiffPresentation {
     /// Build unified rows for a file off the render path.
     static func buildUnifiedRows(for file: DiffFile) -> [UnifiedDiffRow] {
+        let startedAt = PerfLog.now()
         let language = SyntaxLanguage.language(forPath: file.path)
         var rows: [UnifiedDiffRow] = []
         rows.reserveCapacity(file.hunks.reduce(0) { $0 + $1.lines.count + 1 })
+        defer {
+            PerfLog.event(
+                "diff.unifiedRows",
+                ms: PerfLog.elapsedMilliseconds(since: startedAt),
+                details: "file=\(file.path) rows=\(rows.count)")
+        }
 
         for (hunkIndex, hunk) in file.hunks.enumerated() {
             rows.append(
@@ -129,8 +136,15 @@ enum DiffPresentation {
 
     /// Build side-by-side rows: pair deletions with additions inside each hunk.
     static func buildSideBySideRows(for file: DiffFile) -> [SideBySideDiffRow] {
+        let startedAt = PerfLog.now()
         let language = SyntaxLanguage.language(forPath: file.path)
         var rows: [SideBySideDiffRow] = []
+        defer {
+            PerfLog.event(
+                "diff.sideBySideRows",
+                ms: PerfLog.elapsedMilliseconds(since: startedAt),
+                details: "file=\(file.path) rows=\(rows.count)")
+        }
 
         for (hunkIndex, hunk) in file.hunks.enumerated() {
             rows.append(

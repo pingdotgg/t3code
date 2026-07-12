@@ -142,7 +142,12 @@ enum TimelineDisplayCache {
         if let entry = storage[threadID], entry.key == key {
             return entry.value
         }
-        let value = items.groupedForDisplay(threadIsSettled: threadIsSettled)
+        PerfMetrics.count("grouping.fullPass")
+        let value = PerfSignpost.interval("grouping") {
+            PerfMetrics.measure("grouping") {
+                items.groupedForDisplay(threadIsSettled: threadIsSettled)
+            }
+        }
         storage[threadID] = (key, value)
         return value
     }

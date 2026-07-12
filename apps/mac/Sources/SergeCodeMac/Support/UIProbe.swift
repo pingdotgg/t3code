@@ -19,6 +19,10 @@
         private static func run(model: AppModel, scenery: SceneryStore, dir: String) async {
             try? FileManager.default.createDirectory(
                 atPath: dir, withIntermediateDirectories: true)
+            if ProcessInfo.processInfo.environment["SERGECODE_UI_PROBE_SCENARIO"] == "stream-perf" {
+                await runStreamPerf(model: model, dir: dir)
+                return
+            }
 
             // Let the mock backend load, then select a thread so the
             // inspector has content. Prefer thread-1: it's the one the mock
@@ -347,6 +351,59 @@
             try? await Task.sleep(for: .seconds(0.5))
 
             print("UIProbe: done")
+            NSApp.terminate(nil)
+        }
+
+        private static func runStreamPerf(model: AppModel, dir: String) async {
+            // Let MockState publish its seeded threads and ready phase before
+            // selecting the same stable fixture used by the regular probe.
+            try? await Task.sleep(for: .seconds(2))
+            model.selectedThreadID =
+                model.threads.first { $0.id == "thread-1" }?.id ?? model.threads.first?.id
+
+            guard let threadID = model.selectedThreadID else {
+                print("UIProbe: stream-perf failed: no thread")
+                NSApp.terminate(nil)
+                return
+            }
+
+            PerfMetrics.reset()
+            let sendTask = Task { @MainActor in
+                await model.send(threadID: threadID, text: "/perf-stream")
+            }
+
+            let deadline = Date().addingTimeInterval(60)
+            var sawRunning = false
+            var reachedIdle = false
+            while Date() < deadline {
+                let status = model.threads.first { $0.id == threadID }?.status
+                if status == .running { sawRunning = true }
+                if sawRunning, status == .idle {
+                    reachedIdle = true
+                    break
+                }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            let sent = await sendTask.value
+            if !reachedIdle, sawRunning == false,
+                model.threads.first(where: { $0.id == threadID })?.status == .idle
+            {
+                reachedIdle = true
+            }
+            print(
+                "UIProbe: stream-perf sent=\(sent) reachedIdle=\(reachedIdle) "
+                    + "status=\(String(describing: model.threads.first { $0.id == threadID }?.status))")
+
+            // Give the final AppModel/cache invalidations a turn before the
+            // report and screenshot are captured.
+            try? await Task.sleep(for: .seconds(1))
+            snapshot("perf-final", dir: dir)
+
+            let report = PerfMetrics.report()
+            let reportURL = URL(fileURLWithPath: dir).appendingPathComponent("perf-report.txt")
+            try? report.write(to: reportURL, atomically: true, encoding: .utf8)
+            print(report)
+            print("UIProbe: stream-perf done")
             NSApp.terminate(nil)
         }
 

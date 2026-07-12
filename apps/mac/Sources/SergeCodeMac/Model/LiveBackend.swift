@@ -197,6 +197,9 @@ public actor LiveBackend: BackendService {
     /// Port of the running sidecar, captured at spawn for the mobile
     /// pairing URL.
     private var sidecarPort: Int?
+    /// Set immediately before the initial sidecar spawn and consumed by the
+    /// first ready transition so startup timing includes readiness polling.
+    private var sidecarSpawnStartedAt: ContinuousClock.Instant?
     private static let runningLivenessConfirmationDelay: Duration = .seconds(12)
 
     public init(allowLanAccess: Bool = false) {
@@ -215,9 +218,18 @@ public actor LiveBackend: BackendService {
         let token = BootstrapTokenGenerator.generate()
 
         let nodePath: String
+        let locateStartedAt = PerfLog.now()
         do {
             nodePath = try NodeRuntimeLocator().locate().path
+            PerfLog.event(
+                "startup.locate-node",
+                ms: PerfLog.elapsedMilliseconds(since: locateStartedAt),
+                details: "result=success")
         } catch {
+            PerfLog.event(
+                "startup.locate-node",
+                ms: PerfLog.elapsedMilliseconds(since: locateStartedAt),
+                details: "result=failure")
             emit(.connection(.failed("Could not locate a compatible Node.js runtime: \(error)")))
             return
         }
@@ -253,6 +265,7 @@ public actor LiveBackend: BackendService {
             }
         }
 
+        sidecarSpawnStartedAt = PerfLog.now()
         await process.start()
     }
 
@@ -289,7 +302,12 @@ public actor LiveBackend: BackendService {
             break
         case .launching(let attempt):
             emit(.connection(attempt == 0 ? .launchingServer : .reconnecting(attempt: attempt)))
-        case .ready:
+        case .ready(let pid):
+            PerfLog.event(
+                "startup.spawn-to-ready",
+                ms: PerfLog.elapsedMilliseconds(since: sidecarSpawnStartedAt),
+                details: "pid=\(pid)")
+            sidecarSpawnStartedAt = nil
             startSocketSession()
         case .crashed(_, let attempt):
             await teardownSocketSession()
@@ -691,6 +709,7 @@ public actor LiveBackend: BackendService {
     }
 
     private func applyThreadSnapshot(threadID: String, thread: OrchestrationThread) {
+        let startedAt = PerfLog.now()
         // Seed dedup + delta state so live events for already-shown items don't
         // duplicate and assistant deltas continue from the snapshot text.
         seenMessageIDs[threadID] = Set(thread.messages.map(\.id))
@@ -818,6 +837,10 @@ public actor LiveBackend: BackendService {
                     status: ContextWindowStatus(
                         usedTokens: payload.usedTokens, maxTokens: payload.maxTokens)))
         }
+        PerfLog.event(
+            "thread.snapshot-projection",
+            ms: PerfLog.elapsedMilliseconds(since: startedAt),
+            details: "thread=\(threadID) items=\(items.count)")
     }
 
     private func applyThreadEvent(threadID: String, event: OrchestrationEvent) {

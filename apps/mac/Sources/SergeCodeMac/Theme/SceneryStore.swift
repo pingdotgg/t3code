@@ -534,7 +534,13 @@ public final class SceneryStore {
                 }
             }
         }
-        if let data, let image = NSImage(data: data) {
+        if let data,
+            let image = PerfSignpost.interval("scenery.decode", body: {
+                PerfMetrics.measure("scenery.decode") {
+                    NSImage(data: data)
+                }
+            })
+        {
             images[key] = image
             if triggerPaletteBackfill {
                 await generatePaletteIfNeeded(for: setId)

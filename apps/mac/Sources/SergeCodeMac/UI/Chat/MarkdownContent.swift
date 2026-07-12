@@ -73,7 +73,19 @@ enum MarkdownBlockCache {
     private static let store = MarkdownBlockCacheStore()
 
     static func document(for markdown: String) -> ParsedMarkdownDocument {
-        MarkdownASTParser(markdown: markdown).parse(using: store)
+        let missesBefore = store.misses
+        let document = PerfSignpost.interval("markdown.parse") {
+            PerfMetrics.measure("markdown.parse") {
+                MarkdownASTParser(markdown: markdown).parse(using: store)
+            }
+        }
+        // The cmark document is rebuilt for each call, while stable top-level
+        // blocks may still come from the block cache. Count source bytes only
+        // when this pass actually had an uncached block to materialize.
+        if store.misses > missesBefore {
+            PerfMetrics.count("markdown.bytesParsed", by: markdown.utf8.count)
+        }
+        return document
     }
 
     static var statistics: Statistics {
@@ -1008,7 +1020,16 @@ private struct MarkdownTableView: View {
     }
 }
 
+@MainActor
 private func highlightedCode(_ code: String, language: String?) -> AttributedString {
+    PerfSignpost.interval("highlight") {
+        PerfMetrics.measure("highlight") {
+            highlightedCodeImplementation(code, language: language)
+        }
+    }
+}
+
+private func highlightedCodeImplementation(_ code: String, language: String?) -> AttributedString {
     let syntaxLanguage: SyntaxLanguage
     switch language?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
     case "swift": syntaxLanguage = .swift

@@ -249,6 +249,14 @@ public final class AppModel {
     /// invalidation on that child only), no matter how many events landed
     /// for it.
     private func applyBatch(_ events: [BackendEvent]) {
+        PerfSignpost.interval("applyBatch") {
+            PerfMetrics.measure("applyBatch") {
+                applyBatchImplementation(events)
+            }
+        }
+    }
+
+    private func applyBatchImplementation(_ events: [BackendEvent]) {
         var touched: [String: [TimelineItem]] = [:]
         // Only full snapshots (timelineReset) mark history loaded. Plain
         // appends / deltas must not set hasLoadedTimeline — otherwise a

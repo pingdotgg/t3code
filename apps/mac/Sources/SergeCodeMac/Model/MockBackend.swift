@@ -483,7 +483,10 @@ private actor MockState {
 
         let messageID = nextID("asst")
         let reply = MockState.canned(for: text)
-        let chunks = MockState.chunk(reply, size: 24)
+        let isPerfStream = text.trimmingCharacters(in: .whitespacesAndNewlines) == "/perf-stream"
+        let chunks = isPerfStream
+            ? MockState.byteChunks(reply, size: 64)
+            : MockState.chunk(reply, size: 24)
 
         // Seed the streaming message so the timeline has a placeholder before
         // the first delta lands.
@@ -492,7 +495,7 @@ private actor MockState {
         emit(.timelineAppended(threadID: threadID, item: placeholder))
 
         for chunk in chunks {
-            try? await Task.sleep(nanoseconds: 80_000_000)
+            try? await Task.sleep(nanoseconds: isPerfStream ? 2_000_000 : 80_000_000)
             emit(.assistantDelta(threadID: threadID, messageID: messageID, delta: chunk))
         }
         emit(.assistantCompleted(threadID: threadID, messageID: messageID, markdown: reply))
@@ -1402,8 +1405,13 @@ private actor MockState {
         ]
     }
 
+    private static let perfStreamMarkdown = makePerfStreamMarkdown()
+
     private static func canned(for text: String) -> String {
-        """
+        if text.trimmingCharacters(in: .whitespacesAndNewlines) == "/perf-stream" {
+            return perfStreamMarkdown
+        }
+        return """
         Got it — working on “\(text)”.
 
         Here's a quick summary of what I'll do:
@@ -1422,6 +1430,33 @@ private actor MockState {
         """
     }
 
+    private static func makePerfStreamMarkdown() -> String {
+        var document = String()
+        document.reserveCapacity(150_000)
+
+        for section in 1...300 {
+            document += "## Section \(section)\n\n"
+            document +=
+                "Section \(section) covers `section-\(section)` with **bold emphasis** and [a stable link](https://example.com/perf/\(section)). This deterministic prose exercises wrapping, caching, and incremental updates.\n\n"
+            document +=
+                "The stream keeps **incremental output** realistic, revisits `markdown.parse`, and follows [the repeatable fixture](https://example.com/perf/fixture). It preserves stable ordering on every run.\n\n"
+
+            if section == 150 {
+                document += "| Metric | Value | Notes |\n| --- | ---: | --- |\n| sections | 300 | deterministic |\n| stream chunk | 64 bytes | 2 ms cadence |\n\n"
+            }
+
+            if section.isMultiple(of: 6) {
+                document += "```swift\n"
+                for line in 1...25 {
+                    document += "let section\(section)Value\(line) = \(section * line)\n"
+                }
+                document += "```\n\n"
+            }
+        }
+
+        return document
+    }
+
     private static func chunk(_ text: String, size: Int) -> [String] {
         var result: [String] = []
         var current = text.startIndex
@@ -1429,6 +1464,19 @@ private actor MockState {
             let end = text.index(current, offsetBy: size, limitedBy: text.endIndex) ?? text.endIndex
             result.append(String(text[current..<end]))
             current = end
+        }
+        return result
+    }
+
+    private static func byteChunks(_ text: String, size: Int) -> [String] {
+        let bytes = Array(text.utf8)
+        var result: [String] = []
+        result.reserveCapacity((bytes.count + size - 1) / size)
+        var start = 0
+        while start < bytes.count {
+            let end = min(start + size, bytes.count)
+            result.append(String(decoding: bytes[start..<end], as: UTF8.self))
+            start = end
         }
         return result
     }
