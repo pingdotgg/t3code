@@ -457,6 +457,31 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
     }),
   );
 
+  it.effect("forwards the worktree marker to the Codex runtime", () =>
+    Effect.gen(function* () {
+      sessionRuntimeFactory.factory.mockClear();
+      const adapter = yield* CodexAdapter;
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-worktree"),
+        runtimeMode: "auto-accept-edits",
+        cwd: "/tmp/worktree",
+        isWorktree: true,
+      });
+
+      NodeAssert.deepStrictEqual(sessionRuntimeFactory.factory.mock.calls[0]?.[0], {
+        binaryPath: "codex",
+        cwd: "/tmp/worktree",
+        isWorktree: true,
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        threadId: asThreadId("thread-worktree"),
+        runtimeMode: "auto-accept-edits",
+      });
+    }),
+  );
+
   it.effect("maps codex model options for the adapter's bound custom instance id", () => {
     const customInstanceId = ProviderInstanceId.make("codex_personal");
     const customRuntimeFactory = makeRuntimeFactory();
@@ -754,6 +779,37 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       }
       NodeAssert.equal(firstEvent.value.threadId, "thread-1");
       NodeAssert.equal(firstEvent.value.payload.reason, "Session stopped");
+    }),
+  );
+
+  it.effect("maps the worktree sandbox upgrade event to a runtime warning", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-worktree-sandbox-upgrade"),
+        kind: "session",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "session/sandbox-upgraded",
+        message:
+          "Codex sandbox upgraded to danger-full-access because workspace-write hangs inside git worktrees.",
+      });
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") {
+        return;
+      }
+      NodeAssert.equal(firstEvent.value.type, "runtime.warning");
+      if (firstEvent.value.type === "runtime.warning") {
+        NodeAssert.match(
+          firstEvent.value.payload.message,
+          /workspace-write hangs inside git worktrees/,
+        );
+      }
     }),
   );
 

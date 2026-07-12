@@ -103,6 +103,7 @@ export interface CodexSessionRuntimeOptions {
   readonly homePath?: string;
   readonly environment?: NodeJS.ProcessEnv;
   readonly cwd: string;
+  readonly isWorktree?: boolean;
   readonly runtimeMode: RuntimeMode;
   readonly model?: string;
   readonly serviceTier?: CodexServiceTier | undefined;
@@ -264,7 +265,10 @@ function readResumeCursorThreadId(
   return isCodexResumeCursorSchema(resumeCursor) ? resumeCursor.threadId : undefined;
 }
 
-function runtimeModeToThreadConfig(input: RuntimeMode): {
+function runtimeModeToThreadConfig(
+  input: RuntimeMode,
+  isWorktree = false,
+): {
   readonly approvalPolicy: EffectCodexSchema.V2ThreadStartParams__AskForApproval;
   readonly sandbox: EffectCodexSchema.V2ThreadStartParams__SandboxMode;
 } {
@@ -277,7 +281,9 @@ function runtimeModeToThreadConfig(input: RuntimeMode): {
     case "auto-accept-edits":
       return {
         approvalPolicy: "on-request",
-        sandbox: "workspace-write",
+        // Codex's workspace-write sandbox hangs when cwd is inside a git
+        // worktree, so auto-accept-edits uses the full-access sandbox there.
+        sandbox: isWorktree ? "danger-full-access" : "workspace-write",
       };
     case "full-access":
     default:
@@ -291,10 +297,11 @@ function runtimeModeToThreadConfig(input: RuntimeMode): {
 function buildThreadStartParams(input: {
   readonly cwd: string;
   readonly runtimeMode: RuntimeMode;
+  readonly isWorktree?: boolean;
   readonly model: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
 }): EffectCodexSchema.V2ThreadStartParams {
-  const config = runtimeModeToThreadConfig(input.runtimeMode);
+  const config = runtimeModeToThreadConfig(input.runtimeMode, input.isWorktree);
   return {
     cwd: input.cwd,
     approvalPolicy: config.approvalPolicy,
@@ -306,6 +313,7 @@ function buildThreadStartParams(input: {
 
 function runtimeModeToTurnSandboxPolicy(
   input: RuntimeMode,
+  isWorktree = false,
 ): EffectCodexSchema.V2TurnStartParams__SandboxPolicy {
   switch (input) {
     case "approval-required":
@@ -314,7 +322,9 @@ function runtimeModeToTurnSandboxPolicy(
       };
     case "auto-accept-edits":
       return {
-        type: "workspaceWrite",
+        // Codex's workspace-write sandbox hangs when cwd is inside a git
+        // worktree, so auto-accept-edits uses the full-access sandbox there.
+        type: isWorktree ? "dangerFullAccess" : "workspaceWrite",
       };
     case "full-access":
     default:
@@ -349,6 +359,7 @@ function buildCodexCollaborationMode(input: {
 export function buildTurnStartParams(input: {
   readonly threadId: string;
   readonly runtimeMode: RuntimeMode;
+  readonly isWorktree?: boolean;
   readonly prompt?: string;
   readonly attachments?: ReadonlyArray<{
     readonly type: "image";
@@ -373,7 +384,7 @@ export function buildTurnStartParams(input: {
     turnInput.push(attachment);
   }
 
-  const config = runtimeModeToThreadConfig(input.runtimeMode);
+  const config = runtimeModeToThreadConfig(input.runtimeMode, input.isWorktree);
   const collaborationMode = buildCodexCollaborationMode({
     ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
     ...(input.model ? { model: input.model } : {}),
@@ -384,7 +395,7 @@ export function buildTurnStartParams(input: {
     threadId: input.threadId,
     input: turnInput,
     approvalPolicy: config.approvalPolicy,
-    sandboxPolicy: runtimeModeToTurnSandboxPolicy(input.runtimeMode),
+    sandboxPolicy: runtimeModeToTurnSandboxPolicy(input.runtimeMode, input.isWorktree),
     ...(input.model ? { model: input.model } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
@@ -445,6 +456,7 @@ export const openCodexThread = (input: {
   readonly client: CodexThreadOpenClient;
   readonly threadId: ThreadId;
   readonly runtimeMode: RuntimeMode;
+  readonly isWorktree?: boolean;
   readonly cwd: string;
   readonly requestedModel: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
@@ -454,6 +466,7 @@ export const openCodexThread = (input: {
   const startParams = buildThreadStartParams({
     cwd: input.cwd,
     runtimeMode: input.runtimeMode,
+    ...(input.isWorktree !== undefined ? { isWorktree: input.isWorktree } : {}),
     model: input.requestedModel,
     serviceTier: input.serviceTier,
   });
@@ -1202,6 +1215,16 @@ export const makeCodexSessionRuntime = (
 
     const start = Effect.fn("CodexSessionRuntime.start")(function* () {
       yield* emitSessionEvent("session/connecting", "Starting Codex App Server session.");
+      if (options.isWorktree && options.runtimeMode === "auto-accept-edits") {
+        const message =
+          "Codex sandbox upgraded to danger-full-access because workspace-write hangs inside git worktrees.";
+        yield* emitSessionEvent("session/sandbox-upgraded", message);
+        yield* Effect.logWarning(message, {
+          threadId: options.threadId,
+          cwd: options.cwd,
+          runtimeMode: options.runtimeMode,
+        });
+      }
       yield* client.request("initialize", buildCodexInitializeParams());
       yield* client.notify("initialized", undefined);
 
@@ -1211,6 +1234,7 @@ export const makeCodexSessionRuntime = (
         client,
         threadId: options.threadId,
         runtimeMode: options.runtimeMode,
+        ...(options.isWorktree !== undefined ? { isWorktree: options.isWorktree } : {}),
         cwd: options.cwd,
         requestedModel,
         serviceTier: options.serviceTier,
@@ -1284,6 +1308,7 @@ export const makeCodexSessionRuntime = (
           const params = yield* buildTurnStartParams({
             threadId: providerThreadId,
             runtimeMode: options.runtimeMode,
+            ...(options.isWorktree !== undefined ? { isWorktree: options.isWorktree } : {}),
             ...(input.input ? { prompt: input.input } : {}),
             ...(input.attachments ? { attachments: input.attachments } : {}),
             ...(normalizedModel ? { model: normalizedModel } : {}),
