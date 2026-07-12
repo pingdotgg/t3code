@@ -43,7 +43,7 @@ struct ConnectionStatusPill: View {
     private var isSettling: Bool {
         switch phase {
         case .launchingServer, .connecting, .reconnecting: true
-        case .ready, .failed: false
+        case .ready, .unauthorized, .failed: false
         }
     }
 
@@ -53,6 +53,7 @@ struct ConnectionStatusPill: View {
         case .connecting: "Connecting…"
         case .ready: "Connected"
         case .reconnecting(let attempt): "Reconnecting (\(attempt))…"
+        case .unauthorized: "Re-pairing required"
         case .failed(let message): "Error: \(message)"
         }
     }
@@ -61,6 +62,7 @@ struct ConnectionStatusPill: View {
         switch phase {
         case .ready: .green
         case .launchingServer, .connecting, .reconnecting: .yellow
+        case .unauthorized: .orange
         case .failed: .red
         }
     }

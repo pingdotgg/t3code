@@ -66,12 +66,30 @@ import T3Kit
 //    UI Checkpoint.id; restore uses (threadId, turnCount). Mapping preserves
 //    status/files/assistantMessageId via CheckpointMapping.
 
+public enum LiveBackendMode: Sendable {
+    case localSidecar(allowLanAccess: Bool)
+    case remote(device: RemoteDevice, keychain: KeychainStore)
+}
+
+private extension LiveBackendMode {
+    var isRemote: Bool {
+        if case .remote = self { return true }
+        return false
+    }
+
+    var allowLanAccess: Bool {
+        if case let .localSidecar(allowLanAccess) = self { return allowLanAccess }
+        return false
+    }
+}
+
 public actor LiveBackend: BackendService {
 
     // MARK: BackendService event stream
 
     public nonisolated let events: AsyncStream<BackendEvent>
     private nonisolated let continuation: AsyncStream<BackendEvent>.Continuation
+    public nonisolated let remoteDevice: RemoteDevice?
 
     // MARK: Composed transport
 
@@ -186,30 +204,77 @@ public actor LiveBackend: BackendService {
         return path
     }()
 
-    /// When true, the sidecar binds `0.0.0.0` instead of loopback so the
-    /// SergeCode mobile app can connect over the local network. Auth is
-    /// still required (pairing token exchange + per-connection wsTicket);
-    /// the server flips its policy to `remote-reachable`, which keeps the
-    /// desktop-bootstrap method available (EnvironmentAuthPolicy.ts).
-    /// Fixed for the life of the process; read from
-    /// `MobileAccessPreference` at construction (App.swift).
-    private let allowLanAccess: Bool
+    private let mode: LiveBackendMode
     /// Port of the running sidecar, captured at spawn for the mobile
     /// pairing URL.
     private var sidecarPort: Int?
     private static let runningLivenessConfirmationDelay: Duration = .seconds(12)
 
-    public init(allowLanAccess: Bool = false) {
-        self.allowLanAccess = allowLanAccess
+    public init(mode: LiveBackendMode) {
+        self.mode = mode
+        if case let .remote(device, _) = mode {
+            self.remoteDevice = device
+        } else {
+            self.remoteDevice = nil
+        }
         let (stream, continuation) = AsyncStream<BackendEvent>.makeStream()
         self.events = stream
         self.continuation = continuation
+    }
+
+    public init(allowLanAccess: Bool = false) {
+        self.init(mode: .localSidecar(allowLanAccess: allowLanAccess))
+    }
+
+    private static func remoteURLs(for device: RemoteDevice) -> (http: URL, ws: URL)? {
+        guard (1...65_535).contains(device.port) else { return nil }
+        var http = URLComponents()
+        http.scheme = "http"
+        http.host = device.host
+        http.port = device.port
+        guard let httpURL = http.url else { return nil }
+
+        var ws = http
+        ws.scheme = "ws"
+        guard let wsURL = ws.url else { return nil }
+        return (httpURL, wsURL)
     }
 
     // MARK: - Lifecycle
 
     public func start() async {
         guard serverProcess == nil else { return }
+
+        if case let .remote(device, keychain) = mode {
+            guard socketSessionTask == nil else { return }
+            let token: String
+            do {
+                guard let storedToken = try keychain.readToken(deviceID: device.id),
+                    !storedToken.isEmpty
+                else {
+                    emit(.connection(.unauthorized))
+                    return
+                }
+                token = storedToken
+            } catch {
+                emit(.connection(.unauthorized))
+                return
+            }
+
+            guard let (httpBaseURL, wsBaseURL) = Self.remoteURLs(for: device) else {
+                emit(.connection(.failed("Invalid remote device address.")))
+                return
+            }
+            authClient = AuthClient(
+                config: AuthConfig(
+                    httpBaseURL: httpBaseURL,
+                    wsBaseURL: wsBaseURL,
+                    credential: .bearer(token)))
+            emit(.connection(.connecting))
+            startSocketSession()
+            return
+        }
+
         emit(.connection(.launchingServer))
 
         let token = BootstrapTokenGenerator.generate()
@@ -230,7 +295,7 @@ public actor LiveBackend: BackendService {
         do {
             sidecarConfig = try SidecarConfig(
                 nodePath: nodePath, entryPath: entryPath,
-                host: allowLanAccess ? "0.0.0.0" : "127.0.0.1")
+                host: mode.allowLanAccess ? "0.0.0.0" : "127.0.0.1")
         } catch {
             emit(.connection(.failed("Could not configure the server sidecar: \(error)")))
             return
@@ -271,7 +336,7 @@ public actor LiveBackend: BackendService {
         }
         currentClient = nil
 
-        if let process = serverProcess {
+        if !mode.isRemote, let process = serverProcess {
             serverProcess = nil
             await process.stop()
         }
@@ -379,6 +444,12 @@ public actor LiveBackend: BackendService {
                     await conn.disconnect(reason: "socket session failed")
                 }
                 if Task.isCancelled { return }
+                if mode.isRemote, let t3Error = error as? T3Error,
+                    case .unauthorized = t3Error
+                {
+                    emit(.connection(.unauthorized))
+                    return
+                }
                 attempt += 1
                 emit(.connection(.reconnecting(attempt: attempt)))
                 let delay = ServerProcess.backoffDelay(forAttempt: attempt)
@@ -2006,11 +2077,13 @@ public actor LiveBackend: BackendService {
     // MARK: - BackendService: mobile pairing
 
     public func isServerLanReachable() async -> Bool {
-        allowLanAccess && serverProcess != nil
+        guard !mode.isRemote else { return false }
+        return mode.allowLanAccess && serverProcess != nil
     }
 
-    public func mintMobilePairing() async throws -> MobilePairingInfo {
-        guard allowLanAccess else { throw LiveBackendError.mobileAccessDisabled }
+    public func mintMobilePairing(label: String) async throws -> MobilePairingInfo {
+        guard !mode.isRemote else { throw LiveBackendError.remoteModeUnsupported }
+        guard mode.allowLanAccess else { throw LiveBackendError.mobileAccessDisabled }
         guard let auth = authClient, let port = sidecarPort, currentClient != nil else {
             throw LiveBackendError.notConnected
         }
@@ -2018,7 +2091,7 @@ public actor LiveBackend: BackendService {
             throw LiveBackendError.noLanAddress
         }
         let accessToken = try await auth.acquireAccessToken()
-        let minted = try await auth.mintPairingCredential(accessToken: accessToken, label: "iPhone")
+        let minted = try await auth.mintPairingCredential(accessToken: accessToken, label: label)
         // Same shape the server's headless `serve` QR encodes
         // (startupAccess.ts buildPairingUrl): path /pair, token in the URL
         // fragment so it never appears in request logs.
@@ -2683,6 +2756,8 @@ public enum LiveBackendError: Error, Sendable {
     case mobileAccessDisabled
     /// No non-loopback IPv4 interface found — not on a network.
     case noLanAddress
+    /// Mobile pairing is not available while this backend is a remote client.
+    case remoteModeUnsupported
 }
 
 // MARK: - Unified diff parsing (getFullThreadDiff string -> [DiffFile])

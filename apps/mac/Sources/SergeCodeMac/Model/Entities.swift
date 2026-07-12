@@ -951,5 +951,6 @@ public enum ConnectionPhase: Sendable, Equatable {
     case connecting
     case ready
     case reconnecting(attempt: Int)
+    case unauthorized
     case failed(String)
 }

@@ -703,6 +703,7 @@ private extension ConnectionPhase {
         case .connecting: "Connecting…"
         case .ready: "Connected"
         case .reconnecting(let attempt): "Reconnecting (attempt \(attempt))…"
+        case .unauthorized: "Re-pairing required"
         case .failed(let message): "Failed: \(message)"
         }
     }
@@ -711,6 +712,7 @@ private extension ConnectionPhase {
         switch self {
         case .launchingServer, .connecting, .reconnecting: "arrow.triangle.2.circlepath"
         case .ready: "checkmark.circle.fill"
+        case .unauthorized: "key.slash"
         case .failed: "exclamationmark.triangle.fill"
         }
     }
@@ -719,6 +721,7 @@ private extension ConnectionPhase {
         switch self {
         case .launchingServer, .connecting, .reconnecting: .secondary
         case .ready: .green
+        case .unauthorized: .orange
         case .failed: .red
         }
     }

@@ -84,7 +84,7 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         MobileAccessPreference.isEnabled
     }
 
-    public func mintMobilePairing() async throws -> MobilePairingInfo {
+    public func mintMobilePairing(label: String) async throws -> MobilePairingInfo {
         MobilePairingInfo(
             pairingURL: URL(string: "http://192.168.1.42:3773/pair#token=MOCKPAIR2345")!,
             credential: "MOCKPAIR2345",

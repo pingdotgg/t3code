@@ -325,7 +325,7 @@ private final class RecordingBackend: BackendService, @unchecked Sendable {
         GitActionOutcome(success: true, title: "ok")
     }
     func isServerLanReachable() async -> Bool { false }
-    func mintMobilePairing() async throws -> MobilePairingInfo {
+    func mintMobilePairing(label: String) async throws -> MobilePairingInfo {
         MobilePairingInfo(
             pairingURL: URL(string: "http://127.0.0.1/pair#token=x")!,
             credential: "x", expiresAt: Date())

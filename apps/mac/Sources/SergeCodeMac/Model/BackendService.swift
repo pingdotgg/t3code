@@ -140,7 +140,7 @@ public protocol BackendService: Sendable {
     func isServerLanReachable() async -> Bool
     /// Mint a fresh one-time pairing credential and the QR-able pairing URL
     /// the SergeCode mobile app scans to connect to this machine.
-    func mintMobilePairing() async throws -> MobilePairingInfo
+    func mintMobilePairing(label: String) async throws -> MobilePairingInfo
 
     /// Server-side settings (the editable subset).
     func settings() async throws -> AppSettings
@@ -154,6 +154,13 @@ public protocol BackendService: Sendable {
     /// AI-curated scene names + Unsplash queries for a location photo set.
     /// Used by `SceneSetComposer`; fails when the sidecar/model is unavailable.
     func generateScenerySet(location: String) async throws -> GeneratedScenerySet
+}
+
+public extension BackendService {
+    /// Backward-compatible mobile pairing label for existing Settings callers.
+    func mintMobilePairing() async throws -> MobilePairingInfo {
+        try await mintMobilePairing(label: "iPhone")
+    }
 }
 
 /// One freshly-minted mobile pairing handshake: the URL the iPhone scans

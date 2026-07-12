@@ -244,7 +244,7 @@ final class FixedSceneryBackend: BackendService, @unchecked Sendable {
         fatalError("unused")
     }
     func isServerLanReachable() async -> Bool { false }
-    func mintMobilePairing() async throws -> MobilePairingInfo { fatalError("unused") }
+    func mintMobilePairing(label: String) async throws -> MobilePairingInfo { fatalError("unused") }
     func settings() async throws -> AppSettings {
         AppSettings(
             assistantStreaming: true,
