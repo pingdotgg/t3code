@@ -164,7 +164,7 @@
             print("UIProbe: retry user rows before=\(before) after=\(userMessageCount(model))")
             snapshot("8-after-retry", dir: dir)
 
-            // Settings ▸ iPhone: enable the mobile-access preference so the
+            // Settings ▸ Devices: enable the mobile-access preference so the
             // mock backend reports LAN-reachable and the QR pairing card
             // renders; restore the previous value afterward. Mock runs only:
             // against LiveBackend the sidecar's bind host was fixed at spawn,
@@ -177,7 +177,7 @@
                 let previousMobileAccess = MobileAccessPreference.isEnabled
                 MobileAccessPreference.setEnabled(true)
                 await snapshotSettings(
-                    tab: .iphone, name: "9-settings-iphone", model: model, scenery: scenery,
+                    tab: .devices, name: "9-settings-devices", model: model, scenery: scenery,
                     dir: dir)
                 await snapshotSettings(
                     tab: .connection, name: "10-settings-connection", model: model,

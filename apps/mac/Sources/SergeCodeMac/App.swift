@@ -132,7 +132,8 @@ struct SergeCodeApp: App {
                 model: multi.local,
                 scenery: scenery,
                 backend: SergeCodeApp.backend,
-                passport: passport)
+                passport: passport,
+                multi: multi)
         }
     }
 

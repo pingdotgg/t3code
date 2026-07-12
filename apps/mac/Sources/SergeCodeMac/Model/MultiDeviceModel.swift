@@ -125,4 +125,18 @@ public final class MultiDeviceModel {
     public func select(threadID: String, on deviceID: DeviceID) {
         selection = ThreadSelection(deviceID: deviceID, threadID: threadID)
     }
+
+    /// Pairing is wired in the final remote-device integration phase. Keeping
+    /// the async seam here lets Settings ship independently of transport
+    /// persistence and gives the tab an inline error until then.
+    public func addRemoteDevice(pairingLink: String) async throws -> RemoteDeviceSession {
+        _ = pairingLink
+        throw LiveBackendError.remoteModeUnsupported
+    }
+
+    /// Settings and the sidebar share one removal entry point. The persistent
+    /// keychain/store cleanup is added with the real pairing implementation.
+    public func removeRemoteDevice(id: DeviceID) async {
+        await removeSession(id: id)
+    }
 }

@@ -57,10 +57,20 @@ public struct RemoteDeviceDescriptor: Sendable, Identifiable, Equatable {
     public let id: DeviceID
     public var name: String
     public var host: String
+    public var port: Int?
+    public var sessionExpiresAt: Date?
 
-    public init(id: DeviceID, name: String, host: String) {
+    public init(
+        id: DeviceID,
+        name: String,
+        host: String,
+        port: Int? = nil,
+        sessionExpiresAt: Date? = nil
+    ) {
         self.id = id
         self.name = name
         self.host = host
+        self.port = port
+        self.sessionExpiresAt = sessionExpiresAt
     }
 }
