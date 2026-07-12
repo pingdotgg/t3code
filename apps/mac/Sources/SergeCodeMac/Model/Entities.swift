@@ -4,12 +4,13 @@ import Foundation
 // them. Keep UI code independent of wire-shape churn.
 
 public enum ProviderKind: String, Codable, CaseIterable, Sendable, Identifiable {
-    case claude, claudeSynthero, codex, cursor, grok, fugu, opencode
+    case claude, claudex, claudeSynthero, codex, cursor, grok, fugu, opencode
     public var id: String { rawValue }
 
     public var displayName: String {
         switch self {
         case .claude: "Claude Code"
+        case .claudex: "Claudex"
         case .claudeSynthero: "Claude Synthero"
         case .codex: "Codex"
         case .cursor: "Cursor"

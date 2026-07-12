@@ -1263,7 +1263,7 @@ public actor LiveBackend: BackendService {
     public func models() async throws -> [ModelOption] {
         providersByInstanceId.values
             .flatMap { provider -> [ModelOption] in
-                guard let kind = providerKind(fromDriver: provider.driver) else { return [] }
+                guard let kind = providerKind(for: provider) else { return [] }
                 return provider.models.map { model in
                     let effort = Self.effortDescriptor(of: model)
                     let serviceTier = Self.serviceTierDescriptor(of: model)
@@ -1659,7 +1659,7 @@ public actor LiveBackend: BackendService {
         _ = try await client.updateThreadMeta(threadId: threadID, modelSelection: updated)
         modelSelectionsByThread[threadID] = updated
         if let instance = providersByInstanceId[selection.instanceId],
-            let provider = providerKind(fromDriver: instance.driver)
+            let provider = providerKind(for: instance)
         {
             rememberReasoningEffort(value, for: provider)
         }
@@ -1683,7 +1683,7 @@ public actor LiveBackend: BackendService {
         _ = try await client.updateThreadMeta(threadId: threadID, modelSelection: updated)
         modelSelectionsByThread[threadID] = updated
         if let instance = providersByInstanceId[selection.instanceId],
-            let provider = providerKind(fromDriver: instance.driver)
+            let provider = providerKind(for: instance)
         {
             rememberServiceTier(value, for: provider)
         }
@@ -2480,7 +2480,7 @@ public actor LiveBackend: BackendService {
 
     private func resolveProviderKind(instanceId: String?, providerName: String?) -> ProviderKind {
         if let instanceId, let provider = providersByInstanceId[instanceId],
-            let kind = providerKind(fromDriver: provider.driver)
+            let kind = providerKind(for: provider)
         {
             return kind
         }
@@ -2504,9 +2504,19 @@ public actor LiveBackend: BackendService {
         return nil
     }
 
+    /// Claudex deliberately reuses the Claude Agent driver and is distinguished
+    /// by provider-instance identity. Keeping this rule at the native mapping
+    /// boundary avoids duplicating the Claude protocol/runtime on the server.
+    private func providerKind(for provider: ServerProvider) -> ProviderKind? {
+        let instanceId = provider.instanceId.lowercased()
+        let displayName = provider.displayName?.lowercased() ?? ""
+        if instanceId == "claudex" || displayName == "claudex" { return .claudex }
+        return providerKind(fromDriver: provider.driver)
+    }
+
     private func currentProviderList() -> [ProviderInstance] {
         providersByInstanceId.values.compactMap { provider -> ProviderInstance? in
-            guard let kind = providerKind(fromDriver: provider.driver) else { return nil }
+            guard let kind = providerKind(for: provider) else { return nil }
             return ProviderInstance(
                 id: provider.instanceId, kind: kind, availability: availability(for: provider),
                 version: provider.version,
@@ -2535,7 +2545,7 @@ public actor LiveBackend: BackendService {
         // run a thread — returning nil surfaces `noProviderForKind` instead
         // of sending the server an unusable ModelSelection.
         let chosen = providersByInstanceId.values.first {
-            providerKind(fromDriver: $0.driver) == provider
+            providerKind(for: $0) == provider
                 && availability(for: $0) == .available
                 && !$0.models.isEmpty
         }
@@ -2665,7 +2675,7 @@ public actor LiveBackend: BackendService {
         let (instanceID, modelSlug) = (parts[0], parts[1])
         guard
             let instance = providersByInstanceId[instanceID],
-            providerKind(fromDriver: instance.driver) == provider,
+            providerKind(for: instance) == provider,
             availability(for: instance) == .available,
             instance.models.contains(where: { $0.slug == modelSlug })
         else { return nil }
