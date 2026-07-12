@@ -25,3 +25,10 @@ The Android terminal renderer vendors upstream `libghostty-vt` shared libraries 
 
 Ghostty's MIT license applies to the vendored Android libraries. Keep this notice in sync when
 updating `Vendor/libghostty-vt`.
+
+## MesloLGS NF (Android terminal font)
+
+- Files: `android/src/main/assets/fonts/MesloLGS-NF-{Regular,Bold}.ttf`
+- Source: https://github.com/romkatv/powerlevel10k-media (Meslo LG patched with Nerd Fonts glyphs)
+- Upstream: Meslo LG by André Berg (customization of Apple's Menlo), Nerd Fonts patcher
+- License: Apache License 2.0

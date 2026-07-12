@@ -171,6 +171,16 @@ std::vector<uint8_t> DrainResponses(Session* session) {
   return responses;
 }
 
+bool ViewportGridRef(Session* session, jint x, jint y, GhosttyGridRef* out) {
+  *out = GhosttyGridRef{};
+  out->size = sizeof(*out);
+  GhosttyPoint point{};
+  point.tag = GHOSTTY_POINT_TAG_VIEWPORT;
+  point.value.coordinate.x = static_cast<uint16_t>(std::max<jint>(x, 0));
+  point.value.coordinate.y = static_cast<uint32_t>(std::max<jint>(y, 0));
+  return ghostty_terminal_grid_ref(session->terminal, point, out) == GHOSTTY_SUCCESS;
+}
+
 uint16_t StyleFlags(const GhosttyStyle& style, bool selected) {
   uint16_t flags = 0;
   if (style.bold) flags |= kBold;
@@ -270,6 +280,96 @@ Java_expo_modules_t3terminal_GhosttyBridge_nativeSetTheme(
   if (session == nullptr) return;
   std::lock_guard<std::mutex> lock(session->mutex);
   ApplyTheme(session, foreground, background, cursor, env, palette);
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_expo_modules_t3terminal_GhosttyBridge_nativeSelectWordAt(JNIEnv*, jclass,
+                                                               jlong handle, jint x,
+                                                               jint y) {
+  auto* session = FromHandle(handle);
+  if (session == nullptr) return JNI_FALSE;
+  std::lock_guard<std::mutex> lock(session->mutex);
+  GhosttyTerminalSelectWordOptions options{};
+  options.size = sizeof(options);
+  if (!ViewportGridRef(session, x, y, &options.ref)) return JNI_FALSE;
+  GhosttySelection selection{};
+  selection.size = sizeof(selection);
+  if (ghostty_terminal_select_word(session->terminal, &options, &selection) !=
+      GHOSTTY_SUCCESS) {
+    return JNI_FALSE;
+  }
+  return ghostty_terminal_set(session->terminal, GHOSTTY_TERMINAL_OPT_SELECTION,
+                              &selection) == GHOSTTY_SUCCESS
+             ? JNI_TRUE
+             : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_expo_modules_t3terminal_GhosttyBridge_nativeExtendSelection(
+    JNIEnv*, jclass, jlong handle, jint anchor_x, jint anchor_y, jint x, jint y) {
+  auto* session = FromHandle(handle);
+  if (session == nullptr) return;
+  std::lock_guard<std::mutex> lock(session->mutex);
+  GhosttySelection selection{};
+  selection.size = sizeof(selection);
+  if (!ViewportGridRef(session, anchor_x, anchor_y, &selection.start)) return;
+  if (!ViewportGridRef(session, x, y, &selection.end)) return;
+  ghostty_terminal_set(session->terminal, GHOSTTY_TERMINAL_OPT_SELECTION, &selection);
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_expo_modules_t3terminal_GhosttyBridge_nativeSelectAll(JNIEnv*, jclass,
+                                                            jlong handle) {
+  auto* session = FromHandle(handle);
+  if (session == nullptr) return JNI_FALSE;
+  std::lock_guard<std::mutex> lock(session->mutex);
+  GhosttySelection selection{};
+  selection.size = sizeof(selection);
+  if (ghostty_terminal_select_all(session->terminal, &selection) != GHOSTTY_SUCCESS) {
+    return JNI_FALSE;
+  }
+  return ghostty_terminal_set(session->terminal, GHOSTTY_TERMINAL_OPT_SELECTION,
+                              &selection) == GHOSTTY_SUCCESS
+             ? JNI_TRUE
+             : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_expo_modules_t3terminal_GhosttyBridge_nativeClearSelection(JNIEnv*, jclass,
+                                                                 jlong handle) {
+  auto* session = FromHandle(handle);
+  if (session == nullptr) return;
+  std::lock_guard<std::mutex> lock(session->mutex);
+  ghostty_terminal_set(session->terminal, GHOSTTY_TERMINAL_OPT_SELECTION, nullptr);
+}
+
+// Returns the active selection as UTF-8 bytes (soft-wrapped lines unwrapped,
+// trailing whitespace trimmed), or null when there is no selection.
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_expo_modules_t3terminal_GhosttyBridge_nativeGetSelectionText(JNIEnv* env, jclass,
+                                                                   jlong handle) {
+  auto* session = FromHandle(handle);
+  if (session == nullptr) return nullptr;
+  std::lock_guard<std::mutex> lock(session->mutex);
+  GhosttyTerminalSelectionFormatOptions options{};
+  options.size = sizeof(options);
+  options.emit = GHOSTTY_FORMATTER_FORMAT_PLAIN;
+  options.unwrap = true;
+  options.trim = true;
+  uint8_t* bytes = nullptr;
+  size_t len = 0;
+  if (ghostty_terminal_selection_format_alloc(session->terminal, nullptr, options,
+                                              &bytes, &len) != GHOSTTY_SUCCESS ||
+      bytes == nullptr) {
+    return nullptr;
+  }
+  auto result = env->NewByteArray(static_cast<jsize>(len));
+  if (result != nullptr && len > 0) {
+    env->SetByteArrayRegion(result, 0, static_cast<jsize>(len),
+                            reinterpret_cast<const jbyte*>(bytes));
+  }
+  ghostty_free(nullptr, bytes, len);
+  return result;
 }
 
 extern "C" JNIEXPORT jbyteArray JNICALL

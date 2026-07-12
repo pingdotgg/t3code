@@ -613,10 +613,9 @@ export function NewTaskDraftScreen(props: {
 
   const isAndroid = Platform.OS === "android";
   const isDarkMode = colorScheme === "dark";
-  // Mirrors ThreadComposer: collapsed pill until focused, and typed content
-  // keeps it expanded after blur.
-  const hasContent = flow.prompt.trim().length > 0 || flow.attachments.length > 0;
-  const isExpanded = !isAndroid || isComposerFocused || hasContent;
+  // Android expansion follows native editor focus so relayout cannot race
+  // the touch gesture that opens the keyboard.
+  const isExpanded = !isAndroid || isComposerFocused;
   const canStart =
     Boolean(flow.selectedProject) &&
     Boolean(flow.selectedModel) &&
@@ -779,15 +778,17 @@ export function NewTaskDraftScreen(props: {
               ) : null}
             </ComposerSurface>
 
-            <ComposerToolbarRow paddingBottom={8} paddingHorizontal={0} paddingTop={8}>
-              <ComposerToolbarScroller
-                fadeOpaque={isDarkMode ? "rgba(0,0,0,0.95)" : "rgba(255,255,255,0.95)"}
-                fadeTransparent={isDarkMode ? "rgba(0,0,0,0)" : "rgba(255,255,255,0)"}
-              >
-                {toolbarPills}
-              </ComposerToolbarScroller>
-              {isExpanded ? startButton : null}
-            </ComposerToolbarRow>
+            {isExpanded ? (
+              <ComposerToolbarRow paddingBottom={8} paddingHorizontal={0} paddingTop={8}>
+                <ComposerToolbarScroller
+                  fadeOpaque={isDarkMode ? "rgba(0,0,0,0.95)" : "rgba(255,255,255,0.95)"}
+                  fadeTransparent={isDarkMode ? "rgba(0,0,0,0)" : "rgba(255,255,255,0)"}
+                >
+                  {toolbarPills}
+                </ComposerToolbarScroller>
+                {startButton}
+              </ComposerToolbarRow>
+            ) : null}
           </View>
         </KeyboardAvoidingView>
       </View>

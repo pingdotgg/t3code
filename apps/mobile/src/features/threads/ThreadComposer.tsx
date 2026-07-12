@@ -68,7 +68,7 @@ import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerComm
  * Height of the collapsed composer (pill + vertical padding, excluding safe-area inset).
  * Exported so the parent can compute feed overlap / content insets.
  */
-export const COMPOSER_COLLAPSED_CHROME = Platform.OS === "android" ? 120 : 60;
+export const COMPOSER_COLLAPSED_CHROME = 60;
 
 /**
  * Height of the expanded composer (card + toolbar + vertical padding, excluding safe-area inset).
@@ -261,23 +261,14 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const fallbackInputRef = useRef<ComposerEditorHandle>(null);
   const inputRef = props.editorRef ?? fallbackInputRef;
   const [isFocused, setIsFocused] = useState(false);
-  // Android: expansion starts on touch-down. Waiting for the native focus
-  // event to round-trip through JS starts the 220ms morph after the IME is
-  // already animating in, so the two play serially and look jittery.
-  const [eagerExpand, setEagerExpand] = useState(false);
   const wasExpandedBeforePreviewRef = useRef(false);
   const inFlightThreadIdsRef = useRef(new Set<string>());
   const { onExpandedChange } = props;
 
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
   const hasContent = props.draftMessage.trim().length > 0 || props.draftAttachments.length > 0;
-  const isExpanded = isFocused || eagerExpand || (Platform.OS === "android" && hasContent);
+  const isExpanded = isFocused;
   const canSend = hasContent;
-
-  useEffect(() => {
-    if (Platform.OS !== "android") return;
-    onExpandedChange?.(isExpanded);
-  }, [isExpanded, onExpandedChange]);
 
   const onPressImage = useCallback(
     (uri: string) => {
@@ -296,17 +287,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
 
   const handleFocus = useCallback(() => {
     setIsFocused(true);
-    if (Platform.OS !== "android") {
-      onExpandedChange?.(true);
-    }
+    onExpandedChange?.(true);
   }, [onExpandedChange]);
 
   const handleBlur = useCallback(() => {
     setIsFocused(false);
-    setEagerExpand(false);
-    if (Platform.OS !== "android") {
-      onExpandedChange?.(false);
-    }
+    onExpandedChange?.(false);
   }, [onExpandedChange]);
   const showStopAction =
     props.selectedThread.session?.status === "running" ||
@@ -778,12 +764,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
             </Animated.View>
           ) : null}
 
-          <View
-            className={isExpanded ? undefined : "min-w-0 flex-1"}
-            onTouchStart={
-              Platform.OS === "android" && !isExpanded ? () => setEagerExpand(true) : undefined
-            }
-          >
+          <View className={isExpanded ? undefined : "min-w-0 flex-1"}>
             <ComposerEditor
               ref={inputRef}
               multiline
@@ -856,44 +837,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           ) : null}
         </ComposerSurface>
 
-        {Platform.OS === "android" && !isExpanded ? (
-          // Collapsed Android toolbar shows exactly three controls, so skip
-          // the scroller and let the two selector pills flex to fill the row.
-          <ComposerToolbarRow paddingBottom={8} paddingHorizontal={0} paddingTop={8}>
-            <ComposerToolbarButton
-              accessibilityLabel="Add attachment"
-              icon="plus"
-              onPress={() => void props.onPickDraftImages()}
-              showChevron={false}
-            />
-            <ControlPillMenu
-              className="min-w-0 flex-1"
-              actions={modelMenuActions}
-              onPressAction={({ nativeEvent }) => handleModelMenuAction(nativeEvent.event)}
-            >
-              <ComposerToolbarTrigger
-                accessibilityLabel="Model"
-                iconNode={<ProviderIcon provider={currentModelOption?.providerDriver} size={16} />}
-                label={currentModelOption?.label ?? currentModelSelection.model}
-                className="w-full max-w-full"
-              />
-            </ControlPillMenu>
-            <ControlPillMenu
-              // The reasoning/config label runs longer than most model names,
-              // so it gets a larger share of the row.
-              className="min-w-0 flex-[1.4]"
-              actions={optionsMenuActions}
-              onPressAction={({ nativeEvent }) => handleOptionsMenuAction(nativeEvent.event)}
-            >
-              <ComposerToolbarTrigger
-                accessibilityLabel="Configuration"
-                icon="slider.horizontal.3"
-                label={configurationLabel}
-                className="w-full max-w-full"
-              />
-            </ControlPillMenu>
-          </ComposerToolbarRow>
-        ) : isExpanded ? (
+        {isExpanded ? (
           // Toolbar row — matches draft page layout (expanded only)
           <Animated.View entering={FadeIn.duration(160)} exiting={FadeOut.duration(120)}>
             <ComposerToolbarRow paddingBottom={8} paddingHorizontal={0} paddingTop={8}>

@@ -44,4 +44,21 @@ internal object GhosttyBridge {
   )
 
   @JvmStatic external fun nativeSnapshot(handle: Long): ByteArray
+
+  @JvmStatic external fun nativeSelectWordAt(handle: Long, col: Int, row: Int): Boolean
+
+  @JvmStatic
+  external fun nativeExtendSelection(
+    handle: Long,
+    anchorCol: Int,
+    anchorRow: Int,
+    col: Int,
+    row: Int
+  )
+
+  @JvmStatic external fun nativeSelectAll(handle: Long): Boolean
+
+  @JvmStatic external fun nativeClearSelection(handle: Long)
+
+  @JvmStatic external fun nativeGetSelectionText(handle: Long): ByteArray?
 }

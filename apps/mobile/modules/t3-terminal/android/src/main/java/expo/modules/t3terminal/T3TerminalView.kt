@@ -106,6 +106,40 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
       }
     }
     terminalCanvas.onCellMetricsChanged = { emitResize() }
+    terminalCanvas.selectionDelegate = object : TerminalSelectionDelegate {
+      override fun selectWordAt(col: Int, row: Int): Boolean {
+        if (terminalHandle == 0L) return false
+        val selected = GhosttyBridge.nativeSelectWordAt(terminalHandle, col, row)
+        if (selected) renderSnapshot()
+        return selected
+      }
+
+      override fun extendSelection(anchorCol: Int, anchorRow: Int, col: Int, row: Int) {
+        if (terminalHandle == 0L) return
+        GhosttyBridge.nativeExtendSelection(terminalHandle, anchorCol, anchorRow, col, row)
+        renderSnapshot()
+      }
+
+      override fun selectAll(): Boolean {
+        if (terminalHandle == 0L) return false
+        val selected = GhosttyBridge.nativeSelectAll(terminalHandle)
+        if (selected) renderSnapshot()
+        return selected
+      }
+
+      override fun clearSelection() {
+        if (terminalHandle == 0L) return
+        GhosttyBridge.nativeClearSelection(terminalHandle)
+        renderSnapshot()
+      }
+
+      override fun selectionText(): String? =
+        if (terminalHandle == 0L) {
+          null
+        } else {
+          GhosttyBridge.nativeGetSelectionText(terminalHandle)?.let { String(it, Charsets.UTF_8) }
+        }
+    }
 
     configureInputView()
     container.addView(
@@ -147,6 +181,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     terminalCanvas.onScrollRows = null
     terminalCanvas.onRequestKeyboard = null
     terminalCanvas.onCellMetricsChanged = null
+    terminalCanvas.selectionDelegate = null
     destroyTerminal()
   }
 
@@ -174,7 +209,8 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
         event.action == KeyEvent.ACTION_DOWN
       val isEnter = isImeSend || isHardwareEnter
       if (isEnter) {
-        onInput(mapOf("data" to "\n"))
+        // Enter must send CR: raw-mode TUIs treat LF as Ctrl+J (insert newline).
+        onInput(mapOf("data" to "\r"))
         true
       } else {
         false
@@ -288,6 +324,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     GhosttyBridge.nativeDestroy(terminalHandle)
     terminalHandle = 0L
     fedBuffer = ""
+    terminalCanvas.resetSelectionState()
   }
 
   private fun feedPendingBuffer() {
@@ -299,6 +336,12 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     val suffix = initialBuffer.substring(fedBuffer.length)
     if (suffix.isNotEmpty()) {
       emitResponse(GhosttyBridge.nativeFeed(terminalHandle, suffix.toByteArray(Charsets.UTF_8)))
+      // New output invalidates an active selection (matches the web drawer);
+      // otherwise the copy toolbar drifts out of sync with the grid.
+      if (terminalCanvas.hasActiveSelection()) {
+        GhosttyBridge.nativeClearSelection(terminalHandle)
+        terminalCanvas.resetSelectionState()
+      }
     }
     fedBuffer = initialBuffer
     renderSnapshot()
