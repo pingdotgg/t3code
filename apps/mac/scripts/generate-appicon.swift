@@ -225,9 +225,10 @@ private func svgPathData(for path: CGPath) -> String {
     return commands.joined(separator: " ")
 }
 
-private func writeSVG(variant: IconVariant, to path: String, fileManager: FileManager) {
-    let currentDirectory = URL(fileURLWithPath: fileManager.currentDirectoryPath, isDirectory: true)
-    let outputURL = URL(fileURLWithPath: path, relativeTo: currentDirectory).standardizedFileURL
+private func writeSVG(
+    variant: IconVariant, to path: String, baseDirectory: URL, fileManager: FileManager
+) {
+    let outputURL = URL(fileURLWithPath: path, relativeTo: baseDirectory).standardizedFileURL
     let mark = BrandMarkGeometry.silhouette(.passportPeak, in: markRect(in: squircleRect()))
     let svg = """
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
@@ -292,7 +293,9 @@ struct GenerateAppIcon {
         }
 
         if let svgPath {
-            writeSVG(variant: variant, to: svgPath, fileManager: fileManager)
+            writeSVG(
+                variant: variant, to: svgPath, baseDirectory: macDirectory,
+                fileManager: fileManager)
         } else {
             let distDirectory = macDirectory.appendingPathComponent("dist", isDirectory: true)
             let iconset = distDirectory.appendingPathComponent(variant.iconsetDirectoryName, isDirectory: true)

@@ -8,6 +8,7 @@ struct BrandMarkShape: Shape {
     }
 }
 
+@MainActor
 struct BrandMarkView: View {
     enum Style: Equatable, Sendable {
         case monochrome

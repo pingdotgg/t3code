@@ -41,7 +41,7 @@ struct AboutView: View {
                 BrandMarkView(style: .fullColor)
                     .frame(width: 96, height: 96)
                     .padding(14)
-                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20))
+                    .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20))
 
                 BrandWordmark(size: 28)
 

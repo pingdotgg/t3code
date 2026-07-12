@@ -1,5 +1,6 @@
 import SwiftUI
 
+@MainActor
 struct BrandWordmark: View {
     let size: CGFloat
 
