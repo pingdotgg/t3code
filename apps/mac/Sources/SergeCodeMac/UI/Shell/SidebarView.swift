@@ -27,13 +27,23 @@ struct SidebarView: View {
                 Section {
                     ForEach(threadsForProject) { thread in
                         SidebarThreadRow(
-                            thread: thread, vcs: model.threadState(thread.id)?.vcsStatus, scenery: scenery)
+                            thread: thread,
+                            vcs: model.threadState(thread.id)?.vcsStatus,
+                            scenery: scenery,
+                            isPinned: model.isThreadPinned(thread))
                             .tag(thread.id)
                             .contextMenu {
-                                Button("Archive") {
+                                Button(
+                                    model.isThreadPinned(thread) ? "Unpin" : "Pin",
+                                    systemImage: model.isThreadPinned(thread) ? "pin.slash" : "pin")
+                                {
+                                    model.togglePinned(thread)
+                                }
+                                Divider()
+                                Button("Archive", systemImage: "archivebox") {
                                     Task { await model.archiveThread(thread) }
                                 }
-                                Button("Delete", role: .destructive) {
+                                Button("Delete", systemImage: "trash", role: .destructive) {
                                     Task { await model.deleteThread(thread) }
                                 }
                             }
@@ -72,6 +82,7 @@ struct SidebarView: View {
         // New/archived/deleted threads and project changes slide the list
         // smoothly rather than snapping the rows into new positions.
         .animation(Motion.settle, value: threadIDs)
+        .animation(Motion.settle, value: model.pinnedThreadIDs)
         .animation(Motion.settle, value: model.projects)
         .alert(
             "Rename Project",
@@ -114,9 +125,10 @@ struct SidebarView: View {
     }
 
     private func visibleThreads(for project: Project) -> [ChatThread] {
-        model.threads.filter { thread in
+        let threads = model.threads.filter { thread in
             thread.projectID == project.id && thread.status != .archived
         }
+        return AppModel.pinnedFirst(threads, pinnedIDs: model.pinnedThreadIDs)
     }
 }
 
@@ -213,6 +225,7 @@ private struct SidebarThreadRow: View {
     let thread: ChatThread
     let vcs: VcsStatus?
     let scenery: SceneryStore
+    let isPinned: Bool
 
     var body: some View {
         HStack(spacing: 9) {
@@ -236,8 +249,16 @@ private struct SidebarThreadRow: View {
             }
             let names = scenery.displayNames(for: thread)
             VStack(alignment: .leading, spacing: 2) {
-                Text(names.primary)
-                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    Text(names.primary)
+                        .lineLimit(1)
+                    if isPinned {
+                        Image(systemName: "pin.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.tint)
+                            .accessibilityLabel("Pinned")
+                    }
+                }
                 // The AI-generated thread description once the server has
                 // retitled past the scene seed; provider name until then.
                 Text(names.description ?? thread.provider.displayName)
