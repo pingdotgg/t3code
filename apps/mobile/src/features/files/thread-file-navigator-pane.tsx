@@ -1,5 +1,5 @@
 import type { EnvironmentId, ProjectListEntriesResult } from "@t3tools/contracts";
-import { SymbolView } from "expo-symbols";
+import { SymbolView } from "../../components/AppSymbol";
 import { useCallback, useMemo, useState, type ComponentProps } from "react";
 import { Platform, Pressable, useColorScheme, View, type NativeSyntheticEvent } from "react-native";
 import {

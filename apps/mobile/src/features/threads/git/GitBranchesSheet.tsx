@@ -60,11 +60,7 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
     <ScrollView
       showsVerticalScrollIndicator={false}
       contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
-      contentContainerStyle={{
-        paddingHorizontal: 20,
-        paddingTop: 8,
-        gap: 16,
-      }}
+      contentContainerClassName="gap-4 px-5 pt-2"
     >
       <View className="gap-2 rounded-[18px] border border-border bg-card px-4 py-4">
         <Text className="text-foreground-secondary text-2xs font-t3-bold tracking-[1px] uppercase">

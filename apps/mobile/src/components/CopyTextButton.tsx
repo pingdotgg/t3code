@@ -1,4 +1,4 @@
-import { SymbolView } from "expo-symbols";
+import { SymbolView } from "../components/AppSymbol";
 import { memo, useEffect, useRef, useState } from "react";
 import { Pressable, type ColorValue } from "react-native";
 
@@ -58,7 +58,11 @@ export const CopyTextButton = memo(function CopyTextButton(props: {
       })}
     >
       <SymbolView
-        name={copied ? "checkmark" : "doc.on.doc"}
+        name={
+          copied
+            ? { ios: "checkmark", android: "check" }
+            : { ios: "doc.on.doc", android: "content_copy" }
+        }
         size={props.iconSize ?? 13}
         tintColor={copied ? (props.copiedTintColor ?? props.tintColor) : props.tintColor}
         type="monochrome"

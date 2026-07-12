@@ -1,12 +1,13 @@
 import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useNavigation } from "@react-navigation/native";
-import { SymbolView } from "expo-symbols";
+import { SymbolView } from "../../components/AppSymbol";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useState } from "react";
-import { ScrollView, View } from "react-native";
+import { Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
 
+import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
@@ -32,13 +33,27 @@ export function ConnectionsRouteScreen() {
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
-      <NativeHeaderToolbar placement="right">
-        <NativeHeaderToolbar.Button
-          icon="plus"
-          onPress={() => navigation.navigate("ConnectionsNew")}
-          separateBackground
+      {Platform.OS === "android" ? (
+        <AndroidScreenHeader
+          title="Environments"
+          onBack={() => navigation.goBack()}
+          actions={[
+            {
+              accessibilityLabel: "Add environment",
+              icon: "plus",
+              onPress: () => navigation.navigate("ConnectionsNew"),
+            },
+          ]}
         />
-      </NativeHeaderToolbar>
+      ) : (
+        <NativeHeaderToolbar placement="right">
+          <NativeHeaderToolbar.Button
+            icon="plus"
+            onPress={() => navigation.navigate("ConnectionsNew")}
+            separateBackground
+          />
+        </NativeHeaderToolbar>
+      )}
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}

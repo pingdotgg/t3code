@@ -9,8 +9,24 @@ import {
   buildTerminalMenuSessions,
   nextOpenTerminalId,
   nextTerminalId,
+  previousLiveTerminalId,
   resolveProjectScriptTerminalId,
+  type TerminalMenuSession,
 } from "./terminalMenu";
+
+function makeMenuSession(input: {
+  readonly terminalId: string;
+  readonly status: TerminalMenuSession["status"];
+}): TerminalMenuSession {
+  return {
+    terminalId: input.terminalId,
+    cwd: null,
+    status: input.status,
+    hasRunningSubprocess: false,
+    displayLabel: getTerminalLabel(input.terminalId),
+    updatedAt: null,
+  };
+}
 
 function makeKnownSession(input: {
   readonly terminalId: string;
@@ -141,6 +157,60 @@ describe("nextOpenTerminalId", () => {
         activeRouteTerminalId: DEFAULT_TERMINAL_ID,
       }),
     ).toBe("term-2");
+  });
+});
+
+describe("previousLiveTerminalId", () => {
+  it("returns null when no other live session remains", () => {
+    expect(
+      previousLiveTerminalId({
+        sessions: [
+          makeMenuSession({ terminalId: "term-2", status: "exited" }),
+          makeMenuSession({ terminalId: "term-3", status: "closed" }),
+        ],
+        exitedTerminalId: "term-2",
+      }),
+    ).toBe(null);
+  });
+
+  it("prefers the nearest live session below the exited id", () => {
+    expect(
+      previousLiveTerminalId({
+        sessions: [
+          makeMenuSession({ terminalId: DEFAULT_TERMINAL_ID, status: "running" }),
+          makeMenuSession({ terminalId: "term-2", status: "running" }),
+          makeMenuSession({ terminalId: "term-3", status: "exited" }),
+          makeMenuSession({ terminalId: "term-4", status: "running" }),
+        ],
+        exitedTerminalId: "term-3",
+      }),
+    ).toBe("term-2");
+  });
+
+  it("falls back to the nearest live session above when the exited id was lowest", () => {
+    expect(
+      previousLiveTerminalId({
+        sessions: [
+          makeMenuSession({ terminalId: DEFAULT_TERMINAL_ID, status: "exited" }),
+          makeMenuSession({ terminalId: "term-2", status: "starting" }),
+          makeMenuSession({ terminalId: "term-4", status: "running" }),
+        ],
+        exitedTerminalId: DEFAULT_TERMINAL_ID,
+      }),
+    ).toBe("term-2");
+  });
+
+  it("ignores dead sessions when picking the fallback", () => {
+    expect(
+      previousLiveTerminalId({
+        sessions: [
+          makeMenuSession({ terminalId: DEFAULT_TERMINAL_ID, status: "running" }),
+          makeMenuSession({ terminalId: "term-2", status: "exited" }),
+          makeMenuSession({ terminalId: "term-3", status: "exited" }),
+        ],
+        exitedTerminalId: "term-3",
+      }),
+    ).toBe(DEFAULT_TERMINAL_ID);
   });
 });
 

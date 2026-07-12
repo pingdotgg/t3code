@@ -15,7 +15,7 @@ export function TextAppearanceSection() {
   const { isReady, appearance, setBaseFontSize } = useAppearancePreferences();
 
   return (
-    <SettingsSection title="Text">
+    <SettingsSection card title="Text">
       <TextAppearancePreview fontSize={appearance.baseFontSize} />
       <AppearancePreviewSeparator />
       <FontSizeSliderRow

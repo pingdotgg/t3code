@@ -1,10 +1,18 @@
 import { MenuView } from "@react-native-menu/menu";
-import type { ComponentProps, ReactNode } from "react";
-import { Pressable, useColorScheme, View } from "react-native";
-import { SymbolView } from "expo-symbols";
+import * as Haptics from "expo-haptics";
+import {
+  cloneElement,
+  isValidElement,
+  type ComponentProps,
+  type ReactElement,
+  type ReactNode,
+} from "react";
+import { Platform, Pressable, useColorScheme, View } from "react-native";
 import { useThemeColor } from "../lib/useThemeColor";
 
 import { cn } from "../lib/cn";
+import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu";
+import { SymbolView } from "./AppSymbol";
 import { AppText as Text } from "./AppText";
 
 export function ControlPill(props: {
@@ -74,16 +82,60 @@ export function ControlPill(props: {
   );
 }
 
+// iOS renders the native UIMenu (standard checkmark for `state: "on"`);
+// Android renders the token-styled AndroidAnchoredMenu, since the native
+// AppCompat popup can't be themed past its stock animation, metrics, and
+// submenu chrome.
 export function ControlPillMenu(
   props: Omit<ComponentProps<typeof MenuView>, "children" | "themeVariant"> & {
     readonly children: ReactNode;
+    readonly className?: string;
   },
 ) {
   const isDarkMode = useColorScheme() === "dark";
 
+  if (Platform.OS === "android") {
+    // Long-press menus keep their child interactive: the child element gets
+    // an injected onLongPress (mirroring the iOS context-menu interaction)
+    // so its own tap handling still works.
+    if (props.shouldOpenOnLongPress && isValidElement(props.children)) {
+      const child = props.children as ReactElement<{ onLongPress?: () => void }>;
+      return (
+        <AndroidAnchoredMenu
+          actions={props.actions}
+          className={props.className}
+          title={props.title}
+          style={props.style}
+          onPressAction={props.onPressAction}
+        >
+          {(open) =>
+            cloneElement(child, {
+              onLongPress: () => {
+                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                open();
+              },
+            })
+          }
+        </AndroidAnchoredMenu>
+      );
+    }
+    return (
+      <AndroidAnchoredMenu
+        actions={props.actions}
+        className={props.className}
+        title={props.title}
+        style={props.style}
+        onPressAction={props.onPressAction}
+      >
+        {props.children}
+      </AndroidAnchoredMenu>
+    );
+  }
+
+  const { className: _className, ...menuProps } = props;
   return (
-    <MenuView {...props} themeVariant={isDarkMode ? "dark" : "light"}>
-      {props.children}
+    <MenuView {...menuProps} themeVariant={isDarkMode ? "dark" : "light"}>
+      {menuProps.children}
     </MenuView>
   );
 }

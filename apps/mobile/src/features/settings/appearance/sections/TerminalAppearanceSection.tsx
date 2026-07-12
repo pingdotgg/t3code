@@ -26,7 +26,7 @@ export function TerminalAppearanceSection() {
   );
 
   return (
-    <SettingsSection title="Terminal">
+    <SettingsSection card title="Terminal">
       <TerminalAppearancePreview fontSize={appearance.terminalFontSize} />
       <AppearancePreviewSeparator />
       <SettingsSwitchRow
