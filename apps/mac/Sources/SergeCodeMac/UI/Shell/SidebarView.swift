@@ -7,9 +7,11 @@ import SwiftUI
 /// existing sort), each with its alpine scene thumbnail carrying the status
 /// dot.
 struct SidebarView: View {
-    let model: AppModel
+    let multi: MultiDeviceModel
     let scenery: SceneryStore
     let passport: PassportStore
+
+    private var model: AppModel { multi.local }
 
     @UIState private var renameTarget: Project?
     @UIState private var renameText = ""
@@ -18,8 +20,8 @@ struct SidebarView: View {
     var body: some View {
         let threadIDs = model.threads.map(\.id)
         List(selection: Binding(
-            get: { model.selectedThreadID },
-            set: { model.selectedThreadID = $0 }
+            get: { multi.selection },
+            set: { multi.selection = $0 }
         )) {
             ForEach(model.projects) { project in
                 // Archived threads live in Settings > Archive, not the sidebar.
@@ -28,7 +30,7 @@ struct SidebarView: View {
                     ForEach(threadsForProject) { thread in
                         SidebarThreadRow(
                             thread: thread, vcs: model.threadState(thread.id)?.vcsStatus, scenery: scenery)
-                            .tag(thread.id)
+                            .tag(ThreadSelection(deviceID: .local, threadID: thread.id))
                             .contextMenu {
                                 Button("Archive") {
                                     Task { await model.archiveThread(thread) }
@@ -51,11 +53,14 @@ struct SidebarView: View {
                         canCreateThread: { model.canCreateThread(with: $0) },
                         onNewSession: { provider in
                             Task {
-                                await model.createSceneThread(
+                                if let thread = await model.createSceneThread(
                                     projectID: project.id,
                                     provider: provider,
                                     scenery: scenery,
                                     passport: passport)
+                                {
+                                    multi.select(threadID: thread.id, on: model.deviceID)
+                                }
                             }
                         },
                         onRename: {

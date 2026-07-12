@@ -9,14 +9,24 @@
     /// main-area diff review, logs probe steps to stdout, and quits.
     @MainActor
     enum UIProbe {
+        static func runIfRequested(multi: MultiDeviceModel, scenery: SceneryStore) {
+            guard let dir = ProcessInfo.processInfo.environment["SERGECODE_UI_PROBE"],
+                !dir.isEmpty
+            else { return }
+            Task { await run(multi: multi, scenery: scenery, dir: dir) }
+        }
+
+        /// Compatibility entry point for older probe harnesses.
         static func runIfRequested(model: AppModel, scenery: SceneryStore) {
             guard let dir = ProcessInfo.processInfo.environment["SERGECODE_UI_PROBE"],
                 !dir.isEmpty
             else { return }
-            Task { await run(model: model, scenery: scenery, dir: dir) }
+            let multi = MultiDeviceModel(local: model)
+            Task { await run(multi: multi, scenery: scenery, dir: dir) }
         }
 
-        private static func run(model: AppModel, scenery: SceneryStore, dir: String) async {
+        private static func run(multi: MultiDeviceModel, scenery: SceneryStore, dir: String) async {
+            let model = multi.local
             try? FileManager.default.createDirectory(
                 atPath: dir, withIntermediateDirectories: true)
 
@@ -25,8 +35,11 @@
             // seeds with plan progress, so the plan strip is exercised too.
             try? await Task.sleep(for: .seconds(2))
             if model.selectedThreadID == nil {
-                model.selectedThreadID =
-                    model.threads.first { $0.id == "thread-1" }?.id ?? model.threads.first?.id
+                if let threadID = model.threads.first(where: { $0.id == "thread-1" })?.id
+                    ?? model.threads.first?.id
+                {
+                    multi.select(threadID: threadID, on: model.deviceID)
+                }
             }
             // Let the inspector timeline present and the diff refresh land.
             try? await Task.sleep(for: .seconds(2))
@@ -68,7 +81,7 @@
             // exposes Standard/Fast choices, then flip the tier and capture.
             let previousThreadID = model.selectedThreadID
             if let codexThread = model.threads.first(where: { $0.id == "thread-2" }) {
-                model.selectedThreadID = codexThread.id
+                multi.select(threadID: codexThread.id, on: model.deviceID)
                 try? await Task.sleep(for: .seconds(1))
                 let option = model.models.first {
                     $0.instanceID == codexThread.modelInstanceID
@@ -85,7 +98,11 @@
                 let after = model.threads.first { $0.id == codexThread.id }?.serviceTier
                 print("UIProbe: serviceTier after set=\(after ?? "nil")")
                 snapshot("4b-service-tier", dir: dir)
-                model.selectedThreadID = previousThreadID
+                if let previousThreadID {
+                    multi.select(threadID: previousThreadID, on: model.deviceID)
+                } else {
+                    multi.selection = nil
+                }
                 try? await Task.sleep(for: .seconds(1))
             } else {
                 print("UIProbe: no codex thread-2 for service tier probe")
@@ -296,10 +313,14 @@
             // Select Text overlay: use the pricing thread (thread-3) — earlier
             // probe steps mutate thread-1's timeline (queue/retry), so a still-
             // seeded conversation is a cleaner fixture for the sheet.
-            model.selectedThreadID =
-                model.threads.first { $0.id == "thread-3" }?.id
-                ?? model.threads.first { $0.id == "thread-1" }?.id
+            if let threadID = model.threads.first(where: { $0.id == "thread-3" })?.id
+                ?? model.threads.first(where: { $0.id == "thread-1" })?.id
                 ?? model.threads.first?.id
+            {
+                multi.select(threadID: threadID, on: model.deviceID)
+            } else {
+                multi.selection = nil
+            }
             if let threadID = model.selectedThreadID {
                 await model.loadTimelineIfNeeded(threadID: threadID)
             }

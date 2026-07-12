@@ -3,7 +3,7 @@ import SwiftUI
 // App shell. File kept as ContentView.swift for historical reasons but now
 // hosts RootView, the top-level NavigationSplitView wired to AppModel.
 struct RootView: View {
-    let model: AppModel
+    let multi: MultiDeviceModel
     let scenery: SceneryStore
     let passport: PassportStore
 
@@ -11,6 +11,8 @@ struct RootView: View {
     @UIState private var showNewSessionSheet = false
     @UIState private var showPassportSheet = false
     @UIState private var columnVisibility: NavigationSplitViewVisibility = .all
+
+    private var model: AppModel { multi.activeModel }
 
     var body: some View {
         // Drag-collapse writes visibility through this binding; wrapping
@@ -23,12 +25,12 @@ struct RootView: View {
                 }
             }
         )) {
-            SidebarView(model: model, scenery: scenery, passport: passport)
+            SidebarView(multi: multi, scenery: scenery, passport: passport)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 280)
         } detail: {
             Group {
-                if let thread = model.selectedThread {
-                    ThreadDetailView(model: model, scenery: scenery, thread: thread)
+                if let thread = multi.selectedThread {
+                    ThreadDetailView(model: multi.activeModel, scenery: scenery, thread: thread)
                         .transition(.opacity)
                 } else {
                     EmptyStateView(scenery: scenery) {
@@ -39,15 +41,15 @@ struct RootView: View {
             }
             // Keyed to presence, not thread id — thread → thread switches
             // cross-fade inside ChatScreen; this only covers hero ↔ chat.
-            .animation(Motion.settle, value: model.selectedThread == nil)
+            .animation(Motion.settle, value: multi.selectedThread == nil)
             // The inspector hangs off this stable node, not off the
             // per-thread detail view: re-presenting it on every thread
             // switch (and inside the cross-fade above) reset its column
             // width and flashed/clipped the panel.
             .inspector(isPresented: $showInspector) {
                 Group {
-                    if let thread = model.selectedThread {
-                        InspectorPanel(model: model, threadID: thread.id)
+                    if let thread = multi.selectedThread {
+                        InspectorPanel(model: multi.activeModel, threadID: thread.id)
                     } else {
                         ContentUnavailableView(
                             "No Session",
@@ -96,7 +98,10 @@ struct RootView: View {
                 model: model,
                 scenery: scenery,
                 passport: passport,
-                isPresented: $showNewSessionSheet)
+                isPresented: $showNewSessionSheet,
+                onCreated: { thread in
+                    multi.select(threadID: thread.id, on: model.deviceID)
+                })
         }
         .sheet(isPresented: $showPassportSheet) {
             PassportView(
@@ -123,11 +128,14 @@ struct RootView: View {
                     ForEach(model.configuredProviderKinds) { provider in
                         Button {
                             Task {
-                                await model.createSceneThread(
+                                if let thread = await model.createSceneThread(
                                     projectID: project.id,
                                     provider: provider,
                                     scenery: scenery,
                                     passport: passport)
+                                {
+                                    multi.select(threadID: thread.id, on: model.deviceID)
+                                }
                             }
                         } label: {
                             Label(provider.displayName, systemImage: "bolt")

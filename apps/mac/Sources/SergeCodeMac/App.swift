@@ -8,13 +8,21 @@ import SwiftUI
 @main
 struct SergeCodeApp: App {
     private static let backend: any BackendService = SergeCodeApp.makeBackend()
-    private let model = AppModel(backend: SergeCodeApp.backend)
+    private let dictation: DictationController
+    private let model: AppModel
+    private let multi: MultiDeviceModel
     // Alpine identity: Dolomites photo pool + per-thread scene assignment.
     private let scenery = SceneryStore()
     private let passport = PassportStore()
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     init() {
+        let sharedDictation = DictationController()
+        self.dictation = sharedDictation
+        let localModel = AppModel(backend: SergeCodeApp.backend, dictation: sharedDictation)
+        self.model = localModel
+        self.multi = MultiDeviceModel(local: localModel)
+
         // macOS 26/27 beta: SwiftUI toolbar re-vends during an in-layout
         // render can raise NSInternalInconsistencyException from AppKit's
         // layout-feedback-loop guard. Registered (not set) so a user or
@@ -39,7 +47,7 @@ struct SergeCodeApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView(model: model, scenery: scenery, passport: passport)
+            RootView(multi: multi, scenery: scenery, passport: passport)
                 .environment(passport)
                 .tint(AlpineTheme.accent(palette: activeSceneryPalette))
                 // Behind-window liquid glass: strength tracks sceneryTranslucency
@@ -53,16 +61,16 @@ struct SergeCodeApp: App {
                 .onAppear {
                     // Thread → project path so scenery set resolution can read
                     // per-project prefs (Phase 1 multi-set).
-                    scenery.projectPathForThread = { [model] threadID in
-                        guard let thread = model.threads.first(where: { $0.id == threadID }),
-                            let project = model.projects.first(where: { $0.id == thread.projectID })
+                    scenery.projectPathForThread = { [multi] threadID in
+                        guard let thread = multi.local.threads.first(where: { $0.id == threadID }),
+                            let project = multi.local.projects.first(where: { $0.id == thread.projectID })
                         else { return nil }
                         return project.path
                     }
-                    model.start()
-                    appDelegate.backend = SergeCodeApp.backend
+                    multi.start()
+                    appDelegate.multi = multi
                     #if DEBUG
-                        UIProbe.runIfRequested(model: model, scenery: scenery)
+                        UIProbe.runIfRequested(multi: multi, scenery: scenery)
                     #endif
                 }
                 .task {
@@ -88,7 +96,7 @@ struct SergeCodeApp: App {
 
         Settings {
             SettingsScene(
-                model: model,
+                model: multi.local,
                 scenery: scenery,
                 backend: SergeCodeApp.backend,
                 passport: passport)
@@ -96,7 +104,7 @@ struct SergeCodeApp: App {
     }
 
     private var activeSceneryPalette: SceneryPalette? {
-        guard let threadID = model.selectedThreadID else {
+        guard let threadID = multi.activeModel.selectedThreadID else {
             return scenery.palette(for: nil)
         }
         return scenery.palette(
@@ -125,7 +133,7 @@ struct SergeCodeApp: App {
 ///   and never hops to the main actor; the UI is about to die anyway.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    var backend: (any BackendService)?
+    var multi: MultiDeviceModel?
     private var signalSources: [DispatchSourceSignal] = []
     private var didCleanup = false
 
@@ -140,16 +148,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let backend, !didCleanup else { return .terminateNow }
+        guard let multi, !didCleanup else { return .terminateNow }
         didCleanup = true
         let done = DispatchSemaphore(value: 0)
         Task.detached {
-            await backend.stop()
+            await multi.shutdown()
             done.signal()
         }
-        // ServerProcess.stop() SIGKILLs the child after a 2s grace, so 6s
-        // covers the worst legitimate case; a hung teardown must never
-        // wedge quit.
+        // Each backend may own a sidecar whose stop path has a 2s grace, so
+        // 6s covers the worst legitimate case while a hung teardown can
+        // never wedge quit.
         _ = done.wait(timeout: .now() + 6)
         return .terminateNow
     }
