@@ -1175,8 +1175,7 @@ public actor LiveBackend: BackendService {
                             isStreaming: payload.streaming, at: at)))
             } else if payload.streaming {
                 if !payload.text.isEmpty {
-                    let old = assistantTextByMessage[threadID]?[messageID] ?? ""
-                    assistantTextByMessage[threadID, default: [:]][messageID] = old + payload.text
+                    assistantTextByMessage[threadID, default: [:]][messageID, default: ""] += payload.text
                     // Buffer: merged at ~30Hz (or flushed before any non-delta).
                     bufferAssistantDelta(
                         threadID: threadID, messageID: messageID, delta: payload.text)
@@ -2143,11 +2142,15 @@ public actor LiveBackend: BackendService {
 
     /// Ordering barrier: any non-delta event for a thread must land after that
     /// thread's pending assistant deltas (in particular `assistantCompleted`
-    /// and `timelineReset`). Deltas themselves go through `bufferAssistantDelta`.
+    /// and `timelineReset`). Deltas themselves go through `bufferAssistantDelta`
+    /// and must never be routed through `emitOrdered`, which would recreate an
+    /// O(N²) scan+copy per delta.
     private func emitOrdered(threadID: String, event: BackendEvent) {
         flushDeltas(for: threadID)
-        // Keep `latestTimeline` current so `thread.reverted` can truncate a
-        // live-updated cache (not just the last snapshot).
+        // `latestTimeline` intentionally does not track streamed deltas. It is
+        // reconciled by the `.assistantCompleted` mirror case, so
+        // `thread.reverted` truncation may see a placeholder mid-stream
+        // (pre-existing behavior).
         mirrorTimelineCache(threadID: threadID, event: event)
         emit(event)
     }
@@ -2166,16 +2169,6 @@ public actor LiveBackend: BackendService {
             }), case .assistantMessage(let id, _, _, let at) = items[index] {
                 items[index] = .assistantMessage(
                     id: id, markdown: markdown, isStreaming: false, at: at)
-                latestTimeline[threadID] = items
-            }
-        case .assistantDelta(_, let messageID, let delta):
-            guard var items = latestTimeline[threadID] else { return }
-            if let index = items.firstIndex(where: {
-                if case .assistantMessage(let id, _, _, _) = $0 { return id == messageID }
-                return false
-            }), case .assistantMessage(let id, let markdown, _, let at) = items[index] {
-                items[index] = .assistantMessage(
-                    id: id, markdown: markdown + delta, isStreaming: true, at: at)
                 latestTimeline[threadID] = items
             }
         default:
