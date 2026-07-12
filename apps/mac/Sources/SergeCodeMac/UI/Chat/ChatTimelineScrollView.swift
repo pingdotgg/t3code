@@ -35,13 +35,14 @@ struct ChatTimelineScrollView: View {
         let items = model.selectedTimeline()
         // Finished tool bursts render condensed; grouping is pure render
         // sugar over the untouched timeline array. Memoized on
-        // (threadID, timelineVersion, settled) so body re-evals with an
-        // unchanged timeline reuse the last grouping pass.
+        // (threadID, structureVersion, settled), with timelineVersion used
+        // only for content refreshes when assistant markdown changes.
         let threadID = model.selectedThreadID ?? ""
         let displayItems = TimelineDisplayCache.grouped(
             items: items,
             threadID: threadID,
             version: model.timelineVersion(threadID: threadID),
+            structureVersion: model.timelineStructureVersion(threadID: threadID),
             threadIsSettled: threadIsSettled)
 
         ScrollViewReader { proxy in

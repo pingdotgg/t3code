@@ -46,48 +46,60 @@ extension Array where Element == TimelineItem {
     ///
     /// MainActor: routes file-change parsing through `ToolDetailParseCache`.
     @MainActor
-    public func groupedForDisplay(threadIsSettled: Bool = false) -> [TimelineDisplayItem] {
+    func groupedForDisplayWithRanges(
+        threadIsSettled: Bool = false
+    ) -> (items: [TimelineDisplayItem], ranges: [Range<Int>]) {
         var result: [TimelineDisplayItem] = []
-        var run: [TimelineItem] = []
+        var ranges: [Range<Int>] = []
+        var run: [(index: Int, item: TimelineItem)] = []
 
         func flush(somethingFollows: Bool) {
             defer { run.removeAll() }
             guard !run.isEmpty else { return }
-            let tools = run.compactMap { item -> ToolCall? in
-                guard case .toolEvent(_, _, let detail, let kind, let status, _, _, _) = item else {
+            let tools = run.compactMap { entry -> ToolCall? in
+                guard case .toolEvent(_, _, let detail, let kind, let status, _, _, _) = entry.item else {
                     return nil
                 }
                 return ToolCall(detail: detail, kind: kind, status: status)
             }
             let allFinished = threadIsSettled || tools.allSatisfy { $0.status != .running }
             guard somethingFollows, allFinished, tools.count >= 2 else {
-                result.append(contentsOf: run.map { .single($0) })
+                result.append(contentsOf: run.map { .single($0.item) })
+                ranges.append(contentsOf: run.map { $0.index..<$0.index + 1 })
                 return
             }
+            let sourceRange = run[0].index..<(run[run.count - 1].index + 1)
             result.append(
                 .toolGroup(
                     // Keyed to the first row: stable while lifecycle upserts
                     // rewrite members in place, so the disclosure state and
                     // row identity survive re-grouping.
-                    id: "toolgroup:\(run[0].id)",
-                    items: run,
+                    id: "toolgroup:\(run[0].item.id)",
+                    items: run.map { $0.item },
                     summary: ToolGroupSummary(
                         toolCount: tools.count,
                         editedFileCount: Self.editedFileCount(of: tools),
                         failedCount: tools.count { $0.status == .failed })))
+            ranges.append(sourceRange)
         }
 
-        for item in self {
+        for (index, item) in self.enumerated() {
             switch item {
             case .toolEvent, .reasoning:
-                run.append(item)
+                run.append((index, item))
             default:
                 flush(somethingFollows: true)
                 result.append(.single(item))
+                ranges.append(index..<(index + 1))
             }
         }
         flush(somethingFollows: false)
-        return result
+        return (result, ranges)
+    }
+
+    @MainActor
+    public func groupedForDisplay(threadIsSettled: Bool = false) -> [TimelineDisplayItem] {
+        groupedForDisplayWithRanges(threadIsSettled: threadIsSettled).items
     }
 
     private struct ToolCall {
@@ -119,37 +131,141 @@ extension Array where Element == TimelineItem {
 // MARK: - Grouped-display cache
 
 /// `groupedForDisplay` walks the whole timeline and re-parses file-change
-/// details. Cache keyed on (threadID, version, settled) so body re-evals with
-/// an unchanged timeline reuse the last grouping. One entry per thread —
-/// only the latest key/value pair is kept.
+/// details. The cache separates structure identity from content identity so
+/// in-place assistant streaming can refresh rows without repeating the full
+/// grouping pass. One entry per thread — only the latest key/value pair is
+/// kept.
 @MainActor
 enum TimelineDisplayCache {
-    private struct Key: Equatable {
+    private struct StructureKey: Equatable {
         var threadID: String
-        var version: Int
+        var structureVersion: Int
         var threadIsSettled: Bool
     }
 
-    private static var storage: [String: (key: Key, value: [TimelineDisplayItem])] = [:]
+    private struct Entry {
+        var structureKey: StructureKey
+        var timelineVersion: Int
+        var items: [TimelineDisplayItem]
+        var ranges: [Range<Int>]
+    }
+
+    private static var storage: [String: Entry] = [:]
+    private(set) static var fullPassCount = 0
+    private(set) static var contentRefreshCount = 0
 
     static func grouped(
         items: [TimelineItem],
         threadID: String,
         version: Int,
+        structureVersion: Int,
         threadIsSettled: Bool
     ) -> [TimelineDisplayItem] {
-        let key = Key(threadID: threadID, version: version, threadIsSettled: threadIsSettled)
-        if let entry = storage[threadID], entry.key == key {
-            return entry.value
+        let structureKey = StructureKey(
+            threadID: threadID,
+            structureVersion: structureVersion,
+            threadIsSettled: threadIsSettled)
+
+        func fullPassAndStore() -> [TimelineDisplayItem] {
+            let result = fullPass(items: items, threadIsSettled: threadIsSettled)
+            storage[threadID] = Entry(
+                structureKey: structureKey,
+                timelineVersion: version,
+                items: result.items,
+                ranges: result.ranges)
+            return result.items
         }
-        PerfMetrics.count("grouping.fullPass")
-        let value = PerfSignpost.interval("grouping") {
-            PerfMetrics.measure("grouping") {
-                items.groupedForDisplay(threadIsSettled: threadIsSettled)
+
+        guard let entry = storage[threadID] else {
+            return fullPassAndStore()
+        }
+        guard entry.structureKey == structureKey else {
+            return fullPassAndStore()
+        }
+        if entry.timelineVersion == version {
+            return entry.items
+        }
+        guard version > entry.timelineVersion else {
+            return fullPassAndStore()
+        }
+
+        let rangeSpanCount = entry.ranges.reduce(0) { total, range in total + range.count }
+        guard entry.items.count == entry.ranges.count,
+            items.count == rangeSpanCount,
+            Self.rangesCoverAllItems(entry.ranges, itemCount: items.count)
+        else {
+            return fullPassAndStore()
+        }
+
+        let boundariesMatch = zip(entry.items, entry.ranges).allSatisfy { cached, range in
+            let firstID = items[range.lowerBound].id
+            let lastID = items[range.upperBound - 1].id
+            switch cached {
+            case .single(let cachedItem):
+                return range.count == 1 && firstID == cachedItem.id && lastID == cachedItem.id
+            case .toolGroup(_, let cachedItems, _):
+                guard let first = cachedItems.first, let last = cachedItems.last else { return false }
+                return range.count == cachedItems.count
+                    && firstID == first.id
+                    && lastID == last.id
             }
         }
-        storage[threadID] = (key, value)
-        return value
+#if DEBUG
+        assert(
+            boundariesMatch,
+            "Timeline display cache structure changed without a structureVersion bump")
+#endif
+        guard boundariesMatch else {
+            return fullPassAndStore()
+        }
+
+        contentRefreshCount += 1
+        PerfMetrics.count("grouping.contentRefresh")
+        let refreshed = zip(entry.items, entry.ranges).map { cached, range -> TimelineDisplayItem in
+            switch cached {
+            case .single:
+                return .single(items[range.lowerBound])
+            case .toolGroup(let id, _, let summary):
+                return .toolGroup(
+                    id: id, items: Array(items[range]), summary: summary)
+            }
+        }
+        storage[threadID] = Entry(
+            structureKey: structureKey,
+            timelineVersion: version,
+            items: refreshed,
+            ranges: entry.ranges)
+        return refreshed
+    }
+
+    private static func fullPass(
+        items: [TimelineItem], threadIsSettled: Bool
+    ) -> (items: [TimelineDisplayItem], ranges: [Range<Int>]) {
+        fullPassCount += 1
+        PerfMetrics.count("grouping.fullPass")
+        return PerfSignpost.interval("grouping") {
+            PerfMetrics.measure("grouping") {
+                items.groupedForDisplayWithRanges(threadIsSettled: threadIsSettled)
+            }
+        }
+    }
+
+    private static func rangesCoverAllItems(_ ranges: [Range<Int>], itemCount: Int) -> Bool {
+        var nextIndex = 0
+        for range in ranges {
+            guard !range.isEmpty, range.lowerBound == nextIndex,
+                range.upperBound <= itemCount
+            else { return false }
+            nextIndex = range.upperBound
+        }
+        return nextIndex == itemCount
+    }
+
+    /// Reset the cache and its counters between isolated cache tests.
+    static func resetForTesting() {
+        storage.removeAll(keepingCapacity: true)
+        fullPassCount = 0
+        contentRefreshCount = 0
     }
 
     /// Drop a thread's memo entry (timeline release / eviction / removal).

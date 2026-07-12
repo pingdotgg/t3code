@@ -145,6 +145,12 @@ public final class AppModel {
         threadStates[threadID]?.timelineVersion ?? 0
     }
 
+    /// Version of the stored timeline structure for `threadID` (0 if never
+    /// written).
+    public func timelineStructureVersion(threadID: String) -> Int {
+        threadStates[threadID]?.structureVersion ?? 0
+    }
+
     public var selectedThread: ChatThread? {
         threads.first { $0.id == selectedThreadID }
     }
@@ -263,6 +269,7 @@ public final class AppModel {
         // stream event for a not-yet-selected thread suppresses the later
         // history fetch forever.
         var resetThreads: Set<String> = []
+        var structuralThreads: Set<String> = []
 
         func currentItems(_ threadID: String) -> [TimelineItem] {
             touched[threadID] ?? threadStates[threadID]?.timeline ?? []
@@ -276,13 +283,17 @@ public final class AppModel {
         func flushPendingDelta() {
             guard let threadID = deltaThreadID else { return }
             var items = currentItems(threadID)
-            applyDelta(threadID: threadID, messageID: deltaMessageID, delta: deltaText, items: &items)
+            if applyDelta(
+                threadID: threadID, messageID: deltaMessageID, delta: deltaText, items: &items)
+            {
+                structuralThreads.insert(threadID)
+            }
             touched[threadID] = items
             deltaThreadID = nil
             deltaText = ""
         }
 
-        func resolveInteraction(_ id: String) {
+        func resolveInteraction(_ id: String) -> String? {
             func removeItem(threadID: String) -> Bool {
                 var items = currentItems(threadID)
                 guard let index = items.firstIndex(where: { $0.id == id }) else { return false }
@@ -297,15 +308,16 @@ public final class AppModel {
             if let threadID = interactionThreadByID.removeValue(forKey: id),
                 removeItem(threadID: threadID)
             {
-                return
+                return threadID
             }
             // Fallback for items that predate the map (e.g. from a snapshot
             // loaded via loadTimelineIfNeeded rather than an event).
             for threadID in Set(threadStates.keys).union(touched.keys) {
                 if removeItem(threadID: threadID) {
-                    return
+                    return threadID
                 }
             }
+            return nil
         }
 
         for event in events {
@@ -331,6 +343,7 @@ public final class AppModel {
                 var items = currentItems(threadID)
                 items.upsertTimelineItem(item)
                 touched[threadID] = items
+                structuralThreads.insert(threadID)
                 recordInteraction(item, threadID: threadID)
             case .timelineReset(let threadID, let items):
                 // A snapshot can truncate or replace an in-flight message;
@@ -339,15 +352,20 @@ public final class AppModel {
                 let filtered = items.filter { !isDismissedUsageLimit($0) }
                 touched[threadID] = filtered
                 resetThreads.insert(threadID)
+                structuralThreads.insert(threadID)
                 streamingIndex[threadID] = nil
                 for item in filtered { recordInteraction(item, threadID: threadID) }
             case .assistantCompleted(let threadID, let messageID, let markdown):
+                // Assistant rows are always `.single`; grouping does not read
+                // their markdown or item-level isStreaming state.
                 var items = currentItems(threadID)
                 finishStreaming(
                     threadID: threadID, messageID: messageID, markdown: markdown, items: &items)
                 touched[threadID] = items
             case .approvalResolved(let id), .userInputResolved(let id):
-                resolveInteraction(id)
+                if let threadID = resolveInteraction(id) {
+                    structuralThreads.insert(threadID)
+                }
             default:
                 applyNonTimeline(event)
             }
@@ -358,6 +376,9 @@ public final class AppModel {
             let state = self.state(creating: threadID)
             state.timeline = items
             state.timelineVersion += 1
+            if structuralThreads.contains(threadID) {
+                state.structureVersion += 1
+            }
             if resetThreads.contains(threadID) {
                 state.hasLoadedTimeline = true
             }
@@ -470,9 +491,10 @@ public final class AppModel {
         return dismissedUsageLimitIDs.contains(notice.id)
     }
 
+    @discardableResult
     private func applyDelta(
         threadID: String, messageID: String, delta: String, items: inout [TimelineItem]
-    ) {
+    ) -> Bool {
         if let cached = streamingIndex[threadID], cached.messageID == messageID,
             items.indices.contains(cached.index),
             case .assistantMessage(let id, let markdown, _, let at) = items[cached.index],
@@ -480,18 +502,19 @@ public final class AppModel {
         {
             items[cached.index] = .assistantMessage(
                 id: id, markdown: markdown + delta, isStreaming: true, at: at)
-            return
+            return false
         }
         for (index, item) in items.enumerated() {
             if case .assistantMessage(let id, let markdown, _, let at) = item, id == messageID {
                 items[index] = .assistantMessage(
                     id: id, markdown: markdown + delta, isStreaming: true, at: at)
                 streamingIndex[threadID] = (messageID, index)
-                return
+                return false
             }
         }
         items.append(.assistantMessage(id: messageID, markdown: delta, isStreaming: true, at: Date()))
         streamingIndex[threadID] = (messageID, items.count - 1)
+        return true
     }
 
     private func finishStreaming(
@@ -560,6 +583,7 @@ public final class AppModel {
             let items = try await backend.timeline(threadID: threadID)
             state.timeline = items.filter { !isDismissedUsageLimit($0) }
             state.timelineVersion += 1
+            state.structureVersion += 1
             state.hasLoadedTimeline = true
             for item in state.timeline {
                 recordInteraction(item, threadID: threadID)
@@ -1070,6 +1094,7 @@ public final class AppModel {
             if state.timeline.contains(where: { $0.id == notice.id }) {
                 state.timeline.removeAll { $0.id == notice.id }
                 state.timelineVersion += 1
+                state.structureVersion += 1
             }
         }
     }

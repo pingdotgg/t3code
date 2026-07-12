@@ -122,6 +122,7 @@ public struct ChatScreen: View {
             items: items,
             threadID: threadID,
             version: model.timelineVersion(threadID: threadID),
+            structureVersion: model.timelineStructureVersion(threadID: threadID),
             threadIsSettled: threadIsSettled)
     }
 

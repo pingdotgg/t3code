@@ -32,6 +32,7 @@ struct AppModelRenderMemoizationTests {
     func timelineVersionBumpsOncePerFlush() {
         let model = makeModel()
         #expect(model.timelineVersion(threadID: "t1") == 0)
+        #expect(model.timelineStructureVersion(threadID: "t1") == 0)
 
         model.enqueue(.assistantDelta(threadID: "t1", messageID: "m1", delta: "a"))
         model.enqueue(.assistantDelta(threadID: "t1", messageID: "m1", delta: "b"))
@@ -40,14 +41,60 @@ struct AppModelRenderMemoizationTests {
 
         model.flushPendingEvents()
         #expect(model.timelineVersion(threadID: "t1") == 1)
+        // The first delta creates the assistant row, so it is structural.
+        #expect(model.timelineStructureVersion(threadID: "t1") == 1)
 
         // Empty flush must not bump.
         model.flushPendingEvents()
         #expect(model.timelineVersion(threadID: "t1") == 1)
+        #expect(model.timelineStructureVersion(threadID: "t1") == 1)
 
         model.enqueue(.assistantDelta(threadID: "t1", messageID: "m1", delta: "d"))
         model.flushPendingEvents()
         #expect(model.timelineVersion(threadID: "t1") == 2)
+        // This delta updates the existing assistant row in place.
+        #expect(model.timelineStructureVersion(threadID: "t1") == 1)
+    }
+
+    @Test("structural timeline writes bump both versions")
+    func structuralTimelineWritesBumpBothVersions() {
+        let model = makeModel()
+        let date = Date(timeIntervalSince1970: 1)
+
+        model.enqueue(
+            .timelineAppended(
+                threadID: "t1", item: .userMessage(id: "u1", text: "hello", at: date)))
+        model.flushPendingEvents()
+        #expect(model.timelineVersion(threadID: "t1") == 1)
+        #expect(model.timelineStructureVersion(threadID: "t1") == 1)
+
+        model.enqueue(
+            .timelineReset(
+                threadID: "t1",
+                items: [.assistantMessage(id: "m1", markdown: "reply", isStreaming: false, at: date)]))
+        model.flushPendingEvents()
+        #expect(model.timelineVersion(threadID: "t1") == 2)
+        #expect(model.timelineStructureVersion(threadID: "t1") == 2)
+
+        model.enqueue(
+            .timelineAppended(
+                threadID: "t1",
+                item: .toolEvent(
+                    id: "tool1", name: "Bash", detail: "ls", kind: .command, status: .running,
+                    at: date, output: nil, outputIsError: false)))
+        model.flushPendingEvents()
+        #expect(model.timelineVersion(threadID: "t1") == 3)
+        #expect(model.timelineStructureVersion(threadID: "t1") == 3)
+
+        model.enqueue(
+            .timelineAppended(
+                threadID: "t1",
+                item: .toolEvent(
+                    id: "tool1", name: "Bash", detail: "ls", kind: .command, status: .succeeded,
+                    at: date.addingTimeInterval(1), output: nil, outputIsError: false)))
+        model.flushPendingEvents()
+        #expect(model.timelineVersion(threadID: "t1") == 4)
+        #expect(model.timelineStructureVersion(threadID: "t1") == 4)
     }
 
     @Test("updatedAt-only threadUpserted does not rewrite the sidebar list")
