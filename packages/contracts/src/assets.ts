@@ -4,6 +4,11 @@ import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 const ASSET_PATH_MAX_LENGTH = 1024;
 const TEXT_ATTACHMENT_CONTENT_MAX_LENGTH = 1024 * 1024;
+const TEXT_ATTACHMENT_DRAFT_OWNER_ID_MAX_LENGTH = 256;
+
+const TextAttachmentDraftOwnerId = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(TEXT_ATTACHMENT_DRAFT_OWNER_ID_MAX_LENGTH),
+);
 
 export const AssetResource = Schema.Union([
   Schema.TaggedStruct("workspace-file", {
@@ -33,6 +38,7 @@ export type AssetCreateUrlResult = typeof AssetCreateUrlResult.Type;
 export const AssetWriteTextAttachmentInput = Schema.Struct({
   fileName: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
   contents: Schema.String.check(Schema.isMaxLength(TEXT_ATTACHMENT_CONTENT_MAX_LENGTH)),
+  draftOwnerId: TextAttachmentDraftOwnerId,
 });
 export type AssetWriteTextAttachmentInput = typeof AssetWriteTextAttachmentInput.Type;
 
@@ -41,15 +47,24 @@ export const AssetWriteTextAttachmentResult = Schema.Struct({
 });
 export type AssetWriteTextAttachmentResult = typeof AssetWriteTextAttachmentResult.Type;
 
-export const AssetDeleteTextAttachmentInput = Schema.Struct({
+export const AssetClaimTextAttachmentInput = Schema.Struct({
   path: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+  draftOwnerId: TextAttachmentDraftOwnerId,
 });
-export type AssetDeleteTextAttachmentInput = typeof AssetDeleteTextAttachmentInput.Type;
+export type AssetClaimTextAttachmentInput = typeof AssetClaimTextAttachmentInput.Type;
 
-export const AssetDeleteTextAttachmentResult = Schema.Struct({
-  removed: Schema.Boolean,
+export const AssetClaimTextAttachmentResult = Schema.Struct({
+  claimed: Schema.Boolean,
 });
-export type AssetDeleteTextAttachmentResult = typeof AssetDeleteTextAttachmentResult.Type;
+export type AssetClaimTextAttachmentResult = typeof AssetClaimTextAttachmentResult.Type;
+
+export const AssetReleaseTextAttachmentInput = AssetClaimTextAttachmentInput;
+export type AssetReleaseTextAttachmentInput = typeof AssetReleaseTextAttachmentInput.Type;
+
+export const AssetReleaseTextAttachmentResult = Schema.Struct({
+  released: Schema.Boolean,
+});
+export type AssetReleaseTextAttachmentResult = typeof AssetReleaseTextAttachmentResult.Type;
 
 export class AssetTextAttachmentWriteError extends Schema.TaggedErrorClass<AssetTextAttachmentWriteError>()(
   "AssetTextAttachmentWriteError",
@@ -63,15 +78,27 @@ export class AssetTextAttachmentWriteError extends Schema.TaggedErrorClass<Asset
   }
 }
 
-export class AssetTextAttachmentDeleteError extends Schema.TaggedErrorClass<AssetTextAttachmentDeleteError>()(
-  "AssetTextAttachmentDeleteError",
+export class AssetTextAttachmentClaimError extends Schema.TaggedErrorClass<AssetTextAttachmentClaimError>()(
+  "AssetTextAttachmentClaimError",
   {
     path: TrimmedNonEmptyString,
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return "Failed to delete text attachment.";
+    return "Failed to claim text attachment.";
+  }
+}
+
+export class AssetTextAttachmentReleaseError extends Schema.TaggedErrorClass<AssetTextAttachmentReleaseError>()(
+  "AssetTextAttachmentReleaseError",
+  {
+    path: TrimmedNonEmptyString,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Failed to release text attachment.";
   }
 }
 

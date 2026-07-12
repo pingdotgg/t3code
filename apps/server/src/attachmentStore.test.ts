@@ -7,10 +7,14 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   collectTextAttachmentRelativePaths,
+  claimTextAttachment,
   createAttachmentId,
   createTextAttachmentPath,
   parseThreadSegmentFromAttachmentId,
+  reconcileTextAttachments,
+  releaseTextAttachment,
   resolveAttachmentPathById,
+  TEXT_ATTACHMENT_DELETE_GRACE_MS,
   textAttachmentDirectory,
 } from "./attachmentStore.ts";
 
@@ -124,5 +128,93 @@ describe("attachmentStore", () => {
     expect(
       textAttachmentDirectory({ attachmentsDir, path: NodePath.join(attachmentsDir, "../nope") }),
     ).toBeNull();
+  });
+
+  it("persists draft claims across reconciliation and restart-style reloads", () => {
+    const attachmentsDir = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "t3code-text-claims-"),
+    );
+    try {
+      const attachmentPath = createTextAttachmentPath({ attachmentsDir, fileName: "draft.md" });
+      NodeFS.mkdirSync(NodePath.dirname(attachmentPath), { recursive: true });
+      NodeFS.writeFileSync(attachmentPath, "draft");
+      expect(
+        claimTextAttachment({
+          attachmentsDir,
+          path: attachmentPath,
+          draftOwnerId: "draft-owner",
+        }),
+      ).toBe(true);
+
+      reconcileTextAttachments({
+        attachmentsDir,
+        retainedRelativePaths: new Set(),
+        nowMs: TEXT_ATTACHMENT_DELETE_GRACE_MS * 10,
+      });
+
+      expect(NodeFS.existsSync(attachmentPath)).toBe(true);
+    } finally {
+      NodeFS.rmSync(attachmentsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("cancels pending deletion when a copied draft reclaims an attachment", () => {
+    const attachmentsDir = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "t3code-text-reclaim-"),
+    );
+    try {
+      const attachmentPath = createTextAttachmentPath({ attachmentsDir, fileName: "draft.md" });
+      NodeFS.mkdirSync(NodePath.dirname(attachmentPath), { recursive: true });
+      NodeFS.writeFileSync(attachmentPath, "draft");
+      claimTextAttachment({ attachmentsDir, path: attachmentPath, draftOwnerId: "original" });
+      expect(
+        releaseTextAttachment({
+          attachmentsDir,
+          path: attachmentPath,
+          draftOwnerId: "original",
+          nowMs: 1_000,
+        }),
+      ).toBe(true);
+      expect(
+        claimTextAttachment({ attachmentsDir, path: attachmentPath, draftOwnerId: "copy" }),
+      ).toBe(true);
+
+      reconcileTextAttachments({
+        attachmentsDir,
+        retainedRelativePaths: new Set(),
+        nowMs: 1_000 + TEXT_ATTACHMENT_DELETE_GRACE_MS + 1,
+      });
+
+      expect(NodeFS.existsSync(attachmentPath)).toBe(true);
+    } finally {
+      NodeFS.rmSync(attachmentsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("deletes only expired unclaimed and unreferenced text attachments", () => {
+    const attachmentsDir = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "t3code-text-expiry-"),
+    );
+    try {
+      const attachmentPath = createTextAttachmentPath({ attachmentsDir, fileName: "orphan.md" });
+      NodeFS.mkdirSync(NodePath.dirname(attachmentPath), { recursive: true });
+      NodeFS.writeFileSync(attachmentPath, "orphan");
+
+      reconcileTextAttachments({
+        attachmentsDir,
+        retainedRelativePaths: new Set(),
+        nowMs: 1_000,
+      });
+      expect(NodeFS.existsSync(attachmentPath)).toBe(true);
+
+      reconcileTextAttachments({
+        attachmentsDir,
+        retainedRelativePaths: new Set(),
+        nowMs: 1_000 + TEXT_ATTACHMENT_DELETE_GRACE_MS + 1,
+      });
+      expect(NodeFS.existsSync(attachmentPath)).toBe(false);
+    } finally {
+      NodeFS.rmSync(attachmentsDir, { recursive: true, force: true });
+    }
   });
 });

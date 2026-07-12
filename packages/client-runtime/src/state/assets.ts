@@ -76,9 +76,13 @@ export function createAssetEnvironmentAtoms<R, E>(
       label: "environment-data:assets:write-text-attachment",
       tag: WS_METHODS.assetsWriteTextAttachment,
     }),
-    deleteTextAttachment: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:assets:delete-text-attachment",
-      tag: WS_METHODS.assetsDeleteTextAttachment,
+    claimTextAttachment: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:assets:claim-text-attachment",
+      tag: WS_METHODS.assetsClaimTextAttachment,
+    }),
+    releaseTextAttachment: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:assets:release-text-attachment",
+      tag: WS_METHODS.assetsReleaseTextAttachment,
     }),
     createUrls: (target: {
       readonly environmentId: EnvironmentId;

@@ -943,7 +943,7 @@ it.layer(
 
       assert.isTrue(yield* exists(keepPath));
       assert.isFalse(yield* exists(removePath));
-      assert.isFalse(yield* exists(removeTextAttachmentPath));
+      assert.isTrue(yield* exists(removeTextAttachmentPath));
       assert.isFalse(yield* exists(otherThreadPath));
     }),
   );
@@ -1097,7 +1097,7 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-atta
 
         assert.isFalse(yield* exists(threadAttachmentPath));
         assert.isTrue(yield* exists(otherThreadAttachmentPath));
-        assert.isFalse(yield* exists(textAttachmentPath));
+        assert.isTrue(yield* exists(textAttachmentPath));
         assert.isTrue(yield* exists(unrelatedTextAttachmentPath));
 
         yield* fileSystem.writeFileString(threadAttachmentPath, "delete after restart");
@@ -1108,8 +1108,8 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-atta
 
         assert.isFalse(yield* exists(threadAttachmentPath));
         assert.isFalse(yield* exists(otherThreadAttachmentPath));
-        assert.isFalse(yield* exists(textAttachmentPath));
-        assert.isFalse(yield* exists(unrelatedTextAttachmentPath));
+        assert.isTrue(yield* exists(textAttachmentPath));
+        assert.isTrue(yield* exists(unrelatedTextAttachmentPath));
       }),
     );
   },
@@ -1264,7 +1264,7 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-atta
         yield* projectionPipeline.bootstrap;
 
         assert.isTrue(yield* exists(textAttachmentPath));
-        assert.isFalse(yield* exists(deletedTextAttachmentPath));
+        assert.isTrue(yield* exists(deletedTextAttachmentPath));
         assert.isFalse(yield* exists(deletedImageAttachmentPath));
       }),
     );

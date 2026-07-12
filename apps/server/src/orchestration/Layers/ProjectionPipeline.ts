@@ -54,6 +54,7 @@ import {
   collectTextAttachmentRelativePaths,
   parseAttachmentIdFromRelativePath,
   parseThreadSegmentFromAttachmentId,
+  reconcileTextAttachments,
   toSafeThreadAttachmentSegment,
 } from "../../attachmentStore.ts";
 
@@ -501,23 +502,16 @@ const runAttachmentSideEffects = Effect.fn("runAttachmentSideEffects")(function*
         (message) => !sideEffects.deletedThreadIds.has(message.threadId),
       ),
     );
-    yield* Effect.forEach(
-      [...sideEffects.textAttachmentRelativePathsToRemove].filter(
-        (relativePath) => !retainedTextAttachmentPaths.has(relativePath),
-      ),
-      (relativePath) =>
-        fileSystem.remove(path.join(attachmentsRootDir, path.dirname(relativePath)), {
-          recursive: true,
-          force: true,
-        }),
-      { concurrency: 1 },
+    yield* Effect.sync(() =>
+      reconcileTextAttachments({
+        attachmentsDir: attachmentsRootDir,
+        retainedRelativePaths: retainedTextAttachmentPaths,
+      }),
     );
   }
 });
 
 const GENERATED_IMAGE_ATTACHMENT_EXTENSIONS = new Set([...SAFE_IMAGE_FILE_EXTENSIONS, ".bin"]);
-const GENERATED_TEXT_ATTACHMENT_DIRECTORY_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function isGeneratedImageAttachmentEntry(entry: string): boolean {
   const normalizedEntry = entry.replace(/^[/\\]+/, "").replace(/\\/g, "/");
@@ -548,10 +542,9 @@ const reconcileGeneratedAttachments = Effect.fn("reconcileGeneratedAttachments")
       }
     }
   }
-  const retainedTextDirectories = new Set(
-    [...collectThreadTextAttachmentRelativePaths(attachmentsRootDir, retainedMessages)].map(
-      (relativePath) => path.dirname(relativePath).replace(/\\/g, "/"),
-    ),
+  const retainedTextAttachmentPaths = collectThreadTextAttachmentRelativePaths(
+    attachmentsRootDir,
+    retainedMessages,
   );
   const rootEntries = yield* fileSystem
     .readDirectory(attachmentsRootDir, { recursive: false })
@@ -560,30 +553,6 @@ const reconcileGeneratedAttachments = Effect.fn("reconcileGeneratedAttachments")
   for (const entry of rootEntries) {
     const normalizedEntry = entry.replace(/^[/\\]+/, "").replace(/\\/g, "/");
     if (normalizedEntry === "text") {
-      const textRoot = path.join(attachmentsRootDir, normalizedEntry);
-      const textEntries = yield* fileSystem
-        .readDirectory(textRoot, { recursive: false })
-        .pipe(Effect.orElseSucceed(() => [] as Array<string>));
-      for (const textEntry of textEntries) {
-        const normalizedTextEntry = textEntry.replace(/^[/\\]+/, "").replace(/\\/g, "/");
-        if (
-          normalizedTextEntry.includes("/") ||
-          !GENERATED_TEXT_ATTACHMENT_DIRECTORY_PATTERN.test(normalizedTextEntry)
-        ) {
-          continue;
-        }
-        const relativeDirectory = `text/${normalizedTextEntry}`;
-        if (retainedTextDirectories.has(relativeDirectory)) {
-          continue;
-        }
-        const absoluteDirectory = path.join(textRoot, normalizedTextEntry);
-        const fileInfo = yield* fileSystem
-          .stat(absoluteDirectory)
-          .pipe(Effect.orElseSucceed(() => null));
-        if (fileInfo?.type === "Directory") {
-          yield* fileSystem.remove(absoluteDirectory, { recursive: true, force: true });
-        }
-      }
       continue;
     }
     if (!isGeneratedImageAttachmentEntry(normalizedEntry)) {
@@ -595,6 +564,12 @@ const reconcileGeneratedAttachments = Effect.fn("reconcileGeneratedAttachments")
       yield* fileSystem.remove(absolutePath, { force: true });
     }
   }
+  yield* Effect.sync(() =>
+    reconcileTextAttachments({
+      attachmentsDir: attachmentsRootDir,
+      retainedRelativePaths: retainedTextAttachmentPaths,
+    }),
+  );
 });
 
 const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjectionPipeline")(
@@ -614,6 +589,25 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const serverConfig = yield* ServerConfig;
+
+    const reconcileTextAttachmentStore = Effect.gen(function* () {
+      const retainedMessages = yield* projectionThreadMessageRepository.listRetained();
+      const retainedRelativePaths = collectThreadTextAttachmentRelativePaths(
+        serverConfig.attachmentsDir,
+        retainedMessages,
+      );
+      yield* Effect.sync(() =>
+        reconcileTextAttachments({
+          attachmentsDir: serverConfig.attachmentsDir,
+          retainedRelativePaths,
+        }),
+      );
+    }).pipe(
+      Effect.catch((cause) => Effect.logWarning("failed to reconcile text attachments", { cause })),
+    );
+    yield* Effect.forkScoped(
+      Effect.sleep("30 seconds").pipe(Effect.andThen(reconcileTextAttachmentStore), Effect.forever),
+    );
 
     const applyProjectsProjection: ProjectorDefinition["apply"] = Effect.fn(
       "applyProjectsProjection",

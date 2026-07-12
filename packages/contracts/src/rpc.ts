@@ -17,9 +17,12 @@ import {
   AssetAccessError,
   AssetCreateUrlInput,
   AssetCreateUrlResult,
-  AssetDeleteTextAttachmentInput,
-  AssetDeleteTextAttachmentResult,
-  AssetTextAttachmentDeleteError,
+  AssetClaimTextAttachmentInput,
+  AssetClaimTextAttachmentResult,
+  AssetReleaseTextAttachmentInput,
+  AssetReleaseTextAttachmentResult,
+  AssetTextAttachmentClaimError,
+  AssetTextAttachmentReleaseError,
   AssetTextAttachmentWriteError,
   AssetWriteTextAttachmentInput,
   AssetWriteTextAttachmentResult,
@@ -171,7 +174,8 @@ export const WS_METHODS = {
   filesystemBrowse: "filesystem.browse",
   assetsCreateUrl: "assets.createUrl",
   assetsWriteTextAttachment: "assets.writeTextAttachment",
-  assetsDeleteTextAttachment: "assets.deleteTextAttachment",
+  assetsClaimTextAttachment: "assets.claimTextAttachment",
+  assetsReleaseTextAttachment: "assets.releaseTextAttachment",
 
   // VCS methods
   vcsPull: "vcs.pull",
@@ -413,10 +417,16 @@ export const WsAssetsWriteTextAttachmentRpc = Rpc.make(WS_METHODS.assetsWriteTex
   error: Schema.Union([AssetTextAttachmentWriteError, EnvironmentAuthorizationError]),
 });
 
-export const WsAssetsDeleteTextAttachmentRpc = Rpc.make(WS_METHODS.assetsDeleteTextAttachment, {
-  payload: AssetDeleteTextAttachmentInput,
-  success: AssetDeleteTextAttachmentResult,
-  error: Schema.Union([AssetTextAttachmentDeleteError, EnvironmentAuthorizationError]),
+export const WsAssetsClaimTextAttachmentRpc = Rpc.make(WS_METHODS.assetsClaimTextAttachment, {
+  payload: AssetClaimTextAttachmentInput,
+  success: AssetClaimTextAttachmentResult,
+  error: Schema.Union([AssetTextAttachmentClaimError, EnvironmentAuthorizationError]),
+});
+
+export const WsAssetsReleaseTextAttachmentRpc = Rpc.make(WS_METHODS.assetsReleaseTextAttachment, {
+  payload: AssetReleaseTextAttachmentInput,
+  success: AssetReleaseTextAttachmentResult,
+  error: Schema.Union([AssetTextAttachmentReleaseError, EnvironmentAuthorizationError]),
 });
 
 export const WsSubscribeVcsStatusRpc = Rpc.make(WS_METHODS.subscribeVcsStatus, {
@@ -731,7 +741,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsFilesystemBrowseRpc,
   WsAssetsCreateUrlRpc,
   WsAssetsWriteTextAttachmentRpc,
-  WsAssetsDeleteTextAttachmentRpc,
+  WsAssetsClaimTextAttachmentRpc,
+  WsAssetsReleaseTextAttachmentRpc,
   WsSubscribeVcsStatusRpc,
   WsVcsPullRpc,
   WsVcsRefreshStatusRpc,

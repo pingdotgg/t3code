@@ -13,6 +13,8 @@ import { inferImageExtension, SAFE_IMAGE_FILE_EXTENSIONS } from "./imageMime.ts"
 
 const ATTACHMENT_FILENAME_EXTENSIONS = [...SAFE_IMAGE_FILE_EXTENSIONS, ".bin"];
 const TEXT_ATTACHMENT_DIRECTORY = "text";
+const TEXT_ATTACHMENT_METADATA_FILE = ".t3-attachment.json";
+export const TEXT_ATTACHMENT_DELETE_GRACE_MS = 60_000;
 const TEXT_ATTACHMENT_FILE_NAME_MAX_CHARS = 120;
 const WINDOWS_RESERVED_FILE_NAME_PATTERN = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i;
 const ATTACHMENT_ID_THREAD_SEGMENT_MAX_CHARS = 80;
@@ -184,4 +186,135 @@ export function collectTextAttachmentRelativePaths(input: {
     if (relativePath) paths.add(relativePath);
   }
   return paths;
+}
+
+interface TextAttachmentMetadata {
+  readonly version: 1;
+  readonly claims: ReadonlyArray<string>;
+  readonly deleteAfter: number | null;
+}
+
+const emptyTextAttachmentMetadata = (): TextAttachmentMetadata => ({
+  version: 1,
+  claims: [],
+  deleteAfter: null,
+});
+
+function readTextAttachmentMetadata(directory: string): TextAttachmentMetadata {
+  try {
+    const parsed = JSON.parse(
+      NodeFS.readFileSync(NodePath.join(directory, TEXT_ATTACHMENT_METADATA_FILE), "utf8"),
+    ) as Partial<TextAttachmentMetadata>;
+    if (parsed.version !== 1 || !Array.isArray(parsed.claims)) {
+      return emptyTextAttachmentMetadata();
+    }
+    return {
+      version: 1,
+      claims: [
+        ...new Set(parsed.claims.filter((claim): claim is string => typeof claim === "string")),
+      ],
+      deleteAfter: typeof parsed.deleteAfter === "number" ? parsed.deleteAfter : null,
+    };
+  } catch {
+    return emptyTextAttachmentMetadata();
+  }
+}
+
+function writeTextAttachmentMetadata(directory: string, metadata: TextAttachmentMetadata): void {
+  const metadataPath = NodePath.join(directory, TEXT_ATTACHMENT_METADATA_FILE);
+  const temporaryPath = `${metadataPath}.${NodeCrypto.randomUUID()}.tmp`;
+  NodeFS.writeFileSync(temporaryPath, JSON.stringify(metadata));
+  NodeFS.renameSync(temporaryPath, metadataPath);
+}
+
+export function claimTextAttachment(input: {
+  readonly attachmentsDir: string;
+  readonly path: string;
+  readonly draftOwnerId: string;
+}): boolean {
+  const directory = textAttachmentDirectory(input);
+  if (!directory || !NodeFS.existsSync(input.path)) return false;
+  const metadata = readTextAttachmentMetadata(directory);
+  writeTextAttachmentMetadata(directory, {
+    version: 1,
+    claims: [...new Set([...metadata.claims, input.draftOwnerId])],
+    deleteAfter: null,
+  });
+  return true;
+}
+
+export function releaseTextAttachment(input: {
+  readonly attachmentsDir: string;
+  readonly path: string;
+  readonly draftOwnerId: string;
+  readonly nowMs?: number;
+}): boolean {
+  const directory = textAttachmentDirectory(input);
+  if (!directory || !NodeFS.existsSync(input.path)) return false;
+  const metadata = readTextAttachmentMetadata(directory);
+  if (!metadata.claims.includes(input.draftOwnerId)) return false;
+  const claims = metadata.claims.filter((claim) => claim !== input.draftOwnerId);
+  writeTextAttachmentMetadata(directory, {
+    version: 1,
+    claims,
+    deleteAfter:
+      claims.length === 0 ? (input.nowMs ?? Date.now()) + TEXT_ATTACHMENT_DELETE_GRACE_MS : null,
+  });
+  return true;
+}
+
+export function reconcileTextAttachments(input: {
+  readonly attachmentsDir: string;
+  readonly retainedRelativePaths: ReadonlySet<string>;
+  readonly nowMs?: number;
+}): { readonly pending: number; readonly removed: number } {
+  const textRoot = NodePath.join(input.attachmentsDir, TEXT_ATTACHMENT_DIRECTORY);
+  let pending = 0;
+  let removed = 0;
+  let entries: ReadonlyArray<string>;
+  try {
+    entries = NodeFS.readdirSync(textRoot);
+  } catch {
+    return { pending, removed };
+  }
+  const retainedDirectories = new Set(
+    [...input.retainedRelativePaths].map((relativePath) => NodePath.dirname(relativePath)),
+  );
+  const nowMs = input.nowMs ?? Date.now();
+  for (const entry of entries) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(entry)) {
+      continue;
+    }
+    const directory = NodePath.join(textRoot, entry);
+    let stat: NodeFS.Stats;
+    try {
+      stat = NodeFS.statSync(directory);
+    } catch {
+      continue;
+    }
+    if (!stat.isDirectory()) continue;
+    const metadata = readTextAttachmentMetadata(directory);
+    const relativeDirectory = `${TEXT_ATTACHMENT_DIRECTORY}/${entry}`;
+    if (retainedDirectories.has(relativeDirectory) || metadata.claims.length > 0) {
+      if (metadata.deleteAfter !== null) {
+        writeTextAttachmentMetadata(directory, { ...metadata, deleteAfter: null });
+      }
+      continue;
+    }
+    if (metadata.deleteAfter === null) {
+      writeTextAttachmentMetadata(directory, {
+        ...metadata,
+        deleteAfter: nowMs + TEXT_ATTACHMENT_DELETE_GRACE_MS,
+      });
+      pending += 1;
+      continue;
+    }
+    if (metadata.deleteAfter > nowMs) {
+      pending += 1;
+      continue;
+    }
+    NodeFS.rmSync(directory, { recursive: true, force: true });
+    removed += 1;
+  }
+  return { pending, removed };
 }

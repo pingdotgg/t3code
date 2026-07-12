@@ -53,7 +53,8 @@ import {
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
   AssetTextAttachmentWriteError,
-  AssetTextAttachmentDeleteError,
+  AssetTextAttachmentClaimError,
+  AssetTextAttachmentReleaseError,
   EnvironmentAuthorizationError,
   ThreadId,
   type TerminalAttachStreamEvent,
@@ -89,10 +90,9 @@ import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
 import {
-  collectTextAttachmentRelativePaths,
+  claimTextAttachment,
   createTextAttachmentPath,
-  textAttachmentDirectory,
-  textAttachmentRelativePath,
+  releaseTextAttachment,
 } from "./attachmentStore.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
@@ -319,7 +319,8 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.filesystemBrowse, AuthOrchestrationReadScope],
   [WS_METHODS.assetsCreateUrl, AuthOrchestrationReadScope],
   [WS_METHODS.assetsWriteTextAttachment, AuthOrchestrationOperateScope],
-  [WS_METHODS.assetsDeleteTextAttachment, AuthOrchestrationOperateScope],
+  [WS_METHODS.assetsClaimTextAttachment, AuthOrchestrationOperateScope],
+  [WS_METHODS.assetsReleaseTextAttachment, AuthOrchestrationOperateScope],
   [WS_METHODS.subscribeVcsStatus, AuthOrchestrationReadScope],
   [WS_METHODS.vcsRefreshStatus, AuthOrchestrationReadScope],
   [WS_METHODS.vcsPull, AuthOrchestrationOperateScope],
@@ -1553,48 +1554,47 @@ const makeWsRpcLayer = (
                       }),
                   ),
                 );
+              yield* Effect.try({
+                try: () =>
+                  claimTextAttachment({
+                    attachmentsDir: config.attachmentsDir,
+                    path: attachmentPath,
+                    draftOwnerId: input.draftOwnerId,
+                  }),
+                catch: (cause) =>
+                  new AssetTextAttachmentWriteError({ fileName: input.fileName, cause }),
+              });
               return { path: attachmentPath };
             }),
             { "rpc.aggregate": "workspace" },
           ),
-        [WS_METHODS.assetsDeleteTextAttachment]: (input) =>
+        [WS_METHODS.assetsClaimTextAttachment]: (input) =>
           observeRpcEffect(
-            WS_METHODS.assetsDeleteTextAttachment,
-            Effect.gen(function* () {
-              const directory = textAttachmentDirectory({
-                attachmentsDir: config.attachmentsDir,
-                path: input.path,
-              });
-              if (!directory) return { removed: false };
-              const relativePath = textAttachmentRelativePath({
-                attachmentsDir: config.attachmentsDir,
-                path: input.path,
-              });
-              if (!relativePath) return { removed: false };
-              const retainedSnapshot = yield* projectionSnapshotQuery
-                .getSnapshot()
-                .pipe(
-                  Effect.mapError(
-                    (cause) => new AssetTextAttachmentDeleteError({ path: input.path, cause }),
-                  ),
-                );
-              const isDurable = retainedSnapshot.threads.some((thread) =>
-                thread.messages.some((message) =>
-                  collectTextAttachmentRelativePaths({
-                    attachmentsDir: config.attachmentsDir,
-                    text: message.text,
-                  }).has(relativePath),
-                ),
-              );
-              if (isDurable) return { removed: false };
-              yield* fileSystem
-                .remove(directory, { recursive: true, force: true })
-                .pipe(
-                  Effect.mapError(
-                    (cause) => new AssetTextAttachmentDeleteError({ path: input.path, cause }),
-                  ),
-                );
-              return { removed: true };
+            WS_METHODS.assetsClaimTextAttachment,
+            Effect.try({
+              try: () => ({
+                claimed: claimTextAttachment({
+                  attachmentsDir: config.attachmentsDir,
+                  path: input.path,
+                  draftOwnerId: input.draftOwnerId,
+                }),
+              }),
+              catch: (cause) => new AssetTextAttachmentClaimError({ path: input.path, cause }),
+            }),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.assetsReleaseTextAttachment]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.assetsReleaseTextAttachment,
+            Effect.try({
+              try: () => ({
+                released: releaseTextAttachment({
+                  attachmentsDir: config.attachmentsDir,
+                  path: input.path,
+                  draftOwnerId: input.draftOwnerId,
+                }),
+              }),
+              catch: (cause) => new AssetTextAttachmentReleaseError({ path: input.path, cause }),
             }),
             { "rpc.aggregate": "workspace" },
           ),
