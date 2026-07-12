@@ -394,6 +394,53 @@ extension Array where Element == TimelineItem {
         }
         append(item)
     }
+
+    /// Indexed variant of `upsertTimelineItem` for hot paths that repeatedly
+    /// update one timeline. The index is validated before use so callers can
+    /// safely reuse it across staged mutations.
+    public mutating func upsertTimelineItem(
+        _ item: TimelineItem, indexByID: inout [String: Int]
+    ) {
+        if let cachedIndex = indexByID[item.id], indices.contains(cachedIndex),
+            self[cachedIndex].id == item.id
+        {
+            self[cachedIndex] = item.preservingToolMetadata(of: self[cachedIndex])
+            return
+        }
+        if let index = lastIndex(where: { $0.id == item.id }) {
+            indexByID[item.id] = index
+            self[index] = item.preservingToolMetadata(of: self[index])
+            return
+        }
+        // Searches backwards past interleaved rows (reasoning updates land
+        // between a tool's start and its completion), not just `last` —
+        // otherwise the completion appends a duplicate and the original row
+        // is stuck "running" forever. Bounded at the current turn: crossing
+        // a user message (or checkpoint, which marks a turn end) could fold
+        // a fresh same-name invocation into a stale row from an old turn.
+        if case .toolEvent(let id, let name, let detail, _, _, _, _, _) = item {
+            search: for index in indices.reversed() {
+                switch self[index] {
+                case .userMessage, .checkpoint:
+                    break search
+                case .toolEvent(
+                    let existingID, let existingName, let existingDetail, _, .running, _, _, _)
+                where existingName == name
+                    && (existingDetail == detail
+                        || (existingID.hasPrefix("tool:") && !id.hasPrefix("tool:"))):
+                    let replacedID = self[index].id
+                    self[index] = item.preservingToolMetadata(of: self[index])
+                    indexByID.removeValue(forKey: replacedID)
+                    indexByID[item.id] = index
+                    return
+                default:
+                    continue
+                }
+            }
+        }
+        append(item)
+        indexByID[item.id] = count - 1
+    }
 }
 
 extension TimelineItem {

@@ -264,6 +264,7 @@ public final class AppModel {
 
     private func applyBatchImplementation(_ events: [BackendEvent]) {
         var touched: [String: [TimelineItem]] = [:]
+        var indexByThread: [String: [String: Int]] = [:]
         // Only full snapshots (timelineReset) mark history loaded. Plain
         // appends / deltas must not set hasLoadedTimeline — otherwise a
         // stream event for a not-yet-selected thread suppresses the later
@@ -275,6 +276,16 @@ public final class AppModel {
             touched[threadID] ?? threadStates[threadID]?.timeline ?? []
         }
 
+        func ensureTimelineIndex(_ threadID: String, items: [TimelineItem]) {
+            guard indexByThread[threadID] == nil else { return }
+            var indexByID: [String: Int] = [:]
+            indexByID.reserveCapacity(items.count)
+            for (index, item) in items.enumerated() {
+                indexByID[item.id] = index
+            }
+            indexByThread[threadID] = indexByID
+        }
+
         // A run of deltas for the same message collapses to one string
         // concatenation and one array write.
         var deltaThreadID: String?
@@ -284,7 +295,8 @@ public final class AppModel {
             guard let threadID = deltaThreadID else { return }
             var items = currentItems(threadID)
             if applyDelta(
-                threadID: threadID, messageID: deltaMessageID, delta: deltaText, items: &items)
+                threadID: threadID, messageID: deltaMessageID, delta: deltaText, items: &items,
+                indexByID: &indexByThread[threadID])
             {
                 structuralThreads.insert(threadID)
             }
@@ -296,9 +308,24 @@ public final class AppModel {
         func resolveInteraction(_ id: String) -> String? {
             func removeItem(threadID: String) -> Bool {
                 var items = currentItems(threadID)
-                guard let index = items.firstIndex(where: { $0.id == id }) else { return false }
+                let index: Int?
+                if let cachedIndex = indexByThread[threadID]?[id],
+                    items.indices.contains(cachedIndex), items[cachedIndex].id == id
+                {
+                    index = cachedIndex
+                } else {
+                    if indexByThread[threadID] != nil {
+                        indexByThread[threadID]![id] = nil
+                    }
+                    index = items.firstIndex(where: { $0.id == id })
+                    if let index, indexByThread[threadID] != nil {
+                        indexByThread[threadID]![id] = index
+                    }
+                }
+                guard let index else { return false }
                 items.remove(at: index)
                 touched[threadID] = items
+                indexByThread[threadID] = nil
                 // Removal shifts indices; the streaming index self-validates,
                 // but drop it so the next delta rescans instead of racing.
                 streamingIndex[threadID] = nil
@@ -341,7 +368,8 @@ public final class AppModel {
                 // an earlier item (tool call updated -> completed, streaming
                 // reasoning text) and must replace it, not stack.
                 var items = currentItems(threadID)
-                items.upsertTimelineItem(item)
+                ensureTimelineIndex(threadID, items: items)
+                items.upsertTimelineItem(item, indexByID: &indexByThread[threadID]!)
                 touched[threadID] = items
                 structuralThreads.insert(threadID)
                 recordInteraction(item, threadID: threadID)
@@ -351,6 +379,7 @@ public final class AppModel {
                 StreamingMarkdownCache.evict(threadID: threadID)
                 let filtered = items.filter { !isDismissedUsageLimit($0) }
                 touched[threadID] = filtered
+                indexByThread[threadID] = nil
                 resetThreads.insert(threadID)
                 structuralThreads.insert(threadID)
                 streamingIndex[threadID] = nil
@@ -360,7 +389,8 @@ public final class AppModel {
                 // their markdown or item-level isStreaming state.
                 var items = currentItems(threadID)
                 finishStreaming(
-                    threadID: threadID, messageID: messageID, markdown: markdown, items: &items)
+                    threadID: threadID, messageID: messageID, markdown: markdown, items: &items,
+                    indexByID: &indexByThread[threadID])
                 touched[threadID] = items
             case .approvalResolved(let id), .userInputResolved(let id):
                 if let threadID = resolveInteraction(id) {
@@ -493,7 +523,8 @@ public final class AppModel {
 
     @discardableResult
     private func applyDelta(
-        threadID: String, messageID: String, delta: String, items: inout [TimelineItem]
+        threadID: String, messageID: String, delta: String, items: inout [TimelineItem],
+        indexByID: inout [String: Int]?
     ) -> Bool {
         if let cached = streamingIndex[threadID], cached.messageID == messageID,
             items.indices.contains(cached.index),
@@ -502,23 +533,39 @@ public final class AppModel {
         {
             items[cached.index] = .assistantMessage(
                 id: id, markdown: markdown + delta, isStreaming: true, at: at)
+            indexByID?[messageID] = cached.index
             return false
+        }
+        if let indexed = indexByID?[messageID] {
+            if items.indices.contains(indexed),
+                case .assistantMessage(let id, let markdown, _, let at) = items[indexed],
+                id == messageID
+            {
+                items[indexed] = .assistantMessage(
+                    id: id, markdown: markdown + delta, isStreaming: true, at: at)
+                streamingIndex[threadID] = (messageID, indexed)
+                return false
+            }
+            indexByID?[messageID] = nil
         }
         for (index, item) in items.enumerated() {
             if case .assistantMessage(let id, let markdown, _, let at) = item, id == messageID {
                 items[index] = .assistantMessage(
                     id: id, markdown: markdown + delta, isStreaming: true, at: at)
                 streamingIndex[threadID] = (messageID, index)
+                indexByID?[messageID] = index
                 return false
             }
         }
         items.append(.assistantMessage(id: messageID, markdown: delta, isStreaming: true, at: Date()))
         streamingIndex[threadID] = (messageID, items.count - 1)
+        indexByID?[messageID] = items.count - 1
         return true
     }
 
     private func finishStreaming(
-        threadID: String, messageID: String, markdown: String, items: inout [TimelineItem]
+        threadID: String, messageID: String, markdown: String, items: inout [TimelineItem],
+        indexByID: inout [String: Int]?
     ) {
         defer {
             if streamingIndex[threadID]?.messageID == messageID {
@@ -531,12 +578,24 @@ public final class AppModel {
         {
             items[cached.index] = .assistantMessage(
                 id: id, markdown: markdown, isStreaming: false, at: at)
+            indexByID?[messageID] = cached.index
             return
+        }
+        if let indexed = indexByID?[messageID] {
+            if items.indices.contains(indexed),
+                case .assistantMessage(let id, _, _, let at) = items[indexed], id == messageID
+            {
+                items[indexed] = .assistantMessage(
+                    id: id, markdown: markdown, isStreaming: false, at: at)
+                return
+            }
+            indexByID?[messageID] = nil
         }
         for (index, item) in items.enumerated() {
             if case .assistantMessage(let id, _, _, let at) = item, id == messageID {
                 items[index] = .assistantMessage(
                     id: id, markdown: markdown, isStreaming: false, at: at)
+                indexByID?[messageID] = index
                 return
             }
         }

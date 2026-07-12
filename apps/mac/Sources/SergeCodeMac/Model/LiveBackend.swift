@@ -776,6 +776,7 @@ public actor LiveBackend: BackendService {
         // tool updated/completed for one call, subagent task lifecycle
         // updates — collapse into a single row, same as the live tail.
         var items: [TimelineItem] = []
+        var indexByID: [String: Int] = [:]
         var subagentState = T3SubagentTaskActivityState()
         let hadSubagentTasks = !(subagentTasksByThread[threadID]?.items.isEmpty ?? true)
         for entry in OrchestrationMapping.timeline(for: thread) {
@@ -783,7 +784,7 @@ public actor LiveBackend: BackendService {
                 Self.isTaskLifecycleActivity(activity),
                 let task = subagentState.apply(activity: activity, at: at)
             {
-                items.upsertTimelineItem(mapSubagentTask(task))
+                items.upsertTimelineItem(mapSubagentTask(task), indexByID: &indexByID)
                 continue
             }
             guard
@@ -791,7 +792,7 @@ public actor LiveBackend: BackendService {
                     entry, threadID: threadID, pendingUserInputIDs: pendingInputIDs,
                     pendingApprovalIDs: pendingApprovalIDs)
             else { continue }
-            items.upsertTimelineItem(item)
+            items.upsertTimelineItem(item, indexByID: &indexByID)
         }
         let hasSubagentTasks = !subagentState.items.isEmpty
         subagentTasksByThread[threadID] = hasSubagentTasks ? subagentState : nil
