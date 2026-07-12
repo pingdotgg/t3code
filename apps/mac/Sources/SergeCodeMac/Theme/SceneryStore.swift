@@ -186,6 +186,13 @@ public final class SceneryStore {
         pools[setId] ?? []
     }
 
+    /// Resolves a photo within an explicit set. Passport pages retain their
+    /// set id, so they must not infer ownership from a photo id that may be
+    /// shared by more than one pool.
+    public func photo(for photoID: String, inSet setId: String) -> SceneryPhoto? {
+        pools[setId]?.first { $0.id == photoID }
+    }
+
     /// Palette for a resolved set. An explicit set id wins; otherwise the
     /// photo's owning set and then the global default are used.
     public func palette(for photo: SceneryPhoto?, setId: String? = nil) -> SceneryPalette? {
@@ -460,24 +467,37 @@ public final class SceneryStore {
 
     /// Cached image, if already decoded this session. Views pair this with
     /// `ensureImage` in a `.task`.
-    public func image(_ photo: SceneryPhoto, variant: ImageVariant) -> NSImage? {
-        let setId = setIdContaining(photoID: photo.id) ?? ScenerySet.dolomitesID
+    public func image(
+        _ photo: SceneryPhoto,
+        variant: ImageVariant,
+        setId explicitSetId: String? = nil
+    ) -> NSImage? {
+        let setId = explicitSetId ?? setIdContaining(photoID: photo.id) ?? ScenerySet.dolomitesID
         return images[cacheKey(setId, photo.id, variant)]
     }
 
     /// Load a photo's image into the in-memory cache: disk first, CDN on
     /// miss (writing back to disk). Safe to call repeatedly.
-    public func ensureImage(_ photo: SceneryPhoto?, variant: ImageVariant) async {
-        await ensureImage(photo, variant: variant, triggerPaletteBackfill: true)
+    public func ensureImage(
+        _ photo: SceneryPhoto?,
+        variant: ImageVariant,
+        setId explicitSetId: String? = nil
+    ) async {
+        await ensureImage(
+            photo,
+            variant: variant,
+            setId: explicitSetId,
+            triggerPaletteBackfill: true)
     }
 
     private func ensureImage(
         _ photo: SceneryPhoto?,
         variant: ImageVariant,
+        setId explicitSetId: String? = nil,
         triggerPaletteBackfill: Bool
     ) async {
         guard let photo else { return }
-        let setId = setIdContaining(photoID: photo.id) ?? ScenerySet.dolomitesID
+        let setId = explicitSetId ?? setIdContaining(photoID: photo.id) ?? ScenerySet.dolomitesID
         let key = cacheKey(setId, photo.id, variant)
         guard images[key] == nil, !loadingKeys.contains(key) else { return }
         loadingKeys.insert(key)
@@ -533,7 +553,11 @@ public final class SceneryStore {
                 SceneryPaletteExtractor.maximumImageCount))
             for photo in samplePhotos {
                 guard !Task.isCancelled else { return }
-                await ensureImage(photo, variant: .thumb, triggerPaletteBackfill: false)
+                await ensureImage(
+                    photo,
+                    variant: .thumb,
+                    setId: setId,
+                    triggerPaletteBackfill: false)
             }
         }
 

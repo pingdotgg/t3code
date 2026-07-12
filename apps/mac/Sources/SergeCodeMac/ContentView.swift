@@ -9,6 +9,7 @@ struct RootView: View {
 
     @UIState private var showInspector = true
     @UIState private var showNewSessionSheet = false
+    @UIState private var showPassportSheet = false
     @UIState private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
@@ -81,6 +82,14 @@ struct RootView: View {
                 }
                 .disabled(model.selectedThread == nil)
             }
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    showPassportSheet = true
+                } label: {
+                    Label("Passport", systemImage: "book.closed")
+                }
+                .help("Passport")
+            }
         }
         .sheet(isPresented: $showNewSessionSheet) {
             NewSessionSheet(
@@ -88,6 +97,12 @@ struct RootView: View {
                 scenery: scenery,
                 passport: passport,
                 isPresented: $showNewSessionSheet)
+        }
+        .sheet(isPresented: $showPassportSheet) {
+            PassportView(
+                scenery: scenery,
+                passport: passport,
+                isPresented: $showPassportSheet)
         }
     }
 
