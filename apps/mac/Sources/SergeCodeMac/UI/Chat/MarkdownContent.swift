@@ -607,6 +607,11 @@ private func inlineAttributed(markup: Markup) -> AttributedString {
 /// Full-width assistant message body: an AST-backed block list plus a
 /// streaming indicator. Content stays unframed and opaque for long-form
 /// reading; only the hover action chip floats above it.
+private struct MarkdownRenderedBlock: Identifiable {
+    let id: String
+    let block: MarkdownBlock
+}
+
 @MainActor
 struct AssistantMarkdownView: View {
     // The mac client has no editor picker yet; Cursor is first in the shared
@@ -620,22 +625,26 @@ struct AssistantMarkdownView: View {
     // Parsing belongs in init, not body: body is evaluated for every timeline
     // mutation while the view value can remain otherwise unchanged.
     private let blocks: [MarkdownBlock]
+    private let renderedBlocks: [MarkdownRenderedBlock]
 
     init(markdown: String, isStreaming: Bool, threadID: String, model: AppModel) {
         self.markdown = markdown
         self.isStreaming = isStreaming
         self.threadID = threadID
         self.model = model
-        self.blocks = MarkdownBlockCache.document(for: markdown).blocks
+        let document = MarkdownBlockCache.document(for: markdown)
+        self.blocks = document.blocks
+        self.renderedBlocks = Self.renderedBlocks(from: document)
     }
 
     @UIState private var isHovering = false
     @Environment(\.openSelectText) private var openSelectText
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                markdownBlockView(block)
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(renderedBlocks.enumerated()), id: \.element.id) { index, entry in
+                markdownBlockView(entry.block)
+                    .padding(.top, blockGap(at: index))
             }
             if isStreaming {
                 Image(systemName: "ellipsis")
@@ -643,6 +652,7 @@ struct AssistantMarkdownView: View {
                     .foregroundStyle(.secondary)
                     .accessibilityLabel("Assistant is responding")
                     .transition(.opacity)
+                    .padding(.top, streamingIndicatorGap)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -684,41 +694,160 @@ struct AssistantMarkdownView: View {
         })
     }
 
+    private static func renderedBlocks(from document: ParsedMarkdownDocument) -> [MarkdownRenderedBlock] {
+        var occurrences: [String: Int] = [:]
+        return document.blocks.indices.map { index in
+            let sourceKey = document.blockKeys[index]
+            let occurrence = occurrences[sourceKey, default: 0]
+            occurrences[sourceKey] = occurrence + 1
+            // One top-level Markdown node can expand into several blocks. Keep
+            // its stable source key while disambiguating those siblings.
+            return MarkdownRenderedBlock(
+                id: "\(sourceKey)\u{0}\(occurrence)", block: document.blocks[index])
+        }
+    }
+
+    private func blockGap(at index: Int) -> CGFloat {
+        let before = MarkdownTheme.kind(of: renderedBlocks[index].block)
+        let after = index > 0
+            ? MarkdownTheme.kind(of: renderedBlocks[index - 1].block)
+            : nil
+        return MarkdownTheme.gap(after: after, before: before)
+    }
+
+    private var streamingIndicatorGap: CGFloat {
+        guard let last = renderedBlocks.last else {
+            return MarkdownTheme.gap(after: .paragraph, before: .paragraph)
+        }
+        return MarkdownTheme.gap(
+            after: MarkdownTheme.kind(of: last.block), before: .paragraph)
+    }
+
     @ViewBuilder
     private func markdownBlockView(_ block: MarkdownBlock) -> some View {
         switch block {
         case .paragraph(let text):
             MarkdownProseText(attributed: text)
         case .heading(let level, let text):
-            MarkdownProseText(attributed: styled(text, font: headingFont(level)))
+            MarkdownHeadingView(level: level, text: text)
         case .bulletItem(let indent, let text):
-            MarkdownProseText(attributed: listAttributed(marker: "•", text: text, indent: indent))
+            MarkdownListRow(level: indent, marker: .bullet, text: text)
         case .orderedItem(let indent, let number, let text):
-            MarkdownProseText(
-                attributed: listAttributed(marker: "\(number).", text: text, indent: indent))
+            MarkdownListRow(level: indent, marker: .ordered(number), text: text)
         case .taskItem(let indent, let checked, let text):
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Image(systemName: checked ? "checkmark.square" : "square")
-                    .foregroundStyle(.secondary)
-                Text(text)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(.leading, CGFloat(indent) * 24)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            MarkdownListRow(level: indent, marker: .task(checked: checked), text: text)
         case .quote(let paragraphs):
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(Array(paragraphs.enumerated()), id: \.offset) { _, paragraph in
-                    MarkdownProseText(attributed: quotedAttributed(paragraph))
-                }
-            }
+            MarkdownQuoteView(paragraphs: paragraphs)
         case .rule:
-            Divider().padding(.vertical, 2)
+            Rectangle()
+                .fill(.separator)
+                .opacity(0.6)
+                .frame(height: 1)
+                .padding(.horizontal, 2)
         case .codeBlock(let language, let code):
             MarkdownCodeBlock(language: language, code: code)
         case .table(let table):
             MarkdownTableView(table: table)
         }
+    }
+}
+
+private struct MarkdownHeadingView: View {
+    let level: Int
+    let text: AttributedString
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MarkdownTheme.headingHasRule(level) ? 6 : 0) {
+            Text(text)
+                .font(MarkdownTheme.headingFont(level))
+                .foregroundStyle(MarkdownTheme.headingForeground(level))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if MarkdownTheme.headingHasRule(level) {
+                Rectangle()
+                    .fill(.separator)
+                    .opacity(0.5)
+                    .frame(height: 1)
+            }
+        }
+    }
+}
+
+private struct MarkdownListRow: View {
+    enum Marker {
+        case bullet
+        case ordered(String)
+        case task(checked: Bool)
+    }
+
+    let level: Int
+    let marker: Marker
+    let text: AttributedString
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            markerView
+                .frame(width: MarkdownTheme.listMarkerColumnWidth, alignment: .trailing)
+            Text(text)
+                .foregroundStyle(textForeground)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.leading, MarkdownTheme.listIndent(level: level))
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private var markerView: some View {
+        switch marker {
+        case .bullet:
+            Text(MarkdownTheme.bulletGlyph(depth: level))
+                .font(.body)
+                .foregroundStyle(.secondary)
+        case .ordered(let number):
+            Text("\(number).")
+                .font(.body.monospacedDigit())
+                .foregroundStyle(.secondary)
+        case .task(let checked):
+            Image(systemName: checked ? "checkmark.square.fill" : "square")
+                .font(.body)
+                .foregroundStyle(checked ? Color.accentColor : .secondary)
+        }
+    }
+
+    private var textForeground: Color {
+        switch marker {
+        case .task(let checked) where checked:
+            return .secondary
+        default:
+            return .primary
+        }
+    }
+}
+
+private struct MarkdownQuoteView: View {
+    let paragraphs: [AttributedString]
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            RoundedRectangle(cornerRadius: MarkdownTheme.quoteCornerRadius)
+                .fill(Color.accentColor.opacity(MarkdownTheme.quoteAccentOpacity))
+                .frame(width: MarkdownTheme.quoteBarWidth)
+                .frame(maxHeight: .infinity)
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(Array(paragraphs.enumerated()), id: \.offset) { _, paragraph in
+                    Text(paragraph)
+                        .foregroundStyle(.secondary)
+                        .italic()
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 2)
+        .background(MarkdownTheme.quoteFill, in: RoundedRectangle(cornerRadius: 6))
     }
 }
 
@@ -733,6 +862,7 @@ private struct MarkdownProseText: View {
 }
 
 // MARK: - Selectable transcript serialization
+// Serialization-only: keep plain-text markers and separators stable.
 
 /// Stitches parsed blocks into one attributed string for multi-line selection
 /// within a prose run and for the conversation-wide Select Text overlay.
@@ -970,11 +1100,14 @@ private struct MarkdownTableView: View {
                 GridRow {
                     tableCells(table.header, isHeader: true)
                 }
-                Divider()
+                Rectangle()
+                    .fill(.separator)
+                    .opacity(0.5)
+                    .frame(height: 1)
                     .gridCellColumns(max(columnCount, 1))
-                ForEach(Array(table.rows.enumerated()), id: \.offset) { _, row in
+                ForEach(Array(table.rows.enumerated()), id: \.offset) { rowIndex, row in
                     GridRow {
-                        tableCells(row, isHeader: false)
+                        tableCells(row, isHeader: false, rowIndex: rowIndex)
                     }
                 }
             }
@@ -985,18 +1118,31 @@ private struct MarkdownTableView: View {
     }
 
     @ViewBuilder
-    private func tableCells(_ cells: [AttributedString], isHeader: Bool) -> some View {
+    private func tableCells(
+        _ cells: [AttributedString],
+        isHeader: Bool,
+        rowIndex: Int = 0
+    ) -> some View {
         ForEach(0..<columnCount, id: \.self) { index in
             let cell = index < cells.count ? cells[index] : AttributedString()
             let columnAlignment = table.columnAlignments.indices.contains(index)
                 ? table.columnAlignments[index] : nil
             Text(cell)
                 .font(isHeader ? .body.weight(.semibold) : .body)
+                .textSelection(.enabled)
                 .multilineTextAlignment(columnAlignment ?? .leading)
-                .frame(minWidth: 96, alignment: alignment(columnAlignment))
-                .padding(.horizontal, 8)
+                .frame(minWidth: 72, alignment: alignment(columnAlignment))
+                .padding(.horizontal, 10)
                 .padding(.vertical, 6)
+                .background(cellBackground(isHeader: isHeader, rowIndex: rowIndex))
         }
+    }
+
+    private func cellBackground(isHeader: Bool, rowIndex: Int) -> Color {
+        if isHeader {
+            return MarkdownTheme.tableHeaderFill
+        }
+        return rowIndex.isMultiple(of: 2) ? MarkdownTheme.tableOddRowFill : .clear
     }
 
     private func alignment(_ alignment: TextAlignment?) -> Alignment {

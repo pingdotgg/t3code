@@ -263,6 +263,31 @@ struct MarkdownContentTests {
         })
     }
 
+    @Test("collapses Markdown block rhythm like CSS margins")
+    func markdownThemeGaps() {
+        #expect(MarkdownTheme.gap(after: nil, before: .paragraph) == 0)
+        #expect(MarkdownTheme.gap(after: .heading(level: 1), before: .paragraph) == 12)
+        #expect(MarkdownTheme.gap(after: .listItem, before: .taskItem) == 4)
+        #expect(MarkdownTheme.gap(after: .rule, before: .paragraph) == 20)
+    }
+
+    @Test("maps all six heading levels to semantic type and color tokens")
+    func markdownThemeHeadingTokens() {
+        let fonts = (1...6).map(MarkdownTheme.headingFont)
+        #expect(fonts[0] != fonts[1])
+        #expect(fonts[1] != fonts[2])
+        #expect(fonts[2] != fonts[3])
+        #expect(fonts[3] != fonts[4])
+        #expect(fonts[4] == fonts[5])
+
+        let foregrounds = (1...6).map(MarkdownTheme.headingForeground)
+        #expect(foregrounds.dropLast().allSatisfy { $0 == .primary })
+        #expect(foregrounds[5] == .secondary)
+        #expect(MarkdownTheme.headingHasRule(1))
+        #expect(MarkdownTheme.headingHasRule(2))
+        #expect(!MarkdownTheme.headingHasRule(3))
+    }
+
     @Test("parses a mixed GFM document into the extended IR")
     func mixedDocument() {
         let blocks = parseMarkdownBlocks(
