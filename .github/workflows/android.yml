@@ -27,6 +27,10 @@ on:
       - "v*"
       - "android-*"
 
+permissions:
+  contents: read
+  packages: read
+
 concurrency:
   group: apk-build-${{ github.ref }}
   cancel-in-progress: true
@@ -34,120 +38,10 @@ concurrency:
 jobs:
   build-apk:
     name: Build APK (${{ inputs.variant || 'preview' }})
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: read
-    env:
-      APP_VARIANT: ${{ inputs.variant || 'preview' }}
-      BUILD_TYPE: ${{ inputs.build-type || 'debug' }}
-      NODE_OPTIONS: --max-old-space-size=8192
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
-        with:
-          node-version-file: package.json
-          cache: true
-          run-install: true
-
-      - name: Expose pnpm
-        run: |
-          pnpm_version="$(node --print "require('./package.json').packageManager.split('@').pop()")"
-          vp_pnpm_dir="$HOME/.vite-plus/package_manager/pnpm/$pnpm_version/pnpm/bin"
-          echo "$vp_pnpm_dir" >> "$GITHUB_PATH"
-          "$vp_pnpm_dir/pnpm" --version
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
-          cache: gradle
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Set ANDROID_HOME
-        run: echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
-
-      - name: Install Android build tools
-        run: |
-          sdkmanager --sdk_root=$ANDROID_SDK_ROOT "platforms;android-36" "build-tools;36.0.0" "ndk;27.1.12297006" "cmake;3.22.1"
-
-      - name: Prebuild Android
-        working-directory: apps/mobile
-        run: |
-          EXPO_NO_GIT_STATUS=1 npx expo prebuild \
-            --clean \
-            --platform android \
-            --no-install
-
-      - name: Setup Gradle
-        working-directory: apps/mobile/android
-        run: |
-          chmod +x gradlew
-          ./gradlew --version
-
-      - name: Build APK (Debug)
-        if: env.BUILD_TYPE == 'debug'
-        working-directory: apps/mobile/android
-        run: |
-          ./gradlew assembleDebug \
-            -Dorg.gradle.java.home=$JAVA_HOME \
-            -PreactNativeArchitectures=arm64-v8a
-
-      - name: Build APK (Release)
-        if: env.BUILD_TYPE == 'release'
-        working-directory: apps/mobile/android
-        run: |
-          ./gradlew assembleRelease \
-            -Dorg.gradle.java.home=$JAVA_HOME \
-            -PreactNativeArchitectures=arm64-v8a
-        # Note: Release builds may require signing configuration
-        # Set KEYSTORE_FILE, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD secrets for production
-
-      - name: Locate built APK
-        id: apk-location
-        working-directory: apps/mobile/android
-        run: |
-          APK_DIR="app/build/outputs/apk/$BUILD_TYPE"
-          if [ ! -d "$APK_DIR" ]; then
-            echo "APK output directory not found: $APK_DIR"
-            exit 1
-          fi
-          APK_PATH=$(find "$APK_DIR" -maxdepth 1 -name '*.apk' -type f | head -n 1)
-          if [ -z "$APK_PATH" ]; then
-            echo "APK not found in $APK_DIR"
-            exit 1
-          fi
-          echo "apk_path=$APK_PATH" >> "$GITHUB_OUTPUT"
-          ls -lh "$APK_PATH"
-
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: t3code-apk-${{ env.APP_VARIANT }}-${{ env.BUILD_TYPE }}
-          path: apps/mobile/android/${{ steps.apk-location.outputs.apk_path }}
-          retention-days: 30
-          if-no-files-found: error
-
-      - name: Generate build summary
-        if: always()
-        run: |
-          echo "## APK Build Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Variant**: ${{ env.APP_VARIANT }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Build Type**: ${{ env.BUILD_TYPE }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ job.status }}" = "success" ]; then
-            echo "✅ APK built successfully" >> $GITHUB_STEP_SUMMARY
-            echo "📦 Download from artifacts" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "❌ APK build failed" >> $GITHUB_STEP_SUMMARY
-          fi
+    uses: ./.github/workflows/build-android-apk.yml
+    with:
+      app_variant: ${{ inputs.variant || 'preview' }}
+      build_type: ${{ inputs.build-type || 'debug' }}
+      build_version: ${{ github.ref_name }}
+      runs_on: ubuntu-latest
+    secrets: inherit

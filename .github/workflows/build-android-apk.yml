@@ -1,0 +1,198 @@
+name: Build Android APK
+
+on:
+  workflow_call:
+    inputs:
+      app_variant:
+        description: "App variant to build (development, preview, production)"
+        required: true
+        type: string
+      build_type:
+        description: "Build type (debug or release)"
+        required: true
+        type: string
+      build_version:
+        description: "Version string to include in the APK filename"
+        required: false
+        type: string
+        default: ""
+      runs_on:
+        description: "Runner to use for the build"
+        required: false
+        type: string
+        default: "blacksmith-8vcpu-ubuntu-2404"
+      timeout_minutes:
+        description: "Job timeout in minutes"
+        required: false
+        type: number
+        default: 60
+      clerk_publishable_key:
+        description: "Clerk publishable key for the mobile app"
+        required: false
+        type: string
+        default: ""
+      clerk_jwt_template:
+        description: "Clerk JWT template for the mobile app"
+        required: false
+        type: string
+        default: ""
+      clerk_cli_oauth_client_id:
+        description: "Clerk CLI OAuth client ID for the mobile app"
+        required: false
+        type: string
+        default: ""
+      relay_url:
+        description: "T3 Relay URL for the mobile app"
+        required: false
+        type: string
+        default: ""
+      upload_name:
+        description: "Override the artifact upload name"
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  build-apk:
+    name: Build APK (${{ inputs.app_variant }} / ${{ inputs.build_type }})
+    runs-on: ${{ inputs.runs_on }}
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    env:
+      APP_VARIANT: ${{ inputs.app_variant }}
+      BUILD_TYPE: ${{ inputs.build_type }}
+      NODE_OPTIONS: --max-old-space-size=8192
+      T3CODE_CLERK_PUBLISHABLE_KEY: ${{ inputs.clerk_publishable_key }}
+      T3CODE_CLERK_JWT_TEMPLATE: ${{ inputs.clerk_jwt_template }}
+      T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ inputs.clerk_cli_oauth_client_id }}
+      T3CODE_RELAY_URL: ${{ inputs.relay_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Expose pnpm
+        run: |
+          pnpm_version="$(node --print "require('./package.json').packageManager.split('@').pop()")"
+          vp_pnpm_dir="$HOME/.vite-plus/package_manager/pnpm/$pnpm_version/pnpm/bin"
+          echo "$vp_pnpm_dir" >> "$GITHUB_PATH"
+          "$vp_pnpm_dir/pnpm" --version
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set ANDROID_HOME
+        run: echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+
+      - name: Install Android build tools
+        run: |
+          sdkmanager --sdk_root=$ANDROID_SDK_ROOT "platforms;android-36" "build-tools;36.0.0" "ndk;27.1.12297006" "cmake;3.22.1"
+
+      - name: Prebuild Android
+        working-directory: apps/mobile
+        run: |
+          EXPO_NO_GIT_STATUS=1 npx expo prebuild \
+            --clean \
+            --platform android \
+            --no-install
+
+      - name: Setup Gradle
+        working-directory: apps/mobile/android
+        run: |
+          chmod +x gradlew
+          ./gradlew --version
+
+      - name: Build APK (Debug)
+        if: env.BUILD_TYPE == 'debug'
+        working-directory: apps/mobile/android
+        run: |
+          ./gradlew assembleDebug \
+            -Dorg.gradle.java.home=$JAVA_HOME \
+            -PreactNativeArchitectures=arm64-v8a
+
+      - name: Build APK (Release)
+        if: env.BUILD_TYPE == 'release'
+        working-directory: apps/mobile/android
+        run: |
+          ./gradlew assembleRelease \
+            -Dorg.gradle.java.home=$JAVA_HOME \
+            -PreactNativeArchitectures=arm64-v8a
+        # Note: Release builds may require signing configuration.
+        # Set KEYSTORE_FILE, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD secrets for production signing.
+
+      - name: Locate built APK
+        id: apk-location
+        working-directory: apps/mobile/android
+        run: |
+          APK_DIR="app/build/outputs/apk/$BUILD_TYPE"
+          if [ ! -d "$APK_DIR" ]; then
+            echo "APK output directory not found: $APK_DIR"
+            exit 1
+          fi
+          APK_PATH=$(find "$APK_DIR" -maxdepth 1 -name '*.apk' -type f | head -n 1)
+          if [ -z "$APK_PATH" ]; then
+            echo "APK not found in $APK_DIR"
+            exit 1
+          fi
+          echo "apk_path=$APK_PATH" >> "$GITHUB_OUTPUT"
+          ls -lh "$APK_PATH"
+
+      - name: Rename APK
+        id: apk-rename
+        working-directory: apps/mobile/android
+        run: |
+          version_suffix="${{ inputs.build_version }}"
+          if [ -z "$version_suffix" ]; then
+            version_suffix="$BUILD_TYPE"
+          fi
+          apk_name="t3code-android-${{ inputs.app_variant }}-${version_suffix}.apk"
+          cp "${{ steps.apk-location.outputs.apk_path }}" "$apk_name"
+          echo "apk_name=$apk_name" >> "$GITHUB_OUTPUT"
+          ls -lh "$apk_name"
+
+      - name: Resolve artifact name
+        id: artifact-name
+        run: |
+          if [ -n "${{ inputs.upload_name }}" ]; then
+            echo "name=${{ inputs.upload_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=t3code-apk-${{ inputs.app_variant }}-${{ inputs.build_type }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.artifact-name.outputs.name }}
+          path: apps/mobile/android/${{ steps.apk-rename.outputs.apk_name }}
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Generate build summary
+        if: always()
+        run: |
+          echo "## APK Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Variant**: ${{ inputs.app_variant }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build Type**: ${{ inputs.build_type }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "✅ APK built successfully" >> $GITHUB_STEP_SUMMARY
+            echo "📦 Download from artifacts" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ APK build failed" >> $GITHUB_STEP_SUMMARY
+          fi

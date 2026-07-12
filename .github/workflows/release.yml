@@ -299,6 +299,21 @@ jobs:
           path: wsl-prebuild/pty.node
           if-no-files-found: error
 
+  build_android:
+    name: Build Android APK
+    needs: [preflight, relay_public_config]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' }}
+    uses: ./.github/workflows/build-android-apk.yml
+    with:
+      app_variant: ${{ needs.preflight.outputs.release_channel == 'stable' && 'production' || 'preview' }}
+      build_type: release
+      build_version: ${{ needs.preflight.outputs.version }}
+      clerk_publishable_key: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
+      clerk_jwt_template: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
+      clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
+      relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
+    secrets: inherit
+
   build:
     name: Build ${{ matrix.label }}
     # build_wsl_node_pty stays in `needs` so it runs first and its artifact is
@@ -607,8 +622,8 @@ jobs:
 
   publish_cli:
     name: Publish CLI to npm
-    needs: [preflight, relay_public_config, build]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.build.result == 'success' }}
+    needs: [preflight, relay_public_config, build, build_android]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.build.result == 'success' && needs.build_android.result == 'success' }}
     runs-on: ubuntu-24.04 # blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     permissions:
@@ -664,8 +679,8 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    needs: [preflight, build, publish_cli]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build.result == 'success' && needs.publish_cli.result == 'success' }}
+    needs: [preflight, build, publish_cli, build_android]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build.result == 'success' && needs.publish_cli.result == 'success' && needs.build_android.result == 'success' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
@@ -691,10 +706,17 @@ jobs:
             args:
               - --filter=@t3tools/scripts...
 
-      - name: Download all desktop artifacts
+      - name: Download desktop artifacts
         uses: actions/download-artifact@v8
         with:
           pattern: desktop-*
+          merge-multiple: true
+          path: release-assets
+
+      - name: Download Android artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: t3code-apk-*
           merge-multiple: true
           path: release-assets
 
@@ -750,6 +772,7 @@ jobs:
           prerelease: ${{ needs.preflight.outputs.is_prerelease }}
           make_latest: ${{ needs.preflight.outputs.make_latest }}
           files: |
+            release-assets/*.apk
             release-assets/*.dmg
             release-assets/*.zip
             release-assets/*.AppImage
@@ -770,6 +793,7 @@ jobs:
           prerelease: ${{ needs.preflight.outputs.is_prerelease }}
           make_latest: ${{ needs.preflight.outputs.make_latest }}
           files: |
+            release-assets/*.apk
             release-assets/*.dmg
             release-assets/*.zip
             release-assets/*.AppImage
