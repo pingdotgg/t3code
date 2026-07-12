@@ -198,9 +198,9 @@ export function useAllBranches(target: VcsRefTarget) {
       return;
     }
     if (state.error !== null) {
-      const retry = window.setTimeout(state.loadNext, 1_000);
+      const retry = window.setInterval(state.loadNext, 1_000);
       return () => {
-        window.clearTimeout(retry);
+        window.clearInterval(retry);
       };
     }
     if (nextCursor !== null && nextCursor !== undefined) {
