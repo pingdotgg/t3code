@@ -5,12 +5,13 @@ import SwiftUI
 /// a new one via a native folder picker (or typed path), choose a provider
 /// and scenery set, then create the thread.
 struct NewSessionSheet: View {
-    let model: AppModel
+    let multi: MultiDeviceModel
     let scenery: SceneryStore
     let passport: PassportStore
     @Binding var isPresented: Bool
 
     @UIState private var mode: Mode = .existing
+    @UIState private var selectedDeviceID: DeviceID = .local
     @UIState private var selectedProjectID: String?
     @UIState private var provider: ProviderKind = .claude
     @UIState private var newProjectPath: String = ""
@@ -58,17 +59,34 @@ struct NewSessionSheet: View {
             .frame(height: 82)
             .clipShape(RoundedRectangle(cornerRadius: 12))
 
-            Picker("", selection: $mode) {
-                ForEach(Mode.allCases) { mode in
-                    Text(mode.rawValue).tag(mode)
+            if !multi.remoteSessions.isEmpty {
+                Picker("Device", selection: $selectedDeviceID) {
+                    Text("This Mac").tag(DeviceID.local)
+                    ForEach(multi.remoteSessions) { session in
+                        Text(session.descriptor.name).tag(session.id)
+                    }
+                }
+                .onChange(of: selectedDeviceID) {
+                    mode = .existing
+                    selectedProjectID = nil
+                    scenerySetOverride = nil
+                    clearError()
                 }
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .onChange(of: mode) {
-                selectedProjectID = nil
-                scenerySetOverride = nil
-                clearError()
+
+            if model.capabilities.canBrowseLocalFolders {
+                Picker("", selection: $mode) {
+                    ForEach(Mode.allCases) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .onChange(of: mode) {
+                    selectedProjectID = nil
+                    scenerySetOverride = nil
+                    clearError()
+                }
             }
 
             Group {
@@ -166,7 +184,7 @@ struct NewSessionSheet: View {
         .task {
             // Warm the settings so the folder picker can open at the
             // configured default projects directory.
-            if model.settings == nil {
+            if model.capabilities.canBrowseLocalFolders, model.settings == nil {
                 await model.loadSettings()
             }
             syncProviderSelection()
@@ -201,6 +219,7 @@ struct NewSessionSheet: View {
 
     private var canCreate: Bool {
         guard model.canCreateThread(with: provider) else { return false }
+        guard model.capabilities.canBrowseLocalFolders || mode == .existing else { return false }
         switch mode {
         case .existing: return selectedProjectID != nil
         case .new: return !newProjectPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -209,6 +228,10 @@ struct NewSessionSheet: View {
 
     private var configuredProviderKinds: [ProviderKind] {
         model.configuredProviderKinds
+    }
+
+    private var model: AppModel {
+        multi.model(for: selectedDeviceID) ?? multi.local
     }
 
     private var selectedProjectPath: String? {
@@ -297,6 +320,9 @@ struct NewSessionSheet: View {
             }
         }
         if createdThread != nil {
+            if let createdThread {
+                multi.select(threadID: createdThread.id, on: model.deviceID)
+            }
             isPresented = false
         } else {
             errorMessage =

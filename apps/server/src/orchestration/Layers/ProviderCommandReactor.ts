@@ -26,7 +26,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { makeKeyedDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
@@ -92,11 +92,19 @@ const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 const DEFAULT_THREAD_TITLE = "New thread";
+const DEFAULT_SESSION_START_TIMEOUT_MS = 120_000;
 const STALE_RUNNING_SESSION_DETAIL =
   "Provider process was not running after server restart; the in-flight turn was interrupted.";
 
 const STALE_SUBAGENT_TASK_DETAIL =
   "Subagent task was still in progress after server restart; marked stopped.";
+
+function readSessionStartTimeoutMs(): number {
+  const configured = Number(process.env.T3_SESSION_START_TIMEOUT_MS);
+  return Number.isInteger(configured) && configured > 0
+    ? configured
+    : DEFAULT_SESSION_START_TIMEOUT_MS;
+}
 
 /**
  * Derive still-open subagent task IDs from projected activity rows.
@@ -706,19 +714,52 @@ const make = Effect.gen(function* () {
       thread,
       projects: project ? [project] : [],
     });
+    const isWorktree = thread.worktreePath !== null && effectiveCwd === thread.worktreePath;
 
     const startProviderSession = (input?: {
       readonly resumeCursor?: unknown;
       readonly provider?: ProviderDriverKind;
     }) =>
-      providerService.startSession(threadId, {
-        threadId,
-        ...(preferredProvider ? { provider: preferredProvider } : {}),
-        providerInstanceId: desiredInstanceId,
-        ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
-        modelSelection: desiredModelSelection,
-        ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
-        runtimeMode: desiredRuntimeMode,
+      Effect.gen(function* () {
+        const sessionStartTimeoutMs = readSessionStartTimeoutMs();
+        return yield* providerService
+          .startSession(threadId, {
+            threadId,
+            ...(preferredProvider ? { provider: preferredProvider } : {}),
+            providerInstanceId: desiredInstanceId,
+            ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
+            ...(isWorktree ? { isWorktree: true } : {}),
+            modelSelection: desiredModelSelection,
+            ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
+            runtimeMode: desiredRuntimeMode,
+          })
+          .pipe(
+            Effect.timeout(sessionStartTimeoutMs),
+            Effect.catchTag("TimeoutError", (cause) =>
+              providerService.stopSession({ threadId }).pipe(
+                Effect.catchCause((cleanupCause) =>
+                  Effect.logWarning(
+                    "provider command reactor failed to clean up timed out session",
+                    {
+                      threadId,
+                      provider: preferredProvider,
+                      cause: Cause.pretty(cleanupCause),
+                    },
+                  ),
+                ),
+                Effect.andThen(
+                  Effect.fail(
+                    new ProviderAdapterRequestError({
+                      provider: providerErrorLabel(preferredProvider),
+                      method: "thread.turn.start",
+                      detail: `Provider '${providerErrorLabel(preferredProvider)}' session startup timed out after ${sessionStartTimeoutMs}ms.`,
+                      cause,
+                    }),
+                  ),
+                ),
+              ),
+            ),
+          );
       });
 
     const bindSessionToThread = (session: ProviderSession) =>
@@ -1338,7 +1379,9 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const worker = yield* makeDrainableWorker(processDomainEventSafely);
+  const worker = yield* makeKeyedDrainableWorker((_, event: ProviderIntentEvent) =>
+    processDomainEventSafely(event),
+  );
 
   const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
@@ -1351,7 +1394,7 @@ const make = Effect.gen(function* () {
         event.type === "thread.user-input-response-requested" ||
         event.type === "thread.session-stop-requested"
       ) {
-        return yield* worker.enqueue(event);
+        return yield* worker.enqueue(event.payload.threadId, event);
       }
     });
 

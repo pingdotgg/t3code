@@ -225,6 +225,57 @@ it.effect("spawns a sub-agent thread next to the caller's thread on another prov
   }),
 );
 
+it.effect("inherits the caller model when the target instance exposes it", () =>
+  Effect.gen(function* () {
+    const [coordinator, harness] = yield* makeCoordinator({
+      providers: [
+        makeProvider("claude", "claudeAgent", {
+          models: [
+            {
+              slug: "opus",
+              name: "Claude Opus",
+              isCustom: false,
+              capabilities: emptyCapabilities,
+            },
+            {
+              slug: "default-model",
+              name: "Default Model",
+              isCustom: false,
+              capabilities: emptyCapabilities,
+            },
+          ],
+        }),
+        makeProvider("codex", "codex"),
+      ],
+    });
+
+    const result = yield* coordinator.spawn(makeScope(), {
+      providerInstanceId: ProviderInstanceId.make("claude"),
+      prompt: "Use the caller's model.",
+    });
+
+    expect(result.model).toBe("opus");
+    const create = harness.dispatched.find((command) => command.type === "thread.create");
+    expect(create).toMatchObject({
+      type: "thread.create",
+      modelSelection: { instanceId: "claude", model: "opus" },
+    });
+  }),
+);
+
+it.effect("falls back to the target's first model when the caller model is unavailable", () =>
+  Effect.gen(function* () {
+    const [coordinator] = yield* makeCoordinator();
+
+    const result = yield* coordinator.spawn(makeScope(), {
+      providerInstanceId: ProviderInstanceId.make("claude"),
+      prompt: "Use the target default.",
+    });
+
+    expect(result.model).toBe("default-model");
+  }),
+);
+
 it.effect("names a spawned agent and surfaces it on agent_list", () =>
   Effect.gen(function* () {
     const [coordinator, harness] = yield* makeCoordinator();

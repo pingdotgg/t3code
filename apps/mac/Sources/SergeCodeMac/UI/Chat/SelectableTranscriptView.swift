@@ -27,9 +27,12 @@ extension EnvironmentValues {
 // MARK: - Sheet
 
 struct SelectableTranscriptSheet: View {
-    let items: [TimelineDisplayItem]
+    let items: [TimelineItem]
     /// Optional project root for path shortening in tool rows.
     var projectRoot: String? = nil
+    var threadIsSettled: Bool = false
+    /// Cheap change token (thread, timeline version, settled) — the text view
+    /// rebuilds only when it changes, throttled while streaming.
     let contentKey: String
 
     @Environment(\.dismiss) private var dismiss
@@ -51,6 +54,7 @@ struct SelectableTranscriptSheet: View {
             SelectableTranscriptTextView(
                 items: items,
                 projectRoot: projectRoot,
+                threadIsSettled: threadIsSettled,
                 contentKey: contentKey)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -62,8 +66,9 @@ struct SelectableTranscriptSheet: View {
 // MARK: - NSTextView host
 
 struct SelectableTranscriptTextView: NSViewRepresentable {
-    let items: [TimelineDisplayItem]
+    let items: [TimelineItem]
     let projectRoot: String?
+    let threadIsSettled: Bool
     let contentKey: String
 
     @MainActor
@@ -119,6 +124,7 @@ struct SelectableTranscriptTextView: NSViewRepresentable {
                 let remaining = .seconds(1) - elapsed
                 let items = items
                 let projectRoot = projectRoot
+                let threadIsSettled = threadIsSettled
                 let contentKey = contentKey
                 coordinator.pendingRebuild = Task { @MainActor [weak coordinator] in
                     do {
@@ -132,6 +138,7 @@ struct SelectableTranscriptTextView: NSViewRepresentable {
                     Self.rebuild(
                         items: items,
                         projectRoot: projectRoot,
+                        threadIsSettled: threadIsSettled,
                         contentKey: contentKey,
                         textView: textView,
                         scrollView: scrollView,
@@ -145,6 +152,7 @@ struct SelectableTranscriptTextView: NSViewRepresentable {
         Self.rebuild(
             items: items,
             projectRoot: projectRoot,
+            threadIsSettled: threadIsSettled,
             contentKey: contentKey,
             textView: textView,
             scrollView: scrollView,
@@ -166,6 +174,7 @@ struct SelectableTranscriptTextView: NSViewRepresentable {
         Self.rebuild(
             items: items,
             projectRoot: projectRoot,
+            threadIsSettled: threadIsSettled,
             contentKey: contentKey,
             textView: textView,
             scrollView: scrollView,
@@ -174,8 +183,9 @@ struct SelectableTranscriptTextView: NSViewRepresentable {
     }
 
     private static func rebuild(
-        items: [TimelineDisplayItem],
+        items: [TimelineItem],
         projectRoot: String?,
+        threadIsSettled: Bool,
         contentKey: String,
         textView: NSTextView,
         scrollView: NSScrollView,
@@ -186,7 +196,8 @@ struct SelectableTranscriptTextView: NSViewRepresentable {
         let previousOrigin = scrollView.contentView.bounds.origin
         let attributed = TranscriptTextBuilder.attributedString(
             from: items,
-            projectRoot: projectRoot)
+            projectRoot: projectRoot,
+            threadIsSettled: threadIsSettled)
         textView.textStorage?.setAttributedString(attributed)
         coordinator.appliedKey = contentKey
         coordinator.lastRebuild = ContinuousClock.now
@@ -209,7 +220,7 @@ struct SelectableTranscriptTextView: NSViewRepresentable {
 
 // MARK: - Flattening
 
-/// Pure builder: timeline display items → one selectable attributed string.
+/// Pure builder: raw timeline items → one selectable attributed string.
 @MainActor
 enum TranscriptTextBuilder {
     private static var bodyFont: NSFont {
@@ -226,8 +237,39 @@ enum TranscriptTextBuilder {
     }
 
     static func attributedString(
+        from items: [TimelineItem],
+        projectRoot: String? = nil,
+        threadIsSettled: Bool = false
+    ) -> NSAttributedString {
+        // Select Text intentionally uses the pre-separator grouping contract:
+        // day rows are visual chrome and must not flush a tool burst.
+        let displayItems = items.groupedForDisplay(
+            threadIsSettled: threadIsSettled, includeSeparators: false)
+        return attributedString(fromDisplayItems: displayItems, projectRoot: projectRoot)
+    }
+
+    /// Compatibility overload for callers that already have display items.
+    /// Rebuild from raw items so separator-induced grouping changes cannot
+    /// affect serialization even when a caller passes the visual timeline.
+    static func attributedString(
         from items: [TimelineDisplayItem],
-        projectRoot: String? = nil
+        projectRoot: String? = nil,
+        threadIsSettled: Bool = false
+    ) -> NSAttributedString {
+        let rawItems = items.flatMap { display -> [TimelineItem] in
+            switch display {
+            case .single(let item): [item]
+            case .toolGroup(_, let groupItems, _): groupItems
+            case .daySeparator: []
+            }
+        }
+        return attributedString(
+            from: rawItems, projectRoot: projectRoot, threadIsSettled: threadIsSettled)
+    }
+
+    private static func attributedString(
+        fromDisplayItems items: [TimelineDisplayItem],
+        projectRoot: String?
     ) -> NSAttributedString {
         let result = NSMutableAttributedString()
         var didWrite = false
@@ -250,6 +292,8 @@ enum TranscriptTextBuilder {
                     _ = append(nested, to: result, projectRoot: projectRoot, leadingBreak: true)
                 }
                 didWrite = true
+            case .daySeparator:
+                continue
             }
         }
         return result

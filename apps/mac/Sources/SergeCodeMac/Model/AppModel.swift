@@ -4,16 +4,28 @@ import Observation
 @Observable
 @MainActor
 public final class AppModel {
+    public let deviceID: DeviceID
+    public let deviceName: String?
+    public let capabilities: BackendCapabilities
+
     public private(set) var connection: ConnectionPhase = .launchingServer
     public private(set) var projects: [Project] = []
     public private(set) var threads: [ChatThread] = []
+    /// Thread IDs pinned locally in the macOS client. Pinning is intentionally
+    /// client-local: it is sidebar organization, not server thread metadata.
+    public private(set) var pinnedThreadIDs: Set<String>
     public private(set) var providers: [ProviderInstance] = []
     public private(set) var models: [ModelOption] = []
+    /// Server-catalog display names keyed by model slug for timeline badges.
+    public private(set) var modelDisplayNames: [String: String] = [:]
     /// Low-frequency usage-limit card actions — stays flat on AppModel (not ThreadState).
     public private(set) var usageLimitActions: [String: UsageLimitActionState] = [:]
     /// Per-task stop failures for subagent rows (`taskId` → message). Transient;
     /// cleared on the next successful stop, a new stop attempt, or task state change.
     public private(set) var subagentStopErrors: [String: String] = [:]
+    /// Cross-thread task projection. The task rows survive timeline eviction;
+    /// only the live flag changes when a thread leaves the subscription LRU.
+    let subagentTaskAggregator = SubagentTaskAggregator()
     /// Outcome of the most recent git action, shown as a transient banner.
     public var lastGitActionOutcome: GitActionOutcome?
 
@@ -47,7 +59,9 @@ public final class AppModel {
     static let maxRetainedTimelineItems = 500
 
     /// In-app dictation (mic → local ASR → on-device cleanup → composer).
-    public let dictation = DictationController()
+    /// Multiple device models may share one controller so ASR stays a single
+    /// process-wide resource.
+    public let dictation: DictationController
 
     /// Text staged for the composer by a timeline action (Edit on a sent
     /// message). The composer consumes it via `takeComposerPrefill`. A fresh
@@ -86,6 +100,8 @@ public final class AppModel {
     private var usageLimitResumeTasks: [String: Task<Void, Never>] = [:]
     private var dismissedUsageLimitIDs: Set<String> = []
 
+    private static let pinnedThreadIDsKey = "SergeCode.pinnedThreadIDs"
+
     private static let usageLimitContinuationPrompt =
         "Continue the interrupted task from where you stopped."
 
@@ -123,9 +139,65 @@ public final class AppModel {
     /// the sidebar array is left alone so rows don't jump, but new-thread
     /// insertion still sorts against the real latest activity time.
     @ObservationIgnored private var effectiveUpdatedAt: [String: Date] = [:]
+    /// Direct lookup used by scenery resolution. Keys are local thread ids or
+    /// device-scoped remote thread ids, matching `scopedThreadKey(_:)`.
+    @ObservationIgnored private var projectPathByThreadKey: [String: String] = [:]
 
-    public init(backend: any BackendService) {
+    public init(
+        backend: any BackendService,
+        deviceID: DeviceID = .local,
+        deviceName: String? = nil,
+        capabilities: BackendCapabilities = .local,
+        dictation: DictationController? = nil
+    ) {
+        self.deviceID = deviceID
+        self.deviceName = deviceName
+        self.capabilities = capabilities
         self.backend = backend
+        self.dictation = dictation ?? DictationController()
+        self.pinnedThreadIDs = Set(
+            UserDefaults.standard.stringArray(forKey: Self.pinnedThreadIDsKey) ?? [])
+    }
+
+    public var isRemote: Bool { deviceID != .local }
+
+    /// Key used by shared UI stores whose lifetime spans multiple device
+    /// models. Local keys intentionally remain the historical raw thread id.
+    public func scopedThreadKey(_ threadID: String) -> String {
+        isRemote ? "\(deviceID.rawValue)/\(threadID)" : threadID
+    }
+
+    public func isThreadPinned(_ thread: ChatThread) -> Bool {
+        pinnedThreadIDs.contains(thread.id)
+    }
+
+    public func togglePinned(_ thread: ChatThread) {
+        if pinnedThreadIDs.contains(thread.id) {
+            pinnedThreadIDs.remove(thread.id)
+        } else {
+            pinnedThreadIDs.insert(thread.id)
+        }
+        persistPinnedThreadIDs()
+    }
+
+    /// Keeps the existing newest-first order within each group while moving
+    /// pinned rows ahead of unpinned rows.
+    static func pinnedFirst(_ threads: [ChatThread], pinnedIDs: Set<String>) -> [ChatThread] {
+        threads.filter { pinnedIDs.contains($0.id) }
+            + threads.filter { !pinnedIDs.contains($0.id) }
+    }
+
+    private func persistPinnedThreadIDs() {
+        UserDefaults.standard.set(Array(pinnedThreadIDs), forKey: Self.pinnedThreadIDsKey)
+    }
+
+    private static func makeModelDisplayNames(from models: [ModelOption]) -> [String: String] {
+        models.reduce(into: [String: String]()) { displayNames, model in
+            let slug = model.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+            let displayName = model.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !slug.isEmpty, !displayName.isEmpty, displayNames[slug] == nil else { return }
+            displayNames[slug] = displayName
+        }
     }
 
     /// Lookup only — does not create a `ThreadState`.
@@ -200,9 +272,9 @@ public final class AppModel {
 
     public func start() {
         guard eventTask == nil else { return }
-        let stream = backend.events
         let backend = backend
         eventTask = Task { [weak self] in
+            let stream = await backend.events()
             async let _ = backend.start()
             for await event in stream {
                 self?.enqueue(event)
@@ -210,10 +282,19 @@ public final class AppModel {
         }
     }
 
-    public func shutdown() async {
-        flushPendingEvents()
+    /// Cancels MainActor-owned lifecycle work before a caller tears down the
+    /// backend from a non-MainActor context.
+    func prepareForTermination() {
         eventTask?.cancel()
         eventTask = nil
+    }
+
+    /// Shutdown needs the backend after MainActor-owned tasks have stopped.
+    var backendForShutdown: any BackendService { backend }
+
+    public func shutdown() async {
+        flushPendingEvents()
+        prepareForTermination()
         await backend.stop()
     }
 
@@ -376,6 +457,9 @@ public final class AppModel {
                 items.upsertTimelineItem(item, indexByID: &indexByThread[threadID]!)
                 touched[threadID] = items
                 structuralThreads.insert(threadID)
+                if case .subagentTask(let task) = item {
+                    subagentTaskAggregator.upsert(task, for: threadID)
+                }
                 recordInteraction(item, threadID: threadID)
             case .timelineReset(let threadID, let items):
                 // A snapshot can truncate or replace an in-flight message;
@@ -415,6 +499,8 @@ public final class AppModel {
             }
             if resetThreads.contains(threadID) {
                 state.hasLoadedTimeline = true
+                subagentTaskAggregator.replaceTasks(
+                    subagentTasks(from: items), for: threadID)
             }
         }
     }
@@ -428,7 +514,9 @@ public final class AppModel {
             }
         case .projectsChanged(let list):
             projects = list
+            rebuildProjectPathIndex()
         case .threadUpserted(let thread):
+            subagentTaskAggregator.updateThread(thread)
             // Update in place: `updatedAt` bumps on every activity while a
             // thread runs, so resorting here made sidebar rows jump around
             // mid-conversation. Order is recomputed only on refreshAll.
@@ -461,8 +549,13 @@ public final class AppModel {
             if shouldSendQueuedMessage(previousStatus: previousStatus, newStatus: thread.status) {
                 dequeueNextQueuedMessageIfNeeded(threadID: thread.id)
             }
+            updateProjectPathIndex(for: thread)
         case .threadRemoved(let id):
+            subagentTaskAggregator.remove(threadID: id)
             threads.removeAll { $0.id == id }
+            if pinnedThreadIDs.remove(id) != nil {
+                persistPinnedThreadIDs()
+            }
             // ThreadState owns the in-memory composer draft, so removing the
             // child also drops that thread's text and staged attachments.
             threadStates[id] = nil
@@ -472,8 +565,9 @@ public final class AppModel {
             queuedMessagesByThread[id] = nil
             queuedSendInFlightThreadIDs.remove(id)
             queuedRetryTokensByThread[id] = nil
+            projectPathByThreadKey[scopedThreadKey(id)] = nil
             if composerPrefill?.threadID == id { composerPrefill = nil }
-            TimelineDisplayCache.evict(threadID: id)
+            TimelineDisplayCache.evict(threadID: scopedThreadKey(id))
             StreamingMarkdownCache.evict(threadID: id)
             if selectedThreadID == id { selectedThreadID = nil }
         case .approvalRequested, .userInputRequested:
@@ -617,8 +711,19 @@ public final class AppModel {
             let refreshedThreads = try await threads.sorted { $0.updatedAt > $1.updatedAt }
             self.projects = try await projects
             self.threads = refreshedThreads
+            rebuildProjectPathIndex()
+            let liveThreadIDs = Set(refreshedThreads.map(\.id))
+            if pinnedThreadIDs.intersection(liveThreadIDs) != pinnedThreadIDs {
+                pinnedThreadIDs.formIntersection(liveThreadIDs)
+                persistPinnedThreadIDs()
+            }
+            for thread in refreshedThreads {
+                subagentTaskAggregator.updateThread(thread)
+            }
             self.providers = try await providers
-            self.models = try await models
+            let refreshedModels = try await models
+            self.models = refreshedModels
+            self.modelDisplayNames = Self.makeModelDisplayNames(from: refreshedModels)
             self.effectiveUpdatedAt.removeAll(keepingCapacity: true)
             for thread in refreshedThreads
             where shouldSendQueuedMessage(
@@ -633,24 +738,54 @@ public final class AppModel {
 
     public func refreshModels() async {
         do {
-            models = try await backend.models()
+            let refreshedModels = try await backend.models()
+            models = refreshedModels
+            modelDisplayNames = Self.makeModelDisplayNames(from: refreshedModels)
         } catch {
             lastError = String(describing: error)
         }
     }
 
+    /// Returns the project path for a scenery lookup key in O(1) time.
+    public func projectPath(forScopedThreadKey threadKey: String) -> String? {
+        projectPathByThreadKey[threadKey]
+    }
+
+    private func rebuildProjectPathIndex() {
+        let pathsByProjectID = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0.path) })
+        projectPathByThreadKey = Dictionary(
+            threads.compactMap { thread in
+                pathsByProjectID[thread.projectID].map {
+                    (scopedThreadKey(thread.id), $0)
+                }
+            },
+            uniquingKeysWith: { _, latest in latest })
+    }
+
+    private func updateProjectPathIndex(for thread: ChatThread) {
+        let key = scopedThreadKey(thread.id)
+        projectPathByThreadKey[key] = projects.first(where: { $0.id == thread.projectID })?.path
+    }
+
     public func loadTimelineIfNeeded(threadID: String) async {
         let state = self.state(creating: threadID)
-        guard !state.hasLoadedTimeline else { return }
+        guard !state.hasLoadedTimeline else {
+            subagentTaskAggregator.setLive(true, for: threadID)
+            return
+        }
         state.isLoadingTimeline = true
         defer { state.isLoadingTimeline = false }
         do {
             let items = try await backend.timeline(threadID: threadID)
-            state.timeline = items.filter { !isDismissedUsageLimit($0) }
+            let filtered = items.filter { !isDismissedUsageLimit($0) }
+            state.timeline = filtered
             state.timelineVersion += 1
             state.structureVersion += 1
             state.hasLoadedTimeline = true
-            for item in state.timeline {
+            subagentTaskAggregator.setLive(true, for: threadID)
+            subagentTaskAggregator.replaceTasks(
+                subagentTasks(from: filtered), for: threadID)
+            for item in filtered {
                 recordInteraction(item, threadID: threadID)
             }
         } catch {
@@ -1080,7 +1215,6 @@ public final class AppModel {
         do {
             let thread = try await backend.createThread(
                 projectID: projectID, provider: provider, title: title)
-            selectedThreadID = thread.id
             return thread
         } catch {
             lastError = String(describing: error)
@@ -1233,8 +1367,8 @@ public final class AppModel {
         }
     }
 
-    public func stopSubagentTask(taskId: String) async {
-        guard let threadID = selectedThreadID else { return }
+    public func stopSubagentTask(taskId: String, threadID: String? = nil) async {
+        guard let threadID = threadID ?? selectedThreadID else { return }
         // Clear any prior stop error so a retry starts clean.
         subagentStopErrors[taskId] = nil
         do {
@@ -1299,6 +1433,7 @@ public final class AppModel {
             }
             threads.removeAll { $0.projectID == project.id }
             projects.removeAll { $0.id == project.id }
+            rebuildProjectPathIndex()
         } catch {
             lastError = String(describing: error)
         }
@@ -1377,6 +1512,10 @@ public final class AppModel {
     public func openInEditor(
         threadID: String, subpath: String?, editor: ExternalEditor
     ) async {
+        guard capabilities.opensLocalEditor else {
+            lastError = "File is on \(deviceName ?? "the remote Mac")"
+            return
+        }
         do {
             try await backend.openInEditor(threadID: threadID, subpath: subpath, editor: editor)
         } catch {
@@ -1492,11 +1631,15 @@ public final class AppModel {
     /// refresh it through `loadTimelineIfNeeded`.
     private func releaseTimeline(threadID: String) async {
         recentlySelected.removeAll { $0 == threadID }
+        subagentTaskAggregator.setLive(false, for: threadID)
         await backend.closeTimeline(threadID: threadID)
         if let state = threadStates[threadID] {
             trimRetainedTimelineIfNeeded(state)
             state.hasLoadedTimeline = false
         }
+        // Stale-while-revalidate: keep the TimelineDisplayCache entry so a
+        // re-select renders the retained snapshot instantly; only streaming
+        // parse sessions are dropped.
         StreamingMarkdownCache.evict(threadID: threadID)
     }
 
@@ -1516,10 +1659,13 @@ public final class AppModel {
                 guard threadID != self.selectedThreadID
                     && !self.recentlySelected.contains(threadID)
                 else { return }
+                self.subagentTaskAggregator.setLive(false, for: threadID)
                 if let state = self.threadStates[threadID] {
                     self.trimRetainedTimelineIfNeeded(state)
                     state.hasLoadedTimeline = false
                 }
+                // Stale-while-revalidate: keep the display cache (see
+                // releaseTimeline); only streaming parse sessions drop.
                 StreamingMarkdownCache.evict(threadID: threadID)
                 await self.backend.closeTimeline(threadID: threadID)
             }
@@ -1534,5 +1680,12 @@ public final class AppModel {
         state.timeline = Array(state.timeline.suffix(Self.maxRetainedTimelineItems))
         state.timelineVersion += 1
         state.structureVersion += 1
+    }
+
+    private func subagentTasks(from items: [TimelineItem]) -> [SubagentTaskItem] {
+        items.compactMap { item in
+            guard case .subagentTask(let task) = item else { return nil }
+            return task
+        }
     }
 }

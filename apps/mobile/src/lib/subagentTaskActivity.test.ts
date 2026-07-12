@@ -100,6 +100,9 @@ describe("deriveSubagentTasks", () => {
 
     expect(subagentTaskTitle(task)).toBe("Explore the repo");
     expect(subagentTaskIdentityBadge(task)).toBe("Explore · sonnet-5");
+    expect(subagentTaskIdentityBadge(task, new Map([["claude-sonnet-5", "Sonnet 5"]]))).toBe(
+      "Explore · Sonnet 5",
+    );
     expect(subagentTaskSubtitle(task)).toBe("Found 3 usages");
   });
 

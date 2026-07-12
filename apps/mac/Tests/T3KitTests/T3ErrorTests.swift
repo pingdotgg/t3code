@@ -70,15 +70,16 @@ struct T3ErrorTests {
             .transport("socket error"),
             .decoding("bad frame"),
             .auth("ticket expired"),
+            .unauthorized("session expired"),
             .unexpectedFrame("saw an array where an object was expected"),
         ]
-        #expect(cases.count == 8)
+        #expect(cases.count == 9)
 
         for error in cases {
             switch error {
             case .notConnected, .pingTimeout:
                 continue
-            case .connectionClosed, .transport, .decoding, .auth, .unexpectedFrame, .rpc:
+            case .connectionClosed, .transport, .decoding, .auth, .unauthorized, .unexpectedFrame, .rpc:
                 continue
             }
         }

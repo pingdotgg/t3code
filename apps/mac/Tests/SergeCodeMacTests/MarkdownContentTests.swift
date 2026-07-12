@@ -124,6 +124,33 @@ struct MarkdownContentTests {
         #expect(text(trailing) == "trailing paragraph")
     }
 
+    @Test("gates every block in the trailing streaming source span")
+    func streamingHighlightGateCoversNestedBlocks() throws {
+        let document = parseMarkdownDocument(
+            "- parent\n\n    ```swift\n    let answer = 42\n    ```\n\n    trailing paragraph")
+        let lastSourceKey = try #require(document.blockKeys.last)
+
+        #expect(document.blockKeys.dropLast().contains(lastSourceKey))
+        #expect(
+            !markdownBlockAllowsHighlight(
+                style: .assistant,
+                isStreaming: true,
+                sourceKey: lastSourceKey,
+                lastSourceKey: lastSourceKey))
+        #expect(
+            markdownBlockAllowsHighlight(
+                style: .assistant,
+                isStreaming: true,
+                sourceKey: "earlier-source",
+                lastSourceKey: lastSourceKey))
+        #expect(
+            markdownBlockAllowsHighlight(
+                style: .assistant,
+                isStreaming: false,
+                sourceKey: lastSourceKey,
+                lastSourceKey: lastSourceKey))
+    }
+
     @Test("keeps unsupported block text after the list item")
     func listItemUnsupportedBlockOrder() throws {
         let blocks = parseMarkdownBlocks(
@@ -261,6 +288,83 @@ struct MarkdownContentTests {
             if case .rule = $0 { return true }
             return false
         })
+    }
+
+    @Test("collapses Markdown block rhythm like CSS margins")
+    func markdownThemeGaps() {
+        #expect(MarkdownTheme.gap(after: nil, before: .paragraph) == 0)
+        #expect(MarkdownTheme.gap(after: .heading(level: 1), before: .paragraph) == 12)
+        #expect(MarkdownTheme.gap(after: .listItem, before: .taskItem) == 4)
+        #expect(MarkdownTheme.gap(after: .rule, before: .paragraph) == 20)
+    }
+
+    @Test("maps all six heading levels to semantic type and color tokens")
+    func markdownThemeHeadingTokens() {
+        let fonts = (1...6).map(MarkdownTheme.headingFont)
+        #expect(fonts[0] != fonts[1])
+        #expect(fonts[1] != fonts[2])
+        #expect(fonts[2] != fonts[3])
+        #expect(fonts[3] != fonts[4])
+        #expect(fonts[4] == fonts[5])
+
+        let foregrounds = (1...6).map(MarkdownTheme.headingForeground)
+        #expect(foregrounds.dropLast().allSatisfy { $0 == .primary })
+        #expect(foregrounds[5] == .secondary)
+        #expect(MarkdownTheme.headingHasRule(1))
+        #expect(MarkdownTheme.headingHasRule(2))
+        #expect(!MarkdownTheme.headingHasRule(3))
+    }
+
+    @Test("user bubble style downgrades code and table blocks while keeping list blocks")
+    func userBubbleRenderingTokens() {
+        let document = MarkdownBlockCache.document(
+            for: """
+            - keep this list item
+
+            | Name | Status |
+            | --- | --- |
+            | Build | ok |
+
+            ```swift
+            let answer = 42
+            ```
+            """)
+        #expect(document.blocks.contains {
+            if case .bulletItem = $0 { return true }
+            return false
+        })
+        #expect(document.blocks.contains {
+            if case .codeBlock = $0 { return true }
+            return false
+        })
+        #expect(document.blocks.contains {
+            if case .table = $0 { return true }
+            return false
+        })
+
+        let tokens = MarkdownTheme.tokens(for: .userBubble)
+        #expect(tokens.proseForeground == .white)
+        #expect(tokens.headingForeground == .white)
+        #expect(tokens.listMarkerForeground == .whiteOpacity(0.75))
+        #expect(tokens.taskCheckboxForeground == .whiteOpacity(0.75))
+        #expect(tokens.inlineCodeBackground == .whiteOpacity(0.18))
+        #expect(tokens.quoteBar == .whiteOpacity(0.6))
+        #expect(tokens.quoteText == .whiteOpacity(0.85))
+        #expect(tokens.quoteFill == .whiteOpacity(0.08))
+        #expect(tokens.rule == .whiteOpacity(0.35))
+        #expect(tokens.linksAreUnderlined)
+        #expect(
+            MarkdownTheme.blockRendering(for: .code, style: .userBubble)
+                == .plainPanel)
+        #expect(
+            MarkdownTheme.blockRendering(for: .table, style: .userBubble)
+                == .plainPanel)
+        #expect(
+            MarkdownTheme.blockRendering(for: .listItem, style: .userBubble)
+                == .rich)
+        #expect(
+            MarkdownTheme.blockRendering(for: .code, style: .assistant)
+                == .rich)
     }
 
     @Test("parses a mixed GFM document into the extended IR")

@@ -118,7 +118,7 @@ struct AppModelTimelineEvictionTests {
             version: retainedState.timelineVersion,
             structureVersion: retainedState.structureVersion,
             threadIsSettled: false)
-        _ = StreamingMarkdownCache.blocks(
+        _ = StreamingMarkdownCache.document(
             threadID: retainedID, messageID: "streaming", markdown: "initial")
         #expect(TimelineDisplayCache.fullPassCount == 1)
         #expect(StreamingMarkdownCache.resetCount == 0)
@@ -138,7 +138,7 @@ struct AppModelTimelineEvictionTests {
             threadIsSettled: false)
         #expect(TimelineDisplayCache.fullPassCount == 1)
 
-        _ = StreamingMarkdownCache.blocks(
+        _ = StreamingMarkdownCache.document(
             threadID: retainedID, messageID: "streaming", markdown: "replacement")
         #expect(StreamingMarkdownCache.resetCount == 0)
     }

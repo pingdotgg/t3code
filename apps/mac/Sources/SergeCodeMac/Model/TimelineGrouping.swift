@@ -11,11 +11,21 @@ public enum TimelineDisplayItem: Identifiable, Sendable {
     /// A finished run of consecutive tool/reasoning rows, condensed behind
     /// one disclosure ("Ran 6 tools · edited 3 files").
     case toolGroup(id: String, items: [TimelineItem], summary: ToolGroupSummary)
+    case daySeparator(id: String, label: String)
 
     public var id: String {
         switch self {
         case .single(let item): item.id
         case .toolGroup(let id, _, _): id
+        case .daySeparator(let id, _): id
+        }
+    }
+
+    public var at: Date? {
+        switch self {
+        case .single(let item): item.at
+        case .toolGroup(_, let items, _): items.first?.at
+        case .daySeparator: nil
         }
     }
 }
@@ -33,6 +43,62 @@ public struct ToolGroupSummary: Hashable, Sendable {
     }
 }
 
+private func formattedTimelineDate(
+    _ date: Date,
+    calendar: Calendar,
+    style: Date.FormatStyle
+) -> String {
+    var style = style
+    style.calendar = calendar
+    style.timeZone = calendar.timeZone
+    return date.formatted(style)
+}
+
+/// Human-readable label for a calendar-day separator. The relative date and
+/// calendar are explicit so grouping and its labels remain deterministic in
+/// tests and across time zones.
+func separatorLabel(for date: Date, relativeTo now: Date, calendar: Calendar) -> String {
+    if calendar.isDate(date, inSameDayAs: now) {
+        return "Today"
+    }
+
+    if let yesterday = calendar.date(byAdding: .day, value: -1, to: now),
+        calendar.isDate(date, inSameDayAs: yesterday)
+    {
+        return "Yesterday"
+    }
+
+    let dateYear = calendar.component(.year, from: date)
+    let nowYear = calendar.component(.year, from: now)
+    if dateYear != nowYear {
+        return formattedTimelineDate(
+            date,
+            calendar: calendar,
+            style: .dateTime.month(.abbreviated).day().year())
+    }
+
+    let dateDay = calendar.startOfDay(for: date)
+    let nowDay = calendar.startOfDay(for: now)
+    if let dayDistance = calendar.dateComponents([.day], from: dateDay, to: nowDay).day,
+        (2...6).contains(dayDistance)
+    {
+        return formattedTimelineDate(
+            date,
+            calendar: calendar,
+            style: .dateTime.weekday(.wide))
+    }
+
+    return formattedTimelineDate(
+        date,
+        calendar: calendar,
+        style: .dateTime.month(.abbreviated).day())
+}
+
+/// Time-only label used when a same-day pause separates two transcript items.
+func separatorTimeLabel(for date: Date, calendar: Calendar) -> String {
+    formattedTimelineDate(date, calendar: calendar, style: .dateTime.hour().minute())
+}
+
 extension Array where Element == TimelineItem {
     /// Collapses each maximal run of consecutive tool-event/reasoning rows
     /// into a `toolGroup` when the run is over: at least two tools, none
@@ -47,7 +113,10 @@ extension Array where Element == TimelineItem {
     /// MainActor: routes file-change parsing through `ToolDetailParseCache`.
     @MainActor
     func groupedForDisplayWithRanges(
-        threadIsSettled: Bool = false
+        threadIsSettled: Bool = false,
+        now: Date = Date(),
+        calendar: Calendar = .current,
+        includeSeparators: Bool = true
     ) -> (items: [TimelineDisplayItem], ranges: [Range<Int>]) {
         var result: [TimelineDisplayItem] = []
         var ranges: [Range<Int>] = []
@@ -83,7 +152,28 @@ extension Array where Element == TimelineItem {
             ranges.append(sourceRange)
         }
 
+        func separatorForItem(_ item: TimelineItem, previousAt: Date?) -> String? {
+            guard let currentAt = item.at, let previousAt else { return nil }
+            guard currentAt >= previousAt else { return nil }
+            if !calendar.isDate(currentAt, inSameDayAs: previousAt) {
+                return separatorLabel(
+                    for: currentAt, relativeTo: now, calendar: calendar)
+            }
+            guard currentAt.timeIntervalSince(previousAt) > 60 * 60 else { return nil }
+            return separatorTimeLabel(for: currentAt, calendar: calendar)
+        }
+
+        var previousAt: Date?
+
         for (index, item) in self.enumerated() {
+            if includeSeparators, let label = separatorForItem(item, previousAt: previousAt) {
+                flush(somethingFollows: true)
+                result.append(.daySeparator(id: "day-separator:\(item.id)", label: label))
+                // Separators are visual chrome over no source items: an empty
+                // range keeps the ranges array parallel with the result rows.
+                ranges.append(index..<index)
+            }
+
             switch item {
             case .toolEvent, .reasoning:
                 run.append((index, item))
@@ -92,14 +182,28 @@ extension Array where Element == TimelineItem {
                 result.append(.single(item))
                 ranges.append(index..<(index + 1))
             }
+
+            if let at = item.at, previousAt.map({ at > $0 }) ?? true {
+                previousAt = at
+            }
         }
         flush(somethingFollows: false)
         return (result, ranges)
     }
 
     @MainActor
-    public func groupedForDisplay(threadIsSettled: Bool = false) -> [TimelineDisplayItem] {
-        groupedForDisplayWithRanges(threadIsSettled: threadIsSettled).items
+    public func groupedForDisplay(
+        threadIsSettled: Bool = false,
+        now: Date = Date(),
+        calendar: Calendar = .current,
+        includeSeparators: Bool = true
+    ) -> [TimelineDisplayItem] {
+        groupedForDisplayWithRanges(
+            threadIsSettled: threadIsSettled,
+            now: now,
+            calendar: calendar,
+            includeSeparators: includeSeparators
+        ).items
     }
 
     private struct ToolCall {
@@ -133,14 +237,16 @@ extension Array where Element == TimelineItem {
 /// `groupedForDisplay` walks the whole timeline and re-parses file-change
 /// details. The cache separates structure identity from content identity so
 /// in-place assistant streaming can refresh rows without repeating the full
-/// grouping pass. One entry per thread — only the latest key/value pair is
-/// kept.
+/// grouping pass. Structure identity includes the calendar day so a stale
+/// Today/Yesterday label cannot survive midnight. One entry per thread —
+/// only the latest key/value pair is kept.
 @MainActor
 enum TimelineDisplayCache {
     private struct StructureKey: Equatable {
         var threadID: String
         var structureVersion: Int
         var threadIsSettled: Bool
+        var relativeDay: Date
     }
 
     private struct Entry {
@@ -161,13 +267,17 @@ enum TimelineDisplayCache {
         structureVersion: Int,
         threadIsSettled: Bool
     ) -> [TimelineDisplayItem] {
+        let now = Date()
+        let calendar = Calendar.current
         let structureKey = StructureKey(
             threadID: threadID,
             structureVersion: structureVersion,
-            threadIsSettled: threadIsSettled)
+            threadIsSettled: threadIsSettled,
+            relativeDay: calendar.startOfDay(for: now))
 
         func fullPassAndStore() -> [TimelineDisplayItem] {
-            let result = fullPass(items: items, threadIsSettled: threadIsSettled)
+            let result = fullPass(
+                items: items, threadIsSettled: threadIsSettled, now: now, calendar: calendar)
             storage[threadID] = Entry(
                 structureKey: structureKey,
                 timelineVersion: version,
@@ -198,6 +308,8 @@ enum TimelineDisplayCache {
         }
 
         let boundariesMatch = zip(entry.items, entry.ranges).allSatisfy { cached, range in
+            if case .daySeparator = cached { return range.isEmpty }
+            guard !range.isEmpty, range.upperBound <= items.count else { return false }
             let firstID = items[range.lowerBound].id
             let lastID = items[range.upperBound - 1].id
             switch cached {
@@ -208,6 +320,8 @@ enum TimelineDisplayCache {
                 return range.count == cachedItems.count
                     && firstID == first.id
                     && lastID == last.id
+            case .daySeparator:
+                return range.isEmpty
             }
         }
 #if DEBUG
@@ -228,6 +342,10 @@ enum TimelineDisplayCache {
             case .toolGroup(let id, _, let summary):
                 return .toolGroup(
                     id: id, items: Array(items[range]), summary: summary)
+            case .daySeparator:
+                // Label freshness is guaranteed by relativeDay in the
+                // structure key; content refreshes reuse it as-is.
+                return cached
             }
         }
         storage[threadID] = Entry(
@@ -239,13 +357,14 @@ enum TimelineDisplayCache {
     }
 
     private static func fullPass(
-        items: [TimelineItem], threadIsSettled: Bool
+        items: [TimelineItem], threadIsSettled: Bool, now: Date, calendar: Calendar
     ) -> (items: [TimelineDisplayItem], ranges: [Range<Int>]) {
         fullPassCount += 1
         PerfMetrics.count("grouping.fullPass")
         return PerfSignpost.interval("grouping") {
             PerfMetrics.measure("grouping") {
-                items.groupedForDisplayWithRanges(threadIsSettled: threadIsSettled)
+                items.groupedForDisplayWithRanges(
+                    threadIsSettled: threadIsSettled, now: now, calendar: calendar)
             }
         }
     }
@@ -253,8 +372,7 @@ enum TimelineDisplayCache {
     private static func rangesCoverAllItems(_ ranges: [Range<Int>], itemCount: Int) -> Bool {
         var nextIndex = 0
         for range in ranges {
-            guard !range.isEmpty, range.lowerBound == nextIndex,
-                range.upperBound <= itemCount
+            guard range.lowerBound == nextIndex, range.upperBound <= itemCount
             else { return false }
             nextIndex = range.upperBound
         }

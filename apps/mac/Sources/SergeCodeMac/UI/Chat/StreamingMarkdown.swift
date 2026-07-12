@@ -208,14 +208,16 @@ enum StreamingMarkdownCache {
     private(set) static var tailBytesParsedTotal = 0
     private(set) static var resetCount = 0
 
-    static func blocks(threadID: String, messageID: String, markdown: String) -> [MarkdownBlock] {
+    static func document(
+        threadID: String, messageID: String, markdown: String
+    ) -> ParsedMarkdownDocument {
         let session = session(threadID: threadID, messageID: messageID)
         let byteCount = markdown.utf8.count
 
         // SwiftUI can reevaluate a view many times between two stream flushes.
         // The count is the cheap identity key for that unchanged body value.
         if byteCount == session.lastCount {
-            return session.lastBlocks
+            return session.lastDocument
         }
 
         withContiguousUTF8(markdown) { input in
@@ -243,20 +245,26 @@ enum StreamingMarkdownCache {
             let boundary = session.scanner.lastSafeBoundary
             let segment = String(
                 decoding: session.bytes[session.settledUpTo..<boundary], as: UTF8.self)
-            let parsed = MarkdownBlockCache.document(for: segment).blocks
-            session.settledBlocks.append(contentsOf: parsed)
+            let parsed = MarkdownBlockCache.document(for: segment)
+            session.settledBlocks.append(contentsOf: parsed.blocks)
+            session.settledKeys.append(contentsOf: parsed.blockKeys)
             session.settledUpTo = boundary
             segmentParseCount += 1
         }
 
         let tailByteCount = session.bytes.count - session.settledUpTo
         let tail = String(decoding: session.bytes[session.settledUpTo...], as: UTF8.self)
-        let tailBlocks = MarkdownBlockCache.document(for: tail).blocks
+        let tailDocument = MarkdownBlockCache.document(for: tail)
         tailBytesParsedTotal += tailByteCount
 
-        session.lastBlocks = session.settledBlocks + tailBlocks
+        // Segment-relative source keys can repeat across segments; the
+        // renderer disambiguates identical keys by occurrence, so the
+        // concatenation stays render-stable.
+        session.lastDocument = ParsedMarkdownDocument(
+            blocks: session.settledBlocks + tailDocument.blocks,
+            blockKeys: session.settledKeys + tailDocument.blockKeys)
         session.lastCount = byteCount
-        return session.lastBlocks
+        return session.lastDocument
     }
 
     static func finish(threadID: String, messageID: String) {
@@ -308,9 +316,10 @@ enum StreamingMarkdownCache {
         session.bytes = []
         session.scanner = MarkdownSafeSplitScanner()
         session.settledBlocks = []
+        session.settledKeys = []
         session.settledUpTo = 0
         session.lastCount = -1
-        session.lastBlocks = []
+        session.lastDocument = ParsedMarkdownDocument(blocks: [], blockKeys: [])
         resetCount += 1
     }
 
@@ -340,7 +349,8 @@ private final class StreamingMarkdownSession {
     var bytes: [UInt8] = []
     var scanner = MarkdownSafeSplitScanner()
     var settledBlocks: [MarkdownBlock] = []
+    var settledKeys: [String] = []
     var settledUpTo = 0
     var lastCount = -1
-    var lastBlocks: [MarkdownBlock] = []
+    var lastDocument = ParsedMarkdownDocument(blocks: [], blockKeys: [])
 }

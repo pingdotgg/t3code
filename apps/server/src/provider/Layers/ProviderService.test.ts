@@ -137,7 +137,8 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
   );
 
   const stopTask = vi.fn(
-    (_threadId: ThreadId, _taskId: string): Effect.Effect<void, ProviderAdapterError> => Effect.void,
+    (_threadId: ThreadId, _taskId: string): Effect.Effect<void, ProviderAdapterError> =>
+      Effect.void,
   );
 
   const respondToRequest = vi.fn(

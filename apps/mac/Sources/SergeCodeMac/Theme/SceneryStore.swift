@@ -431,9 +431,12 @@ public final class SceneryStore {
     /// Two-line naming for a thread: the scene place name as the stable
     /// primary name, plus the server title as the descriptive second line
     /// once first-turn title generation has replaced the scene seed.
-    public func displayNames(for thread: ChatThread) -> (primary: String, description: String?) {
+    public func displayNames(
+        for thread: ChatThread, threadKey: String? = nil
+    ) -> (primary: String, description: String?) {
+        let key = threadKey ?? thread.id
         let title = thread.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let scene = sceneName(for: thread.id) else {
+        guard let scene = sceneName(for: key) else {
             return (title, nil)
         }
         if title.isEmpty { return (scene, nil) }
@@ -1423,13 +1426,14 @@ extension AppModel {
         let thread = await createThread(
             projectID: projectID, provider: provider, title: sceneTitle)
         if let thread, let scene, let sceneTitle {
+            let threadKey = scopedThreadKey(thread.id)
             scenery.assign(
                 photoID: scene.id,
                 name: sceneTitle,
-                to: thread.id,
+                to: threadKey,
                 projectPath: projectPath,
                 setIdOverride: effectiveSetId)
-            let setId = scenery.resolvedSetId(forThread: thread.id)
+            let setId = scenery.resolvedSetId(forThread: threadKey)
             if let set = scenery.set(id: setId) {
                 // Builtin manifests pin createdAt to epoch 0; a visit that races
                 // the startup backfill must not issue a 1970-dated page.
@@ -1437,7 +1441,7 @@ extension AppModel {
                 passport?.ensurePage(setId: set.id, title: set.title, issuedAt: issuedAt)
             }
             passport?.recordVisit(
-                threadID: thread.id,
+                threadID: threadKey,
                 setId: setId,
                 placeName: sceneTitle,
                 photoID: scene.id,

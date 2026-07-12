@@ -131,12 +131,14 @@ struct StreamingMarkdownTests {
             StreamingMarkdownCache.resetForTesting()
             MarkdownBlockCache.resetForTesting()
             stream(fixture, threadID: "equivalence-thread-\(index)", messageID: "message") {
-                StreamingMarkdownCache.blocks(
+                StreamingMarkdownCache.document(
                     threadID: "equivalence-thread-\(index)",
                     messageID: "message",
                     markdown: $0)
             } assertFullParse: { prefix, actual in
-                #expect(actual == MarkdownBlockCache.document(for: prefix).blocks)
+                let expected = MarkdownBlockCache.document(for: prefix)
+                #expect(actual.blocks == expected.blocks)
+                #expect(actual.blockKeys.count == actual.blocks.count)
             }
         }
     }
@@ -163,7 +165,7 @@ struct StreamingMarkdownTests {
         while offset < sourceBytes.count {
             let end = min(offset + 1_024, sourceBytes.count)
             prefix += String(decoding: sourceBytes[offset..<end], as: UTF8.self)
-            _ = StreamingMarkdownCache.blocks(
+            _ = StreamingMarkdownCache.document(
                 threadID: "complexity-thread", messageID: "large", markdown: prefix)
             offset = end
         }
@@ -179,14 +181,14 @@ struct StreamingMarkdownTests {
         MarkdownBlockCache.resetForTesting()
 
         let initial = "stable paragraph\n\n" + String(repeating: "streaming tail ", count: 20)
-        _ = StreamingMarkdownCache.blocks(
+        _ = StreamingMarkdownCache.document(
             threadID: "reset-thread", messageID: "reset-message", markdown: initial)
 
         let mutated = "replacement heading\n\nnew paragraph"
-        let actual = StreamingMarkdownCache.blocks(
+        let actual = StreamingMarkdownCache.document(
             threadID: "reset-thread", messageID: "reset-message", markdown: mutated)
 
-        #expect(actual == MarkdownBlockCache.document(for: mutated).blocks)
+        #expect(actual.blocks == MarkdownBlockCache.document(for: mutated).blocks)
         #expect(StreamingMarkdownCache.resetCount == 1)
     }
 
@@ -194,8 +196,8 @@ struct StreamingMarkdownTests {
         _ markdown: String,
         threadID: String,
         messageID: String,
-        receive: (String) -> [MarkdownBlock],
-        assertFullParse: (String, [MarkdownBlock]) -> Void
+        receive: (String) -> ParsedMarkdownDocument,
+        assertFullParse: (String, ParsedMarkdownDocument) -> Void
     ) {
         var random = SeededChunkGenerator(state: 0xC0D3_0004)
         let scalars = Array(markdown.unicodeScalars)

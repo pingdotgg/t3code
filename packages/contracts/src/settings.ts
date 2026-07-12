@@ -3,6 +3,10 @@ import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
+import {
+  CustomInstructionsConfig,
+  DEFAULT_CUSTOM_INSTRUCTIONS_CONFIG,
+} from "./customInstructions.ts";
 import { DEFAULT_GIT_TEXT_GENERATION_MODEL, ProviderOptionSelections } from "./model.ts";
 import { ModelSelection } from "./orchestration.ts";
 import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.ts";
@@ -524,6 +528,9 @@ export const ServerSettings = Schema.Struct({
   providerInstances: Schema.Record(ProviderInstanceId, ProviderInstanceConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  customInstructions: CustomInstructionsConfig.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_CUSTOM_INSTRUCTIONS_CONFIG)),
+  ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
@@ -665,6 +672,9 @@ export const ServerSettingsPatch = Schema.Struct({
   // patches risk leaving driver-specific config in a half-merged state.
   // The web UI sends a fully-formed map every time it edits this field.
   providerInstances: Schema.optionalKey(Schema.Record(ProviderInstanceId, ProviderInstanceConfig)),
+  // Whole-object replacement for custom instructions. The web UI sends the
+  // full global/project bundle every time it edits this field.
+  customInstructions: Schema.optionalKey(CustomInstructionsConfig),
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 

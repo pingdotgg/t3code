@@ -91,7 +91,7 @@ export function ThreadWorkLog(props: {
   return (
     <View className="-mx-1 mb-1 px-1 py-0">
       {!onlyToolRows ? (
-        <Text className="px-0.5 pb-0.5 font-t3-medium text-2xs text-foreground-muted opacity-60">
+        <Text className="px-0.5 pb-0.5 font-t3-medium text-2xs text-foreground-muted">
           work log
         </Text>
       ) : null}
@@ -148,7 +148,7 @@ export function ThreadWorkLog(props: {
                       {row.summary}
                     </Text>
                     {row.detail ? (
-                      <Text className="text-foreground-muted opacity-60"> {row.detail}</Text>
+                      <Text className="text-foreground-muted"> {row.detail}</Text>
                     ) : null}
                   </Text>
 
@@ -189,17 +189,16 @@ export function ThreadWorkLog(props: {
               </Pressable>
 
               {expanded && row.fullDetail ? (
-                <View className="ml-7 border-l border-neutral-300/60 pb-1 pl-3 pt-0.5 dark:border-white/[0.12]">
+                <View className="ml-7 mb-1 rounded-[10px] bg-white/75 px-3 py-2 dark:bg-black/40">
                   <ScrollView
                     nestedScrollEnabled
                     directionalLockEnabled
                     showsVerticalScrollIndicator
                     style={{ maxHeight: 240 }}
-                    contentContainerStyle={{ paddingRight: 8 }}
                   >
                     <Text
                       selectable
-                      className="text-2xs leading-normal text-foreground-muted"
+                      className="text-2xs leading-normal text-foreground"
                       style={{ fontFamily: "ui-monospace" }}
                     >
                       {row.fullDetail}
@@ -260,7 +259,7 @@ export function ThreadWorkGroupToggle(props: {
             type="monochrome"
           />
         </View>
-        <Text className="font-t3-medium text-xs text-foreground opacity-80">
+        <Text className="font-t3-medium text-xs text-foreground">
           {props.expanded ? expandedLabel : `+${props.hiddenCount} previous ${noun}`}
         </Text>
       </Pressable>

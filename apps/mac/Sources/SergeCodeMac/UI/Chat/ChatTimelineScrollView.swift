@@ -38,9 +38,10 @@ struct ChatTimelineScrollView: View {
         // (threadID, structureVersion, settled), with timelineVersion used
         // only for content refreshes when assistant markdown changes.
         let threadID = model.selectedThreadID ?? ""
+        let threadKey = model.scopedThreadKey(threadID)
         let displayItems = TimelineDisplayCache.grouped(
             items: items,
-            threadID: threadID,
+            threadID: threadKey,
             version: model.timelineVersion(threadID: threadID),
             structureVersion: model.timelineStructureVersion(threadID: threadID),
             threadIsSettled: threadIsSettled)
@@ -170,9 +171,6 @@ struct ChatTimelineScrollView: View {
     /// Mirrors ToolEventRow's settled rule: once the thread is no longer
     /// working, tool rows stuck "running" count as finished for grouping.
     private var threadIsSettled: Bool {
-        switch model.selectedThread?.status {
-        case .idle, .archived, .error: true
-        case .running, .waitingApproval, .backgroundWork, nil: false
-        }
+        model.selectedThread?.status.isSettled ?? false
     }
 }

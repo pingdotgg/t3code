@@ -3,8 +3,8 @@ import T3Kit
 
 // Deterministic-but-alive fake backend for UI work without the Node sidecar.
 // All mutable state lives behind an actor; the public API is the BackendService
-// protocol (Sendable, async). Events are pushed through an AsyncStream whose
-// continuation is stored on the actor so any method can emit.
+// protocol (Sendable, async). Events are pushed through a fresh AsyncStream
+// per AppModel lifecycle so restart tests behave like the live backend.
 
 private enum MockBackendError: Error, LocalizedError {
     case emptyLocation
@@ -21,15 +21,14 @@ private enum MockBackendError: Error, LocalizedError {
 }
 
 public final class MockBackend: BackendService, @unchecked Sendable {
-    public let events: AsyncStream<BackendEvent>
-    private let continuation: AsyncStream<BackendEvent>.Continuation
     private let state: MockState
 
-    public init() {
-        let (stream, continuation) = AsyncStream<BackendEvent>.makeStream()
-        self.events = stream
-        self.continuation = continuation
-        self.state = MockState(emit: { continuation.yield($0) })
+    public init(seedVariant: String? = nil) {
+        self.state = MockState(seedVariant: seedVariant)
+    }
+
+    public func events() async -> AsyncStream<BackendEvent> {
+        await state.events()
     }
 
     public func start() async {
@@ -37,7 +36,7 @@ public final class MockBackend: BackendService, @unchecked Sendable {
     }
 
     public func stop() async {
-        continuation.finish()
+        await state.stop()
     }
 
     public func projects() async throws -> [Project] {
@@ -84,7 +83,7 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         MobileAccessPreference.isEnabled
     }
 
-    public func mintMobilePairing() async throws -> MobilePairingInfo {
+    public func mintMobilePairing(label: String) async throws -> MobilePairingInfo {
         MobilePairingInfo(
             pairingURL: URL(string: "http://192.168.1.42:3773/pair#token=MOCKPAIR2345")!,
             credential: "MOCKPAIR2345",
@@ -242,6 +241,7 @@ public final class MockBackend: BackendService, @unchecked Sendable {
     }
 
     public func implementPlan(threadID: String, planID: String) async throws {
+        await state.setInteractionMode(threadID: threadID, mode: .normal)
         await state.sendMessage(threadID: threadID, text: "Implement the proposed plan.")
     }
 
@@ -277,7 +277,10 @@ public final class MockBackend: BackendService, @unchecked Sendable {
 // MARK: - Actor-isolated mutable state + demo data
 
 private actor MockState {
-    private let emit: @Sendable (BackendEvent) -> Void
+    private let seedVariant: String?
+    private let primaryThreadID: String
+
+    private var eventContinuation: AsyncStream<BackendEvent>.Continuation?
 
     private var projectsByID: [String: Project] = [:]
     private var threadsByID: [String: ChatThread] = [:]
@@ -294,15 +297,21 @@ private actor MockState {
 
     private var started = false
     private var counter = 0
+    private var lifecycleTask: Task<Void, Never>?
+    private var connectionWobbleTask: Task<Void, Never>?
 
-    init(emit: @escaping @Sendable (BackendEvent) -> Void) {
-        self.emit = emit
+    init(seedVariant: String?) {
+        let normalizedVariant = seedVariant?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.seedVariant = normalizedVariant?.isEmpty == false ? normalizedVariant : nil
+        self.primaryThreadID = self.seedVariant.map {
+            "\(Self.variantSlug($0))-thread-1"
+        } ?? "thread-1"
         // `seed()` used to run as an instance method here, but Swift 6 forbids
         // calling actor-isolated instance methods from a synchronous actor
         // init (the actor isn't considered "isolated" yet at that point).
         // Moved the seed computation into a `nonisolated static` factory that
         // builds the same values without touching `self`, then assigned here.
-        let seed = MockState.makeSeed()
+        let seed = MockState.makeSeed(seedVariant: seedVariant)
         self.projectsByID = seed.projects
         self.threadsByID = seed.threads
         self.timelinesByThread = seed.timelines
@@ -324,6 +333,21 @@ private actor MockState {
 
     // MARK: Lifecycle
 
+    func events() -> AsyncStream<BackendEvent> {
+        let (stream, continuation) = AsyncStream<BackendEvent>.makeStream()
+        eventContinuation = continuation
+        return stream
+    }
+
+    func stop() {
+        started = false
+        lifecycleTask?.cancel()
+        lifecycleTask = nil
+        connectionWobbleTask?.cancel()
+        connectionWobbleTask = nil
+        eventContinuation = nil
+    }
+
     func start() async {
         guard !started else { return }
         started = true
@@ -341,11 +365,11 @@ private actor MockState {
         }
         emit(
             .contextWindowUpdated(
-                threadID: "thread-1",
+                threadID: primaryThreadID,
                 status: ContextWindowStatus(usedTokens: 72_000, maxTokens: 200_000)))
         emit(
             .planProgressUpdated(
-                threadID: "thread-1",
+                threadID: primaryThreadID,
                 progress: PlanProgress(
                     steps: [
                         PlanStep(id: 0, title: "Reproduce the scroll jump", status: .completed),
@@ -353,7 +377,14 @@ private actor MockState {
                         PlanStep(id: 2, title: "Verify with 200-thread seed", status: .pending),
                     ],
                     explanation: nil)))
-        Task { await self.runSubagentLifecycleDemo() }
+        lifecycleTask = Task { await self.runSubagentLifecycleDemo() }
+        if seedVariant != nil {
+            connectionWobbleTask = Task { await self.runConnectionWobble() }
+        }
+    }
+
+    private func emit(_ event: BackendEvent) {
+        eventContinuation?.yield(event)
     }
 
     // MARK: Reads
@@ -657,9 +688,8 @@ private actor MockState {
         let summary = answers.values.flatMap { $0 }.joined(separator: ", ")
         let notice = TimelineItem.notice(
             id: nextID("notice"), text: "Answered: \(summary)", at: Date())
-        // The mock seeds its one user-input request on thread-1.
-        timelinesByThread["thread-1", default: []].append(notice)
-        emit(.timelineAppended(threadID: "thread-1", item: notice))
+        timelinesByThread[primaryThreadID, default: []].append(notice)
+        emit(.timelineAppended(threadID: primaryThreadID, item: notice))
     }
 
     func setRuntimeMode(threadID: String, mode: ThreadRuntimeMode) {
@@ -821,7 +851,7 @@ private actor MockState {
     }
 
     private func runSubagentLifecycleDemo() async {
-        let threadID = "thread-1"
+        let threadID = primaryThreadID
         updateSubagentDemo(
             threadID: threadID, state: .running, progress: "Using Read...", duration: nil,
             activeCount: 1)
@@ -834,6 +864,16 @@ private actor MockState {
             threadID: threadID, state: .completed,
             progress: "Found the status projection and timeline mapping points.",
             duration: 9, activeCount: 0)
+    }
+
+    private func runConnectionWobble() async {
+        try? await Task.sleep(nanoseconds: 1_200_000_000)
+        guard !Task.isCancelled, started else { return }
+        emit(.connection(.reconnecting(attempt: 1)))
+
+        try? await Task.sleep(nanoseconds: 900_000_000)
+        guard !Task.isCancelled, started else { return }
+        emit(.connection(.ready))
     }
 
     private func updateSubagentDemo(
@@ -884,9 +924,115 @@ private actor MockState {
         var checkpoints: [String: [Checkpoint]]
         var approvals: [String: ApprovalRequest]
         var providers: [ProviderInstance]
+
+        func applyingVariant(_ variant: String, slug: String) -> Seed {
+            func projectID(_ id: String) -> String { "\(slug)-\(id)" }
+            func threadID(_ id: String) -> String { "\(slug)-\(id)" }
+            func scopedKey(_ key: String) -> String {
+                guard let separator = key.firstIndex(of: ":") else {
+                    return threadID(key)
+                }
+                return threadID(String(key[..<separator])) + String(key[separator...])
+            }
+
+            let displayVariant = variant
+                .split(whereSeparator: { $0 == " " || $0 == "-" || $0 == "_" })
+                .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+                .joined(separator: " ")
+
+            let remappedProjects = Dictionary(uniqueKeysWithValues: projects.values.map { project in
+                var remapped = project
+                remapped.id = projectID(project.id)
+                switch project.id {
+                case "project-1":
+                    remapped.name = "infra-tools"
+                    remapped.path = "/Users/studio/infra-tools"
+                case "project-2":
+                    remapped.name = "studio-web"
+                    remapped.path = "/Users/studio/studio-web"
+                default:
+                    remapped.name = "\(displayVariant) \(project.name)"
+                }
+                return (remapped.id, remapped)
+            })
+
+            let remappedThreads = Dictionary(uniqueKeysWithValues: threads.values.map { thread in
+                var remapped = thread
+                remapped.id = threadID(thread.id)
+                remapped.projectID = projectID(thread.projectID)
+                switch thread.id {
+                case "thread-1": remapped.title = "Provision runners for \(displayVariant)"
+                case "thread-2": remapped.title = "Audit remote build setup"
+                case "thread-3": remapped.title = "Tune studio deployment dashboards"
+                case "thread-4": remapped.title = "Investigate remote build error"
+                case "thread-5": remapped.title = "Surface the Grok provider"
+                case "thread-6": remapped.title = "Surface the Fugu provider"
+                default: remapped.title = "\(displayVariant) \(thread.title)"
+                }
+                return (remapped.id, remapped)
+            })
+
+            func remapTimelineItem(_ item: TimelineItem) -> TimelineItem {
+                switch item {
+                case .approval(var request):
+                    request.threadID = threadID(request.threadID)
+                    return .approval(request)
+                case .userInput(var request):
+                    request.threadID = threadID(request.threadID)
+                    return .userInput(request)
+                case .usageLimit(var notice):
+                    notice.threadID = threadID(notice.threadID)
+                    return .usageLimit(notice)
+                case .checkpoint(var checkpoint):
+                    checkpoint.threadID = threadID(checkpoint.threadID)
+                    return .checkpoint(checkpoint)
+                case .plan(var plan):
+                    plan.threadID = threadID(plan.threadID)
+                    return .plan(plan)
+                default:
+                    return item
+                }
+            }
+
+            let remappedTimelines = Dictionary(uniqueKeysWithValues: timelines.map { key, items in
+                (threadID(key), items.map(remapTimelineItem))
+            })
+            let remappedDiffs = Dictionary(uniqueKeysWithValues: diffs.map { key, files in
+                (threadID(key), files)
+            })
+            let remappedScopedDiffs = Dictionary(uniqueKeysWithValues: scopedDiffs.map { key, files in
+                (scopedKey(key), files)
+            })
+            let remappedCheckpoints = Dictionary(uniqueKeysWithValues: checkpoints.map { key, values in
+                (
+                    threadID(key),
+                    values.map { checkpoint in
+                        var remapped = checkpoint
+                        remapped.threadID = threadID(checkpoint.threadID)
+                        return remapped
+                    }
+                )
+            })
+            let remappedApprovals = Dictionary(uniqueKeysWithValues: approvals.map { key, approval in
+                var remapped = approval
+                remapped.threadID = threadID(approval.threadID)
+                return (key, remapped)
+            })
+
+            return Seed(
+                projects: remappedProjects,
+                threads: remappedThreads,
+                timelines: remappedTimelines,
+                diffs: remappedDiffs,
+                scopedDiffs: remappedScopedDiffs,
+                checkpoints: remappedCheckpoints,
+                approvals: remappedApprovals,
+                providers: providers
+            )
+        }
     }
 
-    private static func makeSeed() -> Seed {
+    private static func makeSeed(seedVariant: String? = nil) -> Seed {
         let now = Date()
 
         var projectsByID: [String: Project] = [:]
@@ -1074,7 +1220,7 @@ private actor MockState {
         )
         approvalsByID[approval.id] = approval
 
-        return Seed(
+        let seed = Seed(
             projects: projectsByID,
             threads: threadsByID,
             timelines: timelinesByThread,
@@ -1084,11 +1230,26 @@ private actor MockState {
             approvals: approvalsByID,
             providers: providerList
         )
+
+        guard let seedVariant, !seedVariant.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return seed
+        }
+        return seed.applyingVariant(seedVariant, slug: variantSlug(seedVariant))
+    }
+
+    private static func variantSlug(_ value: String) -> String {
+        let slug = value
+            .lowercased()
+            .replacingOccurrences(of: "[^a-z0-9]+", with: "-", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        return slug.isEmpty ? "variant" : slug
     }
 
     private static func timelineForSidebarThread(at now: Date) -> [TimelineItem] {
         [
-            .userMessage(id: "t1-u1", text: "The sidebar list jumps around when new threads arrive. Can you fix it?", at: now.addingTimeInterval(-500)),
+            // Keep one early fixture item on yesterday's calendar day so the
+            // UI probe visibly exercises the transcript day separator.
+            .userMessage(id: "t1-u1", text: "The sidebar list jumps around when new threads arrive. Can you fix it?", at: now.addingTimeInterval(-26 * 3600)),
             .assistantMessage(
                 id: "t1-a1",
                 markdown: """

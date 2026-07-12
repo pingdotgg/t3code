@@ -14,6 +14,8 @@
     <string>0.0.1</string>
     <key>CFBundleShortVersionString</key>
     <string>0.0.1</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>© 2026 Serge Serbinenko</string>
     <key>CFBundleExecutable</key>
     <string>SergeCodeMac</string>
     <key>CFBundlePackageType</key>
@@ -26,6 +28,13 @@
     <string>NSApplication</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.developer-tools</string>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsLocalNetworking</key>
+        <true/>
+    </dict>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>SurgeCode connects to other Macs on your network that you have paired.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>SurgeCode uses the microphone for local, on-device dictation. Audio never leaves your Mac.</string>
 </dict>

@@ -17,12 +17,14 @@ public struct ChatScreen: View {
     public var body: some View {
         VStack(spacing: 0) {
             if let thread = model.selectedThread {
+                let threadKey = model.scopedThreadKey(thread.id)
                 let reviewing = model.threadState(thread.id)?.isReviewing == true
                 if reviewing {
                     DiffReviewView(model: model, threadID: thread.id)
                         .transition(Motion.paneSwap)
                 } else {
-                    ChatHeaderView(thread: thread, model: model, scenery: scenery)
+                    ChatHeaderView(
+                        thread: thread, model: model, scenery: scenery, threadKey: threadKey)
                     Divider()
                     VcsToolbar(model: model)
                     ChatTimelineScrollView(model: model, isPinnedToBottom: $isPinnedToBottom)
@@ -34,8 +36,8 @@ public struct ChatScreen: View {
                         model: model,
                         accent: AlpineTheme.accent(
                             palette: scenery.palette(
-                                for: scenery.photo(for: thread.id),
-                                setId: scenery.resolvedSetId(forThread: thread.id))))
+                                for: scenery.photo(for: threadKey),
+                                setId: scenery.resolvedSetId(forThread: threadKey))))
                         // Breathing room against the window edges and sidebars —
                         // the floating glass composer shouldn't touch chrome.
                         .padding(.horizontal, 16)
@@ -64,10 +66,11 @@ public struct ChatScreen: View {
             if let thread = model.selectedThread,
                 model.threadState(thread.id)?.isReviewing != true
             {
+                let threadKey = model.scopedThreadKey(thread.id)
                 SceneryChatBackground(
-                    scenery: scenery, photo: scenery.photo(for: thread.id),
-                    setId: scenery.resolvedSetId(forThread: thread.id),
-                    fallbackSeed: thread.id)
+                    scenery: scenery, photo: scenery.photo(for: threadKey),
+                    setId: scenery.resolvedSetId(forThread: threadKey),
+                    fallbackSeed: threadKey)
             } else {
                 Rectangle().fill(.background)
             }
@@ -88,11 +91,7 @@ public struct ChatScreen: View {
                 .disabled(model.selectedThreadID == nil)
         }
         .sheet(isPresented: $showSelectableTranscript) {
-            let threadID = model.selectedThreadID ?? ""
-            SelectableTranscriptSheet(
-                items: currentDisplayItems(),
-                projectRoot: selectedProjectRoot,
-                contentKey: "\(threadID):\(model.timelineVersion(threadID: threadID))")
+            selectableTranscriptSheet
         }
         #if DEBUG
             .onReceive(NotificationCenter.default.publisher(for: .uiProbeToggleSection)) { note in
@@ -116,28 +115,25 @@ public struct ChatScreen: View {
         }
     }
 
-    /// Same display-item source the timeline scroll view uses (cached).
-    private func currentDisplayItems() -> [TimelineDisplayItem] {
-        let items = model.selectedTimeline()
-        let threadID = model.selectedThreadID ?? ""
-        return TimelineDisplayCache.grouped(
-            items: items,
-            threadID: threadID,
-            version: model.timelineVersion(threadID: threadID),
-            structureVersion: model.timelineStructureVersion(threadID: threadID),
-            threadIsSettled: threadIsSettled)
-    }
-
-    private var threadIsSettled: Bool {
-        switch model.selectedThread?.status {
-        case .idle, .archived, .error: true
-        case .running, .waitingApproval, .backgroundWork, nil: false
-        }
-    }
 
     private var selectedProjectRoot: String? {
         guard let thread = model.selectedThread else { return nil }
         return model.projects.first { $0.id == thread.projectID }?.path
+    }
+
+    private var selectedThreadIsSettled: Bool {
+        model.selectedThread?.status.isSettled ?? false
+    }
+
+    private var selectableTranscriptSheet: SelectableTranscriptSheet {
+        let threadID = model.selectedThreadID ?? ""
+        let contentKey =
+            "\(threadID):\(model.timelineVersion(threadID: threadID)):\(selectedThreadIsSettled)"
+        return SelectableTranscriptSheet(
+            items: model.selectedTimeline(),
+            projectRoot: selectedProjectRoot,
+            threadIsSettled: selectedThreadIsSettled,
+            contentKey: contentKey)
     }
 }
 

@@ -134,7 +134,7 @@ private final class BlockingTimelineBackend: BackendService, @unchecked Sendable
 
     private(set) var timelineCallCount = 0
 
-    var events: AsyncStream<BackendEvent> { streamPair.stream }
+    func events() async -> AsyncStream<BackendEvent> { streamPair.stream }
 
     func start() async {}
     func stop() async { streamPair.continuation.finish() }
@@ -224,7 +224,7 @@ private final class BlockingTimelineBackend: BackendService, @unchecked Sendable
         fatalError("unused")
     }
     func isServerLanReachable() async -> Bool { false }
-    func mintMobilePairing() async throws -> MobilePairingInfo { fatalError("unused") }
+    func mintMobilePairing(label: String) async throws -> MobilePairingInfo { fatalError("unused") }
     func settings() async throws -> AppSettings {
         AppSettings(
             assistantStreaming: true,

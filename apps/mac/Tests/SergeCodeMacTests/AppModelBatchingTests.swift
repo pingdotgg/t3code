@@ -163,30 +163,83 @@ struct AppModelBatchingTests {
         #expect(markdown == "first second")
     }
 
-    @Test("tool lifecycle upserts replace rows in place within one flush")
-    func toolUpsertWithinFlush() {
+    @Test("lifecycle upserts preserve first timestamps for tools, reasoning, and subagents")
+    func lifecycleUpsertsPreserveFirstTimestamps() {
         let model = makeModel()
+        let firstAt = Date(timeIntervalSince1970: 1)
+        let laterAt = Date(timeIntervalSince1970: 2)
         model.enqueue(
             .timelineAppended(
                 threadID: "t1",
                 item: .toolEvent(
                     id: "tool1", name: "Bash", detail: "ls", kind: .command, status: .running,
-                    at: Date(timeIntervalSince1970: 1), output: nil, outputIsError: false)))
+                    at: firstAt, output: nil, outputIsError: false)))
         model.enqueue(
             .timelineAppended(
                 threadID: "t1",
                 item: .toolEvent(
                     id: "tool1", name: "Bash", detail: "ls", kind: .command, status: .succeeded,
-                    at: Date(timeIntervalSince1970: 2), output: nil, outputIsError: false)))
+                    at: laterAt, output: nil, outputIsError: false)))
+        model.enqueue(
+            .timelineAppended(
+                threadID: "t1",
+                item: .reasoning(id: "reasoning1", text: "thinking", at: firstAt)))
+        model.enqueue(
+            .timelineAppended(
+                threadID: "t1",
+                item: .reasoning(id: "reasoning1", text: "done", at: laterAt)))
+        model.enqueue(
+            .timelineAppended(
+                threadID: "t1",
+                item: .subagentTask(
+                    SubagentTaskItem(
+                        taskId: "agent1",
+                        taskType: "reviewer",
+                        description: "Review",
+                        state: .running,
+                        latestProgress: "Starting",
+                        startedAt: firstAt,
+                        lastActivityAt: firstAt,
+                        duration: nil))))
+        model.enqueue(
+            .timelineAppended(
+                threadID: "t1",
+                item: .subagentTask(
+                    SubagentTaskItem(
+                        taskId: "agent1",
+                        taskType: "reviewer",
+                        description: "Review",
+                        state: .completed,
+                        latestProgress: "Done",
+                        startedAt: laterAt,
+                        lastActivityAt: laterAt,
+                        duration: 1))))
         model.flushPendingEvents()
 
         let items = model.threadState("t1")?.timeline ?? []
-        #expect(items.count == 1)
-        guard case .toolEvent(_, _, _, _, let status, _, _, _) = items.first else {
-            Issue.record("expected tool event, got \(items)")
+        #expect(items.count == 3)
+        guard items.count == 3 else { return }
+        guard case .toolEvent(_, _, _, _, let status, let toolAt, _, _) = items[0] else {
+            Issue.record("expected tool event, got \(items[0])")
             return
         }
         #expect(status == .succeeded)
+        #expect(toolAt == firstAt)
+        guard case .reasoning(_, let text, let reasoningAt) = items[1] else {
+            Issue.record("expected reasoning event, got \(items[1])")
+            return
+        }
+        #expect(text == "done")
+        #expect(reasoningAt == firstAt)
+        guard case .subagentTask(let task) = items[2] else {
+            Issue.record("expected subagent task, got \(items[2])")
+            return
+        }
+        #expect(task.state == .completed)
+        #expect(task.latestProgress == "Done")
+        #expect(task.lastActivityAt == laterAt)
+        #expect(task.duration == 1)
+        #expect(task.startedAt == firstAt)
     }
 
     @Test("mutating thread B does not change thread A's identity or timeline")
