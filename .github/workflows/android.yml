@@ -58,15 +58,15 @@ jobs:
       - name: Expose pnpm
         run: |
           pnpm_version="$(node --print "require('./package.json').packageManager.split('@').pop()")"
-          vp_pnpm_bin="$HOME/.vite-plus/package_manager/pnpm/$pnpm_version/pnpm/bin"
-          echo "$vp_pnpm_bin" >> "$GITHUB_PATH"
-          "$vp_pnpm_bin" --version
+          vp_pnpm_dir="$HOME/.vite-plus/package_manager/pnpm/$pnpm_version/pnpm/bin"
+          echo "$vp_pnpm_dir" >> "$GITHUB_PATH"
+          "$vp_pnpm_dir/pnpm" --version
 
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 21
+          java-version: 17
           cache: gradle
 
       - name: Setup Android SDK
@@ -77,7 +77,7 @@ jobs:
 
       - name: Install Android build tools
         run: |
-          sdkmanager --sdk_root=$ANDROID_SDK_ROOT "platforms;android-35" "build-tools;35.0.0"
+          sdkmanager --sdk_root=$ANDROID_SDK_ROOT "platforms;android-36" "build-tools;36.0.0" "ndk;27.1.12297006" "cmake;3.22.1"
 
       - name: Prebuild Android
         working-directory: apps/mobile
@@ -98,14 +98,16 @@ jobs:
         working-directory: apps/mobile/android
         run: |
           ./gradlew assembleDebug \
-            -Dorg.gradle.java.home=$JAVA_HOME
+            -Dorg.gradle.java.home=$JAVA_HOME \
+            -PreactNativeArchitectures=arm64-v8a
 
       - name: Build APK (Release)
         if: env.BUILD_TYPE == 'release'
         working-directory: apps/mobile/android
         run: |
           ./gradlew assembleRelease \
-            -Dorg.gradle.java.home=$JAVA_HOME
+            -Dorg.gradle.java.home=$JAVA_HOME \
+            -PreactNativeArchitectures=arm64-v8a
         # Note: Release builds may require signing configuration
         # Set KEYSTORE_FILE, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD secrets for production
 
@@ -113,18 +115,18 @@ jobs:
         id: apk-location
         working-directory: apps/mobile/android
         run: |
-          if [ "$BUILD_TYPE" = "debug" ]; then
-            APK_PATH="app/build/outputs/apk/debug/app-debug.apk"
-          else
-            APK_PATH="app/build/outputs/apk/release/app-release-unsigned.apk"
-          fi
-          if [ -f "$APK_PATH" ]; then
-            echo "apk_path=$APK_PATH" >> "$GITHUB_OUTPUT"
-            ls -lh "$APK_PATH"
-          else
-            echo "APK not found at $APK_PATH"
+          APK_DIR="app/build/outputs/apk/$BUILD_TYPE"
+          if [ ! -d "$APK_DIR" ]; then
+            echo "APK output directory not found: $APK_DIR"
             exit 1
           fi
+          APK_PATH=$(find "$APK_DIR" -maxdepth 1 -name '*.apk' -type f | head -n 1)
+          if [ -z "$APK_PATH" ]; then
+            echo "APK not found in $APK_DIR"
+            exit 1
+          fi
+          echo "apk_path=$APK_PATH" >> "$GITHUB_OUTPUT"
+          ls -lh "$APK_PATH"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
