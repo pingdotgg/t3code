@@ -405,7 +405,7 @@ export const make = Effect.gen(function* () {
               "pr",
               "list",
               "--head",
-              qualifyPullRequestHead(context, input.headSelector),
+              input.headSelector,
               "--state",
               input.state,
               "--limit",
