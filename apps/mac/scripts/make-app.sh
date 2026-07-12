@@ -17,7 +17,9 @@ SWIFT_FLAGS=()
 if [[ "$CONFIG" == "release" ]]; then
   SWIFT_FLAGS+=(-Xswiftc -cross-module-optimization)
 fi
-swift build --package-path "$MAC_DIR" -c "$CONFIG" "${SWIFT_FLAGS[@]}"
+# ${arr[@]+...} guard: bash 3.2 (macOS default) treats expanding an empty
+# array as an unbound variable under `set -u`, which would break --debug.
+swift build --package-path "$MAC_DIR" -c "$CONFIG" ${SWIFT_FLAGS[@]+"${SWIFT_FLAGS[@]}"}
 
 BIN="$MAC_DIR/.build/$CONFIG/SergeCodeMac"
 RESOURCE_BUNDLE="$MAC_DIR/.build/$CONFIG/SergeCodeMac_SergeCodeMac.bundle"
