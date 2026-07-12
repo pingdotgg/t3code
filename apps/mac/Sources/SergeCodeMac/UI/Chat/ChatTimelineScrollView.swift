@@ -38,9 +38,10 @@ struct ChatTimelineScrollView: View {
         // (threadID, timelineVersion, settled) so body re-evals with an
         // unchanged timeline reuse the last grouping pass.
         let threadID = model.selectedThreadID ?? ""
+        let threadKey = model.scopedThreadKey(threadID)
         let displayItems = TimelineDisplayCache.grouped(
             items: items,
-            threadID: threadID,
+            threadID: threadKey,
             version: model.timelineVersion(threadID: threadID),
             threadIsSettled: threadIsSettled)
 

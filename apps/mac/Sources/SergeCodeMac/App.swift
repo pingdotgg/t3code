@@ -61,11 +61,18 @@ struct SergeCodeApp: App {
                 .onAppear {
                     // Thread → project path so scenery set resolution can read
                     // per-project prefs (Phase 1 multi-set).
-                    scenery.projectPathForThread = { [multi] threadID in
-                        guard let thread = multi.local.threads.first(where: { $0.id == threadID }),
-                            let project = multi.local.projects.first(where: { $0.id == thread.projectID })
-                        else { return nil }
-                        return project.path
+                    scenery.projectPathForThread = { [multi] threadKey in
+                        for model in multi.allModels {
+                            guard let thread = model.threads.first(where: {
+                                model.scopedThreadKey($0.id) == threadKey
+                            }),
+                                let project = model.projects.first(where: {
+                                    $0.id == thread.projectID
+                                })
+                            else { continue }
+                            return project.path
+                        }
+                        return nil
                     }
                     multi.start()
                     appDelegate.multi = multi
@@ -104,12 +111,14 @@ struct SergeCodeApp: App {
     }
 
     private var activeSceneryPalette: SceneryPalette? {
-        guard let threadID = multi.activeModel.selectedThreadID else {
+        let model = multi.activeModel
+        guard let threadID = model.selectedThreadID else {
             return scenery.palette(for: nil)
         }
+        let threadKey = model.scopedThreadKey(threadID)
         return scenery.palette(
-            for: scenery.photo(for: threadID),
-            setId: scenery.resolvedSetId(forThread: threadID))
+            for: scenery.photo(for: threadKey),
+            setId: scenery.resolvedSetId(forThread: threadKey))
     }
 }
 

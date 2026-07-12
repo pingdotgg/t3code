@@ -13,6 +13,7 @@ struct RootView: View {
     @UIState private var columnVisibility: NavigationSplitViewVisibility = .all
 
     private var model: AppModel { multi.activeModel }
+    private var localModel: AppModel { multi.local }
 
     var body: some View {
         // Drag-collapse writes visibility through this binding; wrapping
@@ -95,12 +96,12 @@ struct RootView: View {
         }
         .sheet(isPresented: $showNewSessionSheet) {
             NewSessionSheet(
-                model: model,
+                model: localModel,
                 scenery: scenery,
                 passport: passport,
                 isPresented: $showNewSessionSheet,
                 onCreated: { thread in
-                    multi.select(threadID: thread.id, on: model.deviceID)
+                    multi.select(threadID: thread.id, on: localModel.deviceID)
                 })
         }
         .sheet(isPresented: $showPassportSheet) {
@@ -117,30 +118,30 @@ struct RootView: View {
     @ViewBuilder
     private var newSessionMenu: some View {
         Menu {
-            if model.projects.isEmpty {
+            if localModel.projects.isEmpty {
                 Text("No projects yet")
             }
-            ForEach(model.projects) { project in
+            ForEach(localModel.projects) { project in
                 Menu(project.name) {
-                    if model.configuredProviderKinds.isEmpty {
+                    if localModel.configuredProviderKinds.isEmpty {
                         Text("No providers found")
                     }
-                    ForEach(model.configuredProviderKinds) { provider in
+                    ForEach(localModel.configuredProviderKinds) { provider in
                         Button {
                             Task {
-                                if let thread = await model.createSceneThread(
+                                if let thread = await localModel.createSceneThread(
                                     projectID: project.id,
                                     provider: provider,
                                     scenery: scenery,
                                     passport: passport)
                                 {
-                                    multi.select(threadID: thread.id, on: model.deviceID)
+                                    multi.select(threadID: thread.id, on: localModel.deviceID)
                                 }
                             }
                         } label: {
                             Label(provider.displayName, systemImage: "bolt")
                         }
-                        .disabled(!model.canCreateThread(with: provider))
+                        .disabled(!localModel.canCreateThread(with: provider))
                     }
                 }
             }

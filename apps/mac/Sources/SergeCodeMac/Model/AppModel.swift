@@ -142,6 +142,12 @@ public final class AppModel {
 
     public var isRemote: Bool { deviceID != .local }
 
+    /// Key used by shared UI stores whose lifetime spans multiple device
+    /// models. Local keys intentionally remain the historical raw thread id.
+    public func scopedThreadKey(_ threadID: String) -> String {
+        isRemote ? "\(deviceID.rawValue)/\(threadID)" : threadID
+    }
+
     /// Lookup only — does not create a `ThreadState`.
     public func threadState(_ threadID: String) -> ThreadState? {
         threadStates[threadID]
@@ -425,7 +431,7 @@ public final class AppModel {
             queuedSendInFlightThreadIDs.remove(id)
             queuedRetryTokensByThread[id] = nil
             if composerPrefill?.threadID == id { composerPrefill = nil }
-            TimelineDisplayCache.evict(threadID: id)
+            TimelineDisplayCache.evict(threadID: scopedThreadKey(id))
             if selectedThreadID == id { selectedThreadID = nil }
         case .approvalRequested, .userInputRequested:
             break
@@ -1412,7 +1418,7 @@ public final class AppModel {
             state.timeline = []
             state.hasLoadedTimeline = false
         }
-        TimelineDisplayCache.evict(threadID: threadID)
+        TimelineDisplayCache.evict(threadID: scopedThreadKey(threadID))
     }
 
     private func pruneTimelineSubscriptions() {
@@ -1435,7 +1441,7 @@ public final class AppModel {
                     state.timeline = []
                     state.hasLoadedTimeline = false
                 }
-                TimelineDisplayCache.evict(threadID: threadID)
+                TimelineDisplayCache.evict(threadID: self.scopedThreadKey(threadID))
                 await self.backend.closeTimeline(threadID: threadID)
             }
         }
