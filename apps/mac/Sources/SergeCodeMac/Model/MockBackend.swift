@@ -1086,7 +1086,9 @@ private actor MockState {
 
     private static func timelineForSidebarThread(at now: Date) -> [TimelineItem] {
         [
-            .userMessage(id: "t1-u1", text: "The sidebar list jumps around when new threads arrive. Can you fix it?", at: now.addingTimeInterval(-500)),
+            // Keep one early fixture item on yesterday's calendar day so the
+            // UI probe visibly exercises the transcript day separator.
+            .userMessage(id: "t1-u1", text: "The sidebar list jumps around when new threads arrive. Can you fix it?", at: now.addingTimeInterval(-26 * 3600)),
             .assistantMessage(
                 id: "t1-a1",
                 markdown: """

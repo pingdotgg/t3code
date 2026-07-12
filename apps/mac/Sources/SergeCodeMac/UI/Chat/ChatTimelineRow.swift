@@ -98,23 +98,26 @@ struct ChatTimelineRowView: View {
                 items: items, summary: summary,
                 threadStatus: model.selectedThread?.status,
                 projectRoot: projectRoot)
+        case .daySeparator(_, let label):
+            SessionSeparatorRow(label: label)
         }
     }
 
     @ViewBuilder
     private func singleRow(_ item: TimelineItem) -> some View {
         switch item {
-        case .userMessage(let id, let text, _):
+        case .userMessage(let id, let text, let at):
             UserMessageBubble(
-                messageID: id, text: text, threadID: threadID, model: model)
-        case .assistantMessage(_, let markdown, let isStreaming, _):
+                messageID: id, text: text, threadID: threadID, model: model, at: at)
+        case .assistantMessage(_, let markdown, let isStreaming, let at):
             AssistantMarkdownView(
-                markdown: markdown, isStreaming: isStreaming, threadID: threadID, model: model)
-        case .toolEvent(_, let name, let detail, let kind, let status, _, let output, let outputIsError):
+                markdown: markdown, isStreaming: isStreaming, threadID: threadID, model: model,
+                at: at)
+        case .toolEvent(_, let name, let detail, let kind, let status, let at, let output, let outputIsError):
             ToolEventRow(
                 name: name, detail: detail, kind: kind, status: status,
                 output: output, outputIsError: outputIsError,
-                threadStatus: model.selectedThread?.status,
+                threadStatus: model.selectedThread?.status, at: at,
                 projectRoot: projectRoot)
         case .subagentTask(let task):
             SubagentTaskRow(
@@ -183,6 +186,7 @@ private struct UserMessageBubble: View {
     let text: String
     let threadID: String
     let model: AppModel
+    let at: Date?
 
     @UIState private var isHovering = false
     /// Local double-click guard: `canResend` flips only after the thread's
@@ -199,56 +203,71 @@ private struct UserMessageBubble: View {
     var body: some View {
         HStack {
             Spacer(minLength: 48)
-            AssistantMarkdownView(
-                markdown: text,
-                isStreaming: false,
-                threadID: threadID,
-                model: model,
-                style: .userBubble)
-                .frame(maxWidth: 560, alignment: .trailing)
-                .textSelection(.enabled)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 16))
-                .foregroundStyle(.white)
-                .overlay(alignment: .topTrailing) {
-                    MessageActionChip {
-                        CopyActionButton(text: text)
-                        MessageActionButton(
-                            systemImage: "pencil", help: "Edit in composer and resend",
-                            disabled: !canResend
-                        ) {
+            VStack(alignment: .trailing, spacing: 2) {
+                AssistantMarkdownView(
+                    markdown: text,
+                    isStreaming: false,
+                    threadID: threadID,
+                    model: model,
+                    style: .userBubble)
+                    .frame(maxWidth: 560, alignment: .trailing)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(
+                        LinearGradient(
+                            colors: [Color.accentColor, Color.accentColor.opacity(0.92)],
+                            startPoint: .top,
+                            endPoint: .bottom),
+                        in: RoundedRectangle(cornerRadius: 16))
+                    .foregroundStyle(.white)
+                    .overlay(alignment: .topTrailing) {
+                        MessageActionChip {
+                            CopyActionButton(text: text)
+                            MessageActionButton(
+                                systemImage: "pencil", help: "Edit in composer and resend",
+                                disabled: !canResend
+                            ) {
+                                model.stageComposerText(text, editedMessageID: messageID)
+                            }
+                            MessageActionButton(
+                                systemImage: "arrow.clockwise", help: "Send this message again",
+                                disabled: !canResend
+                            ) {
+                                resend()
+                            }
+                        }
+                        .opacity(isHovering ? 1 : 0)
+                        .allowsHitTesting(isHovering)
+                        .accessibilityHidden(!isHovering)
+                        .padding(3)
+                    }
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16)
+                            .strokeBorder(Color.white.opacity(0.12), lineWidth: 1))
+                    .contextMenu {
+                        Button("Copy") { Pasteboard.copy(text) }
+                        Button("Edit in Composer") {
                             model.stageComposerText(text, editedMessageID: messageID)
                         }
-                        MessageActionButton(
-                            systemImage: "arrow.clockwise", help: "Send this message again",
-                            disabled: !canResend
-                        ) {
-                            resend()
+                        .disabled(!canResend)
+                        Button("Retry") { resend() }
+                            .disabled(!canResend)
+                        if let openSelectText {
+                            Divider()
+                            Button("Select Text…") { openSelectText() }
                         }
                     }
-                    .opacity(isHovering ? 1 : 0)
-                    .allowsHitTesting(isHovering)
-                    .accessibilityHidden(!isHovering)
-                    .padding(3)
+
+                if let at, isHovering {
+                    TranscriptTimestamp(date: at)
+                        .transition(.opacity)
                 }
-                // Hover and context menu live on the bubble, not the full
-                // row — the spacer's empty area shouldn't reveal actions.
-                .onHover { isHovering = $0 }
-                .animation(Motion.fade, value: isHovering)
-                .contextMenu {
-                    Button("Copy") { Pasteboard.copy(text) }
-                    Button("Edit in Composer") {
-                        model.stageComposerText(text, editedMessageID: messageID)
-                    }
-                    .disabled(!canResend)
-                    Button("Retry") { resend() }
-                        .disabled(!canResend)
-                    if let openSelectText {
-                        Divider()
-                        Button("Select Text…") { openSelectText() }
-                    }
-                }
+            }
+            // Hover and context menu live on the bubble cluster, not the full
+            // row — the spacer's empty area shouldn't reveal actions.
+            .onHover { isHovering = $0 }
+            .animation(Motion.fade, value: isHovering)
         }
     }
 
@@ -334,11 +353,11 @@ private struct ToolGroupRow: View {
     @ViewBuilder
     private func expandedRow(_ item: TimelineItem) -> some View {
         switch item {
-        case .toolEvent(_, let name, let detail, let kind, let status, _, let output, let outputIsError):
+        case .toolEvent(_, let name, let detail, let kind, let status, let at, let output, let outputIsError):
             ToolEventRow(
                 name: name, detail: detail, kind: kind, status: status,
                 output: output, outputIsError: outputIsError,
-                threadStatus: threadStatus,
+                threadStatus: threadStatus, at: at,
                 projectRoot: projectRoot)
         case .reasoning(_, let text, _):
             ReasoningRow(text: text)
@@ -365,9 +384,11 @@ private struct ToolEventRow: View {
     let output: String?
     let outputIsError: Bool
     let threadStatus: ThreadStatus?
+    let at: Date?
     let projectRoot: String?
 
     @UIState private var isExpanded = false
+    @UIState private var isHovering = false
 
     /// Memoized: SwiftUI rebuilds every visible row's view value on each
     /// timeline mutation, and re-running JSONSerialization per row per frame
@@ -446,6 +467,11 @@ private struct ToolEventRow: View {
                         previewLabel(preview)
                     }
                     Spacer(minLength: 8)
+                    if let at {
+                        TranscriptTimestamp(date: at)
+                            .opacity(isHovering ? 1 : 0)
+                            .accessibilityHidden(!isHovering)
+                    }
                     if hasExpandableContent {
                         Image(systemName: "chevron.right")
                             .font(.caption2)
@@ -467,6 +493,8 @@ private struct ToolEventRow: View {
         }
         .transcriptCard(fill: cardFill)
         .animation(Motion.ambient, value: displayState)
+        .animation(Motion.fade, value: isHovering)
+        .onHover { isHovering = $0 }
     }
 
     private var cardFill: AnyShapeStyle {
@@ -1235,6 +1263,31 @@ enum SubagentProgressLogText {
         let minutes = seconds / 60
         let rem = seconds % 60
         return String(format: "%d:%02d", minutes, rem)
+    }
+}
+
+/// Quiet transcript marker for a calendar-day or long same-day pause.
+private struct SessionSeparatorRow: View {
+    let label: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Rectangle()
+                .fill(.separator)
+                .frame(maxWidth: .infinity)
+                .frame(height: 1)
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .layoutPriority(1)
+            Rectangle()
+                .fill(.separator)
+                .frame(maxWidth: .infinity)
+                .frame(height: 1)
+        }
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
     }
 }
 

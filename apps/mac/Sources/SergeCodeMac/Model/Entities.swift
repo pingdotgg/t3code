@@ -353,6 +353,25 @@ public enum TimelineItem: Identifiable, Sendable {
         case .subagentTask(let item): item.id
         }
     }
+
+    /// The backend event time used to place this item in the transcript.
+    /// Interactive items carry their creation time on the nested request or
+    /// entity; a subagent row starts at the task's start time.
+    public var at: Date? {
+        switch self {
+        case .userMessage(_, _, let at): at
+        case .assistantMessage(_, _, _, let at): at
+        case .toolEvent(_, _, _, _, _, let at, _, _): at
+        case .approval(let request): request.createdAt
+        case .userInput(let request): request.createdAt
+        case .usageLimit(let notice): notice.createdAt
+        case .checkpoint(let checkpoint): checkpoint.createdAt
+        case .plan(let plan): plan.createdAt
+        case .notice(_, _, let at): at
+        case .reasoning(_, _, let at): at
+        case .subagentTask(let item): item.startedAt
+        }
+    }
 }
 
 extension Array where Element == TimelineItem {

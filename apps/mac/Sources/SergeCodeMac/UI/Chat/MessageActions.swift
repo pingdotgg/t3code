@@ -3,6 +3,39 @@ import SwiftUI
 // Hover-revealed per-message actions (copy / edit / retry). Shared chrome for
 // user bubbles and assistant bodies so the two rows look and behave the same.
 
+/// Compact absolute timestamp used by transcript rows. Keeping the formatter
+/// here gives user, tool, and assistant rows one quiet visual treatment and
+/// makes the calendar boundary deterministic in tests.
+struct TranscriptTimestamp: View {
+    let date: Date
+
+    var body: some View {
+        Text(Self.text(for: date))
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
+            .monospacedDigit()
+            .fixedSize()
+    }
+
+    static func text(
+        for date: Date,
+        relativeTo now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> String {
+        let baseFormat: Date.FormatStyle
+        if calendar.isDate(date, inSameDayAs: now) {
+            baseFormat = .dateTime.hour().minute()
+        } else {
+            baseFormat = .dateTime.month(.abbreviated).day().hour().minute()
+        }
+
+        var format = baseFormat
+        format.calendar = calendar
+        format.timeZone = calendar.timeZone
+        return date.formatted(format)
+    }
+}
+
 /// Small icon button used in message action rows.
 struct MessageActionButton: View {
     let systemImage: String

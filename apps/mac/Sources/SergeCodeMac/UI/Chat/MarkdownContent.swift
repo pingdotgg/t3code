@@ -622,6 +622,7 @@ struct AssistantMarkdownView: View {
     let isStreaming: Bool
     let threadID: String
     let model: AppModel
+    let at: Date?
     let style: MarkdownRenderStyle
     // Parsing belongs in init, not body: body is evaluated for every timeline
     // mutation while the view value can remain otherwise unchanged.
@@ -633,12 +634,14 @@ struct AssistantMarkdownView: View {
         isStreaming: Bool,
         threadID: String,
         model: AppModel,
+        at: Date? = nil,
         style: MarkdownRenderStyle = .assistant
     ) {
         self.markdown = markdown
         self.isStreaming = isStreaming
         self.threadID = threadID
         self.model = model
+        self.at = at
         self.style = style
         let document = MarkdownBlockCache.document(for: markdown)
         self.blocks = document.blocks
@@ -650,6 +653,9 @@ struct AssistantMarkdownView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if style == .assistant {
+                assistantRoleLine
+            }
             ForEach(Array(renderedBlocks.enumerated()), id: \.element.id) { index, entry in
                 markdownBlockView(
                     entry.block,
@@ -703,6 +709,59 @@ struct AssistantMarkdownView: View {
             }
             return .handled
         })
+    }
+
+    @ViewBuilder
+    private var assistantRoleLine: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 5) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(Color.accentColor.opacity(0.9))
+            if let assistantModelName {
+                Text(assistantModelName)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+            if !isStreaming, isHovering, let at {
+                TranscriptTimestamp(date: at)
+                    .transition(.opacity)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.bottom, 3)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var assistantModelName: String? {
+        guard let thread = model.threads.first(where: { $0.id == threadID }) else {
+            return nil
+        }
+
+        if let modelID = thread.modelID,
+            let option = model.models.first(where: {
+                $0.instanceID == thread.modelInstanceID && $0.modelID == modelID
+            })
+        {
+            return option.displayName
+        }
+
+        guard let modelID = thread.modelID else { return nil }
+        return Self.shortModelName(modelID)
+    }
+
+    private static func shortModelName(_ model: String) -> String? {
+        let component = model
+            .split(separator: "/")
+            .last
+            .map(String.init)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let component, !component.isEmpty else { return nil }
+        if component.hasPrefix("claude-") {
+            return String(component.dropFirst("claude-".count))
+        }
+        return component
     }
 
     private static func renderedBlocks(from document: ParsedMarkdownDocument) -> [MarkdownRenderedBlock] {

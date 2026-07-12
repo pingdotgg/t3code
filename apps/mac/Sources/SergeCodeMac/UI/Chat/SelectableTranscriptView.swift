@@ -147,6 +147,10 @@ enum TranscriptTextBuilder {
                     _ = append(nested, to: result, projectRoot: projectRoot, leadingBreak: true)
                 }
                 didWrite = true
+            case .daySeparator(_, let label):
+                if didWrite { appendBlankLine(to: result) }
+                appendPlain(label, font: captionMono, color: .secondaryLabelColor, to: result)
+                didWrite = true
             }
         }
         return result
