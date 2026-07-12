@@ -1,24 +1,6 @@
 import SwiftUI
 import T3Kit
 
-func displayModelName(slug: String, catalog: [String: String]) -> String {
-    let trimmed = slug.trimmingCharacters(in: .whitespacesAndNewlines)
-    if let displayName = catalog[trimmed]?.trimmingCharacters(in: .whitespacesAndNewlines),
-        !displayName.isEmpty
-    {
-        return displayName
-    }
-    return shortModelName(trimmed)
-}
-
-private func shortModelName(_ model: String) -> String {
-    // Prefer a readable short id when the wire form is a long Claude slug.
-    if model.hasPrefix("claude-") {
-        return String(model.dropFirst("claude-".count))
-    }
-    return model
-}
-
 /// Dispatches a single `TimelineDisplayItem` to its row view.
 struct ChatTimelineRowView: View {
     let item: TimelineDisplayItem
@@ -516,8 +498,6 @@ private struct ToolEventRow: View {
 private struct SubagentTaskRow: View {
     /// Expanded log shows the tail; older entries are summarized above.
     private static let maxVisibleLogEntries = 30
-    /// No progress for this long marks a running task as stalled.
-    private static let stalledThreshold: TimeInterval = 3 * 60
 
     let task: SubagentTaskItem
     let modelDisplayNames: [String: String]
@@ -539,11 +519,6 @@ private struct SubagentTaskRow: View {
             || task.usageSummary != nil
     }
 
-    private func isStalled(at currentNow: Date) -> Bool {
-        guard task.state == .running else { return false }
-        return currentNow.timeIntervalSince(task.lastActivityAt) > Self.stalledThreshold
-    }
-
     var body: some View {
         // TimelineView owns the 1Hz tick only while the task is running;
         // paused/terminal rows never attach a live timer subscription.
@@ -560,7 +535,7 @@ private struct SubagentTaskRow: View {
 
     @ViewBuilder
     private func rowChrome(now currentNow: Date) -> some View {
-        let stalled = isStalled(at: currentNow)
+        let stalled = SubagentTaskPresentation.isStalled(task: task, at: currentNow)
         VStack(alignment: .leading, spacing: 4) {
             Button {
                 guard hasExpandableContent else { return }
@@ -594,16 +569,12 @@ private struct SubagentTaskRow: View {
                             }
                         }
 
-                        if let identityBadge {
-                            Text(identityBadge)
-                                .font(.caption2.weight(.medium))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
+                        SubagentTaskIdentityBadge(
+                            task: task, modelDisplayNames: modelDisplayNames)
 
-                        healthTags(now: currentNow)
+                        SubagentTaskHealthTags(task: task, now: currentNow)
 
-                        if let subtitle {
+                        if let subtitle = SubagentTaskPresentation.subtitle(for: task) {
                             Text(subtitle)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -612,7 +583,7 @@ private struct SubagentTaskRow: View {
                         }
 
                         // Always visible — stop failures must not require expand.
-                        if let stopError = nonEmpty(stopError) {
+                        if let stopError = SubagentTaskPresentation.nonEmpty(stopError) {
                             Text(stopError)
                                 .font(.caption)
                                 .foregroundStyle(.red)
@@ -633,7 +604,9 @@ private struct SubagentTaskRow: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
-        .background(backgroundTint(stalled: stalled), in: RoundedRectangle(cornerRadius: 10))
+        .background(
+            SubagentTaskPresentation.backgroundTint(for: task, stalled: stalled),
+            in: RoundedRectangle(cornerRadius: 10))
         .animation(Motion.ambient, value: task.state)
         .onChange(of: task.state) { _, _ in
             onClearStopError()
@@ -681,79 +654,19 @@ private struct SubagentTaskRow: View {
 
     @ViewBuilder
     private var durationLabel: some View {
-        if task.state == .running {
-            Text(task.startedAt, style: .timer)
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
-        } else if let duration = task.duration {
-            Text(Self.format(duration: duration))
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    @ViewBuilder
-    private func healthTags(now currentNow: Date) -> some View {
-        if task.state == .running {
-            let stalled = isStalled(at: currentNow)
-            HStack(spacing: 6) {
-                Text(lastActivityLabel(at: currentNow))
-                    .font(.caption2)
-                    .foregroundStyle(stalled ? Color.orange : Color.secondary)
-                if stalled {
-                    Text("stalled")
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(.orange)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1)
-                        .background(Color.orange.opacity(0.14), in: Capsule())
-                }
-                if task.isBackgrounded {
-                    Text("background")
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1)
-                        .background(.secondary.opacity(0.12), in: Capsule())
-                }
-            }
-        } else if task.state == .paused {
-            HStack(spacing: 6) {
-                Text("paused")
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1)
-                    .background(.secondary.opacity(0.12), in: Capsule())
-                if task.isBackgrounded {
-                    Text("background")
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1)
-                        .background(.secondary.opacity(0.12), in: Capsule())
-                }
-            }
-        } else if task.isBackgrounded {
-            Text("background")
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 1)
-                .background(.secondary.opacity(0.12), in: Capsule())
-        }
+        SubagentTaskDurationLabel(task: task)
     }
 
     @ViewBuilder
     private var expandedBody: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if let lastTool = nonEmpty(task.lastToolName) {
+            if let lastTool = SubagentTaskPresentation.nonEmpty(task.lastToolName) {
                 metaLine(label: "Last tool", value: lastTool)
             }
-            if let usage = nonEmpty(task.usageSummary) {
+            if let usage = SubagentTaskPresentation.nonEmpty(task.usageSummary) {
                 metaLine(label: "Usage", value: usage)
             }
-            if let error = nonEmpty(task.error) {
+            if let error = SubagentTaskPresentation.nonEmpty(task.error) {
                 Text(error)
                     .font(.caption)
                     .foregroundStyle(.red)
@@ -804,121 +717,10 @@ private struct SubagentTaskRow: View {
         }
     }
 
-    private var title: String {
-        task.description?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-            ? task.description!
-            : "Subagent task"
-    }
-
-    /// Compact identity badge: "Explore · sonnet-5" or "workflow · opus-4.8".
-    private var identityBadge: String? {
-        var parts: [String] = []
-        if let workflow = nonEmpty(task.workflowName) {
-            parts.append(workflow)
-        } else if let subagent = nonEmpty(task.subagentType) {
-            parts.append(subagent)
-        } else if let type = nonEmpty(task.taskType) {
-            parts.append(type.replacingOccurrences(of: "-", with: " "))
-        }
-        if let model = nonEmpty(task.model) {
-            parts.append(displayModelName(slug: model, catalog: modelDisplayNames))
-        }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
-    }
-
-    private func lastActivityLabel(at currentNow: Date) -> String {
-        let seconds = max(0, Int(currentNow.timeIntervalSince(task.lastActivityAt)))
-        if seconds < 5 { return "last activity just now" }
-        if seconds < 60 { return "last activity \(seconds)s ago" }
-        let minutes = seconds / 60
-        if minutes < 60 { return "last activity \(minutes)m ago" }
-        return "last activity \(minutes / 60)h ago"
-    }
-
-    private var subtitle: String? {
-        // Terminal (and paused): prefer completion/latest summary when present.
-        if task.state != .running {
-            if let progress = task.latestProgress?.trimmingCharacters(in: .whitespacesAndNewlines),
-                !progress.isEmpty
-            {
-                return progress
-            }
-            switch task.state {
-            case .running: return nil
-            case .paused: return "Paused"
-            case .completed: return "Completed"
-            case .failed: return "Failed"
-            case .stopped: return "Stopped"
-            }
-        }
-
-        // Running: latest log entry as "tool · summary", else "Working...".
-        if let last = task.progressLog.last {
-            if let tool = last.toolName?.trimmingCharacters(in: .whitespacesAndNewlines),
-                !tool.isEmpty
-            {
-                return "\(tool) · \(last.text)"
-            }
-            return last.text
-        }
-        if let progress = task.latestProgress?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !progress.isEmpty
-        {
-            return progress
-        }
-        return "Working..."
-    }
+    private var title: String { SubagentTaskPresentation.title(for: task) }
 
     private func statusIcon(stalled: Bool) -> some View {
-        Image(systemName: iconName(stalled: stalled))
-            .symbolEffect(.pulse, isActive: task.state == .running && !stalled)
-            .foregroundStyle(iconTint(stalled: stalled))
-            .contentTransition(.symbolEffect(.replace))
-    }
-
-    private func iconName(stalled: Bool) -> String {
-        switch task.state {
-        case .running: stalled ? "exclamationmark.circle" : "circle.dotted"
-        case .paused: "pause.circle.fill"
-        case .completed: "checkmark.circle.fill"
-        case .failed: "xmark.circle.fill"
-        case .stopped: "stop.circle.fill"
-        }
-    }
-
-    private func iconTint(stalled: Bool) -> Color {
-        switch task.state {
-        case .running: stalled ? .orange : .secondary
-        case .paused: .secondary
-        case .completed: .green
-        case .failed: .red
-        case .stopped: .secondary
-        }
-    }
-
-    private func backgroundTint(stalled: Bool) -> Color {
-        switch task.state {
-        case .running: stalled ? Color.orange.opacity(0.08) : Color.accentColor.opacity(0.08)
-        case .paused: Color.secondary.opacity(0.08)
-        case .completed: Color.green.opacity(0.08)
-        case .failed: Color.red.opacity(0.08)
-        case .stopped: Color.secondary.opacity(0.08)
-        }
-    }
-
-    private func nonEmpty(_ value: String?) -> String? {
-        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !trimmed.isEmpty
-        else { return nil }
-        return trimmed
-    }
-
-    private static func format(duration: TimeInterval) -> String {
-        if duration < 1 { return "<1s" }
-        if duration < 60 { return "\(Int(duration.rounded()))s" }
-        let minutes = Int(duration) / 60
-        let seconds = Int(duration) % 60
-        return seconds == 0 ? "\(minutes)m" : "\(minutes)m \(seconds)s"
+        SubagentTaskStatusIcon(task: task, stalled: stalled)
     }
 }
 
