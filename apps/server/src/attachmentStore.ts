@@ -192,30 +192,52 @@ interface TextAttachmentMetadata {
   readonly deleteAfter: number | null;
 }
 
+type TextAttachmentMetadataReadResult =
+  | { readonly _tag: "Missing" }
+  | { readonly _tag: "Invalid" }
+  | { readonly _tag: "Valid"; readonly metadata: TextAttachmentMetadata };
+
 const emptyTextAttachmentMetadata = (): TextAttachmentMetadata => ({
   version: 1,
   claims: [],
   deleteAfter: null,
 });
 
-function readTextAttachmentMetadata(directory: string): TextAttachmentMetadata {
+function readTextAttachmentMetadata(directory: string): TextAttachmentMetadataReadResult {
   try {
     const parsed = JSON.parse(
       NodeFS.readFileSync(NodePath.join(directory, TEXT_ATTACHMENT_METADATA_FILE), "utf8"),
     ) as Partial<TextAttachmentMetadata>;
     if (parsed.version !== 1 || !Array.isArray(parsed.claims)) {
-      return emptyTextAttachmentMetadata();
+      return { _tag: "Invalid" };
+    }
+    if (
+      parsed.claims.some((claim) => typeof claim !== "string") ||
+      (parsed.deleteAfter !== null && typeof parsed.deleteAfter !== "number")
+    ) {
+      return { _tag: "Invalid" };
     }
     return {
-      version: 1,
-      claims: [
-        ...new Set(parsed.claims.filter((claim): claim is string => typeof claim === "string")),
-      ],
-      deleteAfter: typeof parsed.deleteAfter === "number" ? parsed.deleteAfter : null,
+      _tag: "Valid",
+      metadata: {
+        version: 1,
+        claims: [...new Set(parsed.claims as ReadonlyArray<string>)],
+        deleteAfter: parsed.deleteAfter ?? null,
+      },
     };
-  } catch {
-    return emptyTextAttachmentMetadata();
+  } catch (cause) {
+    return typeof cause === "object" && cause !== null && "code" in cause && cause.code === "ENOENT"
+      ? { _tag: "Missing" }
+      : { _tag: "Invalid" };
   }
+}
+
+function metadataForMutation(directory: string): TextAttachmentMetadata {
+  const result = readTextAttachmentMetadata(directory);
+  if (result._tag === "Invalid") {
+    throw new Error("Text attachment metadata is unreadable or malformed.");
+  }
+  return result._tag === "Valid" ? result.metadata : emptyTextAttachmentMetadata();
 }
 
 function writeTextAttachmentMetadata(directory: string, metadata: TextAttachmentMetadata): void {
@@ -257,7 +279,7 @@ export function claimTextAttachment(input: {
 }): boolean {
   const directory = textAttachmentDirectory(input);
   if (!directory || !NodeFS.existsSync(input.path)) return false;
-  const metadata = readTextAttachmentMetadata(directory);
+  const metadata = metadataForMutation(directory);
   writeTextAttachmentMetadata(directory, {
     version: 1,
     claims: [...new Set([...metadata.claims, input.draftOwnerId])],
@@ -305,7 +327,7 @@ export function releaseTextAttachment(input: {
 }): boolean {
   const directory = textAttachmentDirectory(input);
   if (!directory || !NodeFS.existsSync(input.path)) return false;
-  const metadata = readTextAttachmentMetadata(directory);
+  const metadata = metadataForMutation(directory);
   if (!metadata.claims.includes(input.draftOwnerId)) {
     if (metadata.deleteAfter === null) return false;
     writeTextAttachmentPendingMarker(input.attachmentsDir, directory, metadata.deleteAfter);
@@ -359,7 +381,10 @@ export function reconcileTextAttachments(input: {
       continue;
     }
     if (!stat.isDirectory()) continue;
-    const metadata = readTextAttachmentMetadata(directory);
+    const metadataResult = readTextAttachmentMetadata(directory);
+    if (metadataResult._tag === "Invalid") continue;
+    const metadata =
+      metadataResult._tag === "Valid" ? metadataResult.metadata : emptyTextAttachmentMetadata();
     const relativeDirectory = `${TEXT_ATTACHMENT_DIRECTORY}/${entry}`;
     if (retainedDirectories.has(relativeDirectory) || metadata.claims.length > 0) {
       if (metadata.deleteAfter !== null) {

@@ -15,6 +15,8 @@ import {
   releaseTextAttachment,
   resolveAttachmentPathById,
   TEXT_ATTACHMENT_DELETE_GRACE_MS,
+  TEXT_ATTACHMENT_METADATA_FILE,
+  TEXT_ATTACHMENT_PENDING_DIRECTORY,
   writeClaimedTextAttachment,
   textAttachmentDirectory,
 } from "./attachmentStore.ts";
@@ -236,6 +238,38 @@ describe("attachmentStore", () => {
         nowMs: 1_000 + TEXT_ATTACHMENT_DELETE_GRACE_MS + 1,
       });
       expect(NodeFS.existsSync(attachmentPath)).toBe(false);
+    } finally {
+      NodeFS.rmSync(attachmentsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves malformed metadata during full reconciliation", () => {
+    const attachmentsDir = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "t3code-text-invalid-metadata-"),
+    );
+    try {
+      const attachmentPath = createTextAttachmentPath({ attachmentsDir, fileName: "keep.md" });
+      const directory = NodePath.dirname(attachmentPath);
+      const metadataPath = NodePath.join(directory, TEXT_ATTACHMENT_METADATA_FILE);
+      const pendingPath = NodePath.join(
+        attachmentsDir,
+        "text",
+        TEXT_ATTACHMENT_PENDING_DIRECTORY,
+        `${NodePath.basename(directory)}.json`,
+      );
+      NodeFS.mkdirSync(directory, { recursive: true });
+      NodeFS.writeFileSync(attachmentPath, "keep");
+      NodeFS.writeFileSync(metadataPath, "malformed");
+
+      reconcileTextAttachments({
+        attachmentsDir,
+        retainedRelativePaths: new Set(),
+        nowMs: Number.MAX_SAFE_INTEGER,
+      });
+
+      expect(NodeFS.existsSync(attachmentPath)).toBe(true);
+      expect(NodeFS.readFileSync(metadataPath, "utf8")).toBe("malformed");
+      expect(NodeFS.existsSync(pendingPath)).toBe(false);
     } finally {
       NodeFS.rmSync(attachmentsDir, { recursive: true, force: true });
     }
