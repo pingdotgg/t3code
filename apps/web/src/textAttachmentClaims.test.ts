@@ -437,6 +437,18 @@ describe("text attachment claims", () => {
     await fence;
     await expect(first).resolves.toBeNull();
 
+    const newOwnerUpload = vi.fn(async () => ({ path: PATH }));
+    await expect(
+      runTextAttachmentUpload({
+        environmentId,
+        draftOwnerId: "draft:first-seen-after-prepare",
+        upload: newOwnerUpload,
+        path: (result) => result.path,
+        release: vi.fn(async () => undefined),
+      }),
+    ).resolves.toBeNull();
+    expect(newOwnerUpload).not.toHaveBeenCalled();
+
     resumeTextAttachmentUploadEnvironment(environmentId);
     await expect(
       runTextAttachmentUpload({

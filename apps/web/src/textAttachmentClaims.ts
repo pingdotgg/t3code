@@ -263,6 +263,7 @@ export function resetTextAttachmentClaimRegistryForTest(): void {
   for (const reconciler of textAttachmentClaimReconcilerRegistry.values()) reconciler.dispose();
   textAttachmentClaimReconcilerRegistry.clear();
   textAttachmentUploadRegistry.clear();
+  fencedTextAttachmentUploadEnvironmentIds.clear();
 }
 
 interface TextAttachmentUploadOwnerState {
@@ -271,6 +272,7 @@ interface TextAttachmentUploadOwnerState {
 }
 
 const textAttachmentUploadRegistry = new Map<string, TextAttachmentUploadOwnerState>();
+const fencedTextAttachmentUploadEnvironmentIds = new Set<EnvironmentId>();
 
 function textAttachmentUploadOwnerState(
   environmentId: EnvironmentId,
@@ -291,6 +293,7 @@ export async function runTextAttachmentUpload<T>(input: {
   path: (result: T) => string | null;
   release: (path: string) => Promise<void>;
 }): Promise<T | null> {
+  if (fencedTextAttachmentUploadEnvironmentIds.has(input.environmentId)) return null;
   const state = textAttachmentUploadOwnerState(input.environmentId, input.draftOwnerId);
   if (state.fenced) return null;
   let finish: () => void = () => undefined;
@@ -322,6 +325,7 @@ export async function fenceTextAttachmentUploadOwner(
 export async function fenceTextAttachmentUploadEnvironment(
   environmentId: EnvironmentId,
 ): Promise<void> {
+  fencedTextAttachmentUploadEnvironmentIds.add(environmentId);
   const prefix = `${environmentId}:`;
   const waits: Promise<void>[] = [];
   for (const [key, state] of textAttachmentUploadRegistry) {
@@ -333,6 +337,7 @@ export async function fenceTextAttachmentUploadEnvironment(
 }
 
 export function resumeTextAttachmentUploadEnvironment(environmentId: EnvironmentId): void {
+  fencedTextAttachmentUploadEnvironmentIds.delete(environmentId);
   const prefix = `${environmentId}:`;
   for (const [key, state] of textAttachmentUploadRegistry) {
     if (key.startsWith(prefix)) state.fenced = false;
@@ -340,6 +345,7 @@ export function resumeTextAttachmentUploadEnvironment(environmentId: Environment
 }
 
 export function clearTextAttachmentUploadEnvironment(environmentId: EnvironmentId): void {
+  fencedTextAttachmentUploadEnvironmentIds.delete(environmentId);
   const prefix = `${environmentId}:`;
   for (const key of textAttachmentUploadRegistry.keys()) {
     if (key.startsWith(prefix)) textAttachmentUploadRegistry.delete(key);
