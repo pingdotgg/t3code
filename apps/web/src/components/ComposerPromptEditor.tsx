@@ -366,16 +366,12 @@ function $updateComposerSkillMetadata(
   const visit = (node: LexicalNode): void => {
     if (node instanceof ComposerSkillNode) {
       const metadata = skillMetadata.get(node.__skillName);
-      if (!metadata) {
+      const label = metadata?.label ?? node.__skillName;
+      const description = metadata?.description ?? null;
+      if (node.__skillLabel === label && node.__skillDescription === description) {
         return;
       }
-      if (
-        node.__skillLabel === metadata.label &&
-        node.__skillDescription === metadata.description
-      ) {
-        return;
-      }
-      node.setSkillPresentation(metadata.label, metadata.description);
+      node.setSkillPresentation(label, description);
       return;
     }
     if ($isElementNode(node)) {
