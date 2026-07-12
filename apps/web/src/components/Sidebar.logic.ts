@@ -81,6 +81,39 @@ export function getProjectRemovalConfirmationMessage(input: {
   ].join("\n");
 }
 
+export async function runStableProjectRemovalConfirmation<TSnapshot, TResult>(input: {
+  readSnapshot: () => Promise<{
+    readonly threadRefs: ReadonlyArray<ScopedThreadRef>;
+    readonly value: TSnapshot;
+  } | null>;
+  confirm: (snapshot: {
+    readonly threadRefs: ReadonlyArray<ScopedThreadRef>;
+    readonly value: TSnapshot;
+  }) => Promise<boolean>;
+  remove: (snapshot: {
+    readonly threadRefs: ReadonlyArray<ScopedThreadRef>;
+    readonly value: TSnapshot;
+  }) => Promise<TResult>;
+}): Promise<
+  | { readonly status: "unavailable" | "cancelled" | "changed" }
+  | { readonly status: "removed"; readonly result: TResult }
+> {
+  const confirmedSnapshot = await input.readSnapshot();
+  if (confirmedSnapshot === null) return { status: "unavailable" };
+  if (!(await input.confirm(confirmedSnapshot))) return { status: "cancelled" };
+  const latestSnapshot = await input.readSnapshot();
+  if (latestSnapshot === null) return { status: "unavailable" };
+  const confirmedKeys = new Set(confirmedSnapshot.threadRefs.map(scopedThreadKey));
+  const latestKeys = new Set(latestSnapshot.threadRefs.map(scopedThreadKey));
+  if (
+    confirmedKeys.size !== latestKeys.size ||
+    [...confirmedKeys].some((key) => !latestKeys.has(key))
+  ) {
+    return { status: "changed" };
+  }
+  return { status: "removed", result: await input.remove(latestSnapshot) };
+}
+
 export interface ThreadStatusPill {
   label:
     | "Working"

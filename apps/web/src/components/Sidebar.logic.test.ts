@@ -19,6 +19,7 @@ import {
   resolveSidebarStageBadgeLabel,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
+  runStableProjectRemovalConfirmation,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
@@ -78,6 +79,55 @@ describe("getProjectRemovalThreadRefs", () => {
     expect(message).toContain("delete its 1 thread?");
     expect(message).toContain("permanently clears conversation history");
     expect(message).toContain("cannot be undone");
+  });
+});
+
+describe("runStableProjectRemovalConfirmation", () => {
+  it("does not remove when a second snapshot adds an archived thread", async () => {
+    const firstThreadRef = scopeThreadRef(localEnvironmentId, ThreadId.make("thread-first"));
+    const archivedThreadRef = scopeThreadRef(localEnvironmentId, ThreadId.make("thread-archived"));
+    const readSnapshot = vi
+      .fn()
+      .mockResolvedValueOnce({ threadRefs: [firstThreadRef], value: "before" })
+      .mockResolvedValueOnce({
+        threadRefs: [firstThreadRef, archivedThreadRef],
+        value: "after",
+      });
+    const remove = vi.fn(async () => undefined);
+
+    const result = await runStableProjectRemovalConfirmation({
+      readSnapshot,
+      confirm: vi.fn(async () => true),
+      remove,
+    });
+
+    expect(result).toEqual({ status: "changed" });
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it("removes when the exact scoped thread set is unchanged", async () => {
+    const firstThreadRef = scopeThreadRef(localEnvironmentId, ThreadId.make("thread-first"));
+    const secondThreadRef = scopeThreadRef(localEnvironmentId, ThreadId.make("thread-second"));
+    const readSnapshot = vi
+      .fn()
+      .mockResolvedValueOnce({
+        threadRefs: [firstThreadRef, secondThreadRef],
+        value: "before",
+      })
+      .mockResolvedValueOnce({
+        threadRefs: [secondThreadRef, firstThreadRef],
+        value: "after",
+      });
+    const remove = vi.fn(async (snapshot: { value: string }) => snapshot.value);
+
+    const result = await runStableProjectRemovalConfirmation({
+      readSnapshot,
+      confirm: vi.fn(async () => true),
+      remove,
+    });
+
+    expect(result).toEqual({ status: "removed", result: "after" });
+    expect(remove).toHaveBeenCalledOnce();
   });
 });
 

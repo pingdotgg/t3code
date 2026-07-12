@@ -210,6 +210,7 @@ import {
   resolveSidebarStageBadgeLabel,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
+  runStableProjectRemovalConfirmation,
   orderItemsByPreferredIds,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
@@ -1582,34 +1583,45 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                     window.setTimeout(resolve, 180);
                   });
 
-                  const archivedThreadsBeforeConfirmation = await readLatestArchivedThreads();
-                  if (archivedThreadsBeforeConfirmation === null) return;
-
-                  const latestProjectThreads = Array.from(sidebarThreadByKeyRef.current.values());
-                  const latestProjectThreadRefs = getProjectRemovalThreadRefs({
-                    environmentId: memberProjectRef.environmentId,
-                    projectId: memberProjectRef.projectId,
-                    liveThreads: latestProjectThreads,
-                    archivedThreads: archivedThreadsBeforeConfirmation,
+                  const outcome = await runStableProjectRemovalConfirmation({
+                    readSnapshot: async () => {
+                      const latestArchivedThreads = await readLatestArchivedThreads();
+                      if (latestArchivedThreads === null) return null;
+                      return {
+                        threadRefs: getProjectRemovalThreadRefs({
+                          environmentId: memberProjectRef.environmentId,
+                          projectId: memberProjectRef.projectId,
+                          liveThreads: Array.from(sidebarThreadByKeyRef.current.values()),
+                          archivedThreads: latestArchivedThreads,
+                        }),
+                        value: latestArchivedThreads,
+                      };
+                    },
+                    confirm: ({ threadRefs }) =>
+                      api.dialogs.confirm(
+                        getProjectRemovalConfirmationMessage({
+                          title: member.title,
+                          workspaceRoot: member.workspaceRoot,
+                          environmentLabel: member.environmentLabel,
+                          threadCount: threadRefs.length,
+                        }),
+                      ),
+                    remove: ({ value: latestArchivedThreads }) =>
+                      removeProject(member, {
+                        force: true,
+                        archivedThreads: latestArchivedThreads,
+                      }),
                   });
-                  const confirmed = await api.dialogs.confirm(
-                    getProjectRemovalConfirmationMessage({
-                      title: member.title,
-                      workspaceRoot: member.workspaceRoot,
-                      environmentLabel: member.environmentLabel,
-                      threadCount: latestProjectThreadRefs.length,
-                    }),
-                  );
-                  if (!confirmed) {
+                  if (outcome.status === "changed") {
+                    toastManager.add({
+                      type: "warning",
+                      title: "Project threads changed",
+                      description: "Review the updated thread count and confirm removal again.",
+                    });
                     return;
                   }
-
-                  const archivedThreadsBeforeRemoval = await readLatestArchivedThreads();
-                  if (archivedThreadsBeforeRemoval === null) return;
-                  const result = await removeProject(member, {
-                    force: true,
-                    archivedThreads: archivedThreadsBeforeRemoval,
-                  });
+                  if (outcome.status !== "removed") return;
+                  const result = outcome.result;
                   if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
                     const error = squashAtomCommandFailure(result);
                     toastManager.add(
@@ -1646,22 +1658,45 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         return;
       }
 
-      const message = [
-        `Remove project "${member.title}"?`,
-        `Path: ${member.workspaceRoot}`,
-        ...(member.environmentLabel ? [`Environment: ${member.environmentLabel}`] : []),
-        "This removes only this project entry.",
-      ].join("\n");
-      const confirmed = await api.dialogs.confirm(message);
-      if (!confirmed) {
+      const outcome = await runStableProjectRemovalConfirmation({
+        readSnapshot: async () => {
+          const latestArchivedThreads = await readLatestArchivedThreads();
+          if (latestArchivedThreads === null) return null;
+          return {
+            threadRefs: getProjectRemovalThreadRefs({
+              environmentId: memberProjectRef.environmentId,
+              projectId: memberProjectRef.projectId,
+              liveThreads: Array.from(sidebarThreadByKeyRef.current.values()),
+              archivedThreads: latestArchivedThreads,
+            }),
+            value: latestArchivedThreads,
+          };
+        },
+        confirm: ({ threadRefs }) =>
+          api.dialogs.confirm(
+            getProjectRemovalConfirmationMessage({
+              title: member.title,
+              workspaceRoot: member.workspaceRoot,
+              environmentLabel: member.environmentLabel,
+              threadCount: threadRefs.length,
+            }),
+          ),
+        remove: ({ threadRefs, value: latestArchivedThreads }) =>
+          removeProject(member, {
+            ...(threadRefs.length > 0 ? { force: true } : {}),
+            archivedThreads: latestArchivedThreads,
+          }),
+      });
+      if (outcome.status === "changed") {
+        toastManager.add({
+          type: "warning",
+          title: "Project threads changed",
+          description: "Review the updated thread count and confirm removal again.",
+        });
         return;
       }
-
-      const archivedThreadsBeforeRemoval = await readLatestArchivedThreads();
-      if (archivedThreadsBeforeRemoval === null) return;
-      const result = await removeProject(member, {
-        archivedThreads: archivedThreadsBeforeRemoval,
-      });
+      if (outcome.status !== "removed") return;
+      const result = outcome.result;
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         const message = error instanceof Error ? error.message : "Unknown error removing project.";
