@@ -19,7 +19,7 @@ import {
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
-  resolveThreadPinDropAction,
+  resolveThreadPinCrossingAction,
   sortProjectsForSidebar,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
 } from "./Sidebar.logic";
@@ -51,54 +51,39 @@ describe("prioritizeThreadsByPinnedKeys", () => {
   });
 });
 
-describe("resolveThreadPinDropAction", () => {
-  it("pins an unpinned thread dropped on its project's pin target", () => {
+describe("resolveThreadPinCrossingAction", () => {
+  it("pins an unpinned thread after its center crosses above the divider", () => {
     expect(
-      resolveThreadPinDropAction({
-        activeThreadKey: "thread-1",
-        overId: "project-a:pin-drop:thread-2",
-        pinDropPrefix: "project-a:pin-drop:",
-        unpinDropPrefix: "project-a:unpin-drop:",
-        dividerDropId: "project-a:pin-divider",
-        pinnedThreadKeys: [],
+      resolveThreadPinCrossingAction({
+        activeIsPinned: false,
+        draggedCenterY: 90,
+        dividerCenterY: 100,
       }),
     ).toBe("pin");
-  });
-
-  it("unpins a pinned thread dropped in the regular thread area", () => {
     expect(
-      resolveThreadPinDropAction({
-        activeThreadKey: "thread-1",
-        overId: "project-a:unpin-drop:thread-2",
-        pinDropPrefix: "project-a:pin-drop:",
-        unpinDropPrefix: "project-a:unpin-drop:",
-        dividerDropId: "project-a:pin-divider",
-        pinnedThreadKeys: ["thread-1"],
+      resolveThreadPinCrossingAction({
+        activeIsPinned: false,
+        draggedCenterY: 110,
+        dividerCenterY: 100,
       }),
-    ).toBe("unpin");
+    ).toBeNull();
   });
 
-  it("uses the divider to toggle based on the dragged thread's current state", () => {
+  it("unpins a pinned thread after its center crosses below the divider", () => {
     expect(
-      resolveThreadPinDropAction({
-        activeThreadKey: "thread-1",
-        overId: "project-a:pin-divider",
-        pinDropPrefix: "project-a:pin-drop:",
-        unpinDropPrefix: "project-a:unpin-drop:",
-        dividerDropId: "project-a:pin-divider",
-        pinnedThreadKeys: ["thread-1"],
+      resolveThreadPinCrossingAction({
+        activeIsPinned: true,
+        draggedCenterY: 110,
+        dividerCenterY: 100,
       }),
     ).toBe("unpin");
     expect(
-      resolveThreadPinDropAction({
-        activeThreadKey: "thread-1",
-        overId: "project-a:pin-drop:thread-2",
-        pinDropPrefix: "project-a:pin-drop:",
-        unpinDropPrefix: "project-a:unpin-drop:",
-        dividerDropId: "project-a:pin-divider",
-        pinnedThreadKeys: [],
+      resolveThreadPinCrossingAction({
+        activeIsPinned: true,
+        draggedCenterY: 90,
+        dividerCenterY: 100,
       }),
-    ).toBe("pin");
+    ).toBeNull();
   });
 });
 

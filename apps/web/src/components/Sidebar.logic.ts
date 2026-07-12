@@ -41,29 +41,15 @@ export function prioritizeThreadsByPinnedKeys<T>(
 
 export type ThreadPinDropAction = "pin" | "unpin";
 
-export function resolveThreadPinDropAction(input: {
-  activeThreadKey: string;
-  overId: string | null;
-  pinDropPrefix: string;
-  unpinDropPrefix: string;
-  dividerDropId: string;
-  pinnedThreadKeys: readonly string[];
+export function resolveThreadPinCrossingAction(input: {
+  activeIsPinned: boolean;
+  draggedCenterY: number;
+  dividerCenterY: number;
 }): ThreadPinDropAction | null {
-  if (input.overId === null) return null;
-  const activeIsPinned = input.pinnedThreadKeys.includes(input.activeThreadKey);
-  if (
-    !activeIsPinned &&
-    (input.overId === input.dividerDropId || input.overId.startsWith(input.pinDropPrefix))
-  ) {
-    return "pin";
+  if (input.activeIsPinned) {
+    return input.draggedCenterY > input.dividerCenterY ? "unpin" : null;
   }
-  if (
-    activeIsPinned &&
-    (input.overId === input.dividerDropId || input.overId.startsWith(input.unpinDropPrefix))
-  ) {
-    return "unpin";
-  }
-  return null;
+  return input.draggedCenterY < input.dividerCenterY ? "pin" : null;
 }
 
 export interface ThreadStatusPill {

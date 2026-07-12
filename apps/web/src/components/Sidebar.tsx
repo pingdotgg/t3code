@@ -32,13 +32,12 @@ import {
   DndContext,
   type DragCancelEvent,
   type CollisionDetection,
-  type DragOverEvent,
+  type DragMoveEvent,
   PointerSensor,
   type DragStartEvent,
   closestCorners,
   pointerWithin,
   useDraggable,
-  useDroppable,
   useSensor,
   useSensors,
   type DragEndEvent,
@@ -202,7 +201,7 @@ import {
   orderItemsByPreferredIds,
   prioritizeThreadsByPinnedKeys,
   shouldClearThreadSelectionOnMouseDown,
-  resolveThreadPinDropAction,
+  resolveThreadPinCrossingAction,
   type ThreadPinDropAction,
   sortProjectsForSidebar,
   useThreadJumpHintVisibility,
@@ -989,8 +988,13 @@ interface SidebarProjectThreadListProps {
   collapseThreadListForProject: (projectKey: string) => void;
 }
 
-function SidebarPinnedDivider({ id, flow }: { id: string; flow: ThreadPinDropAction | null }) {
-  const { setNodeRef } = useDroppable({ id });
+function SidebarPinnedDivider({
+  nodeRef,
+  flow,
+}: {
+  nodeRef: (node: HTMLLIElement | null) => void;
+  flow: ThreadPinDropAction | null;
+}) {
   const colorClass =
     flow === "pin"
       ? "text-amber-400 before:bg-amber-400/75 after:bg-amber-400/75"
@@ -999,7 +1003,7 @@ function SidebarPinnedDivider({ id, flow }: { id: string; flow: ThreadPinDropAct
         : "text-muted-foreground/45 before:bg-border/80 after:bg-border/80";
   return (
     <SidebarMenuSubItem
-      ref={setNodeRef}
+      ref={nodeRef}
       aria-hidden="true"
       className={`flex h-3 w-full items-center gap-1.5 px-2 transition-colors before:h-px before:flex-1 after:h-px after:flex-1 ${colorClass}`}
     >
@@ -1008,10 +1012,9 @@ function SidebarPinnedDivider({ id, flow }: { id: string; flow: ThreadPinDropAct
   );
 }
 
-function SidebarThreadDropSection({ id, children }: { id: string; children: React.ReactNode }) {
-  const { setNodeRef } = useDroppable({ id });
+function SidebarThreadSection({ children }: { children: React.ReactNode }) {
   return (
-    <SidebarMenuSubItem ref={setNodeRef} className="w-full">
+    <SidebarMenuSubItem className="w-full">
       <ul className="flex w-full flex-col gap-0.5">{children}</ul>
     </SidebarMenuSubItem>
   );
@@ -1062,51 +1065,95 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
   const showLessButtonRender = useMemo(() => <button type="button" />, []);
   const threadDragSensor = useSensor(PointerSensor, { activationConstraint: { distance: 6 } });
   const threadDragSensors = useSensors(threadDragSensor);
-  const pinDropPrefix = `${projectKey}:pin-drop:`;
-  const unpinDropPrefix = `${projectKey}:unpin-drop:`;
-  const dividerDropId = `${projectKey}:pin-divider`;
   const [dragFlow, setDragFlow] = useState<ThreadPinDropAction | null>(null);
+  const dragFlowRef = useRef<ThreadPinDropAction | null>(null);
+  const dividerElementRef = useRef<HTMLLIElement | null>(null);
+  const setDividerElement = useCallback((node: HTMLLIElement | null) => {
+    dividerElementRef.current = node;
+  }, []);
 
-  const resolveDropAction = useCallback(
-    (activeThreadKey: string, overId: string | null) =>
-      resolveThreadPinDropAction({
-        activeThreadKey,
-        overId,
-        pinDropPrefix,
-        unpinDropPrefix,
-        dividerDropId,
-        pinnedThreadKeys,
-      }),
-    [dividerDropId, pinDropPrefix, pinnedThreadKeys, unpinDropPrefix],
-  );
+  const updateDragFlow = useCallback((flow: ThreadPinDropAction | null) => {
+    dragFlowRef.current = flow;
+    setDragFlow(flow);
+  }, []);
 
-  const handleThreadDragOver = useCallback(
-    (event: DragOverEvent) => {
-      setDragFlow(
-        resolveDropAction(String(event.active.id), event.over ? String(event.over.id) : null),
+  const handleThreadDragMove = useCallback(
+    (event: DragMoveEvent) => {
+      const draggedRect = event.active.rect.current.translated;
+      const dividerRect = dividerElementRef.current?.getBoundingClientRect();
+      if (!draggedRect || !dividerRect) {
+        updateDragFlow(null);
+        return;
+      }
+      updateDragFlow(
+        resolveThreadPinCrossingAction({
+          activeIsPinned: pinnedThreadKeys.includes(String(event.active.id)),
+          draggedCenterY: draggedRect.top + draggedRect.height / 2,
+          dividerCenterY: dividerRect.top + dividerRect.height / 2,
+        }),
       );
     },
-    [resolveDropAction],
+    [pinnedThreadKeys, updateDragFlow],
   );
 
   const handleThreadDragEnd = useCallback(
     (event: DragEndEvent) => {
       const activeThreadKey = String(event.active.id);
-      const action = resolveDropAction(activeThreadKey, event.over ? String(event.over.id) : null);
-      setDragFlow(null);
+      const action = dragFlowRef.current;
+      updateDragFlow(null);
       if (action !== null) {
         toggleThreadPinned(activeThreadKey, action === "pin");
       }
     },
-    [resolveDropAction, toggleThreadPinned],
+    [toggleThreadPinned, updateDragFlow],
   );
+  const renderedPinnedThreads = renderedThreads.filter((thread) =>
+    pinnedThreadKeys.includes(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
+  );
+  const renderedRegularThreads = renderedThreads.filter(
+    (thread) =>
+      !pinnedThreadKeys.includes(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
+  );
+  const renderThreadRow = (thread: SidebarThreadSummary) => {
+    const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+    return (
+      <SidebarThreadRow
+        key={threadKey}
+        thread={thread}
+        projectCwd={projectCwd}
+        orderedProjectThreadKeys={orderedProjectThreadKeys}
+        isActive={activeRouteThreadKey === threadKey}
+        jumpLabel={threadJumpLabelByKey.get(threadKey) ?? null}
+        isPinned={pinnedThreadKeys.includes(threadKey)}
+        togglePinned={toggleThreadPinned}
+        appSettingsConfirmThreadArchive={appSettingsConfirmThreadArchive}
+        renamingThreadKey={renamingThreadKey}
+        renamingTitle={renamingTitle}
+        setRenamingTitle={setRenamingTitle}
+        startThreadRename={startThreadRename}
+        renamingInputRef={renamingInputRef}
+        renamingCommittedRef={renamingCommittedRef}
+        confirmingArchiveThreadKey={confirmingArchiveThreadKey}
+        setConfirmingArchiveThreadKey={setConfirmingArchiveThreadKey}
+        confirmArchiveButtonRefs={confirmArchiveButtonRefs}
+        handleThreadClick={handleThreadClick}
+        navigateToThread={navigateToThread}
+        handleMultiSelectContextMenu={handleMultiSelectContextMenu}
+        handleThreadContextMenu={handleThreadContextMenu}
+        clearSelection={clearSelection}
+        commitRename={commitRename}
+        cancelRename={cancelRename}
+        attemptArchiveThread={attemptArchiveThread}
+        openPrLink={openPrLink}
+      />
+    );
+  };
 
   return (
     <DndContext
       sensors={threadDragSensors}
-      collisionDetection={pointerWithin}
-      onDragOver={handleThreadDragOver}
-      onDragCancel={() => setDragFlow(null)}
+      onDragMove={handleThreadDragMove}
+      onDragCancel={() => updateDragFlow(null)}
       onDragEnd={handleThreadDragEnd}
     >
       <SidebarMenuSub
@@ -1123,60 +1170,17 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
             </div>
           </SidebarMenuSubItem>
         ) : null}
+        {shouldShowThreadPanel && renderedPinnedThreads.length > 0 && (
+          <SidebarThreadSection>{renderedPinnedThreads.map(renderThreadRow)}</SidebarThreadSection>
+        )}
         {shouldShowThreadPanel &&
-          renderedThreads.map((thread, index) => {
-            const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-            const showPinnedSeparator =
-              index > 0 &&
-              pinnedThreadKeys.includes(
-                scopedThreadKey(
-                  scopeThreadRef(
-                    renderedThreads[index - 1]!.environmentId,
-                    renderedThreads[index - 1]!.id,
-                  ),
-                ),
-              ) &&
-              !pinnedThreadKeys.includes(threadKey);
-            return (
-              <React.Fragment key={threadKey}>
-                {showPinnedSeparator && <SidebarPinnedDivider id={dividerDropId} flow={dragFlow} />}
-                <SidebarThreadRow
-                  thread={thread}
-                  projectCwd={projectCwd}
-                  orderedProjectThreadKeys={orderedProjectThreadKeys}
-                  isActive={activeRouteThreadKey === threadKey}
-                  jumpLabel={threadJumpLabelByKey.get(threadKey) ?? null}
-                  threadDropId={
-                    pinnedThreadKeys.includes(threadKey) ||
-                    (index === 0 && pinnedThreadKeys.length === 0)
-                      ? `${pinDropPrefix}${threadKey}`
-                      : `${unpinDropPrefix}${threadKey}`
-                  }
-                  isPinned={pinnedThreadKeys.includes(threadKey)}
-                  togglePinned={toggleThreadPinned}
-                  appSettingsConfirmThreadArchive={appSettingsConfirmThreadArchive}
-                  renamingThreadKey={renamingThreadKey}
-                  renamingTitle={renamingTitle}
-                  setRenamingTitle={setRenamingTitle}
-                  startThreadRename={startThreadRename}
-                  renamingInputRef={renamingInputRef}
-                  renamingCommittedRef={renamingCommittedRef}
-                  confirmingArchiveThreadKey={confirmingArchiveThreadKey}
-                  setConfirmingArchiveThreadKey={setConfirmingArchiveThreadKey}
-                  confirmArchiveButtonRefs={confirmArchiveButtonRefs}
-                  handleThreadClick={handleThreadClick}
-                  navigateToThread={navigateToThread}
-                  handleMultiSelectContextMenu={handleMultiSelectContextMenu}
-                  handleThreadContextMenu={handleThreadContextMenu}
-                  clearSelection={clearSelection}
-                  commitRename={commitRename}
-                  cancelRename={cancelRename}
-                  attemptArchiveThread={attemptArchiveThread}
-                  openPrLink={openPrLink}
-                />
-              </React.Fragment>
-            );
-          })}
+          renderedPinnedThreads.length > 0 &&
+          renderedRegularThreads.length > 0 && (
+            <SidebarPinnedDivider nodeRef={setDividerElement} flow={dragFlow} />
+          )}
+        {shouldShowThreadPanel && renderedRegularThreads.length > 0 && (
+          <SidebarThreadSection>{renderedRegularThreads.map(renderThreadRow)}</SidebarThreadSection>
+        )}
 
         {projectExpanded && hasOverflowingThreads && !isThreadListExpanded && (
           <SidebarMenuSubItem className="w-full">
