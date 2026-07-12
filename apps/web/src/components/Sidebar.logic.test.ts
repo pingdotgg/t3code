@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   createThreadJumpHintVisibilityController,
+  getProjectRemovalThreadRefs,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
@@ -28,6 +29,7 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
@@ -36,6 +38,34 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("getProjectRemovalThreadRefs", () => {
+  it("includes archived server threads with composer drafts", () => {
+    const projectId = ProjectId.make("project-a");
+    const liveThreadId = ThreadId.make("thread-live");
+    const archivedThreadId = ThreadId.make("thread-archived");
+
+    expect(
+      getProjectRemovalThreadRefs({
+        environmentId: localEnvironmentId,
+        projectId,
+        liveThreads: [{ environmentId: localEnvironmentId, id: liveThreadId, projectId }],
+        archivedThreads: [
+          { environmentId: localEnvironmentId, id: archivedThreadId, projectId },
+          { environmentId: localEnvironmentId, id: liveThreadId, projectId },
+          {
+            environmentId: localEnvironmentId,
+            id: ThreadId.make("thread-other-project"),
+            projectId: ProjectId.make("project-b"),
+          },
+        ],
+      }),
+    ).toEqual([
+      scopeThreadRef(localEnvironmentId, liveThreadId),
+      scopeThreadRef(localEnvironmentId, archivedThreadId),
+    ]);
+  });
+});
 
 describe("resolveSidebarStageBadgeLabel", () => {
   it("returns Nightly for nightly primary server versions", () => {

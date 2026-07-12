@@ -10,6 +10,8 @@ import type { SidebarThreadSummary, Thread } from "../types";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import type { EnvironmentId, ProjectId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
@@ -25,6 +27,31 @@ type SidebarProject = {
 };
 
 export type ThreadTraversalDirection = "previous" | "next";
+
+export function getProjectRemovalThreadRefs(input: {
+  environmentId: EnvironmentId;
+  projectId: ProjectId;
+  liveThreads: ReadonlyArray<{
+    environmentId: EnvironmentId;
+    id: ThreadId;
+    projectId: ProjectId;
+  }>;
+  archivedThreads: ReadonlyArray<{
+    environmentId: EnvironmentId;
+    id: ThreadId;
+    projectId: ProjectId;
+  }>;
+}): ScopedThreadRef[] {
+  const refs = new Map<string, ScopedThreadRef>();
+  for (const thread of [...input.liveThreads, ...input.archivedThreads]) {
+    if (thread.environmentId !== input.environmentId || thread.projectId !== input.projectId) {
+      continue;
+    }
+    const ref = scopeThreadRef(thread.environmentId, thread.id);
+    refs.set(scopedThreadKey(ref), ref);
+  }
+  return [...refs.values()];
+}
 
 export interface ThreadStatusPill {
   label:

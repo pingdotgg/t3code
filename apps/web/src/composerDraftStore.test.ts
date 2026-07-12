@@ -837,21 +837,30 @@ describe("composerDraftStore project draft thread mapping", () => {
     ]);
   });
 
-  it("collects every draft target removed with a forced project deletion", () => {
+  it("collects live and archived draft targets removed with a forced project deletion", () => {
     const store = useComposerDraftStore.getState();
     const projectThreadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+    const archivedThreadRef = scopeThreadRef(
+      TEST_ENVIRONMENT_ID,
+      ThreadId.make("archived-project-thread"),
+    );
     const retainedThreadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, otherThreadId);
     const projectDraftThreadId = ThreadId.make("project-draft-thread");
 
     store.setPrompt(projectThreadRef, "project server-thread draft");
+    store.setPrompt(archivedThreadRef, "archived server-thread draft");
     store.setProjectDraftThreadId(projectRef, draftId, { threadId: projectDraftThreadId });
     store.setPrompt(draftId, "project new-thread draft");
     store.setPrompt(retainedThreadRef, "other project draft");
 
-    const discardedTargets = composerDraftTargetsProject(projectRef, [projectThreadRef]);
-    expect(discardedTargets).toEqual([projectThreadRef, draftId]);
+    const discardedTargets = composerDraftTargetsProject(projectRef, [
+      projectThreadRef,
+      archivedThreadRef,
+    ]);
+    expect(discardedTargets).toEqual([projectThreadRef, archivedThreadRef, draftId]);
     expect(discardedTargets.map((target) => store.getComposerDraft(target)?.prompt)).toEqual([
       "project server-thread draft",
+      "archived server-thread draft",
       "project new-thread draft",
     ]);
     expect(composerDraftPromptsEnvironmentExcept(TEST_ENVIRONMENT_ID, discardedTargets)).toEqual([
@@ -860,6 +869,7 @@ describe("composerDraftStore project draft thread mapping", () => {
 
     for (const target of discardedTargets) store.clearDraftThread(target);
     expect(store.getComposerDraft(projectThreadRef)).toBeNull();
+    expect(store.getComposerDraft(archivedThreadRef)).toBeNull();
     expect(store.getComposerDraft(draftId)).toBeNull();
     expect(store.getComposerDraft(retainedThreadRef)?.prompt).toBe("other project draft");
   });

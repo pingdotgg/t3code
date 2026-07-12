@@ -76,6 +76,7 @@ import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstra
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL } from "../branding";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
+import { useArchivedThreadSnapshots } from "../lib/archivedThreadsState";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isMacPlatform } from "../lib/utils";
 import {
@@ -195,6 +196,7 @@ import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useOpenAddProjectCommandPalette } from "../commandPaletteContext";
 import {
   getSidebarThreadIdsToPrewarm,
+  getProjectRemovalThreadRefs,
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
   isTrailingDoubleClick,
@@ -1203,6 +1205,23 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const sidebarThreadByKeyRef = useRef(sidebarThreadByKey);
   sidebarThreadByKeyRef.current = sidebarThreadByKey;
   const projectThreads = sidebarThreads;
+  const archivedEnvironmentIds = useMemo(
+    () => [...new Set(project.memberProjects.map((member) => member.environmentId))],
+    [project.memberProjects],
+  );
+  const {
+    snapshots: archivedSnapshots,
+    isLoading: isLoadingArchivedThreads,
+    error: archivedThreadsError,
+    refresh: refreshArchivedThreads,
+  } = useArchivedThreadSnapshots(archivedEnvironmentIds);
+  const archivedThreads = useMemo(
+    () =>
+      archivedSnapshots.flatMap(({ environmentId, snapshot }) =>
+        snapshot.threads.map((thread) => ({ ...thread, environmentId })),
+      ),
+    [archivedSnapshots],
+  );
   const projectPreferenceKeys = useMemo(() => projectExpansionPreferenceKeys(project), [project]);
   const projectExpanded = useUiStateStore((state) =>
     resolveProjectExpanded(state.projectExpandedById, projectPreferenceKeys),
@@ -1246,7 +1265,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     const counts = new Map<string, number>(
       project.memberProjects.map((member) => [member.physicalProjectKey, 0] as const),
     );
-    for (const thread of projectThreads) {
+    for (const thread of [...projectThreads, ...archivedThreads]) {
       const member = memberProjectByScopedKey.get(
         scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
       );
@@ -1256,7 +1275,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       counts.set(member.physicalProjectKey, (counts.get(member.physicalProjectKey) ?? 0) + 1);
     }
     return counts;
-  }, [memberProjectByScopedKey, project.memberProjects, projectThreads]);
+  }, [archivedThreads, memberProjectByScopedKey, project.memberProjects, projectThreads]);
 
   const { projectStatus, visibleProjectThreads, orderedProjectThreadKeys } = useMemo(() => {
     const lastVisitedAtByThreadKey = new Map(
@@ -1451,12 +1470,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     async (member: SidebarProjectGroupMember, options: { force?: boolean } = {}) => {
       const memberProjectRef = scopeProjectRef(member.environmentId, member.id);
       const draftStore = useComposerDraftStore.getState();
-      const projectThreadRefs = projectThreads
-        .filter(
-          (thread) =>
-            thread.environmentId === member.environmentId && thread.projectId === member.id,
-        )
-        .map((thread) => scopeThreadRef(thread.environmentId, thread.id));
+      const projectThreadRefs = getProjectRemovalThreadRefs({
+        environmentId: member.environmentId,
+        projectId: member.id,
+        liveThreads: projectThreads,
+        archivedThreads,
+      });
       const discardedTargets = composerDraftTargetsProject(memberProjectRef, projectThreadRefs);
       const discardedClaims = discardedTargets.flatMap((target) =>
         textAttachmentClaims(target, draftStore.getComposerDraft(target)?.prompt ?? ""),
@@ -1501,13 +1520,22 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       draftStore.clearProjectDraftThreadId(memberProjectRef);
       return result;
     },
-    [deleteProject, projectThreads, releaseTextAttachment],
+    [archivedThreads, deleteProject, projectThreads, releaseTextAttachment],
   );
 
   const handleRemoveProject = useCallback(
     async (member: SidebarProjectGroupMember) => {
       const api = readLocalApi();
       if (!api) {
+        return;
+      }
+      if (isLoadingArchivedThreads || archivedThreadsError !== null) {
+        if (archivedThreadsError !== null) refreshArchivedThreads();
+        toastManager.add({
+          type: "warning",
+          title: "Archived threads are still loading",
+          description: "Try removing the project again in a moment.",
+        });
         return;
       }
 
@@ -1629,7 +1657,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         );
       }
     },
-    [memberThreadCountByPhysicalKey, removeProject],
+    [
+      archivedThreadsError,
+      isLoadingArchivedThreads,
+      memberThreadCountByPhysicalKey,
+      refreshArchivedThreads,
+      removeProject,
+    ],
   );
 
   const handleProjectButtonContextMenu = useCallback(
