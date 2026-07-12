@@ -1407,10 +1407,14 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const handleContentSizeChange = useCallback((_width: number, height: number) => {
     setContentHeight((current) => (Math.abs(current - height) > 1 ? height : current));
   }, []);
+  // UIKit's automatic top inset reduces the visible list area without adding
+  // to contentHeight. Non-automatic layouts render their header spacer inside
+  // the list, so their contentHeight already accounts for it.
+  const usableViewportHeight = viewportHeight - (usesNativeAutomaticInsets ? anchorTopInset : 0);
   const contentUnderflowsViewport =
     contentHeight > 0 &&
     viewportHeight > 0 &&
-    contentHeight + props.contentInsetEndEstimate < viewportHeight - CONTENT_FIT_EPSILON;
+    contentHeight + props.contentInsetEndEstimate < usableViewportHeight - CONTENT_FIT_EPSILON;
 
   useEffect(() => {
     if (underflowCorrectionFrameRef.current !== null) {
