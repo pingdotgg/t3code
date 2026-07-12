@@ -4,6 +4,10 @@ import Observation
 @Observable
 @MainActor
 public final class AppModel {
+    public let deviceID: DeviceID
+    public let deviceName: String?
+    public let capabilities: BackendCapabilities
+
     public private(set) var connection: ConnectionPhase = .launchingServer
     public private(set) var projects: [Project] = []
     public private(set) var threads: [ChatThread] = []
@@ -43,7 +47,9 @@ public final class AppModel {
     static let timelineSubscriptionKeepCount = 4
 
     /// In-app dictation (mic → local ASR → on-device cleanup → composer).
-    public let dictation = DictationController()
+    /// Multiple device models may share one controller so ASR stays a single
+    /// process-wide resource.
+    public let dictation: DictationController
 
     /// Text staged for the composer by a timeline action (Edit on a sent
     /// message). The composer consumes it via `takeComposerPrefill`. A fresh
@@ -120,9 +126,21 @@ public final class AppModel {
     /// insertion still sorts against the real latest activity time.
     @ObservationIgnored private var effectiveUpdatedAt: [String: Date] = [:]
 
-    public init(backend: any BackendService) {
+    public init(
+        backend: any BackendService,
+        deviceID: DeviceID = .local,
+        deviceName: String? = nil,
+        capabilities: BackendCapabilities = .local,
+        dictation: DictationController? = nil
+    ) {
+        self.deviceID = deviceID
+        self.deviceName = deviceName
+        self.capabilities = capabilities
         self.backend = backend
+        self.dictation = dictation ?? DictationController()
     }
+
+    public var isRemote: Bool { deviceID != .local }
 
     /// Lookup only — does not create a `ThreadState`.
     public func threadState(_ threadID: String) -> ThreadState? {
