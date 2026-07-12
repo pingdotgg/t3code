@@ -95,6 +95,7 @@ import { toastManager } from "../ui/toast";
 import {
   BotIcon,
   CircleAlertIcon,
+  ImagePlusIcon,
   ListTodoIcon,
   PencilRulerIcon,
   type LucideIcon,
@@ -890,6 +891,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerEditorRef = useRef<ComposerPromptEditorHandle>(null);
   const composerFormRef = useRef<HTMLFormElement>(null);
   const composerSurfaceRef = useRef<HTMLDivElement>(null);
+  const composerImageInputRef = useRef<HTMLInputElement>(null);
   const composerSelectLockRef = useRef(false);
   const composerMenuOpenRef = useRef(false);
   const composerMenuItemsRef = useRef<ComposerCommandItem[]>([]);
@@ -1809,6 +1811,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     removeComposerImageFromDraft(imageId);
   };
 
+  const openComposerImagePicker = () => {
+    composerImageInputRef.current?.click();
+  };
+
+  const onComposerImageInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    addComposerImages(Array.from(event.target.files ?? []));
+    // Reset so selecting the same file again re-fires onChange.
+    event.target.value = "";
+  };
+
   // ------------------------------------------------------------------
   // Callbacks: paste / drag
   // ------------------------------------------------------------------
@@ -2527,6 +2539,41 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     />
                   </>
                 )}
+
+                <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        type="button"
+                        className="shrink-0 px-2 text-muted-foreground/70 hover:text-foreground/80"
+                        onClick={openComposerImagePicker}
+                        disabled={
+                          isConnecting ||
+                          isComposerApprovalState ||
+                          (environmentUnavailable !== null && activePendingProgress === null) ||
+                          pendingUserInputs.length > 0 ||
+                          !activeThreadId ||
+                          composerImages.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS
+                        }
+                        aria-label="Attach image"
+                      />
+                    }
+                  >
+                    <ImagePlusIcon aria-hidden="true" className="size-4" />
+                  </TooltipTrigger>
+                  <TooltipPopup side="top">Attach image</TooltipPopup>
+                </Tooltip>
+                <input
+                  ref={composerImageInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={onComposerImageInputChange}
+                />
               </div>
 
               {/* Right side: send / stop button */}
