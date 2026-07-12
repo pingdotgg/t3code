@@ -11,7 +11,6 @@ import { subscribe } from "@t3tools/client-runtime/rpc";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import type { KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
 import { nextTerminalId } from "@t3tools/shared/terminalLabels";
-import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -619,31 +618,6 @@ export function projectActionTerminalReadinessFailureFromEvent(
   return null;
 }
 
-function projectActionTerminalAttachErrorFromCause(
-  input: TerminalOpenInput,
-  cause: Cause.Cause<unknown>,
-): ProjectActionTerminalAttachError {
-  return new ProjectActionTerminalAttachError({
-    threadId: input.threadId,
-    terminalId: input.terminalId,
-    cwd: input.cwd,
-    detail: "Terminal attach failed before it was ready for input.",
-    cause,
-  });
-}
-
-function projectActionTerminalReadinessTimeoutError(
-  input: TerminalOpenInput,
-  timeoutMs: number,
-): ProjectActionTerminalReadinessTimeoutError {
-  return new ProjectActionTerminalReadinessTimeoutError({
-    threadId: input.threadId,
-    terminalId: input.terminalId,
-    cwd: input.cwd,
-    timeoutMs,
-  });
-}
-
 type ProjectActionTerminalReadinessOutcome =
   | { readonly _tag: "ready" }
   | { readonly _tag: "failed"; readonly error: ProjectActionTerminalReadinessError };
@@ -662,7 +636,15 @@ export function waitForProjectActionTerminalInputReadyStrict(
     subscribe(WS_METHODS.terminalAttach, terminalAttachInputFromOpenInput(input)),
   ).pipe(
     Stream.catchCause((cause) =>
-      Stream.fail(projectActionTerminalAttachErrorFromCause(input, cause)),
+      Stream.fail(
+        new ProjectActionTerminalAttachError({
+          threadId: input.threadId,
+          terminalId: input.terminalId,
+          cwd: input.cwd,
+          detail: "Terminal attach failed before it was ready for input.",
+          cause,
+        }),
+      ),
     ),
     Stream.filterMap((event) => {
       const error = projectActionTerminalReadinessFailureFromEvent(input, event);
@@ -680,7 +662,14 @@ export function waitForProjectActionTerminalInputReadyStrict(
     Effect.timeoutOption(Duration.millis(timeoutMs)),
     Effect.flatMap((result) => {
       if (Option.isNone(result)) {
-        return Effect.fail(projectActionTerminalReadinessTimeoutError(input, timeoutMs));
+        return Effect.fail(
+          new ProjectActionTerminalReadinessTimeoutError({
+            threadId: input.threadId,
+            terminalId: input.terminalId,
+            cwd: input.cwd,
+            timeoutMs,
+          }),
+        );
       }
       if (Option.isNone(result.value)) {
         return Effect.fail(
