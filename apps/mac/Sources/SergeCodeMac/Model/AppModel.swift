@@ -136,8 +136,10 @@ public final class AppModel {
     }
 
     public func togglePinned(_ thread: ChatThread) {
-        if !pinnedThreadIDs.insert(thread.id).inserted {
+        if pinnedThreadIDs.contains(thread.id) {
             pinnedThreadIDs.remove(thread.id)
+        } else {
+            pinnedThreadIDs.insert(thread.id)
         }
         persistPinnedThreadIDs()
     }
