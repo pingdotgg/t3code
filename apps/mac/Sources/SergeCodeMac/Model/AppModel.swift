@@ -333,6 +333,9 @@ public final class AppModel {
                 touched[threadID] = items
                 recordInteraction(item, threadID: threadID)
             case .timelineReset(let threadID, let items):
+                // A snapshot can truncate or replace an in-flight message;
+                // the old settled prefix is no longer valid for this thread.
+                StreamingMarkdownCache.evict(threadID: threadID)
                 let filtered = items.filter { !isDismissedUsageLimit($0) }
                 touched[threadID] = filtered
                 resetThreads.insert(threadID)
@@ -416,6 +419,7 @@ public final class AppModel {
             queuedRetryTokensByThread[id] = nil
             if composerPrefill?.threadID == id { composerPrefill = nil }
             TimelineDisplayCache.evict(threadID: id)
+            StreamingMarkdownCache.evict(threadID: id)
             if selectedThreadID == id { selectedThreadID = nil }
         case .approvalRequested, .userInputRequested:
             break
@@ -1403,6 +1407,7 @@ public final class AppModel {
             state.hasLoadedTimeline = false
         }
         TimelineDisplayCache.evict(threadID: threadID)
+        StreamingMarkdownCache.evict(threadID: threadID)
     }
 
     private func pruneTimelineSubscriptions() {
@@ -1426,6 +1431,7 @@ public final class AppModel {
                     state.hasLoadedTimeline = false
                 }
                 TimelineDisplayCache.evict(threadID: threadID)
+                StreamingMarkdownCache.evict(threadID: threadID)
                 await self.backend.closeTimeline(threadID: threadID)
             }
         }

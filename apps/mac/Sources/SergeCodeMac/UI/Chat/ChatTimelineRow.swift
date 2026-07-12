@@ -31,9 +31,13 @@ struct ChatTimelineRowView: View {
         switch item {
         case .userMessage(let id, let text, _):
             UserMessageBubble(messageID: id, text: text, model: model)
-        case .assistantMessage(_, let markdown, let isStreaming, _):
+        case .assistantMessage(let id, let markdown, let isStreaming, _):
             AssistantMarkdownView(
-                markdown: markdown, isStreaming: isStreaming, threadID: threadID, model: model)
+                markdown: markdown,
+                isStreaming: isStreaming,
+                threadID: threadID,
+                messageID: id,
+                model: model)
         case .toolEvent(_, let name, let detail, let kind, let status, _, let output, let outputIsError):
             ToolEventRow(
                 name: name, detail: detail, kind: kind, status: status,

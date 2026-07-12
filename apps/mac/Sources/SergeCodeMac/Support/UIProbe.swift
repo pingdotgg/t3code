@@ -262,6 +262,7 @@
                     markdown: markdownProbe,
                     isStreaming: false,
                     threadID: model.selectedThreadID ?? "ui-probe",
+                    messageID: "ui-probe-markdown",
                     model: model))
             markdownHosting.frame = NSRect(x: 0, y: 0, width: 720, height: 360)
             markdownHosting.layoutSubtreeIfNeeded()

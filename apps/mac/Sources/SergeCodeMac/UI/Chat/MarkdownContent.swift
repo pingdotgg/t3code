@@ -670,17 +670,31 @@ struct AssistantMarkdownView: View {
     let markdown: String
     let isStreaming: Bool
     let threadID: String
+    let messageID: String
     let model: AppModel
     // Parsing belongs in init, not body: body is evaluated for every timeline
     // mutation while the view value can remain otherwise unchanged.
     private let blocks: [MarkdownBlock]
 
-    init(markdown: String, isStreaming: Bool, threadID: String, model: AppModel) {
+    init(
+        markdown: String,
+        isStreaming: Bool,
+        threadID: String,
+        messageID: String,
+        model: AppModel
+    ) {
         self.markdown = markdown
         self.isStreaming = isStreaming
         self.threadID = threadID
+        self.messageID = messageID
         self.model = model
-        self.blocks = MarkdownBlockCache.document(for: markdown).blocks
+        if isStreaming {
+            self.blocks = StreamingMarkdownCache.blocks(
+                threadID: threadID, messageID: messageID, markdown: markdown)
+        } else {
+            StreamingMarkdownCache.finish(threadID: threadID, messageID: messageID)
+            self.blocks = MarkdownBlockCache.document(for: markdown).blocks
+        }
     }
 
     @UIState private var isHovering = false
