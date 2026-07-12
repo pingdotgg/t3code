@@ -1834,6 +1834,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         { allowNonZeroExit: true },
       );
       const hasHead = headResult.exitCode === 0;
+      const baseline = hasHead
+        ? "HEAD"
+        : (yield* executeGit(
+            "GitVcsDriver.readWorkingTreeReviewDiff.resolveEmptyTree",
+            cwd,
+            ["hash-object", "-t", "tree", "--stdin"],
+            { stdin: "" },
+          )).stdout.trim();
       const gitIndexResult = yield* executeGit(
         "GitVcsDriver.readWorkingTreeReviewDiff.resolveIndex",
         cwd,
@@ -1880,7 +1888,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           "--minimal",
           "--find-renames",
           ...(ignoreWhitespace ? ["--ignore-all-space"] : []),
-          ...(hasHead ? ["HEAD"] : []),
+          baseline,
           "--",
         ],
         {
