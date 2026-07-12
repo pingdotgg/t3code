@@ -101,6 +101,48 @@ private extension MarkdownBlockCacheStore {
     var entryCount: Int { storage.count }
 }
 
+@MainActor
+enum CodeHighlightCache {
+    private struct Key: Hashable {
+        var language: String?
+        var code: String
+    }
+
+    private static var storage: [Key: AttributedString] = [:]
+    private(set) static var hits = 0
+    private(set) static var misses = 0
+
+    static func highlighted(code: String, language: String?) -> AttributedString {
+        let key = Key(language: language, code: code)
+        if let value = storage[key] {
+            hits += 1
+            return value
+        }
+
+        misses += 1
+        let value: AttributedString
+        if code.utf8.count > 64_000 {
+            // Keep oversized blocks as one plain run. MarkdownCodeBlock applies
+            // the monospaced font at the Text view, matching the normal path.
+            value = AttributedString(code)
+        } else {
+            value = highlightedCode(code, language: language)
+        }
+
+        if storage.count >= 256 {
+            storage.removeAll(keepingCapacity: true)
+        }
+        storage[key] = value
+        return value
+    }
+
+    static func resetForTesting() {
+        storage.removeAll(keepingCapacity: true)
+        hits = 0
+        misses = 0
+    }
+}
+
 /// Parse the complete Markdown document with swift-markdown/cmark-gfm.
 func parseMarkdownDocument(_ markdown: String) -> ParsedMarkdownDocument {
     MarkdownASTParser(markdown: markdown).parse()
@@ -918,7 +960,7 @@ private struct MarkdownCodeBlock: View {
     init(language: String?, code: String) {
         self.language = language
         self.code = code
-        self.highlighted = highlightedCode(code, language: language)
+        self.highlighted = CodeHighlightCache.highlighted(code: code, language: language)
     }
 
     var body: some View {
