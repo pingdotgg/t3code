@@ -44,8 +44,19 @@ struct ChatTimelineScrollView: View {
             version: model.timelineVersion(threadID: threadID),
             structureVersion: model.timelineStructureVersion(threadID: threadID),
             threadIsSettled: threadIsSettled)
+        let isLoadingTimeline = model.threadState(threadID)?.isLoadingTimeline == true
 
-        ScrollViewReader { proxy in
+        if displayItems.isEmpty && isLoadingTimeline {
+            VStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Loading conversation…")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
                     ForEach(displayItems) { item in
@@ -142,6 +153,7 @@ struct ChatTimelineScrollView: View {
                 }
                 pendingInitialScrollThreadID = nil
                 proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+            }
             }
         }
     }

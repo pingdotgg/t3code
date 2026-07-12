@@ -51,6 +51,10 @@ public final class ThreadState {
     /// so a stream event for a not-yet-selected thread cannot suppress the
     /// later history fetch. Gates `loadTimelineIfNeeded`.
     @ObservationIgnored var hasLoadedTimeline = false
+    /// True while a full timeline snapshot is being fetched for this thread.
+    /// Unlike `hasLoadedTimeline`, this stays observable so a cold selection
+    /// can show an inline loading affordance without masking retained content.
+    public internal(set) var isLoadingTimeline = false
 
     public init() {}
 }

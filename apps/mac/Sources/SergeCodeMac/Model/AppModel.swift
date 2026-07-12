@@ -41,6 +41,10 @@ public final class AppModel {
     /// Keep the selected thread plus this many other recently selected ones
     /// subscribed. Beyond that, `closeTimeline` drops the live subscription.
     static let timelineSubscriptionKeepCount = 4
+    /// Retained timeline history is bounded even after its live subscription
+    /// is closed. Keep the newest suffix so a later selection has useful
+    /// stale content to render immediately.
+    static let maxRetainedTimelineItems = 500
 
     /// In-app dictation (mic → local ASR → on-device cleanup → composer).
     public let dictation = DictationController()
@@ -638,6 +642,8 @@ public final class AppModel {
     public func loadTimelineIfNeeded(threadID: String) async {
         let state = self.state(creating: threadID)
         guard !state.hasLoadedTimeline else { return }
+        state.isLoadingTimeline = true
+        defer { state.isLoadingTimeline = false }
         do {
             let items = try await backend.timeline(threadID: threadID)
             state.timeline = items.filter { !isDismissedUsageLimit($0) }
@@ -1481,16 +1487,16 @@ public final class AppModel {
         return Array(recent.dropFirst(keep))
     }
 
-    /// Tear down backend timeline subscription and local timeline cache so a
-    /// later selection refetches via `loadTimelineIfNeeded`.
+    /// Tear down the backend timeline subscription while retaining a bounded
+    /// stale snapshot so a later selection can render immediately and then
+    /// refresh it through `loadTimelineIfNeeded`.
     private func releaseTimeline(threadID: String) async {
         recentlySelected.removeAll { $0 == threadID }
         await backend.closeTimeline(threadID: threadID)
         if let state = threadStates[threadID] {
-            state.timeline = []
+            trimRetainedTimelineIfNeeded(state)
             state.hasLoadedTimeline = false
         }
-        TimelineDisplayCache.evict(threadID: threadID)
         StreamingMarkdownCache.evict(threadID: threadID)
     }
 
@@ -1511,13 +1517,22 @@ public final class AppModel {
                     && !self.recentlySelected.contains(threadID)
                 else { return }
                 if let state = self.threadStates[threadID] {
-                    state.timeline = []
+                    self.trimRetainedTimelineIfNeeded(state)
                     state.hasLoadedTimeline = false
                 }
-                TimelineDisplayCache.evict(threadID: threadID)
                 StreamingMarkdownCache.evict(threadID: threadID)
                 await self.backend.closeTimeline(threadID: threadID)
             }
         }
+    }
+
+    /// Trim only when needed. A real trim changes the cached shape, so bump
+    /// both monotonic versions instead of resetting them; the retained
+    /// `TimelineDisplayCache` entry will re-key on its next read.
+    private func trimRetainedTimelineIfNeeded(_ state: ThreadState) {
+        guard state.timeline.count > Self.maxRetainedTimelineItems else { return }
+        state.timeline = Array(state.timeline.suffix(Self.maxRetainedTimelineItems))
+        state.timelineVersion += 1
+        state.structureVersion += 1
     }
 }
