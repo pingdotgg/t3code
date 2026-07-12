@@ -6,9 +6,10 @@ import {
 } from "@t3tools/client-runtime/state/vcs";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { SymbolView } from "expo-symbols";
+import { SymbolView } from "../../../components/AppSymbol";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
+
 import { Screen, ScreenStack, ScreenStackHeaderConfig } from "react-native-screens";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../../lib/useThemeColor";
@@ -354,40 +355,53 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
         }}
       />
 
-      <View
-        className={
-          isInspector
-            ? "gap-1 border-b border-border px-4 pb-4 pt-3"
-            : "items-center gap-1 px-5 pb-3 pt-4"
-        }
-      >
-        <Pressable
-          className={
-            busy
-              ? "absolute right-3 top-4 z-[1] h-9 w-9 items-center justify-center rounded-full bg-subtle opacity-[0.45]"
-              : "absolute right-3 top-4 z-[1] h-9 w-9 items-center justify-center rounded-full bg-subtle"
-          }
-          disabled={busy}
-          onPress={() => void gitActions.refreshSelectedThreadGitStatus()}
-        >
-          <SymbolView
-            name="arrow.clockwise"
-            size={16}
-            tintColor={iconColor}
-            type="monochrome"
-            weight="medium"
-          />
-        </Pressable>
-        <Text className="text-xs font-t3-bold tracking-[1px] uppercase text-foreground-muted">
-          {isInspector ? "Repository" : "Branch"}
-        </Text>
-        <Text className={isInspector ? "pr-10 text-xl font-t3-bold" : "text-3xl font-t3-bold"}>
-          {currentBranchLabel}
-        </Text>
-        <Text className="text-foreground-secondary text-sm font-medium leading-normal">
-          {currentStatusSummary}
-        </Text>
-      </View>
+      {isInspector ? (
+        <View className="gap-1 border-b border-border px-4 pb-4 pt-3">
+          <Pressable
+            className={
+              busy
+                ? "absolute right-3 top-4 z-[1] h-9 w-9 items-center justify-center rounded-full bg-subtle opacity-[0.45]"
+                : "absolute right-3 top-4 z-[1] h-9 w-9 items-center justify-center rounded-full bg-subtle"
+            }
+            disabled={busy}
+            onPress={() => void gitActions.refreshSelectedThreadGitStatus()}
+          >
+            <SymbolView
+              name="arrow.clockwise"
+              size={16}
+              tintColor={iconColor}
+              type="monochrome"
+              weight="medium"
+            />
+          </Pressable>
+          <Text className="text-xs font-t3-bold tracking-[1px] uppercase text-foreground-muted">
+            Repository
+          </Text>
+          <Text className="pr-10 text-xl font-t3-bold">{currentBranchLabel}</Text>
+          <Text className="text-foreground-secondary text-sm font-medium leading-normal">
+            {currentStatusSummary}
+          </Text>
+        </View>
+      ) : (
+        // Compact header row: labeled branch on the left, status summary at
+        // the trailing end. Horizontal padding lines the text up with the
+        // rows' icon column inside the card below (20 screen + 16 card + 4
+        // row). The sheet relies on pull-to-refresh instead of a corner
+        // refresh button.
+        <View className="flex-row items-end justify-between gap-3 px-10 pb-4 pt-4">
+          <View className="shrink gap-0.5">
+            <Text className="text-xs font-t3-bold tracking-[1px] uppercase text-foreground-muted">
+              Branch
+            </Text>
+            <Text className="text-xl font-t3-bold" numberOfLines={1}>
+              {currentBranchLabel}
+            </Text>
+          </View>
+          <Text className="text-foreground-secondary pb-0.5 text-sm font-medium" numberOfLines={1}>
+            {currentStatusSummary}
+          </Text>
+        </View>
+      )}
 
       {content}
     </View>

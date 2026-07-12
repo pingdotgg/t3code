@@ -69,11 +69,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
       contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
-      contentContainerStyle={{
-        paddingHorizontal: 20,
-        paddingTop: 8,
-        gap: 16,
-      }}
+      contentContainerClassName="gap-4 px-5 pt-2"
     >
       <View className="gap-3 rounded-[22px] border border-border bg-card px-4 py-4">
         <View className="flex-row items-center justify-between gap-3">

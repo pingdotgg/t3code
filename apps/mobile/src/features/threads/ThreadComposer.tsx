@@ -19,6 +19,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject
 import {
   ActivityIndicator,
   Image,
+  Platform,
   Pressable,
   useColorScheme,
   View,
@@ -113,12 +114,18 @@ export interface ThreadComposerProps {
 /**
  * The pill / card container — renders as LiquidGlassView on supported
  * iOS 26+ devices (progressive blur, native morph), opaque View otherwise.
+ * Exported so NewTaskDraftScreen can render the same composer chrome.
  */
 // One timing for every piece of the expanded↔compact morph so the surface,
 // toolbar, and siblings move together instead of popping between layouts.
-const COMPOSER_LAYOUT_TRANSITION = LinearTransition.duration(220);
+// Android gets NO layout transition: the composer rides the keyboard via
+// KeyboardStickyView (frame-synced to the IME), and a time-based morph
+// running alongside that translate reads as jitter. Snapping the layout and
+// letting the keyboard-synced slide be the only motion looks native there.
+const COMPOSER_LAYOUT_TRANSITION =
+  Platform.OS === "android" ? undefined : LinearTransition.duration(220);
 
-function ComposerSurface(props: {
+export function ComposerSurface(props: {
   readonly children: ReactNode;
   readonly style: ViewStyle;
   readonly isDarkMode: boolean;
@@ -772,7 +779,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               onBlur={handleBlur}
               onSubmit={handleSend}
               scrollEnabled={isExpanded}
-              contentInsetVertical={isExpanded ? 0 : 6}
+              // Android: collapsed single line centers natively (gravity) in
+              // a pill-height box matching the send button; iOS keeps insets.
+              singleLineCentered={!isExpanded}
+              contentInsetVertical={isExpanded || Platform.OS === "android" ? 0 : 6}
               style={
                 isExpanded
                   ? {
@@ -827,8 +837,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           ) : null}
         </ComposerSurface>
 
-        {/* Toolbar row — matches draft page layout (expanded only) */}
         {isExpanded ? (
+          // Toolbar row — matches draft page layout (expanded only)
           <Animated.View entering={FadeIn.duration(160)} exiting={FadeOut.duration(120)}>
             <ComposerToolbarRow paddingBottom={8} paddingHorizontal={0} paddingTop={8}>
               <ComposerToolbarScroller
@@ -836,6 +846,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 fadeTransparent={toolbarFadeTransparent}
               >
                 <ComposerToolbarButton
+                  accessibilityLabel="Add attachment"
                   icon="plus"
                   onPress={() => void props.onPickDraftImages()}
                   showChevron={false}
@@ -864,6 +875,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 </ControlPillMenu>
                 {showStopAction ? (
                   <ComposerToolbarButton
+                    accessibilityLabel="Stop"
                     icon="stop.fill"
                     variant="danger"
                     onPress={props.onStopThread}
