@@ -219,6 +219,56 @@
                 "UIProbe: multi-line diff selectable block=\(multiLineOK) "
                     + "chars=\(multiLinePlain.count)")
 
+            // Markdown renderer smoke test: build the real assistant view and
+            // verify its AST contains the new GFM block kinds before taking
+            // the conversation-wide selection snapshot.
+            let markdownProbe = """
+            | Name | Status |
+            | :--- | ---: |
+            | Build | 1 |
+
+            - [ ] pending
+            - [x] done
+
+            ```swift
+            let answer = 42
+            ```
+            """
+            let markdownBlocks = parseMarkdownBlocks(markdownProbe)
+            let tableCount = markdownBlocks.reduce(into: 0) { count, block in
+                if case .table = block { count += 1 }
+            }
+            let taskCount = markdownBlocks.reduce(into: 0) { count, block in
+                if case .taskItem = block { count += 1 }
+            }
+            let codeValues = markdownBlocks.compactMap { block -> String? in
+                if case .codeBlock(_, let code) = block { return code }
+                return nil
+            }
+            let highlightedKinds = codeValues.flatMap {
+                SyntaxTint.tokenize($0, language: .swift).map(\.kind)
+            }
+            let renderedMarkdown = attributedMarkdownDocument(markdownProbe)
+            let markdownHosting = NSHostingView(
+                rootView: AssistantMarkdownView(
+                    markdown: markdownProbe,
+                    isStreaming: false,
+                    threadID: model.selectedThreadID ?? "ui-probe",
+                    model: model))
+            markdownHosting.frame = NSRect(x: 0, y: 0, width: 720, height: 360)
+            markdownHosting.layoutSubtreeIfNeeded()
+            let markdownProbeOK =
+                tableCount == 1
+                && taskCount == 2
+                && codeValues.count == 1
+                && highlightedKinds.contains(.keyword)
+                && String(renderedMarkdown.characters).contains("Name\tStatus")
+            print(
+                "UIProbe: markdown table=\(tableCount) tasks=\(taskCount) "
+                    + "code=\(codeValues.count) syntaxKeyword=\(highlightedKinds.contains(.keyword)) "
+                    + "rendered=\(markdownProbeOK)")
+            assert(markdownProbeOK, "Markdown UI probe failed")
+
             // Select Text overlay: use the pricing thread (thread-3) — earlier
             // probe steps mutate thread-1's timeline (queue/retry), so a still-
             // seeded conversation is a cleaner fixture for the sheet.

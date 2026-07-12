@@ -434,16 +434,19 @@ struct AssistantMarkdownView: View {
             MarkdownProseText(
                 attributed: listAttributed(marker: "\(number).", text: text, indent: indent))
         case .taskItem(let indent, let checked, let text):
-            MarkdownProseText(
-                attributed: listAttributed(
-                    marker: checked ? "☑" : "☐", text: text, indent: indent))
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: checked ? "checkmark.square" : "square")
+                    .foregroundStyle(.secondary)
+                Text(linkifyFilePaths(in: text))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.leading, CGFloat(indent) * 24)
+            .frame(maxWidth: .infinity, alignment: .leading)
         case .quote(let paragraphs):
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(Array(paragraphs.enumerated()), id: \.offset) { _, paragraph in
-                    MarkdownProseText(
-                        attributed: styled(
-                            inlineAttributed(quoteText(String(paragraph.characters))),
-                            foregroundColor: .secondary))
+                    MarkdownProseText(attributed: quotedAttributed(paragraph))
                 }
             }
         case .rule:
@@ -514,8 +517,12 @@ private func attributedBlock(_ block: MarkdownBlock) -> AttributedString {
     case .taskItem(let indent, let checked, let text):
         return listAttributed(marker: checked ? "☑" : "☐", text: text, indent: indent)
     case .quote(let paragraphs):
-        let quote = paragraphs.map { "> \(String($0.characters))" }.joined(separator: "\n")
-        return styled(AttributedString(quote), foregroundColor: .secondary)
+        var result = AttributedString()
+        for (index, paragraph) in paragraphs.enumerated() {
+            if index > 0 { result.append(AttributedString("\n")) }
+            result.append(quotedAttributed(paragraph))
+        }
+        return result
     case .rule:
         // Selection has no divider primitive, so use a neutral separator glyph
         // while the chat renderer uses a real Divider view.
@@ -556,6 +563,12 @@ private func attributedCode(_ code: String) -> AttributedString {
     return result
 }
 
+private func quotedAttributed(_ paragraph: AttributedString) -> AttributedString {
+    var result = styled(AttributedString("> "), foregroundColor: .secondary)
+    result.append(styled(paragraph, foregroundColor: .secondary))
+    return result
+}
+
 private func listAttributed(marker: String, text: AttributedString, indent: Int) -> AttributedString {
     let indentPrefix = String(repeating: "  ", count: indent)
     let markerPrefix = "\(indentPrefix)\(marker) "
@@ -591,12 +604,6 @@ private func hangingIndentedText(_ text: AttributedString, prefix: String) -> At
     return result
 }
 
-private func quoteText(_ text: String) -> String {
-    text.split(separator: "\n", omittingEmptySubsequences: false)
-        .map { "> \($0)" }
-        .joined(separator: "\n")
-}
-
 private func styled(
     _ attributed: AttributedString,
     font: Font? = nil,
@@ -626,8 +633,16 @@ private func headingFont(_ level: Int) -> Font {
 private struct MarkdownCodeBlock: View {
     let language: String?
     let code: String
+    private let highlighted: AttributedString
 
     @UIState private var isHovering = false
+    @UIState private var isWrapped = false
+
+    init(language: String?, code: String) {
+        self.language = language
+        self.code = code
+        self.highlighted = highlightedCode(code, language: language)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -638,17 +653,36 @@ private struct MarkdownCodeBlock: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
-                CopyActionButton(text: code)
-                    .opacity(isHovering ? 1 : 0)
+                if isHovering {
+                    MessageActionButton(
+                        systemImage: isWrapped ? "arrow.left.and.right" : "arrow.down.right.and.line.horizontal.and.line.vertical.and.arrow.down",
+                        help: isWrapped ? "Disable word wrap" : "Enable word wrap"
+                    ) {
+                        withAnimation(Motion.fade) { isWrapped.toggle() }
+                    }
+                    .transition(.opacity)
+                    CopyActionButton(text: code)
+                        .transition(.opacity)
+                }
             }
-            ScrollView(.horizontal, showsIndicators: false) {
-                Text(code)
+            if isWrapped {
+                Text(highlighted)
                     .font(.system(.body, design: .monospaced))
                     .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    Text(highlighted)
+                        .font(.system(.body, design: .monospaced))
+                        .textSelection(.enabled)
+                        .fixedSize()
+                }
             }
         }
         .onHover { isHovering = $0 }
         .animation(Motion.fade, value: isHovering)
+        .animation(Motion.fade, value: isWrapped)
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         // Solid opaque fill — code blocks live inside long-form assistant
@@ -661,13 +695,22 @@ private struct MarkdownCodeBlock: View {
 private struct MarkdownTableView: View {
     let table: MarkdownTable
 
+    private var columnCount: Int {
+        max(table.header.count, table.rows.map(\.count).max() ?? 0)
+    }
+
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 0) {
-                tableRow(table.header, isHeader: true)
+            Grid(horizontalSpacing: 0, verticalSpacing: 0) {
+                GridRow {
+                    tableCells(table.header, isHeader: true)
+                }
                 Divider()
+                    .gridCellColumns(max(columnCount, 1))
                 ForEach(Array(table.rows.enumerated()), id: \.offset) { _, row in
-                    tableRow(row, isHeader: false)
+                    GridRow {
+                        tableCells(row, isHeader: false)
+                    }
                 }
             }
             .padding(8)
@@ -676,18 +719,18 @@ private struct MarkdownTableView: View {
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator, lineWidth: 1))
     }
 
-    private func tableRow(_ cells: [AttributedString], isHeader: Bool) -> some View {
-        HStack(alignment: .top, spacing: 0) {
-            ForEach(Array(cells.enumerated()), id: \.offset) { index, cell in
-                let columnAlignment = table.columnAlignments.indices.contains(index)
-                    ? table.columnAlignments[index] : nil
-                Text(cell)
-                    .font(isHeader ? .body.weight(.semibold) : .body)
-                    .multilineTextAlignment(columnAlignment ?? .leading)
-                    .frame(minWidth: 96, alignment: alignment(columnAlignment))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
-            }
+    @ViewBuilder
+    private func tableCells(_ cells: [AttributedString], isHeader: Bool) -> some View {
+        ForEach(0..<columnCount, id: \.self) { index in
+            let cell = index < cells.count ? cells[index] : AttributedString()
+            let columnAlignment = table.columnAlignments.indices.contains(index)
+                ? table.columnAlignments[index] : nil
+            Text(linkifyFilePaths(in: cell))
+                .font(isHeader ? .body.weight(.semibold) : .body)
+                .multilineTextAlignment(columnAlignment ?? .leading)
+                .frame(minWidth: 96, alignment: alignment(columnAlignment))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
         }
     }
 
@@ -697,5 +740,37 @@ private struct MarkdownTableView: View {
         case .trailing: return .trailing
         default: return .leading
         }
+    }
+}
+
+private func highlightedCode(_ code: String, language: String?) -> AttributedString {
+    let syntaxLanguage: SyntaxLanguage
+    switch language?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+    case "swift": syntaxLanguage = .swift
+    case "ts", "tsx", "typescript", "js", "jsx", "javascript", "mjs", "cjs":
+        syntaxLanguage = .typescript
+    case "json": syntaxLanguage = .json
+    default: syntaxLanguage = .plain
+    }
+
+    var result = AttributedString()
+    for span in SyntaxTint.tokenize(code, language: syntaxLanguage) {
+        var piece = AttributedString(span.text)
+        if let color = markdownSyntaxColor(span.kind) {
+            piece.foregroundColor = color
+        }
+        result.append(piece)
+    }
+    result.font = .system(.body, design: .monospaced)
+    return result
+}
+
+private func markdownSyntaxColor(_ kind: SyntaxKind) -> Color? {
+    switch kind {
+    case .plain: return nil
+    case .keyword: return Color(red: 0.56, green: 0.25, blue: 0.68)
+    case .string: return Color(red: 0.72, green: 0.22, blue: 0.25)
+    case .comment: return .secondary
+    case .number: return Color(red: 0.12, green: 0.42, blue: 0.62)
     }
 }
