@@ -178,6 +178,21 @@ struct MarkdownContentTests {
         #expect(text(value) == "A\tB\n1\t2")
     }
 
+    @Test("reuses stable top-level blocks while the tail streams")
+    func blockCacheReusesStableBlocks() {
+        MarkdownBlockCache.resetForTesting()
+        _ = MarkdownBlockCache.document(for: "stable paragraph\n\nstreaming tail")
+        let firstPass = MarkdownBlockCache.statistics
+        _ = MarkdownBlockCache.document(for: "stable paragraph\n\nstreaming tail updated")
+        let secondPass = MarkdownBlockCache.statistics
+
+        #expect(firstPass.hits == 0)
+        #expect(firstPass.misses == 2)
+        #expect(secondPass.hits == 1)
+        #expect(secondPass.misses == 3)
+        #expect(secondPass.entryCount == 3)
+    }
+
     private func text(_ value: AttributedString) -> String {
         String(value.characters)
     }

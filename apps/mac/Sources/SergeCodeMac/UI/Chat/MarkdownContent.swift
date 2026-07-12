@@ -28,11 +28,68 @@ struct MarkdownTable: Equatable {
 
 struct ParsedMarkdownDocument {
     let blocks: [MarkdownBlock]
+    let blockKeys: [String]
+}
+
+@MainActor
+private final class MarkdownBlockCacheStore {
+    private var storage: [String: [MarkdownBlock]] = [:]
+    private(set) var hits = 0
+    private(set) var misses = 0
+
+    func value(for key: String) -> [MarkdownBlock]? {
+        guard let value = storage[key] else {
+            misses += 1
+            return nil
+        }
+        hits += 1
+        return value
+    }
+
+    func insert(_ value: [MarkdownBlock], for key: String) {
+        if storage.count >= 512, storage[key] == nil {
+            storage.removeAll(keepingCapacity: true)
+        }
+        storage[key] = value
+    }
+
+    func reset() {
+        storage.removeAll(keepingCapacity: true)
+        hits = 0
+        misses = 0
+    }
+}
+
+@MainActor
+enum MarkdownBlockCache {
+    struct Statistics: Equatable {
+        let hits: Int
+        let misses: Int
+        let entryCount: Int
+    }
+
+    private static let store = MarkdownBlockCacheStore()
+
+    static func document(for markdown: String) -> ParsedMarkdownDocument {
+        MarkdownASTParser(markdown: markdown).parse(using: store)
+    }
+
+    static var statistics: Statistics {
+        Statistics(hits: store.hits, misses: store.misses, entryCount: store.entryCount)
+    }
+
+    static func resetForTesting() {
+        store.reset()
+    }
+}
+
+private extension MarkdownBlockCacheStore {
+    var entryCount: Int { storage.count }
 }
 
 /// Parse the complete Markdown document with swift-markdown/cmark-gfm.
 func parseMarkdownDocument(_ markdown: String) -> ParsedMarkdownDocument {
-    ParsedMarkdownDocument(blocks: MarkdownASTParser(markdown: markdown).parse())
+    MarkdownASTParser(markdown: markdown).parse()
 }
 
 /// Kept as the parser entry point used by older consumers. It now accepts a
@@ -44,9 +101,71 @@ func parseMarkdownBlocks(_ markdown: String) -> [MarkdownBlock] {
 private struct MarkdownASTParser {
     let markdown: String
 
-    func parse() -> [MarkdownBlock] {
+    func parse() -> ParsedMarkdownDocument {
         let document = Document(parsing: markdown)
-        return document.children.flatMap { parseBlock($0, listIndent: 0) }
+        var blocks: [MarkdownBlock] = []
+        var blockKeys: [String] = []
+        for (index, markup) in document.children.enumerated() {
+            let parsed = parseBlock(markup, listIndent: 0)
+            blocks.append(contentsOf: parsed)
+            blockKeys.append(contentsOf: repeatElement(
+                sourceKey(for: markup, fallbackIndex: index), count: parsed.count))
+        }
+        return ParsedMarkdownDocument(blocks: blocks, blockKeys: blockKeys)
+    }
+
+    @MainActor
+    func parse(using cache: MarkdownBlockCacheStore) -> ParsedMarkdownDocument {
+        let document = Document(parsing: markdown)
+        var blocks: [MarkdownBlock] = []
+        var blockKeys: [String] = []
+
+        for (index, markup) in document.children.enumerated() {
+            let key = sourceKey(for: markup, fallbackIndex: index)
+            let parsed: [MarkdownBlock]
+            if let cached = cache.value(for: key) {
+                parsed = cached
+            } else {
+                parsed = parseBlock(markup, listIndent: 0)
+                cache.insert(parsed, for: key)
+            }
+            blocks.append(contentsOf: parsed)
+            blockKeys.append(contentsOf: repeatElement(key, count: parsed.count))
+        }
+
+        return ParsedMarkdownDocument(blocks: blocks, blockKeys: blockKeys)
+    }
+
+    private func sourceKey(for markup: Markup, fallbackIndex: Int) -> String {
+        guard let range = markup.range,
+            let start = sourceByteOffset(for: range.lowerBound),
+            let end = sourceByteOffset(for: range.upperBound),
+            start <= end
+        else {
+            return "\u{0}\(fallbackIndex)"
+        }
+
+        let bytes = Array(markdown.utf8)
+        guard start <= bytes.count, end <= bytes.count else {
+            return "\u{0}\(fallbackIndex)"
+        }
+        return String(decoding: bytes[start..<end], as: UTF8.self)
+    }
+
+    private func sourceByteOffset(for location: SourceLocation) -> Int? {
+        guard location.line >= 1, location.column >= 1 else { return nil }
+        let bytes = Array(markdown.utf8)
+        var line = 1
+        var lineStart = 0
+        if location.line > 1 {
+            for index in bytes.indices where bytes[index] == 10 {
+                line += 1
+                lineStart = index + 1
+                if line == location.line { break }
+            }
+        }
+        guard line == location.line else { return nil }
+        return min(bytes.count, lineStart + location.column - 1)
     }
 
     private func parseBlock(_ markup: Markup, listIndent: Int) -> [MarkdownBlock] {
@@ -345,6 +464,7 @@ private func inlineAttributed(markup: Markup) -> AttributedString {
 /// Full-width assistant message body: an AST-backed block list plus a
 /// streaming indicator. Content stays unframed and opaque for long-form
 /// reading; only the hover action chip floats above it.
+@MainActor
 struct AssistantMarkdownView: View {
     // The mac client has no editor picker yet; Cursor is first in the shared
     // EDITORS ordering and therefore matches the existing client default.
@@ -363,7 +483,7 @@ struct AssistantMarkdownView: View {
         self.isStreaming = isStreaming
         self.threadID = threadID
         self.model = model
-        self.blocks = parseMarkdownBlocks(markdown)
+        self.blocks = MarkdownBlockCache.document(for: markdown).blocks
     }
 
     @UIState private var isHovering = false
