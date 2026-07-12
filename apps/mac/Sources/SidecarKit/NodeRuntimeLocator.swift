@@ -61,6 +61,9 @@ public struct NodeRuntimeLocator: Sendable {
     private let environment: [String: String]
     private nonisolated(unsafe) let fileManager: FileManager
     private let runVersionProbe: @Sendable (String) -> String?
+    private let runLoginShellPathProbe: @Sendable () -> String?
+    private let cachedPath: String?
+    private let onLocated: (@Sendable (String) -> Void)?
 
     /// - Parameters:
     ///   - environment: Process environment to read `SERGECODE_NODE`/`HOME`
@@ -70,47 +73,76 @@ public struct NodeRuntimeLocator: Sendable {
     ///     stdout, or `nil` on failure. Defaults to actually spawning the
     ///     binary; tests can stub this out to avoid touching the filesystem
     ///     or spawning processes.
+    ///   - cachedPath: Previously located node path. A valid cached path avoids
+    ///     the login-shell probe; stale values are ignored.
+    ///   - onLocated: Called when a path is newly located through the override
+    ///     or normal search paths, so the caller can persist it.
+    ///   - runLoginShellPathProbe: Runs the login-shell PATH probe. Defaults to
+    ///     actually spawning zsh; tests can stub this out.
     public init(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         fileManager: FileManager = .default,
-        runVersionProbe: (@Sendable (String) -> String?)? = nil
+        runVersionProbe: (@Sendable (String) -> String?)? = nil,
+        cachedPath: String? = nil,
+        onLocated: (@Sendable (String) -> Void)? = nil,
+        runLoginShellPathProbe: (@Sendable () -> String?)? = nil
     ) {
         self.environment = environment
         self.fileManager = fileManager
         self.runVersionProbe = runVersionProbe ?? NodeRuntimeLocator.spawnVersionProbe
+        self.cachedPath = cachedPath
+        self.onLocated = onLocated
+        self.runLoginShellPathProbe =
+            runLoginShellPathProbe ?? NodeRuntimeLocator.spawnLoginShellPath
     }
 
     /// Finds a usable node binary, in priority order:
     /// 1. `$SERGECODE_NODE` override
-    /// 2. login-shell PATH probe (`/bin/zsh -ilc 'command -v node'`)
-    /// 3. common install paths (`~/.local/bin/node`, `/opt/homebrew/bin/node`,
+    /// 2. previously cached path, if it is still usable
+    /// 3. login-shell PATH probe (`/bin/zsh -ilc 'command -v node'`)
+    /// 4. common install paths (`~/.local/bin/node`, `/opt/homebrew/bin/node`,
     ///    `/usr/local/bin/node`)
     ///
     /// Each candidate must exist, be executable, and report a version
     /// satisfying the server's engines range (`^22.16 || ^23.11 || >=24.10`).
     public func locate() throws -> LocatedNode {
-        var candidates: [String] = []
         if let override = environment["SERGECODE_NODE"], !override.isEmpty {
-            candidates.append(override)
+            if let located = validatedNode(at: override) {
+                onLocated?(located.path)
+                return located
+            }
         }
-        if let shellNode = probeLoginShellPath() {
+
+        if let cachedPath, let located = validatedNode(at: cachedPath) {
+            return located
+        }
+
+        var candidates: [String] = []
+        if let shellNode = runLoginShellPathProbe() {
             candidates.append(shellNode)
         }
         candidates.append(contentsOf: commonCandidatePaths())
 
         for candidate in candidates {
-            guard fileManager.isExecutableFile(atPath: candidate) else { continue }
-            guard let rawVersion = runVersionProbe(candidate),
-                let version = SemanticVersion(parsing: rawVersion),
-                Self.satisfiesEngineRange(version)
-            else { continue }
-            return LocatedNode(path: candidate, version: version)
+            if let located = validatedNode(at: candidate) {
+                onLocated?(located.path)
+                return located
+            }
         }
 
         throw LocatorError.notFound
     }
 
-    private func probeLoginShellPath() -> String? {
+    private func validatedNode(at path: String) -> LocatedNode? {
+        guard fileManager.isExecutableFile(atPath: path) else { return nil }
+        guard let rawVersion = runVersionProbe(path),
+            let version = SemanticVersion(parsing: rawVersion),
+            Self.satisfiesEngineRange(version)
+        else { return nil }
+        return LocatedNode(path: path, version: version)
+    }
+
+    private static func spawnLoginShellPath() -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
         process.arguments = ["-ilc", "command -v node"]

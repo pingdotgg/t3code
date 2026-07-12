@@ -168,6 +168,8 @@ public actor LiveBackend: BackendService {
     /// snapshots and advanced by live `task.*` activity events.
     private var subagentTasksByThread: [String: T3SubagentTaskActivityState] = [:]
 
+    private static let nodePathCacheKey = "sergecode.nodePathCache"
+
     /// Verification-only breadcrumb path (see `emit`), opt-in via
     /// `$SERGECODE_DEBUG_LOG` (e.g. for a manual `open`-launched run whose
     /// stdio isn't attached to a terminal). `nil` — the default for every
@@ -220,7 +222,14 @@ public actor LiveBackend: BackendService {
         let nodePath: String
         let locateStartedAt = PerfLog.now()
         do {
-            nodePath = try NodeRuntimeLocator().locate().path
+            let nodePathCacheKey = Self.nodePathCacheKey
+            let cachedNodePath = UserDefaults.standard.string(forKey: nodePathCacheKey)
+            nodePath = try NodeRuntimeLocator(
+                cachedPath: cachedNodePath,
+                onLocated: { path in
+                    UserDefaults.standard.set(path, forKey: nodePathCacheKey)
+                }
+            ).locate().path
             PerfLog.event(
                 "startup.locate-node",
                 ms: PerfLog.elapsedMilliseconds(since: locateStartedAt),
