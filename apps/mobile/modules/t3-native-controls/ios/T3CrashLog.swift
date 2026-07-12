@@ -134,8 +134,7 @@ public enum T3CrashLog {
     }
     if JSONSerialization.isValidJSONObject(value),
        let data = try? JSONSerialization.data(withJSONObject: value, options: []),
-       let text = String(data: data, encoding: .utf8)
-    {
+       let text = String(data: data, encoding: .utf8) {
       return text
     }
     return String(describing: value)
