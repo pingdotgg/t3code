@@ -191,6 +191,8 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
     "opus-4.6": "claude-opus-4-6",
     "claude-opus-4.6": "claude-opus-4-6",
     "claude-opus-4-6-20251117": "claude-opus-4-6",
+    fable: "claude-fable-5",
+    "fable-5": "claude-fable-5",
     sonnet: "claude-sonnet-5",
     "sonnet-5": "claude-sonnet-5",
     "claude-sonnet-5.0": "claude-sonnet-5",
