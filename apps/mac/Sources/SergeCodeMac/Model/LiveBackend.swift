@@ -1517,6 +1517,11 @@ public actor LiveBackend: BackendService {
             runtimeMode: thread.map { Self.wireRuntimeMode($0.runtimeMode) } ?? .wireDefault,
             interactionMode: .default,
             sourceProposedPlan: SourceProposedPlanReference(threadId: threadID, planId: planID))
+        // The implementation turn deliberately uses the default interaction
+        // mode, so keep the local composer state in sync immediately. The
+        // thread shell may still report plan mode because that setting is
+        // persisted independently of the turn's mode.
+        updateCachedThread(threadID) { $0.interactionMode = .normal }
     }
 
     public func cancelTurn(threadID: String) async throws {
