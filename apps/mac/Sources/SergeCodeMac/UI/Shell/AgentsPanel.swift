@@ -166,7 +166,10 @@ private struct AgentsPanelTaskRow: View {
                             .lineLimit(2)
                             .fixedSize(horizontal: false, vertical: true)
                         Spacer(minLength: 8)
-                        if entry.task.state == .running {
+                        // Match the timeline row: paused agents are stoppable
+                        // too, and the panel is the only stop affordance for
+                        // non-selected threads.
+                        if entry.task.state == .running || entry.task.state == .paused {
                             stopButton
                         }
                         SubagentTaskDurationLabel(task: entry.task)
