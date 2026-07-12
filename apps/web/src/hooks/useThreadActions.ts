@@ -27,7 +27,7 @@ import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useClientSettings } from "./useSettings";
 import { useAtomCommand } from "../state/use-atom-command";
-import { textAttachmentClaims } from "../textAttachmentClaims";
+import { retryTextAttachmentOperation, textAttachmentClaims } from "../textAttachmentClaims";
 
 export class ThreadArchiveBlockedError extends Schema.TaggedErrorClass<ThreadArchiveBlockedError>()(
   "ThreadArchiveBlockedError",
@@ -249,9 +249,12 @@ export function useThreadActions() {
       }
       await Promise.all(
         textAttachmentClaims(threadRef, discardedPrompt).map(({ path, draftOwnerId }) =>
-          releaseTextAttachment({
-            environmentId: threadRef.environmentId,
-            input: { path, draftOwnerId },
+          retryTextAttachmentOperation(async () => {
+            const result = await releaseTextAttachment({
+              environmentId: threadRef.environmentId,
+              input: { path, draftOwnerId },
+            });
+            return result._tag === "Success";
           }),
         ),
       );

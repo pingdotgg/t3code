@@ -593,6 +593,7 @@ const environmentOwnedDataCleanupLayer = Layer.succeed(
             ({ path, draftOwnerId }) =>
               request(WS_METHODS.assetsReleaseTextAttachment, { path, draftOwnerId }).pipe(
                 Effect.provideService(EnvironmentSupervisor, supervisor),
+                Effect.retry({ times: 2 }),
                 Effect.ignoreCause({ log: true }),
               ),
             { concurrency: 1, discard: true },

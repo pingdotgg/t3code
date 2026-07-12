@@ -87,7 +87,11 @@ import {
 import { ContextWindowMeter } from "./ContextWindowMeter";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
 import { basenameOfPath } from "../../pierre-icons";
-import { textAttachmentClaimChanges, textAttachmentDraftOwnerId } from "../../textAttachmentClaims";
+import {
+  textAttachmentClaimChanges,
+  textAttachmentDraftOwnerId,
+  TextAttachmentClaimReconciler,
+} from "../../textAttachmentClaims";
 import { cn, randomUUID } from "~/lib/utils";
 import { Separator } from "../ui/separator";
 import { Button } from "../ui/button";
@@ -937,38 +941,39 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const attachmentQueueRef = useRef<Promise<void>>(Promise.resolve());
   const composerAttachmentKeyRef = useRef(composerAttachmentKey);
   composerAttachmentKeyRef.current = composerAttachmentKey;
-  const textAttachmentClaimQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const textAttachmentClaimStateRef = useRef<{
-    draftOwnerId: string;
-    paths: Set<string>;
+  const textAttachmentClaimReconcilerRef = useRef<{
+    key: string;
+    value: TextAttachmentClaimReconciler;
   } | null>(null);
+  const getTextAttachmentClaimReconciler = useCallback(() => {
+    const draftOwnerId = textAttachmentDraftOwnerId(composerDraftTarget);
+    const key = `${environmentId}:${draftOwnerId}`;
+    const existing = textAttachmentClaimReconcilerRef.current;
+    if (existing?.key === key) return existing.value;
+    const value = new TextAttachmentClaimReconciler({
+      claim: async (path) => {
+        const result = await claimTextAttachment({
+          environmentId,
+          input: { path, draftOwnerId },
+        });
+        return result._tag === "Success" && result.value.claimed;
+      },
+      release: async (path) => {
+        const result = await releaseTextAttachment({
+          environmentId,
+          input: { path, draftOwnerId },
+        });
+        return result._tag === "Success";
+      },
+    });
+    textAttachmentClaimReconcilerRef.current = { key, value };
+    return value;
+  }, [claimTextAttachment, composerDraftTarget, environmentId, releaseTextAttachment]);
 
   useEffect(() => {
     if (textAttachmentClaimsHeld) return;
-    const draftOwnerId = textAttachmentDraftOwnerId(composerDraftTarget);
-    const previous = textAttachmentClaimStateRef.current;
-    const previousPaths =
-      previous?.draftOwnerId === draftOwnerId ? previous.paths : new Set<string>();
-    const changes = textAttachmentClaimChanges(previousPaths, prompt);
-    textAttachmentClaimStateRef.current = { draftOwnerId, paths: changes.nextPaths };
-    textAttachmentClaimQueueRef.current = textAttachmentClaimQueueRef.current
-      .catch(() => undefined)
-      .then(async () => {
-        for (const path of changes.claim) {
-          await claimTextAttachment({ environmentId, input: { path, draftOwnerId } });
-        }
-        for (const path of changes.release) {
-          await releaseTextAttachment({ environmentId, input: { path, draftOwnerId } });
-        }
-      });
-  }, [
-    claimTextAttachment,
-    composerDraftTarget,
-    environmentId,
-    prompt,
-    releaseTextAttachment,
-    textAttachmentClaimsHeld,
-  ]);
+    getTextAttachmentClaimReconciler().setDesiredPrompt(prompt);
+  }, [getTextAttachmentClaimReconciler, prompt, textAttachmentClaimsHeld]);
 
   // ------------------------------------------------------------------
   // Derived: composer send state
@@ -1862,6 +1867,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (result === null) return `'${file.name}' is not a supported text file.`;
     if (result._tag === "Failure") return `Could not attach '${file.name}'.`;
 
+    getTextAttachmentClaimReconciler().confirmPaths([result.value.path]);
     const currentPrompt = getComposerDraft(composerDraftTarget)?.prompt ?? "";
     const separator = currentPrompt.length > 0 && !/\s$/.test(currentPrompt) ? " " : "";
     const nextPrompt = `${currentPrompt}${separator}${serializeComposerFileLink(
@@ -2147,21 +2153,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       },
       releaseTextAttachmentClaims: () => {
         setTextAttachmentClaimsHeld(false);
-        const draftOwnerId = textAttachmentDraftOwnerId(composerDraftTarget);
-        const paths = new Set([
-          ...textAttachmentClaimChanges(new Set(), promptRef.current).nextPaths,
-          ...(textAttachmentClaimStateRef.current?.draftOwnerId === draftOwnerId
-            ? textAttachmentClaimStateRef.current.paths
-            : []),
-        ]);
-        textAttachmentClaimStateRef.current = { draftOwnerId, paths: new Set() };
-        textAttachmentClaimQueueRef.current = textAttachmentClaimQueueRef.current
-          .catch(() => undefined)
-          .then(async () => {
-            for (const path of paths) {
-              await releaseTextAttachment({ environmentId, input: { path, draftOwnerId } });
-            }
-          });
+        const reconciler = getTextAttachmentClaimReconciler();
+        reconciler.confirmPaths(textAttachmentClaimChanges(new Set(), promptRef.current).nextPaths);
+        reconciler.setDesiredPaths([]);
       },
       holdTextAttachmentClaims: () => {
         setTextAttachmentClaimsHeld(true);
@@ -2190,8 +2184,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerCursor,
       composerTerminalContexts,
       insertComposerDraftTerminalContext,
-      environmentId,
-      releaseTextAttachment,
+      getTextAttachmentClaimReconciler,
       promptRef,
       composerImagesRef,
       composerTerminalContextsRef,

@@ -119,7 +119,7 @@ import { useEnvironmentQuery } from "../state/query";
 import { threadEnvironment, useEnvironmentThread } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useEnvironment, useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
-import { textAttachmentClaims } from "../textAttachmentClaims";
+import { retryTextAttachmentOperation, textAttachmentClaims } from "../textAttachmentClaims";
 import {
   buildThreadRouteParams,
   resolveThreadRouteRef,
@@ -1465,9 +1465,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       }
       await Promise.all(
         discardedClaims.map(({ path, draftOwnerId }) =>
-          releaseTextAttachment({
-            environmentId: member.environmentId,
-            input: { path, draftOwnerId },
+          retryTextAttachmentOperation(async () => {
+            const result = await releaseTextAttachment({
+              environmentId: member.environmentId,
+              input: { path, draftOwnerId },
+            });
+            return result._tag === "Success";
           }),
         ),
       );
