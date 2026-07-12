@@ -457,6 +457,7 @@ private extension ProviderKind {
     var symbolName: String {
         switch self {
         case .claude: "sparkles"
+        case .claudex: "arrow.triangle.branch"
         case .claudeSynthero: "link"
         case .codex: "chevron.left.forwardslash.chevron.right"
         case .cursor: "cursorarrow"
@@ -469,6 +470,7 @@ private extension ProviderKind {
     var cliCommand: String {
         switch self {
         case .claude: "claude"
+        case .claudex: "claudex"
         case .claudeSynthero: "claude"
         case .codex: "codex"
         case .cursor: "cursor-agent"
