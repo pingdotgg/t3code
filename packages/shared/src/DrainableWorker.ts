@@ -10,6 +10,7 @@
  */
 import * as Scope from "effect/Scope";
 import * as Effect from "effect/Effect";
+import * as Semaphore from "effect/Semaphore";
 import * as TxQueue from "effect/TxQueue";
 import * as TxRef from "effect/TxRef";
 
@@ -24,6 +25,21 @@ export interface DrainableWorker<A> {
 
   /**
    * Resolves when the queue is empty and the worker is idle (not processing).
+   */
+  readonly drain: Effect.Effect<void>;
+}
+
+export interface KeyedDrainableWorker<K, A, R = never> {
+  /**
+   * Enqueue a work item on the worker dedicated to `key`.
+   *
+   * Items for the same key are processed in order, while different keys have
+   * independent worker fibers.
+   */
+  readonly enqueue: (key: K, item: A) => Effect.Effect<void, never, R>;
+
+  /**
+   * Resolves when every item enqueued on every key has finished processing.
    */
   readonly drain: Effect.Effect<void>;
 }
@@ -67,4 +83,60 @@ export const makeDrainableWorker = <A, E, R>(
       );
 
     return { enqueue, drain } satisfies DrainableWorker<A>;
+  });
+
+/**
+ * Create lazily allocated drainable workers keyed by `K`.
+ *
+ * Workers are retained for the lifetime of the enclosing scope. Thread IDs
+ * are the intended key here and are bounded by the server's thread set; this
+ * keeps enqueueing simple while preserving per-key ordering. The shared
+ * outstanding count makes `drain` cover all lazily created workers, including
+ * items enqueued while another key is still processing.
+ */
+export const makeKeyedDrainableWorker = <K, A, E, R>(
+  process: (key: K, item: A) => Effect.Effect<void, E, R>,
+): Effect.Effect<KeyedDrainableWorker<K, A, R>, never, Scope.Scope | R> =>
+  Effect.gen(function* () {
+    const workerScope = yield* Scope.Scope;
+    const workers = new Map<K, DrainableWorker<A>>();
+    const workersLock = yield* Semaphore.make(1);
+    const outstanding = yield* TxRef.make(0);
+
+    const getWorker = (key: K) =>
+      workersLock.withPermit(
+        Effect.gen(function* () {
+          const existing = workers.get(key);
+          if (existing !== undefined) {
+            return existing;
+          }
+
+          const worker = yield* makeDrainableWorker((item: A) =>
+            Effect.ensuring(
+              process(key, item),
+              TxRef.update(outstanding, (n) => n - 1),
+            ),
+          ).pipe(Effect.provideService(Scope.Scope, workerScope));
+          workers.set(key, worker);
+          return worker;
+        }),
+      );
+
+    const enqueue: KeyedDrainableWorker<K, A, R>["enqueue"] = (key, item) =>
+      Effect.gen(function* () {
+        const worker = yield* getWorker(key);
+        // Reserve the item before offering it to the per-key queue so a
+        // concurrent drain cannot observe a false idle state.
+        yield* TxRef.update(outstanding, (n) => n + 1).pipe(Effect.tx);
+        yield* worker
+          .enqueue(item)
+          .pipe(Effect.onError(() => TxRef.update(outstanding, (n) => n - 1).pipe(Effect.tx)));
+      });
+
+    const drain: KeyedDrainableWorker<K, A, R>["drain"] = TxRef.get(outstanding).pipe(
+      Effect.tap((n) => (n > 0 ? Effect.txRetry : Effect.void)),
+      Effect.tx,
+    );
+
+    return { enqueue, drain } satisfies KeyedDrainableWorker<K, A, R>;
   });
