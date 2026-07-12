@@ -98,6 +98,75 @@ struct PassportStoreTests {
         #expect(store.stampedThreadIDs == ["thread-1", "thread-2"])
     }
 
+    @Test("recordVisit matches punctuation variants by canonical slug")
+    func recordVisitSlugCanonicalization() throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = PassportStore(rootOverride: root)
+        let first = Date(timeIntervalSince1970: 100)
+        let second = Date(timeIntervalSince1970: 200)
+        store.ensurePage(setId: "cornwall", title: "Cornwall", issuedAt: first)
+
+        store.recordVisit(
+            threadID: "thread-st-ives-1",
+            setId: "cornwall",
+            placeName: "St. Ives",
+            photoID: nil,
+            date: first)
+        store.recordVisit(
+            threadID: "thread-st-ives-2",
+            setId: "cornwall",
+            placeName: "St Ives",
+            photoID: "st-ives-photo",
+            date: second)
+
+        #expect(store.pages[0].stamps.count == 1)
+        #expect(store.pages[0].stamps[0].id == "st-ives")
+        #expect(store.pages[0].stamps[0].visitCount == 2)
+        #expect(store.pages[0].stamps[0].photoID == "st-ives-photo")
+    }
+
+    @Test("load repairs persisted stamp slug collisions")
+    func loadRepairsSlugCollisions() throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = Date(timeIntervalSince1970: 100)
+        let second = Date(timeIntervalSince1970: 200)
+        let file = PassportFile(
+            pages: [
+                PassportPage(
+                    setId: "cornwall",
+                    title: "Cornwall",
+                    issuedAt: first,
+                    stamps: [
+                        PassportStamp(
+                            placeName: "St. Ives",
+                            photoID: nil,
+                            firstVisitedAt: first,
+                            lastVisitedAt: first.addingTimeInterval(50),
+                            visitCount: 2),
+                        PassportStamp(
+                            placeName: "St Ives",
+                            photoID: "st-ives-photo",
+                            firstVisitedAt: second,
+                            lastVisitedAt: second.addingTimeInterval(100),
+                            visitCount: 3),
+                    ]
+                )
+            ])
+        try JSONEncoder().encode(file).write(to: root.appendingPathComponent("passport.json"))
+
+        let store = PassportStore(rootOverride: root)
+        let stamps = try #require(store.pages.first?.stamps)
+        #expect(stamps.count == 1)
+        #expect(stamps[0].id == "st-ives")
+        #expect(stamps[0].placeName == "St. Ives")
+        #expect(stamps[0].visitCount == 5)
+        #expect(stamps[0].firstVisitedAt == first)
+        #expect(stamps[0].lastVisitedAt == second.addingTimeInterval(100))
+        #expect(stamps[0].photoID == "st-ives-photo")
+    }
+
     @Test("recordVisit does not stamp the bare set title")
     func bareSetTitleIsSkipped() throws {
         let root = try tempRoot()
@@ -146,21 +215,64 @@ struct PassportStoreTests {
         #expect(store.pages.first(where: { $0.setId == "kyoto" })?.stamps.first?.photoID == "photo-3")
     }
 
-    @Test("missing and corrupt passport files load as an empty passport")
-    func corruptAndMissingFile() throws {
+    @Test("missing passport file stays writable")
+    func missingFileStaysWritable() throws {
         let missingRoot = try tempRoot()
         defer { try? FileManager.default.removeItem(at: missingRoot) }
         let missing = PassportStore(rootOverride: missingRoot)
         #expect(missing.pages.isEmpty)
         #expect(missing.stampedThreadIDs.isEmpty)
 
-        let corruptRoot = try tempRoot()
-        defer { try? FileManager.default.removeItem(at: corruptRoot) }
-        try Data("not json".utf8).write(
-            to: corruptRoot.appendingPathComponent("passport.json"))
-        let corrupt = PassportStore(rootOverride: corruptRoot)
+        missing.recordVisit(
+            threadID: "thread-missing",
+            setId: "alps",
+            placeName: "Lake Como",
+            photoID: nil,
+            date: Date(timeIntervalSince1970: 100))
+        #expect(missing.pages.count == 1)
+        #expect(
+            FileManager.default.fileExists(
+                atPath: missingRoot.appendingPathComponent("passport.json").path))
+    }
+
+    @Test("corrupt passport file blocks saves and preserves its bytes")
+    func corruptFileBlocksSaves() throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let original = Data("not json".utf8)
+        let fileURL = root.appendingPathComponent("passport.json")
+        try original.write(to: fileURL)
+
+        let corrupt = PassportStore(rootOverride: root)
         #expect(corrupt.pages.isEmpty)
         #expect(corrupt.stampedThreadIDs.isEmpty)
+        corrupt.recordVisit(
+            threadID: "thread-corrupt",
+            setId: "alps",
+            placeName: "Lake Como",
+            photoID: nil,
+            date: Date(timeIntervalSince1970: 100))
+        #expect(try Data(contentsOf: fileURL) == original)
+    }
+
+    @Test("newer passport file blocks saves and preserves its bytes")
+    func newerFileBlocksSaves() throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fileURL = root.appendingPathComponent("passport.json")
+        let original = try JSONEncoder().encode(PassportFile(version: 2))
+        try original.write(to: fileURL)
+
+        let newer = PassportStore(rootOverride: root)
+        #expect(newer.pages.isEmpty)
+        #expect(newer.stampedThreadIDs.isEmpty)
+        newer.recordVisit(
+            threadID: "thread-newer",
+            setId: "alps",
+            placeName: "Lake Como",
+            photoID: nil,
+            date: Date(timeIntervalSince1970: 100))
+        #expect(try Data(contentsOf: fileURL) == original)
     }
 }
 

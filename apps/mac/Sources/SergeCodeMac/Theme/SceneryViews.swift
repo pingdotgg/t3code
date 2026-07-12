@@ -42,7 +42,7 @@ struct SceneryImageView: View {
     }
 
     private var taskKey: String {
-        "\(photo?.id ?? "-")/\(variant.rawValue)"
+        "\(setId ?? "-")/\(photo?.id ?? "-")/\(variant.rawValue)"
     }
 }
 

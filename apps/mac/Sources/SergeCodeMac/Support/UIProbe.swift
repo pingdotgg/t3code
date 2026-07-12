@@ -515,7 +515,11 @@
                 setId: ScenerySet.dolomitesID,
                 title: set?.title ?? "Dolomites",
                 issuedAt: Date())
-            let places = Array((set?.sceneNames ?? ["Seceda", "Tre Cime", "Marmolada"]).prefix(3))
+            let configuredSceneNames = set?.sceneNames ?? []
+            let places = Array(
+                (configuredSceneNames.isEmpty
+                    ? ["Seceda", "Tre Cime", "Marmolada"]
+                    : configuredSceneNames).prefix(3))
             for (index, place) in places.enumerated() {
                 passport.recordVisit(
                     threadID: "probe-passport-\(index)",

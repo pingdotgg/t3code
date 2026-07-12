@@ -72,10 +72,7 @@ struct PassportPageDisplay {
     }
 
     private static func comparisonKey(_ value: String) -> String {
-        value
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-            .lowercased()
+        PassportStamp.placeSlug(for: value)
     }
 }
 
@@ -156,7 +153,7 @@ struct PassportView: View {
     }
 
     private var isEmptyPassport: Bool {
-        passport.pages.isEmpty || passport.pages.allSatisfy { $0.stamps.isEmpty }
+        passport.pages.isEmpty
     }
 
     private var collectedSummary: String {

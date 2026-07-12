@@ -87,6 +87,7 @@ public final class PassportStore {
 
     private let root: URL
     private let fileURL: URL
+    private var saveBlocked = false
 
     public init(rootOverride: URL? = nil) {
         if let rootOverride {
@@ -189,29 +190,75 @@ public final class PassportStore {
     }
 
     private func load() {
-        guard let data = try? Data(contentsOf: fileURL),
-            let file = try? JSONDecoder().decode(PassportFile.self, from: data),
-            file.version == 1
-        else {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
             pages = []
             stampedThreadIDs = []
             return
         }
-        pages = file.pages.map { page in
-            var normalized = page
-            normalized.stamps.sort { $0.firstVisitedAt < $1.firstVisitedAt }
-            return normalized
+
+        do {
+            let data = try Data(contentsOf: fileURL)
+            let file = try JSONDecoder().decode(PassportFile.self, from: data)
+            guard file.version == 1 else {
+                blockSaving(reason: "unsupported version \(file.version)")
+                return
+            }
+            pages = file.pages.map { page in
+                var normalized = page
+                normalized.stamps = Self.repairCollidingStamps(page.stamps)
+                return normalized
+            }
+            stampedThreadIDs = file.stampedThreadIDs
+        } catch {
+            blockSaving(reason: "unreadable passport file")
         }
-        stampedThreadIDs = file.stampedThreadIDs
     }
 
     private func save() {
+        guard !saveBlocked else { return }
         let file = PassportFile(pages: pages, stampedThreadIDs: stampedThreadIDs)
         guard let data = try? JSONEncoder().encode(file) else { return }
         try? data.write(to: fileURL, options: .atomic)
     }
 
     private static func comparisonKey(_ value: String) -> String {
-        value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        PassportStamp.placeSlug(for: value)
+    }
+
+    private static func repairCollidingStamps(_ stamps: [PassportStamp]) -> [PassportStamp] {
+        var mergedByKey: [String: PassportStamp] = [:]
+        var keyOrder: [String] = []
+
+        for stamp in stamps {
+            let key = comparisonKey(stamp.placeName)
+            if let existing = mergedByKey[key] {
+                let earlierStamp =
+                    existing.firstVisitedAt <= stamp.firstVisitedAt ? existing : stamp
+                mergedByKey[key] = PassportStamp(
+                    placeName: earlierStamp.placeName,
+                    photoID: existing.photoID ?? stamp.photoID,
+                    firstVisitedAt: min(existing.firstVisitedAt, stamp.firstVisitedAt),
+                    lastVisitedAt: max(existing.lastVisitedAt, stamp.lastVisitedAt),
+                    visitCount: existing.visitCount + stamp.visitCount)
+            } else {
+                mergedByKey[key] = PassportStamp(
+                    placeName: stamp.placeName,
+                    photoID: stamp.photoID,
+                    firstVisitedAt: stamp.firstVisitedAt,
+                    lastVisitedAt: stamp.lastVisitedAt,
+                    visitCount: stamp.visitCount)
+                keyOrder.append(key)
+            }
+        }
+
+        return keyOrder.compactMap { mergedByKey[$0] }
+            .sorted { $0.firstVisitedAt < $1.firstVisitedAt }
+    }
+
+    private func blockSaving(reason: String) {
+        pages = []
+        stampedThreadIDs = []
+        saveBlocked = true
+        print("PassportStore: \(reason); preserving \(fileURL.path)")
     }
 }

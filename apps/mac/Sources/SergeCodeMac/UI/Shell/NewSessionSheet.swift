@@ -47,7 +47,7 @@ struct NewSessionSheet: View {
                     Text("New Session")
                         .font(.title2.bold())
                     if let nextScene {
-                        Text(scenery.threadTitle(for: nextScene))
+                        Text(scenery.threadTitle(for: nextScene, setId: previewSetId))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -230,8 +230,9 @@ struct NewSessionSheet: View {
     }
 
     private var selectedScenerySetId: String {
-        validScenerySetOverride
-            ?? scenery.resolvedSetId(projectPath: selectedProjectPath)
+        scenery.effectiveSetId(
+            projectPath: selectedProjectPath,
+            setIdOverride: validScenerySetOverride)
     }
 
     private var scenerySetBinding: Binding<String> {

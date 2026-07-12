@@ -63,6 +63,30 @@ struct PassportDisplayTests {
         #expect(display.progress > 0.66 && display.progress < 0.67)
     }
 
+    @Test("unions set names and stamps by canonical slug")
+    func slugCanonicalUnion() throws {
+        let page = PassportPage(
+            setId: "cornwall",
+            title: "Cornwall",
+            issuedAt: Date(timeIntervalSince1970: 100),
+            stamps: [
+                PassportStamp(
+                    placeName: "St Ives",
+                    firstVisitedAt: Date(timeIntervalSince1970: 100),
+                    lastVisitedAt: Date(timeIntervalSince1970: 100))
+            ])
+        let scenerySet = makeSet(
+            id: "cornwall",
+            title: "Cornwall",
+            createdAt: Date(timeIntervalSince1970: 100),
+            sceneNames: ["St. Ives"])
+
+        let display = PassportPageDisplay(page: page, scenerySet: scenerySet)
+
+        #expect(display.places.map(\.name) == ["St. Ives"])
+        #expect(display.places.map(\.isVisited) == [true])
+    }
+
     @Test("deleted set pages show only their persisted stamps")
     func deletedSetFallback() throws {
         let root = try tempRoot()
