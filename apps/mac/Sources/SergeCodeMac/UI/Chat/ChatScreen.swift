@@ -17,12 +17,14 @@ public struct ChatScreen: View {
     public var body: some View {
         VStack(spacing: 0) {
             if let thread = model.selectedThread {
+                let threadKey = model.scopedThreadKey(thread.id)
                 let reviewing = model.threadState(thread.id)?.isReviewing == true
                 if reviewing {
                     DiffReviewView(model: model, threadID: thread.id)
                         .transition(Motion.paneSwap)
                 } else {
-                    ChatHeaderView(thread: thread, model: model, scenery: scenery)
+                    ChatHeaderView(
+                        thread: thread, model: model, scenery: scenery, threadKey: threadKey)
                     Divider()
                     VcsToolbar(model: model)
                     ChatTimelineScrollView(model: model, isPinnedToBottom: $isPinnedToBottom)
@@ -34,8 +36,8 @@ public struct ChatScreen: View {
                         model: model,
                         accent: AlpineTheme.accent(
                             palette: scenery.palette(
-                                for: scenery.photo(for: thread.id),
-                                setId: scenery.resolvedSetId(forThread: thread.id))))
+                                for: scenery.photo(for: threadKey),
+                                setId: scenery.resolvedSetId(forThread: threadKey))))
                         // Breathing room against the window edges and sidebars —
                         // the floating glass composer shouldn't touch chrome.
                         .padding(.horizontal, 16)
@@ -64,10 +66,11 @@ public struct ChatScreen: View {
             if let thread = model.selectedThread,
                 model.threadState(thread.id)?.isReviewing != true
             {
+                let threadKey = model.scopedThreadKey(thread.id)
                 SceneryChatBackground(
-                    scenery: scenery, photo: scenery.photo(for: thread.id),
-                    setId: scenery.resolvedSetId(forThread: thread.id),
-                    fallbackSeed: thread.id)
+                    scenery: scenery, photo: scenery.photo(for: threadKey),
+                    setId: scenery.resolvedSetId(forThread: threadKey),
+                    fallbackSeed: threadKey)
             } else {
                 Rectangle().fill(.background)
             }

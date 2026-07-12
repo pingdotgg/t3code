@@ -4,6 +4,10 @@ import Observation
 @Observable
 @MainActor
 public final class AppModel {
+    public let deviceID: DeviceID
+    public let deviceName: String?
+    public let capabilities: BackendCapabilities
+
     public private(set) var connection: ConnectionPhase = .launchingServer
     public private(set) var projects: [Project] = []
     public private(set) var threads: [ChatThread] = []
@@ -51,7 +55,9 @@ public final class AppModel {
     static let timelineSubscriptionKeepCount = 4
 
     /// In-app dictation (mic → local ASR → on-device cleanup → composer).
-    public let dictation = DictationController()
+    /// Multiple device models may share one controller so ASR stays a single
+    /// process-wide resource.
+    public let dictation: DictationController
 
     /// Text staged for the composer by a timeline action (Edit on a sent
     /// message). The composer consumes it via `takeComposerPrefill`. A fresh
@@ -129,11 +135,32 @@ public final class AppModel {
     /// the sidebar array is left alone so rows don't jump, but new-thread
     /// insertion still sorts against the real latest activity time.
     @ObservationIgnored private var effectiveUpdatedAt: [String: Date] = [:]
+    /// Direct lookup used by scenery resolution. Keys are local thread ids or
+    /// device-scoped remote thread ids, matching `scopedThreadKey(_:)`.
+    @ObservationIgnored private var projectPathByThreadKey: [String: String] = [:]
 
-    public init(backend: any BackendService) {
+    public init(
+        backend: any BackendService,
+        deviceID: DeviceID = .local,
+        deviceName: String? = nil,
+        capabilities: BackendCapabilities = .local,
+        dictation: DictationController? = nil
+    ) {
+        self.deviceID = deviceID
+        self.deviceName = deviceName
+        self.capabilities = capabilities
         self.backend = backend
+        self.dictation = dictation ?? DictationController()
         self.pinnedThreadIDs = Set(
             UserDefaults.standard.stringArray(forKey: Self.pinnedThreadIDsKey) ?? [])
+    }
+
+    public var isRemote: Bool { deviceID != .local }
+
+    /// Key used by shared UI stores whose lifetime spans multiple device
+    /// models. Local keys intentionally remain the historical raw thread id.
+    public func scopedThreadKey(_ threadID: String) -> String {
+        isRemote ? "\(deviceID.rawValue)/\(threadID)" : threadID
     }
 
     public func isThreadPinned(_ thread: ChatThread) -> Bool {
@@ -235,9 +262,9 @@ public final class AppModel {
 
     public func start() {
         guard eventTask == nil else { return }
-        let stream = backend.events
         let backend = backend
         eventTask = Task { [weak self] in
+            let stream = await backend.events()
             async let _ = backend.start()
             for await event in stream {
                 self?.enqueue(event)
@@ -245,10 +272,19 @@ public final class AppModel {
         }
     }
 
-    public func shutdown() async {
-        flushPendingEvents()
+    /// Cancels MainActor-owned lifecycle work before a caller tears down the
+    /// backend from a non-MainActor context.
+    func prepareForTermination() {
         eventTask?.cancel()
         eventTask = nil
+    }
+
+    /// Shutdown needs the backend after MainActor-owned tasks have stopped.
+    var backendForShutdown: any BackendService { backend }
+
+    public func shutdown() async {
+        flushPendingEvents()
+        prepareForTermination()
         await backend.stop()
     }
 
@@ -412,6 +448,7 @@ public final class AppModel {
             }
         case .projectsChanged(let list):
             projects = list
+            rebuildProjectPathIndex()
         case .threadUpserted(let thread):
             subagentTaskAggregator.updateThread(thread)
             // Update in place: `updatedAt` bumps on every activity while a
@@ -446,6 +483,7 @@ public final class AppModel {
             if shouldSendQueuedMessage(previousStatus: previousStatus, newStatus: thread.status) {
                 dequeueNextQueuedMessageIfNeeded(threadID: thread.id)
             }
+            updateProjectPathIndex(for: thread)
         case .threadRemoved(let id):
             subagentTaskAggregator.remove(threadID: id)
             threads.removeAll { $0.id == id }
@@ -461,8 +499,9 @@ public final class AppModel {
             queuedMessagesByThread[id] = nil
             queuedSendInFlightThreadIDs.remove(id)
             queuedRetryTokensByThread[id] = nil
+            projectPathByThreadKey[scopedThreadKey(id)] = nil
             if composerPrefill?.threadID == id { composerPrefill = nil }
-            TimelineDisplayCache.evict(threadID: id)
+            TimelineDisplayCache.evict(threadID: scopedThreadKey(id))
             if selectedThreadID == id { selectedThreadID = nil }
         case .approvalRequested, .userInputRequested:
             break
@@ -574,6 +613,7 @@ public final class AppModel {
             let refreshedThreads = try await threads.sorted { $0.updatedAt > $1.updatedAt }
             self.projects = try await projects
             self.threads = refreshedThreads
+            rebuildProjectPathIndex()
             let liveThreadIDs = Set(refreshedThreads.map(\.id))
             if pinnedThreadIDs.intersection(liveThreadIDs) != pinnedThreadIDs {
                 pinnedThreadIDs.formIntersection(liveThreadIDs)
@@ -606,6 +646,27 @@ public final class AppModel {
         } catch {
             lastError = String(describing: error)
         }
+    }
+
+    /// Returns the project path for a scenery lookup key in O(1) time.
+    public func projectPath(forScopedThreadKey threadKey: String) -> String? {
+        projectPathByThreadKey[threadKey]
+    }
+
+    private func rebuildProjectPathIndex() {
+        let pathsByProjectID = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0.path) })
+        projectPathByThreadKey = Dictionary(
+            threads.compactMap { thread in
+                pathsByProjectID[thread.projectID].map {
+                    (scopedThreadKey(thread.id), $0)
+                }
+            },
+            uniquingKeysWith: { _, latest in latest })
+    }
+
+    private func updateProjectPathIndex(for thread: ChatThread) {
+        let key = scopedThreadKey(thread.id)
+        projectPathByThreadKey[key] = projects.first(where: { $0.id == thread.projectID })?.path
     }
 
     public func loadTimelineIfNeeded(threadID: String) async {
@@ -1053,7 +1114,6 @@ public final class AppModel {
         do {
             let thread = try await backend.createThread(
                 projectID: projectID, provider: provider, title: title)
-            selectedThreadID = thread.id
             return thread
         } catch {
             lastError = String(describing: error)
@@ -1271,6 +1331,7 @@ public final class AppModel {
             }
             threads.removeAll { $0.projectID == project.id }
             projects.removeAll { $0.id == project.id }
+            rebuildProjectPathIndex()
         } catch {
             lastError = String(describing: error)
         }
@@ -1349,6 +1410,10 @@ public final class AppModel {
     public func openInEditor(
         threadID: String, subpath: String?, editor: ExternalEditor
     ) async {
+        guard capabilities.opensLocalEditor else {
+            lastError = "File is on \(deviceName ?? "the remote Mac")"
+            return
+        }
         do {
             try await backend.openInEditor(threadID: threadID, subpath: subpath, editor: editor)
         } catch {
@@ -1469,7 +1534,7 @@ public final class AppModel {
             state.timeline = []
             state.hasLoadedTimeline = false
         }
-        TimelineDisplayCache.evict(threadID: threadID)
+        TimelineDisplayCache.evict(threadID: scopedThreadKey(threadID))
     }
 
     private func pruneTimelineSubscriptions() {
@@ -1493,7 +1558,7 @@ public final class AppModel {
                     state.timeline = []
                     state.hasLoadedTimeline = false
                 }
-                TimelineDisplayCache.evict(threadID: threadID)
+                TimelineDisplayCache.evict(threadID: self.scopedThreadKey(threadID))
                 await self.backend.closeTimeline(threadID: threadID)
             }
         }

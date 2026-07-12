@@ -7,19 +7,27 @@ import SwiftUI
 /// existing sort), each with its alpine scene thumbnail carrying the status
 /// dot.
 struct SidebarView: View {
-    let model: AppModel
+    let multi: MultiDeviceModel
     let scenery: SceneryStore
     let passport: PassportStore
 
-    @UIState private var renameTarget: Project?
+    private var model: AppModel { multi.local }
+
+    private struct ProjectActionTarget {
+        let model: AppModel
+        let project: Project
+    }
+
+    @UIState private var renameTarget: ProjectActionTarget?
     @UIState private var renameText = ""
-    @UIState private var deleteTarget: Project?
+    @UIState private var deleteTarget: ProjectActionTarget?
+    @UIState private var forgetTarget: RemoteDeviceSession?
 
     var body: some View {
         let threadIDs = model.threads.map(\.id)
         List(selection: Binding(
-            get: { model.selectedThreadID },
-            set: { model.selectedThreadID = $0 }
+            get: { multi.selection },
+            set: { multi.selection = $0 }
         )) {
             ForEach(model.projects) { project in
                 // Archived threads live in Settings > Archive, not the sidebar.
@@ -30,8 +38,9 @@ struct SidebarView: View {
                             thread: thread,
                             vcs: model.threadState(thread.id)?.vcsStatus,
                             scenery: scenery,
+                            threadKey: model.scopedThreadKey(thread.id),
                             isPinned: model.isThreadPinned(thread))
-                            .tag(thread.id)
+                            .tag(ThreadSelection(deviceID: .local, threadID: thread.id))
                             .contextMenu {
                                 Button(
                                     model.isThreadPinned(thread) ? "Unpin" : "Pin",
@@ -61,20 +70,28 @@ struct SidebarView: View {
                         canCreateThread: { model.canCreateThread(with: $0) },
                         onNewSession: { provider in
                             Task {
-                                await model.createSceneThread(
+                                if let thread = await model.createSceneThread(
                                     projectID: project.id,
                                     provider: provider,
                                     scenery: scenery,
                                     passport: passport)
+                                {
+                                    multi.select(threadID: thread.id, on: model.deviceID)
+                                }
                             }
                         },
                         onRename: {
                             renameText = project.name
-                            renameTarget = project
+                            renameTarget = ProjectActionTarget(model: model, project: project)
                         },
-                        onDelete: { deleteTarget = project }
+                        onDelete: {
+                            deleteTarget = ProjectActionTarget(model: model, project: project)
+                        }
                     )
                 }
+            }
+            ForEach(multi.remoteSessions) { session in
+                remoteDeviceSection(session)
             }
         }
         .listStyle(.sidebar)
@@ -84,6 +101,7 @@ struct SidebarView: View {
         .animation(Motion.settle, value: threadIDs)
         .animation(Motion.settle, value: model.pinnedThreadIDs)
         .animation(Motion.settle, value: model.projects)
+        .animation(Motion.settle, value: multi.remoteSessions.map(\.id))
         .alert(
             "Rename Project",
             isPresented: Binding(
@@ -93,8 +111,8 @@ struct SidebarView: View {
         ) {
             TextField("Project name", text: $renameText)
             Button("Rename") {
-                if let project = renameTarget {
-                    Task { await model.renameProject(project, to: renameText) }
+                if let target = renameTarget {
+                    Task { await target.model.renameProject(target.project, to: renameText) }
                 }
             }
             Button("Cancel", role: .cancel) {}
@@ -109,26 +127,212 @@ struct SidebarView: View {
             )
         ) {
             Button("Delete", role: .destructive) {
-                if let project = deleteTarget {
-                    Task { await model.deleteProject(project) }
+                if let target = deleteTarget {
+                    Task { await target.model.deleteProject(target.project) }
                 }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            if let project = deleteTarget {
-                let count = model.sessionCount(for: project)
+            if let target = deleteTarget {
+                let count = target.model.sessionCount(for: target.project)
                 Text(
-                    "“\(project.name)” and ^[\(count) session](inflect: true) will be removed. Files on disk are not touched."
+                    "“\(target.project.name)” and ^[\(count) session](inflect: true) will be removed. Files on disk are not touched."
                 )
+            }
+        }
+        .alert(
+            "Forget Device?",
+            isPresented: Binding(
+                get: { forgetTarget != nil },
+                set: { if !$0 { forgetTarget = nil } }
+            )
+        ) {
+            Button("Forget", role: .destructive) {
+                if let session = forgetTarget {
+                    forgetTarget = nil
+                    Task { await multi.removeRemoteDevice(id: session.id) }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            if let session = forgetTarget {
+                Text("Remove “\(session.descriptor.name)” from this sidebar?")
             }
         }
     }
 
     private func visibleThreads(for project: Project) -> [ChatThread] {
+        visibleThreads(for: project, in: model)
+    }
+
+    private func visibleThreads(for project: Project, in model: AppModel) -> [ChatThread] {
         let threads = model.threads.filter { thread in
             thread.projectID == project.id && thread.status != .archived
         }
         return AppModel.pinnedFirst(threads, pinnedIDs: model.pinnedThreadIDs)
+    }
+
+    @ViewBuilder
+    private func remoteDeviceSection(_ session: RemoteDeviceSession) -> some View {
+        Section {
+            if session.model.projects.isEmpty {
+                Text("No projects")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            } else {
+                ForEach(session.model.projects) { project in
+                    RemoteProjectSubheaderRow(
+                        project: project,
+                        isReady: session.model.connection == .ready,
+                        onRename: {
+                            renameText = project.name
+                            renameTarget = ProjectActionTarget(
+                                model: session.model, project: project)
+                        },
+                        onDelete: {
+                            deleteTarget = ProjectActionTarget(
+                                model: session.model, project: project)
+                        })
+
+                    let threadsForProject = visibleThreads(for: project, in: session.model)
+                    ForEach(threadsForProject) { thread in
+                        SidebarThreadRow(
+                            thread: thread,
+                            vcs: session.model.threadState(thread.id)?.vcsStatus,
+                            scenery: scenery,
+                            threadKey: session.model.scopedThreadKey(thread.id),
+                            isPinned: session.model.isThreadPinned(thread))
+                            .tag(ThreadSelection(deviceID: session.id, threadID: thread.id))
+                            .disabled(session.model.connection != .ready)
+                            .opacity(session.model.connection == .ready ? 1 : 0.5)
+                            .contextMenu {
+                                Button("Archive") {
+                                    Task { await session.model.archiveThread(thread) }
+                                }
+                                .disabled(session.model.connection != .ready)
+                                Button("Delete", role: .destructive) {
+                                    Task { await session.model.deleteThread(thread) }
+                                }
+                                .disabled(session.model.connection != .ready)
+                            }
+                    }
+                    if threadsForProject.isEmpty {
+                        Text("No sessions yet")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+            }
+        } header: {
+            DeviceSectionHeader(
+                session: session,
+                onReconnect: {
+                    Task { await multi.reconnect(id: session.id) }
+                },
+                onForget: { forgetTarget = session })
+        }
+    }
+}
+
+private struct RemoteProjectSubheaderRow: View {
+    let project: Project
+    let isReady: Bool
+    let onRename: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        HStack {
+            Text(project.name)
+                .font(.caption2.smallCaps().weight(.semibold))
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+        }
+        .padding(.leading, 8)
+        .padding(.top, 6)
+        .padding(.bottom, 1)
+        .listRowSeparator(.hidden)
+        .contextMenu {
+            Button("Rename…") { onRename() }
+                .disabled(!isReady)
+            Divider()
+            Button("Delete Project…", role: .destructive) { onDelete() }
+                .disabled(!isReady)
+        }
+    }
+}
+
+private struct DeviceSectionHeader: View {
+    let session: RemoteDeviceSession
+    let onReconnect: () -> Void
+    let onForget: () -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "laptopcomputer")
+                .foregroundStyle(.secondary)
+            Text(session.descriptor.name)
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            DeviceStatusDot(phase: session.connection)
+        }
+        .contextMenu {
+            Button("Reconnect") { onReconnect() }
+            Divider()
+            Button("Forget…", role: .destructive) { onForget() }
+        }
+    }
+}
+
+private struct DeviceStatusDot: View {
+    let phase: ConnectionPhase
+
+    @UIState private var isPulseExpanded = false
+
+    var body: some View {
+        ZStack {
+            if phase.isSettling {
+                Circle()
+                    .stroke(Color.secondary, lineWidth: 1.2)
+                    .opacity(pulseOpacity)
+                    .scaleEffect(pulseScale)
+            }
+            Circle()
+                .fill(statusTint)
+                .frame(width: 7, height: 7)
+                .overlay(Circle().strokeBorder(.background, lineWidth: 1.5))
+        }
+        .frame(width: 11, height: 11)
+        .accessibilityLabel(phase.accessibilityLabel)
+        .animation(Motion.ambient, value: phase)
+        .onAppear { updatePulse(for: phase) }
+        .onChange(of: phase) { _, newPhase in
+            updatePulse(for: newPhase)
+        }
+    }
+
+    private var pulseOpacity: Double {
+        Motion.reduceMotion ? 0.35 : (isPulseExpanded ? 0.1 : 0.45)
+    }
+
+    private var pulseScale: CGFloat {
+        Motion.reduceMotion ? 1.45 : (isPulseExpanded ? 1.85 : 1.0)
+    }
+
+    private var statusTint: Color {
+        phase.statusColor
+    }
+
+    private func updatePulse(for phase: ConnectionPhase) {
+        guard phase.isSettling, !Motion.reduceMotion else {
+            withAnimation(Motion.ambient) {
+                isPulseExpanded = false
+            }
+            return
+        }
+        isPulseExpanded = false
+        withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) {
+            isPulseExpanded = true
+        }
     }
 }
 
@@ -225,14 +429,15 @@ private struct SidebarThreadRow: View {
     let thread: ChatThread
     let vcs: VcsStatus?
     let scenery: SceneryStore
+    let threadKey: String
     let isPinned: Bool
 
     var body: some View {
         HStack(spacing: 9) {
             SceneryImageView(
-                scenery: scenery, photo: scenery.photo(for: thread.id), variant: .thumb,
-                setId: scenery.resolvedSetId(forThread: thread.id),
-                fallbackSeed: thread.id
+                scenery: scenery, photo: scenery.photo(for: threadKey), variant: .thumb,
+                setId: scenery.resolvedSetId(forThread: threadKey),
+                fallbackSeed: threadKey
             )
             .frame(width: 28, height: 28)
             .clipShape(RoundedRectangle(cornerRadius: 7))
@@ -247,7 +452,7 @@ private struct SidebarThreadRow: View {
                 .animation(Motion.ambient, value: thread.status)
                 .animation(Motion.ambient, value: hasOpenPullRequest)
             }
-            let names = scenery.displayNames(for: thread)
+            let names = scenery.displayNames(for: thread, threadKey: threadKey)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
                     Text(names.primary)

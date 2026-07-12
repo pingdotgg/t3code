@@ -5,18 +5,29 @@
     /// Debug-only UI verification hook for agent/CI runs without screen
     /// recording or accessibility permissions: `SERGECODE_UI_PROBE=<dir>`
     /// (typically with `--mock`) selects the first thread, self-captures the
-    /// window to PNGs in `<dir>` (in-process bitmap, no TCC prompt), opens
-    /// main-area diff review, logs probe steps to stdout, and quits.
+    /// window to PNGs in `<dir>` (in-process bitmap, no TCC prompt), verifies
+    /// the optional mock remote sidebar/chat, opens main-area diff review,
+    /// logs probe steps to stdout, and quits.
     @MainActor
     enum UIProbe {
+        static func runIfRequested(multi: MultiDeviceModel, scenery: SceneryStore) {
+            guard let dir = ProcessInfo.processInfo.environment["SERGECODE_UI_PROBE"],
+                !dir.isEmpty
+            else { return }
+            Task { await run(multi: multi, scenery: scenery, dir: dir) }
+        }
+
+        /// Compatibility entry point for older probe harnesses.
         static func runIfRequested(model: AppModel, scenery: SceneryStore) {
             guard let dir = ProcessInfo.processInfo.environment["SERGECODE_UI_PROBE"],
                 !dir.isEmpty
             else { return }
-            Task { await run(model: model, scenery: scenery, dir: dir) }
+            let multi = MultiDeviceModel(local: model)
+            Task { await run(multi: multi, scenery: scenery, dir: dir) }
         }
 
-        private static func run(model: AppModel, scenery: SceneryStore, dir: String) async {
+        private static func run(multi: MultiDeviceModel, scenery: SceneryStore, dir: String) async {
+            let model = multi.local
             try? FileManager.default.createDirectory(
                 atPath: dir, withIntermediateDirectories: true)
 
@@ -25,8 +36,11 @@
             // seeds with plan progress, so the plan strip is exercised too.
             try? await Task.sleep(for: .seconds(2))
             if model.selectedThreadID == nil {
-                model.selectedThreadID =
-                    model.threads.first { $0.id == "thread-1" }?.id ?? model.threads.first?.id
+                if let threadID = model.threads.first(where: { $0.id == "thread-1" })?.id
+                    ?? model.threads.first?.id
+                {
+                    multi.select(threadID: threadID, on: model.deviceID)
+                }
             }
             // Let the inspector timeline present and the diff refresh land.
             try? await Task.sleep(for: .seconds(2))
@@ -41,6 +55,11 @@
             toggleSection("agents")
             try? await Task.sleep(for: .seconds(1))
             snapshot("1-inspector-timeline", dir: dir)
+
+            if let remote = multi.remoteSessions.first {
+                await probeRemoteDevice(
+                    remote, multi: multi, scenery: scenery, passport: PassportStore(), dir: dir)
+            }
 
             // Plan strip above the composer: expand, snapshot, collapse.
             toggleSection("plan")
@@ -78,7 +97,7 @@
             // exposes Standard/Fast choices, then flip the tier and capture.
             let previousThreadID = model.selectedThreadID
             if let codexThread = model.threads.first(where: { $0.id == "thread-2" }) {
-                model.selectedThreadID = codexThread.id
+                multi.select(threadID: codexThread.id, on: model.deviceID)
                 try? await Task.sleep(for: .seconds(1))
                 let option = model.models.first {
                     $0.instanceID == codexThread.modelInstanceID
@@ -95,7 +114,11 @@
                 let after = model.threads.first { $0.id == codexThread.id }?.serviceTier
                 print("UIProbe: serviceTier after set=\(after ?? "nil")")
                 snapshot("4b-service-tier", dir: dir)
-                model.selectedThreadID = previousThreadID
+                if let previousThreadID {
+                    multi.select(threadID: previousThreadID, on: model.deviceID)
+                } else {
+                    multi.selection = nil
+                }
                 try? await Task.sleep(for: .seconds(1))
             } else {
                 print("UIProbe: no codex thread-2 for service tier probe")
@@ -151,7 +174,7 @@
             print("UIProbe: retry user rows before=\(before) after=\(userMessageCount(model))")
             snapshot("8-after-retry", dir: dir)
 
-            // Settings ▸ iPhone: enable the mobile-access preference so the
+            // Settings ▸ Devices: enable the mobile-access preference so the
             // mock backend reports LAN-reachable and the QR pairing card
             // renders; restore the previous value afterward. Mock runs only:
             // against LiveBackend the sidecar's bind host was fixed at spawn,
@@ -164,7 +187,7 @@
                 let previousMobileAccess = MobileAccessPreference.isEnabled
                 MobileAccessPreference.setEnabled(true)
                 await snapshotSettings(
-                    tab: .iphone, name: "9-settings-iphone", model: model, scenery: scenery,
+                    tab: .devices, name: "9-settings-devices", model: model, scenery: scenery,
                     dir: dir)
                 await snapshotSettings(
                     tab: .connection, name: "10-settings-connection", model: model,
@@ -186,7 +209,7 @@
                 // Create-image-set naming: mock backend returns locations;
                 // register the resulting bare-title pool and create a thread.
                 // Confirms new threads get "Iceland", not "Iceland 5".
-                await probeIcelandSceneSetCreate(model: model, scenery: scenery)
+                await probeIcelandSceneSetCreate(model: model, multi: multi, scenery: scenery)
 
                 // Passport sheet: seed a temp store with Dolomites visits and
                 // capture the sheet's view tree.
@@ -322,10 +345,14 @@
             // Select Text overlay: use the pricing thread (thread-3) — earlier
             // probe steps mutate thread-1's timeline (queue/retry), so a still-
             // seeded conversation is a cleaner fixture for the sheet.
-            model.selectedThreadID =
-                model.threads.first { $0.id == "thread-3" }?.id
-                ?? model.threads.first { $0.id == "thread-1" }?.id
+            if let threadID = model.threads.first(where: { $0.id == "thread-3" })?.id
+                ?? model.threads.first(where: { $0.id == "thread-1" })?.id
                 ?? model.threads.first?.id
+            {
+                multi.select(threadID: threadID, on: model.deviceID)
+            } else {
+                multi.selection = nil
+            }
             if let threadID = model.selectedThreadID {
                 await model.loadTimelineIfNeeded(threadID: threadID)
             }
@@ -374,6 +401,62 @@
 
             print("UIProbe: done")
             NSApp.terminate(nil)
+        }
+
+        private static func probeRemoteDevice(
+            _ session: RemoteDeviceSession,
+            multi: MultiDeviceModel,
+            scenery: SceneryStore,
+            passport: PassportStore,
+            dir: String
+        ) async {
+            let previousSelection = multi.selection
+            defer { multi.selection = previousSelection }
+
+            // The mock remote briefly reconnects after startup. Wait for its
+            // ready state so the probe captures the enabled remote rows as
+            // well as the status-dot transition.
+            for _ in 0..<12 {
+                if case .ready = session.connection { break }
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+            await snapshotRemoteSidebar(
+                multi: multi, scenery: scenery, passport: passport, dir: dir)
+
+            guard let thread = session.model.threads.first(where: { $0.status != .archived }) else {
+                print("UIProbe: remote session has no selectable thread")
+                return
+            }
+            multi.select(threadID: thread.id, on: session.id)
+            await session.model.loadTimelineIfNeeded(threadID: thread.id)
+            try? await Task.sleep(for: .seconds(2))
+            snapshot("remote-chat-inspector", dir: dir)
+            print(
+                "UIProbe: remote device=\(session.descriptor.name) "
+                    + "projectCount=\(session.model.projects.count) "
+                    + "thread=\(thread.id) phase=\(session.connection)")
+        }
+
+        private static func snapshotRemoteSidebar(
+            multi: MultiDeviceModel,
+            scenery: SceneryStore,
+            passport: PassportStore,
+            dir: String
+        ) async {
+            let hosting = NSHostingView(
+                rootView: SidebarView(multi: multi, scenery: scenery, passport: passport))
+            hosting.frame = NSRect(x: 0, y: 0, width: 340, height: 760)
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 340, height: 760),
+                styleMask: [.titled], backing: .buffered, defer: false)
+            window.contentView = hosting
+            window.orderFront(nil)
+            try? await Task.sleep(for: .seconds(1))
+            print(
+                "UIProbe: remote sidebar device=\(multi.remoteSessions.map { $0.descriptor.name }) "
+                    + "projects=\(multi.remoteSessions.flatMap { $0.model.projects.map(\.name) })")
+            snapshot("remote-sidebar", window: window, dir: dir)
+            window.orderOut(nil)
         }
 
         /// Captures the main window at translucency 1.0 and 0.5 and logs
@@ -426,7 +509,9 @@
         /// pool so Unsplash is not required. New pools use the bare place
         /// name only when no distinctly-named candidate exists; historical
         /// pool-index names still strip via `threadTitle`.
-        private static func probeIcelandSceneSetCreate(model: AppModel, scenery: SceneryStore) async {
+        private static func probeIcelandSceneSetCreate(
+            model: AppModel, multi: MultiDeviceModel, scenery: SceneryStore
+        ) async {
             let previousDefaultSetId = scenery.defaultSetId
             let probeRunID = UUID().uuidString
             let setId = "probe-iceland-\(probeRunID)"
@@ -493,6 +578,9 @@
                     scenery: scenery,
                     scenerySetId: setId)
                 let title = thread?.title ?? "nil"
+                if let thread {
+                    multi.select(threadID: thread.id, on: model.deviceID)
+                }
                 print("UIProbe: iceland new-set thread title=\(title)")
                 if title != "Iceland" {
                     print("UIProbe: FAIL expected thread title Iceland, got \(title)")
@@ -555,6 +643,9 @@
                 // The pool has exactly one distinctly-named photo, so the
                 // filtered selection must land on it — assert exact title.
                 if let title = thread?.title {
+                    if let thread {
+                        multi.select(threadID: thread.id, on: model.deviceID)
+                    }
                     print("UIProbe: iceland mixed-pool thread title=\(title)")
                     if title == "Skógafoss" {
                         print("UIProbe: PASS iceland mixed-pool thread title is place-specific")

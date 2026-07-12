@@ -58,6 +58,9 @@ public final class DictationController {
     private let recorder = AudioRecorder()
     private let cleaner = TranscriptCleaner()
     private var asrManager: AsrManager?
+    /// The composer that owned the recording when it started. The live
+    /// handler may be rebound while transcription is in flight.
+    private var recordingInsertHandler: ((String) -> Void)?
     /// In-flight load, shared so the recording warm-up and finishRecording
     /// don't both load the models.
     private var asrLoadTask: Task<AsrManager, Error>?
@@ -96,6 +99,7 @@ public final class DictationController {
             guard state == .idle else { return }
             do {
                 try recorder.start()
+                recordingInsertHandler = insertHandler
                 state = .recording
                 // Warm both models while the user is speaking so the
                 // transcript lands near-instantly after they stop.
@@ -110,6 +114,8 @@ public final class DictationController {
     }
 
     private func finishRecording() {
+        let recordingInsertHandler = recordingInsertHandler
+        self.recordingInsertHandler = nil
         state = .processing
         let language = Language(rawValue: languageCode)
         Task {
@@ -127,7 +133,7 @@ public final class DictationController {
                     return
                 }
                 let text = cleanupEnabled ? await cleaner.clean(raw) : raw
-                insertHandler?(text)
+                recordingInsertHandler?(text)
             } catch let error as ASRError where isTooShort(error) {
                 presentError("Recording was too short to transcribe.")
             } catch {

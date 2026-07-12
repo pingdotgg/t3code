@@ -3,7 +3,7 @@ import SwiftUI
 /// Settings tab identifiers — public so debug harnesses (UIProbe) can open
 /// the window on a specific tab.
 public enum SettingsTab: Hashable {
-    case general, providers, dictation, archive, scenery, iphone, connection
+    case general, providers, dictation, archive, scenery, devices, remoteMacs, connection
 }
 
 // Settings window content: `Settings { SettingsScene(...) }` in App.swift.
@@ -11,6 +11,7 @@ public enum SettingsTab: Hashable {
 // utility window, not a chrome surface over long-form content).
 public struct SettingsScene: View {
     private let model: AppModel
+    private let multi: MultiDeviceModel
     private let scenery: SceneryStore
     /// Mounted here (not at app root): Phase 5 Create Set flow only.
     /// Held in `@UIState` so App.body redraws that reconstruct `Settings {
@@ -23,9 +24,11 @@ public struct SettingsScene: View {
         scenery: SceneryStore,
         backend: any BackendService,
         passport: PassportStore? = nil,
+        multi: MultiDeviceModel? = nil,
         initialTab: SettingsTab = .general
     ) {
         self.model = model
+        self.multi = multi ?? MultiDeviceModel(local: model)
         self.scenery = scenery
         _sceneSetComposer = UIState(
             initialValue: SceneSetComposer(store: scenery, backend: backend, passport: passport))
@@ -55,14 +58,18 @@ public struct SettingsScene: View {
                 .tag(SettingsTab.scenery)
 
             PhoneSettingsTab(model: model)
-                .tabItem { Label("iPhone", systemImage: "iphone") }
-                .tag(SettingsTab.iphone)
+                .tabItem { Label("Devices", systemImage: "macbook.and.iphone") }
+                .tag(SettingsTab.devices)
+
+            RemoteMacsSettingsTab(multi: self.multi)
+                .tabItem { Label("Remote Macs", systemImage: "network") }
+                .tag(SettingsTab.remoteMacs)
 
             ConnectionSettingsTab(model: model)
                 .tabItem { Label("Connection", systemImage: "network") }
                 .tag(SettingsTab.connection)
         }
-        .frame(width: 560, height: 420)
+        .frame(width: 560, height: 500)
         // Composer is owned by this scene only. Cancel in-flight create when
         // the Settings window closes so Unsplash work does not keep running
         // (and so `runCreate` can drop its self retain → deinit cancel).
@@ -472,7 +479,7 @@ private extension ProviderKind {
     }
 }
 
-// MARK: - iPhone (mobile pairing)
+// MARK: - Devices (host-side mobile pairing)
 
 private struct PhoneSettingsTab: View {
     let model: AppModel
@@ -488,7 +495,7 @@ private struct PhoneSettingsTab: View {
         Form {
             Section {
                 Toggle(
-                    "Allow iPhone connections on your local network",
+                    "Allow iPhone and Mac connections on your local network",
                     isOn: Binding(
                         get: { allowConnections },
                         set: { newValue in
@@ -496,7 +503,7 @@ private struct PhoneSettingsTab: View {
                             MobileAccessPreference.setEnabled(newValue)
                         }))
                 Text(
-                    "Pair the SurgeCode app on your iPhone to chat with this Mac's sessions over Wi‑Fi. Every connection needs a one-time code from below; macOS may ask to allow incoming network connections."
+                    "Pair SurgeCode on an iPhone or another Mac to chat with this Mac's sessions over Wi‑Fi. The same one-time link or QR code below works for either device; macOS may ask to allow incoming network connections."
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -504,13 +511,13 @@ private struct PhoneSettingsTab: View {
 
             if allowConnections && checkedReachability {
                 if lanReachable {
-                    Section("Pair your iPhone") {
+                    Section("Pair a device") {
                         pairingContent
                     }
                 } else {
                     Section {
                         Label(
-                            "Quit and reopen SurgeCode to start accepting iPhone connections.",
+                            "Quit and reopen SurgeCode to start accepting iPhone or Mac connections.",
                             systemImage: "arrow.counterclockwise.circle"
                         )
                         .foregroundStyle(.orange)
@@ -541,7 +548,7 @@ private struct PhoneSettingsTab: View {
                 QRCodePairingView(text: pairing.pairingURL.absoluteString)
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Open SurgeCode on your iPhone, choose Scan QR Code, and point it here.")
+                    Text("Open SurgeCode on an iPhone or another Mac, then scan this QR code or paste the link.")
                         .font(.callout)
                         .fixedSize(horizontal: false, vertical: true)
 
@@ -609,11 +616,159 @@ private struct PhoneSettingsTab: View {
         case LiveBackendError.noLanAddress:
             return "This Mac doesn't appear to be on a network — join Wi‑Fi and try again."
         case LiveBackendError.mobileAccessDisabled:
-            return "Quit and reopen SurgeCode to start accepting iPhone connections."
+            return "Quit and reopen SurgeCode to start accepting iPhone or Mac connections."
         case LiveBackendError.notConnected:
             return "Waiting for the local server — try again once the app shows Connected."
         default:
             return "Couldn't create a pairing code: \(error)"
+        }
+    }
+}
+
+// MARK: - Remote Macs
+
+struct RemoteMacsSettingsTab: View {
+    let multi: MultiDeviceModel
+
+    @UIState private var pairingLink = ""
+    @UIState private var isPairing = false
+    @UIState private var pairingError: String?
+    @UIState private var forgetTarget: DeviceID?
+
+    var body: some View {
+        Form {
+            Section("Add a Mac") {
+                HStack(spacing: 8) {
+                    TextField("Paste pairing link…", text: $pairingLink)
+                        .textFieldStyle(.roundedBorder)
+                        .disabled(isPairing)
+                    Button("Connect") { connect() }
+                        .disabled(isPairing || pairingLink.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+
+                if isPairing {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                if let pairingError {
+                    Label(pairingError, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Text("On the other Mac, open Settings > Devices and copy its pairing link or scan its QR code.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Paired Macs") {
+                if multi.remoteSessions.isEmpty {
+                    Text("No Macs paired yet.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(multi.remoteSessions) { session in
+                        remoteMacRow(session)
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+        .confirmationDialog(
+            "Forget Mac?",
+            isPresented: Binding(
+                get: { forgetTarget != nil },
+                set: { if !$0 { forgetTarget = nil } }
+            )
+        ) {
+            Button("Forget", role: .destructive) {
+                if let id = forgetTarget {
+                    forgetTarget = nil
+                    Task { await multi.removeRemoteDevice(id: id) }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            let name = forgetTarget.flatMap { id in
+                multi.remoteSessions.first { $0.id == id }?.descriptor.name
+            } ?? "this Mac"
+            Text("Remove “\(name)” and its saved pairing from this Mac?")
+        }
+    }
+
+    @ViewBuilder
+    private func remoteMacRow(_ session: RemoteDeviceSession) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(session.descriptor.name)
+                    Text(address(for: session))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                Spacer(minLength: 8)
+                Button("Forget", role: .destructive) {
+                    forgetTarget = session.id
+                }
+                .controlSize(.small)
+            }
+
+            Label(
+                session.connection.statusText,
+                systemImage: session.connection.symbolName)
+                .font(.caption)
+                .foregroundStyle(session.connection.statusColor)
+                .contentTransition(.symbolEffect(.replace))
+                .animation(Motion.ambient, value: session.connection)
+
+            if expiresSoon(session) {
+                Text("Expires soon")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            }
+
+            if session.connection == .unauthorized {
+                Label(
+                    "Re-pair: paste a fresh link from this Mac in Add a Mac above.",
+                    systemImage: "arrow.triangle.2.circlepath")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, 3)
+    }
+
+    private func address(for session: RemoteDeviceSession) -> String {
+        if let port = session.descriptor.port {
+            return "\(session.descriptor.host):\(port)"
+        }
+        return session.descriptor.host
+    }
+
+    private func expiresSoon(_ session: RemoteDeviceSession) -> Bool {
+        guard let expiresAt = session.descriptor.sessionExpiresAt else { return false }
+        let remaining = expiresAt.timeIntervalSinceNow
+        return remaining > 0 && remaining <= 3 * 24 * 60 * 60
+    }
+
+    private func connect() {
+        let link = pairingLink.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !link.isEmpty, !isPairing else { return }
+        isPairing = true
+        pairingError = nil
+        Task {
+            do {
+                _ = try await multi.addRemoteDevice(pairingLink: link)
+                pairingLink = ""
+            } catch {
+                pairingError = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+            }
+            isPairing = false
         }
     }
 }
@@ -668,7 +823,7 @@ private struct ConnectionSettingsTab: View {
                     "Mode", value: lanReachable ? "remote-reachable" : "desktop-managed-local")
                 Text(
                     lanReachable
-                        ? "The t3 server runs as a supervised local child process and accepts paired devices from your local network (Settings ▸ iPhone)."
+                        ? "The t3 server runs as a supervised local child process and accepts paired devices from your local network (Settings ▸ Devices)."
                         : "The t3 server runs as a supervised local child process; no remote or cloud connection is used."
                 )
                 .font(.caption)
@@ -680,33 +835,5 @@ private struct ConnectionSettingsTab: View {
         // Keyed to the connection phase so the row updates if the server
         // comes up (or restarts) after the Settings window opened.
         .task(id: model.connection) { lanReachable = await model.isServerLanReachable() }
-    }
-}
-
-private extension ConnectionPhase {
-    var statusText: String {
-        switch self {
-        case .launchingServer: "Launching Server…"
-        case .connecting: "Connecting…"
-        case .ready: "Connected"
-        case .reconnecting(let attempt): "Reconnecting (attempt \(attempt))…"
-        case .failed(let message): "Failed: \(message)"
-        }
-    }
-
-    var symbolName: String {
-        switch self {
-        case .launchingServer, .connecting, .reconnecting: "arrow.triangle.2.circlepath"
-        case .ready: "checkmark.circle.fill"
-        case .failed: "exclamationmark.triangle.fill"
-        }
-    }
-
-    var statusColor: Color {
-        switch self {
-        case .launchingServer, .connecting, .reconnecting: .secondary
-        case .ready: .green
-        case .failed: .red
-        }
     }
 }

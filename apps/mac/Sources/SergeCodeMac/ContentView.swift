@@ -3,7 +3,7 @@ import SwiftUI
 // App shell. File kept as ContentView.swift for historical reasons but now
 // hosts RootView, the top-level NavigationSplitView wired to AppModel.
 struct RootView: View {
-    let model: AppModel
+    let multi: MultiDeviceModel
     let scenery: SceneryStore
     let passport: PassportStore
 
@@ -12,6 +12,9 @@ struct RootView: View {
     @UIState private var showNewSessionSheet = false
     @UIState private var showPassportSheet = false
     @UIState private var columnVisibility: NavigationSplitViewVisibility = .all
+
+    private var model: AppModel { multi.activeModel }
+    private var localModel: AppModel { multi.local }
 
     var body: some View {
         // Drag-collapse writes visibility through this binding; wrapping
@@ -24,12 +27,12 @@ struct RootView: View {
                 }
             }
         )) {
-            SidebarView(model: model, scenery: scenery, passport: passport)
+            SidebarView(multi: multi, scenery: scenery, passport: passport)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 280)
         } detail: {
             Group {
-                if let thread = model.selectedThread {
-                    ThreadDetailView(model: model, scenery: scenery, thread: thread)
+                if let thread = multi.selectedThread {
+                    ThreadDetailView(model: multi.activeModel, scenery: scenery, thread: thread)
                         .transition(.opacity)
                 } else {
                     EmptyStateView(scenery: scenery) {
@@ -40,15 +43,15 @@ struct RootView: View {
             }
             // Keyed to presence, not thread id — thread → thread switches
             // cross-fade inside ChatScreen; this only covers hero ↔ chat.
-            .animation(Motion.settle, value: model.selectedThread == nil)
+            .animation(Motion.settle, value: multi.selectedThread == nil)
             // The inspector hangs off this stable node, not off the
             // per-thread detail view: re-presenting it on every thread
             // switch (and inside the cross-fade above) reset its column
             // width and flashed/clipped the panel.
             .inspector(isPresented: $showInspector) {
                 Group {
-                    if let thread = model.selectedThread {
-                        InspectorPanel(model: model, threadID: thread.id)
+                    if let thread = multi.selectedThread {
+                        InspectorPanel(model: multi.activeModel, threadID: thread.id)
                     } else {
                         ContentUnavailableView(
                             "No Session",
@@ -120,7 +123,7 @@ struct RootView: View {
         #endif
         .sheet(isPresented: $showNewSessionSheet) {
             NewSessionSheet(
-                model: model,
+                multi: multi,
                 scenery: scenery,
                 passport: passport,
                 isPresented: $showNewSessionSheet)
@@ -139,38 +142,101 @@ struct RootView: View {
     @ViewBuilder
     private var newSessionMenu: some View {
         Menu {
-            if model.projects.isEmpty {
-                Text("No projects yet")
-            }
-            ForEach(model.projects) { project in
-                Menu(project.name) {
-                    if model.configuredProviderKinds.isEmpty {
-                        Text("No providers found")
-                    }
-                    ForEach(model.configuredProviderKinds) { provider in
-                        Button {
-                            Task {
-                                await model.createSceneThread(
-                                    projectID: project.id,
-                                    provider: provider,
-                                    scenery: scenery,
-                                    passport: passport)
-                            }
-                        } label: {
-                            Label(provider.displayName, systemImage: "bolt")
-                        }
-                        .disabled(!model.canCreateThread(with: provider))
-                    }
+            if multi.remoteSessions.isEmpty {
+                // Preserve the original flat menu while there are no remote
+                // targets. This is also the fast path for the common case.
+                localProjectMenus
+                Divider()
+                addProjectButton
+            } else {
+                Section("This Mac") {
+                    localProjectMenus
+                    addProjectButton
                 }
-            }
-            Divider()
-            Button {
-                showNewSessionSheet = true
-            } label: {
-                Label("Add Project…", systemImage: "folder.badge.plus")
+                Divider()
+                ForEach(multi.remoteSessions) { session in
+                    remoteProjectSection(session)
+                }
             }
         } label: {
             Label("New Session", systemImage: "plus")
+        }
+    }
+
+    @ViewBuilder
+    private var localProjectMenus: some View {
+        projectMenus(
+            for: localModel,
+            deviceID: localModel.deviceID)
+    }
+
+    private var addProjectButton: some View {
+        Button {
+            showNewSessionSheet = true
+        } label: {
+            Label("Add Project…", systemImage: "folder.badge.plus")
+        }
+    }
+
+    @ViewBuilder
+    private func remoteProjectSection(_ session: RemoteDeviceSession) -> some View {
+        Section {
+            if session.model.projects.isEmpty {
+                Text("No projects yet")
+            } else {
+                projectMenus(for: session.model, deviceID: session.id)
+            }
+        } header: {
+            Label(session.descriptor.name, systemImage: "laptopcomputer")
+        }
+    }
+
+    @ViewBuilder
+    private func projectMenus(for owner: AppModel, deviceID: DeviceID) -> some View {
+        if owner.projects.isEmpty {
+            Text("No projects yet")
+        }
+        ForEach(owner.projects) { project in
+            Menu(project.name) {
+                if owner.configuredProviderKinds.isEmpty {
+                    Text("No providers found")
+                }
+                ForEach(owner.configuredProviderKinds) { provider in
+                    Button {
+                        createSession(
+                            owner: owner,
+                            projectID: project.id,
+                            provider: provider,
+                            deviceID: deviceID)
+                    } label: {
+                        Label(provider.displayName, systemImage: "bolt")
+                    }
+                    .disabled(
+                        owner.deviceID != .local
+                            && owner.connection != .ready
+                            || !owner.canCreateThread(with: provider))
+                }
+            }
+            .disabled(owner.deviceID != .local && owner.connection != .ready)
+        }
+    }
+
+    private func createSession(
+        owner: AppModel,
+        projectID: String,
+        provider: ProviderKind,
+        deviceID: DeviceID
+    ) {
+        Task {
+            guard owner.deviceID == .local || owner.connection == .ready else { return }
+            if let thread = await owner.createSceneThread(
+                projectID: projectID,
+                provider: provider,
+                scenery: scenery,
+                passport: passport)
+            {
+                multi.select(threadID: thread.id, on: deviceID)
+            }
         }
     }
 }

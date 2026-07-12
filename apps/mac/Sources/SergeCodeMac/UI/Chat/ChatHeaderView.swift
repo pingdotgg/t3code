@@ -7,10 +7,11 @@ struct ChatHeaderView: View {
     let thread: ChatThread
     let model: AppModel
     let scenery: SceneryStore
+    let threadKey: String
 
     var body: some View {
         HStack(spacing: 12) {
-            let names = scenery.displayNames(for: thread)
+            let names = scenery.displayNames(for: thread, threadKey: threadKey)
             VStack(alignment: .leading, spacing: 3) {
                 Group {
                     if let prefs = projectPrefs, prefs.showsProjectBadge {
@@ -30,6 +31,12 @@ struct ChatHeaderView: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
+                if model.isRemote {
+                    Text("on \(model.deviceName ?? "Remote Mac")")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
                 HStack(spacing: 10) {
                     ProviderBadge(provider: thread.provider)
                     StatusBadge(status: thread.status)
@@ -38,7 +45,7 @@ struct ChatHeaderView: View {
 
             Spacer()
 
-            if let photo = scenery.photo(for: thread.id) {
+            if let photo = scenery.photo(for: threadKey) {
                 SceneryAttributionTag(photo: photo)
             }
         }

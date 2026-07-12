@@ -95,5 +95,7 @@ public enum T3Error: Error, Sendable {
     case rpc(RpcFailure)
     /// HTTP bootstrap/ticket failure (§1.2).
     case auth(String)
+    /// The bearer session is no longer accepted by the remote server.
+    case unauthorized(String)
     case unexpectedFrame(String)
 }
