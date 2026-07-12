@@ -7,6 +7,9 @@ public final class AppModel {
     public private(set) var connection: ConnectionPhase = .launchingServer
     public private(set) var projects: [Project] = []
     public private(set) var threads: [ChatThread] = []
+    /// Thread IDs pinned locally in the macOS client. Pinning is intentionally
+    /// client-local: it is sidebar organization, not server thread metadata.
+    public private(set) var pinnedThreadIDs: Set<String>
     public private(set) var providers: [ProviderInstance] = []
     public private(set) var models: [ModelOption] = []
     /// Low-frequency usage-limit card actions — stays flat on AppModel (not ThreadState).
@@ -82,6 +85,8 @@ public final class AppModel {
     private var usageLimitResumeTasks: [String: Task<Void, Never>] = [:]
     private var dismissedUsageLimitIDs: Set<String> = []
 
+    private static let pinnedThreadIDsKey = "SergeCode.pinnedThreadIDs"
+
     private static let usageLimitContinuationPrompt =
         "Continue the interrupted task from where you stopped."
 
@@ -122,6 +127,32 @@ public final class AppModel {
 
     public init(backend: any BackendService) {
         self.backend = backend
+        self.pinnedThreadIDs = Set(
+            UserDefaults.standard.stringArray(forKey: Self.pinnedThreadIDsKey) ?? [])
+    }
+
+    public func isThreadPinned(_ thread: ChatThread) -> Bool {
+        pinnedThreadIDs.contains(thread.id)
+    }
+
+    public func togglePinned(_ thread: ChatThread) {
+        if pinnedThreadIDs.contains(thread.id) {
+            pinnedThreadIDs.remove(thread.id)
+        } else {
+            pinnedThreadIDs.insert(thread.id)
+        }
+        persistPinnedThreadIDs()
+    }
+
+    /// Keeps the existing newest-first order within each group while moving
+    /// pinned rows ahead of unpinned rows.
+    static func pinnedFirst(_ threads: [ChatThread], pinnedIDs: Set<String>) -> [ChatThread] {
+        threads.filter { pinnedIDs.contains($0.id) }
+            + threads.filter { !pinnedIDs.contains($0.id) }
+    }
+
+    private func persistPinnedThreadIDs() {
+        UserDefaults.standard.set(Array(pinnedThreadIDs), forKey: Self.pinnedThreadIDsKey)
     }
 
     /// Lookup only — does not create a `ThreadState`.
@@ -397,6 +428,9 @@ public final class AppModel {
             }
         case .threadRemoved(let id):
             threads.removeAll { $0.id == id }
+            if pinnedThreadIDs.remove(id) != nil {
+                persistPinnedThreadIDs()
+            }
             // ThreadState owns the in-memory composer draft, so removing the
             // child also drops that thread's text and staged attachments.
             threadStates[id] = nil
@@ -519,6 +553,11 @@ public final class AppModel {
             let refreshedThreads = try await threads.sorted { $0.updatedAt > $1.updatedAt }
             self.projects = try await projects
             self.threads = refreshedThreads
+            let liveThreadIDs = Set(refreshedThreads.map(\.id))
+            if pinnedThreadIDs.intersection(liveThreadIDs) != pinnedThreadIDs {
+                pinnedThreadIDs.formIntersection(liveThreadIDs)
+                persistPinnedThreadIDs()
+            }
             self.providers = try await providers
             self.models = try await models
             self.effectiveUpdatedAt.removeAll(keepingCapacity: true)
