@@ -1,6 +1,24 @@
 import SwiftUI
 import T3Kit
 
+func displayModelName(slug: String, catalog: [String: String]) -> String {
+    let trimmed = slug.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let displayName = catalog[trimmed]?.trimmingCharacters(in: .whitespacesAndNewlines),
+        !displayName.isEmpty
+    {
+        return displayName
+    }
+    return shortModelName(trimmed)
+}
+
+private func shortModelName(_ model: String) -> String {
+    // Prefer a readable short id when the wire form is a long Claude slug.
+    if model.hasPrefix("claude-") {
+        return String(model.dropFirst("claude-".count))
+    }
+    return model
+}
+
 /// Dispatches a single `TimelineDisplayItem` to its row view.
 struct ChatTimelineRowView: View {
     let item: TimelineDisplayItem
@@ -43,6 +61,7 @@ struct ChatTimelineRowView: View {
         case .subagentTask(let task):
             SubagentTaskRow(
                 task: task,
+                modelDisplayNames: model.modelDisplayNames,
                 stopError: model.subagentStopErrors[task.taskId],
                 onStopAgent: {
                     Task { await model.stopSubagentTask(taskId: task.taskId) }
@@ -501,6 +520,7 @@ private struct SubagentTaskRow: View {
     private static let stalledThreshold: TimeInterval = 3 * 60
 
     let task: SubagentTaskItem
+    let modelDisplayNames: [String: String]
     /// Transient stop-RPC failure (not part of the provider task payload).
     let stopError: String?
     let onStopAgent: () -> Void
@@ -801,7 +821,7 @@ private struct SubagentTaskRow: View {
             parts.append(type.replacingOccurrences(of: "-", with: " "))
         }
         if let model = nonEmpty(task.model) {
-            parts.append(shortModelName(model))
+            parts.append(displayModelName(slug: model, catalog: modelDisplayNames))
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
@@ -884,15 +904,6 @@ private struct SubagentTaskRow: View {
         case .failed: Color.red.opacity(0.08)
         case .stopped: Color.secondary.opacity(0.08)
         }
-    }
-
-    private func shortModelName(_ model: String) -> String {
-        // Prefer a readable short id when the wire form is a long Claude slug.
-        let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.hasPrefix("claude-") {
-            return String(trimmed.dropFirst("claude-".count))
-        }
-        return trimmed
     }
 
     private func nonEmpty(_ value: String?) -> String? {
