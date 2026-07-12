@@ -374,7 +374,7 @@ describe("SceneryStore", () => {
     expect(store.variantURL(scene, "thumb")).toBe(scene.thumbURL);
     expect(new URL(store.variantURL(scene, "hero")).searchParams.get("w")).toBe("2048");
     const wallpaperUrl = new URL(store.variantURL(scene, "wallpaper"));
-    expect(wallpaperUrl.searchParams.get("blur")).toBe("35");
+    expect(wallpaperUrl.searchParams.get("blur")).toBe("50");
     expect(wallpaperUrl.searchParams.get("sat")).toBe("5");
     expect(new URL(store.variantURL(scene, "frost")).searchParams.get("w")).toBe("800");
   });

@@ -172,7 +172,7 @@ const MARKDOWN_COLORS = {
     userFenceText: "#ffffff",
   },
   dark: {
-    body: "#e5e5e5",
+    body: "#f0f2ef",
     strong: "#f5f5f5",
     link: "#60a5fa",
     blockquoteBorder: "rgba(255, 255, 255, 0.1)",
