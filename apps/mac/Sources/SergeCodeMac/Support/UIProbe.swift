@@ -249,9 +249,18 @@
                 if case .codeBlock(_, let code) = block { return code }
                 return nil
             }
-            let highlightedKinds = codeValues.flatMap {
-                SyntaxTint.tokenize($0, language: .swift).map(\.kind)
-            }
+            let highlightedSwift = await CodeHighlighter.shared.highlighted(
+                code: codeValues.first ?? "",
+                language: "swift",
+                dark: false)
+            let highlightedColorCount = Set(
+                highlightedSwift?.runs.compactMap { run in
+                    run.foregroundColor.map { String(describing: $0) }
+                } ?? []).count
+            let unknownHighlight = await CodeHighlighter.shared.highlighted(
+                code: codeValues.first ?? "",
+                language: "notareallang",
+                dark: false)
             let renderedMarkdown = attributedMarkdownDocument(markdownProbe)
             let markdownHosting = NSHostingView(
                 rootView: AssistantMarkdownView(
@@ -283,12 +292,14 @@
                 tableCount == 1
                 && taskCount == 2
                 && codeValues.count == 1
-                && highlightedKinds.contains(.keyword)
+                && highlightedColorCount > 1
+                && unknownHighlight == nil
                 && String(renderedMarkdown.characters).contains("Name\tStatus")
                 && markdownViewOK
             print(
                 "UIProbe: markdown table=\(tableCount) tasks=\(taskCount) "
-                    + "code=\(codeValues.count) syntaxKeyword=\(highlightedKinds.contains(.keyword)) "
+                    + "code=\(codeValues.count) syntaxColors=\(highlightedColorCount) "
+                    + "unknownSyntaxNil=\(unknownHighlight == nil) "
                     + "rendered=\(markdownProbeOK) viewHeight=\(markdownFittingHeight) "
                     + "viewEvidence=\(markdownViewEvidence) viewVerified=\(markdownViewOK)")
             assert(markdownProbeOK, "Markdown UI probe failed")

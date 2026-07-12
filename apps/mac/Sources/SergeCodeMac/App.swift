@@ -66,6 +66,7 @@ struct SergeCodeApp: App {
                     #endif
                 }
                 .task {
+                    Task { await CodeHighlighter.shared.warm() }
                     await scenery.start()
                     passport.backfill(
                         sets: scenery.availableSets,

@@ -29,7 +29,9 @@ let package = Package(
                 .product(name: "FluidAudio", package: "FluidAudio"),
                 .product(name: "Markdown", package: "swift-markdown"),
             ],
-            path: "Sources/SergeCodeMac"
+            path: "Sources/SergeCodeMac",
+            exclude: ["Vendor/HighlightSwift/LICENSE.md"],
+            resources: [.process("Vendor/HighlightSwift/HighlightJS")]
         ),
         .testTarget(
             name: "SergeCodeMacTests",

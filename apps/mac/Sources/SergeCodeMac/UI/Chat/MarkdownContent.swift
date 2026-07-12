@@ -643,7 +643,9 @@ struct AssistantMarkdownView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(renderedBlocks.enumerated()), id: \.element.id) { index, entry in
-                markdownBlockView(entry.block)
+                markdownBlockView(
+                    entry.block,
+                    allowsHighlight: !(isStreaming && index == renderedBlocks.count - 1))
                     .padding(.top, blockGap(at: index))
             }
             if isStreaming {
@@ -724,7 +726,7 @@ struct AssistantMarkdownView: View {
     }
 
     @ViewBuilder
-    private func markdownBlockView(_ block: MarkdownBlock) -> some View {
+    private func markdownBlockView(_ block: MarkdownBlock, allowsHighlight: Bool) -> some View {
         switch block {
         case .paragraph(let text):
             MarkdownProseText(attributed: text)
@@ -745,7 +747,10 @@ struct AssistantMarkdownView: View {
                 .frame(height: 1)
                 .padding(.horizontal, 2)
         case .codeBlock(let language, let code):
-            MarkdownCodeBlock(language: language, code: code)
+            MarkdownCodeBlock(
+                language: language,
+                code: code,
+                allowsHighlight: allowsHighlight)
         case .table(let table):
             MarkdownTableView(table: table)
         }
@@ -1025,28 +1030,36 @@ private func headingFont(_ level: Int) -> Font {
 
 // MARK: - Basic code/table views (refined in the rendering commit)
 
+private struct MarkdownCodeHighlightTaskID: Equatable {
+    let code: String
+    let language: String?
+    let dark: Bool
+    let allowsHighlight: Bool
+}
+
 private struct MarkdownCodeBlock: View {
     let language: String?
     let code: String
-    private let highlighted: AttributedString
+    let allowsHighlight: Bool
 
     @UIState private var isHovering = false
     @UIState private var isWrapped = false
+    @UIState private var displayedText: AttributedString
+    @Environment(\.colorScheme) private var colorScheme
 
-    init(language: String?, code: String) {
+    init(language: String?, code: String, allowsHighlight: Bool) {
         self.language = language
         self.code = code
-        self.highlighted = highlightedCode(code, language: language)
+        self.allowsHighlight = allowsHighlight
+        _displayedText = UIState(initialValue: Self.plainCode(code))
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
-                if let language, !language.isEmpty {
-                    Text(language.uppercased())
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                }
+                Text(languageLabel)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
                 Spacer(minLength: 0)
                 if isHovering {
                     MessageActionButton(
@@ -1056,34 +1069,87 @@ private struct MarkdownCodeBlock: View {
                         withAnimation(Motion.fade) { isWrapped.toggle() }
                     }
                     .transition(.opacity)
-                    CopyActionButton(text: code)
-                        .transition(.opacity)
                 }
+                CopyActionButton(text: code)
+                    .opacity(isHovering ? 1 : 0.55)
             }
-            if isWrapped {
-                Text(highlighted)
-                    .font(.system(.body, design: .monospaced))
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    Text(highlighted)
-                        .font(.system(.body, design: .monospaced))
-                        .textSelection(.enabled)
-                        .fixedSize()
-                }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity)
+            .background(Color.secondary.opacity(0.06))
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(.separator)
+                    .frame(height: 0.5)
             }
+
+            codeContent
+                .padding(10)
         }
         .onHover { isHovering = $0 }
         .animation(Motion.fade, value: isHovering)
         .animation(Motion.fade, value: isWrapped)
-        .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         // Solid opaque fill — code blocks live inside long-form assistant
         // text, so no glass/material here per Liquid Glass content rules.
         .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator, lineWidth: 1))
+        .task(id: highlightTaskID) {
+            guard allowsHighlight,
+                let highlighted = await CodeHighlighter.shared.highlighted(
+                    code: code,
+                    language: language,
+                    dark: colorScheme == .dark)
+            else { return }
+            // Keep the state write out of an AppKit layout transaction. The
+            // macOS 27 SDK can trap when measured Text content changes while
+            // its hosting view is still laying out.
+            try? await Task.sleep(for: .milliseconds(1))
+            guard !Task.isCancelled else { return }
+            withAnimation(Motion.fade) {
+                displayedText = highlighted
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var codeContent: some View {
+        if isWrapped {
+            Text(displayedText)
+                .font(.system(.body, design: .monospaced))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            ScrollView(.horizontal, showsIndicators: false) {
+                Text(displayedText)
+                    .font(.system(.body, design: .monospaced))
+                    .textSelection(.enabled)
+                    .fixedSize()
+            }
+        }
+    }
+
+    private var highlightTaskID: MarkdownCodeHighlightTaskID {
+        MarkdownCodeHighlightTaskID(
+            code: code,
+            language: language,
+            dark: colorScheme == .dark,
+            allowsHighlight: allowsHighlight)
+    }
+
+    private var languageLabel: String {
+        guard let language = language?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !language.isEmpty
+        else { return "Code" }
+        return language.capitalized
+    }
+
+    private static func plainCode(_ code: String) -> AttributedString {
+        var result = AttributedString(code)
+        result.font = .system(.body, design: .monospaced)
+        return result
     }
 }
 
@@ -1151,37 +1217,5 @@ private struct MarkdownTableView: View {
         case .trailing: return .trailing
         default: return .leading
         }
-    }
-}
-
-private func highlightedCode(_ code: String, language: String?) -> AttributedString {
-    let syntaxLanguage: SyntaxLanguage
-    switch language?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-    case "swift": syntaxLanguage = .swift
-    case "ts", "tsx", "typescript", "js", "jsx", "javascript", "mjs", "cjs":
-        syntaxLanguage = .typescript
-    case "json": syntaxLanguage = .json
-    default: syntaxLanguage = .plain
-    }
-
-    var result = AttributedString()
-    for span in SyntaxTint.tokenize(code, language: syntaxLanguage) {
-        var piece = AttributedString(span.text)
-        if let color = markdownSyntaxColor(span.kind) {
-            piece.foregroundColor = color
-        }
-        result.append(piece)
-    }
-    result.font = .system(.body, design: .monospaced)
-    return result
-}
-
-private func markdownSyntaxColor(_ kind: SyntaxKind) -> Color? {
-    switch kind {
-    case .plain: return nil
-    case .keyword: return Color(red: 0.56, green: 0.25, blue: 0.68)
-    case .string: return Color(red: 0.72, green: 0.22, blue: 0.25)
-    case .comment: return .secondary
-    case .number: return Color(red: 0.12, green: 0.42, blue: 0.62)
     }
 }
