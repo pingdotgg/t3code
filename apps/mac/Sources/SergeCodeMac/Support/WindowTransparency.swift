@@ -74,19 +74,25 @@ struct WindowGlassBackground: View {
             / (ScenerySettingsFile.translucencyRange.upperBound
                 - ScenerySettingsFile.translucencyRange.lowerBound)
 
-        ZStack {
-            BehindWindowVisualEffect(
-                material: .underWindowBackground,
-                state: .active)
-
-            // Solid plate on top of the effect. Opacity tracks translucency so
-            // 100% matches the previous fully solid window; lower values let
-            // the behind-window blur (desktop) show through.
+        if solidifying >= 0.999 {
             Rectangle()
                 .fill(Color(nsColor: .windowBackgroundColor))
-                .opacity(solidifying)
+                .ignoresSafeArea()
+        } else {
+            ZStack {
+                BehindWindowVisualEffect(
+                    material: .underWindowBackground,
+                    state: .active)
+
+                // Solid plate on top of the effect. Opacity tracks translucency so
+                // 100% matches the previous fully solid window; lower values let
+                // the behind-window blur (desktop) show through.
+                Rectangle()
+                    .fill(Color(nsColor: .windowBackgroundColor))
+                    .opacity(solidifying)
+            }
+            .ignoresSafeArea()
         }
-        .ignoresSafeArea()
     }
 }
 
