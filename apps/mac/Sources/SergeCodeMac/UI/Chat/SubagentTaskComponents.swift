@@ -109,6 +109,18 @@ enum SubagentTaskPresentation {
         }
     }
 
+    /// Leading state rail on the timeline card: the strongest at-a-glance
+    /// state signal, stronger than the background tint alone.
+    static func railColor(for task: SubagentTaskItem, stalled: Bool) -> Color {
+        if stalled { return .orange }
+        switch task.state {
+        case .running: return .accentColor
+        case .paused, .stopped: return .secondary
+        case .completed: return .green
+        case .failed: return .red
+        }
+    }
+
     static func durationText(_ duration: TimeInterval) -> String {
         if duration < 1 { return "<1s" }
         if duration < 60 { return "\(Int(duration.rounded()))s" }
@@ -138,7 +150,7 @@ struct SubagentTaskStatusIcon: View {
     }
 
     var body: some View {
-        Image(systemName: iconName)
+        let icon = Image(systemName: iconName)
             .symbolEffect(
                 .pulse,
                 isActive: task.state == .running
@@ -146,7 +158,14 @@ struct SubagentTaskStatusIcon: View {
                     && isLive
                     && !Motion.reduceMotion)
             .foregroundStyle(iconTint)
-            .contentTransition(.symbolEffect(.replace))
+            .contentTransition(
+                Motion.reduceMotion ? .identity : .symbolEffect(.replace))
+        if Motion.reduceMotion {
+            icon
+        } else {
+            // Completion beat: one bounce when the task changes state.
+            icon.symbolEffect(.bounce, value: task.state)
+        }
     }
 
     private var iconName: String {
@@ -198,11 +217,35 @@ struct SubagentTaskIdentityBadge: View {
         if let identityBadge = SubagentTaskPresentation.identityBadge(
             for: task, modelDisplayNames: modelDisplayNames)
         {
-            Text(identityBadge)
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            TranscriptPill(
+                identityBadge,
+                tint: .secondary,
+                fill: AnyShapeStyle(.quaternary))
         }
+    }
+}
+
+/// Compact capsule tag shared by transcript and agents-panel rows: identity
+/// badges and health states ("stalled", "background", "paused").
+struct TranscriptPill: View {
+    let text: String
+    let tint: Color
+    let fill: AnyShapeStyle
+
+    init(_ text: String, tint: Color = .secondary, fill: AnyShapeStyle? = nil) {
+        self.text = text
+        self.tint = tint
+        self.fill = fill ?? AnyShapeStyle(tint.opacity(0.12))
+    }
+
+    var body: some View {
+        Text(text)
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(tint)
+            .lineLimit(1)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(fill, in: Capsule())
     }
 }
 
@@ -220,46 +263,24 @@ struct SubagentTaskHealthTags: View {
                     .font(.caption2)
                     .foregroundStyle(stalled ? Color.orange : Color.secondary)
                 if stalled {
-                    Text("stalled")
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(.orange)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1)
-                        .background(Color.orange.opacity(0.14), in: Capsule())
+                    TranscriptPill(
+                        "stalled",
+                        tint: .orange,
+                        fill: AnyShapeStyle(Color.orange.opacity(0.14)))
                 }
                 if task.isBackgrounded {
-                    Text("background")
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1)
-                        .background(.secondary.opacity(0.12), in: Capsule())
+                    TranscriptPill("background")
                 }
             }
         } else if task.state == .paused {
             HStack(spacing: 6) {
-                Text("paused")
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1)
-                    .background(.secondary.opacity(0.12), in: Capsule())
+                TranscriptPill("paused")
                 if task.isBackgrounded {
-                    Text("background")
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1)
-                        .background(.secondary.opacity(0.12), in: Capsule())
+                    TranscriptPill("background")
                 }
             }
         } else if task.isBackgrounded {
-            Text("background")
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 1)
-                .background(.secondary.opacity(0.12), in: Capsule())
+            TranscriptPill("background")
         }
     }
 }

@@ -1,6 +1,62 @@
 import SwiftUI
 import T3Kit
 
+private enum TranscriptMetrics {
+    static let cardRadius: CGFloat = 10
+    static let cardPadH: CGFloat = 10
+    static let cardPadV: CGFloat = 7
+    static let nestedRadius: CGFloat = 6
+    static let railWidth: CGFloat = 2.5
+    static let iconColumn: CGFloat = 16
+}
+
+private struct TranscriptCardModifier: ViewModifier {
+    let fill: AnyShapeStyle
+    let showRail: Bool
+    let railColor: Color
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, TranscriptMetrics.cardPadH)
+            .padding(.vertical, TranscriptMetrics.cardPadV)
+            .background(
+                fill,
+                in: RoundedRectangle(cornerRadius: TranscriptMetrics.cardRadius)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: TranscriptMetrics.cardRadius)
+                    .strokeBorder(
+                        Color(nsColor: .separatorColor).opacity(0.45),
+                        lineWidth: 0.5)
+            )
+            .overlay(alignment: .leading) {
+                if showRail {
+                    Capsule()
+                        .fill(railColor)
+                        .frame(width: TranscriptMetrics.railWidth)
+                        .padding(.vertical, 4)
+                }
+            }
+    }
+}
+
+private extension View {
+    func transcriptCard<S: ShapeStyle>(
+        fill: S,
+        showRail: Bool = false,
+        railColor: Color = .accentColor
+    ) -> some View {
+        modifier(
+            TranscriptCardModifier(
+                fill: AnyShapeStyle(fill),
+                showRail: showRail,
+                railColor: railColor))
+    }
+}
+
+// TranscriptPill lives in SubagentTaskComponents.swift — shared with the
+// agents panel so both surfaces render identical capsule tags.
+
 /// Dispatches a single `TimelineDisplayItem` to its row view.
 struct ChatTimelineRowView: View {
     let item: TimelineDisplayItem
@@ -23,22 +79,26 @@ struct ChatTimelineRowView: View {
                 items: items, summary: summary,
                 threadStatus: model.selectedThread?.status,
                 projectRoot: projectRoot)
+        case .daySeparator(_, let label):
+            SessionSeparatorRow(label: label)
         }
     }
 
     @ViewBuilder
     private func singleRow(_ item: TimelineItem) -> some View {
         switch item {
-        case .userMessage(let id, let text, _):
-            UserMessageBubble(messageID: id, text: text, model: model)
-        case .assistantMessage(_, let markdown, let isStreaming, _):
+        case .userMessage(let id, let text, let at):
+            UserMessageBubble(
+                messageID: id, text: text, threadID: threadID, model: model, at: at)
+        case .assistantMessage(_, let markdown, let isStreaming, let at):
             AssistantMarkdownView(
-                markdown: markdown, isStreaming: isStreaming, threadID: threadID, model: model)
-        case .toolEvent(_, let name, let detail, let kind, let status, _, let output, let outputIsError):
+                markdown: markdown, isStreaming: isStreaming, threadID: threadID, model: model,
+                at: at, showsRoleChrome: true)
+        case .toolEvent(_, let name, let detail, let kind, let status, let at, let output, let outputIsError):
             ToolEventRow(
                 name: name, detail: detail, kind: kind, status: status,
                 output: output, outputIsError: outputIsError,
-                threadStatus: model.selectedThread?.status,
+                threadStatus: model.selectedThread?.status, at: at,
                 projectRoot: projectRoot)
         case .subagentTask(let task):
             SubagentTaskRow(
@@ -106,7 +166,9 @@ struct ChatTimelineRowView: View {
 private struct UserMessageBubble: View {
     let messageID: String
     let text: String
+    let threadID: String
     let model: AppModel
+    let at: Date?
 
     @UIState private var isHovering = false
     /// Local double-click guard: `canResend` flips only after the thread's
@@ -123,50 +185,70 @@ private struct UserMessageBubble: View {
     var body: some View {
         HStack {
             Spacer(minLength: 48)
-            Text(text)
-                .textSelection(.enabled)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 16))
-                .foregroundStyle(.white)
-                .overlay(alignment: .topTrailing) {
-                    MessageActionChip {
-                        CopyActionButton(text: text)
-                        MessageActionButton(
-                            systemImage: "pencil", help: "Edit in composer and resend",
-                            disabled: !canResend
-                        ) {
+            VStack(alignment: .trailing, spacing: 2) {
+                AssistantMarkdownView(
+                    markdown: text,
+                    isStreaming: false,
+                    threadID: threadID,
+                    model: model,
+                    style: .userBubble)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(
+                        LinearGradient(
+                            colors: [Color.accentColor, Color.accentColor.opacity(0.92)],
+                            startPoint: .top,
+                            endPoint: .bottom),
+                        in: RoundedRectangle(cornerRadius: 16))
+                    .foregroundStyle(.white)
+                    .overlay(alignment: .topTrailing) {
+                        MessageActionChip {
+                            CopyActionButton(text: text)
+                            MessageActionButton(
+                                systemImage: "pencil", help: "Edit in composer and resend",
+                                disabled: !canResend
+                            ) {
+                                model.stageComposerText(text, editedMessageID: messageID)
+                            }
+                            MessageActionButton(
+                                systemImage: "arrow.clockwise", help: "Send this message again",
+                                disabled: !canResend
+                            ) {
+                                resend()
+                            }
+                        }
+                        .opacity(isHovering ? 1 : 0)
+                        .allowsHitTesting(isHovering)
+                        .accessibilityHidden(!isHovering)
+                        .padding(3)
+                    }
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16)
+                            .strokeBorder(Color.white.opacity(0.12), lineWidth: 1))
+                    .contextMenu {
+                        Button("Copy") { Pasteboard.copy(text) }
+                        Button("Edit in Composer") {
                             model.stageComposerText(text, editedMessageID: messageID)
                         }
-                        MessageActionButton(
-                            systemImage: "arrow.clockwise", help: "Send this message again",
-                            disabled: !canResend
-                        ) {
-                            resend()
+                        .disabled(!canResend)
+                        Button("Retry") { resend() }
+                            .disabled(!canResend)
+                        if let openSelectText {
+                            Divider()
+                            Button("Select Text…") { openSelectText() }
                         }
                     }
-                    .opacity(isHovering ? 1 : 0)
-                    .allowsHitTesting(isHovering)
-                    .accessibilityHidden(!isHovering)
-                    .padding(3)
+
+                if let at, isHovering {
+                    TranscriptTimestamp(date: at)
+                        .transition(.opacity)
                 }
-                // Hover and context menu live on the bubble, not the full
-                // row — the spacer's empty area shouldn't reveal actions.
-                .onHover { isHovering = $0 }
-                .animation(Motion.fade, value: isHovering)
-                .contextMenu {
-                    Button("Copy") { Pasteboard.copy(text) }
-                    Button("Edit in Composer") {
-                        model.stageComposerText(text, editedMessageID: messageID)
-                    }
-                    .disabled(!canResend)
-                    Button("Retry") { resend() }
-                        .disabled(!canResend)
-                    if let openSelectText {
-                        Divider()
-                        Button("Select Text…") { openSelectText() }
-                    }
-                }
+            }
+            // Hover and context menu live on the bubble cluster, not the full
+            // row — the spacer's empty area shouldn't reveal actions.
+            .onHover { isHovering = $0 }
+            .animation(Motion.fade, value: isHovering)
         }
     }
 
@@ -212,6 +294,7 @@ private struct ToolGroupRow: View {
                     Image(systemName: summary.failedCount > 0
                         ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
                         .foregroundStyle(summary.failedCount > 0 ? Color.orange : Color.green)
+                        .frame(width: TranscriptMetrics.iconColumn)
                     Text(headline)
                         .font(.callout)
                         .foregroundStyle(.secondary)
@@ -234,9 +317,7 @@ private struct ToolGroupRow: View {
                 .transition(Motion.unfold)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+        .transcriptCard(fill: .quaternary.opacity(0.4))
     }
 
     private var headline: String {
@@ -253,11 +334,11 @@ private struct ToolGroupRow: View {
     @ViewBuilder
     private func expandedRow(_ item: TimelineItem) -> some View {
         switch item {
-        case .toolEvent(_, let name, let detail, let kind, let status, _, let output, let outputIsError):
+        case .toolEvent(_, let name, let detail, let kind, let status, let at, let output, let outputIsError):
             ToolEventRow(
                 name: name, detail: detail, kind: kind, status: status,
                 output: output, outputIsError: outputIsError,
-                threadStatus: threadStatus,
+                threadStatus: threadStatus, at: at,
                 projectRoot: projectRoot)
         case .reasoning(_, let text, _):
             ReasoningRow(text: text)
@@ -284,9 +365,11 @@ private struct ToolEventRow: View {
     let output: String?
     let outputIsError: Bool
     let threadStatus: ThreadStatus?
+    let at: Date?
     let projectRoot: String?
 
     @UIState private var isExpanded = false
+    @UIState private var isHovering = false
 
     /// Memoized: SwiftUI rebuilds every visible row's view value on each
     /// timeline mutation, and re-running JSONSerialization per row per frame
@@ -295,7 +378,7 @@ private struct ToolEventRow: View {
         ToolDetailParseCache.parsed(detail: detail, itemType: kind.wireItemType)
     }
 
-    private enum DisplayState {
+    private enum DisplayState: Equatable {
         case running, succeeded, failed
         /// Thread stopped while the row was still "running": the tool is
         /// finished by definition, but its outcome was never reported (the
@@ -353,10 +436,11 @@ private struct ToolEventRow: View {
             } label: {
                 HStack(spacing: 8) {
                     statusIcon
+                        .frame(width: TranscriptMetrics.iconColumn)
                     Image(systemName: kind.symbolName)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .frame(width: 14)
+                        .frame(width: TranscriptMetrics.iconColumn)
                     Text(name)
                         .font(.callout.weight(.medium))
                         .layoutPriority(1)
@@ -383,10 +467,26 @@ private struct ToolEventRow: View {
                     .transition(Motion.unfold)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+        .transcriptCard(fill: cardFill)
+        .overlay(alignment: .topTrailing) {
+            if isHovering, let at {
+                TranscriptTimestamp(date: at)
+                    .padding(.top, 7)
+                    .padding(.trailing, hasExpandableContent ? 24 : 10)
+            }
+        }
         .animation(Motion.ambient, value: displayState)
+        .animation(Motion.fade, value: isHovering)
+        .onHover { isHovering = $0 }
+    }
+
+    private var cardFill: AnyShapeStyle {
+        switch displayState {
+        case .failed:
+            AnyShapeStyle(Color.red.opacity(0.06))
+        case .running, .succeeded, .settled:
+            AnyShapeStyle(.quaternary.opacity(0.4))
+        }
     }
 
     @ViewBuilder
@@ -464,16 +564,27 @@ private struct ToolEventRow: View {
             .textSelection(.enabled)
             .padding(8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+            .background(
+                Color(nsColor: .textBackgroundColor),
+                in: RoundedRectangle(cornerRadius: TranscriptMetrics.nestedRadius))
     }
 
     /// One `Image` whose name/tint swap rides `.contentTransition` — the
     /// running → done flip morphs instead of hard-swapping glyphs.
+    @ViewBuilder
     private var statusIcon: some View {
-        Image(systemName: iconName)
-            .symbolEffect(.pulse, isActive: displayState == .running)
+        let icon = Image(systemName: iconName)
+            .symbolEffect(
+                .pulse,
+                isActive: displayState == .running && !Motion.reduceMotion)
             .foregroundStyle(iconTint)
-            .contentTransition(.symbolEffect(.replace))
+            .contentTransition(
+                Motion.reduceMotion ? .identity : .symbolEffect(.replace))
+        if Motion.reduceMotion {
+            icon
+        } else {
+            icon.symbolEffect(.bounce, value: displayState)
+        }
     }
 
     private var iconName: String {
@@ -543,7 +654,7 @@ private struct SubagentTaskRow: View {
             } label: {
                 HStack(alignment: .top, spacing: 9) {
                     statusIcon(stalled: stalled)
-                        .frame(width: 16, height: 16)
+                        .frame(width: TranscriptMetrics.iconColumn, height: 16)
                         .padding(.top, 1)
 
                     VStack(alignment: .leading, spacing: 5) {
@@ -551,7 +662,7 @@ private struct SubagentTaskRow: View {
                             Image(systemName: "person.2")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                                .frame(width: 14)
+                                .frame(width: TranscriptMetrics.iconColumn)
                             Text(title)
                                 .font(.callout.weight(.medium))
                                 .lineLimit(2)
@@ -602,11 +713,10 @@ private struct SubagentTaskRow: View {
                     .transition(Motion.unfold)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(
-            SubagentTaskPresentation.backgroundTint(for: task, stalled: stalled),
-            in: RoundedRectangle(cornerRadius: 10))
+        .transcriptCard(
+            fill: SubagentTaskPresentation.backgroundTint(for: task, stalled: stalled),
+            showRail: true,
+            railColor: SubagentTaskPresentation.railColor(for: task, stalled: stalled))
         .animation(Motion.ambient, value: task.state)
         .onChange(of: task.state) { _, _ in
             onClearStopError()
@@ -719,6 +829,7 @@ private struct SubagentTaskRow: View {
 
     private var title: String { SubagentTaskPresentation.title(for: task) }
 
+    @ViewBuilder
     private func statusIcon(stalled: Bool) -> some View {
         SubagentTaskStatusIcon(task: task, stalled: stalled)
     }
@@ -855,8 +966,10 @@ private struct FileChangeDiffView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(nsColor: .textBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.separator, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: TranscriptMetrics.nestedRadius))
+        .overlay(
+            RoundedRectangle(cornerRadius: TranscriptMetrics.nestedRadius)
+                .strokeBorder(.separator, lineWidth: 1))
     }
 }
 
@@ -952,6 +1065,31 @@ enum SubagentProgressLogText {
     }
 }
 
+/// Quiet transcript marker for a calendar-day or long same-day pause.
+private struct SessionSeparatorRow: View {
+    let label: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Rectangle()
+                .fill(.separator)
+                .frame(maxWidth: .infinity)
+                .frame(height: 1)
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .layoutPriority(1)
+            Rectangle()
+                .fill(.separator)
+                .frame(maxWidth: .infinity)
+                .frame(height: 1)
+        }
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
+    }
+}
+
 /// Subtle divider row marking a restorable checkpoint.
 private struct CheckpointRow: View {
     let checkpoint: Checkpoint
@@ -988,6 +1126,7 @@ private struct ReasoningRow: View {
             Image(systemName: "sparkles")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
+                .frame(width: TranscriptMetrics.iconColumn)
             Text(text)
                 .font(.callout)
                 .italic()
@@ -996,7 +1135,7 @@ private struct ReasoningRow: View {
                 .contentTransition(.opacity)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, 4)
+        .padding(.leading, TranscriptMetrics.cardPadH)
         .animation(Motion.ambient, value: text)
     }
 }

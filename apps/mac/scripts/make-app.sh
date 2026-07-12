@@ -12,6 +12,7 @@ fi
 swift build --package-path "$MAC_DIR" -c "$CONFIG"
 
 BIN="$MAC_DIR/.build/$CONFIG/SergeCodeMac"
+RESOURCE_BUNDLE="$MAC_DIR/.build/$CONFIG/SergeCodeMac_SergeCodeMac.bundle"
 APP="$MAC_DIR/dist/SurgeCode.app"
 
 ICON="$MAC_DIR/Support/AppIcon.icns"
@@ -24,6 +25,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$MAC_DIR/Support/Info.plist" "$APP/Contents/Info.plist"
 cp "$ICON" "$APP/Contents/Resources/AppIcon.icns"
 cp "$BIN" "$APP/Contents/MacOS/SergeCodeMac"
+cp -R "$RESOURCE_BUNDLE" "$APP/Contents/Resources/"
 
 # Prefer the stable self-signed identity when present: TCC permissions
 # (Documents-folder access for the node sidecar) are keyed to the code

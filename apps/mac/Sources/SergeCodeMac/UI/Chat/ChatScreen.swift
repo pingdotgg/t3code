@@ -88,9 +88,7 @@ public struct ChatScreen: View {
                 .disabled(model.selectedThreadID == nil)
         }
         .sheet(isPresented: $showSelectableTranscript) {
-            SelectableTranscriptSheet(
-                items: currentDisplayItems(),
-                projectRoot: selectedProjectRoot)
+            selectableTranscriptSheet
         }
         #if DEBUG
             .onReceive(NotificationCenter.default.publisher(for: .uiProbeToggleSection)) { note in
@@ -114,27 +112,20 @@ public struct ChatScreen: View {
         }
     }
 
-    /// Same display-item source the timeline scroll view uses (cached).
-    private func currentDisplayItems() -> [TimelineDisplayItem] {
-        let items = model.selectedTimeline()
-        let threadID = model.selectedThreadID ?? ""
-        return TimelineDisplayCache.grouped(
-            items: items,
-            threadID: threadID,
-            version: model.timelineVersion(threadID: threadID),
-            threadIsSettled: threadIsSettled)
-    }
-
-    private var threadIsSettled: Bool {
-        switch model.selectedThread?.status {
-        case .idle, .archived, .error: true
-        case .running, .waitingApproval, .backgroundWork, nil: false
-        }
-    }
-
     private var selectedProjectRoot: String? {
         guard let thread = model.selectedThread else { return nil }
         return model.projects.first { $0.id == thread.projectID }?.path
+    }
+
+    private var selectedThreadIsSettled: Bool {
+        model.selectedThread?.status.isSettled ?? false
+    }
+
+    private var selectableTranscriptSheet: SelectableTranscriptSheet {
+        SelectableTranscriptSheet(
+            items: model.selectedTimeline(),
+            projectRoot: selectedProjectRoot,
+            threadIsSettled: selectedThreadIsSettled)
     }
 }
 

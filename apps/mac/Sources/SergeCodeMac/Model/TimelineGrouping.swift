@@ -11,11 +11,21 @@ public enum TimelineDisplayItem: Identifiable, Sendable {
     /// A finished run of consecutive tool/reasoning rows, condensed behind
     /// one disclosure ("Ran 6 tools · edited 3 files").
     case toolGroup(id: String, items: [TimelineItem], summary: ToolGroupSummary)
+    case daySeparator(id: String, label: String)
 
     public var id: String {
         switch self {
         case .single(let item): item.id
         case .toolGroup(let id, _, _): id
+        case .daySeparator(let id, _): id
+        }
+    }
+
+    public var at: Date? {
+        switch self {
+        case .single(let item): item.at
+        case .toolGroup(_, let items, _): items.first?.at
+        case .daySeparator: nil
         }
     }
 }
@@ -33,6 +43,62 @@ public struct ToolGroupSummary: Hashable, Sendable {
     }
 }
 
+private func formattedTimelineDate(
+    _ date: Date,
+    calendar: Calendar,
+    style: Date.FormatStyle
+) -> String {
+    var style = style
+    style.calendar = calendar
+    style.timeZone = calendar.timeZone
+    return date.formatted(style)
+}
+
+/// Human-readable label for a calendar-day separator. The relative date and
+/// calendar are explicit so grouping and its labels remain deterministic in
+/// tests and across time zones.
+func separatorLabel(for date: Date, relativeTo now: Date, calendar: Calendar) -> String {
+    if calendar.isDate(date, inSameDayAs: now) {
+        return "Today"
+    }
+
+    if let yesterday = calendar.date(byAdding: .day, value: -1, to: now),
+        calendar.isDate(date, inSameDayAs: yesterday)
+    {
+        return "Yesterday"
+    }
+
+    let dateYear = calendar.component(.year, from: date)
+    let nowYear = calendar.component(.year, from: now)
+    if dateYear != nowYear {
+        return formattedTimelineDate(
+            date,
+            calendar: calendar,
+            style: .dateTime.month(.abbreviated).day().year())
+    }
+
+    let dateDay = calendar.startOfDay(for: date)
+    let nowDay = calendar.startOfDay(for: now)
+    if let dayDistance = calendar.dateComponents([.day], from: dateDay, to: nowDay).day,
+        (2...6).contains(dayDistance)
+    {
+        return formattedTimelineDate(
+            date,
+            calendar: calendar,
+            style: .dateTime.weekday(.wide))
+    }
+
+    return formattedTimelineDate(
+        date,
+        calendar: calendar,
+        style: .dateTime.month(.abbreviated).day())
+}
+
+/// Time-only label used when a same-day pause separates two transcript items.
+func separatorTimeLabel(for date: Date, calendar: Calendar) -> String {
+    formattedTimelineDate(date, calendar: calendar, style: .dateTime.hour().minute())
+}
+
 extension Array where Element == TimelineItem {
     /// Collapses each maximal run of consecutive tool-event/reasoning rows
     /// into a `toolGroup` when the run is over: at least two tools, none
@@ -46,7 +112,12 @@ extension Array where Element == TimelineItem {
     ///
     /// MainActor: routes file-change parsing through `ToolDetailParseCache`.
     @MainActor
-    public func groupedForDisplay(threadIsSettled: Bool = false) -> [TimelineDisplayItem] {
+    public func groupedForDisplay(
+        threadIsSettled: Bool = false,
+        now: Date = Date(),
+        calendar: Calendar = .current,
+        includeSeparators: Bool = true
+    ) -> [TimelineDisplayItem] {
         var result: [TimelineDisplayItem] = []
         var run: [TimelineItem] = []
 
@@ -77,13 +148,35 @@ extension Array where Element == TimelineItem {
                         failedCount: tools.count { $0.status == .failed })))
         }
 
+        func separatorForItem(_ item: TimelineItem, previousAt: Date?) -> String? {
+            guard let currentAt = item.at, let previousAt else { return nil }
+            guard currentAt >= previousAt else { return nil }
+            if !calendar.isDate(currentAt, inSameDayAs: previousAt) {
+                return separatorLabel(
+                    for: currentAt, relativeTo: now, calendar: calendar)
+            }
+            guard currentAt.timeIntervalSince(previousAt) > 60 * 60 else { return nil }
+            return separatorTimeLabel(for: currentAt, calendar: calendar)
+        }
+
+        var previousAt: Date?
+
         for item in self {
+            if includeSeparators, let label = separatorForItem(item, previousAt: previousAt) {
+                flush(somethingFollows: true)
+                result.append(.daySeparator(id: "day-separator:\(item.id)", label: label))
+            }
+
             switch item {
             case .toolEvent, .reasoning:
                 run.append(item)
             default:
                 flush(somethingFollows: true)
                 result.append(.single(item))
+            }
+
+            if let at = item.at, previousAt.map({ at > $0 }) ?? true {
+                previousAt = at
             }
         }
         flush(somethingFollows: false)
@@ -119,15 +212,17 @@ extension Array where Element == TimelineItem {
 // MARK: - Grouped-display cache
 
 /// `groupedForDisplay` walks the whole timeline and re-parses file-change
-/// details. Cache keyed on (threadID, version, settled) so body re-evals with
-/// an unchanged timeline reuse the last grouping. One entry per thread —
-/// only the latest key/value pair is kept.
+/// details. Cache keyed on (threadID, version, settled, current calendar day)
+/// so body re-evals with an unchanged timeline reuse the last grouping without
+/// leaving a stale Today/Yesterday label across midnight. One entry per
+/// thread — only the latest key/value pair is kept.
 @MainActor
 enum TimelineDisplayCache {
     private struct Key: Equatable {
         var threadID: String
         var version: Int
         var threadIsSettled: Bool
+        var relativeDay: Date
     }
 
     private static var storage: [String: (key: Key, value: [TimelineDisplayItem])] = [:]
@@ -138,11 +233,20 @@ enum TimelineDisplayCache {
         version: Int,
         threadIsSettled: Bool
     ) -> [TimelineDisplayItem] {
-        let key = Key(threadID: threadID, version: version, threadIsSettled: threadIsSettled)
+        let now = Date()
+        let calendar = Calendar.current
+        let key = Key(
+            threadID: threadID,
+            version: version,
+            threadIsSettled: threadIsSettled,
+            relativeDay: calendar.startOfDay(for: now))
         if let entry = storage[threadID], entry.key == key {
             return entry.value
         }
-        let value = items.groupedForDisplay(threadIsSettled: threadIsSettled)
+        let value = items.groupedForDisplay(
+            threadIsSettled: threadIsSettled,
+            now: now,
+            calendar: calendar)
         storage[threadID] = (key, value)
         return value
     }

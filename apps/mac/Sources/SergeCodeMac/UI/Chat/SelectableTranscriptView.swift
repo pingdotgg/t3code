@@ -27,14 +27,26 @@ extension EnvironmentValues {
 // MARK: - Sheet
 
 struct SelectableTranscriptSheet: View {
-    let items: [TimelineDisplayItem]
+    let items: [TimelineItem]
     /// Optional project root for path shortening in tool rows.
     var projectRoot: String? = nil
+    let threadIsSettled: Bool
+
+    init(
+        items: [TimelineItem],
+        projectRoot: String? = nil,
+        threadIsSettled: Bool = false
+    ) {
+        self.items = items
+        self.projectRoot = projectRoot
+        self.threadIsSettled = threadIsSettled
+    }
 
     @Environment(\.dismiss) private var dismiss
 
     private var attributed: NSAttributedString {
-        TranscriptTextBuilder.attributedString(from: items, projectRoot: projectRoot)
+        TranscriptTextBuilder.attributedString(
+            from: items, projectRoot: projectRoot, threadIsSettled: threadIsSettled)
     }
 
     var body: some View {
@@ -106,7 +118,7 @@ struct SelectableTranscriptTextView: NSViewRepresentable {
 
 // MARK: - Flattening
 
-/// Pure builder: timeline display items → one selectable attributed string.
+/// Pure builder: raw timeline items → one selectable attributed string.
 @MainActor
 enum TranscriptTextBuilder {
     private static var bodyFont: NSFont {
@@ -123,8 +135,39 @@ enum TranscriptTextBuilder {
     }
 
     static func attributedString(
+        from items: [TimelineItem],
+        projectRoot: String? = nil,
+        threadIsSettled: Bool = false
+    ) -> NSAttributedString {
+        // Select Text intentionally uses the pre-separator grouping contract:
+        // day rows are visual chrome and must not flush a tool burst.
+        let displayItems = items.groupedForDisplay(
+            threadIsSettled: threadIsSettled, includeSeparators: false)
+        return attributedString(fromDisplayItems: displayItems, projectRoot: projectRoot)
+    }
+
+    /// Compatibility overload for callers that already have display items.
+    /// Rebuild from raw items so separator-induced grouping changes cannot
+    /// affect serialization even when a caller passes the visual timeline.
+    static func attributedString(
         from items: [TimelineDisplayItem],
-        projectRoot: String? = nil
+        projectRoot: String? = nil,
+        threadIsSettled: Bool = false
+    ) -> NSAttributedString {
+        let rawItems = items.flatMap { display -> [TimelineItem] in
+            switch display {
+            case .single(let item): [item]
+            case .toolGroup(_, let groupItems, _): groupItems
+            case .daySeparator: []
+            }
+        }
+        return attributedString(
+            from: rawItems, projectRoot: projectRoot, threadIsSettled: threadIsSettled)
+    }
+
+    private static func attributedString(
+        fromDisplayItems items: [TimelineDisplayItem],
+        projectRoot: String?
     ) -> NSAttributedString {
         let result = NSMutableAttributedString()
         var didWrite = false
@@ -147,6 +190,8 @@ enum TranscriptTextBuilder {
                     _ = append(nested, to: result, projectRoot: projectRoot, leadingBreak: true)
                 }
                 didWrite = true
+            case .daySeparator:
+                continue
             }
         }
         return result
