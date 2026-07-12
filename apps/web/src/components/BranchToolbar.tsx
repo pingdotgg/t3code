@@ -285,13 +285,13 @@ export const BranchToolbar = memo(function BranchToolbar({
       activeProject.workspaceRoot,
       branchState.data?.mainCheckoutPath,
     );
-    return branchState.data
-      ? options
-      : withActiveWorkspaceFallback(options, {
-          activeWorktreePath,
-          activeBranch,
-          projectWorkspaceRoot: activeProject.workspaceRoot,
-        });
+    // Always apply the fallback so a partial first page of refs that omits the
+    // active worktree still keeps that checkout selectable in the picker.
+    return withActiveWorkspaceFallback(options, {
+      activeWorktreePath,
+      activeBranch,
+      projectWorkspaceRoot: activeProject.workspaceRoot,
+    });
   }, [activeBranch, activeProject, activeWorktreePath, branchState.data]);
 
   const showEnvironmentPicker = Boolean(
