@@ -1,4 +1,5 @@
 import AppKit
+import ImageIO
 import Observation
 import SwiftUI
 
@@ -154,6 +155,17 @@ public final class SceneryStore {
         let parts = calendar.dateComponents([.year, .day], from: date)
         let ordinal = calendar.ordinality(of: .day, in: .year, for: date) ?? 0
         return "\(parts.year ?? 0)-\(ordinal)"
+    }
+
+    nonisolated private static func decodeImage(data: Data, maxPixelWidth: Int) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelWidth,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
     }
 
     // MARK: - Set resolution
@@ -534,16 +546,24 @@ public final class SceneryStore {
                 }
             }
         }
-        if let data,
-            let image = PerfSignpost.interval("scenery.decode", body: {
-                PerfMetrics.measure("scenery.decode") {
-                    NSImage(data: data)
+        let maxPixelWidth = variant == .hero ? heroPixelWidth : 512
+        if let data {
+            let cgImage = await Task.detached(priority: .userInitiated) {
+                let startedAt = PerfLog.now()
+                let decoded = Self.decodeImage(data: data, maxPixelWidth: maxPixelWidth)
+                PerfLog.event(
+                    "scenery.decode",
+                    ms: PerfLog.elapsedMilliseconds(since: startedAt),
+                    details: "pixel_width=\(maxPixelWidth)")
+                return decoded
+            }.value
+            if let cgImage {
+                images[key] = NSImage(
+                    cgImage: cgImage,
+                    size: NSSize(width: CGFloat(cgImage.width), height: CGFloat(cgImage.height)))
+                if triggerPaletteBackfill {
+                    await generatePaletteIfNeeded(for: setId)
                 }
-            })
-        {
-            images[key] = image
-            if triggerPaletteBackfill {
-                await generatePaletteIfNeeded(for: setId)
             }
         }
     }
