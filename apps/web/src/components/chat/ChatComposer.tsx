@@ -1814,7 +1814,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     let error: string | null = null;
     for (const file of files) {
       if (!file.type.startsWith("image/")) {
-        error = (await addComposerTextAttachment(file)) ?? error;
+        error = await addComposerTextAttachment(file);
         continue;
       }
       if (file.size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
