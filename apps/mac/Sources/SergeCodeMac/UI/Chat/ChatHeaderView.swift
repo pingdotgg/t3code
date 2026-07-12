@@ -31,6 +31,12 @@ struct ChatHeaderView: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
+                if model.isRemote {
+                    Text("on \(model.deviceName ?? "Remote Mac")")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
                 HStack(spacing: 10) {
                     ProviderBadge(provider: thread.provider)
                     StatusBadge(status: thread.status)

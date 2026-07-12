@@ -1299,6 +1299,10 @@ public final class AppModel {
     public func openInEditor(
         threadID: String, subpath: String?, editor: ExternalEditor
     ) async {
+        guard capabilities.opensLocalEditor else {
+            lastError = "File is on \(deviceName ?? "the remote Mac")"
+            return
+        }
         do {
             try await backend.openInEditor(threadID: threadID, subpath: subpath, editor: editor)
         } catch {

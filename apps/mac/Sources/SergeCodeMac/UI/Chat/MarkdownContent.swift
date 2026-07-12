@@ -663,6 +663,11 @@ struct AssistantMarkdownView: View {
         .onHover { isHovering = $0 }
         .animation(Motion.fade, value: isHovering)
         .animation(Motion.fade, value: isStreaming)
+        .modifier(
+            RemoteFileLinkHelpModifier(
+                message: model.capabilities.opensLocalEditor
+                    ? nil
+                    : "File is on \(model.deviceName ?? "the remote Mac")"))
         .contextMenu {
             Button("Copy as Markdown") { Pasteboard.copy(markdown) }
             if let openSelectText {
@@ -673,6 +678,12 @@ struct AssistantMarkdownView: View {
         .environment(\.openURL, OpenURLAction { url in
             guard url.scheme?.lowercased() == "sergecode-file" else { return .systemAction }
             guard let target = parseFileLinkURL(url) else { return .handled }
+            guard model.capabilities.opensLocalEditor else {
+                // The workspace is remote. There is no in-app file preview
+                // surface in the mac client yet, so keep the link inert rather
+                // than launching an editor on the other Mac.
+                return .discarded
+            }
             // The launcher API does not accept a line yet; keep it in the URL
             // contract so a future RPC extension can preserve the location.
             _ = target.line
@@ -718,6 +729,19 @@ struct AssistantMarkdownView: View {
             MarkdownCodeBlock(language: language, code: code)
         case .table(let table):
             MarkdownTableView(table: table)
+        }
+    }
+}
+
+private struct RemoteFileLinkHelpModifier: ViewModifier {
+    let message: String?
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let message {
+            content.help(message)
+        } else {
+            content
         }
     }
 }
