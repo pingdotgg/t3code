@@ -659,7 +659,7 @@ struct AssistantMarkdownView: View {
             }
             if style == .assistant && isStreaming {
                 Image(systemName: "ellipsis")
-                    .symbolEffect(.variableColor.iterative)
+                    .symbolEffect(.variableColor.iterative, isActive: !Motion.reduceMotion)
                     .foregroundStyle(.secondary)
                     .accessibilityLabel("Assistant is responding")
                     .transition(.opacity)

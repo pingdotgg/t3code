@@ -1,6 +1,81 @@
 import SwiftUI
 import T3Kit
 
+private enum TranscriptMetrics {
+    static let cardRadius: CGFloat = 10
+    static let cardPadH: CGFloat = 10
+    static let cardPadV: CGFloat = 7
+    static let nestedRadius: CGFloat = 6
+    static let railWidth: CGFloat = 2.5
+    static let iconColumn: CGFloat = 16
+}
+
+private struct TranscriptCardModifier: ViewModifier {
+    let fill: AnyShapeStyle
+    let showRail: Bool
+    let railColor: Color
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, TranscriptMetrics.cardPadH)
+            .padding(.vertical, TranscriptMetrics.cardPadV)
+            .background(
+                fill,
+                in: RoundedRectangle(cornerRadius: TranscriptMetrics.cardRadius)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: TranscriptMetrics.cardRadius)
+                    .strokeBorder(
+                        Color(nsColor: .separatorColor).opacity(0.45),
+                        lineWidth: 0.5)
+            )
+            .overlay(alignment: .leading) {
+                if showRail {
+                    Capsule()
+                        .fill(railColor)
+                        .frame(width: TranscriptMetrics.railWidth)
+                        .padding(.vertical, 4)
+                }
+            }
+    }
+}
+
+private extension View {
+    func transcriptCard<S: ShapeStyle>(
+        fill: S,
+        showRail: Bool = false,
+        railColor: Color = .accentColor
+    ) -> some View {
+        modifier(
+            TranscriptCardModifier(
+                fill: AnyShapeStyle(fill),
+                showRail: showRail,
+                railColor: railColor))
+    }
+}
+
+private struct TranscriptPill: View {
+    let text: String
+    let tint: Color
+    let fill: AnyShapeStyle
+
+    init(_ text: String, tint: Color = .secondary, fill: AnyShapeStyle? = nil) {
+        self.text = text
+        self.tint = tint
+        self.fill = fill ?? AnyShapeStyle(tint.opacity(0.12))
+    }
+
+    var body: some View {
+        Text(text)
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(tint)
+            .lineLimit(1)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(fill, in: Capsule())
+    }
+}
+
 /// Dispatches a single `TimelineDisplayItem` to its row view.
 struct ChatTimelineRowView: View {
     let item: TimelineDisplayItem
@@ -219,6 +294,7 @@ private struct ToolGroupRow: View {
                     Image(systemName: summary.failedCount > 0
                         ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
                         .foregroundStyle(summary.failedCount > 0 ? Color.orange : Color.green)
+                        .frame(width: TranscriptMetrics.iconColumn)
                     Text(headline)
                         .font(.callout)
                         .foregroundStyle(.secondary)
@@ -241,9 +317,7 @@ private struct ToolGroupRow: View {
                 .transition(Motion.unfold)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+        .transcriptCard(fill: .quaternary.opacity(0.4))
     }
 
     private var headline: String {
@@ -302,7 +376,7 @@ private struct ToolEventRow: View {
         ToolDetailParseCache.parsed(detail: detail, itemType: kind.wireItemType)
     }
 
-    private enum DisplayState {
+    private enum DisplayState: Equatable {
         case running, succeeded, failed
         /// Thread stopped while the row was still "running": the tool is
         /// finished by definition, but its outcome was never reported (the
@@ -360,10 +434,11 @@ private struct ToolEventRow: View {
             } label: {
                 HStack(spacing: 8) {
                     statusIcon
+                        .frame(width: TranscriptMetrics.iconColumn)
                     Image(systemName: kind.symbolName)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .frame(width: 14)
+                        .frame(width: TranscriptMetrics.iconColumn)
                     Text(name)
                         .font(.callout.weight(.medium))
                         .layoutPriority(1)
@@ -390,10 +465,17 @@ private struct ToolEventRow: View {
                     .transition(Motion.unfold)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+        .transcriptCard(fill: cardFill)
         .animation(Motion.ambient, value: displayState)
+    }
+
+    private var cardFill: AnyShapeStyle {
+        switch displayState {
+        case .failed:
+            AnyShapeStyle(Color.red.opacity(0.06))
+        case .running, .succeeded, .settled:
+            AnyShapeStyle(.quaternary.opacity(0.4))
+        }
     }
 
     @ViewBuilder
@@ -471,16 +553,26 @@ private struct ToolEventRow: View {
             .textSelection(.enabled)
             .padding(8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+            .background(
+                Color(nsColor: .textBackgroundColor),
+                in: RoundedRectangle(cornerRadius: TranscriptMetrics.nestedRadius))
     }
 
     /// One `Image` whose name/tint swap rides `.contentTransition` — the
     /// running → done flip morphs instead of hard-swapping glyphs.
+    @ViewBuilder
     private var statusIcon: some View {
-        Image(systemName: iconName)
-            .symbolEffect(.pulse, isActive: displayState == .running)
+        let icon = Image(systemName: iconName)
+            .symbolEffect(
+                .pulse,
+                isActive: displayState == .running && !Motion.reduceMotion)
             .foregroundStyle(iconTint)
             .contentTransition(.symbolEffect(.replace))
+        if Motion.reduceMotion {
+            icon
+        } else {
+            icon.symbolEffect(.bounce, value: displayState)
+        }
     }
 
     private var iconName: String {
@@ -556,7 +648,7 @@ private struct SubagentTaskRow: View {
             } label: {
                 HStack(alignment: .top, spacing: 9) {
                     statusIcon(stalled: stalled)
-                        .frame(width: 16, height: 16)
+                        .frame(width: TranscriptMetrics.iconColumn, height: 16)
                         .padding(.top, 1)
 
                     VStack(alignment: .leading, spacing: 5) {
@@ -564,7 +656,7 @@ private struct SubagentTaskRow: View {
                             Image(systemName: "person.2")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                                .frame(width: 14)
+                                .frame(width: TranscriptMetrics.iconColumn)
                             Text(title)
                                 .font(.callout.weight(.medium))
                                 .lineLimit(2)
@@ -583,10 +675,10 @@ private struct SubagentTaskRow: View {
                         }
 
                         if let identityBadge {
-                            Text(identityBadge)
-                                .font(.caption2.weight(.medium))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
+                            TranscriptPill(
+                                identityBadge,
+                                tint: .secondary,
+                                fill: AnyShapeStyle(.quaternary))
                         }
 
                         healthTags(now: currentNow)
@@ -619,9 +711,10 @@ private struct SubagentTaskRow: View {
                     .transition(Motion.unfold)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(backgroundTint(stalled: stalled), in: RoundedRectangle(cornerRadius: 10))
+        .transcriptCard(
+            fill: backgroundTint(stalled: stalled),
+            showRail: true,
+            railColor: railColor(stalled: stalled))
         .animation(Motion.ambient, value: task.state)
         .onChange(of: task.state) { _, _ in
             onClearStopError()
@@ -689,46 +782,24 @@ private struct SubagentTaskRow: View {
                     .font(.caption2)
                     .foregroundStyle(stalled ? Color.orange : Color.secondary)
                 if stalled {
-                    Text("stalled")
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(.orange)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1)
-                        .background(Color.orange.opacity(0.14), in: Capsule())
+                    TranscriptPill(
+                        "stalled",
+                        tint: .orange,
+                        fill: AnyShapeStyle(Color.orange.opacity(0.14)))
                 }
                 if task.isBackgrounded {
-                    Text("background")
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1)
-                        .background(.secondary.opacity(0.12), in: Capsule())
+                    TranscriptPill("background")
                 }
             }
         } else if task.state == .paused {
             HStack(spacing: 6) {
-                Text("paused")
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1)
-                    .background(.secondary.opacity(0.12), in: Capsule())
+                TranscriptPill("paused")
                 if task.isBackgrounded {
-                    Text("background")
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1)
-                        .background(.secondary.opacity(0.12), in: Capsule())
+                    TranscriptPill("background")
                 }
             }
         } else if task.isBackgrounded {
-            Text("background")
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 1)
-                .background(.secondary.opacity(0.12), in: Capsule())
+            TranscriptPill("background")
         }
     }
 
@@ -857,11 +928,19 @@ private struct SubagentTaskRow: View {
         return "Working..."
     }
 
+    @ViewBuilder
     private func statusIcon(stalled: Bool) -> some View {
-        Image(systemName: iconName(stalled: stalled))
-            .symbolEffect(.pulse, isActive: task.state == .running && !stalled)
+        let icon = Image(systemName: iconName(stalled: stalled))
+            .symbolEffect(
+                .pulse,
+                isActive: task.state == .running && !stalled && !Motion.reduceMotion)
             .foregroundStyle(iconTint(stalled: stalled))
             .contentTransition(.symbolEffect(.replace))
+        if Motion.reduceMotion {
+            icon
+        } else {
+            icon.symbolEffect(.bounce, value: task.state)
+        }
     }
 
     private func iconName(stalled: Bool) -> String {
@@ -891,6 +970,16 @@ private struct SubagentTaskRow: View {
         case .completed: Color.green.opacity(0.08)
         case .failed: Color.red.opacity(0.08)
         case .stopped: Color.secondary.opacity(0.08)
+        }
+    }
+
+    private func railColor(stalled: Bool) -> Color {
+        if stalled { return .orange }
+        switch task.state {
+        case .running: return .accentColor
+        case .paused, .stopped: return .secondary
+        case .completed: return .green
+        case .failed: return .red
         }
     }
 
@@ -1050,8 +1139,10 @@ private struct FileChangeDiffView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(nsColor: .textBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.separator, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: TranscriptMetrics.nestedRadius))
+        .overlay(
+            RoundedRectangle(cornerRadius: TranscriptMetrics.nestedRadius)
+                .strokeBorder(.separator, lineWidth: 1))
     }
 }
 
@@ -1183,6 +1274,7 @@ private struct ReasoningRow: View {
             Image(systemName: "sparkles")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
+                .frame(width: TranscriptMetrics.iconColumn)
             Text(text)
                 .font(.callout)
                 .italic()
@@ -1191,7 +1283,7 @@ private struct ReasoningRow: View {
                 .contentTransition(.opacity)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, 4)
+        .padding(.leading, TranscriptMetrics.cardPadH)
         .animation(Motion.ambient, value: text)
     }
 }
