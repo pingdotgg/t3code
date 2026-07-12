@@ -1014,10 +1014,18 @@ function SidebarPinnedDivider({
   );
 }
 
-function SidebarThreadSection({ children }: { children: React.ReactNode }) {
+function SidebarThreadSection({
+  children,
+  attachAutoAnimateRef,
+}: {
+  children: React.ReactNode;
+  attachAutoAnimateRef: (node: HTMLElement | null) => void;
+}) {
   return (
     <SidebarMenuSubItem className="w-full">
-      <ul className="flex w-full flex-col gap-0.5">{children}</ul>
+      <ul ref={attachAutoAnimateRef} className="flex w-full flex-col gap-0.5">
+        {children}
+      </ul>
     </SidebarMenuSubItem>
   );
 }
@@ -1173,7 +1181,9 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
           </SidebarMenuSubItem>
         ) : null}
         {shouldShowThreadPanel && renderedPinnedThreads.length > 0 && (
-          <SidebarThreadSection>{renderedPinnedThreads.map(renderThreadRow)}</SidebarThreadSection>
+          <SidebarThreadSection attachAutoAnimateRef={attachThreadListAutoAnimateRef}>
+            {renderedPinnedThreads.map(renderThreadRow)}
+          </SidebarThreadSection>
         )}
         {shouldShowThreadPanel &&
           renderedPinnedThreads.length > 0 &&
@@ -1181,7 +1191,9 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
             <SidebarPinnedDivider nodeRef={setDividerElement} flow={dragFlow} />
           )}
         {shouldShowThreadPanel && renderedRegularThreads.length > 0 && (
-          <SidebarThreadSection>{renderedRegularThreads.map(renderThreadRow)}</SidebarThreadSection>
+          <SidebarThreadSection attachAutoAnimateRef={attachThreadListAutoAnimateRef}>
+            {renderedRegularThreads.map(renderThreadRow)}
+          </SidebarThreadSection>
         )}
 
         {projectExpanded && hasOverflowingThreads && !isThreadListExpanded && (
