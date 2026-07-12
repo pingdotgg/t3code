@@ -32,12 +32,13 @@ struct ParsedMarkdownDocument {
 }
 
 @MainActor
-private final class MarkdownBlockCacheStore {
+final class MarkdownBlockCacheStore {
     private var storage: [String: [MarkdownBlock]] = [:]
     private(set) var hits = 0
     private(set) var misses = 0
 
-    func value(for key: String) -> [MarkdownBlock]? {
+    func value(for key: String?) -> [MarkdownBlock]? {
+        guard let key else { return nil }
         guard let value = storage[key] else {
             misses += 1
             return nil
@@ -46,7 +47,8 @@ private final class MarkdownBlockCacheStore {
         return value
     }
 
-    func insert(_ value: [MarkdownBlock], for key: String) {
+    func insert(_ value: [MarkdownBlock], for key: String?) {
+        guard let key else { return }
         if storage.count >= 512, storage[key] == nil {
             storage.removeAll(keepingCapacity: true)
         }
@@ -103,13 +105,17 @@ private struct MarkdownASTParser {
 
     func parse() -> ParsedMarkdownDocument {
         let document = Document(parsing: markdown)
+        let bytes = Array(markdown.utf8)
+        let lineStarts = lineStartOffsets(in: bytes)
         var blocks: [MarkdownBlock] = []
         var blockKeys: [String] = []
         for (index, markup) in document.children.enumerated() {
             let parsed = parseBlock(markup, listIndent: 0)
             blocks.append(contentsOf: parsed)
             blockKeys.append(contentsOf: repeatElement(
-                sourceKey(for: markup, fallbackIndex: index), count: parsed.count))
+                sourceKey(for: markup, bytes: bytes, lineStarts: lineStarts)
+                    ?? fallbackKey(for: index),
+                count: parsed.count))
         }
         return ParsedMarkdownDocument(blocks: blocks, blockKeys: blockKeys)
     }
@@ -117,55 +123,75 @@ private struct MarkdownASTParser {
     @MainActor
     func parse(using cache: MarkdownBlockCacheStore) -> ParsedMarkdownDocument {
         let document = Document(parsing: markdown)
+        let bytes = Array(markdown.utf8)
+        let lineStarts = lineStartOffsets(in: bytes)
         var blocks: [MarkdownBlock] = []
         var blockKeys: [String] = []
 
         for (index, markup) in document.children.enumerated() {
-            let key = sourceKey(for: markup, fallbackIndex: index)
+            let key = sourceKey(for: markup, bytes: bytes, lineStarts: lineStarts)
             let parsed: [MarkdownBlock]
-            if let cached = cache.value(for: key) {
-                parsed = cached
+            if let key {
+                if let cached = cache.value(for: key) {
+                    parsed = cached
+                } else {
+                    parsed = parseBlock(markup, listIndent: 0)
+                    cache.insert(parsed, for: key)
+                }
             } else {
                 parsed = parseBlock(markup, listIndent: 0)
-                cache.insert(parsed, for: key)
             }
             blocks.append(contentsOf: parsed)
-            blockKeys.append(contentsOf: repeatElement(key, count: parsed.count))
+            blockKeys.append(contentsOf: repeatElement(
+                key ?? fallbackKey(for: index), count: parsed.count))
         }
 
         return ParsedMarkdownDocument(blocks: blocks, blockKeys: blockKeys)
     }
 
-    private func sourceKey(for markup: Markup, fallbackIndex: Int) -> String {
+    private func lineStartOffsets(in bytes: [UInt8]) -> [Int] {
+        var lineStarts = [0]
+        lineStarts.reserveCapacity(1 + bytes.count / 40)
+        for (index, byte) in bytes.enumerated() where byte == 10 {
+            lineStarts.append(index + 1)
+        }
+        return lineStarts
+    }
+
+    private func sourceKey(
+        for markup: Markup,
+        bytes: [UInt8],
+        lineStarts: [Int]
+    ) -> String? {
         guard let range = markup.range,
-            let start = sourceByteOffset(for: range.lowerBound),
-            let end = sourceByteOffset(for: range.upperBound),
+            let start = sourceByteOffset(
+                for: range.lowerBound, lineStarts: lineStarts, byteCount: bytes.count),
+            let end = sourceByteOffset(
+                for: range.upperBound, lineStarts: lineStarts, byteCount: bytes.count),
             start <= end
         else {
-            return "\u{0}\(fallbackIndex)"
+            return nil
         }
 
-        let bytes = Array(markdown.utf8)
         guard start <= bytes.count, end <= bytes.count else {
-            return "\u{0}\(fallbackIndex)"
+            return nil
         }
         return String(decoding: bytes[start..<end], as: UTF8.self)
     }
 
-    private func sourceByteOffset(for location: SourceLocation) -> Int? {
+    private func sourceByteOffset(
+        for location: SourceLocation,
+        lineStarts: [Int],
+        byteCount: Int
+    ) -> Int? {
         guard location.line >= 1, location.column >= 1 else { return nil }
-        let bytes = Array(markdown.utf8)
-        var line = 1
-        var lineStart = 0
-        if location.line > 1 {
-            for index in bytes.indices where bytes[index] == 10 {
-                line += 1
-                lineStart = index + 1
-                if line == location.line { break }
-            }
-        }
-        guard line == location.line else { return nil }
-        return min(bytes.count, lineStart + location.column - 1)
+        let lineIndex = location.line - 1
+        guard lineStarts.indices.contains(lineIndex) else { return nil }
+        return min(byteCount, lineStarts[lineIndex] + location.column - 1)
+    }
+
+    private func fallbackKey(for index: Int) -> String {
+        "\u{0}\(index)"
     }
 
     private func parseBlock(_ markup: Markup, listIndent: Int) -> [MarkdownBlock] {
@@ -201,7 +227,7 @@ private struct MarkdownASTParser {
             return [.table(parseTable(table))]
 
         case let html as Markdown.HTMLBlock:
-            return [.paragraph(AttributedString(html.rawHTML))]
+            return [.paragraph(linkifiedPlainText(html.rawHTML))]
 
         default:
             // Unsupported block extensions are uncommon in assistant output.
@@ -209,7 +235,7 @@ private struct MarkdownASTParser {
             if let text = (markup as? any PlainTextConvertibleMarkup)?.plainText,
                 !text.isEmpty
             {
-                return [.paragraph(AttributedString(text))]
+                return [.paragraph(linkifiedPlainText(text))]
             }
             return []
         }
@@ -296,7 +322,7 @@ private struct MarkdownASTParser {
             }
         }
 
-        return linkifyFilePaths(in: result)
+        return result
     }
 
     private func quoteParagraphs(in blockQuote: Markdown.BlockQuote) -> [AttributedString] {
@@ -324,7 +350,7 @@ private struct MarkdownASTParser {
                 if let text = (markup as? any PlainTextConvertibleMarkup)?.plainText,
                     !text.isEmpty
                 {
-                    paragraphs.append(AttributedString(text))
+                    paragraphs.append(linkifiedPlainText(text))
                 }
             }
         }
@@ -384,9 +410,13 @@ func inlineAttributed(_ text: String) -> AttributedString {
     guard let paragraph = document.children.compactMap({ $0 as? Markdown.Paragraph }).first,
         document.childCount == 1
     else {
-        return AttributedString(text)
+        return linkifiedPlainText(text)
     }
     return inlineAttributed(children: paragraph.children)
+}
+
+private func linkifiedPlainText(_ text: String) -> AttributedString {
+    linkifyFilePaths(in: AttributedString(text))
 }
 
 private func inlineAttributed(children: MarkupChildren) -> AttributedString {
@@ -557,7 +587,7 @@ struct AssistantMarkdownView: View {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Image(systemName: checked ? "checkmark.square" : "square")
                     .foregroundStyle(.secondary)
-                Text(linkifyFilePaths(in: text))
+                Text(text)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -583,7 +613,7 @@ private struct MarkdownProseText: View {
     let attributed: AttributedString
 
     var body: some View {
-        Text(linkifyFilePaths(in: attributed))
+        Text(attributed)
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -603,7 +633,7 @@ func attributedMarkdownProse(_ blocks: [MarkdownBlock]) -> AttributedString {
         result.append(attributedBlock(block))
     }
 
-    return linkifyFilePaths(in: result)
+    return result
 }
 
 /// Full assistant Markdown as one attributed document for the conversation-
@@ -677,6 +707,8 @@ private func joinedTableCells(_ cells: [AttributedString]) -> AttributedString {
 }
 
 private func attributedCode(_ code: String) -> AttributedString {
+    // Fenced code intentionally stays unlinked. Inline code is linkified by
+    // inlineAttributed(children:) before it reaches a MarkdownBlock.
     var result = AttributedString(code)
     result.font = .system(.body, design: .monospaced)
     result.backgroundColor = Color(nsColor: .textBackgroundColor)
@@ -845,7 +877,7 @@ private struct MarkdownTableView: View {
             let cell = index < cells.count ? cells[index] : AttributedString()
             let columnAlignment = table.columnAlignments.indices.contains(index)
                 ? table.columnAlignments[index] : nil
-            Text(linkifyFilePaths(in: cell))
+            Text(cell)
                 .font(isHeader ? .body.weight(.semibold) : .body)
                 .multilineTextAlignment(columnAlignment ?? .leading)
                 .frame(minWidth: 96, alignment: alignment(columnAlignment))

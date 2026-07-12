@@ -83,6 +83,22 @@ struct MarkdownContentTests {
         #expect(text(value) == "use src/Foo.swift:12 and docs")
     }
 
+    @Test("linkifies file paths in parsed paragraph IR")
+    func parsedParagraphFileLink() throws {
+        let blocks = parseMarkdownBlocks("Open apps/mac/Sources/Foo.swift:10")
+        guard case .paragraph(let paragraph) = try #require(blocks.first) else {
+            Issue.record("expected a paragraph")
+            return
+        }
+
+        let parsedTarget = paragraph.runs.compactMap { $0.link.flatMap(parseFileLinkURL) }.first
+        #expect(parsedTarget == FileLinkTarget(path: "apps/mac/Sources/Foo.swift", line: 10))
+
+        let serialized = attributedMarkdownProse(blocks)
+        let serializedTarget = serialized.runs.compactMap { $0.link.flatMap(parseFileLinkURL) }.first
+        #expect(serializedTarget == parsedTarget)
+    }
+
     @Test("parses fenced code and keeps its language")
     func fencedCode() throws {
         let blocks = parseMarkdownBlocks("before\n\n```swift\nlet answer = 42\n```")
@@ -191,6 +207,23 @@ struct MarkdownContentTests {
         #expect(secondPass.hits == 1)
         #expect(secondPass.misses == 3)
         #expect(secondPass.entryCount == 3)
+    }
+
+    @Test("bypasses cache for blocks without source keys")
+    func cacheBypassesMissingSourceKeys() {
+        let cache = MarkdownBlockCacheStore()
+        let fallbackKey = "\u{0}0"
+        let firstDocument = [MarkdownBlock.paragraph(AttributedString("document A"))]
+        let secondDocument = [MarkdownBlock.paragraph(AttributedString("document B"))]
+
+        // Simulate the old collision slot belonging to a different document.
+        cache.insert(firstDocument, for: fallbackKey)
+        let missesBefore = cache.misses
+
+        #expect(cache.value(for: nil) == nil)
+        cache.insert(secondDocument, for: nil)
+        #expect(cache.value(for: fallbackKey) == firstDocument)
+        #expect(cache.misses == missesBefore)
     }
 
     private func text(_ value: AttributedString) -> String {
