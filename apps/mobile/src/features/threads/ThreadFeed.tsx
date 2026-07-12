@@ -1,7 +1,14 @@
+import * as Cause from "effect/Cause";
 import * as Haptics from "expo-haptics";
 import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import { type LegendListRef } from "@legendapp/list/react-native";
-import type { EnvironmentId, MessageId, ThreadId, TurnId } from "@t3tools/contracts";
+import {
+  RuntimeTaskId,
+  type EnvironmentId,
+  type MessageId,
+  type ThreadId,
+  type TurnId,
+} from "@t3tools/contracts";
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import { SymbolView } from "expo-symbols";
 import { useNavigation } from "@react-navigation/native";
@@ -81,8 +88,11 @@ import {
 } from "../../lib/threadActivity";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { ThreadWorkGroupToggle, ThreadWorkLog } from "./thread-work-log";
+import { SubagentTaskRow } from "./SubagentTaskRow";
 import { useAssetUrl } from "../../state/assets";
 import { resolveWorkspaceRelativeFilePath } from "../files/filePath";
+import { threadEnvironment } from "../../state/threads";
+import { useAtomCommand } from "../../state/use-atom-command";
 
 const MESSAGE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
   hour: "numeric",
@@ -680,6 +690,9 @@ function renderFeedEntry(
     readonly expandedWorkRows: Record<string, boolean>;
     readonly terminalAssistantMessageIds: ReadonlySet<string>;
     readonly unsettledTurnId: TurnId | null;
+    readonly subagentStopErrors: Readonly<Record<string, string>>;
+    readonly stoppingSubagentTaskIds: ReadonlySet<string>;
+    readonly onStopSubagentTask: (taskId: string, turnId: TurnId | null) => void;
     readonly onCopyWorkRow: (rowId: string, value: string) => void;
     readonly onToggleWorkGroup: (groupId: string) => void;
     readonly onToggleWorkRow: (rowId: string) => void;
@@ -851,6 +864,17 @@ function renderFeedEntry(
           </View>
         ) : null}
       </View>
+    );
+  }
+
+  if (entry.type === "subagent-task") {
+    return (
+      <SubagentTaskRow
+        task={entry.task}
+        stopError={props.subagentStopErrors[entry.task.taskId] ?? null}
+        stopping={props.stoppingSubagentTaskIds.has(entry.task.taskId)}
+        onStopAgent={() => props.onStopSubagentTask(entry.task.taskId, entry.turnId)}
+      />
     );
   }
 
@@ -1159,6 +1183,20 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     expandedTurnIds: new Set(),
   });
   const { copiedRowId, expandedWorkGroups, expandedWorkRows, expandedTurnIds } = interactionState;
+  const [subagentTaskState, setSubagentTaskState] = useState<{
+    readonly stopErrors: Record<string, string>;
+    readonly stoppingTaskIds: ReadonlySet<string>;
+  }>({ stopErrors: {}, stoppingTaskIds: new Set() });
+  // Synchronous re-entrancy guard for onStopSubagentTask: setState updaters
+  // run on React's schedule, not immediately, so a guard living only inside
+  // the updater can't stop a double-tap's second call from dispatching its
+  // own stopTask RPC before the first update commits. A ref is checked and
+  // mutated inline, before the dispatch, so the second call always sees it.
+  const stoppingTaskIdsRef = useRef<Set<string>>(new Set());
+  const stopSubagentTaskCommand = useAtomCommand(threadEnvironment.stopTask, {
+    label: "thread subagent task stop",
+    reportFailure: false,
+  });
   const [expandedImage, setExpandedImage] = useState<{
     uri: string;
     headers?: Record<string, string>;
@@ -1219,6 +1257,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       reviewCommentColors,
       userBubbleColor,
       viewportWidth,
+      subagentStopErrors: subagentTaskState.stopErrors,
+      stoppingSubagentTaskIds: subagentTaskState.stoppingTaskIds,
     }),
     [
       copiedRowId,
@@ -1228,6 +1268,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       reviewCommentColors,
       userBubbleColor,
       viewportWidth,
+      subagentTaskState,
     ],
   );
   const reportHeaderMaterialVisibility = useCallback(
@@ -1254,6 +1295,30 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   useEffect(() => {
     reportHeaderMaterialVisibility(false);
   }, [props.threadId, reportHeaderMaterialVisibility]);
+
+  // Transient stop-RPC failures are only meaningful while the row can still
+  // be stopped — once a task leaves running/paused (completes, fails, or the
+  // stop actually lands) drop any stale error, matching mac's
+  // `onChange(of: task.state) { onClearStopError() }`.
+  useEffect(() => {
+    const stoppableTaskIds = new Set(
+      props.feed.flatMap((entry) =>
+        entry.type === "subagent-task" &&
+        (entry.task.state === "running" || entry.task.state === "paused")
+          ? [entry.task.taskId]
+          : [],
+      ),
+    );
+    setSubagentTaskState((current) => {
+      const entries = Object.entries(current.stopErrors).filter(([taskId]) =>
+        stoppableTaskIds.has(taskId),
+      );
+      if (entries.length === Object.keys(current.stopErrors).length) {
+        return current;
+      }
+      return { ...current, stopErrors: Object.fromEntries(entries) };
+    });
+  }, [props.feed]);
 
   const expandedWorkGroupIds = useMemo(() => {
     const ids = new Set<string>();
@@ -1438,6 +1503,48 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     setExpandedImage({ uri, headers });
   }, []);
 
+  const onStopSubagentTask = useCallback(
+    (taskId: string, turnId: TurnId | null) => {
+      if (stoppingTaskIdsRef.current.has(taskId)) {
+        return;
+      }
+      stoppingTaskIdsRef.current.add(taskId);
+      setSubagentTaskState((current) => {
+        const stoppingTaskIds = new Set(current.stoppingTaskIds);
+        stoppingTaskIds.add(taskId);
+        const stopErrors = Object.fromEntries(
+          Object.entries(current.stopErrors).filter(([id]) => id !== taskId),
+        );
+        return { stopErrors, stoppingTaskIds };
+      });
+      void Haptics.selectionAsync();
+      void stopSubagentTaskCommand({
+        environmentId: props.environmentId,
+        input: {
+          threadId: props.threadId,
+          taskId: RuntimeTaskId.make(taskId),
+          ...(turnId ? { turnId } : {}),
+        },
+      }).then((result) => {
+        stoppingTaskIdsRef.current.delete(taskId);
+        setSubagentTaskState((current) => {
+          const stoppingTaskIds = new Set(current.stoppingTaskIds);
+          stoppingTaskIds.delete(taskId);
+          if (result._tag === "Failure") {
+            const error = Cause.squash(result.cause);
+            const message =
+              error instanceof Error && error.message.trim().length > 0
+                ? error.message
+                : "Could not stop the agent.";
+            return { stopErrors: { ...current.stopErrors, [taskId]: message }, stoppingTaskIds };
+          }
+          return { stopErrors: current.stopErrors, stoppingTaskIds };
+        });
+      });
+    },
+    [props.environmentId, props.threadId, stopSubagentTaskCommand],
+  );
+
   const renderItem = useCallback(
     (info: { item: ThreadFeedEntry; index: number }) =>
       renderFeedEntry(info, {
@@ -1446,6 +1553,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         expandedWorkRows,
         terminalAssistantMessageIds,
         unsettledTurnId,
+        subagentStopErrors: subagentTaskState.stopErrors,
+        stoppingSubagentTaskIds: subagentTaskState.stoppingTaskIds,
+        onStopSubagentTask,
         onCopyWorkRow,
         onToggleWorkGroup,
         onToggleWorkRow,
@@ -1465,6 +1575,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       expandedWorkRows,
       terminalAssistantMessageIds,
       unsettledTurnId,
+      subagentTaskState,
+      onStopSubagentTask,
       iconSubtleColor,
       userBubbleColor,
       markdownStyles,

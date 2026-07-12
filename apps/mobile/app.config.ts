@@ -9,6 +9,11 @@ Object.assign(process.env, repoEnv);
 
 const APP_VARIANT = resolveAppVariant(repoEnv.APP_VARIANT);
 
+// All variants use the plain SurgeCode ./assets/icon.png (see
+// scripts/generate-appicon.swift). assets/icon-composer-{dev,prod}.icon are
+// stale upstream Icon Composer bundles (still carrying the old T3 mark,
+// Assets/T3.svg) — no longer referenced from this config, left in place
+// rather than hand-authoring new .icon bundles.
 const VARIANT_CONFIG: Record<
   AppVariant,
   {
@@ -21,27 +26,27 @@ const VARIANT_CONFIG: Record<
   }
 > = {
   development: {
-    appName: "T3 Code Dev",
-    scheme: "t3code-dev",
-    iosIcon: "./assets/icon-composer-dev.icon",
-    iosBundleIdentifier: "com.t3tools.t3code.dev",
-    androidPackage: "com.t3tools.t3code.dev",
+    appName: "SurgeCode Dev",
+    scheme: "surgecode-dev",
+    iosIcon: "./assets/icon.png",
+    iosBundleIdentifier: "com.sergeserb.sergecode.dev",
+    androidPackage: "com.sergeserb.sergecode.dev",
     relyingParty: "clerk.t3.codes",
   },
   preview: {
-    appName: "T3 Code Preview",
-    scheme: "t3code-preview",
-    iosIcon: "./assets/icon-composer-prod.icon",
-    iosBundleIdentifier: "com.t3tools.t3code.preview",
-    androidPackage: "com.t3tools.t3code.preview",
+    appName: "SurgeCode Preview",
+    scheme: "surgecode-preview",
+    iosIcon: "./assets/icon.png",
+    iosBundleIdentifier: "com.sergeserb.sergecode.preview",
+    androidPackage: "com.sergeserb.sergecode.preview",
     relyingParty: "clerk.t3.codes",
   },
   production: {
-    appName: "T3 Code",
-    scheme: "t3code",
-    iosIcon: "./assets/icon-composer-prod.icon",
-    iosBundleIdentifier: "com.t3tools.t3code",
-    androidPackage: "com.t3tools.t3code",
+    appName: "SurgeCode",
+    scheme: "surgecode",
+    iosIcon: "./assets/icon.png",
+    iosBundleIdentifier: "com.sergeserb.sergecode",
+    androidPackage: "com.sergeserb.sergecode",
     relyingParty: "clerk.t3.codes",
   },
 };
@@ -88,12 +93,12 @@ if (personalSigning && !PERSONAL_TEAM_ID) {
 // team ids are already alphanumeric.
 const iosBundleIdentifier = personalSigning
   ? (process.env.SERGECODE_PERSONAL_BUNDLE_ID ??
-    `dev.${PERSONAL_TEAM_ID!.toLowerCase()}.t3code.development`)
+    `dev.${PERSONAL_TEAM_ID!.toLowerCase()}.sergecode.development`)
   : variant.iosBundleIdentifier;
 
 const config: ExpoConfig = {
   name: variant.appName,
-  slug: "t3-code",
+  slug: "sergecode",
   platforms: ["ios", "android"],
   scheme: variant.scheme,
   version: "0.1.0",
@@ -103,6 +108,10 @@ const config: ExpoConfig = {
   orientation: "portrait",
   icon: "./assets/icon.png",
   userInterfaceStyle: "automatic",
+  // Upstream EAS project leftovers (T3 Tools' expo.dev project). SergeCode
+  // does not run hosted EAS updates/builds; local personal-signed builds
+  // never contact this URL/project. Left in place rather than pointed at a
+  // new EAS project — do not create or contact one.
   updates: {
     enabled: true,
     url: "https://u.expo.dev/d763fcb8-d37c-41ea-a773-b54a0ab4a454",
@@ -117,6 +126,8 @@ const config: ExpoConfig = {
     // does not fall back to a personal team (which cannot sign app groups,
     // Sign in with Apple, or push notification entitlements).
     appleTeamId: personalSigning ? PERSONAL_TEAM_ID! : "ARK85ZXQ4Z",
+    // relyingParty (clerk.t3.codes) is an upstream T3 Tools leftover, unused
+    // by local personal-signed builds (which drop associatedDomains below).
     ...(personalSigning
       ? {}
       : {
@@ -130,7 +141,7 @@ const config: ExpoConfig = {
         NSAllowsArbitraryLoads: true,
       },
       NSLocalNetworkUsageDescription:
-        "Allow T3 Code to connect to T3 Code servers on your local network or tailnet.",
+        "Allow SurgeCode to connect to SurgeCode servers on your local network or tailnet.",
       ITSAppUsesNonExemptEncryption: false,
     },
   },
@@ -160,7 +171,7 @@ const config: ExpoConfig = {
     [
       "expo-camera",
       {
-        cameraPermission: "Allow T3 Code to access your camera so you can scan pairing QR codes.",
+        cameraPermission: "Allow SurgeCode to access your camera so you can scan pairing QR codes.",
         barcodeScannerEnabled: true,
       },
     ],
@@ -206,7 +217,7 @@ const config: ExpoConfig = {
                 {
                   name: "AgentActivity",
                   displayName: "Agent Activity",
-                  description: "Shows the current state of active T3 Code agents.",
+                  description: "Shows the current state of active SurgeCode agents.",
                   supportedFamilies: ["systemSmall", "systemMedium", "accessoryRectangular"],
                 },
               ],
@@ -237,6 +248,9 @@ const config: ExpoConfig = {
       tracesDataset: repoEnv.EXPO_PUBLIC_OTLP_TRACES_DATASET ?? null,
       tracesToken: repoEnv.EXPO_PUBLIC_OTLP_TRACES_TOKEN ?? null,
     },
+    // eas.projectId and owner (below) are the upstream T3 Tools EAS project
+    // — upstream leftovers unused by local personal-signed builds. Do not
+    // create or contact a SergeCode EAS project.
     eas: {
       projectId: "d763fcb8-d37c-41ea-a773-b54a0ab4a454",
     },

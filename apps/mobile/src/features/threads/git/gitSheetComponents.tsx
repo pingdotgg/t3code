@@ -1,6 +1,6 @@
 import { SymbolView } from "expo-symbols";
 import type { ComponentProps } from "react";
-import { Pressable, View } from "react-native";
+import { ActivityIndicator, Pressable, View } from "react-native";
 import { useThemeColor } from "../../../lib/useThemeColor";
 import { AppText as Text } from "../../../components/AppText";
 
@@ -10,6 +10,8 @@ export function SheetActionButton(props: {
   readonly icon: ComponentProps<typeof SymbolView>["name"];
   readonly label: string;
   readonly disabled?: boolean;
+  /** Swaps the icon for a spinner (e.g. while a long-running action runs). */
+  readonly loading?: boolean;
   readonly tone?: "primary" | "secondary" | "danger";
   readonly onPress: () => void;
 }) {
@@ -54,7 +56,11 @@ export function SheetActionButton(props: {
       }}
       onPress={props.onPress}
     >
-      <SymbolView name={props.icon} size={16} tintColor={colors.textColor} type="monochrome" />
+      {props.loading ? (
+        <ActivityIndicator color={colors.textColor} size="small" />
+      ) : (
+        <SymbolView name={props.icon} size={16} tintColor={colors.textColor} type="monochrome" />
+      )}
       <Text
         className="text-xs font-t3-bold uppercase"
         style={{ color: colors.textColor, letterSpacing: 0.9 }}

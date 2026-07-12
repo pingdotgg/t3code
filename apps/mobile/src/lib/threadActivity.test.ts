@@ -225,6 +225,50 @@ describe("buildThreadFeed", () => {
     expect(group.activities[0]?.fullDetail).toContain("repository.search");
   });
 
+  it("renders subagent task lifecycle activities as dedicated rows, not generic work-log entries", () => {
+    const turnId = TurnId.make("turn-subagent");
+    const thread = makeThread({
+      id: ThreadId.make("thread-subagent"),
+      projectId: ProjectId.make("project-1"),
+      title: "Subagent task row",
+      activities: [
+        makeActivity({
+          id: EventId.make("task-started"),
+          kind: "task.started",
+          summary: "Task started",
+          createdAt: "2026-04-01T00:00:00.000Z",
+          turnId,
+          payload: {
+            taskId: "task-row-1",
+            description: "Investigate the bug",
+            subagentType: "Explore",
+          },
+        }),
+        makeActivity({
+          id: EventId.make("task-progress"),
+          kind: "task.progress",
+          summary: "Task progress",
+          createdAt: "2026-04-01T00:00:05.000Z",
+          turnId,
+          payload: { taskId: "task-row-1", lastToolName: "Grep", summary: "Searching" },
+        }),
+      ],
+    });
+
+    const feed = buildThreadFeed(thread);
+    const subagentEntries = feed.filter((entry) => entry.type === "subagent-task");
+    expect(subagentEntries).toHaveLength(1);
+    expect(subagentEntries[0]).toMatchObject({
+      type: "subagent-task",
+      turnId: "turn-subagent",
+      task: { taskId: "task-row-1", state: "running" },
+    });
+
+    // task.started/task.progress must not also leak into the generic work log.
+    const activityGroups = feed.filter((entry) => entry.type === "activity-group");
+    expect(activityGroups).toHaveLength(0);
+  });
+
   it("folds settled turn work while leaving the terminal answer visible", () => {
     const turnId = TurnId.make("turn-1");
     const thread = makeThread({

@@ -4,7 +4,7 @@ import { AppState } from "react-native";
 
 import { stableIndex } from "./alpine-theme";
 import type { SceneryState } from "./scenery-store";
-import { appSceneryStore, sceneryStateAtom } from "./scenery-store";
+import { appSceneryStore, displayNamesFromState, sceneryStateAtom } from "./scenery-store";
 import type { SceneryPhoto } from "./unsplash";
 
 /** Pure resolution of a thread key's scene from published state. */
@@ -22,6 +22,23 @@ export function photoFromState(state: SceneryState, threadKey: string): SceneryP
 export function useSceneryPhoto(threadKey: string | null): SceneryPhoto | null {
   const state = useAtomValue(sceneryStateAtom);
   return threadKey === null ? null : photoFromState(state, threadKey);
+}
+
+/**
+ * Two-line thread naming ("Seceda" primary / "Fix the flaky retry test"
+ * description), reactive to scene assignment and pool changes. Mirrors the
+ * mac sidebar's `scenery.displayNames(for:)`. Falls back to `{ primary:
+ * title.trim(), description: null }` when the thread has no resolvable scene
+ * (no thread key, no Unsplash key, or an empty pool) so callers render
+ * exactly the pre-scenery title-only row.
+ */
+export function useThreadDisplayNames(
+  threadKey: string | null,
+  title: string,
+): { readonly primary: string; readonly description: string | null } {
+  const state = useAtomValue(sceneryStateAtom);
+  if (threadKey === null) return { primary: title.trim(), description: null };
+  return displayNamesFromState(state, threadKey, title);
 }
 
 /** Daily-rotating hero for empty states. */

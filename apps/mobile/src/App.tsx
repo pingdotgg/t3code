@@ -6,7 +6,7 @@ import {
 } from "@expo-google-fonts/dm-sans";
 import * as Linking from "expo-linking";
 import * as SplashScreen from "expo-splash-screen";
-import { StatusBar, useColorScheme } from "react-native";
+import { Platform, StatusBar, UIManager, useColorScheme } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -23,8 +23,21 @@ import { useThemeColor } from "./lib/useThemeColor";
 import "../global.css";
 
 const appLinking = {
-  prefixes: [Linking.createURL("/"), "t3code://", "t3code-dev://", "t3code-preview://"],
+  prefixes: [
+    Linking.createURL("/"),
+    "surgecode://",
+    "surgecode-dev://",
+    "surgecode-preview://",
+    // Back-compat: keep accepting the legacy T3 Code schemes.
+    "t3code://",
+    "t3code-dev://",
+    "t3code-preview://",
+  ],
 };
+
+if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 const Navigation = createStaticNavigation(RootStack);
 

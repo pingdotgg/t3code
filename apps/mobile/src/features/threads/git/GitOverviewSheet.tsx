@@ -21,8 +21,16 @@ import { useThreadSelection } from "../../../state/use-thread-selection";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
 import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-worktree";
+import { useVcsActionState } from "../../../state/use-vcs-action-state";
 import { vcsEnvironment } from "../../../state/vcs";
-import { MetaCard, SheetListRow, menuItemIconName, statusSummary } from "./gitSheetComponents";
+import {
+  MetaCard,
+  SheetActionButton,
+  SheetListRow,
+  menuItemIconName,
+  statusSummary,
+} from "./gitSheetComponents";
+import { isMergeReady } from "./mergeReadiness";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 
@@ -63,6 +71,19 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
   const currentBranchLabel = gitStatus.data?.refName ?? selectedThread?.branch ?? "Detached HEAD";
   const currentStatusSummary = statusSummary(gitStatus.data);
   const currentWorktreePath = selectedThreadWorktreePath;
+
+  // Mirrors apps/mac's MergeReadiness: only offer the one-click merge affordance
+  // once the PR is open with all review feedback fixed.
+  const mergeReady = isMergeReady(gitStatus.data);
+  const gitActionTarget = useMemo(
+    () => ({ environmentId: selectedThread?.environmentId ?? null, cwd: selectedThreadCwd }),
+    [selectedThread?.environmentId, selectedThreadCwd],
+  );
+  const gitActionState = useVcsActionState(gitActionTarget);
+  const isMergingPR = gitActionState.isRunning && gitActionState.action === "merge_pr";
+  const onMergePR = useCallback(() => {
+    void gitActions.onRunSelectedThreadGitAction({ action: "merge_pr" });
+  }, [gitActions]);
   const gitOperationLabel = gitState.gitOperationLabel;
   const busy = gitOperationLabel !== null;
   const isRepo = gitStatus.data?.isRepo ?? true;
@@ -218,6 +239,16 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
         <RefreshControl refreshing={isPullRefreshing} onRefresh={() => void handlePullRefresh()} />
       }
     >
+      {mergeReady ? (
+        <SheetActionButton
+          icon="arrow.triangle.merge"
+          label={isMergingPR ? "Merging…" : "Merge PR"}
+          loading={isMergingPR}
+          tone="primary"
+          disabled={busy || isMergingPR}
+          onPress={onMergePR}
+        />
+      ) : null}
       <View
         className={
           isInspector
