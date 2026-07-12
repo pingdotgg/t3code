@@ -88,9 +88,11 @@ public struct ChatScreen: View {
                 .disabled(model.selectedThreadID == nil)
         }
         .sheet(isPresented: $showSelectableTranscript) {
+            let threadID = model.selectedThreadID ?? ""
             SelectableTranscriptSheet(
                 items: currentDisplayItems(),
-                projectRoot: selectedProjectRoot)
+                projectRoot: selectedProjectRoot,
+                contentKey: "\(threadID):\(model.timelineVersion(threadID: threadID))")
         }
         #if DEBUG
             .onReceive(NotificationCenter.default.publisher(for: .uiProbeToggleSection)) { note in

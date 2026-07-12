@@ -30,12 +30,9 @@ struct SelectableTranscriptSheet: View {
     let items: [TimelineDisplayItem]
     /// Optional project root for path shortening in tool rows.
     var projectRoot: String? = nil
+    let contentKey: String
 
     @Environment(\.dismiss) private var dismiss
-
-    private var attributed: NSAttributedString {
-        TranscriptTextBuilder.attributedString(from: items, projectRoot: projectRoot)
-    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -51,7 +48,10 @@ struct SelectableTranscriptSheet: View {
 
             Divider()
 
-            SelectableTranscriptTextView(attributed: attributed)
+            SelectableTranscriptTextView(
+                items: items,
+                projectRoot: projectRoot,
+                contentKey: contentKey)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(minWidth: 560, minHeight: 420)
@@ -62,7 +62,20 @@ struct SelectableTranscriptSheet: View {
 // MARK: - NSTextView host
 
 struct SelectableTranscriptTextView: NSViewRepresentable {
-    let attributed: NSAttributedString
+    let items: [TimelineDisplayItem]
+    let projectRoot: String?
+    let contentKey: String
+
+    @MainActor
+    final class Coordinator {
+        var appliedKey: String?
+        var lastRebuild: ContinuousClock.Instant?
+        var pendingRebuild: Task<Void, Never>?
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSTextView.scrollableTextView()
@@ -83,24 +96,114 @@ struct SelectableTranscriptTextView: NSViewRepresentable {
         textView.textContainer?.containerSize = NSSize(
             width: 0, height: CGFloat.greatestFiniteMagnitude)
         textView.font = .systemFont(ofSize: NSFont.systemFontSize)
-        textView.textStorage?.setAttributedString(attributed)
-
-        DispatchQueue.main.async {
-            textView.scrollToEndOfDocument(nil)
-        }
+        rebuild(
+            textView: textView,
+            scrollView: scrollView,
+            coordinator: context.coordinator,
+            preserveScroll: false)
         return scrollView
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        let coordinator = context.coordinator
+        guard contentKey != coordinator.appliedKey else { return }
         guard let textView = scrollView.documentView as? NSTextView else { return }
-        // Sheet content is fixed at open; only re-apply if the representable
-        // is reused with different items.
-        if textView.string != attributed.string {
-            textView.textStorage?.setAttributedString(attributed)
-            DispatchQueue.main.async {
-                textView.scrollToEndOfDocument(nil)
+
+        coordinator.pendingRebuild?.cancel()
+        coordinator.pendingRebuild = nil
+
+        let now = ContinuousClock.now
+        if let lastRebuild = coordinator.lastRebuild {
+            let elapsed = lastRebuild.duration(to: now)
+            if elapsed < .seconds(1) {
+                let remaining = .seconds(1) - elapsed
+                let items = items
+                let projectRoot = projectRoot
+                let contentKey = contentKey
+                coordinator.pendingRebuild = Task { @MainActor [weak coordinator] in
+                    do {
+                        try await Task.sleep(for: remaining)
+                    } catch {
+                        return
+                    }
+                    guard let coordinator, !Task.isCancelled,
+                        contentKey != coordinator.appliedKey
+                    else { return }
+                    Self.rebuild(
+                        items: items,
+                        projectRoot: projectRoot,
+                        contentKey: contentKey,
+                        textView: textView,
+                        scrollView: scrollView,
+                        coordinator: coordinator,
+                        preserveScroll: true)
+                }
+                return
             }
         }
+
+        Self.rebuild(
+            items: items,
+            projectRoot: projectRoot,
+            contentKey: contentKey,
+            textView: textView,
+            scrollView: scrollView,
+            coordinator: coordinator,
+            preserveScroll: true)
+    }
+
+    func dismantleNSView(_ scrollView: NSScrollView, coordinator: Coordinator) {
+        coordinator.pendingRebuild?.cancel()
+        coordinator.pendingRebuild = nil
+    }
+
+    private func rebuild(
+        textView: NSTextView,
+        scrollView: NSScrollView,
+        coordinator: Coordinator,
+        preserveScroll: Bool
+    ) {
+        Self.rebuild(
+            items: items,
+            projectRoot: projectRoot,
+            contentKey: contentKey,
+            textView: textView,
+            scrollView: scrollView,
+            coordinator: coordinator,
+            preserveScroll: preserveScroll)
+    }
+
+    private static func rebuild(
+        items: [TimelineDisplayItem],
+        projectRoot: String?,
+        contentKey: String,
+        textView: NSTextView,
+        scrollView: NSScrollView,
+        coordinator: Coordinator,
+        preserveScroll: Bool
+    ) {
+        let wasAtBottom = !preserveScroll || isAtBottom(textView: textView, scrollView: scrollView)
+        let previousOrigin = scrollView.contentView.bounds.origin
+        let attributed = TranscriptTextBuilder.attributedString(
+            from: items,
+            projectRoot: projectRoot)
+        textView.textStorage?.setAttributedString(attributed)
+        coordinator.appliedKey = contentKey
+        coordinator.lastRebuild = ContinuousClock.now
+
+        DispatchQueue.main.async {
+            if wasAtBottom {
+                textView.scrollToEndOfDocument(nil)
+            } else {
+                scrollView.contentView.setBoundsOrigin(previousOrigin)
+                scrollView.reflectScrolledClipView(scrollView.contentView)
+            }
+        }
+    }
+
+    private static func isAtBottom(textView: NSTextView, scrollView: NSScrollView) -> Bool {
+        let visibleRect = scrollView.contentView.documentVisibleRect
+        return visibleRect.maxY >= textView.bounds.maxY - 1
     }
 }
 
