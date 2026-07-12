@@ -171,6 +171,12 @@ describe("attachmentStore", () => {
         ].join("\n"),
       }),
     ).toEqual(new Set());
+    expect(
+      collectTextAttachmentRelativePaths({
+        attachmentsDir,
+        text: `paragraph\n    [continued](${attachmentPath})`,
+      }),
+    ).toEqual(new Set([NodePath.relative(attachmentsDir, attachmentPath).replaceAll("\\", "/")]));
   });
 
   it("persists draft claims across reconciliation and restart-style reloads", () => {

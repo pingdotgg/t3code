@@ -46,11 +46,28 @@ describe("markdownLinkDestinations", () => {
           "[still-inside](/still-inside)",
           "```   ",
           "[outside](/outside)",
+          "",
           "    [space-indented](/space-indented)",
           "\t[tab-indented](/tab-indented)",
           "[final](/final)",
         ].join("\n"),
       ),
     ).toEqual(["/outside", "/final"]);
+  });
+
+  it("allows indented paragraph and list continuations", () => {
+    expect(
+      markdownLinkDestinations(
+        [
+          "paragraph",
+          "    [paragraph-continuation](/paragraph)",
+          "- list item",
+          "\t[list-continuation](/list)",
+          "",
+          "    [actual-code](/code)",
+          "\t[more-code](/more-code)",
+        ].join("\n"),
+      ),
+    ).toEqual(["/paragraph", "/list"]);
   });
 });
