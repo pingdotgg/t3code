@@ -87,6 +87,7 @@ import {
 import { ContextWindowMeter } from "./ContextWindowMeter";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
 import { basenameOfPath } from "../../pierre-icons";
+import { removedOwnedTextAttachmentPaths, textAttachmentPaths } from "../../textAttachmentPaths";
 import { cn, randomUUID } from "~/lib/utils";
 import { Separator } from "../ui/separator";
 import { Button } from "../ui/button";
@@ -629,6 +630,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const writeTextAttachment = useAtomCommand(assetEnvironment.writeTextAttachment, {
     reportFailure: false,
   });
+  const deleteTextAttachment = useAtomCommand(assetEnvironment.deleteTextAttachment, {
+    reportFailure: false,
+  });
   const prompt = composerDraft.prompt;
   const composerImages = composerDraft.images;
   const composerTerminalContexts = composerDraft.terminalContexts;
@@ -923,6 +927,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const attachmentQueueRef = useRef<Promise<void>>(Promise.resolve());
   const composerAttachmentKeyRef = useRef(composerAttachmentKey);
   composerAttachmentKeyRef.current = composerAttachmentKey;
+  const ownedTextAttachmentPathsRef = useRef(new Set(textAttachmentPaths(prompt)));
+  const ownedTextAttachmentTargetKeyRef = useRef(composerAttachmentKey);
+  if (ownedTextAttachmentTargetKeyRef.current !== composerAttachmentKey) {
+    ownedTextAttachmentTargetKeyRef.current = composerAttachmentKey;
+    ownedTextAttachmentPathsRef.current = new Set(textAttachmentPaths(prompt));
+  }
 
   // ------------------------------------------------------------------
   // Derived: composer send state
@@ -1173,9 +1183,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   const setPrompt = useCallback(
     (nextPrompt: string) => {
+      const previousPrompt = getComposerDraft(composerDraftTarget)?.prompt ?? "";
+      const removedPaths = removedOwnedTextAttachmentPaths(
+        previousPrompt,
+        nextPrompt,
+        ownedTextAttachmentPathsRef.current,
+      );
+      for (const path of removedPaths) {
+        ownedTextAttachmentPathsRef.current.delete(path);
+        void deleteTextAttachment({ environmentId, input: { path } });
+      }
       setComposerDraftPrompt(composerDraftTarget, nextPrompt);
     },
-    [composerDraftTarget, setComposerDraftPrompt],
+    [
+      composerDraftTarget,
+      deleteTextAttachment,
+      environmentId,
+      getComposerDraft,
+      setComposerDraftPrompt,
+    ],
   );
 
   const addComposerImage = useCallback(
@@ -1812,6 +1838,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (result === null) return `'${file.name}' is not a supported text file.`;
     if (result._tag === "Failure") return `Could not attach '${file.name}'.`;
 
+    ownedTextAttachmentPathsRef.current.add(result.value.path);
     const currentPrompt = getComposerDraft(composerDraftTarget)?.prompt ?? "";
     const separator = currentPrompt.length > 0 && !/\s$/.test(currentPrompt) ? " " : "";
     const nextPrompt = `${currentPrompt}${separator}${serializeComposerFileLink(

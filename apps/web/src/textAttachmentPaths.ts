@@ -24,4 +24,15 @@ export function textAttachmentPaths(prompt: string): string[] {
   ];
 }
 
+export function removedOwnedTextAttachmentPaths(
+  previousPrompt: string,
+  nextPrompt: string,
+  ownedPaths: ReadonlySet<string>,
+): string[] {
+  const nextPaths = new Set(textAttachmentPaths(nextPrompt));
+  return textAttachmentPaths(previousPrompt).filter(
+    (path) => ownedPaths.has(path) && !nextPaths.has(path),
+  );
+}
+
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
