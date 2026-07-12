@@ -38,6 +38,7 @@ interface FakeGhScenario {
   createdPrUrl?: string;
   defaultBranch?: string;
   baseRepository?: string;
+  headRepositoryOwner?: string;
   pullRequest?: {
     number: number;
     title: string;
@@ -378,6 +379,10 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
     ]),
   );
   const ghCalls: string[] = [];
+  const qualifyHeadSelector = (headSelector: string) =>
+    scenario.headRepositoryOwner && !headSelector.includes(":")
+      ? `${scenario.headRepositoryOwner}:${headSelector}`
+      : headSelector;
 
   const execute: GitHubCli.GitHubCli["Service"]["execute"] = (input) => {
     const args = [...input.args];
@@ -522,7 +527,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
             "pr",
             "list",
             "--head",
-            input.headSelector,
+            qualifyHeadSelector(input.headSelector),
             "--state",
             "open",
             "--limit",
@@ -549,7 +554,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
             "--base",
             input.baseBranch,
             "--head",
-            input.headSelector,
+            qualifyHeadSelector(input.headSelector),
             "--title",
             input.title,
             "--body-file",
@@ -1829,6 +1834,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       const { manager, ghCalls } = yield* makeManager({
         ghScenario: {
           baseRepository: "pingdotgg/t3code",
+          headRepositoryOwner: "octocat",
           prListSequence: ["[]", "[]"],
         },
       });
@@ -1842,7 +1848,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(
         ghCalls.some((call) =>
           call.includes(
-            "pr create --base main --head feature/upstream-pr --title Add stacked git actions",
+            "pr create --base main --head octocat:feature/upstream-pr --title Add stacked git actions",
           ),
         ),
       ).toBe(true);

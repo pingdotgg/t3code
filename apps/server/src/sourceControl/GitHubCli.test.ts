@@ -159,7 +159,9 @@ describe("GitHubCli.layer", () => {
 
   it.effect("skips invalid entries when parsing pr lists", () =>
     Effect.gen(function* () {
-      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("pingdotgg/codething-mvp\n")));
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(processOutput("pingdotgg/codething-mvp\tpingdotgg/codething-mvp\n")),
+      );
       mockRun.mockReturnValueOnce(
         Effect.succeed(
           processOutput(
@@ -232,7 +234,7 @@ describe("GitHubCli.layer", () => {
   it.effect("creates pull requests against a fork's parent repository", () =>
     Effect.gen(function* () {
       mockRun
-        .mockReturnValueOnce(Effect.succeed(processOutput("pingdotgg/t3code\n")))
+        .mockReturnValueOnce(Effect.succeed(processOutput("pingdotgg/t3code\toctocat/t3code\n")))
         .mockReturnValueOnce(
           Effect.succeed(processOutput("https://github.com/pingdotgg/t3code/pull/42\n")),
         );
@@ -241,7 +243,7 @@ describe("GitHubCli.layer", () => {
       yield* gh.createPullRequest({
         cwd: "/repo",
         baseBranch: "main",
-        headSelector: "octocat:feature/fork-pr",
+        headSelector: "feature/fork-pr",
         title: "Target upstream",
         bodyFile: "/tmp/pr-body.md",
       });
@@ -255,7 +257,7 @@ describe("GitHubCli.layer", () => {
           "--json",
           "nameWithOwner,parent",
           "--jq",
-          'if .parent then "\\(.parent.owner.login)/\\(.parent.name)" else .nameWithOwner end',
+          '[if .parent then "\\(.parent.owner.login)/\\(.parent.name)" else .nameWithOwner end, .nameWithOwner] | @tsv',
         ],
         cwd: "/repo",
         timeoutMs: 30_000,

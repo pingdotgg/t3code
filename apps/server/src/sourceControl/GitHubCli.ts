@@ -24,6 +24,37 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const BASE_REPOSITORY_CACHE_CAPACITY = 2_048;
 const BASE_REPOSITORY_CACHE_TTL = Duration.seconds(5);
 
+interface PullRequestRepositoryContext {
+  readonly baseRepository: string;
+  readonly headRepository: string;
+}
+
+function ownerLoginFromRepository(repository: string): string | undefined {
+  const parts = repository.split("/").filter((part) => part.length > 0);
+  if (parts.length >= 3) {
+    return parts[parts.length - 2];
+  }
+  if (parts.length === 2) {
+    return parts[0];
+  }
+  return undefined;
+}
+
+function qualifyPullRequestHead(
+  context: PullRequestRepositoryContext,
+  headSelector: string,
+): string {
+  if (
+    context.baseRepository.toLowerCase() === context.headRepository.toLowerCase() ||
+    /^[^:/\s]+:.+$/u.test(headSelector)
+  ) {
+    return headSelector;
+  }
+
+  const owner = ownerLoginFromRepository(context.headRepository);
+  return owner ? `${owner}:${headSelector}` : headSelector;
+}
+
 const gitHubCliFailureFields = {
   command: Schema.Literal("gh"),
   cwd: Schema.String,
@@ -322,7 +353,7 @@ export const make = Effect.gen(function* () {
       })
       .pipe(Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)));
 
-  const baseRepositoryCache = yield* Cache.makeWith(
+  const pullRequestRepositoryContextCache = yield* Cache.makeWith(
     (cwd: string) =>
       execute({
         cwd,
@@ -332,35 +363,50 @@ export const make = Effect.gen(function* () {
           "--json",
           "nameWithOwner,parent",
           "--jq",
-          'if .parent then "\\(.parent.owner.login)/\\(.parent.name)" else .nameWithOwner end',
+          '[if .parent then "\\(.parent.owner.login)/\\(.parent.name)" else .nameWithOwner end, .nameWithOwner] | @tsv',
         ],
-      }).pipe(Effect.map((result) => result.stdout.trim())),
+      }).pipe(
+        Effect.flatMap((result) => {
+          const [baseRepository, headRepository] = result.stdout.trim().split("\t");
+          if (baseRepository && headRepository) {
+            return Effect.succeed({ baseRepository, headRepository });
+          }
+          return Effect.fail(
+            new GitHubCliCommandError({
+              command: "gh",
+              cwd,
+              cause: new Error("GitHub CLI returned invalid repository context."),
+            }),
+          );
+        }),
+      ),
     {
       capacity: BASE_REPOSITORY_CACHE_CAPACITY,
       timeToLive: (exit) => (Exit.isSuccess(exit) ? BASE_REPOSITORY_CACHE_TTL : Duration.zero),
     },
   );
 
-  const resolveBaseRepository = (cwd: string) => Cache.get(baseRepositoryCache, cwd);
+  const resolvePullRequestRepositoryContext = (cwd: string) =>
+    Cache.get(pullRequestRepositoryContextCache, cwd);
 
   return GitHubCli.of({
     execute,
     listOpenPullRequests: (input) =>
-      resolveBaseRepository(input.cwd).pipe(
-        Effect.flatMap((repository) =>
+      resolvePullRequestRepositoryContext(input.cwd).pipe(
+        Effect.flatMap((context) =>
           execute({
             cwd: input.cwd,
             args: [
               "pr",
               "list",
               "--head",
-              input.headSelector,
+              qualifyPullRequestHead(context, input.headSelector),
               "--state",
               "open",
               "--limit",
               String(input.limit ?? 1),
               "--repo",
-              repository,
+              context.baseRepository,
               "--json",
               "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
             ],
@@ -451,8 +497,8 @@ export const make = Effect.gen(function* () {
         ),
       ),
     createPullRequest: (input) =>
-      resolveBaseRepository(input.cwd).pipe(
-        Effect.flatMap((repository) =>
+      resolvePullRequestRepositoryContext(input.cwd).pipe(
+        Effect.flatMap((context) =>
           execute({
             cwd: input.cwd,
             args: [
@@ -461,27 +507,27 @@ export const make = Effect.gen(function* () {
               "--base",
               input.baseBranch,
               "--head",
-              input.headSelector,
+              qualifyPullRequestHead(context, input.headSelector),
               "--title",
               input.title,
               "--body-file",
               input.bodyFile,
               "--repo",
-              repository,
+              context.baseRepository,
             ],
           }),
         ),
         Effect.asVoid,
       ),
     getDefaultBranch: (input) =>
-      resolveBaseRepository(input.cwd).pipe(
-        Effect.flatMap((repository) =>
+      resolvePullRequestRepositoryContext(input.cwd).pipe(
+        Effect.flatMap((context) =>
           execute({
             cwd: input.cwd,
             args: [
               "repo",
               "view",
-              repository,
+              context.baseRepository,
               "--json",
               "defaultBranchRef",
               "--jq",
