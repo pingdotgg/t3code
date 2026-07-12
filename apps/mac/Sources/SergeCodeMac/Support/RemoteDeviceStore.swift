@@ -5,8 +5,13 @@ public struct RemoteDevice: Sendable, Codable, Equatable, Identifiable {
     public var name: String
     public var host: String
     public var port: Int
+    public var scheme: String
     public var pairedAt: Date
     public var sessionExpiresAt: Date?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, host, port, scheme, pairedAt, sessionExpiresAt
+    }
 
     public init(
         id: String,
@@ -14,17 +19,32 @@ public struct RemoteDevice: Sendable, Codable, Equatable, Identifiable {
         host: String,
         port: Int,
         pairedAt: Date,
-        sessionExpiresAt: Date?
+        sessionExpiresAt: Date?,
+        scheme: String = "http"
     ) {
         self.id = id
         self.name = name
         self.host = host
         self.port = port
+        self.scheme = scheme.lowercased()
         self.pairedAt = pairedAt
         self.sessionExpiresAt = sessionExpiresAt
     }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        host = try container.decode(String.self, forKey: .host)
+        port = try container.decode(Int.self, forKey: .port)
+        scheme = (try container.decodeIfPresent(String.self, forKey: .scheme) ?? "http")
+            .lowercased()
+        pairedAt = try container.decode(Date.self, forKey: .pairedAt)
+        sessionExpiresAt = try container.decodeIfPresent(Date.self, forKey: .sessionExpiresAt)
+    }
 }
 
+@MainActor
 public struct RemoteDeviceStore: @unchecked Sendable {
     public static let defaultsKey = "remoteDevices"
 

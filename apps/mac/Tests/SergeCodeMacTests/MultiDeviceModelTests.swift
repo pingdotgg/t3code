@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import SergeCodeMac
@@ -68,6 +69,22 @@ struct MultiDeviceModelTests {
         #expect(session.model.selectedThreadID == nil)
     }
 
+    @Test("thread creation leaves selection routing to MultiDeviceModel")
+    func creationUsesSharedSelection() async {
+        let local = AppModel(backend: MockBackend())
+        let multi = MultiDeviceModel(local: local)
+
+        let thread = await local.createThread(projectID: "project-1", provider: .codex)
+        #expect(thread != nil)
+        #expect(local.selectedThreadID == nil)
+
+        if let thread {
+            multi.select(threadID: thread.id, on: .local)
+        }
+        #expect(multi.selection?.threadID == thread?.id)
+        #expect(multi.selection?.deviceID == .local)
+    }
+
     @Test("shutdown fans out across local and remote mock backends")
     func shutdownFanout() async {
         let local = AppModel(backend: MockBackend())
@@ -85,5 +102,42 @@ struct MultiDeviceModelTests {
         // later reconnect or test assertion.
         #expect(multi.allModels.count == 3)
         #expect(multi.remoteSessions.count == 2)
+    }
+
+    @Test("reconnect gets a fresh mock event stream")
+    func reconnectRestartsEvents() async {
+        let suiteName = "multi-device-reconnect-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let local = AppModel(backend: MockBackend())
+        let session = makeSession("remote-reconnect")
+        let multi = MultiDeviceModel(
+            local: local, remoteDeviceStore: RemoteDeviceStore(defaults: defaults))
+        multi.addSession(session)
+        multi.start()
+
+        await waitForReady(session.model)
+        #expect(session.model.connection == .ready)
+
+        // A stale `.ready` would make a dead-stream reconnect look successful,
+        // so force a distinct phase before restarting the same AppModel.
+        session.model.enqueue(.connection(.failed("sentinel")))
+        session.model.flushPendingEvents()
+        #expect(session.model.connection == .failed("sentinel"))
+
+        await multi.reconnect(id: session.id)
+        await waitForReady(session.model)
+        #expect(session.model.connection == .ready)
+
+        await multi.shutdown()
+    }
+
+    private func waitForReady(_ model: AppModel) async {
+        for _ in 0..<40 {
+            if model.connection == .ready { return }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
     }
 }

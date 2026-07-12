@@ -10,8 +10,8 @@ import T3Kit
 //
 // Isolation: this is an `actor`. All mutable projection state lives here; the
 // four composed pieces (ServerProcess/AuthClient/RpcConnection/T3Client) are
-// themselves Sendable actors. The `events` stream + its continuation are
-// nonisolated `let`s so AppModel can grab the stream synchronously.
+// themselves Sendable actors. The event stream is created inside the actor
+// once per AppModel lifecycle so a cancelled consumer cannot poison a restart.
 //
 // ── Lifecycle ────────────────────────────────────────────────────────────────
 //  start():   locate node -> build SidecarConfig (free port, default baseDir
@@ -87,8 +87,7 @@ public actor LiveBackend: BackendService {
 
     // MARK: BackendService event stream
 
-    public nonisolated let events: AsyncStream<BackendEvent>
-    private nonisolated let continuation: AsyncStream<BackendEvent>.Continuation
+    private var eventContinuation: AsyncStream<BackendEvent>.Continuation?
     public nonisolated let remoteDevice: RemoteDevice?
 
     // MARK: Composed transport
@@ -219,9 +218,6 @@ public actor LiveBackend: BackendService {
         } else {
             self.remoteDevice = nil
         }
-        let (stream, continuation) = AsyncStream<BackendEvent>.makeStream()
-        self.events = stream
-        self.continuation = continuation
     }
 
     public init(allowLanAccess: Bool = false, baseDirectory: String? = nil) {
@@ -230,21 +226,29 @@ public actor LiveBackend: BackendService {
             baseDirectory: baseDirectory)
     }
 
-    private static func remoteURLs(for device: RemoteDevice) -> (http: URL, ws: URL)? {
+    nonisolated static func remoteURLs(for device: RemoteDevice) -> (http: URL, ws: URL)? {
         guard (1...65_535).contains(device.port) else { return nil }
+        let scheme = device.scheme.lowercased()
+        guard scheme == "http" || scheme == "https" else { return nil }
         var http = URLComponents()
-        http.scheme = "http"
+        http.scheme = scheme
         http.host = device.host
         http.port = device.port
         guard let httpURL = http.url else { return nil }
 
         var ws = http
-        ws.scheme = "ws"
+        ws.scheme = scheme == "https" ? "wss" : "ws"
         guard let wsURL = ws.url else { return nil }
         return (httpURL, wsURL)
     }
 
     // MARK: - Lifecycle
+
+    public func events() -> AsyncStream<BackendEvent> {
+        let (stream, continuation) = AsyncStream<BackendEvent>.makeStream()
+        eventContinuation = continuation
+        return stream
+    }
 
     public func start() async {
         guard serverProcess == nil else { return }
@@ -348,9 +352,9 @@ public actor LiveBackend: BackendService {
 
         failAllSnapshotWaiters(error: LiveBackendError.notConnected)
         failAllRevertWaiters(error: LiveBackendError.notConnected)
-        // Keep the event stream open so AppModel can start this backend again
-        // after a sidebar reconnect. The app's final process teardown cancels
-        // the event task before it needs stream completion.
+        // Do not finish the stream: AppModel owns the consumer lifecycle and
+        // will request a fresh stream before the next start.
+        eventContinuation = nil
     }
 
     // MARK: - Sidecar state -> connection phase
@@ -2256,7 +2260,7 @@ public actor LiveBackend: BackendService {
                 handle.closeFile()
             }
         }
-        continuation.yield(event)
+        eventContinuation?.yield(event)
     }
 
     // MARK: - Wire -> UI mapping

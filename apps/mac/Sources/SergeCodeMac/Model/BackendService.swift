@@ -41,8 +41,10 @@ public enum BackendEvent: Sendable {
 }
 
 public protocol BackendService: Sendable {
-    /// Long-lived event stream; UI consumes exactly once from AppModel.
-    var events: AsyncStream<BackendEvent> { get }
+    /// Returns the event stream for one AppModel lifecycle. A fresh stream is
+    /// created for every start so stopping a consumer cannot poison a later
+    /// restart.
+    func events() async -> AsyncStream<BackendEvent>
 
     func start() async
     func stop() async

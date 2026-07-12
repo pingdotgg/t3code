@@ -3,8 +3,8 @@ import T3Kit
 
 // Deterministic-but-alive fake backend for UI work without the Node sidecar.
 // All mutable state lives behind an actor; the public API is the BackendService
-// protocol (Sendable, async). Events are pushed through an AsyncStream whose
-// continuation is stored on the actor so any method can emit.
+// protocol (Sendable, async). Events are pushed through a fresh AsyncStream
+// per AppModel lifecycle so restart tests behave like the live backend.
 
 private enum MockBackendError: Error, LocalizedError {
     case emptyLocation
@@ -21,16 +21,14 @@ private enum MockBackendError: Error, LocalizedError {
 }
 
 public final class MockBackend: BackendService, @unchecked Sendable {
-    public let events: AsyncStream<BackendEvent>
-    private let continuation: AsyncStream<BackendEvent>.Continuation
     private let state: MockState
 
     public init(seedVariant: String? = nil) {
-        let (stream, continuation) = AsyncStream<BackendEvent>.makeStream()
-        self.events = stream
-        self.continuation = continuation
-        self.state = MockState(
-            emit: { continuation.yield($0) }, seedVariant: seedVariant)
+        self.state = MockState(seedVariant: seedVariant)
+    }
+
+    public func events() async -> AsyncStream<BackendEvent> {
+        await state.events()
     }
 
     public func start() async {
@@ -278,9 +276,10 @@ public final class MockBackend: BackendService, @unchecked Sendable {
 // MARK: - Actor-isolated mutable state + demo data
 
 private actor MockState {
-    private let emit: @Sendable (BackendEvent) -> Void
     private let seedVariant: String?
     private let primaryThreadID: String
+
+    private var eventContinuation: AsyncStream<BackendEvent>.Continuation?
 
     private var projectsByID: [String: Project] = [:]
     private var threadsByID: [String: ChatThread] = [:]
@@ -300,11 +299,7 @@ private actor MockState {
     private var lifecycleTask: Task<Void, Never>?
     private var connectionWobbleTask: Task<Void, Never>?
 
-    init(
-        emit: @escaping @Sendable (BackendEvent) -> Void,
-        seedVariant: String?
-    ) {
-        self.emit = emit
+    init(seedVariant: String?) {
         let normalizedVariant = seedVariant?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.seedVariant = normalizedVariant?.isEmpty == false ? normalizedVariant : nil
         self.primaryThreadID = self.seedVariant.map {
@@ -337,12 +332,19 @@ private actor MockState {
 
     // MARK: Lifecycle
 
+    func events() -> AsyncStream<BackendEvent> {
+        let (stream, continuation) = AsyncStream<BackendEvent>.makeStream()
+        eventContinuation = continuation
+        return stream
+    }
+
     func stop() {
         started = false
         lifecycleTask?.cancel()
         lifecycleTask = nil
         connectionWobbleTask?.cancel()
         connectionWobbleTask = nil
+        eventContinuation = nil
     }
 
     func start() async {
@@ -378,6 +380,10 @@ private actor MockState {
         if seedVariant != nil {
             connectionWobbleTask = Task { await self.runConnectionWobble() }
         }
+    }
+
+    private func emit(_ event: BackendEvent) {
+        eventContinuation?.yield(event)
     }
 
     // MARK: Reads

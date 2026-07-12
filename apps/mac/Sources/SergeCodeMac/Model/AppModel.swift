@@ -125,6 +125,9 @@ public final class AppModel {
     /// the sidebar array is left alone so rows don't jump, but new-thread
     /// insertion still sorts against the real latest activity time.
     @ObservationIgnored private var effectiveUpdatedAt: [String: Date] = [:]
+    /// Direct lookup used by scenery resolution. Keys are local thread ids or
+    /// device-scoped remote thread ids, matching `scopedThreadKey(_:)`.
+    @ObservationIgnored private var projectPathByThreadKey: [String: String] = [:]
 
     public init(
         backend: any BackendService,
@@ -214,9 +217,9 @@ public final class AppModel {
 
     public func start() {
         guard eventTask == nil else { return }
-        let stream = backend.events
         let backend = backend
         eventTask = Task { [weak self] in
+            let stream = await backend.events()
             async let _ = backend.start()
             for await event in stream {
                 self?.enqueue(event)
@@ -386,6 +389,7 @@ public final class AppModel {
             }
         case .projectsChanged(let list):
             projects = list
+            rebuildProjectPathIndex()
         case .threadUpserted(let thread):
             // Update in place: `updatedAt` bumps on every activity while a
             // thread runs, so resorting here made sidebar rows jump around
@@ -419,6 +423,7 @@ public final class AppModel {
             if shouldSendQueuedMessage(previousStatus: previousStatus, newStatus: thread.status) {
                 dequeueNextQueuedMessageIfNeeded(threadID: thread.id)
             }
+            updateProjectPathIndex(for: thread)
         case .threadRemoved(let id):
             threads.removeAll { $0.id == id }
             // ThreadState owns the in-memory composer draft, so removing the
@@ -430,6 +435,7 @@ public final class AppModel {
             queuedMessagesByThread[id] = nil
             queuedSendInFlightThreadIDs.remove(id)
             queuedRetryTokensByThread[id] = nil
+            projectPathByThreadKey[scopedThreadKey(id)] = nil
             if composerPrefill?.threadID == id { composerPrefill = nil }
             TimelineDisplayCache.evict(threadID: scopedThreadKey(id))
             if selectedThreadID == id { selectedThreadID = nil }
@@ -543,6 +549,7 @@ public final class AppModel {
             let refreshedThreads = try await threads.sorted { $0.updatedAt > $1.updatedAt }
             self.projects = try await projects
             self.threads = refreshedThreads
+            rebuildProjectPathIndex()
             self.providers = try await providers
             self.models = try await models
             self.effectiveUpdatedAt.removeAll(keepingCapacity: true)
@@ -563,6 +570,27 @@ public final class AppModel {
         } catch {
             lastError = String(describing: error)
         }
+    }
+
+    /// Returns the project path for a scenery lookup key in O(1) time.
+    public func projectPath(forScopedThreadKey threadKey: String) -> String? {
+        projectPathByThreadKey[threadKey]
+    }
+
+    private func rebuildProjectPathIndex() {
+        let pathsByProjectID = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0.path) })
+        projectPathByThreadKey = Dictionary(
+            threads.compactMap { thread in
+                pathsByProjectID[thread.projectID].map {
+                    (scopedThreadKey(thread.id), $0)
+                }
+            },
+            uniquingKeysWith: { _, latest in latest })
+    }
+
+    private func updateProjectPathIndex(for thread: ChatThread) {
+        let key = scopedThreadKey(thread.id)
+        projectPathByThreadKey[key] = projects.first(where: { $0.id == thread.projectID })?.path
     }
 
     public func loadTimelineIfNeeded(threadID: String) async {
@@ -1003,7 +1031,6 @@ public final class AppModel {
         do {
             let thread = try await backend.createThread(
                 projectID: projectID, provider: provider, title: title)
-            selectedThreadID = thread.id
             return thread
         } catch {
             lastError = String(describing: error)
@@ -1221,6 +1248,7 @@ public final class AppModel {
             }
             threads.removeAll { $0.projectID == project.id }
             projects.removeAll { $0.id == project.id }
+            rebuildProjectPathIndex()
         } catch {
             lastError = String(describing: error)
         }

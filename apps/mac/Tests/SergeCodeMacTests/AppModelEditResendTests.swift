@@ -216,7 +216,7 @@ struct AppModelEditResendTests {
 /// revert (same event shape as LiveBackend/MockBackend), appends on send.
 @MainActor
 private final class RecordingBackend: BackendService, @unchecked Sendable {
-    let events: AsyncStream<BackendEvent>
+    let eventStream: AsyncStream<BackendEvent>
     private let continuation: AsyncStream<BackendEvent>.Continuation
 
     private(set) var revertCalls: [(threadID: String, turnCount: Int)] = []
@@ -235,7 +235,7 @@ private final class RecordingBackend: BackendService, @unchecked Sendable {
         extraThreads: [ChatThread] = []
     ) {
         let (stream, continuation) = AsyncStream<BackendEvent>.makeStream()
-        self.events = stream
+        self.eventStream = stream
         self.continuation = continuation
         self.timelines = [thread.id: initialTimeline]
         var threads = [thread.id: thread]
@@ -246,6 +246,7 @@ private final class RecordingBackend: BackendService, @unchecked Sendable {
         self.threads = threads
     }
 
+    func events() async -> AsyncStream<BackendEvent> { eventStream }
     func start() async {}
     func stop() async { continuation.finish() }
 

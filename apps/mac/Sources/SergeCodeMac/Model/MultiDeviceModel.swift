@@ -88,17 +88,6 @@ public final class MultiDeviceModel {
         }
     }
 
-    public func removeSession(id: DeviceID) async {
-        guard id != .local, let index = remoteSessions.firstIndex(where: { $0.id == id }) else {
-            return
-        }
-        if selection?.deviceID == id {
-            selection = nil
-        }
-        let session = remoteSessions.remove(at: index)
-        await session.model.shutdown()
-    }
-
     /// Restart one already-mounted backend session.
     public func reconnect(id: DeviceID) async {
         guard hasStarted, let session = remoteSessions.first(where: { $0.id == id }) else {

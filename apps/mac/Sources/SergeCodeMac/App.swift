@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 // App entry point. AppModel is a reference type (@Observable class), so a
@@ -21,7 +22,9 @@ struct SergeCodeApp: App {
         self.dictation = sharedDictation
         let localModel = AppModel(backend: SergeCodeApp.backend, dictation: sharedDictation)
         self.model = localModel
-        let multiModel = MultiDeviceModel(local: localModel)
+        let multiModel = MultiDeviceModel(
+            local: localModel,
+            remoteDeviceStore: Self.makeRemoteDeviceStore())
         if Self.shouldSeedMockRemote {
             let descriptor = RemoteDeviceDescriptor(
                 id: DeviceID(rawValue: "mock-mac-2"),
@@ -60,6 +63,14 @@ struct SergeCodeApp: App {
                 || ProcessInfo.processInfo.environment["SERGECODE_MOCK_REMOTE"] == "1")
     }
 
+    private static func makeRemoteDeviceStore() -> RemoteDeviceStore {
+        guard shouldUseMock else { return RemoteDeviceStore() }
+        let suiteName = "SergeCode.mock.remote-devices.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        return RemoteDeviceStore(defaults: defaults)
+    }
+
     // MockBackend when launched with `--mock`/`--mock-remote` or the matching
     // environment flags; otherwise the real sidecar-backed LiveBackend.
     private static func makeBackend() -> any BackendService {
@@ -90,14 +101,9 @@ struct SergeCodeApp: App {
                     // per-project prefs (Phase 1 multi-set).
                     scenery.projectPathForThread = { [multi] threadKey in
                         for model in multi.allModels {
-                            guard let thread = model.threads.first(where: {
-                                model.scopedThreadKey($0.id) == threadKey
-                            }),
-                                let project = model.projects.first(where: {
-                                    $0.id == thread.projectID
-                                })
-                            else { continue }
-                            return project.path
+                            if let path = model.projectPath(forScopedThreadKey: threadKey) {
+                                return path
+                            }
                         }
                         return nil
                     }

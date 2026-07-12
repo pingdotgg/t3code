@@ -70,6 +70,7 @@ private func waitForProject(
 }
 
 @Suite("LiveIntegrationTests")
+@MainActor
 struct LiveIntegrationTests {
     @Test(
         "pairs a local sidecar back into a remote LiveBackend",
@@ -81,7 +82,7 @@ struct LiveIntegrationTests {
         let projectPath = scratchRoot + "/project"
         let defaultsSuite = "sergecode-remote-pairing-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: defaultsSuite))
-        let deviceStore = RemoteDeviceStore(defaults: defaults)
+        let deviceStore = await RemoteDeviceStore(defaults: defaults)
         let keychain = InMemoryKeychainStore()
         let fileManager = FileManager.default
 
@@ -94,7 +95,7 @@ struct LiveIntegrationTests {
         let local = LiveBackend(
             allowLanAccess: true,
             baseDirectory: scratchRoot + "/local-home")
-        let localEvents = local.events
+        let localEvents = await local.events()
 
         do {
             // This is the same local-sidecar path used by the app. The LAN
@@ -115,12 +116,13 @@ struct LiveIntegrationTests {
                 deviceStore: deviceStore,
                 keychain: keychain)
             #expect(device.host == "127.0.0.1")
-            #expect(deviceStore.all().map(\.id) == [device.id])
+            let storedDeviceIDs = (await deviceStore.all()).map(\.id)
+            #expect(storedDeviceIDs == [device.id])
             #expect(try keychain.readToken(deviceID: device.id) != nil)
 
             let remote = LiveBackend(
                 mode: .remote(device: device, keychain: keychain))
-            let remoteEvents = remote.events
+            let remoteEvents = await remote.events()
             await remote.start()
             try await waitForReady(remoteEvents)
 

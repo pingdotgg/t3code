@@ -2,6 +2,7 @@ import Foundation
 import T3Kit
 
 public enum RemotePairing {
+    @MainActor
     public static func pair(
         pairingURL: String,
         deviceStore: RemoteDeviceStore = .init(),
@@ -23,7 +24,8 @@ public enum RemotePairing {
             host: host,
             port: port,
             pairedAt: Date(),
-            sessionExpiresAt: Date().addingTimeInterval(TimeInterval(redemption.expiresIn)))
+            sessionExpiresAt: Date().addingTimeInterval(TimeInterval(redemption.expiresIn)),
+            scheme: target.httpBaseURL.scheme ?? "http")
 
         try keychain.writeToken(
             redemption.accessToken,
@@ -33,6 +35,7 @@ public enum RemotePairing {
         return device
     }
 
+    @MainActor
     public static func unpair(
         id: String,
         deviceStore: RemoteDeviceStore = .init(),
