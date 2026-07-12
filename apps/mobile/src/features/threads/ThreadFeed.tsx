@@ -109,6 +109,7 @@ function formatMessageTime(input: string): string {
 export interface ThreadFeedProps {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
+  readonly modelDisplayNames: ReadonlyMap<string, string>;
   readonly workspaceRoot?: string | null;
   readonly feed: ReadonlyArray<ThreadFeedEntry>;
   readonly contentPresentation: ThreadContentPresentation;
@@ -685,7 +686,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
 
 function renderFeedEntry(
   info: { item: ThreadFeedEntry; index: number },
-  props: Pick<ThreadFeedProps, "environmentId" | "skills"> & {
+  props: Pick<ThreadFeedProps, "environmentId" | "modelDisplayNames" | "skills"> & {
     readonly copiedRowId: string | null;
     readonly expandedWorkRows: Record<string, boolean>;
     readonly terminalAssistantMessageIds: ReadonlySet<string>;
@@ -871,6 +872,7 @@ function renderFeedEntry(
     return (
       <SubagentTaskRow
         task={entry.task}
+        modelDisplayNames={props.modelDisplayNames}
         stopError={props.subagentStopErrors[entry.task.taskId] ?? null}
         stopping={props.stoppingSubagentTaskIds.has(entry.task.taskId)}
         onStopAgent={() => props.onStopSubagentTask(entry.task.taskId, entry.turnId)}
@@ -1257,6 +1259,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       reviewCommentColors,
       userBubbleColor,
       viewportWidth,
+      modelDisplayNames: props.modelDisplayNames,
       subagentStopErrors: subagentTaskState.stopErrors,
       stoppingSubagentTaskIds: subagentTaskState.stoppingTaskIds,
     }),
@@ -1268,6 +1271,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       reviewCommentColors,
       userBubbleColor,
       viewportWidth,
+      props.modelDisplayNames,
       subagentTaskState,
     ],
   );
@@ -1549,6 +1553,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     (info: { item: ThreadFeedEntry; index: number }) =>
       renderFeedEntry(info, {
         environmentId: props.environmentId,
+        modelDisplayNames: props.modelDisplayNames,
         copiedRowId,
         expandedWorkRows,
         terminalAssistantMessageIds,
@@ -1590,6 +1595,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       onToggleWorkGroup,
       onToggleWorkRow,
       props.environmentId,
+      props.modelDisplayNames,
       props.skills,
     ],
   );

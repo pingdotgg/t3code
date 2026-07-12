@@ -336,14 +336,6 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
           description: `Provider instance "${target.instanceId}" (${target.driver}) is not ready (status: ${target.status}, auth: ${target.auth.status}). Call agent_list to pick a spawnable provider.`,
         });
       }
-      const model = input.model ?? target.models[0]?.slug;
-      if (model === undefined) {
-        return yield* new SubAgentError({
-          reason: "model-not-resolved",
-          description: `Provider instance "${target.instanceId}" reports no models; pass an explicit model slug.`,
-        });
-      }
-
       const callerThread = yield* snapshotQuery
         .getThreadShellById(scope.threadId)
         .pipe(Effect.mapError(dispatchFailed("read calling thread")));
@@ -355,6 +347,18 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
         });
       }
       const parent = callerThread.value;
+      const inheritedModel =
+        parent.modelSelection.instanceId === target.instanceId &&
+        target.models.some((candidate) => candidate.slug === parent.modelSelection.model)
+          ? parent.modelSelection.model
+          : undefined;
+      const model = input.model ?? inheritedModel ?? target.models[0]?.slug;
+      if (model === undefined) {
+        return yield* new SubAgentError({
+          reason: "model-not-resolved",
+          description: `Provider instance "${target.instanceId}" reports no models; pass an explicit model slug.`,
+        });
+      }
 
       const createdAt = yield* nowIso;
       const commandUuid = yield* randomUuid;

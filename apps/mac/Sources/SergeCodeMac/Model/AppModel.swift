@@ -12,6 +12,8 @@ public final class AppModel {
     public private(set) var pinnedThreadIDs: Set<String>
     public private(set) var providers: [ProviderInstance] = []
     public private(set) var models: [ModelOption] = []
+    /// Server-catalog display names keyed by model slug for timeline badges.
+    public private(set) var modelDisplayNames: [String: String] = [:]
     /// Low-frequency usage-limit card actions — stays flat on AppModel (not ThreadState).
     public private(set) var usageLimitActions: [String: UsageLimitActionState] = [:]
     /// Per-task stop failures for subagent rows (`taskId` → message). Transient;
@@ -153,6 +155,15 @@ public final class AppModel {
 
     private func persistPinnedThreadIDs() {
         UserDefaults.standard.set(Array(pinnedThreadIDs), forKey: Self.pinnedThreadIDsKey)
+    }
+
+    private static func makeModelDisplayNames(from models: [ModelOption]) -> [String: String] {
+        models.reduce(into: [String: String]()) { displayNames, model in
+            let slug = model.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+            let displayName = model.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !slug.isEmpty, !displayName.isEmpty, displayNames[slug] == nil else { return }
+            displayNames[slug] = displayName
+        }
     }
 
     /// Lookup only — does not create a `ThreadState`.
@@ -559,7 +570,9 @@ public final class AppModel {
                 persistPinnedThreadIDs()
             }
             self.providers = try await providers
-            self.models = try await models
+            let refreshedModels = try await models
+            self.models = refreshedModels
+            self.modelDisplayNames = Self.makeModelDisplayNames(from: refreshedModels)
             self.effectiveUpdatedAt.removeAll(keepingCapacity: true)
             for thread in refreshedThreads
             where shouldSendQueuedMessage(
@@ -574,7 +587,9 @@ public final class AppModel {
 
     public func refreshModels() async {
         do {
-            models = try await backend.models()
+            let refreshedModels = try await backend.models()
+            models = refreshedModels
+            modelDisplayNames = Self.makeModelDisplayNames(from: refreshedModels)
         } catch {
             lastError = String(describing: error)
         }

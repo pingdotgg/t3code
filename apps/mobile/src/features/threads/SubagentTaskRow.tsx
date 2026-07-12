@@ -168,6 +168,7 @@ const RunningDurationLabel = memo(function RunningDurationLabel(props: {
 
 export const SubagentTaskRow = memo(function SubagentTaskRow(props: {
   readonly task: SubagentTaskItem;
+  readonly modelDisplayNames: ReadonlyMap<string, string>;
   readonly stopError: string | null;
   readonly stopping: boolean;
   readonly onStopAgent: () => void;
@@ -182,7 +183,7 @@ export const SubagentTaskRow = memo(function SubagentTaskRow(props: {
   const colors = useSubagentTaskColors();
   const canStop = (task.state === "running" || task.state === "paused") && !props.stopping;
 
-  const identityBadge = subagentTaskIdentityBadge(task);
+  const identityBadge = subagentTaskIdentityBadge(task, props.modelDisplayNames);
   const subtitle = subagentTaskSubtitle(task);
   const usageSummary = subagentTaskUsageSummary(task.usage);
   const durationMs = subagentTaskDurationMs(task);
