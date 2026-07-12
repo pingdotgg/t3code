@@ -14,10 +14,15 @@ swift build --package-path "$MAC_DIR" -c "$CONFIG"
 BIN="$MAC_DIR/.build/$CONFIG/SergeCodeMac"
 APP="$MAC_DIR/dist/SurgeCode.app"
 
+ICON="$MAC_DIR/Support/AppIcon.icns"
+if [[ "$CONFIG" == "debug" ]]; then
+  ICON="$MAC_DIR/Support/AppIcon-Dev.icns"
+fi
+
 rm -rf "$APP" "$MAC_DIR/dist/SergeCode.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$MAC_DIR/Support/Info.plist" "$APP/Contents/Info.plist"
-cp "$MAC_DIR/Support/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+cp "$ICON" "$APP/Contents/Resources/AppIcon.icns"
 cp "$BIN" "$APP/Contents/MacOS/SergeCodeMac"
 
 # Prefer the stable self-signed identity when present: TCC permissions

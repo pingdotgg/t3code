@@ -27,7 +27,7 @@ public struct SceneryPhoto: Codable, Hashable, Sendable, Identifiable {
 /// never embed the secret key in the app.
 public actor UnsplashClient {
     /// utm_source value Unsplash attribution links must carry.
-    public static let appName = "SergeCode"
+    public static let appName = "SurgeCode"
 
     private let accessKey: String
     private let session: URLSession
