@@ -1,96 +1,348 @@
 import Foundation
+import Markdown
 import SwiftUI
 
-// Markdown rendering for assistant messages. AttributedString(markdown:) has
-// no concept of fenced code blocks (it either fails to parse them or mangles
-// them), so we split the raw text into prose/code segments ourselves and only
-// hand the prose segments to AttributedString.
+// MARK: - Markdown intermediate representation
 
-enum MarkdownSegment: Identifiable {
-    case prose(String)
-    case code(language: String?, code: String)
-
-    var id: String {
-        switch self {
-        case .prose(let text): "prose-\(text.hashValue)"
-        case .code(let language, let code): "code-\(language ?? "")-\(code.hashValue)"
-        }
-    }
+/// The block-level representation used by both the chat renderer and the
+/// conversation-wide Select Text sheet. Code blocks remain blocks here rather
+/// than being split out before parsing, so an unterminated streaming fence is
+/// represented exactly like a completed fence.
+enum MarkdownBlock: Equatable {
+    case paragraph(AttributedString)
+    case heading(level: Int, text: AttributedString)
+    case bulletItem(indent: Int, text: AttributedString)
+    case orderedItem(indent: Int, number: String, text: AttributedString)
+    case taskItem(indent: Int, checked: Bool, text: AttributedString)
+    case quote([AttributedString])
+    case rule
+    case codeBlock(language: String?, code: String)
+    case table(MarkdownTable)
 }
 
-/// Splits `markdown` on ``` fences into alternating prose / code segments.
-/// Tolerates an unterminated trailing fence (the common case mid-stream while
-/// an assistant message is still arriving) by flushing whatever code has
-/// arrived so far.
-func parseMarkdownSegments(_ markdown: String) -> [MarkdownSegment] {
-    var segments: [MarkdownSegment] = []
-    var proseLines: [Substring] = []
-    var codeLines: [Substring] = []
-    var codeLanguage: String?
-    var inCode = false
+struct MarkdownTable: Equatable {
+    var columnAlignments: [TextAlignment?]
+    var header: [AttributedString]
+    var rows: [[AttributedString]]
+}
 
-    func flushProse() {
-        guard !proseLines.isEmpty else { return }
-        let text = proseLines.joined(separator: "\n")
-        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            segments.append(.prose(text))
-        }
-        proseLines.removeAll()
+struct ParsedMarkdownDocument {
+    let blocks: [MarkdownBlock]
+}
+
+/// Parse the complete Markdown document with swift-markdown/cmark-gfm.
+func parseMarkdownDocument(_ markdown: String) -> ParsedMarkdownDocument {
+    ParsedMarkdownDocument(blocks: MarkdownASTParser(markdown: markdown).parse())
+}
+
+/// Kept as the parser entry point used by older consumers. It now accepts a
+/// complete Markdown document, including fenced code blocks.
+func parseMarkdownBlocks(_ markdown: String) -> [MarkdownBlock] {
+    parseMarkdownDocument(markdown).blocks
+}
+
+private struct MarkdownASTParser {
+    let markdown: String
+
+    func parse() -> [MarkdownBlock] {
+        let document = Document(parsing: markdown)
+        return document.children.flatMap { parseBlock($0, listIndent: 0) }
     }
 
-    func flushCode() {
-        let code = codeLines.joined(separator: "\n")
-        segments.append(.code(language: codeLanguage, code: code))
-        codeLines.removeAll()
-        codeLanguage = nil
-    }
+    private func parseBlock(_ markup: Markup, listIndent: Int) -> [MarkdownBlock] {
+        switch markup {
+        case let paragraph as Markdown.Paragraph:
+            return [.paragraph(inlineAttributed(children: paragraph.children))]
 
-    for line in markdown.split(separator: "\n", omittingEmptySubsequences: false) {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        if trimmed.hasPrefix("```") {
-            if inCode {
-                flushCode()
-                inCode = false
-            } else {
-                flushProse()
-                let lang = trimmed.dropFirst(3).trimmingCharacters(in: .whitespaces)
-                codeLanguage = lang.isEmpty ? nil : lang
-                inCode = true
+        case let heading as Markdown.Heading:
+            return [
+                .heading(
+                    level: heading.level,
+                    text: inlineAttributed(children: heading.children))
+            ]
+
+        case let codeBlock as Markdown.CodeBlock:
+            return [
+                .codeBlock(language: codeBlock.language, code: normalizedCode(codeBlock.code))
+            ]
+
+        case is Markdown.ThematicBreak:
+            return [.rule]
+
+        case let blockQuote as Markdown.BlockQuote:
+            return [.quote(quoteParagraphs(in: blockQuote))]
+
+        case let unorderedList as Markdown.UnorderedList:
+            return parseUnorderedList(unorderedList, indent: listIndent)
+
+        case let orderedList as Markdown.OrderedList:
+            return parseOrderedList(orderedList, indent: listIndent)
+
+        case let table as Markdown.Table:
+            return [.table(parseTable(table))]
+
+        case let html as Markdown.HTMLBlock:
+            return [.paragraph(AttributedString(html.rawHTML))]
+
+        default:
+            // Unsupported block extensions are uncommon in assistant output.
+            // Preserve their literal text instead of dropping content.
+            if let text = (markup as? any PlainTextConvertibleMarkup)?.plainText,
+                !text.isEmpty
+            {
+                return [.paragraph(AttributedString(text))]
             }
-            continue
-        }
-        if inCode {
-            codeLines.append(line)
-        } else {
-            proseLines.append(line)
+            return []
         }
     }
 
-    if inCode {
-        flushCode()
-    } else {
-        flushProse()
+    private func parseUnorderedList(
+        _ list: Markdown.UnorderedList,
+        indent: Int
+    ) -> [MarkdownBlock] {
+        var blocks: [MarkdownBlock] = []
+        for item in list.listItems {
+            blocks.append(parseListItem(item, indent: indent, number: nil))
+            blocks.append(contentsOf: parseNestedLists(in: item, indent: indent + 1))
+        }
+        return blocks
     }
-    return segments
+
+    private func parseOrderedList(
+        _ list: Markdown.OrderedList,
+        indent: Int
+    ) -> [MarkdownBlock] {
+        var blocks: [MarkdownBlock] = []
+        for (index, item) in list.listItems.enumerated() {
+            let number = String(list.startIndex + UInt(index))
+            blocks.append(parseListItem(item, indent: indent, number: number))
+            blocks.append(contentsOf: parseNestedLists(in: item, indent: indent + 1))
+        }
+        return blocks
+    }
+
+    private func parseNestedLists(in item: Markdown.ListItem, indent: Int) -> [MarkdownBlock] {
+        var blocks: [MarkdownBlock] = []
+        for child in item.children {
+            if let unordered = child as? Markdown.UnorderedList {
+                blocks.append(contentsOf: parseUnorderedList(unordered, indent: indent))
+            } else if let ordered = child as? Markdown.OrderedList {
+                blocks.append(contentsOf: parseOrderedList(ordered, indent: indent))
+            }
+        }
+        return blocks
+    }
+
+    private func parseListItem(
+        _ item: Markdown.ListItem,
+        indent: Int,
+        number: String?
+    ) -> MarkdownBlock {
+        let text = listItemText(item)
+        if let checkbox = item.checkbox {
+            let checked: Bool
+            switch checkbox {
+            case .checked: checked = true
+            case .unchecked: checked = false
+            }
+            return .taskItem(indent: indent, checked: checked, text: text)
+        }
+        if let number {
+            return .orderedItem(indent: indent, number: number, text: text)
+        }
+        return .bulletItem(indent: indent, text: text)
+    }
+
+    private func listItemText(_ item: Markdown.ListItem) -> AttributedString {
+        var result = AttributedString()
+        var needsSeparator = false
+
+        for child in item.children {
+            let text: AttributedString?
+            switch child {
+            case let paragraph as Markdown.Paragraph:
+                text = inlineAttributed(children: paragraph.children)
+            case let heading as Markdown.Heading:
+                text = inlineAttributed(children: heading.children)
+            case let codeBlock as Markdown.CodeBlock:
+                text = attributedCode(codeBlock.code)
+            default:
+                text = nil
+            }
+
+            if let text {
+                if needsSeparator { result.append(AttributedString("\n")) }
+                result.append(text)
+                needsSeparator = true
+            }
+        }
+
+        return linkifyFilePaths(in: result)
+    }
+
+    private func quoteParagraphs(in blockQuote: Markdown.BlockQuote) -> [AttributedString] {
+        var paragraphs: [AttributedString] = []
+
+        func collect(_ markup: Markup) {
+            switch markup {
+            case let paragraph as Markdown.Paragraph:
+                paragraphs.append(inlineAttributed(children: paragraph.children))
+            case let heading as Markdown.Heading:
+                paragraphs.append(inlineAttributed(children: heading.children))
+            case let nestedQuote as Markdown.BlockQuote:
+                nestedQuote.children.forEach(collect)
+            case let unordered as Markdown.UnorderedList:
+                for item in unordered.listItems {
+                    paragraphs.append(listItemText(item))
+                }
+            case let ordered as Markdown.OrderedList:
+                for item in ordered.listItems {
+                    paragraphs.append(listItemText(item))
+                }
+            case let codeBlock as Markdown.CodeBlock:
+                paragraphs.append(attributedCode(codeBlock.code))
+            default:
+                if let text = (markup as? any PlainTextConvertibleMarkup)?.plainText,
+                    !text.isEmpty
+                {
+                    paragraphs.append(AttributedString(text))
+                }
+            }
+        }
+
+        blockQuote.children.forEach(collect)
+        return paragraphs
+    }
+
+    private func parseTable(_ table: Markdown.Table) -> MarkdownTable {
+        let columnCount = table.maxColumnCount
+        let alignments = table.columnAlignments.map { alignment -> TextAlignment? in
+            switch alignment {
+            case .left: return .leading
+            case .center: return .center
+            case .right: return .trailing
+            case .none: return nil
+            }
+        } + Array(repeating: nil, count: max(0, columnCount - table.columnAlignments.count))
+
+        func cells(in row: Markup) -> [AttributedString] {
+            var values = row.children.compactMap { child -> AttributedString? in
+                guard let cell = child as? Markdown.Table.Cell else { return nil }
+                return inlineAttributed(children: cell.children)
+            }
+            if values.count < columnCount {
+                values.append(contentsOf: Array(
+                    repeating: AttributedString(),
+                    count: columnCount - values.count))
+            }
+            return Array(values.prefix(columnCount))
+        }
+
+        let header = cells(in: table.head)
+        let rows = table.body.rows.map { cells(in: $0) }
+        return MarkdownTable(
+            columnAlignments: Array(alignments.prefix(columnCount)),
+            header: header,
+            rows: Array(rows))
+    }
+
+    private func normalizedCode(_ code: String) -> String {
+        // cmark-gfm includes the line ending that terminates a fenced code
+        // block. The old segment parser joined content lines without that
+        // delimiter, so preserve the renderer's established code value.
+        code.hasSuffix("\n") ? String(code.dropLast()) : code
+    }
 }
 
-/// Segment splits are immutable for a given markdown string, so results are
-/// cached across view rebuilds. Bounded: cleared wholesale past 64 entries
-/// rather than tracking LRU order (mirrors ToolDetailParseCache).
-@MainActor
-enum MarkdownSegmentCache {
-    private static var storage: [String: [MarkdownSegment]] = [:]
+// MARK: - Inline AST rendering
 
-    static func segments(for markdown: String) -> [MarkdownSegment] {
-        if let hit = storage[markdown] { return hit }
-        let value = parseMarkdownSegments(markdown)
-        if storage.count >= 64 { storage.removeAll(keepingCapacity: true) }
-        storage[markdown] = value
-        return value
+/// Compatibility helper for callers that need to render inline Markdown.
+/// Unlike the old implementation this never round-trips through
+/// `AttributedString(markdown:)`; it parses and walks swift-markdown nodes.
+func inlineAttributed(_ text: String) -> AttributedString {
+    guard !text.isEmpty else { return AttributedString() }
+    let document = Document(parsing: text)
+    guard let paragraph = document.children.compactMap({ $0 as? Markdown.Paragraph }).first,
+        document.childCount == 1
+    else {
+        return AttributedString(text)
+    }
+    return inlineAttributed(children: paragraph.children)
+}
+
+private func inlineAttributed(children: MarkupChildren) -> AttributedString {
+    var result = AttributedString()
+    for child in children {
+        result.append(inlineAttributed(markup: child))
+    }
+    return linkifyFilePaths(in: result)
+}
+
+private func inlineAttributed(markup: Markup) -> AttributedString {
+    switch markup {
+    case let text as Markdown.Text:
+        return AttributedString(text.string)
+
+    case let emphasis as Markdown.Emphasis:
+        var result = inlineAttributed(children: emphasis.children)
+        result.inlinePresentationIntent = .emphasized
+        return result
+
+    case let strong as Markdown.Strong:
+        var result = inlineAttributed(children: strong.children)
+        result.inlinePresentationIntent = .stronglyEmphasized
+        return result
+
+    case let inlineCode as Markdown.InlineCode:
+        var result = AttributedString(inlineCode.code)
+        result.inlinePresentationIntent = .code
+        result.font = .system(.body, design: .monospaced)
+        return result
+
+    case let link as Markdown.Link:
+        var result = inlineAttributed(children: link.children)
+        if let destination = link.destination, let url = URL(string: destination) {
+            result.link = url
+        }
+        return result
+
+    case let strikethrough as Markdown.Strikethrough:
+        var result = inlineAttributed(children: strikethrough.children)
+        result.strikethroughStyle = .single
+        return result
+
+    case is Markdown.SoftBreak:
+        return AttributedString(" ")
+
+    case is Markdown.LineBreak:
+        return AttributedString("\n")
+
+    case let html as Markdown.InlineHTML:
+        return AttributedString(html.rawHTML)
+
+    case let image as Markdown.Image:
+        return inlineAttributed(children: image.children)
+
+    case let custom as Markdown.CustomInline:
+        return AttributedString(custom.text)
+
+    case let symbolLink as Markdown.SymbolLink:
+        return AttributedString(symbolLink.destination ?? "")
+
+    case let attributes as Markdown.InlineAttributes:
+        return inlineAttributed(children: attributes.children)
+
+    default:
+        if let text = (markup as? any PlainTextConvertibleMarkup)?.plainText {
+            return AttributedString(text)
+        }
+        return AttributedString()
     }
 }
 
-/// Full-width assistant message body: parsed markdown segments plus a
+// MARK: - Assistant message view
+
+/// Full-width assistant message body: an AST-backed block list plus a
 /// streaming indicator. Content stays unframed and opaque for long-form
 /// reading; only the hover action chip floats above it.
 struct AssistantMarkdownView: View {
@@ -102,16 +354,16 @@ struct AssistantMarkdownView: View {
     let isStreaming: Bool
     let threadID: String
     let model: AppModel
-    // Parsed once per view value, not per body evaluation — body re-runs on
-    // every timeline mutation while this view's markdown is unchanged.
-    private let segments: [MarkdownSegment]
+    // Parsing belongs in init, not body: body is evaluated for every timeline
+    // mutation while the view value can remain otherwise unchanged.
+    private let blocks: [MarkdownBlock]
 
     init(markdown: String, isStreaming: Bool, threadID: String, model: AppModel) {
         self.markdown = markdown
         self.isStreaming = isStreaming
         self.threadID = threadID
         self.model = model
-        self.segments = MarkdownSegmentCache.segments(for: markdown)
+        self.blocks = parseMarkdownBlocks(markdown)
     }
 
     @UIState private var isHovering = false
@@ -119,13 +371,8 @@ struct AssistantMarkdownView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(segments) { segment in
-                switch segment {
-                case .prose(let text):
-                    MarkdownProseText(text)
-                case .code(let language, let code):
-                    MarkdownCodeBlock(language: language, code: code)
-                }
+            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+                markdownBlockView(block)
             }
             if isStreaming {
                 Image(systemName: "ellipsis")
@@ -173,153 +420,56 @@ struct AssistantMarkdownView: View {
             return .handled
         })
     }
-}
 
-// MARK: - Prose blocks
-
-// SwiftUI text selection is scoped to a single `Text` view. To make drag
-// selection work across a full prose run, prose is still parsed into block
-// pieces for styling, then stitched back into one `AttributedString`.
-
-enum MarkdownBlock: Equatable {
-    case paragraph(String)
-    case heading(level: Int, text: String)
-    case bulletItem(indent: Int, text: String)
-    case orderedItem(number: String, text: String)
-    case quote(String)
-    case rule
-}
-
-/// Splits one prose segment (no code fences) into block-level pieces.
-func parseMarkdownBlocks(_ prose: String) -> [MarkdownBlock] {
-    var blocks: [MarkdownBlock] = []
-    var paragraphLines: [String] = []
-
-    func flushParagraph() {
-        guard !paragraphLines.isEmpty else { return }
-        blocks.append(.paragraph(paragraphLines.joined(separator: "\n")))
-        paragraphLines.removeAll()
-    }
-
-    for rawLine in prose.split(separator: "\n", omittingEmptySubsequences: false) {
-        let line = String(rawLine)
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-
-        if trimmed.isEmpty {
-            flushParagraph()
-            continue
-        }
-        if let heading = headingBlock(trimmed) {
-            flushParagraph()
-            blocks.append(heading)
-            continue
-        }
-        if isRule(trimmed) {
-            flushParagraph()
-            blocks.append(.rule)
-            continue
-        }
-        if let item = bulletBlock(line: line, trimmed: trimmed) {
-            flushParagraph()
-            blocks.append(item)
-            continue
-        }
-        if let item = orderedBlock(trimmed) {
-            flushParagraph()
-            blocks.append(item)
-            continue
-        }
-        if trimmed.hasPrefix(">") {
-            flushParagraph()
-            let text = trimmed.dropFirst().trimmingCharacters(in: .whitespaces)
-            // Merge consecutive quote lines into one block.
-            if case .quote(let existing)? = blocks.last {
-                blocks[blocks.count - 1] = .quote(existing + "\n" + text)
-            } else {
-                blocks.append(.quote(text))
+    @ViewBuilder
+    private func markdownBlockView(_ block: MarkdownBlock) -> some View {
+        switch block {
+        case .paragraph(let text):
+            MarkdownProseText(attributed: text)
+        case .heading(let level, let text):
+            MarkdownProseText(attributed: styled(text, font: headingFont(level)))
+        case .bulletItem(let indent, let text):
+            MarkdownProseText(attributed: listAttributed(marker: "•", text: text, indent: indent))
+        case .orderedItem(let indent, let number, let text):
+            MarkdownProseText(
+                attributed: listAttributed(marker: "\(number).", text: text, indent: indent))
+        case .taskItem(let indent, let checked, let text):
+            MarkdownProseText(
+                attributed: listAttributed(
+                    marker: checked ? "☑" : "☐", text: text, indent: indent))
+        case .quote(let paragraphs):
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(Array(paragraphs.enumerated()), id: \.offset) { _, paragraph in
+                    MarkdownProseText(
+                        attributed: styled(
+                            inlineAttributed(quoteText(String(paragraph.characters))),
+                            foregroundColor: .secondary))
+                }
             }
-            continue
+        case .rule:
+            Divider().padding(.vertical, 2)
+        case .codeBlock(let language, let code):
+            MarkdownCodeBlock(language: language, code: code)
+        case .table(let table):
+            MarkdownTableView(table: table)
         }
-        // Continuation of a list item (indented follow-up line) folds into it.
-        if line.first?.isWhitespace == true {
-            switch blocks.last {
-            case .bulletItem(let indent, let text)? where paragraphLines.isEmpty:
-                blocks[blocks.count - 1] = .bulletItem(indent: indent, text: text + "\n" + trimmed)
-                continue
-            case .orderedItem(let number, let text)? where paragraphLines.isEmpty:
-                blocks[blocks.count - 1] = .orderedItem(number: number, text: text + "\n" + trimmed)
-                continue
-            default:
-                break
-            }
-        }
-        paragraphLines.append(trimmed)
     }
-    flushParagraph()
-    return blocks
-}
-
-private func headingBlock(_ trimmed: String) -> MarkdownBlock? {
-    guard trimmed.hasPrefix("#") else { return nil }
-    let hashes = trimmed.prefix(while: { $0 == "#" })
-    guard hashes.count <= 6 else { return nil }
-    let rest = trimmed.dropFirst(hashes.count)
-    guard rest.first == " " else { return nil }
-    return .heading(level: hashes.count, text: rest.trimmingCharacters(in: .whitespaces))
-}
-
-private func isRule(_ trimmed: String) -> Bool {
-    guard trimmed.count >= 3 else { return false }
-    return trimmed.allSatisfy { $0 == "-" } || trimmed.allSatisfy { $0 == "*" }
-        || trimmed.allSatisfy { $0 == "_" }
-}
-
-private func bulletBlock(line: String, trimmed: String) -> MarkdownBlock? {
-    for marker in ["- ", "* ", "+ "] where trimmed.hasPrefix(marker) {
-        let indent = line.prefix(while: \.isWhitespace).count >= 2 ? 1 : 0
-        return .bulletItem(
-            indent: indent, text: String(trimmed.dropFirst(marker.count)))
-    }
-    return nil
-}
-
-private func orderedBlock(_ trimmed: String) -> MarkdownBlock? {
-    let digits = trimmed.prefix(while: \.isNumber)
-    guard !digits.isEmpty, digits.count <= 3 else { return nil }
-    let rest = trimmed.dropFirst(digits.count)
-    guard rest.hasPrefix(". ") || rest.hasPrefix(") ") else { return nil }
-    return .orderedItem(number: String(digits), text: String(rest.dropFirst(2)))
-}
-
-/// Inline-only markdown (bold/italic/code/links), newlines preserved.
-func inlineAttributed(_ text: String) -> AttributedString {
-    let options = AttributedString.MarkdownParsingOptions(
-        allowsExtendedAttributes: true,
-        interpretedSyntax: .inlineOnlyPreservingWhitespace,
-        failurePolicy: .returnPartiallyParsedIfPossible
-    )
-    return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
 }
 
 private struct MarkdownProseText: View {
-    // Parsed once per view value, not per body evaluation — body re-runs on
-    // every timeline mutation while this view's `raw` is unchanged.
-    private let attributed: AttributedString
-
-    init(_ raw: String) {
-        self.attributed = linkifyFilePaths(
-            in: attributedMarkdownProse(parseMarkdownBlocks(raw)))
-    }
+    let attributed: AttributedString
 
     var body: some View {
-        Text(attributed)
+        Text(linkifyFilePaths(in: attributed))
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
-/// Stitches parsed prose blocks into one attributed string (multi-line
-/// selection within a prose run).
+// MARK: - Selectable transcript serialization
+
+/// Stitches parsed blocks into one attributed string for multi-line selection
+/// within a prose run and for the conversation-wide Select Text overlay.
 func attributedMarkdownProse(_ blocks: [MarkdownBlock]) -> AttributedString {
     var result = AttributedString()
 
@@ -330,68 +480,115 @@ func attributedMarkdownProse(_ blocks: [MarkdownBlock]) -> AttributedString {
         result.append(attributedBlock(block))
     }
 
-    return result
+    return linkifyFilePaths(in: result)
 }
 
-/// Full assistant markdown (prose + fenced code) as one attributed document
-/// for the conversation-wide Select Text overlay.
+/// Full assistant Markdown as one attributed document for the conversation-
+/// wide Select Text overlay. Tables use tab-separated rows.
 func attributedMarkdownDocument(_ markdown: String) -> AttributedString {
-    var result = AttributedString()
-    let segments = parseMarkdownSegments(markdown)
-    for (index, segment) in segments.enumerated() {
-        if index > 0 {
-            result.append(AttributedString("\n\n"))
-        }
-        switch segment {
-        case .prose(let text):
-            result.append(attributedMarkdownProse(parseMarkdownBlocks(text)))
-        case .code(_, let code):
-            var codeRun = AttributedString(code)
-            codeRun.font = .system(.body, design: .monospaced)
-            codeRun.backgroundColor = Color(nsColor: .textBackgroundColor)
-            result.append(codeRun)
-        }
-    }
-    return result
+    attributedMarkdownProse(parseMarkdownBlocks(markdown))
 }
 
 private func blockSeparator(after previous: MarkdownBlock, before next: MarkdownBlock) -> String {
     switch (previous, next) {
-    case (.bulletItem(_, _), .bulletItem(_, _)),
-         (.orderedItem(_, _), .orderedItem(_, _)),
-         (.quote(_), .quote(_)):
-        "\n"
+    case (.bulletItem, .bulletItem),
+         (.orderedItem, .orderedItem),
+         (.taskItem, .taskItem),
+         (.quote, .quote):
+        return "\n"
     default:
-        "\n\n"
+        return "\n\n"
     }
 }
 
 private func attributedBlock(_ block: MarkdownBlock) -> AttributedString {
     switch block {
     case .paragraph(let text):
-        inlineAttributed(text)
+        return text
     case .heading(let level, let text):
-        styled(inlineAttributed(text), font: headingFont(level))
+        return styled(text, font: headingFont(level))
     case .bulletItem(let indent, let text):
-        listAttributed(marker: "•", text: text, indent: indent)
-    case .orderedItem(let number, let text):
-        listAttributed(marker: "\(number).", text: text, indent: 0)
-    case .quote(let text):
-        styled(inlineAttributed(quoteText(text)), foregroundColor: .secondary)
+        return listAttributed(marker: "•", text: text, indent: indent)
+    case .orderedItem(let indent, let number, let text):
+        return listAttributed(marker: "\(number).", text: text, indent: indent)
+    case .taskItem(let indent, let checked, let text):
+        return listAttributed(marker: checked ? "☑" : "☐", text: text, indent: indent)
+    case .quote(let paragraphs):
+        let quote = paragraphs.map { "> \(String($0.characters))" }.joined(separator: "\n")
+        return styled(AttributedString(quote), foregroundColor: .secondary)
     case .rule:
-        styled(AttributedString(String(repeating: "-", count: 24)), foregroundColor: .secondary)
+        // Selection has no divider primitive, so use a neutral separator glyph
+        // while the chat renderer uses a real Divider view.
+        return styled(AttributedString(String(repeating: "─", count: 24)), foregroundColor: .secondary)
+    case .codeBlock(_, let code):
+        return attributedCode(code)
+    case .table(let table):
+        return attributedTable(table)
     }
 }
 
-private func listAttributed(marker: String, text: String, indent: Int) -> AttributedString {
+private func attributedTable(_ table: MarkdownTable) -> AttributedString {
+    var lines: [AttributedString] = []
+    lines.append(joinedTableCells(table.header))
+    lines.append(contentsOf: table.rows.map(joinedTableCells))
+
+    var result = AttributedString()
+    for (index, line) in lines.enumerated() {
+        if index > 0 { result.append(AttributedString("\n")) }
+        result.append(line)
+    }
+    return result
+}
+
+private func joinedTableCells(_ cells: [AttributedString]) -> AttributedString {
+    var result = AttributedString()
+    for (index, cell) in cells.enumerated() {
+        if index > 0 { result.append(AttributedString("\t")) }
+        result.append(cell)
+    }
+    return result
+}
+
+private func attributedCode(_ code: String) -> AttributedString {
+    var result = AttributedString(code)
+    result.font = .system(.body, design: .monospaced)
+    result.backgroundColor = Color(nsColor: .textBackgroundColor)
+    return result
+}
+
+private func listAttributed(marker: String, text: AttributedString, indent: Int) -> AttributedString {
     let indentPrefix = String(repeating: "  ", count: indent)
     let markerPrefix = "\(indentPrefix)\(marker) "
     let continuationPrefix = String(repeating: " ", count: markerPrefix.count)
-    let continuationAlignedText = text.replacingOccurrences(of: "\n", with: "\n\(continuationPrefix)")
+    let continuationAlignedText = hangingIndentedText(text, prefix: continuationPrefix)
 
     var attributed = styled(AttributedString(markerPrefix), foregroundColor: .secondary)
-    attributed.append(inlineAttributed(continuationAlignedText))
+    attributed.append(continuationAlignedText)
     return attributed
+}
+
+private func hangingIndentedText(_ text: AttributedString, prefix: String) -> AttributedString {
+    guard text.characters.contains("\n") else { return text }
+
+    let characters = text.characters
+    var result = AttributedString()
+    var segmentStart = characters.startIndex
+    var searchStart = characters.startIndex
+
+    while let newline = characters[searchStart...].firstIndex(of: "\n") {
+        let segmentEnd = characters.index(after: newline)
+        result.append(AttributedString(text[segmentStart..<segmentEnd]))
+        if segmentEnd < characters.endIndex {
+            result.append(AttributedString(prefix))
+        }
+        segmentStart = segmentEnd
+        searchStart = segmentEnd
+    }
+
+    if segmentStart < characters.endIndex {
+        result.append(AttributedString(text[segmentStart..<characters.endIndex]))
+    }
+    return result
 }
 
 private func quoteText(_ text: String) -> String {
@@ -423,6 +620,8 @@ private func headingFont(_ level: Int) -> Font {
     default: .subheadline.weight(.semibold)
     }
 }
+
+// MARK: - Basic code/table views (refined in the rendering commit)
 
 private struct MarkdownCodeBlock: View {
     let language: String?
@@ -456,5 +655,47 @@ private struct MarkdownCodeBlock: View {
         // text, so no glass/material here per Liquid Glass content rules.
         .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator, lineWidth: 1))
+    }
+}
+
+private struct MarkdownTableView: View {
+    let table: MarkdownTable
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 0) {
+                tableRow(table.header, isHeader: true)
+                Divider()
+                ForEach(Array(table.rows.enumerated()), id: \.offset) { _, row in
+                    tableRow(row, isHeader: false)
+                }
+            }
+            .padding(8)
+        }
+        .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator, lineWidth: 1))
+    }
+
+    private func tableRow(_ cells: [AttributedString], isHeader: Bool) -> some View {
+        HStack(alignment: .top, spacing: 0) {
+            ForEach(Array(cells.enumerated()), id: \.offset) { index, cell in
+                let columnAlignment = table.columnAlignments.indices.contains(index)
+                    ? table.columnAlignments[index] : nil
+                Text(cell)
+                    .font(isHeader ? .body.weight(.semibold) : .body)
+                    .multilineTextAlignment(columnAlignment ?? .leading)
+                    .frame(minWidth: 96, alignment: alignment(columnAlignment))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+            }
+        }
+    }
+
+    private func alignment(_ alignment: TextAlignment?) -> Alignment {
+        switch alignment {
+        case .center: return .center
+        case .trailing: return .trailing
+        default: return .leading
+        }
     }
 }
