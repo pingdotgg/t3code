@@ -284,26 +284,21 @@ public actor AuthClient {
     }
 
     private func perform(_ request: URLRequest) async throws -> Data {
-        let requestURL = request.url?.absoluteString ?? "<unknown>"
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await urlSession.data(for: request)
-        } catch {
-            throw T3Error.auth("HTTP request to \(requestURL) failed: \(error)")
-        }
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw T3Error.auth("Non-HTTP response from \(requestURL)")
-        }
-        guard (200..<300).contains(httpResponse.statusCode) else {
-            let bodyText = String(data: data, encoding: .utf8) ?? "<non-utf8 body>"
-            if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
-                throw T3Error.unauthorized(
-                    "HTTP \(httpResponse.statusCode) from \(requestURL): \(bodyText)")
-            }
-            throw T3Error.auth("HTTP \(httpResponse.statusCode) from \(requestURL): \(bodyText)")
-        }
-        return data
+        try await HTTPClient.perform(
+            request,
+            urlSession: urlSession,
+            mapTransportError: { endpoint, detail in
+                T3Error.auth("HTTP request to \(endpoint) failed: \(detail)")
+            },
+            mapNonHTTPResponse: { endpoint in
+                T3Error.auth("Non-HTTP response from \(endpoint)")
+            },
+            mapHTTPStatus: { endpoint, statusCode, body in
+                if statusCode == 401 || statusCode == 403 {
+                    return T3Error.unauthorized(
+                        "HTTP \(statusCode) from \(endpoint): \(body)")
+                }
+                return T3Error.auth("HTTP \(statusCode) from \(endpoint): \(body)")
+            })
     }
 }

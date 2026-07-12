@@ -850,34 +850,3 @@ private struct ConnectionSettingsTab: View {
         .task(id: model.connection) { lanReachable = await model.isServerLanReachable() }
     }
 }
-
-extension ConnectionPhase {
-    var statusText: String {
-        switch self {
-        case .launchingServer: "Launching Server…"
-        case .connecting: "Connecting…"
-        case .ready: "Connected"
-        case .reconnecting(let attempt): "Reconnecting (attempt \(attempt))…"
-        case .unauthorized: "Re-pairing required"
-        case .failed(let message): "Failed: \(message)"
-        }
-    }
-
-    var symbolName: String {
-        switch self {
-        case .launchingServer, .connecting, .reconnecting: "arrow.triangle.2.circlepath"
-        case .ready: "checkmark.circle.fill"
-        case .unauthorized: "key.slash"
-        case .failed: "exclamationmark.triangle.fill"
-        }
-    }
-
-    var statusColor: Color {
-        switch self {
-        case .launchingServer, .connecting, .reconnecting: .secondary
-        case .ready: .green
-        case .unauthorized: .orange
-        case .failed: .red
-        }
-    }
-}

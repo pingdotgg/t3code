@@ -104,3 +104,43 @@ struct PairingTargetTests {
         }
     }
 }
+
+private final class FailingPairingURLProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        client?.urlProtocol(
+            self,
+            didFailWithError: URLError(.cannotConnectToHost))
+    }
+
+    override func stopLoading() {}
+}
+
+@Suite("PairingClient HTTP errors")
+struct PairingClientHTTPErrorTests {
+    @Test("surfaces transport failures as network errors")
+    func networkFailure() async {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [FailingPairingURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+
+        do {
+            _ = try await PairingClient.fetchDescriptor(
+                httpBaseURL: URL(string: "http://remote.invalid")!,
+                urlSession: session)
+            Issue.record("expected a network error")
+        } catch let error as PairingClientError {
+            guard case .network(let endpoint, let detail) = error else {
+                Issue.record("expected network, got \(error)")
+                return
+            }
+            #expect(endpoint.contains("remote.invalid"))
+            #expect(detail.contains("NSURLErrorDomain"))
+        } catch {
+            Issue.record("expected PairingClientError, got \(error)")
+        }
+    }
+}

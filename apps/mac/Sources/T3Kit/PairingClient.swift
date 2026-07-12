@@ -6,6 +6,7 @@ public enum PairingClientError: Error, LocalizedError, Sendable {
     case missingToken(host: String)
     case httpStatus(endpoint: String, statusCode: Int, body: String)
     case nonHTTPResponse(endpoint: String)
+    case network(endpoint: String, detail: String)
     case decoding(endpoint: String, detail: String)
 
     public var errorDescription: String? {
@@ -20,6 +21,8 @@ public enum PairingClientError: Error, LocalizedError, Sendable {
             return "HTTP \(statusCode) from \(endpoint): \(body)"
         case .nonHTTPResponse(let endpoint):
             return "Non-HTTP response from \(endpoint)."
+        case .network(let endpoint, let detail):
+            return "Could not reach \(endpoint): \(detail)"
         case .decoding(let endpoint, let detail):
             return "Failed to decode \(endpoint) response: \(detail)"
         }
@@ -201,25 +204,19 @@ public enum PairingClient {
         _ request: URLRequest,
         urlSession: URLSession
     ) async throws -> Data {
-        let endpoint = request.url?.absoluteString ?? "<unknown>"
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await urlSession.data(for: request)
-        } catch {
-            throw PairingClientError.decoding(endpoint: endpoint, detail: String(describing: error))
-        }
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw PairingClientError.nonHTTPResponse(endpoint: endpoint)
-        }
-        guard (200..<300).contains(httpResponse.statusCode) else {
-            throw PairingClientError.httpStatus(
-                endpoint: endpoint,
-                statusCode: httpResponse.statusCode,
-                body: String(data: data, encoding: .utf8) ?? "<non-utf8 body>")
-        }
-        return data
+        try await HTTPClient.perform(
+            request,
+            urlSession: urlSession,
+            mapTransportError: { endpoint, detail in
+                PairingClientError.network(endpoint: endpoint, detail: detail)
+            },
+            mapNonHTTPResponse: { endpoint in
+                PairingClientError.nonHTTPResponse(endpoint: endpoint)
+            },
+            mapHTTPStatus: { endpoint, statusCode, body in
+                PairingClientError.httpStatus(
+                    endpoint: endpoint, statusCode: statusCode, body: body)
+            })
     }
 
     private static func decode<Value: Decodable>(

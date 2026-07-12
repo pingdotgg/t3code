@@ -34,36 +34,19 @@ struct ConnectionStatusPill: View {
         .padding(.horizontal, 4)
         .fixedSize()
         .animation(Motion.ambient, value: phase)
-        .onAppear { isPulsing = isSettling && !Motion.reduceMotion }
-        .onChange(of: isSettling) { _, settling in
+        .onAppear { isPulsing = phase.isSettling && !Motion.reduceMotion }
+        .onChange(of: phase.isSettling) { _, settling in
             isPulsing = settling && !Motion.reduceMotion
         }
     }
 
-    private var isSettling: Bool {
-        switch phase {
-        case .launchingServer, .connecting, .reconnecting: true
-        case .ready, .unauthorized, .failed: false
-        }
-    }
-
     private var label: String {
-        switch phase {
-        case .launchingServer: "Launching…"
-        case .connecting: "Connecting…"
-        case .ready: "Connected"
-        case .reconnecting(let attempt): "Reconnecting (\(attempt))…"
-        case .unauthorized: "Re-pairing required"
-        case .failed(let message): "Error: \(message)"
-        }
+        phase.statusText
     }
 
     private var tint: Color {
-        switch phase {
-        case .ready: .green
-        case .launchingServer, .connecting, .reconnecting: .yellow
-        case .unauthorized: .orange
-        case .failed: .red
-        }
+        // The toolbar intentionally uses a yellow heartbeat for in-flight
+        // work; the canonical settling color remains `.secondary` elsewhere.
+        phase.isSettling ? .yellow : phase.statusColor
     }
 }

@@ -273,7 +273,7 @@ private struct DeviceStatusDot: View {
 
     var body: some View {
         ZStack {
-            if isConnecting {
+            if phase.isSettling {
                 Circle()
                     .stroke(Color.secondary, lineWidth: 1.2)
                     .opacity(pulseOpacity)
@@ -285,20 +285,11 @@ private struct DeviceStatusDot: View {
                 .overlay(Circle().strokeBorder(.background, lineWidth: 1.5))
         }
         .frame(width: 11, height: 11)
-        .accessibilityLabel(accessibilityLabel)
+        .accessibilityLabel(phase.accessibilityLabel)
         .animation(Motion.ambient, value: phase)
         .onAppear { updatePulse(for: phase) }
         .onChange(of: phase) { _, newPhase in
             updatePulse(for: newPhase)
-        }
-    }
-
-    private var isConnecting: Bool {
-        switch phase {
-        case .launchingServer, .connecting, .reconnecting:
-            return true
-        default:
-            return false
         }
     }
 
@@ -311,42 +302,11 @@ private struct DeviceStatusDot: View {
     }
 
     private var statusTint: Color {
-        switch phase {
-        case .ready:
-            return .green
-        case .failed:
-            return .red
-        case .unauthorized:
-            return .orange
-        default:
-            return .secondary
-        }
-    }
-
-    private var accessibilityLabel: String {
-        switch phase {
-        case .ready:
-            return "Ready"
-        case .failed:
-            return "Connection failed"
-        case .unauthorized:
-            return "Re-pairing required"
-        case .launchingServer, .connecting, .reconnecting:
-            return "Connecting"
-        @unknown default:
-            return "Not ready"
-        }
+        phase.statusColor
     }
 
     private func updatePulse(for phase: ConnectionPhase) {
-        let connecting: Bool
-        switch phase {
-        case .launchingServer, .connecting, .reconnecting:
-            connecting = true
-        default:
-            connecting = false
-        }
-        guard connecting, !Motion.reduceMotion else {
+        guard phase.isSettling, !Motion.reduceMotion else {
             withAnimation(Motion.ambient) {
                 isPulseExpanded = false
             }
