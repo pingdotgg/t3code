@@ -232,9 +232,8 @@ private struct MarkdownASTParser {
         default:
             // Unsupported block extensions are uncommon in assistant output.
             // Preserve their literal text instead of dropping content.
-            if let text = (markup as? any PlainTextConvertibleMarkup)?.plainText,
-                !text.isEmpty
-            {
+            let text = plainTextFallback(for: markup)
+            if !text.isEmpty {
                 return [.paragraph(linkifiedPlainText(text))]
             }
             return []
@@ -247,8 +246,7 @@ private struct MarkdownASTParser {
     ) -> [MarkdownBlock] {
         var blocks: [MarkdownBlock] = []
         for item in list.listItems {
-            blocks.append(parseListItem(item, indent: indent, number: nil))
-            blocks.append(contentsOf: parseNestedLists(in: item, indent: indent + 1))
+            blocks.append(contentsOf: parseListItem(item, indent: indent, number: nil))
         }
         return blocks
     }
@@ -260,20 +258,7 @@ private struct MarkdownASTParser {
         var blocks: [MarkdownBlock] = []
         for (index, item) in list.listItems.enumerated() {
             let number = String(list.startIndex + UInt(index))
-            blocks.append(parseListItem(item, indent: indent, number: number))
-            blocks.append(contentsOf: parseNestedLists(in: item, indent: indent + 1))
-        }
-        return blocks
-    }
-
-    private func parseNestedLists(in item: Markdown.ListItem, indent: Int) -> [MarkdownBlock] {
-        var blocks: [MarkdownBlock] = []
-        for child in item.children {
-            if let unordered = child as? Markdown.UnorderedList {
-                blocks.append(contentsOf: parseUnorderedList(unordered, indent: indent))
-            } else if let ordered = child as? Markdown.OrderedList {
-                blocks.append(contentsOf: parseOrderedList(ordered, indent: indent))
-            }
+            blocks.append(contentsOf: parseListItem(item, indent: indent, number: number))
         }
         return blocks
     }
@@ -282,20 +267,43 @@ private struct MarkdownASTParser {
         _ item: Markdown.ListItem,
         indent: Int,
         number: String?
-    ) -> MarkdownBlock {
+    ) -> [MarkdownBlock] {
         let text = listItemText(item)
+        let itemBlock: MarkdownBlock
         if let checkbox = item.checkbox {
             let checked: Bool
             switch checkbox {
             case .checked: checked = true
             case .unchecked: checked = false
             }
-            return .taskItem(indent: indent, checked: checked, text: text)
+            itemBlock = .taskItem(indent: indent, checked: checked, text: text)
+        } else if let number {
+            itemBlock = .orderedItem(indent: indent, number: number, text: text)
+        } else {
+            itemBlock = .bulletItem(indent: indent, text: text)
         }
-        if let number {
-            return .orderedItem(indent: indent, number: number, text: text)
+
+        return [itemBlock] + parseListItemChildren(in: item, indent: indent + 1)
+    }
+
+    /// Emits every child after the leading inline run in its original source
+    /// order. A list item can contain any block-level Markdown node, not only
+    /// nested lists, so using one post-pass for lists loses both order and
+    /// unsupported content.
+    private func parseListItemChildren(in item: Markdown.ListItem, indent: Int) -> [MarkdownBlock] {
+        var blocks: [MarkdownBlock] = []
+        var isLeadingInlineRun = true
+        for child in item.children {
+            if isLeadingInlineRun, inlineListItemText(for: child) != nil {
+                continue
+            }
+            isLeadingInlineRun = false
+
+            // parseBlock preserves code, quote, paragraph, list, and heading
+            // nodes, and its default case retains plain-text fallbacks.
+            blocks.append(contentsOf: parseBlock(child, listIndent: indent))
         }
-        return .bulletItem(indent: indent, text: text)
+        return blocks
     }
 
     private func listItemText(_ item: Markdown.ListItem) -> AttributedString {
@@ -303,60 +311,165 @@ private struct MarkdownASTParser {
         var needsSeparator = false
 
         for child in item.children {
-            let text: AttributedString?
-            switch child {
-            case let paragraph as Markdown.Paragraph:
-                text = inlineAttributed(children: paragraph.children)
-            case let heading as Markdown.Heading:
-                text = inlineAttributed(children: heading.children)
-            case let codeBlock as Markdown.CodeBlock:
-                text = attributedCode(codeBlock.code)
-            default:
-                text = nil
-            }
-
-            if let text {
-                if needsSeparator { result.append(AttributedString("\n")) }
-                result.append(text)
-                needsSeparator = true
-            }
+            guard let text = inlineListItemText(for: child) else { break }
+            if needsSeparator { result.append(AttributedString("\n")) }
+            result.append(text)
+            needsSeparator = true
         }
 
         return result
     }
 
+    private func inlineListItemText(for child: Markup) -> AttributedString? {
+        switch child {
+        case let paragraph as Markdown.Paragraph:
+            return inlineAttributed(children: paragraph.children)
+        case let heading as Markdown.Heading:
+            return inlineAttributed(children: heading.children)
+        default:
+            return nil
+        }
+    }
+
     private func quoteParagraphs(in blockQuote: Markdown.BlockQuote) -> [AttributedString] {
         var paragraphs: [AttributedString] = []
+        for child in blockQuote.children {
+            paragraphs.append(contentsOf: quoteParagraphs(for: child, listIndent: 0))
+        }
+        return paragraphs
+    }
 
-        func collect(_ markup: Markup) {
-            switch markup {
-            case let paragraph as Markdown.Paragraph:
-                paragraphs.append(inlineAttributed(children: paragraph.children))
-            case let heading as Markdown.Heading:
-                paragraphs.append(inlineAttributed(children: heading.children))
-            case let nestedQuote as Markdown.BlockQuote:
-                nestedQuote.children.forEach(collect)
-            case let unordered as Markdown.UnorderedList:
-                for item in unordered.listItems {
-                    paragraphs.append(listItemText(item))
-                }
-            case let ordered as Markdown.OrderedList:
-                for item in ordered.listItems {
-                    paragraphs.append(listItemText(item))
-                }
-            case let codeBlock as Markdown.CodeBlock:
-                paragraphs.append(attributedCode(codeBlock.code))
-            default:
-                if let text = (markup as? any PlainTextConvertibleMarkup)?.plainText,
-                    !text.isEmpty
-                {
-                    paragraphs.append(linkifiedPlainText(text))
-                }
+    private func quoteParagraphs(for markup: Markup, listIndent: Int) -> [AttributedString] {
+        switch markup {
+        case let paragraph as Markdown.Paragraph:
+            return [inlineAttributed(children: paragraph.children)]
+        case let heading as Markdown.Heading:
+            return [inlineAttributed(children: heading.children)]
+        case let nestedQuote as Markdown.BlockQuote:
+            var paragraphs: [AttributedString] = []
+            for child in nestedQuote.children {
+                paragraphs.append(contentsOf: quoteParagraphs(for: child, listIndent: listIndent))
+            }
+            return paragraphs
+        case let unordered as Markdown.UnorderedList:
+            return quoteListParagraphs(in: unordered, indent: listIndent)
+        case let ordered as Markdown.OrderedList:
+            return quoteListParagraphs(in: ordered, indent: listIndent)
+        case let codeBlock as Markdown.CodeBlock:
+            return [attributedCode(codeBlock.code)]
+        default:
+            let text = plainTextFallback(for: markup)
+            if !text.isEmpty {
+                return [linkifiedPlainText(text)]
+            }
+            return []
+        }
+    }
+
+    /// Keep text from block extensions that do not conform to
+    /// PlainTextConvertibleMarkup (for example, custom containers). Known
+    /// block kinds are handled above; this is only the lossless fallback for
+    /// nodes the renderer does not otherwise understand.
+    private func plainTextFallback(for markup: Markup) -> String {
+        if let plainText = (markup as? any PlainTextConvertibleMarkup)?.plainText,
+            !plainText.isEmpty
+        {
+            return plainText
+        }
+
+        return markup.children
+            .map { plainTextFallback(for: $0) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+    }
+
+    private func quoteListParagraphs(
+        in list: Markdown.UnorderedList,
+        indent: Int
+    ) -> [AttributedString] {
+        var paragraphs: [AttributedString] = []
+        for item in list.listItems {
+            let markerAndText = quotedListItemMarkerAndText(item, defaultMarker: "•")
+            paragraphs.append(
+                quotedListItem(
+                    text: markerAndText.text, marker: markerAndText.marker, indent: indent))
+            paragraphs.append(contentsOf: quoteListItemChildren(in: item, indent: indent + 1))
+        }
+        return paragraphs
+    }
+
+    private func quoteListParagraphs(
+        in list: Markdown.OrderedList,
+        indent: Int
+    ) -> [AttributedString] {
+        var paragraphs: [AttributedString] = []
+        for (index, item) in list.listItems.enumerated() {
+            let markerAndText = quotedListItemMarkerAndText(
+                item, defaultMarker: "\(list.startIndex + UInt(index)).")
+            paragraphs.append(
+                quotedListItem(
+                    text: markerAndText.text, marker: markerAndText.marker, indent: indent))
+            paragraphs.append(contentsOf: quoteListItemChildren(in: item, indent: indent + 1))
+        }
+        return paragraphs
+    }
+
+    private func quoteListItemChildren(
+        in item: Markdown.ListItem,
+        indent: Int
+    ) -> [AttributedString] {
+        var paragraphs: [AttributedString] = []
+        var isLeadingInlineRun = true
+        for child in item.children {
+            if isLeadingInlineRun, inlineListItemText(for: child) != nil {
+                continue
+            }
+            isLeadingInlineRun = false
+            paragraphs.append(contentsOf: quoteParagraphs(for: child, listIndent: indent))
+        }
+        return paragraphs
+    }
+
+    private func quotedListItem(
+        text: AttributedString,
+        marker: String,
+        indent: Int
+    ) -> AttributedString {
+        let prefix = String(repeating: "  ", count: indent) + "\(marker) "
+        var result = styled(AttributedString(prefix), foregroundColor: .secondary)
+        result.append(text)
+        return result
+    }
+
+    private func quotedListItemMarkerAndText(
+        _ item: Markdown.ListItem,
+        defaultMarker: String
+    ) -> (marker: String, text: AttributedString) {
+        let text = listItemText(item)
+        if let checkbox = item.checkbox {
+            switch checkbox {
+            case .checked: return ("☑", text)
+            case .unchecked: return ("☐", text)
             }
         }
 
-        blockQuote.children.forEach(collect)
-        return paragraphs
+        // cmark-gfm can leave a task marker literal when the task list is
+        // nested inside a block quote. Keep quote serialization faithful to
+        // the source even when the AST did not populate ListItem.checkbox.
+        let plainText = String(text.characters)
+        let literalMarker = String(plainText.prefix(4))
+        let marker: String
+        switch literalMarker {
+        case "[x] ", "[X] ": marker = "☑"
+        case "[ ] ": marker = "☐"
+        default: return (defaultMarker, text)
+        }
+
+        let characters = text.characters
+        let contentStart = characters.index(characters.startIndex, offsetBy: 4)
+        var content = AttributedString()
+        content.append(text[contentStart..<characters.endIndex])
+        return (marker, content)
     }
 
     private func parseTable(_ table: Markdown.Table) -> MarkdownTable {

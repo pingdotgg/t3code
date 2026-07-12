@@ -63,6 +63,83 @@ struct MarkdownContentTests {
         #expect(items.map(\.1) == ["level one", "level two", "level three"])
     }
 
+    @Test("preserves list-item child order around nested blocks")
+    func listItemChildOrder() throws {
+        let blocks = parseMarkdownBlocks(
+            """
+            - parent
+
+              - nested
+
+              trailing paragraph
+            """)
+
+        guard blocks.count == 3,
+            case .bulletItem(indent: 0, text: let parent) = blocks[0],
+            case .bulletItem(indent: 1, text: let nested) = blocks[1],
+            case .paragraph(let trailing) = blocks[2]
+        else {
+            Issue.record("expected parent item, nested item, then trailing paragraph")
+            return
+        }
+        #expect(text(parent) == "parent")
+        #expect(text(nested) == "nested")
+        #expect(text(trailing) == "trailing paragraph")
+    }
+
+    @Test("keeps a block quote and nested list inside a list item")
+    func listItemBlockQuote() throws {
+        let blocks = parseMarkdownBlocks(
+            """
+            - parent
+
+                > quoted
+                >
+                > - nested
+            """)
+
+        guard blocks.count == 2,
+            case .quote(let paragraphs) = blocks[1]
+        else {
+            Issue.record("expected a quote block after the parent item")
+            return
+        }
+        #expect(paragraphs.map(text) == ["quoted", "• nested"])
+    }
+
+    @Test("keeps code blocks and trailing paragraphs after the list item")
+    func listItemCodeBlockOrder() throws {
+        let blocks = parseMarkdownBlocks(
+            "- parent\n\n    ```swift\n    let answer = 42\n    ```\n\n    trailing paragraph")
+
+        guard blocks.count == 3,
+            case .bulletItem(indent: 0, text: let parent) = blocks[0],
+            case .codeBlock(language: "swift", code: "let answer = 42") = blocks[1],
+            case .paragraph(let trailing) = blocks[2]
+        else {
+            Issue.record("expected parent item, code block, then trailing paragraph")
+            return
+        }
+        #expect(text(parent) == "parent")
+        #expect(text(trailing) == "trailing paragraph")
+    }
+
+    @Test("keeps unsupported block text after the list item")
+    func listItemUnsupportedBlockOrder() throws {
+        let blocks = parseMarkdownBlocks(
+            "- parent\n\n    <div>\n    preserved child\n    </div>")
+
+        guard blocks.count == 2,
+            case .bulletItem(indent: 0, text: let parent) = blocks[0],
+            case .paragraph(let fallback) = blocks[1]
+        else {
+            Issue.record("expected unsupported block text after the parent item")
+            return
+        }
+        #expect(text(parent) == "parent")
+        #expect(text(fallback).contains("preserved child"))
+    }
+
     @Test("renders strikethrough as an attributed run")
     func strikethrough() throws {
         let blocks = parseMarkdownBlocks("this is ~~obsolete~~ text")
@@ -131,6 +208,39 @@ struct MarkdownContentTests {
         #expect(paragraphs.map(text) == ["first paragraph", "second paragraph"])
     }
 
+    @Test("preserves list markers and task glyphs inside block quotes")
+    func quotedListMarkers() throws {
+        let unordered = parseMarkdownBlocks("> - one\n> - two")
+        let ordered = parseMarkdownBlocks("> 1. a\n> 2. b")
+        let task = parseMarkdownBlocks("> - [ ] pending\n> - [x] done")
+
+        guard case .quote(let unorderedParagraphs) = try #require(unordered.first),
+            case .quote(let orderedParagraphs) = try #require(ordered.first),
+            case .quote(let taskParagraphs) = try #require(task.first)
+        else {
+            Issue.record("expected quote blocks for list marker fixtures")
+            return
+        }
+        #expect(unorderedParagraphs.map(text) == ["• one", "• two"])
+        #expect(orderedParagraphs.map(text) == ["1. a", "2. b"])
+        #expect(taskParagraphs.map(text) == ["☐ pending", "☑ done"])
+        #expect(unorderedParagraphs.first?.runs.first?.foregroundColor != nil)
+    }
+
+    @Test("indents nested quote lists and preserves list source order")
+    func quotedNestedListStructure() throws {
+        let blocks = parseMarkdownBlocks(
+            "> - outer\n>   - inner\n>     1. deep\n> - final")
+
+        guard case .quote(let paragraphs) = try #require(blocks.first) else {
+            Issue.record("expected a quote block for nested list fixture")
+            return
+        }
+        #expect(paragraphs.map(text) == [
+            "• outer", "  • inner", "    1. deep", "• final",
+        ])
+    }
+
     @Test("parses heading levels one through six")
     func headingLevels() {
         let markdown = (1...6).map { level in
@@ -177,14 +287,32 @@ struct MarkdownContentTests {
             ---
             """)
 
-        #expect(blocks.contains { if case .heading = $0 { return true }; return false })
-        #expect(blocks.contains { if case .paragraph = $0 { return true }; return false })
-        #expect(blocks.contains { if case .quote = $0 { return true }; return false })
-        #expect(blocks.contains { if case .taskItem = $0 { return true }; return false })
-        #expect(blocks.contains { if case .bulletItem = $0 { return true }; return false })
-        #expect(blocks.contains { if case .table = $0 { return true }; return false })
-        #expect(blocks.contains { if case .codeBlock = $0 { return true }; return false })
-        #expect(blocks.contains { if case .rule = $0 { return true }; return false })
+        enum Kind: Equatable {
+            case heading
+            case paragraph
+            case quote
+            case taskItem
+            case bulletItem
+            case table
+            case codeBlock
+            case rule
+        }
+        let kinds = blocks.map { block -> Kind in
+            switch block {
+            case .heading: return .heading
+            case .paragraph: return .paragraph
+            case .quote: return .quote
+            case .taskItem: return .taskItem
+            case .bulletItem: return .bulletItem
+            case .table: return .table
+            case .codeBlock: return .codeBlock
+            case .rule: return .rule
+            case .orderedItem: Issue.record("unexpected ordered item"); return .paragraph
+            }
+        }
+        #expect(kinds == [
+            .heading, .paragraph, .quote, .taskItem, .bulletItem, .table, .codeBlock, .rule,
+        ])
     }
 
     @Test("serializes table rows with tabs for Select Text")
