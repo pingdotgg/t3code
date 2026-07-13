@@ -44,6 +44,8 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
+import { ProviderService } from "../../../provider/Services/ProviderService.ts";
+import { readTurnStallThresholdMs } from "../../../provider/turnReliabilityConfig.ts";
 import type { McpInvocationScope } from "../../McpInvocationContext.ts";
 
 const WAIT_POLL_INTERVAL_MILLIS = 500;
@@ -161,11 +163,28 @@ const turnStatus = (thread: OrchestrationThread, sinceIso: string): SubAgentStat
 
 const isTerminalStatus = (status: SubAgentStatus): boolean => status !== "running";
 
+const lastActivityAt = (thread: OrchestrationThread): string | undefined => {
+  const timestamps = [
+    thread.session?.updatedAt,
+    thread.latestTurn?.startedAt ?? undefined,
+    thread.latestTurn?.requestedAt,
+    ...thread.messages.map((message) => message.updatedAt),
+    ...thread.activities
+      .filter((activity) => activity.kind !== "session.health")
+      .map((activity) => activity.createdAt),
+  ].filter((value): value is string => value !== undefined);
+  return timestamps.reduce<string | undefined>(
+    (latest, value) => (latest === undefined || value > latest ? value : latest),
+    undefined,
+  );
+};
+
 const makeSubAgentCoordinator = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const engine = yield* OrchestrationEngineService;
   const snapshotQuery = yield* ProjectionSnapshotQuery;
   const providerRegistry = yield* ProviderRegistry;
+  const providerService = yield* ProviderService;
   const children = yield* SynchronizedRef.make<ReadonlyMap<ThreadId, SubAgentRecord>>(new Map());
 
   const randomUuid = crypto.randomUUIDv4.pipe(Effect.orDie);
@@ -471,14 +490,33 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
         }
         if (isTerminalStatus(status)) {
           // First observation of terminal for this turn — return the result.
+          const activityAt = lastActivityAt(thread) ?? fresh.lastTurnRequestedAt;
           return {
             threadId: input.threadId,
             status,
             finalText: finalAssistantText(thread),
+            lastActivityAt: activityAt,
+            stalled: false,
           };
         }
         if ((yield* Clock.currentTimeMillis) >= deadline) {
-          return { threadId: input.threadId, status: "running" as const, finalText: null };
+          const trackedActivity = providerService.getSessionActivity
+            ? yield* providerService.getSessionActivity(input.threadId)
+            : undefined;
+          const activityAt =
+            trackedActivity?.lastActivityAt ?? lastActivityAt(thread) ?? fresh.lastTurnRequestedAt;
+          const activityAtMs = Date.parse(activityAt);
+          const now = yield* Clock.currentTimeMillis;
+          const thresholdMs = readTurnStallThresholdMs();
+          return {
+            threadId: input.threadId,
+            status: "running" as const,
+            finalText: null,
+            lastActivityAt: activityAt,
+            stalled:
+              trackedActivity?.stalled ??
+              (thresholdMs > 0 && !Number.isNaN(activityAtMs) && now - activityAtMs >= thresholdMs),
+          };
         }
         yield* Effect.sleep(Duration.millis(WAIT_POLL_INTERVAL_MILLIS));
       }
