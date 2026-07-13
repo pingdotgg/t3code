@@ -15,6 +15,11 @@ export interface KittyTransmitOptions {
   readonly y: number;
   readonly imageWidth: number;
   readonly imageHeight: number;
+  /** Pixel rectangle from the source image to display. Defaults to the full image. */
+  readonly sourceX?: number;
+  readonly sourceY?: number;
+  readonly sourceWidth?: number;
+  readonly sourceHeight?: number;
   readonly columns: number;
   readonly rows: number;
   readonly data: Uint8Array;
@@ -23,6 +28,12 @@ export interface KittyTransmitOptions {
 function assertPositiveInteger(value: number, name: string): void {
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new RangeError(`${name} must be a positive safe integer`);
+  }
+}
+
+function assertNonNegativeInteger(value: number, name: string): void {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new RangeError(`${name} must be a non-negative safe integer`);
   }
 }
 
@@ -61,10 +72,21 @@ export function encodeKittyTransmit(
   transport: KittyProtocolTransport = "direct",
 ): string {
   const { imageId, x, y, imageWidth, imageHeight, columns, rows, data } = options;
+  const sourceX = options.sourceX ?? 0;
+  const sourceY = options.sourceY ?? 0;
+  const sourceWidth = options.sourceWidth ?? imageWidth;
+  const sourceHeight = options.sourceHeight ?? imageHeight;
   assertPositiveInteger(imageId, "imageId");
   assertPositiveInteger(columns, "columns");
   assertPositiveInteger(rows, "rows");
   assertRgbaImage(data, imageWidth, imageHeight);
+  assertNonNegativeInteger(sourceX, "sourceX");
+  assertNonNegativeInteger(sourceY, "sourceY");
+  assertPositiveInteger(sourceWidth, "sourceWidth");
+  assertPositiveInteger(sourceHeight, "sourceHeight");
+  if (sourceX + sourceWidth > imageWidth || sourceY + sourceHeight > imageHeight) {
+    throw new RangeError("source rectangle must fit inside the image");
+  }
 
   const encoded = NodeBuffer.Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString(
     "base64",
@@ -85,7 +107,7 @@ export function encodeKittyTransmit(
         const more = index === chunks.length - 1 ? 0 : 1;
         if (index === 0) {
           return encodeKittyCommand(
-            `${ESC}_Ga=T,f=32,s=${imageWidth},v=${imageHeight},c=${columns},r=${rows},i=${imageId},m=${more},q=2;${chunk}${ST}`,
+            `${ESC}_Ga=T,f=32,s=${imageWidth},v=${imageHeight},x=${sourceX},y=${sourceY},w=${sourceWidth},h=${sourceHeight},c=${columns},r=${rows},C=1,i=${imageId},m=${more},q=2;${chunk}${ST}`,
             transport,
           );
         }

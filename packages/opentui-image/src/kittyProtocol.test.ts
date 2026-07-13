@@ -22,8 +22,27 @@ describe("Kitty graphics protocol", () => {
     });
 
     expect(output).toStartWith("\x1b[4;3H");
-    expect(output).toContain("a=T,f=32,s=1,v=1,c=4,r=2,i=7,m=0,q=2;");
+    expect(output).toContain("a=T,f=32,s=1,v=1,x=0,y=0,w=1,h=1,c=4,r=2,C=1,i=7,m=0,q=2;");
     expect(output).toContain("/wCA/w==");
+  });
+
+  it("keeps the terminal cursor fixed when placing an image", () => {
+    const output = encodeKittyTransmit({
+      imageId: 8,
+      x: 0,
+      y: 0,
+      imageWidth: 2,
+      imageHeight: 2,
+      sourceX: 0,
+      sourceY: 1,
+      sourceWidth: 2,
+      sourceHeight: 1,
+      columns: 2,
+      rows: 1,
+      data: new Uint8Array(2 * 2 * 4),
+    });
+
+    expect(output).toContain("x=0,y=1,w=2,h=1,c=2,r=1,C=1");
   });
 
   it("chunks large payloads below the terminal control-sequence limit", () => {

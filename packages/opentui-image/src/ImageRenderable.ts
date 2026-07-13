@@ -125,15 +125,21 @@ export class ImageRenderable extends Renderable {
 
   protected override renderSelf(_buffer: OptimizedBuffer, _deltaTime: number): void {
     assertRgbaImage(this.#data, this.#imageWidth, this.#imageHeight);
+    const visible = this.#visibleImageRect();
+    if (!visible) return;
     this.#manager.submit({
       key: this.num,
       revision: this.#revision,
-      x: Math.max(0, this.screenX),
-      y: Math.max(0, this.screenY),
+      x: visible.x,
+      y: visible.y,
       imageWidth: this.#imageWidth,
       imageHeight: this.#imageHeight,
-      columns: this.width,
-      rows: this.height,
+      sourceX: visible.sourceX,
+      sourceY: visible.sourceY,
+      sourceWidth: visible.sourceWidth,
+      sourceHeight: visible.sourceHeight,
+      columns: visible.columns,
+      rows: visible.rows,
       data: this.#data,
     });
   }
@@ -155,6 +161,84 @@ export class ImageRenderable extends Renderable {
     this.width = size.columns;
     this.height = size.rows;
   }
+
+  /**
+   * Kitty placements are external to OpenTUI's cell buffer, so they do not
+   * inherit its scissor stack. Recreate the effective ancestor clip and map the
+   * visible cell rectangle back to source pixels before submitting a placement.
+   */
+  #visibleImageRect(): VisibleImageRect | null {
+    const imageRect = {
+      x: this.screenX,
+      y: this.screenY,
+      width: this.width,
+      height: this.height,
+    };
+    let clip: CellRect | null = {
+      x: 0,
+      y: 0,
+      width: this.#renderer.width,
+      height: this.#renderer.height,
+    };
+    for (let ancestor = this.parent; ancestor && clip; ancestor = ancestor.parent) {
+      if (ancestor.overflow === "visible") continue;
+      clip = intersectCellRects(clip, {
+        x: ancestor.screenX,
+        y: ancestor.screenY,
+        width: ancestor.width,
+        height: ancestor.height,
+      });
+    }
+    const visible = clip ? intersectCellRects(imageRect, clip) : null;
+    if (!visible) return null;
+
+    const leftCells = visible.x - imageRect.x;
+    const topCells = visible.y - imageRect.y;
+    const rightCells = leftCells + visible.width;
+    const bottomCells = topCells + visible.height;
+    const sourceX = Math.floor((leftCells / imageRect.width) * this.#imageWidth);
+    const sourceY = Math.floor((topCells / imageRect.height) * this.#imageHeight);
+    const sourceRight = Math.ceil((rightCells / imageRect.width) * this.#imageWidth);
+    const sourceBottom = Math.ceil((bottomCells / imageRect.height) * this.#imageHeight);
+
+    return {
+      x: visible.x,
+      y: visible.y,
+      columns: visible.width,
+      rows: visible.height,
+      sourceX,
+      sourceY,
+      sourceWidth: Math.max(1, sourceRight - sourceX),
+      sourceHeight: Math.max(1, sourceBottom - sourceY),
+    };
+  }
+}
+
+interface CellRect {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+interface VisibleImageRect {
+  readonly x: number;
+  readonly y: number;
+  readonly columns: number;
+  readonly rows: number;
+  readonly sourceX: number;
+  readonly sourceY: number;
+  readonly sourceWidth: number;
+  readonly sourceHeight: number;
+}
+
+function intersectCellRects(left: CellRect, right: CellRect): CellRect | null {
+  const x = Math.max(left.x, right.x);
+  const y = Math.max(left.y, right.y);
+  const rightEdge = Math.min(left.x + left.width, right.x + right.width);
+  const bottomEdge = Math.min(left.y + left.height, right.y + right.height);
+  if (rightEdge <= x || bottomEdge <= y) return null;
+  return { x, y, width: rightEdge - x, height: bottomEdge - y };
 }
 
 interface CellSizeOptions {

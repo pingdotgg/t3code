@@ -1,3 +1,4 @@
+import { BoxRenderable, ScrollBoxRenderable } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import { describe, expect, it } from "bun:test";
 
@@ -71,6 +72,78 @@ describe("ImageRenderable", () => {
     expect(image.width).toBe(10);
     expect(image.height).toBe(5);
     image.destroy();
+    t.renderer.destroy();
+  });
+
+  it("removes an image after its containing row scrolls outside the clipped viewport", async () => {
+    const t = await createTestRenderer({ width: 20, height: 8 });
+    const writes: string[] = [];
+    installKittyImageExtension(t.renderer, {
+      capability: "always",
+      writer: { write: (value) => writes.push(value) },
+    });
+    const scrollbox = new ScrollBoxRenderable(t.renderer, { width: 10, height: 2 });
+    const row = new BoxRenderable(t.renderer, {
+      width: 10,
+      height: 6,
+      flexShrink: 0,
+      flexDirection: "column",
+    });
+    row.add(
+      new ImageRenderable(t.renderer, {
+        data: new Uint8Array(2 * 2 * 4),
+        imageWidth: 2,
+        imageHeight: 2,
+        columns: 2,
+        rows: 2,
+      }),
+    );
+    scrollbox.add(row);
+    t.renderer.root.add(scrollbox);
+
+    await t.renderOnce();
+    expect(writes.join("")).toContain("a=T");
+
+    scrollbox.scrollTo(4);
+    await t.renderOnce();
+
+    expect(writes.at(-1)).toContain("a=d");
+    expect(writes.at(-1)).not.toContain("a=T");
+    t.renderer.destroy();
+  });
+
+  it("crops a partially visible image to the scroll viewport", async () => {
+    const t = await createTestRenderer({ width: 20, height: 8 });
+    const writes: string[] = [];
+    installKittyImageExtension(t.renderer, {
+      capability: "always",
+      writer: { write: (value) => writes.push(value) },
+    });
+    const scrollbox = new ScrollBoxRenderable(t.renderer, { width: 10, height: 1 });
+    const row = new BoxRenderable(t.renderer, {
+      width: 10,
+      height: 3,
+      flexShrink: 0,
+      flexDirection: "column",
+    });
+    row.add(
+      new ImageRenderable(t.renderer, {
+        data: new Uint8Array(2 * 2 * 4),
+        imageWidth: 2,
+        imageHeight: 2,
+        columns: 2,
+        rows: 2,
+      }),
+    );
+    scrollbox.add(row);
+    t.renderer.root.add(scrollbox);
+    await t.renderOnce();
+    writes.length = 0;
+    scrollbox.scrollTo(1);
+
+    await t.renderOnce();
+
+    expect(writes.join("")).toContain("x=0,y=1,w=2,h=1,c=2,r=1,C=1");
     t.renderer.destroy();
   });
 });

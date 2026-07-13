@@ -18,6 +18,10 @@ export interface KittyImagePatch {
   readonly y: number;
   readonly imageWidth: number;
   readonly imageHeight: number;
+  readonly sourceX: number;
+  readonly sourceY: number;
+  readonly sourceWidth: number;
+  readonly sourceHeight: number;
   readonly columns: number;
   readonly rows: number;
   readonly data: Uint8Array;
@@ -200,6 +204,10 @@ function samePatch(active: ActivePatch, pending: KittyImagePatch): boolean {
     active.y === pending.y &&
     active.imageWidth === pending.imageWidth &&
     active.imageHeight === pending.imageHeight &&
+    active.sourceX === pending.sourceX &&
+    active.sourceY === pending.sourceY &&
+    active.sourceWidth === pending.sourceWidth &&
+    active.sourceHeight === pending.sourceHeight &&
     active.columns === pending.columns &&
     active.rows === pending.rows
   );
