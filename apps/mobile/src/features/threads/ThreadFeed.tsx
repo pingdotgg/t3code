@@ -51,6 +51,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { type SharedValue } from "react-native-reanimated";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
+import type { ThreadHealth } from "../../lib/threadHealth";
 import {
   hasNativeSelectableMarkdownText,
   SelectableMarkdownText,
@@ -110,6 +111,7 @@ export interface ThreadFeedProps {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly modelDisplayNames: ReadonlyMap<string, string>;
+  readonly threadHealth: ThreadHealth | null;
   readonly workspaceRoot?: string | null;
   readonly feed: ReadonlyArray<ThreadFeedEntry>;
   readonly contentPresentation: ThreadContentPresentation;
@@ -686,7 +688,10 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
 
 function renderFeedEntry(
   info: { item: ThreadFeedEntry; index: number },
-  props: Pick<ThreadFeedProps, "environmentId" | "modelDisplayNames" | "skills"> & {
+  props: Pick<
+    ThreadFeedProps,
+    "environmentId" | "modelDisplayNames" | "skills" | "threadHealth"
+  > & {
     readonly copiedRowId: string | null;
     readonly expandedWorkRows: Record<string, boolean>;
     readonly terminalAssistantMessageIds: ReadonlySet<string>;
@@ -872,6 +877,7 @@ function renderFeedEntry(
     return (
       <SubagentTaskRow
         task={entry.task}
+        threadHealth={props.threadHealth}
         modelDisplayNames={props.modelDisplayNames}
         stopError={props.subagentStopErrors[entry.task.taskId] ?? null}
         stopping={props.stoppingSubagentTaskIds.has(entry.task.taskId)}
@@ -1260,6 +1266,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       userBubbleColor,
       viewportWidth,
       modelDisplayNames: props.modelDisplayNames,
+      threadHealth: props.threadHealth,
       subagentStopErrors: subagentTaskState.stopErrors,
       stoppingSubagentTaskIds: subagentTaskState.stoppingTaskIds,
     }),
@@ -1272,6 +1279,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       userBubbleColor,
       viewportWidth,
       props.modelDisplayNames,
+      props.threadHealth,
       subagentTaskState,
     ],
   );
@@ -1554,6 +1562,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       renderFeedEntry(info, {
         environmentId: props.environmentId,
         modelDisplayNames: props.modelDisplayNames,
+        threadHealth: props.threadHealth,
         copiedRowId,
         expandedWorkRows,
         terminalAssistantMessageIds,
@@ -1596,6 +1605,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       onToggleWorkRow,
       props.environmentId,
       props.modelDisplayNames,
+      props.threadHealth,
       props.skills,
     ],
   );

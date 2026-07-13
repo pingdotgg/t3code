@@ -47,6 +47,11 @@ export const SUBAGENT_TASK_MAX_VISIBLE_LOG_ENTRIES = 30;
 /** No progress for this long marks a running task as stalled. */
 export const SUBAGENT_TASK_STALLED_THRESHOLD_MS = 3 * 60 * 1000;
 
+export interface SubagentTaskThreadHealth {
+  readonly stalled: boolean;
+  readonly lastActivityAt: Date;
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" ? (value as Record<string, unknown>) : null;
 }
@@ -478,8 +483,19 @@ export function subagentTaskLastActivityLabel(task: SubagentTaskItem, nowMs: num
   return `last activity ${Math.floor(minutes / 60)}h ago`;
 }
 
-export function isSubagentTaskStalled(task: SubagentTaskItem, nowMs: number): boolean {
+export function isSubagentTaskStalled(
+  task: SubagentTaskItem,
+  nowMs: number,
+  threadHealth: SubagentTaskThreadHealth | null = null,
+): boolean {
   if (task.state !== "running") return false;
+  if (threadHealth?.stalled) return true;
+  if (
+    threadHealth &&
+    nowMs - threadHealth.lastActivityAt.getTime() <= SUBAGENT_TASK_STALLED_THRESHOLD_MS
+  ) {
+    return false;
+  }
   return nowMs - Date.parse(task.lastActivityAt) > SUBAGENT_TASK_STALLED_THRESHOLD_MS;
 }
 

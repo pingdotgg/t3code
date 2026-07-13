@@ -19,6 +19,7 @@ import { SceneryImage } from "../scenery/SceneryImage";
 import { useSceneryPhoto, useThreadDisplayNames } from "../scenery/use-scenery";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useThreadPr } from "../../state/use-thread-pr";
+import { useThreadHealth } from "../../state/use-thread-health";
 import type { HomeGroupDisplayAction } from "../home/homeListItems";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { resolveThreadStatus } from "./threadPresentation";
@@ -431,12 +432,17 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   // when the thread has no resolvable scene, so the row renders exactly as
   // before (title only).
   const names = useThreadDisplayNames(threadKey, thread.title);
+  const health = useThreadHealth({ environmentId: thread.environmentId, threadId: thread.id });
+  const status = resolveThreadStatus(thread, health);
   // Mirrors what the row actually renders (scene name, plus the
   // server-generated description once titled), not the raw thread.title the
   // row no longer displays on its own.
-  const rowAccessibilityLabel =
-    names.description !== null ? `${names.primary}, ${names.description}` : names.primary;
-  const status = resolveThreadStatus(thread);
+  const rowAccessibilityLabel = [
+    names.description !== null ? `${names.primary}, ${names.description}` : names.primary,
+    status?.kind === "stalled" ? "Stalled — no recent activity" : null,
+  ]
+    .filter((part): part is string => part !== null)
+    .join(", ");
   const pr = useThreadPr(thread, props.projectCwd);
   const timestamp = relativeTime(
     thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
@@ -475,6 +481,9 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
 
   const statusPill = effectiveStatus ? (
     <View
+      accessibilityLabel={
+        effectiveStatus.kind === "stalled" ? "Stalled — no recent activity" : undefined
+      }
       className={effectiveStatus.pillClassName}
       style={{ borderRadius: 99, paddingHorizontal: 6, paddingVertical: 2 }}
     >

@@ -269,6 +269,29 @@ describe("buildThreadFeed", () => {
     expect(activityGroups).toHaveLength(0);
   });
 
+  it("keeps session health out of the generic work log", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-health"),
+      projectId: ProjectId.make("project-1"),
+      title: "Health projection",
+      activities: [
+        makeActivity({
+          id: EventId.make("health-stalled"),
+          kind: "session.health",
+          tone: "error",
+          summary: "Session stalled",
+          createdAt: "2026-04-01T00:03:00.000Z",
+          payload: {
+            state: "stalled",
+            lastActivityAt: "2026-04-01T00:00:00.000Z",
+          },
+        }),
+      ],
+    });
+
+    expect(buildThreadFeed(thread)).toEqual([]);
+  });
+
   it("folds settled turn work while leaving the terminal answer visible", () => {
     const turnId = TurnId.make("turn-1");
     const thread = makeThread({

@@ -15,6 +15,7 @@ import {
 import { AppText as Text } from "../../components/AppText";
 import { StatusPill } from "../../components/StatusPill";
 import { cn } from "../../lib/cn";
+import { threadHealthStalledForLabel, type ThreadHealth } from "../../lib/threadHealth";
 import { useThemeColor } from "../../lib/useThemeColor";
 import {
   SUBAGENT_TASK_MAX_VISIBLE_LOG_ENTRIES,
@@ -168,6 +169,7 @@ const RunningDurationLabel = memo(function RunningDurationLabel(props: {
 
 export const SubagentTaskRow = memo(function SubagentTaskRow(props: {
   readonly task: SubagentTaskItem;
+  readonly threadHealth: ThreadHealth | null;
   readonly modelDisplayNames: ReadonlyMap<string, string>;
   readonly stopError: string | null;
   readonly stopping: boolean;
@@ -177,7 +179,11 @@ export const SubagentTaskRow = memo(function SubagentTaskRow(props: {
   const [expanded, setExpanded] = useState(false);
   const isRunning = task.state === "running";
   const nowMs = useLiveNow(isRunning);
-  const stalled = isSubagentTaskStalled(task, nowMs);
+  const stalled = isSubagentTaskStalled(task, nowMs, props.threadHealth);
+  const stalledForLabel =
+    stalled && props.threadHealth?.stalled
+      ? threadHealthStalledForLabel(props.threadHealth, nowMs)
+      : null;
   const canExpand = hasSubagentTaskExpandableContent(task);
   const reduceMotion = useReduceMotionEnabled();
   const colors = useSubagentTaskColors();
@@ -206,7 +212,11 @@ export const SubagentTaskRow = memo(function SubagentTaskRow(props: {
     >
       <Pressable
         accessibilityRole={canExpand ? "button" : undefined}
-        accessibilityLabel={subagentTaskTitle(task)}
+        accessibilityLabel={
+          stalled
+            ? `${subagentTaskTitle(task)}, stalled — no recent activity`
+            : subagentTaskTitle(task)
+        }
         accessibilityState={canExpand ? { expanded } : undefined}
         disabled={!canExpand}
         hitSlop={4}
@@ -297,7 +307,7 @@ export const SubagentTaskRow = memo(function SubagentTaskRow(props: {
                       stalled ? "text-amber-600 dark:text-amber-400" : "text-foreground-tertiary",
                     )}
                   >
-                    {subagentTaskLastActivityLabel(task, nowMs)}
+                    {stalledForLabel ?? subagentTaskLastActivityLabel(task, nowMs)}
                   </Text>
                   {stalled ? (
                     <StatusPill

@@ -201,4 +201,69 @@ describe("isSubagentTaskStalled", () => {
       true,
     );
   });
+
+  it("treats a server-stalled signal as authoritative", () => {
+    const [task] = deriveSubagentTasks([
+      makeActivity({
+        id: EventId.make("evt-server-stalled"),
+        kind: "task.started",
+        summary: "Task started",
+        createdAt: "2026-04-01T00:00:00.000Z",
+        payload: { taskId: "task-server-stalled" },
+      }),
+    ]);
+    expect(task).toBeDefined();
+    if (!task) return;
+
+    expect(
+      isSubagentTaskStalled(task, Date.parse(task.startedAt) + 1_000, {
+        stalled: true,
+        lastActivityAt: new Date(task.startedAt),
+      }),
+    ).toBe(true);
+  });
+
+  it("lets a fresh active server signal suppress the local heuristic", () => {
+    const [task] = deriveSubagentTasks([
+      makeActivity({
+        id: EventId.make("evt-server-active"),
+        kind: "task.started",
+        summary: "Task started",
+        createdAt: "2026-04-01T00:00:00.000Z",
+        payload: { taskId: "task-server-active" },
+      }),
+    ]);
+    expect(task).toBeDefined();
+    if (!task) return;
+
+    const nowMs = Date.parse(task.startedAt) + SUBAGENT_TASK_STALLED_THRESHOLD_MS + 10_000;
+    expect(
+      isSubagentTaskStalled(task, nowMs, {
+        stalled: false,
+        lastActivityAt: new Date(nowMs - 1_000),
+      }),
+    ).toBe(false);
+  });
+
+  it("falls back to the local heuristic when an active server signal is stale", () => {
+    const [task] = deriveSubagentTasks([
+      makeActivity({
+        id: EventId.make("evt-server-stale"),
+        kind: "task.started",
+        summary: "Task started",
+        createdAt: "2026-04-01T00:00:00.000Z",
+        payload: { taskId: "task-server-stale" },
+      }),
+    ]);
+    expect(task).toBeDefined();
+    if (!task) return;
+
+    const nowMs = Date.parse(task.startedAt) + SUBAGENT_TASK_STALLED_THRESHOLD_MS + 10_000;
+    expect(
+      isSubagentTaskStalled(task, nowMs, {
+        stalled: false,
+        lastActivityAt: new Date(nowMs - SUBAGENT_TASK_STALLED_THRESHOLD_MS - 1),
+      }),
+    ).toBe(true);
+  });
 });

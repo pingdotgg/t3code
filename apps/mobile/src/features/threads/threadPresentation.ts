@@ -1,6 +1,7 @@
 import type { StatusTone } from "../../components/StatusPill";
 import type { OrchestrationLatestTurn, OrchestrationSession } from "@t3tools/contracts";
 import { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type { ThreadHealth } from "../../lib/threadHealth";
 
 export function threadSortValue(thread: EnvironmentThreadShell): number {
   const candidate = Date.parse(thread.updatedAt ?? thread.createdAt);
@@ -8,6 +9,7 @@ export function threadSortValue(thread: EnvironmentThreadShell): number {
 }
 
 export type ThreadStatusKind =
+  | "stalled"
   | "pending-approval"
   | "awaiting-input"
   | "working"
@@ -48,7 +50,20 @@ function isLatestTurnSettled(
  */
 export function resolveThreadStatus(
   thread: EnvironmentThreadShell,
+  health: ThreadHealth | null = null,
 ): ThreadStatusPresentation | null {
+  if (health?.stalled) {
+    return {
+      kind: "stalled",
+      label: "Stalled",
+      pillClassName: "bg-amber-500/14 dark:bg-amber-500/18",
+      textClassName: "text-amber-700 dark:text-amber-300",
+      iconColor: "#ff9f0a",
+      iconBackground: "rgba(255,159,10,0.22)",
+      pulse: false,
+    };
+  }
+
   if (thread.hasPendingApprovals) {
     return {
       kind: "pending-approval",

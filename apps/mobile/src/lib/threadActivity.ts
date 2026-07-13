@@ -256,6 +256,8 @@ function deriveWorkLogEntries(
     ) {
       continue;
     }
+    // Health activities drive the thread status projection, not work-log rows.
+    if (activity.kind === "session.health") continue;
     if (activity.kind === "context-window.updated") continue;
     if (activity.summary === "Checkpoint captured") continue;
     if (isPlanBoundaryToolActivity(activity)) continue;
