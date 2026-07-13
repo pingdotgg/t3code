@@ -4857,4 +4857,41 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* adapter.stopSession(threadId);
     }),
   );
+
+  it.effect("preserves the active turn when a queued Copilot send rejects", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-queued-send-failure-preserves-active-turn");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      const activeTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "keep this turn running",
+        attachments: [],
+      });
+
+      runtimeMock.state.lastSession.send.mockRejectedValueOnce(new Error("Queued send rejected"));
+      const queuedTurnResult = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "reject this queued turn",
+          attachments: [],
+        })
+        .pipe(Effect.result);
+
+      NodeAssert.equal(queuedTurnResult._tag, "Failure");
+      const sessions = yield* adapter.listSessions();
+      NodeAssert.equal(sessions.at(0)?.status, "running");
+      NodeAssert.equal(String(sessions.at(0)?.activeTurnId), String(activeTurn.turnId));
+      NodeAssert.equal(sessions.at(0)?.lastError, undefined);
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
 });
