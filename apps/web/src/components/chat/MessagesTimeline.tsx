@@ -1152,7 +1152,13 @@ function WorkGroupToggleTimelineRow({
   row: Extract<TimelineRow, { kind: "work-toggle" }>;
 }) {
   const ctx = use(TimelineRowCtx);
-  const labelNoun = row.onlyToolEntries ? "tool call" : "log entry";
+  const labelNoun = row.onlyToolEntries
+    ? row.hiddenCount === 1
+      ? "tool call"
+      : "tool calls"
+    : row.hiddenCount === 1
+      ? "log entry"
+      : "log entries";
 
   return (
     <button
@@ -1161,7 +1167,9 @@ function WorkGroupToggleTimelineRow({
       aria-expanded={row.expanded}
       onClick={(event) => {
         const anchorElement =
-          event.currentTarget.closest<HTMLElement>("[data-timeline-row-id]") ?? event.currentTarget;
+          event.currentTarget.closest<HTMLElement>("[data-timeline-row-id]") ??
+          event.currentTarget;
+
         ctx.onToggleWorkGroup(row.groupId, anchorElement);
       }}
     >
@@ -1173,6 +1181,7 @@ function WorkGroupToggleTimelineRow({
           )}
         />
       </span>
+
       {row.expanded ? (
         <span className="font-medium text-foreground/82">
           Show fewer {row.onlyToolEntries ? "tool calls" : "log entries"}
@@ -1180,7 +1189,6 @@ function WorkGroupToggleTimelineRow({
       ) : (
         <span className="font-medium text-foreground/82">
           +{row.hiddenCount} previous {labelNoun}
-          {row.hiddenCount === 1 ? "" : "s"}
         </span>
       )}
     </button>
