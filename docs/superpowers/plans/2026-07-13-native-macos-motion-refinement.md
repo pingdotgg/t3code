@@ -13,6 +13,7 @@
 ### Task 1: Define and test the semantic motion profile
 
 **Files:**
+
 - Modify: `apps/mac/Sources/SergeCodeMac/Theme/Motion.swift`
 - Create: `apps/mac/Tests/SergeCodeMacTests/MotionTests.swift`
 
@@ -94,6 +95,7 @@ git commit -m "refactor(mac): define semantic motion profile"
 ### Task 2: Remove animation from typing and frequent navigation
 
 **Files:**
+
 - Modify: `apps/mac/Sources/SergeCodeMac/UI/Composer/ComposerBar.swift`
 - Modify: `apps/mac/Sources/SergeCodeMac/UI/Chat/ChatScreen.swift`
 - Modify: `apps/mac/Sources/SergeCodeMac/ContentView.swift`
@@ -138,6 +140,7 @@ git commit -m "perf(mac): remove motion from frequent input paths"
 ### Task 3: Refine timeline, scroll, and structural transitions
 
 **Files:**
+
 - Modify: `apps/mac/Sources/SergeCodeMac/UI/Chat/ChatTimelineScrollView.swift`
 - Modify: `apps/mac/Sources/SergeCodeMac/UI/Chat/ChatTimelineRow.swift`
 - Modify: `apps/mac/Sources/SergeCodeMac/UI/Chat/PlanCard.swift`
@@ -181,6 +184,7 @@ git commit -m "refactor(mac): tighten timeline and disclosure motion"
 ### Task 4: Quiet ongoing status motion and add rare success accents
 
 **Files:**
+
 - Modify: `apps/mac/Sources/SergeCodeMac/UI/Shell/ConnectionStatusPill.swift`
 - Modify: `apps/mac/Sources/SergeCodeMac/UI/Shell/AgentsPanel.swift`
 - Modify: `apps/mac/Sources/SergeCodeMac/UI/Shell/SidebarView.swift`
@@ -236,6 +240,7 @@ git commit -m "feat(mac): add restrained success motion"
 ### Task 5: Retune remaining native animation call sites
 
 **Files:**
+
 - Modify: animation call sites under `apps/mac/Sources/SergeCodeMac/UI/`
 - Modify: `apps/mac/Sources/SergeCodeMac/Theme/SceneryViews.swift`
 - Modify: `apps/mac/Sources/SergeCodeMac/UI/Shell/EmptyStateView.swift`
@@ -280,6 +285,7 @@ git commit -m "refactor(mac): unify native animation call sites"
 ### Task 6: Full verification and motion review
 
 **Files:**
+
 - Modify only if verification exposes a defect.
 
 - [ ] **Step 1: Run the complete native test suite**
