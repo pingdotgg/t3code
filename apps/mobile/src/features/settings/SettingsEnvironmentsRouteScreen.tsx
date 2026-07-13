@@ -209,7 +209,7 @@ function ConfiguredCloudEnvironmentRows(props: {
       ) : controller.relayDiscovery.error ? (
         <View collapsable={false} className="gap-3 rounded-[24px] bg-card p-5">
           <Text className="text-base font-t3-bold text-foreground">
-            Could not load Cloud environments
+            Could not load cloud environments
           </Text>
           <Text className="text-sm text-foreground-muted">{controller.relayDiscovery.error}</Text>
           {controller.relayDiscovery.errorTraceId ? (
