@@ -354,13 +354,6 @@ function createBaseEvent(input: {
   };
 }
 
-function contentActivityEventId(input: {
-  readonly threadId: ThreadId;
-  readonly itemId: string;
-}): EventId {
-  return EventId.make(`copilot-content:${input.threadId}:${input.itemId}`);
-}
-
 function ensureTurnSnapshot(context: CopilotSessionContext, turnId: TurnId): CopilotTurnSnapshot {
   const existing = context.turns.find((turn) => turn.id === turnId);
   if (existing) {
@@ -852,18 +845,6 @@ function extractPlanStepsFromTodoInput(input: Record<string, unknown>): PlanStep
     ];
   });
   return steps.length > 0 ? steps : undefined;
-}
-
-function toolStreamKind(
-  itemType: ToolMeta["itemType"] | undefined,
-): "command_output" | "file_change_output" | "unknown" {
-  if (itemType === "command_execution") {
-    return "command_output";
-  }
-  if (itemType === "file_change") {
-    return "file_change_output";
-  }
-  return "unknown";
 }
 
 function isStringRecord(value: unknown): value is Record<string, unknown> {
@@ -1700,12 +1681,10 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     });
   };
 
-  const emitTextDelta = async (input: {
+  const emitAssistantTextDelta = async (input: {
     readonly context: CopilotSessionContext;
     readonly turnId: TurnId;
     readonly itemId: string;
-    readonly itemType: "assistant_message" | "reasoning";
-    readonly streamKind: "assistant_text" | "reasoning_text";
     readonly nextText: string;
     readonly raw?: SessionEvent | undefined;
   }) => {
@@ -1720,7 +1699,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         }),
         type: "item.started",
         payload: {
-          itemType: input.itemType,
+          itemType: "assistant_message",
           status: "inProgress",
         },
       });
@@ -1732,11 +1711,8 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     if (delta.length === 0) {
       return;
     }
-    if (input.itemType === "assistant_message" && input.streamKind === "assistant_text") {
-      input.context.turnIdsWithAssistantText.add(input.turnId);
-      input.context.assistantItemIdByTurnId.set(input.turnId, input.itemId);
-    }
-    const isReasoning = input.streamKind === "reasoning_text";
+    input.context.turnIdsWithAssistantText.add(input.turnId);
+    input.context.assistantItemIdByTurnId.set(input.turnId, input.itemId);
     await emitAsync({
       ...createBaseEvent({
         threadId: input.context.threadId,
@@ -1744,18 +1720,10 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         itemId: input.itemId,
         raw: input.raw,
       }),
-      ...(isReasoning
-        ? {
-            eventId: contentActivityEventId({
-              threadId: input.context.threadId,
-              itemId: input.itemId,
-            }),
-          }
-        : {}),
       type: "content.delta",
       payload: {
-        streamKind: input.streamKind,
-        delta: isReasoning ? input.nextText : delta,
+        streamKind: "assistant_text",
+        delta,
       },
     });
   };
@@ -1772,12 +1740,10 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
 
     context.pendingTaskCompletionTextByTurnId.delete(turnId);
     const itemId = `copilot-task-completion-${String(turnId)}`;
-    await emitTextDelta({
+    await emitAssistantTextDelta({
       context,
       turnId,
       itemId,
-      itemType: "assistant_message",
-      streamKind: "assistant_text",
       nextText: content,
       raw,
     });
@@ -2466,29 +2432,6 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         });
         return;
       }
-      case "assistant.reasoning_delta": {
-        const turnId = resolveTurnIdForEvent(context, {
-          sdkTurnId: context.activeSdkTurnId,
-          sdkEventTimestamp: event.timestamp,
-          agentId: event.agentId,
-          providerItemId: event.data.reasoningId,
-        });
-        if (!turnId) {
-          return;
-        }
-        const itemId = `copilot-reasoning-${event.data.reasoningId}`;
-        context.turnIdByProviderItemId.set(event.data.reasoningId, turnId);
-        await emitTextDelta({
-          context,
-          turnId,
-          itemId,
-          itemType: "reasoning",
-          streamKind: "reasoning_text",
-          nextText: (context.emittedTextByItemId.get(itemId) ?? "") + event.data.deltaContent,
-          raw: event,
-        });
-        return;
-      }
       case "assistant.reasoning": {
         const turnId = resolveTurnIdForEvent(context, {
           sdkTurnId: context.activeSdkTurnId,
@@ -2499,30 +2442,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         if (!turnId) {
           return;
         }
-        const itemId = `copilot-reasoning-${event.data.reasoningId}`;
         context.turnIdByProviderItemId.set(event.data.reasoningId, turnId);
-        await emitTextDelta({
-          context,
-          turnId,
-          itemId,
-          itemType: "reasoning",
-          streamKind: "reasoning_text",
-          nextText: event.data.content,
-          raw: event,
-        });
-        await emitAsync({
-          ...createBaseEvent({
-            threadId: context.threadId,
-            turnId,
-            itemId,
-            raw: event,
-          }),
-          type: "item.completed",
-          payload: {
-            itemType: "reasoning",
-            status: "completed",
-          },
-        });
         appendTurnItem(context, turnId, {
           type: "reasoning",
           reasoningId: event.data.reasoningId,
@@ -2544,12 +2464,10 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         const itemId = `copilot-message-${event.data.messageId}`;
         context.turnIdByProviderItemId.set(event.data.messageId, turnId);
         context.assistantItemIdByTurnId.set(turnId, itemId);
-        await emitTextDelta({
+        await emitAssistantTextDelta({
           context,
           turnId,
           itemId,
-          itemType: "assistant_message",
-          streamKind: "assistant_text",
           nextText: (context.emittedTextByItemId.get(itemId) ?? "") + event.data.deltaContent,
           raw: event,
         });
@@ -2569,12 +2487,10 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         const itemId = `copilot-message-${event.data.messageId}`;
         context.turnIdByProviderItemId.set(event.data.messageId, turnId);
         context.assistantItemIdByTurnId.set(turnId, itemId);
-        await emitTextDelta({
+        await emitAssistantTextDelta({
           context,
           turnId,
           itemId,
-          itemType: "assistant_message",
-          streamKind: "assistant_text",
           nextText: event.data.content,
           raw: event,
         });
@@ -2591,31 +2507,6 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
             status: "completed",
           },
         });
-        if (event.data.reasoningText?.trim()) {
-          const reasoningItemId = `copilot-message-reasoning-${event.data.messageId}`;
-          await emitTextDelta({
-            context,
-            turnId,
-            itemId: reasoningItemId,
-            itemType: "reasoning",
-            streamKind: "reasoning_text",
-            nextText: event.data.reasoningText,
-            raw: event,
-          });
-          await emitAsync({
-            ...createBaseEvent({
-              threadId: context.threadId,
-              turnId,
-              itemId: reasoningItemId,
-              raw: event,
-            }),
-            type: "item.completed",
-            payload: {
-              itemType: "reasoning",
-              status: "completed",
-            },
-          });
-        }
         appendTurnItem(context, turnId, {
           type: "assistant_message",
           messageId: event.data.messageId,
@@ -2745,41 +2636,6 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
               toolMeta,
               ...(event.data.arguments ? { arguments: event.data.arguments } : {}),
             }),
-          },
-        });
-        return;
-      }
-      case "tool.execution_partial_result": {
-        const turnId = resolveTurnIdForEvent(context, {
-          providerItemId: event.data.toolCallId,
-          sdkTurnId: context.activeSdkTurnId,
-          sdkEventTimestamp: event.timestamp,
-          agentId: event.agentId,
-          allowActiveFallback: false,
-        });
-        if (!turnId) {
-          return;
-        }
-        const itemId = `copilot-tool-${event.data.toolCallId}`;
-        const toolMeta = context.toolMetaById.get(event.data.toolCallId);
-        const streamKind = toolStreamKind(toolMeta?.itemType);
-        const output = `${context.emittedTextByItemId.get(itemId) ?? ""}${event.data.partialOutput}`;
-        context.emittedTextByItemId.set(itemId, output);
-        await emitAsync({
-          ...createBaseEvent({
-            threadId: context.threadId,
-            turnId,
-            itemId,
-            raw: event,
-          }),
-          eventId: contentActivityEventId({
-            threadId: context.threadId,
-            itemId,
-          }),
-          type: "content.delta",
-          payload: {
-            streamKind,
-            delta: output,
           },
         });
         return;

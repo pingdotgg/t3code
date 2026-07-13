@@ -3286,7 +3286,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     }),
   );
 
-  it.effect("emits command metadata and accumulates activity stream content", () =>
+  it.effect("emits command metadata without unused reasoning or tool output deltas", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
       const threadId = asThreadId("copilot-command-metadata");
@@ -3443,33 +3443,9 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         });
       }
 
-      const reasoningDeltas = runtimeEvents.filter(
-        (event) => event.type === "content.delta" && event.payload.streamKind === "reasoning_text",
-      );
-      NodeAssert.equal(reasoningDeltas.length, 2);
-      NodeAssert.equal(reasoningDeltas[0]?.eventId, reasoningDeltas[1]?.eventId);
-      NodeAssert.deepStrictEqual(
-        reasoningDeltas.map((event) => (event.type === "content.delta" ? event.payload.delta : "")),
-        ["Thinking through ", "Thinking through the command"],
-      );
-
-      const commandOutputDeltas = runtimeEvents.filter(
-        (event) =>
-          event.type === "content.delta" && String(event.itemId) === "copilot-tool-tool-command",
-      );
-      NodeAssert.equal(commandOutputDeltas.length, 2);
-      NodeAssert.equal(commandOutputDeltas[0]?.eventId, commandOutputDeltas[1]?.eventId);
-      NodeAssert.deepStrictEqual(
-        commandOutputDeltas.map((event) =>
-          event.type === "content.delta" ? event.payload.streamKind : undefined,
-        ),
-        ["unknown", "command_output"],
-      );
-      NodeAssert.deepStrictEqual(
-        commandOutputDeltas.map((event) =>
-          event.type === "content.delta" ? event.payload.delta : "",
-        ),
-        ["On branch ", "On branch main"],
+      NodeAssert.equal(
+        runtimeEvents.some((event) => event.type === "content.delta"),
+        false,
       );
 
       yield* adapter.stopSession(threadId);
