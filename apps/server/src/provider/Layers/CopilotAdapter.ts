@@ -1495,15 +1495,19 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     if (context.activeTurnId === turnId) {
       context.activeTurnId = undefined;
     }
+    const remainingActiveTurnId = context.activeTurnId;
     updateProviderSession(context, {
-      status:
-        status === "failed"
+      status: remainingActiveTurnId
+        ? "running"
+        : status === "failed"
           ? "error"
           : context.stopped
             ? "closed"
             : readyStatusAfterTurnCompletion(context),
-      ...(status === "failed" && input?.errorMessage ? { lastError: input.errorMessage } : {}),
-      activeTurnId: undefined,
+      ...(status === "failed" && !remainingActiveTurnId && input?.errorMessage
+        ? { lastError: input.errorMessage }
+        : {}),
+      activeTurnId: remainingActiveTurnId,
     });
     await emitAsync({
       ...createBaseEvent({
