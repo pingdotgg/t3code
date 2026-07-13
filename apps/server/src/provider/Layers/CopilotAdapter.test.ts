@@ -689,6 +689,37 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         [String(firstTurn.turnId)],
       );
 
+      runtimeMock.state.lastSession.send.mockResolvedValueOnce(undefined);
+      const turnWithoutHistoryBoundary = yield* adapter.sendTurn({
+        threadId,
+        input: "missing persisted boundary",
+        attachments: [],
+      });
+      completeTurn("sdk-turn-without-boundary", "evt-without-boundary");
+      for (
+        let attempt = 0;
+        attempt < 20 &&
+        !runtimeEvents.some(
+          (event) =>
+            event.type === "turn.completed" &&
+            String(event.turnId) === String(turnWithoutHistoryBoundary.turnId),
+        );
+        attempt += 1
+      ) {
+        yield* waitForSdkEventQueue();
+      }
+
+      const missingBoundaryError = yield* Effect.flip(adapter.rollbackThread(threadId, 1));
+      NodeAssert.match(missingBoundaryError.message, /without the first removed user message ID/);
+      NodeAssert.deepStrictEqual(runtimeMock.state.lastSession.rpc.history.truncate.mock.calls, [
+        [{ eventId: "user-message-second" }],
+        [{ eventId: "user-message-recovered" }],
+      ]);
+      NodeAssert.deepStrictEqual(
+        (yield* adapter.readThread(threadId)).turns.map((turn) => String(turn.id)),
+        [String(firstTurn.turnId), String(turnWithoutHistoryBoundary.turnId)],
+      );
+
       yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
       yield* adapter.stopSession(threadId);
     }),
@@ -812,6 +843,136 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
 
       yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
       yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("lets rollback finish before gated events drain while stop waits for both", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-rollback-stop-serialization");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* waitForSdkEventQueue();
+
+      runtimeMock.state.lastSession.send.mockResolvedValueOnce("user-message-first");
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "first prompt",
+        attachments: [],
+      });
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      NodeAssert.ok(config?.onEvent);
+      const timestamp = yield* nowIso;
+      config.onEvent?.({
+        id: "rollback-stop-start",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_start",
+        data: { turnId: "sdk-turn-first" },
+      } as SessionEvent);
+      config.onEvent?.({
+        id: "rollback-stop-end",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_end",
+        data: { turnId: "sdk-turn-first" },
+      } as SessionEvent);
+      config.onEvent?.({
+        id: "rollback-stop-idle",
+        timestamp,
+        parentId: null,
+        type: "session.idle",
+        data: { aborted: false },
+      } as SessionEvent);
+      for (
+        let attempt = 0;
+        attempt < 20 &&
+        !runtimeEvents.some(
+          (event) =>
+            event.type === "turn.completed" && String(event.turnId) === String(turn.turnId),
+        );
+        attempt += 1
+      ) {
+        yield* waitForSdkEventQueue();
+      }
+
+      let markTruncateStarted!: () => void;
+      const truncateStarted = new Promise<void>((resolve) => {
+        markTruncateStarted = resolve;
+      });
+      let releaseTruncate!: () => void;
+      const truncateGate = new Promise<void>((resolve) => {
+        releaseTruncate = resolve;
+      });
+      runtimeMock.state.lastSession.rpc.history.truncate.mockImplementationOnce(async () => {
+        markTruncateStarted();
+        await truncateGate;
+        return { removedEventCount: 1 };
+      });
+
+      let markRollbackFinished!: () => void;
+      const rollbackFinished = new Promise<void>((resolve) => {
+        markRollbackFinished = resolve;
+      });
+      const rollbackFiber = yield* adapter.rollbackThread(threadId, 1).pipe(
+        Effect.tap(() => Effect.sync(markRollbackFinished)),
+        Effect.forkChild,
+      );
+      yield* Effect.promise(() => truncateStarted);
+
+      let releaseNativeWrite: () => void = () => undefined;
+      runtimeMock.state.nativeWriteGate = new Promise<void>((resolve) => {
+        releaseNativeWrite = resolve;
+      });
+      config.onEvent?.({
+        id: "late-user-message-after-rollback",
+        timestamp,
+        parentId: null,
+        type: "user.message",
+        data: { content: "late SDK event" },
+      } as SessionEvent);
+      releaseTruncate();
+
+      for (
+        let attempt = 0;
+        attempt < 20 && runtimeMock.state.nativeWriteCalls === 0;
+        attempt += 1
+      ) {
+        yield* waitForSdkEventQueue();
+      }
+      const rollbackFinishedBeforeEventDrain = yield* Effect.promise(() =>
+        Promise.race([
+          rollbackFinished.then(() => true),
+          NodeTimersPromises.setTimeout(200).then(() => false),
+        ]),
+      );
+
+      const stopFiber = yield* adapter.stopSession(threadId).pipe(Effect.forkChild);
+      yield* waitForSdkEventQueue();
+      const disconnectsBeforeEventDrain =
+        runtimeMock.state.lastSession.disconnect.mock.calls.length;
+
+      releaseNativeWrite();
+      const rolledBack = yield* Fiber.join(rollbackFiber);
+      yield* Fiber.join(stopFiber);
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+
+      NodeAssert.equal(rollbackFinishedBeforeEventDrain, true);
+      NodeAssert.deepStrictEqual(rolledBack.turns, []);
+      NodeAssert.equal(disconnectsBeforeEventDrain, 0);
+      NodeAssert.equal(runtimeMock.state.lastSession.disconnect.mock.calls.length, 1);
+      NodeAssert.equal(runtimeMock.state.stopCalls, 1);
     }),
   );
 

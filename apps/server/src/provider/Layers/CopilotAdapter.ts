@@ -3373,56 +3373,59 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         return;
       }
       if (context.stopped) {
-        sessions.delete(threadId);
         return;
       }
 
       context.stopped = true;
-      yield* Effect.promise(() => context.eventChain);
-      const activeTurnId = context.activeTurnId;
-      if (activeTurnId && !context.completedTurnIds.has(activeTurnId)) {
-        yield* Effect.promise(() =>
-          emitPendingTaskCompletionAsAssistantMessage(context, activeTurnId),
-        ).pipe(Effect.ignore);
-        yield* Effect.promise(() =>
-          emitTurnCompleted(context, activeTurnId, "interrupted", {
-            stopReason: null,
-          }),
-        ).pipe(Effect.ignore);
-      }
-      cancelTurnEndFallback(context);
-      yield* settlePendingPermissionHandlers(context, (binding) =>
-        emitPermissionRequestResolved(context, binding, "reject", DENIED_PERMISSION_RESULT),
-      );
-      yield* settlePendingUserInputs(context);
-      yield* copilotSdk.disconnect(context).pipe(Effect.ignore);
-      yield* copilotSdk.stopClient(threadId, context.client).pipe(Effect.ignore);
+      yield* context.historyMutationSemaphore.withPermit(
+        Effect.gen(function* () {
+          yield* Effect.promise(() => context.eventChain);
+          const activeTurnId = context.activeTurnId;
+          if (activeTurnId && !context.completedTurnIds.has(activeTurnId)) {
+            yield* Effect.promise(() =>
+              emitPendingTaskCompletionAsAssistantMessage(context, activeTurnId),
+            ).pipe(Effect.ignore);
+            yield* Effect.promise(() =>
+              emitTurnCompleted(context, activeTurnId, "interrupted", {
+                stopReason: null,
+              }),
+            ).pipe(Effect.ignore);
+          }
+          cancelTurnEndFallback(context);
+          yield* settlePendingPermissionHandlers(context, (binding) =>
+            emitPermissionRequestResolved(context, binding, "reject", DENIED_PERMISSION_RESULT),
+          );
+          yield* settlePendingUserInputs(context);
+          yield* copilotSdk.disconnect(context).pipe(Effect.ignore);
+          yield* copilotSdk.stopClient(threadId, context.client).pipe(Effect.ignore);
 
-      updateProviderSession(context, {
-        status: "closed",
-        activeTurnId: undefined,
-      });
-      yield* emit({
-        ...createBaseEvent({
-          threadId,
+          updateProviderSession(context, {
+            status: "closed",
+            activeTurnId: undefined,
+          });
+          yield* emit({
+            ...createBaseEvent({
+              threadId,
+            }),
+            type: "session.state.changed",
+            payload: {
+              state: "stopped",
+              reason: "Copilot session stopped.",
+            },
+          });
+          yield* emit({
+            ...createBaseEvent({
+              threadId,
+            }),
+            type: "session.exited",
+            payload: {
+              reason: "Copilot session stopped.",
+              exitKind: "graceful",
+            },
+          });
+          sessions.delete(threadId);
         }),
-        type: "session.state.changed",
-        payload: {
-          state: "stopped",
-          reason: "Copilot session stopped.",
-        },
-      });
-      yield* emit({
-        ...createBaseEvent({
-          threadId,
-        }),
-        type: "session.exited",
-        payload: {
-          reason: "Copilot session stopped.",
-          exitKind: "graceful",
-        },
-      });
-      sessions.delete(threadId);
+      );
     });
 
   const stopSession: CopilotAdapterShape["stopSession"] = Effect.fn("stopSession")(
@@ -3542,12 +3545,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
                 })),
               };
             }),
-          (eventChainGate) =>
-            Effect.promise(async () => {
-              const gatedEvents = context.eventChain;
-              eventChainGate.release();
-              await gatedEvents;
-            }),
+          (eventChainGate) => Effect.sync(eventChainGate.release),
         ),
       );
     },
