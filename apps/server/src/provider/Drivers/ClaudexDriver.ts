@@ -10,6 +10,8 @@ import {
   ClaudexSettings,
   type ClaudexSettings as ClaudexSettingsType,
   type ClaudeSettings,
+  DEFAULT_MODEL_BY_PROVIDER,
+  MODEL_SLUG_ALIASES_BY_PROVIDER,
   type ModelSelection,
   ProviderDriverKind,
   type ServerProvider,
@@ -60,7 +62,10 @@ import { resolveClaudeHomePath } from "./ClaudeHome.ts";
 const DRIVER_KIND = ProviderDriverKind.make("claudex");
 const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
 const decodeClaudexSettings = Schema.decodeSync(ClaudexSettings);
-const CLAUDEX_MODEL_SLUGS = new Set(["claudex-luna", "claudex-sol"]);
+const CLAUDEX_DEFAULT_MODEL = DEFAULT_MODEL_BY_PROVIDER[DRIVER_KIND] ?? "claudex-luna";
+const CLAUDEX_MODEL_SLUGS = new Set(
+  Object.values(MODEL_SLUG_ALIASES_BY_PROVIDER[DRIVER_KIND] ?? {}),
+);
 
 /** Remove Claude-only effort flags from user-supplied Claudex launch arguments. */
 export function stripClaudexEffortArgs(launchArgs: string): string {
@@ -80,13 +85,15 @@ export function stripClaudexEffortArgs(launchArgs: string): string {
   return retained.join(" ");
 }
 
-function normalizeClaudexModelSelection(
+export function normalizeClaudexModelSelection(
   modelSelection: ModelSelection | undefined,
 ): ModelSelection | undefined {
   if (modelSelection === undefined) return undefined;
   return {
     instanceId: modelSelection.instanceId,
-    model: CLAUDEX_MODEL_SLUGS.has(modelSelection.model) ? modelSelection.model : "claudex-luna",
+    model: CLAUDEX_MODEL_SLUGS.has(modelSelection.model)
+      ? modelSelection.model
+      : CLAUDEX_DEFAULT_MODEL,
   };
 }
 

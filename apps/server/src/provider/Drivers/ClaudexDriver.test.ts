@@ -7,12 +7,14 @@ import {
   ClaudexSettings,
   DEFAULT_MODEL_BY_PROVIDER,
   ProviderDriverKind,
+  ProviderInstanceId,
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 
 import {
   makeClaudexContinuationGroupKey,
+  normalizeClaudexModelSelection,
   normalizeClaudexProviderSnapshot,
 } from "./ClaudexDriver.ts";
 import { makeClaudeContinuationGroupKey } from "./ClaudeHome.ts";
@@ -105,6 +107,23 @@ describe("ClaudexDriver", () => {
       ).toBe(false);
       expect(descriptors).toEqual([]);
     }
+  });
+
+  it("keeps valid Claudex model selections and coerces unknown models to the default", () => {
+    const instanceId = ProviderInstanceId.make("claudex");
+
+    expect(normalizeClaudexModelSelection({ instanceId, model: "claudex-sol" })).toEqual({
+      instanceId,
+      model: "claudex-sol",
+    });
+    expect(normalizeClaudexModelSelection({ instanceId, model: "claude-fable-5" })).toEqual({
+      instanceId,
+      model: "claudex-luna",
+    });
+  });
+
+  it("passes through a missing model selection unchanged", () => {
+    expect(normalizeClaudexModelSelection(undefined)).toBeUndefined();
   });
 
   it("does not expose or resolve effort for Claudex model slugs", () => {
