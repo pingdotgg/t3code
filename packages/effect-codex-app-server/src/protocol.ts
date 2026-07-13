@@ -1,6 +1,8 @@
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
@@ -9,10 +11,26 @@ import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
 
 import * as CodexError from "./errors.ts";
+import { splitLinesWithBoundedRemainder } from "@t3tools/shared/processStderrCapture";
 import { JsonRpcId, JsonRpcResponseEnvelope } from "./_internal/shared.ts";
 const isJsonRpcId = Schema.is(JsonRpcId);
 const isJsonRpcResponseEnvelope = Schema.is(JsonRpcResponseEnvelope);
 const isCodexAppServerError = Schema.is(CodexError.CodexAppServerError);
+
+/** Default timeout for control-plane JSON-RPC requests (initialize, session, etc.). */
+export const DEFAULT_CONTROL_PLANE_REQUEST_TIMEOUT = Duration.seconds(60);
+
+/**
+ * Per-request timeout options for {@link CodexAppServerPatchedProtocol.request}.
+ * - omit / `undefined`: use the 60s control-plane default
+ * - `"none"`: no timeout (long-running turn-start / prompt-style calls)
+ * - duration input: explicit timeout
+ */
+export type CodexAppServerRequestTimeout = Duration.Input | "none";
+
+export interface CodexAppServerRequestOptions {
+  readonly timeout?: CodexAppServerRequestTimeout;
+}
 
 export interface CodexAppServerProtocolLogEvent {
   readonly direction: "incoming" | "outgoing";
@@ -52,6 +70,7 @@ export interface CodexAppServerPatchedProtocol {
   readonly request: (
     method: string,
     payload?: unknown,
+    options?: CodexAppServerRequestOptions,
   ) => Effect.Effect<unknown, CodexError.CodexAppServerError>;
   readonly notify: (
     method: string,
@@ -158,6 +177,7 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
     const pending = yield* Ref.make(new Map<string, CodexAppServerPendingRequest>());
     const nextRequestId = yield* Ref.make(1);
     const remainder = yield* Ref.make("");
+    const remainderTruncationLogged = yield* Ref.make(false);
     const terminationHandled = yield* Ref.make(false);
 
     const logProtocol = (event: CodexAppServerProtocolLogEvent) => {
@@ -355,11 +375,23 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
       Stream.decodeText(),
       Stream.runForEach((chunk) =>
         Ref.modify(remainder, (current) => {
-          const combined = current + chunk;
-          const lines = combined.split("\n");
-          const nextRemainder = lines.pop() ?? "";
-          return [lines.map((line) => line.replace(/\r$/, "")), nextRemainder] as const;
-        }).pipe(Effect.flatMap((lines) => Effect.forEach(lines, handleLine, { discard: true }))),
+          const split = splitLinesWithBoundedRemainder(current, chunk);
+          return [{ lines: split.lines, truncated: split.truncated }, split.remainder] as const;
+        }).pipe(
+          Effect.flatMap(({ lines, truncated }) =>
+            Effect.gen(function* () {
+              if (truncated) {
+                const alreadyLogged = yield* Ref.getAndSet(remainderTruncationLogged, true);
+                if (!alreadyLogged) {
+                  yield* Effect.logWarning(
+                    "Codex App Server protocol line remainder truncated after exceeding 1 MiB.",
+                  );
+                }
+              }
+              yield* Effect.forEach(lines, handleLine, { discard: true });
+            }),
+          ),
+        ),
       ),
       Effect.matchEffect({
         onFailure: (error) =>
@@ -385,7 +417,11 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
 
     yield* Stream.fromQueue(outgoing).pipe(Stream.run(options.stdio.stdout()), Effect.forkScoped);
 
-    const request = (method: string, payload?: unknown) =>
+    const request = (
+      method: string,
+      payload?: unknown,
+      requestOptions?: CodexAppServerRequestOptions,
+    ) =>
       Effect.gen(function* () {
         const requestId = yield* Ref.modify(
           nextRequestId,
@@ -400,8 +436,41 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
           method,
           ...(payload !== undefined ? { params: payload } : {}),
         }).pipe(Effect.tapError(() => removePending(String(requestId))));
-        return yield* Deferred.await(deferred).pipe(
+
+        const awaitResponse = Deferred.await(deferred).pipe(
           Effect.onInterrupt(() => removePending(String(requestId))),
+        );
+
+        const timeoutOpt = requestOptions?.timeout;
+        if (timeoutOpt === "none") {
+          return yield* awaitResponse;
+        }
+        const timeoutDuration =
+          timeoutOpt === undefined ? DEFAULT_CONTROL_PLANE_REQUEST_TIMEOUT : timeoutOpt;
+        const timeoutMs = Duration.toMillis(Duration.fromInputUnsafe(timeoutDuration));
+        if (timeoutMs <= 0) {
+          return yield* awaitResponse;
+        }
+
+        return yield* awaitResponse.pipe(
+          Effect.timeoutOption(timeoutDuration),
+          Effect.flatMap((result) =>
+            Option.match(result, {
+              onNone: () =>
+                removePending(String(requestId)).pipe(
+                  Effect.andThen(
+                    Effect.fail(
+                      new CodexError.CodexAppServerRequestTimeoutError({
+                        method,
+                        requestId: String(requestId),
+                        timeoutMs,
+                      }),
+                    ),
+                  ),
+                ),
+              onSome: Effect.succeed,
+            }),
+          ),
         );
       });
 

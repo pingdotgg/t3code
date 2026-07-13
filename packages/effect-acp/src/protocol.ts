@@ -1,6 +1,8 @@
 import * as Cause from "effect/Cause";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -17,6 +19,21 @@ import * as AcpSchema from "./_generated/schema.gen.ts";
 import { CLIENT_METHODS } from "./_generated/meta.gen.ts";
 import * as AcpError from "./errors.ts";
 const isAcpError = Schema.is(AcpError.AcpError);
+
+/** Default timeout for control-plane / extension JSON-RPC requests. */
+export const DEFAULT_CONTROL_PLANE_REQUEST_TIMEOUT = Duration.seconds(60);
+
+/**
+ * Per-request timeout options for {@link AcpPatchedProtocol.request}.
+ * - omit / `undefined`: use the 60s control-plane default
+ * - `"none"`: no timeout (long-running `session/prompt`)
+ * - duration input: explicit timeout
+ */
+export type AcpRequestTimeout = Duration.Input | "none";
+
+export interface AcpRequestOptions {
+  readonly timeout?: AcpRequestTimeout;
+}
 
 export interface AcpProtocolLogEvent {
   readonly direction: "incoming" | "outgoing";
@@ -62,7 +79,11 @@ export interface AcpPatchedProtocol {
   readonly clientProtocol: RpcClient.Protocol["Service"];
   readonly serverProtocol: RpcServer.Protocol["Service"];
   readonly incoming: Stream.Stream<AcpIncomingNotification>;
-  readonly request: (method: string, payload: unknown) => Effect.Effect<unknown, AcpError.AcpError>;
+  readonly request: (
+    method: string,
+    payload: unknown,
+    options?: AcpRequestOptions,
+  ) => Effect.Effect<unknown, AcpError.AcpError>;
   readonly notify: (method: string, payload: unknown) => Effect.Effect<void, AcpError.AcpError>;
 }
 
@@ -526,7 +547,11 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     });
   });
 
-  const sendRequest = Effect.fn("sendRequest")(function* (method: string, payload: unknown) {
+  const sendRequest = Effect.fn("sendRequest")(function* (
+    method: string,
+    payload: unknown,
+    requestOptions?: AcpRequestOptions,
+  ) {
     const requestId = yield* Ref.modify(
       nextRequestId,
       (current) => [current, current + 1n] as const,
@@ -542,8 +567,41 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
       payload,
       headers: [],
     }).pipe(Effect.tapError(() => removeExtPending(String(requestId))));
-    return yield* Deferred.await(deferred).pipe(
+
+    const awaitResponse = Deferred.await(deferred).pipe(
       Effect.onInterrupt(() => removeExtPending(String(requestId))),
+    );
+
+    const timeoutOpt = requestOptions?.timeout;
+    if (timeoutOpt === "none") {
+      return yield* awaitResponse;
+    }
+    const timeoutDuration =
+      timeoutOpt === undefined ? DEFAULT_CONTROL_PLANE_REQUEST_TIMEOUT : timeoutOpt;
+    const timeoutMs = Duration.toMillis(Duration.fromInputUnsafe(timeoutDuration));
+    if (timeoutMs <= 0) {
+      return yield* awaitResponse;
+    }
+
+    return yield* awaitResponse.pipe(
+      Effect.timeoutOption(timeoutDuration),
+      Effect.flatMap((result) =>
+        Option.match(result, {
+          onNone: () =>
+            removeExtPending(String(requestId)).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new AcpError.AcpRequestTimeoutError({
+                    method,
+                    requestId: String(requestId),
+                    timeoutMs,
+                  }),
+                ),
+              ),
+            ),
+          onSome: Effect.succeed,
+        }),
+      ),
     );
   });
 

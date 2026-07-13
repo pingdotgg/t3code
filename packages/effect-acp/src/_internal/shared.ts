@@ -1,4 +1,6 @@
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { RpcClientError } from "effect/unstable/rpc";
 
@@ -6,11 +8,17 @@ import * as AcpSchema from "../_generated/schema.gen.ts";
 import * as AcpError from "../errors.ts";
 const isError = Schema.is(AcpSchema.Error);
 
+/** Default control-plane RPC timeout (matches protocol.DEFAULT_CONTROL_PLANE_REQUEST_TIMEOUT). */
+const DEFAULT_CONTROL_PLANE_REQUEST_TIMEOUT = Duration.seconds(60);
+
+export type CallRpcTimeout = Duration.Input | "none";
+
 export const callRpc = <A>(
   method: string,
   effect: Effect.Effect<A, RpcClientError.RpcClientError | AcpSchema.Error>,
-): Effect.Effect<A, AcpError.AcpError> =>
-  effect.pipe(
+  options?: { readonly timeout?: CallRpcTimeout },
+): Effect.Effect<A, AcpError.AcpError> => {
+  const mapped = effect.pipe(
     Effect.catchIf(isError, (error) =>
       Effect.fail(AcpError.AcpRequestError.fromProtocolError(error, { method })),
     ),
@@ -25,6 +33,34 @@ export const callRpc = <A>(
         ),
     }),
   );
+
+  const timeoutOpt = options?.timeout;
+  if (timeoutOpt === "none") {
+    return mapped;
+  }
+  const timeoutDuration =
+    timeoutOpt === undefined ? DEFAULT_CONTROL_PLANE_REQUEST_TIMEOUT : timeoutOpt;
+  const timeoutMs = Duration.toMillis(Duration.fromInputUnsafe(timeoutDuration));
+  if (timeoutMs <= 0) {
+    return mapped;
+  }
+
+  return mapped.pipe(
+    Effect.timeoutOption(timeoutDuration),
+    Effect.flatMap((result) =>
+      Option.match(result, {
+        onNone: () =>
+          Effect.fail(
+            new AcpError.AcpRequestTimeoutError({
+              method,
+              timeoutMs,
+            }),
+          ),
+        onSome: Effect.succeed,
+      }),
+    ),
+  );
+};
 
 export const runHandler = Effect.fnUntraced(function* <A, B>(
   handler: ((payload: A) => Effect.Effect<B, AcpError.AcpError>) | undefined,

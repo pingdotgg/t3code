@@ -5,11 +5,19 @@ import * as Effect from "effect/Effect";
 import * as Sink from "effect/Sink";
 import * as Stdio from "effect/Stdio";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import type { ProcessStderrCapture } from "@t3tools/shared/processStderrCapture";
 
 import * as AcpError from "../errors.ts";
 
 const encoder = new TextEncoder();
 
+/**
+ * Build inverted Stdio for talking to a child ACP process over its stdio pipes.
+ *
+ * Child stderr is **not** consumed here — callers must capture `handle.stderr`
+ * separately (see `runProcessStderrCapture`) so the pipe cannot block and the
+ * diagnostic tail remains available after exit.
+ */
 export const makeChildStdio = (handle: ChildProcessSpawner.ChildProcessHandle) =>
   Stdio.make({
     args: Effect.succeed([]),
@@ -18,6 +26,7 @@ export const makeChildStdio = (handle: ChildProcessSpawner.ChildProcessHandle) =
       Sink.mapInput(handle.stdin, (chunk: string | Uint8Array) =>
         typeof chunk === "string" ? encoder.encode(chunk) : chunk,
       ),
+    // Write-side stderr sink for this Stdio view; child stderr is a Stream on the handle.
     stderr: () => Sink.drain,
   });
 
@@ -51,6 +60,7 @@ type ChildProcessTerminationHandle = Pick<
 
 export const makeTerminationError = (
   handle: ChildProcessTerminationHandle,
+  stderrCapture?: ProcessStderrCapture,
 ): Effect.Effect<AcpError.AcpError> =>
   Effect.match(handle.exitCode, {
     onFailure: (cause) =>
@@ -59,5 +69,12 @@ export const makeTerminationError = (
         pid: handle.pid,
         cause,
       }),
-    onSuccess: (code) => new AcpError.AcpProcessExitedError({ code, pid: handle.pid }),
+    onSuccess: (code) => {
+      const stderrTail = stderrCapture?.getTail();
+      return new AcpError.AcpProcessExitedError({
+        code,
+        pid: handle.pid,
+        ...(stderrTail ? { stderrTail } : {}),
+      });
+    },
   });

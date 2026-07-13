@@ -93,6 +93,8 @@ export class AcpProcessExitedError extends Schema.TaggedErrorClass<AcpProcessExi
     code: Schema.optional(Schema.Number),
     pid: Schema.optionalKey(Schema.Int),
     cause: Schema.optional(Schema.Defect()),
+    /** Bounded tail of process stderr captured before exit (may be empty). */
+    stderrTail: Schema.optionalKey(Schema.String),
   },
 ) {
   override get message() {
@@ -179,6 +181,19 @@ export class AcpInputStreamEndedError extends Schema.TaggedErrorClass<AcpInputSt
 ) {
   override get message() {
     return "ACP input stream ended.";
+  }
+}
+
+export class AcpRequestTimeoutError extends Schema.TaggedErrorClass<AcpRequestTimeoutError>()(
+  "AcpRequestTimeoutError",
+  {
+    method: Schema.String,
+    requestId: Schema.optionalKey(Schema.String),
+    timeoutMs: Schema.Number,
+  },
+) {
+  override get message() {
+    return `ACP request '${this.method}' timed out after ${this.timeoutMs}ms.`;
   }
 }
 
@@ -370,6 +385,7 @@ export const AcpError = Schema.Union([
   AcpProtocolParseError,
   AcpTransportError,
   AcpInputStreamEndedError,
+  AcpRequestTimeoutError,
 ]);
 
 export type AcpError = typeof AcpError.Type;

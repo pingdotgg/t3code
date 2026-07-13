@@ -8,6 +8,10 @@ import * as Stream from "effect/Stream";
 import * as RpcClient from "effect/unstable/rpc/RpcClient";
 import * as RpcServer from "effect/unstable/rpc/RpcServer";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import {
+  type ProcessStderrCapture,
+  runProcessStderrCapture,
+} from "@t3tools/shared/processStderrCapture";
 
 import * as AcpError from "./errors.ts";
 import * as AcpProtocol from "./protocol.ts";
@@ -26,6 +30,11 @@ export interface AcpClientOptions {
   readonly logIncoming?: boolean;
   readonly logOutgoing?: boolean;
   readonly logger?: (event: AcpProtocol.AcpProtocolLogEvent) => Effect.Effect<void, never>;
+  /**
+   * Invoked for each completed stderr line from a child process client.
+   * Best-effort; failures from this callback are ignored by the capture fiber.
+   */
+  readonly onStderrLine?: (line: string) => Effect.Effect<void>;
 }
 
 type AcpClientRaw = {
@@ -262,6 +271,11 @@ export class AcpClient extends Context.Service<
       payload: Schema.Codec<A, I>,
       handler: (payload: A) => Effect.Effect<void, AcpError.AcpError>,
     ) => Effect.Effect<void>;
+    /**
+     * Bounded tail of child-process stderr. Empty when not attached to a child
+     * process or when no stderr has been captured yet.
+     */
+    readonly getStderrTail: () => string;
   }
 >()("effect-acp/client/AcpClient") {}
 
@@ -309,6 +323,7 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
   stdio: Stdio.Stdio,
   options: AcpClientOptions = {},
   terminationError?: Effect.Effect<AcpError.AcpError>,
+  stderrCapture?: ProcessStderrCapture,
 ): Effect.fn.Return<AcpClient["Service"], never, Scope.Scope> {
   const coreHandlers: AcpCoreRequestHandlers = {};
   const notificationHandlers: AcpNotificationHandlers = {
@@ -486,8 +501,12 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
           AGENT_METHODS.session_set_config_option,
           rpc[AGENT_METHODS.session_set_config_option](payload),
         ),
+      // session/prompt is long-running and is governed by the server-side turn
+      // activity watchdog, not a fixed control-plane timeout.
       prompt: (payload) =>
-        callRpc(AGENT_METHODS.session_prompt, rpc[AGENT_METHODS.session_prompt](payload)),
+        callRpc(AGENT_METHODS.session_prompt, rpc[AGENT_METHODS.session_prompt](payload), {
+          timeout: "none",
+        }),
       cancel: (payload) => transport.notify(AGENT_METHODS.session_cancel, payload),
     },
     handleRequestPermission: (handler) =>
@@ -568,6 +587,7 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
         );
         return Effect.void;
       }),
+    getStderrTail: () => stderrCapture?.getTail() ?? "",
   });
 });
 
@@ -577,8 +597,28 @@ export const layer = (stdio: Stdio.Stdio, options: AcpClientOptions = {}): Layer
 export const layerChildProcess = (
   handle: ChildProcessSpawner.ChildProcessHandle,
   options: AcpClientOptions = {},
-): Layer.Layer<AcpClient> => {
-  const stdio = makeChildStdio(handle);
-  const terminationError = makeTerminationError(handle);
-  return Layer.effect(AcpClient, make(stdio, options, terminationError));
-};
+): Layer.Layer<AcpClient> => Layer.effect(AcpClient, makeChildProcessClient(handle, options));
+
+const makeChildProcessClient = Effect.fn("effect-acp/AcpClient.makeChildProcessClient")(function* (
+  handle: ChildProcessSpawner.ChildProcessHandle,
+  options: AcpClientOptions,
+) {
+  const stderrCapture = yield* runProcessStderrCapture(handle.stderr, {
+    logLabel: "acp child process stderr",
+    annotations: {
+      transport: "acp",
+      pid: handle.pid,
+    },
+    ...(options.onStderrLine
+      ? {
+          onLine: (line: string) => options.onStderrLine!(line).pipe(Effect.ignore),
+        }
+      : {}),
+  });
+  return yield* make(
+    makeChildStdio(handle),
+    options,
+    makeTerminationError(handle, stderrCapture),
+    stderrCapture,
+  );
+});

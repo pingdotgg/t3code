@@ -21,6 +21,24 @@ describe("ACP child process termination", () => {
     }),
   );
 
+  it.effect("attaches a non-empty stderr tail to process-exited errors", () =>
+    Effect.gen(function* () {
+      const stderrCapture = {
+        getTail: () => "boom\nstack",
+      };
+      const error = yield* makeTerminationError(
+        {
+          pid: ChildProcessSpawner.ProcessId(43),
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+        },
+        stderrCapture as never,
+      );
+
+      assert.instanceOf(error, AcpError.AcpProcessExitedError);
+      assert.equal((error as AcpError.AcpProcessExitedError).stderrTail, "boom\nstack");
+    }),
+  );
+
   it.effect("retains the process identifier and exact exit-status cause", () =>
     Effect.gen(function* () {
       const rootCause = new Error("private process diagnostics");

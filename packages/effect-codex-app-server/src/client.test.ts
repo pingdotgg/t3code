@@ -123,7 +123,7 @@ it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
       ]);
     }),
   );
-  it.effect("drains child stderr so large diagnostics cannot block protocol responses", () =>
+  it.effect("captures child stderr so large diagnostics cannot block protocol responses", () =>
     Effect.gen(function* () {
       const handle = yield* makeHandle({
         CODEX_APP_SERVER_TEST_STDERR_BYTES: String(512 * 1024),
@@ -152,6 +152,48 @@ it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
       );
 
       assert.equal(initialized.userAgent, "mock-codex-app-server");
+    }),
+  );
+
+  it.effect("exposes a bounded stderr tail from the child process client", () =>
+    Effect.gen(function* () {
+      const handle = yield* makeHandle({
+        CODEX_APP_SERVER_TEST_STDERR_BYTES: String(64),
+      });
+      const scope = yield* Scope.make();
+      const clientLayer = CodexClient.layerChildProcess(handle);
+      const context = yield* Layer.buildWithScope(clientLayer, scope);
+
+      const tail = yield* Effect.gen(function* () {
+        const client = yield* CodexClient.CodexAppServerClient;
+        yield* client.request("initialize", {
+          clientInfo: {
+            name: "effect-codex-app-server-test",
+            title: "Effect Codex App Server Test",
+            version: "0.0.0",
+          },
+          capabilities: {
+            experimentalApi: true,
+            optOutNotificationMethods: null,
+          },
+        });
+        // Poll briefly: mock peer writes stderr asynchronously around initialize.
+        for (let attempt = 0; attempt < 50; attempt++) {
+          const current = client.getStderrTail();
+          if (current.length > 0) {
+            return current;
+          }
+          yield* Effect.sleep("10 millis");
+        }
+        return client.getStderrTail();
+      }).pipe(
+        Effect.timeout("5 seconds"),
+        Effect.provide(context),
+        Effect.ensuring(Scope.close(scope, Exit.void)),
+      );
+
+      assert.isTrue(tail.length > 0);
+      assert.isTrue(tail.length <= 64 * 1024);
     }),
   );
 });
