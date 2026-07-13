@@ -338,13 +338,16 @@ function responseFunctionOutputText(
 }
 
 function responseItemId(item: CodexRawResponseItem, fallback: string): string {
-  if ("id" in item && typeof item.id === "string" && item.id.length > 0) {
-    return item.id;
-  }
+  // Prefer call_id so a tool call and its paired output (e.g. function_call +
+  // function_call_output) that share a call_id but not an id collapse onto one
+  // lifecycle key. Fall back to the item id, then the event-derived fallback.
   if ("call_id" in item && typeof item.call_id === "string" && item.call_id.length > 0) {
     return item.call_id;
   }
-  return fallback ?? "raw-response-item";
+  if ("id" in item && typeof item.id === "string" && item.id.length > 0) {
+    return item.id;
+  }
+  return fallback;
 }
 
 function responseItemDetail(item: CodexRawResponseItem): string | undefined {
@@ -1291,41 +1294,33 @@ function mapToRuntimeEvents(
       },
     };
 
-    if (itemType === "assistant_message") {
+    const completedEvent: ProviderRuntimeEvent = {
+      ...base,
+      eventId: EventId.make(`${event.id}:completed`),
+      type: "item.completed",
+      payload: {
+        itemType,
+        status: "completed",
+        ...(responseItemTitle(itemType, item) ? { title: responseItemTitle(itemType, item) } : {}),
+        ...(detail ? { detail } : {}),
+        data: event.payload,
+      },
+    };
+
+    if (itemType === "assistant_message" || itemType === "reasoning") {
+      const streamKind =
+        itemType === "assistant_message" ? "assistant_text" : "reasoning_summary_text";
       return [
         ...(detail
           ? [
               {
                 ...base,
                 type: "content.delta" as const,
-                payload: { streamKind: "assistant_text" as const, delta: detail },
-              },
+                payload: { streamKind, delta: detail },
+              } satisfies ProviderRuntimeEvent,
             ]
           : []),
-        {
-          ...base,
-          eventId: EventId.make(`${event.id}:completed`),
-          type: "item.completed" as const,
-          payload: {
-            itemType,
-            status: "completed" as const,
-            ...(responseItemTitle(itemType, item)
-              ? { title: responseItemTitle(itemType, item) }
-              : {}),
-            ...(detail ? { detail } : {}),
-            data: event.payload,
-          },
-        },
-      ];
-    }
-
-    if (itemType === "reasoning" && detail) {
-      return [
-        {
-          ...base,
-          type: "content.delta",
-          payload: { streamKind: "reasoning_summary_text", delta: detail },
-        },
+        completedEvent,
       ];
     }
 
@@ -1333,21 +1328,7 @@ function mapToRuntimeEvents(
       return [];
     }
 
-    return [
-      {
-        ...base,
-        type: "item.completed",
-        payload: {
-          itemType,
-          status: "completed",
-          ...(responseItemTitle(itemType, item)
-            ? { title: responseItemTitle(itemType, item) }
-            : {}),
-          ...(detail ? { detail } : {}),
-          data: event.payload,
-        },
-      },
-    ];
+    return [completedEvent];
   }
 
   if (

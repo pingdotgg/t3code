@@ -919,13 +919,66 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
 
       const firstEvent = yield* Fiber.join(firstEventFiber);
       NodeAssert.equal(firstEvent._tag, "Some");
-      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "item.completed") {
+      const toolEvent = firstEvent._tag === "Some" ? firstEvent.value : undefined;
+      NodeAssert.equal(toolEvent?.type, "item.completed");
+      if (toolEvent?.type !== "item.completed") {
         return;
       }
-      NodeAssert.equal(firstEvent.value.itemId, "fc_1");
-      NodeAssert.equal(firstEvent.value.payload.itemType, "dynamic_tool_call");
-      NodeAssert.equal(firstEvent.value.payload.title, "exec_command");
-      NodeAssert.equal(firstEvent.value.payload.detail, 'exec_command: {"cmd":"ls"}');
+      // call_id is preferred over id so a tool call and its paired output share
+      // one lifecycle key.
+      NodeAssert.equal(toolEvent.itemId, "call_1");
+      NodeAssert.equal(toolEvent.payload.itemType, "dynamic_tool_call");
+      NodeAssert.equal(toolEvent.payload.title, "exec_command");
+      NodeAssert.equal(toolEvent.payload.detail, 'exec_command: {"cmd":"ls"}');
+    }),
+  );
+
+  it.effect("maps raw response reasoning completions to reasoning + item.completed", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const collectedFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(
+        Effect.forkChild,
+      );
+
+      yield* runtime.emit({
+        id: asEventId("evt-raw-response-reasoning"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "rawResponseItem/completed",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        payload: {
+          threadId: "provider-thread-1",
+          turnId: "turn-1",
+          item: {
+            type: "reasoning",
+            id: "reasoning-1",
+            summary: [
+              { type: "summary_text", text: "Plan the change, " },
+              { type: "summary_text", text: "then apply it." },
+            ],
+          },
+        },
+      } satisfies ProviderEvent);
+
+      const events = Array.from(yield* Fiber.join(collectedFiber));
+      const delta = events[0];
+      NodeAssert.equal(delta?.type, "content.delta");
+      if (delta?.type === "content.delta") {
+        NodeAssert.equal(delta.itemId, "reasoning-1");
+        NodeAssert.equal(delta.payload.streamKind, "reasoning_summary_text");
+        NodeAssert.equal(delta.payload.delta, "Plan the change, then apply it.");
+      }
+
+      const completed = events[1];
+      NodeAssert.equal(completed?.type, "item.completed");
+      if (completed?.type === "item.completed") {
+        NodeAssert.equal(completed.eventId, "evt-raw-response-reasoning:completed");
+        NodeAssert.equal(completed.itemId, "reasoning-1");
+        NodeAssert.equal(completed.payload.itemType, "reasoning");
+        NodeAssert.equal(completed.payload.detail, "Plan the change, then apply it.");
+      }
     }),
   );
 
