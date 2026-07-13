@@ -1638,7 +1638,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               pendingUsageLimit = undefined;
             }
           }),
-        ).pipe(Effect.forkChild);
+        ).pipe(Effect.forkIn(sessionScope));
 
         const started = yield* runtime.start().pipe(
           Effect.mapError(

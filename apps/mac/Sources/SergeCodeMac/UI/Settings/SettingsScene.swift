@@ -564,6 +564,26 @@ private struct PhoneSettingsTab: View {
                             .textSelection(.enabled)
                     }
 
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Pairing link")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        HStack(alignment: .top, spacing: 8) {
+                            Text(pairing.pairingURL.absoluteString)
+                                .font(.caption.monospaced())
+                                .textSelection(.enabled)
+                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
+
+                            Button {
+                                Pasteboard.copy(pairing.pairingURL.absoluteString)
+                            } label: {
+                                Label("Copy Link", systemImage: "doc.on.doc")
+                            }
+                            .controlSize(.small)
+                        }
+                    }
+
                     HStack(spacing: 12) {
                         // A minted code lives ~5 minutes; the loop below
                         // replaces it automatically just before expiry.
