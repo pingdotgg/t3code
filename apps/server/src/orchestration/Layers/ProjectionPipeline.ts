@@ -4,6 +4,7 @@ import {
   type OrchestrationEvent,
   type OrchestrationSessionStatus,
   ProviderDriverKind,
+  ThreadTokenUsageSnapshot,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -11,6 +12,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
@@ -25,10 +27,7 @@ import {
   type ProjectionThreadMessage,
   ProjectionThreadMessageRepository,
 } from "../../persistence/Services/ProjectionThreadMessages.ts";
-import {
-  ProjectionTurnUsageRepository,
-  type ProjectionTurnUsage,
-} from "../../persistence/Services/ProjectionTurnUsage.ts";
+import { ProjectionTurnUsageRepository } from "../../persistence/Services/ProjectionTurnUsage.ts";
 import {
   type ProjectionThreadProposedPlan,
   ProjectionThreadProposedPlanRepository,
@@ -1354,8 +1353,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
             return;
           }
-          const usage = payload as ProjectionTurnUsage["usage"];
-          if (typeof usage.usedTokens !== "number" || usage.usedTokens < 0) {
+          const usage = Schema.decodeUnknownOption(ThreadTokenUsageSnapshot)(payload);
+          if (Option.isNone(usage)) {
             return;
           }
           const [thread, session] = yield* Effect.all([
@@ -1370,7 +1369,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ),
             providerInstanceId: Option.isSome(session) ? session.value.providerInstanceId : null,
             model: Option.isSome(thread) ? thread.value.modelSelection.model : null,
-            usage,
+            usage: usage.value,
             updatedAt: activity.createdAt,
           });
           return;

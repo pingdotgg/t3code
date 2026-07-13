@@ -194,8 +194,12 @@ function trimTerminalContextChars(
   }
   let remaining = maxChars;
   const kept: string[] = [];
+  let truncated = false;
   for (const line of lines) {
-    if (remaining <= 0) break;
+    if (remaining <= 0) {
+      truncated = true;
+      break;
+    }
     if (line.length <= remaining) {
       kept.push(line);
       remaining -= line.length + 1;
@@ -203,8 +207,9 @@ function trimTerminalContextChars(
     }
     kept.push(`${line.slice(0, Math.max(0, remaining - 1))}…`);
     remaining = 0;
+    truncated = true;
   }
-  return { lines: kept, truncatedByChars: kept.length < lines.length || remaining <= 0 };
+  return { lines: kept, truncatedByChars: truncated || kept.length < lines.length };
 }
 
 function buildTerminalContextBodyLines(

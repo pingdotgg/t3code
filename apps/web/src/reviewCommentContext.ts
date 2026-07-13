@@ -259,24 +259,47 @@ function stripTrailingNewline(value: string): string {
 }
 
 function boundReviewCommentDiff(value: string): string {
-  if (value.length <= REVIEW_COMMENT_CONTEXT_MAX_CHARS) {
-    const lines = value.split("\n");
-    if (lines.length <= REVIEW_COMMENT_CONTEXT_MAX_LINES) return value;
-  }
   const lines = value.split("\n");
-  const headCount = Math.max(1, Math.floor(REVIEW_COMMENT_CONTEXT_MAX_LINES * 0.25));
-  const tailCount = Math.max(1, REVIEW_COMMENT_CONTEXT_MAX_LINES - headCount);
+
+  if (
+    value.length <= REVIEW_COMMENT_CONTEXT_MAX_CHARS &&
+    lines.length <= REVIEW_COMMENT_CONTEXT_MAX_LINES
+  ) {
+    return value;
+  }
+
+  if (lines.length <= REVIEW_COMMENT_CONTEXT_MAX_LINES) {
+    return `${value.slice(0, REVIEW_COMMENT_CONTEXT_MAX_CHARS - 1)}…`;
+  }
+
+  const contentLineLimit = REVIEW_COMMENT_CONTEXT_MAX_LINES - 1;
+  const headCount = Math.max(1, Math.floor(contentLineLimit * 0.25));
+  const tailCount = Math.max(1, contentLineLimit - headCount);
   const head = lines.slice(0, headCount);
   const tail = lines.slice(-tailCount);
   const omitted = Math.max(0, lines.length - head.length - tail.length);
-  const bounded = [
-    ...head,
-    `[trimmed: omitted ${omitted} middle lines from ${lines.length} total lines]`,
-    ...tail,
-  ].join("\n");
-  return bounded.length <= REVIEW_COMMENT_CONTEXT_MAX_CHARS
-    ? bounded
-    : `${bounded.slice(0, REVIEW_COMMENT_CONTEXT_MAX_CHARS - 1)}…`;
+  const marker = `[trimmed: omitted ${omitted} middle lines from ${lines.length} total lines]`;
+  const headText = head.join("\n");
+  const tailText = tail.join("\n");
+  const suffix = `${marker}\n${tailText}`;
+  const availableHeadChars = REVIEW_COMMENT_CONTEXT_MAX_CHARS - suffix.length - 1;
+
+  if (availableHeadChars >= headText.length) {
+    return `${headText}\n${suffix}`;
+  }
+  if (availableHeadChars > 0) {
+    return `${headText.slice(0, availableHeadChars - 1)}…\n${suffix}`;
+  }
+
+  const availableTailChars = REVIEW_COMMENT_CONTEXT_MAX_CHARS - marker.length - 1;
+  if (availableTailChars <= 1) {
+    return marker.slice(0, REVIEW_COMMENT_CONTEXT_MAX_CHARS - 1) + "…";
+  }
+  const boundedTail =
+    tailText.length <= availableTailChars
+      ? tailText
+      : `…${tailText.slice(-(availableTailChars - 1))}`;
+  return `${marker}\n${boundedTail}`;
 }
 
 function buildDiffReviewLines(fileDiff: FileDiffMetadata): ReadonlyArray<DiffReviewLine> {
