@@ -721,12 +721,15 @@ struct AssistantMarkdownView: View {
         if isStreaming && style == .assistant && !messageID.isEmpty {
             // Incremental parse: settled prefix cached per (thread, message)
             // session; only the tail past the last safe boundary reparses.
+            // Scope the thread key (like TimelineDisplayCache) so local/remote
+            // ids can't alias across devices in MultiDeviceModel.
             let document = StreamingMarkdownCache.document(
-                threadID: threadID, messageID: messageID, markdown: markdown)
+                threadID: model.scopedThreadKey(threadID), messageID: messageID, markdown: markdown)
             self.renderedBlocks = Self.renderedBlocks(from: document)
         } else {
             if !messageID.isEmpty {
-                StreamingMarkdownCache.finish(threadID: threadID, messageID: messageID)
+                StreamingMarkdownCache.finish(
+                    threadID: model.scopedThreadKey(threadID), messageID: messageID)
             }
             // Keyed by messageID so a finished message's parse is memoized
             // across the sibling-mutation rebuilds documented on the cache
