@@ -581,12 +581,19 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         yield* waitForSdkEventQueue();
       }
 
-      runtimeMock.state.lastSession.send.mockResolvedValueOnce("user-message-second");
+      runtimeMock.state.lastSession.send.mockResolvedValueOnce(undefined);
       const secondTurn = yield* adapter.sendTurn({
         threadId,
         input: "second prompt",
         attachments: [],
       });
+      config.onEvent?.({
+        id: "user-message-second",
+        timestamp,
+        parentId: null,
+        type: "user.message",
+        data: { content: "second prompt" },
+      } as SessionEvent);
       completeTurn("sdk-turn-second", "evt-second");
       for (
         let attempt = 0;
