@@ -11,7 +11,6 @@ import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
 
 import * as CodexError from "./errors.ts";
-import { splitLinesWithBoundedRemainder } from "@t3tools/shared/processStderrCapture";
 import { JsonRpcId, JsonRpcResponseEnvelope } from "./_internal/shared.ts";
 const isJsonRpcId = Schema.is(JsonRpcId);
 const isJsonRpcResponseEnvelope = Schema.is(JsonRpcResponseEnvelope);
@@ -19,11 +18,90 @@ const isCodexAppServerError = Schema.is(CodexError.CodexAppServerError);
 
 /** Default timeout for control-plane JSON-RPC requests (initialize, session, etc.). */
 export const DEFAULT_CONTROL_PLANE_REQUEST_TIMEOUT = Duration.seconds(60);
+export const MAX_PROTOCOL_LINE_BYTES = 32 * 1024 * 1024;
+
+const NO_DEFAULT_TIMEOUT_METHODS = new Set(["turn/start", "thread/resume", "thread/read"]);
+const textEncoder = new TextEncoder();
+
+interface ProtocolLineReaderState {
+  readonly remainder: string;
+  readonly remainderBytes: number;
+  readonly discarding: boolean;
+  readonly discardedBytes: number;
+}
+
+interface ProtocolLineChunkResult {
+  readonly state: ProtocolLineReaderState;
+  readonly lines: ReadonlyArray<string>;
+  readonly skippedByteCounts: ReadonlyArray<number>;
+}
+
+const initialProtocolLineReaderState: ProtocolLineReaderState = {
+  remainder: "",
+  remainderBytes: 0,
+  discarding: false,
+  discardedBytes: 0,
+};
+
+function splitProtocolLines(
+  initialState: ProtocolLineReaderState,
+  chunk: string,
+): ProtocolLineChunkResult {
+  let state = initialState;
+  const lines: Array<string> = [];
+  const skippedByteCounts: Array<number> = [];
+  let offset = 0;
+
+  while (offset < chunk.length) {
+    const newlineIndex = chunk.indexOf("\n", offset);
+    const hasNewline = newlineIndex !== -1;
+    const end = hasNewline ? newlineIndex : chunk.length;
+    const segment = chunk.slice(offset, end);
+    const segmentBytes = textEncoder.encode(segment).byteLength;
+
+    if (state.discarding) {
+      state = {
+        remainder: "",
+        remainderBytes: 0,
+        discarding: true,
+        discardedBytes: state.discardedBytes + segmentBytes,
+      };
+    } else if (state.remainderBytes + segmentBytes > MAX_PROTOCOL_LINE_BYTES) {
+      state = {
+        remainder: "",
+        remainderBytes: 0,
+        discarding: true,
+        discardedBytes: state.remainderBytes + segmentBytes,
+      };
+    } else if (hasNewline) {
+      lines.push(`${state.remainder}${segment}`.replace(/\r$/, ""));
+      state = initialProtocolLineReaderState;
+    } else {
+      state = {
+        remainder: state.remainder + segment,
+        remainderBytes: state.remainderBytes + segmentBytes,
+        discarding: false,
+        discardedBytes: 0,
+      };
+    }
+
+    if (!hasNewline) {
+      break;
+    }
+    if (state.discarding) {
+      skippedByteCounts.push(state.discardedBytes);
+      state = initialProtocolLineReaderState;
+    }
+    offset = newlineIndex + 1;
+  }
+
+  return { state, lines, skippedByteCounts };
+}
 
 /**
  * Per-request timeout options for {@link CodexAppServerPatchedProtocol.request}.
  * - omit / `undefined`: use the 60s control-plane default
- * - `"none"`: no timeout (long-running turn-start / prompt-style calls)
+ * - `"none"`: no timeout (long-running turn-start / thread hydration calls)
  * - duration input: explicit timeout
  */
 export type CodexAppServerRequestTimeout = Duration.Input | "none";
@@ -176,8 +254,7 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
     const incomingRequests = yield* Queue.unbounded<CodexAppServerIncomingRequest>();
     const pending = yield* Ref.make(new Map<string, CodexAppServerPendingRequest>());
     const nextRequestId = yield* Ref.make(1);
-    const remainder = yield* Ref.make("");
-    const remainderTruncationLogged = yield* Ref.make(false);
+    const lineReaderState = yield* Ref.make(initialProtocolLineReaderState);
     const terminationHandled = yield* Ref.make(false);
 
     const logProtocol = (event: CodexAppServerProtocolLogEvent) => {
@@ -371,23 +448,22 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
       );
     };
 
+    const logSkippedMessage = (byteCount: number) =>
+      Effect.logWarning("Codex App Server skipped an oversized protocol message.", {
+        byteCount,
+        maximumByteCount: MAX_PROTOCOL_LINE_BYTES,
+      });
+
     yield* options.stdio.stdin.pipe(
       Stream.decodeText(),
       Stream.runForEach((chunk) =>
-        Ref.modify(remainder, (current) => {
-          const split = splitLinesWithBoundedRemainder(current, chunk);
-          return [{ lines: split.lines, truncated: split.truncated }, split.remainder] as const;
+        Ref.modify(lineReaderState, (current) => {
+          const split = splitProtocolLines(current, chunk);
+          return [split, split.state] as const;
         }).pipe(
-          Effect.flatMap(({ lines, truncated }) =>
+          Effect.flatMap(({ lines, skippedByteCounts }) =>
             Effect.gen(function* () {
-              if (truncated) {
-                const alreadyLogged = yield* Ref.getAndSet(remainderTruncationLogged, true);
-                if (!alreadyLogged) {
-                  yield* Effect.logWarning(
-                    "Codex App Server protocol line remainder truncated after exceeding 1 MiB.",
-                  );
-                }
-              }
+              yield* Effect.forEach(skippedByteCounts, logSkippedMessage, { discard: true });
               yield* Effect.forEach(lines, handleLine, { discard: true });
             }),
           ),
@@ -399,8 +475,14 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
             Effect.succeed(normalizeIncomingError(error, "read-input-stream")),
           ),
         onSuccess: () =>
-          Ref.get(remainder).pipe(
-            Effect.flatMap((line) => (line.trim().length === 0 ? Effect.void : handleLine(line))),
+          Ref.get(lineReaderState).pipe(
+            Effect.flatMap((state) =>
+              state.discarding
+                ? logSkippedMessage(state.discardedBytes)
+                : state.remainder.trim().length === 0
+                  ? Effect.void
+                  : handleLine(state.remainder),
+            ),
             Effect.matchEffect({
               onFailure: (error) => handleTermination(() => Effect.succeed(error)),
               onSuccess: () =>
@@ -441,7 +523,8 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
           Effect.onInterrupt(() => removePending(String(requestId))),
         );
 
-        const timeoutOpt = requestOptions?.timeout;
+        const timeoutOpt =
+          requestOptions?.timeout ?? (NO_DEFAULT_TIMEOUT_METHODS.has(method) ? "none" : undefined);
         if (timeoutOpt === "none") {
           return yield* awaitResponse;
         }

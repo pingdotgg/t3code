@@ -64,6 +64,29 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol request timeouts"
     }).pipe(Effect.provide(TestClock.layer()), Effect.scoped),
   );
 
+  it.effect("thread resume and read have no default timeout", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({ stdio });
+
+      const resumeFiber = yield* transport
+        .request("thread/resume", { threadId: "t1" })
+        .pipe(Effect.forkScoped);
+      yield* Queue.take(output);
+      const readFiber = yield* transport
+        .request("thread/read", { threadId: "t1" })
+        .pipe(Effect.forkScoped);
+      yield* Queue.take(output);
+
+      yield* TestClock.adjust(Duration.seconds(90));
+      yield* Queue.offer(input, encodeJsonl({ id: 1, result: { thread: { id: "t1" } } }));
+      yield* Queue.offer(input, encodeJsonl({ id: 2, result: { thread: { id: "t1" } } }));
+
+      assert.deepEqual(yield* Fiber.join(resumeFiber), { thread: { id: "t1" } });
+      assert.deepEqual(yield* Fiber.join(readFiber), { thread: { id: "t1" } });
+    }).pipe(Effect.provide(TestClock.layer()), Effect.scoped),
+  );
+
   it.effect("explicit short timeout fires for control-plane requests", () =>
     Effect.gen(function* () {
       const { stdio } = yield* makeInMemoryStdio();
