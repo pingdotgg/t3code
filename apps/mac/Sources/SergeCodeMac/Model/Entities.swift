@@ -131,8 +131,9 @@ public struct ModelOption: Identifiable, Hashable, Sendable {
 
 /// Server-authoritative liveness for a thread's active provider turn (from
 /// `session.health` activities, all providers). `nil` means the server has not
-/// reported health for this thread, so any client-side stall heuristic applies;
-/// when present, this signal is authoritative and wins over the heuristic.
+/// reported health for this thread, so any client-side stall heuristic applies.
+/// A stalled signal is authoritative; an active signal suppresses the heuristic
+/// only while its activity timestamp is fresh.
 public struct ThreadHealth: Hashable, Sendable {
     public var stalled: Bool
     public var lastActivityAt: Date
@@ -168,9 +169,8 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
     /// Active delegated/background task count. Used for sidebar accessibility
     /// when `status == .backgroundWork`; zero for ordinary thread states.
     public var backgroundAgentCount: Int
-    /// Server-authoritative turn liveness (`session.health`); `nil` until the
-    /// server reports it. Drives the stalled indicator and, when present,
-    /// overrides the client-side subagent stall heuristic for this thread.
+    /// Server turn liveness (`session.health`); `nil` until the server reports
+    /// it. Stalled and fresh-active signals override the client-side heuristic.
     public var health: ThreadHealth?
 
     /// True when the server has reported this thread's active turn as stalled.

@@ -34,16 +34,18 @@ enum SubagentTaskPresentation {
         return now.timeIntervalSince(task.lastActivityAt) > stalledThreshold
     }
 
-    /// Resolved stall state with server precedence: when the owning thread has
-    /// a server `session.health` signal it is authoritative (the client 3-min
-    /// heuristic is suppressed); otherwise the heuristic applies. Never shows a
-    /// non-running task as stalled.
+    /// Resolved stall state with server precedence: stalled is authoritative;
+    /// active suppresses the client heuristic only while its activity is fresh.
+    /// Never shows a non-running task as stalled.
     static func isStalled(
         task: SubagentTaskItem, at now: Date, threadHealth: ThreadHealth?
     ) -> Bool {
         guard task.state == .running else { return false }
         if let threadHealth {
-            return threadHealth.stalled
+            if threadHealth.stalled { return true }
+            if now.timeIntervalSince(threadHealth.lastActivityAt) <= stalledThreshold {
+                return false
+            }
         }
         return isStalled(task: task, at: now)
     }
