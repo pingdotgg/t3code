@@ -685,6 +685,52 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.title).toBe(seededTitle);
   });
 
+  it("replaces the default Copilot title with the local fallback", async () => {
+    const copilotSelection = createModelSelection(ProviderInstanceId.make("copilot"), "gpt-4.1");
+    const harness = await createHarness({
+      threadModelSelection: copilotSelection,
+      textGenerationModelSelection: copilotSelection,
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+    harness.generateThreadTitle.mockReturnValue(
+      Effect.succeed({ title: "Investigate Copilot reconnect failures" }),
+    );
+
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-title-copilot-default"),
+        threadId: ThreadId.make("thread-1"),
+        title: "New thread",
+      }),
+    );
+
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-copilot-title-fallback"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-copilot-title-fallback"),
+          role: "user",
+          text: "Investigate Copilot reconnect failures after restarting the session.",
+          attachments: [],
+        },
+        titleSeed: "Investigate Copilot reconnect failures after...",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.generateThreadTitle.mock.calls.length === 1);
+    await harness.drain();
+
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.title).toBe("Investigate Copilot reconnect failures");
+  });
+
   it("does not overwrite an existing custom thread title on the first turn", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

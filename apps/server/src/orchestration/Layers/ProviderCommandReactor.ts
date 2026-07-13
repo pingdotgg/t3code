@@ -748,7 +748,19 @@ const make = Effect.gen(function* () {
           modelSelection.instanceId,
         );
         if (textGenerationProvider.driverKind === COPILOT_DRIVER_KIND) {
-          return;
+          const thread = yield* resolveThread(input.threadId);
+          if (!thread) return;
+
+          const currentTitle = thread.title.trim();
+          const titleSeed = input.titleSeed?.trim();
+          const hasClientSeededTitle =
+            currentTitle !== DEFAULT_THREAD_TITLE &&
+            titleSeed !== undefined &&
+            titleSeed.length > 0 &&
+            currentTitle === titleSeed;
+          if (hasClientSeededTitle) {
+            return;
+          }
         }
         const generated = yield* textGeneration.generateThreadTitle({
           cwd: input.cwd,

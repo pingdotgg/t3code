@@ -1185,6 +1185,24 @@ function resolveTurnIdForSdkTurn(
   return nextTurnId;
 }
 
+function resolveTurnIdForSdkUserMessage(
+  context: CopilotSessionContext,
+  event: Extract<SessionEvent, { type: "user.message" }>,
+): TurnId | undefined {
+  const mappedTurnId = context.turnIdByProviderItemId.get(event.id);
+  if (mappedTurnId) {
+    return mappedTurnId;
+  }
+
+  return context.queuedTurnIds.find((turnId) => {
+    const snapshot = context.turns.find((turn) => turn.id === turnId);
+    return (
+      snapshot?.sdkHistoryEventId === undefined &&
+      !isSdkEventBeforeQueuedTurn(context, turnId, event.timestamp)
+    );
+  });
+}
+
 function resolveTurnIdForEvent(
   context: CopilotSessionContext,
   input?: {
@@ -2401,6 +2419,15 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         await runWithContext(emitBackgroundTasksPlanSnapshot(context, event));
         return;
       }
+      case "user.message": {
+        const turnId = resolveTurnIdForSdkUserMessage(context, event);
+        if (!turnId) {
+          return;
+        }
+        context.turnIdByProviderItemId.set(event.id, turnId);
+        ensureTurnSnapshot(context, turnId).sdkHistoryEventId = event.id;
+        return;
+      }
       case "assistant.turn_start": {
         await completePendingActiveTurnEnd(context);
         if (context.activeTurnId) {
@@ -3416,9 +3443,14 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
 
       const nextLength = Math.max(0, context.turns.length - numTurns);
       const removedTurns = context.turns.slice(nextLength);
-      const sdkHistoryEventId = removedTurns.find(
-        (turn) => turn.sdkHistoryEventId,
-      )?.sdkHistoryEventId;
+      const sdkHistoryEventId = removedTurns[0]?.sdkHistoryEventId;
+      if (removedTurns.length > 0 && !sdkHistoryEventId) {
+        return yield* new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "thread.rollback",
+          detail: "Cannot roll back Copilot history without the first removed user message ID.",
+        });
+      }
       if (sdkHistoryEventId) {
         yield* copilotSdk.truncateHistory(context, sdkHistoryEventId);
       }
