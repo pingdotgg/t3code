@@ -26,7 +26,7 @@ public struct ChatScreen: View {
                     ChatHeaderView(
                         thread: thread, model: model, scenery: scenery, threadKey: threadKey)
                     Divider()
-                    VcsToolbar(model: model)
+                    VcsToolbar(model: model, threadID: thread.id).id(thread.id)
                     ChatTimelineScrollView(model: model, isPinnedToBottom: $isPinnedToBottom)
                     ChatFollowUpBar(model: model)
                     PlanProgressStrip(model: model)

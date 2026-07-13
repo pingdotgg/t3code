@@ -145,6 +145,21 @@ struct SergeCodeApp: App {
                     AboutWindowController.shared.show()
                 }
             }
+            // `.replacing` (not `.after`): a bare `WindowGroup` auto-vends a
+            // "New Window" item already bound to ⌘N, which would otherwise
+            // race our own ⌘N item for the same key equivalent (and a second
+            // top-level window here would just be a redundant duplicate of
+            // the same sidebar/model, not a useful window to spawn).
+            CommandGroup(replacing: .newItem) {
+                // Same AppKit-window workaround as About above — this opens
+                // an independent standalone window rather than RootView's
+                // own New Session sheet.
+                Button("New Session") {
+                    NewSessionWindowController.shared.show(
+                        multi: multi, scenery: scenery, passport: passport)
+                }
+                .keyboardShortcut("n", modifiers: .command)
+            }
         }
 
         Settings {
