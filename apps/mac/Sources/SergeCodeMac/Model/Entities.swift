@@ -129,6 +129,23 @@ public struct ModelOption: Identifiable, Hashable, Sendable {
     }
 }
 
+/// Server-authoritative liveness for a thread's active provider turn (from
+/// `session.health` activities, all providers). `nil` means the server has not
+/// reported health for this thread, so any client-side stall heuristic applies;
+/// when present, this signal is authoritative and wins over the heuristic.
+public struct ThreadHealth: Hashable, Sendable {
+    public var stalled: Bool
+    public var lastActivityAt: Date
+    /// When the current stall began; `nil` unless `stalled`.
+    public var stalledSince: Date?
+
+    public init(stalled: Bool, lastActivityAt: Date, stalledSince: Date? = nil) {
+        self.stalled = stalled
+        self.lastActivityAt = lastActivityAt
+        self.stalledSince = stalledSince
+    }
+}
+
 public struct ChatThread: Identifiable, Hashable, Sendable {
     public var id: String
     public var projectID: String
@@ -151,6 +168,13 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
     /// Active delegated/background task count. Used for sidebar accessibility
     /// when `status == .backgroundWork`; zero for ordinary thread states.
     public var backgroundAgentCount: Int
+    /// Server-authoritative turn liveness (`session.health`); `nil` until the
+    /// server reports it. Drives the stalled indicator and, when present,
+    /// overrides the client-side subagent stall heuristic for this thread.
+    public var health: ThreadHealth?
+
+    /// True when the server has reported this thread's active turn as stalled.
+    public var isStalled: Bool { health?.stalled ?? false }
 
     public init(
         id: String, projectID: String, title: String, provider: ProviderKind,
@@ -159,7 +183,7 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
         interactionMode: ThreadInteractionMode = .normal,
         modelInstanceID: String? = nil, modelID: String? = nil,
         reasoningEffort: String? = nil, serviceTier: String? = nil,
-        backgroundAgentCount: Int = 0
+        backgroundAgentCount: Int = 0, health: ThreadHealth? = nil
     ) {
         self.id = id
         self.projectID = projectID
@@ -174,6 +198,7 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
         self.reasoningEffort = reasoningEffort
         self.serviceTier = serviceTier
         self.backgroundAgentCount = backgroundAgentCount
+        self.health = health
     }
 
     /// True when every stored property except `updatedAt` matches. Used by
@@ -190,6 +215,7 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
             && modelID == other.modelID
             && reasoningEffort == other.reasoningEffort
             && serviceTier == other.serviceTier
+            && health == other.health
     }
 }
 
@@ -345,6 +371,9 @@ public enum TimelineItem: Identifiable, Sendable {
     /// the same task, so new text replaces the row instead of stacking.
     case reasoning(id: String, text: String, at: Date)
     case subagentTask(SubagentTaskItem)
+    /// A provider CLI process died leaving captured stderr. Error-styled row
+    /// with an expandable "process output" disclosure (`session.exited`).
+    case sessionExit(id: String, summary: String, stderrTail: String, at: Date)
 
     public var id: String {
         switch self {
@@ -359,6 +388,7 @@ public enum TimelineItem: Identifiable, Sendable {
         case .notice(let id, _, _): id
         case .reasoning(let id, _, _): id
         case .subagentTask(let item): item.id
+        case .sessionExit(let id, _, _, _): id
         }
     }
 
@@ -378,6 +408,7 @@ public enum TimelineItem: Identifiable, Sendable {
         case .notice(_, _, let at): at
         case .reasoning(_, _, let at): at
         case .subagentTask(let item): item.startedAt
+        case .sessionExit(_, _, _, let at): at
         }
     }
 }

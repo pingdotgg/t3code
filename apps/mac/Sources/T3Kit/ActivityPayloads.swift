@@ -37,6 +37,41 @@ public enum ActivityKind {
     /// Tone `.info`: adapter-side warning about a provider message the
     /// server couldn't project (ProviderRuntimeIngestion.ts).
     public static let runtimeWarning = "runtime.warning"
+    /// Server-driven turn liveness for ALL providers (codex/grok/cursor/
+    /// claude): tone `.error` when `state == "stalled"`, `.info` on recovery.
+    /// Payload is `SessionHealthActivityPayload`. Emitted once on stall and
+    /// once on recovery by the server's TurnActivityWatchdog.
+    public static let sessionHealth = "session.health"
+    /// Tone `.error`: a provider CLI process died leaving captured stderr.
+    /// Payload is `SessionExitedActivityPayload`; only emitted when a
+    /// `stderrTail` was captured (quiet exits produce no activity).
+    public static let sessionExited = "session.exited"
+}
+
+// MARK: - session.health
+
+/// Activity payload for kind `session.health`:
+/// `{ state: "stalled" | "active", lastActivityAt, stalledForMs? }`
+/// (providerRuntime.ts `SessionHealthPayload`). Drives server-authoritative
+/// stall status for a thread's active provider turn.
+public struct SessionHealthActivityPayload: Decodable, Sendable {
+    public var state: String
+    public var lastActivityAt: String
+    public var stalledForMs: Int?
+
+    public var isStalled: Bool { state == "stalled" }
+}
+
+// MARK: - session.exited
+
+/// Activity payload for kind `session.exited`:
+/// `{ stderrTail, reason?, exitKind?, recoverable? }`. `stderrTail` is a
+/// bounded tail of the provider process stderr for the failure disclosure.
+public struct SessionExitedActivityPayload: Decodable, Sendable {
+    public var stderrTail: String
+    public var reason: String?
+    public var exitKind: String?
+    public var recoverable: Bool?
 }
 
 // MARK: - tool.updated / tool.completed
