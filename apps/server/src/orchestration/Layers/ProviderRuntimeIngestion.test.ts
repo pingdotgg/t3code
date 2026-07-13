@@ -2862,7 +2862,7 @@ describe("ProviderRuntimeIngestion", () => {
     expect(checkpoint?.checkpointRef).toBe("provider-diff:evt-turn-diff-updated");
   });
 
-  it("projects reasoning text deltas into normalized thread activities", async () => {
+  it("does not persist streamed deltas as thread activities", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
 
@@ -2882,57 +2882,6 @@ describe("ProviderRuntimeIngestion", () => {
     });
     harness.emit({
       type: "content.delta",
-      eventId: asEventId("evt-reasoning-summary-delta"),
-      provider: ProviderDriverKind.make("codex"),
-      createdAt: now,
-      threadId: asThreadId("thread-1"),
-      turnId: asTurnId("turn-reasoning"),
-      itemId: asItemId("item-reasoning-summary"),
-      payload: {
-        streamKind: "reasoning_summary_text",
-        delta: "Implementation summary",
-        summaryIndex: 1,
-      },
-    });
-
-    const thread = await waitForThread(
-      harness.readModel,
-      (entry) =>
-        entry.activities.some(
-          (activity: ProviderRuntimeTestActivity) => activity.kind === "reasoning.update",
-        ) &&
-        entry.activities.some(
-          (activity: ProviderRuntimeTestActivity) => activity.kind === "reasoning.summary",
-        ),
-    );
-
-    const reasoning = thread.activities.find(
-      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-reasoning-delta",
-    );
-    expect(reasoning?.kind).toBe("reasoning.update");
-    expect(reasoning?.payload).toMatchObject({
-      detail: "Thinking through the implementation",
-      streamKind: "reasoning_text",
-      contentIndex: 0,
-    });
-
-    const summary = thread.activities.find(
-      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-reasoning-summary-delta",
-    );
-    expect(summary?.kind).toBe("reasoning.summary");
-    expect(summary?.payload).toMatchObject({
-      detail: "Implementation summary",
-      streamKind: "reasoning_summary_text",
-      summaryIndex: 1,
-    });
-  });
-
-  it("projects provider tool output deltas into normalized thread activities", async () => {
-    const harness = await createHarness();
-    const now = "2026-01-01T00:00:00.000Z";
-
-    harness.emit({
-      type: "content.delta",
       eventId: asEventId("evt-command-output-delta"),
       provider: ProviderDriverKind.make("codex"),
       createdAt: now,
@@ -2944,49 +2893,15 @@ describe("ProviderRuntimeIngestion", () => {
         delta: "stdout: tests passed",
       },
     });
-    harness.emit({
-      type: "content.delta",
-      eventId: asEventId("evt-file-output-delta"),
-      provider: ProviderDriverKind.make("copilot"),
-      createdAt: now,
-      threadId: asThreadId("thread-1"),
-      turnId: asTurnId("turn-output"),
-      itemId: asItemId("item-file"),
-      payload: {
-        streamKind: "file_change_output",
-        delta: "updated README.md",
-      },
-    });
-
-    const thread = await waitForThread(
-      harness.readModel,
-      (entry) =>
-        entry.activities.filter(
-          (activity: ProviderRuntimeTestActivity) => activity.kind === "tool.output",
-        ).length >= 2,
+    await harness.drain();
+    const thread = (await harness.readModel()).threads.find(
+      (entry) => entry.id === ThreadId.make("thread-1"),
     );
-
-    const commandOutput = thread.activities.find(
-      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-command-output-delta",
-    );
-    expect(commandOutput?.kind).toBe("tool.output");
-    expect(commandOutput?.summary).toBe("Command output");
-    expect(commandOutput?.payload).toMatchObject({
-      detail: "stdout: tests passed",
-      streamKind: "command_output",
-      itemId: "item-command",
-    });
-
-    const fileOutput = thread.activities.find(
-      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-file-output-delta",
-    );
-    expect(fileOutput?.kind).toBe("tool.output");
-    expect(fileOutput?.summary).toBe("File change output");
-    expect(fileOutput?.payload).toMatchObject({
-      detail: "updated README.md",
-      streamKind: "file_change_output",
-      itemId: "item-file",
-    });
+    expect(
+      thread?.activities.some((activity) =>
+        ["evt-reasoning-delta", "evt-command-output-delta"].includes(activity.id),
+      ),
+    ).toBe(false);
   });
 
   it("projects context window updates into normalized thread activities", async () => {
