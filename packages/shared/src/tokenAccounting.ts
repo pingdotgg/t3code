@@ -117,7 +117,8 @@ export function computeUsageCost(input: {
 }): ThreadUsageCostSnapshot | undefined {
   if (
     input.providerReportedTotalCostUsd !== undefined &&
-    Number.isFinite(input.providerReportedTotalCostUsd)
+    Number.isFinite(input.providerReportedTotalCostUsd) &&
+    input.providerReportedTotalCostUsd >= 0
   ) {
     return {
       currency: "USD",
@@ -154,13 +155,25 @@ export function computeUsageCost(input: {
     input.usage.uncachedInputTokens,
     pricing.uncachedInputPerMillionUsd ?? pricing.inputPerMillionUsd,
   );
-  push("cached_input", input.usage.cachedInputTokens, pricing.cachedInputPerMillionUsd);
-  push(
-    "cache_creation_input",
-    input.usage.cacheCreationInputTokens,
-    pricing.cacheCreationInputPerMillionUsd,
-  );
-  push("cache_read_input", input.usage.cacheReadInputTokens, pricing.cacheReadInputPerMillionUsd);
+  const hasCompleteSpecificCachePricing =
+    input.usage.cachedInputTokens !== undefined &&
+    input.usage.cacheCreationInputTokens !== undefined &&
+    input.usage.cacheReadInputTokens !== undefined &&
+    input.usage.cacheCreationInputTokens + input.usage.cacheReadInputTokens ===
+      input.usage.cachedInputTokens &&
+    pricing.cacheCreationInputPerMillionUsd !== undefined &&
+    pricing.cacheReadInputPerMillionUsd !== undefined;
+  if (!hasCompleteSpecificCachePricing && pricing.cachedInputPerMillionUsd !== undefined) {
+    push("cached_input", input.usage.cachedInputTokens, pricing.cachedInputPerMillionUsd);
+  }
+  if (hasCompleteSpecificCachePricing || pricing.cachedInputPerMillionUsd === undefined) {
+    push(
+      "cache_creation_input",
+      input.usage.cacheCreationInputTokens,
+      pricing.cacheCreationInputPerMillionUsd,
+    );
+    push("cache_read_input", input.usage.cacheReadInputTokens, pricing.cacheReadInputPerMillionUsd);
+  }
 
   if (!components.some((component) => component.category.endsWith("input"))) {
     push("input", input.usage.inputTokens, pricing.inputPerMillionUsd);

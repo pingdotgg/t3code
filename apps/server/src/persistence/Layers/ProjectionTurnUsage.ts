@@ -33,18 +33,31 @@ function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: st
 }
 
 function addUsage(left: Usage, right: Usage): Usage {
-  const total = (key: keyof Usage) =>
-    ((left[key] as number | undefined) ?? 0) + ((right[key] as number | undefined) ?? 0);
+  const total = (key: keyof Usage) => {
+    const leftValue = left[key] as number | undefined;
+    const rightValue = right[key] as number | undefined;
+    return leftValue === undefined && rightValue === undefined
+      ? undefined
+      : (leftValue ?? 0) + (rightValue ?? 0);
+  };
+  const totalProcessedTokens = total("totalProcessedTokens");
+  const inputTokens = total("inputTokens");
+  const uncachedInputTokens = total("uncachedInputTokens");
+  const cachedInputTokens = total("cachedInputTokens");
+  const cacheCreationInputTokens = total("cacheCreationInputTokens");
+  const cacheReadInputTokens = total("cacheReadInputTokens");
+  const outputTokens = total("outputTokens");
+  const reasoningOutputTokens = total("reasoningOutputTokens");
   return {
-    usedTokens: total("usedTokens"),
-    totalProcessedTokens: total("totalProcessedTokens"),
-    inputTokens: total("inputTokens"),
-    uncachedInputTokens: total("uncachedInputTokens"),
-    cachedInputTokens: total("cachedInputTokens"),
-    cacheCreationInputTokens: total("cacheCreationInputTokens"),
-    cacheReadInputTokens: total("cacheReadInputTokens"),
-    outputTokens: total("outputTokens"),
-    reasoningOutputTokens: total("reasoningOutputTokens"),
+    usedTokens: total("usedTokens") ?? 0,
+    ...(totalProcessedTokens !== undefined ? { totalProcessedTokens } : {}),
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(uncachedInputTokens !== undefined ? { uncachedInputTokens } : {}),
+    ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+    ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
+    ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
+    ...(reasoningOutputTokens !== undefined ? { reasoningOutputTokens } : {}),
   };
 }
 
