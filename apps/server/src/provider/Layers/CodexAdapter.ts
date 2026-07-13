@@ -21,6 +21,7 @@ import {
   type RuntimeUsageLimitDetail,
   RuntimeItemId,
   RuntimeRequestId,
+  RuntimeTaskId,
   ProviderApprovalDecision,
   ThreadId,
   ProviderSendTurnInput,
@@ -247,6 +248,9 @@ function toCanonicalItemType(raw: string | undefined | null): CanonicalItemType 
 }
 
 function itemTitle(itemType: CanonicalItemType, item?: CodexLifecycleItem): string | undefined {
+  if (itemType === "collab_agent_tool_call" && item?.type === "collabAgentToolCall") {
+    return "Subagent task";
+  }
   if (itemType === "mcp_tool_call" && item?.type === "mcpToolCall") {
     return `${item.server} · ${item.tool}`;
   }
@@ -279,6 +283,9 @@ function itemTitle(itemType: CanonicalItemType, item?: CodexLifecycleItem): stri
 }
 
 function itemDetail(item: CodexLifecycleItem): string | undefined {
+  if (item.type === "collabAgentToolCall") {
+    return trimText(item.prompt) ?? `${item.tool} agent`;
+  }
   const candidates = [
     "command" in item ? item.command : undefined,
     "title" in item ? item.title : undefined,
@@ -293,6 +300,37 @@ function itemDetail(item: CodexLifecycleItem): string | undefined {
     return trimmed;
   }
   return undefined;
+}
+
+function collabAgentTaskId(item: Extract<CodexLifecycleItem, { type: "collabAgentToolCall" }>) {
+  return RuntimeTaskId.make(`collab:${item.id}`);
+}
+
+function collabAgentItemId(item: Extract<CodexLifecycleItem, { type: "collabAgentToolCall" }>) {
+  return RuntimeItemId.make(`collab:${item.id}`);
+}
+
+function collabAgentSummary(item: Extract<CodexLifecycleItem, { type: "collabAgentToolCall" }>) {
+  const targetCount = item.receiverThreadIds.length;
+  switch (item.tool) {
+    case "spawnAgent":
+      return targetCount > 1 ? `Spawned ${targetCount} agents` : "Spawned agent";
+    case "sendInput":
+      return targetCount > 1 ? `Prompted ${targetCount} agents` : "Prompted agent";
+    case "resumeAgent":
+      return targetCount > 1 ? `Resumed ${targetCount} agents` : "Resumed agent";
+    case "wait":
+      return targetCount > 1 ? `Waited for ${targetCount} agents` : "Waited for agent";
+    case "closeAgent":
+      return targetCount > 1 ? `Closed ${targetCount} agents` : "Closed agent";
+  }
+}
+
+function collabAgentProviderRefs(event: ProviderEvent) {
+  return {
+    ...providerRefsFromEvent(event),
+    ...(event.itemId ? { providerItemId: event.itemId } : {}),
+  };
 }
 
 function toRequestTypeFromMethod(method: string): CanonicalRequestType {
@@ -978,6 +1016,42 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "item/started") {
+    const payload = readPayload(EffectCodexSchema.V2ItemStartedNotification, event.payload);
+    const item = payload?.item;
+    if (item?.type === "collabAgentToolCall") {
+      return [
+        {
+          ...runtimeEventBase(event, canonicalThreadId),
+          itemId: collabAgentItemId(item),
+          type: "task.started",
+          payload: {
+            taskId: collabAgentTaskId(item),
+            description: itemDetail(item) ?? "Subagent task",
+            taskType: "sub-agent",
+            subagentType: "codex",
+            workflowName: item.tool,
+            toolUseId: item.id,
+            ...(trimText(item.model) ? { model: trimText(item.model) } : {}),
+          },
+          providerRefs: collabAgentProviderRefs(event),
+        },
+        {
+          ...runtimeEventBase(event, canonicalThreadId),
+          eventId: EventId.make(`${event.id}:progress`),
+          itemId: collabAgentItemId(item),
+          type: "task.progress",
+          payload: {
+            taskId: collabAgentTaskId(item),
+            description: itemDetail(item) ?? "Subagent task",
+            summary: collabAgentSummary(item),
+            lastToolName: item.tool,
+            subagentType: "codex",
+            toolUseId: item.id,
+          },
+          providerRefs: collabAgentProviderRefs(event),
+        },
+      ];
+    }
     const started = mapItemLifecycle(event, canonicalThreadId, "item.started");
     return started ? [started] : [];
   }
@@ -989,6 +1063,41 @@ function mapToRuntimeEvents(
       return [];
     }
     const itemType = toCanonicalItemType(item.type);
+    if (item.type === "collabAgentToolCall") {
+      return [
+        {
+          ...runtimeEventBase(event, canonicalThreadId),
+          itemId: collabAgentItemId(item),
+          type: "task.progress",
+          payload: {
+            taskId: collabAgentTaskId(item),
+            description: itemDetail(item) ?? "Subagent task",
+            summary: collabAgentSummary(item),
+            lastToolName: item.tool,
+            subagentType: "codex",
+            toolUseId: item.id,
+          },
+          providerRefs: collabAgentProviderRefs(event),
+        },
+        {
+          ...runtimeEventBase(event, canonicalThreadId),
+          eventId: EventId.make(`${event.id}:completed`),
+          itemId: collabAgentItemId(item),
+          type: "task.completed",
+          payload: {
+            taskId: collabAgentTaskId(item),
+            status:
+              item.status === "failed"
+                ? "failed"
+                : item.status === "completed"
+                  ? "completed"
+                  : "stopped",
+            summary: collabAgentSummary(item),
+          },
+          providerRefs: collabAgentProviderRefs(event),
+        },
+      ];
+    }
     if (itemType === "plan") {
       const detail = itemDetail(item);
       if (!detail) {
