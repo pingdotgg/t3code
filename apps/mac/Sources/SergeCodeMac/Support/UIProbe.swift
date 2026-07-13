@@ -623,6 +623,8 @@
                 in: window.contentView)
             print(
                 "UIProbe: \(label) isOpaque=\(opaque) clearBackground=\(clearBG) "
+                    + "appearance=\(window.appearance?.name.rawValue ?? "nil") "
+                    + "effectiveAppearance=\(window.effectiveAppearance.name.rawValue) "
                     + "configured=\(configured) behindWindowEffects=\(behindCount)")
             if !configured {
                 print("UIProbe: FAIL expected non-opaque clear window for glass translucency")
