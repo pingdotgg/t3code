@@ -3,10 +3,11 @@ import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/Stac
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useState } from "react";
-import { Alert, ScrollView, View } from "react-native";
+import { Alert, Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
 
+import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { ErrorBanner } from "../../components/ErrorBanner";
 import { ConnectionSheetButton } from "./ConnectionSheetButton";
@@ -136,23 +137,45 @@ export function ConnectionsNewRouteScreen({
     <View collapsable={false} className="flex-1 bg-sheet">
       <NativeStackScreenOptions
         options={{
+          // Android renders its own in-screen header below instead of the native bar.
+          ...(Platform.OS === "android" ? { headerShown: false } : null),
           title: showScanner ? "Scan QR Code" : "Add Environment",
         }}
       />
-      <NativeHeaderToolbar placement="right">
-        <NativeHeaderToolbar.Button
-          icon={showScanner ? "xmark" : "qrcode.viewfinder"}
-          onPress={() => {
-            if (showScanner) {
-              closeScanner();
-            } else {
-              void openScanner();
-            }
-          }}
-          separateBackground
-          tintColor={headerIconColor}
+      {Platform.OS === "android" ? (
+        <AndroidScreenHeader
+          title={showScanner ? "Scan QR Code" : "Add Environment"}
+          onBack={() => navigation.goBack()}
+          actions={[
+            {
+              accessibilityLabel: showScanner ? "Close scanner" : "Scan QR code",
+              icon: showScanner ? "xmark" : "camera",
+              onPress: () => {
+                if (showScanner) {
+                  closeScanner();
+                } else {
+                  void openScanner();
+                }
+              },
+            },
+          ]}
         />
-      </NativeHeaderToolbar>
+      ) : (
+        <NativeHeaderToolbar placement="right">
+          <NativeHeaderToolbar.Button
+            icon={showScanner ? "xmark" : "qrcode.viewfinder"}
+            onPress={() => {
+              if (showScanner) {
+                closeScanner();
+              } else {
+                void openScanner();
+              }
+            }}
+            separateBackground
+            tintColor={headerIconColor}
+          />
+        </NativeHeaderToolbar>
+      )}
 
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
