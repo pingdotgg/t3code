@@ -92,13 +92,17 @@ public final class DictationController {
         case .recording:
             finishRecording()
         case .idle where modelStatus == .ready:
+            guard let threadID else {
+                presentError("Select a thread before recording.")
+                return
+            }
             startRecording(threadID: threadID)
         default:
             break
         }
     }
 
-    private func startRecording(threadID: String?) {
+    private func startRecording(threadID: String) {
         lastError = nil
         Task {
             guard await AudioRecorder.requestPermission() else {

@@ -165,49 +165,54 @@ struct ChatTimelineRowView: View {
     //
     // Approve/Deny/Submit/Implement/Wait/Dismiss gain keyboard shortcuts
     // (ApprovalCard, UserInputCard, PlanCard, UsageLimitCard), but only the
-    // single most-recent pending card of each kind should own them — a
+    // single most-recent actionable card across all kinds should own them — a
     // scrollback full of historical cards must never let a keystroke
     // resolve the wrong one. Approvals and user-input requests are removed
-    // from the timeline once resolved (AppModel.resolveInteraction), so in
-    // steady state at most one of each is ever present; usage-limit notices
-    // and already-implemented plans can still legitimately sit alongside a
-    // newer pending one of the same kind, so these scan from the end of the
-    // timeline and match the nearest item of that case.
+    // from the timeline once resolved (AppModel.resolveInteraction), while
+    // usage-limit notices and already-implemented plans can remain alongside
+    // newer pending cards. Scan from the end and stop at the nearest card that
+    // still has an action, regardless of its kind.
 
-    private func isMostRecentApproval(_ request: ApprovalRequest) -> Bool {
+    private func isMostRecentDecisionCard(_ matches: (TimelineItem) -> Bool) -> Bool {
         for item in (model.threadState(threadID)?.timeline ?? []).reversed() {
-            if case .approval(let candidate) = item {
-                return candidate.id == request.id
+            switch item {
+            case .approval(_), .userInput(_), .usageLimit(_):
+                return matches(item)
+            case .plan(let plan) where !plan.isImplemented:
+                return matches(item)
+            default:
+                continue
             }
         }
         return false
+    }
+
+    private func isMostRecentApproval(_ request: ApprovalRequest) -> Bool {
+        isMostRecentDecisionCard { item in
+            guard case .approval(let candidate) = item else { return false }
+            return candidate.id == request.id
+        }
     }
 
     private func isMostRecentUserInput(_ request: UserInputRequest) -> Bool {
-        for item in (model.threadState(threadID)?.timeline ?? []).reversed() {
-            if case .userInput(let candidate) = item {
-                return candidate.id == request.id
-            }
+        isMostRecentDecisionCard { item in
+            guard case .userInput(let candidate) = item else { return false }
+            return candidate.id == request.id
         }
-        return false
     }
 
     private func isMostRecentUsageLimit(_ notice: UsageLimitNotice) -> Bool {
-        for item in (model.threadState(threadID)?.timeline ?? []).reversed() {
-            if case .usageLimit(let candidate) = item {
-                return candidate.id == notice.id
-            }
+        isMostRecentDecisionCard { item in
+            guard case .usageLimit(let candidate) = item else { return false }
+            return candidate.id == notice.id
         }
-        return false
     }
 
     private func isMostRecentPlan(_ plan: ProposedPlan) -> Bool {
-        for item in (model.threadState(threadID)?.timeline ?? []).reversed() {
-            if case .plan(let candidate) = item {
-                return candidate.id == plan.id
-            }
+        isMostRecentDecisionCard { item in
+            guard case .plan(let candidate) = item else { return false }
+            return candidate.id == plan.id
         }
-        return false
     }
 }
 
