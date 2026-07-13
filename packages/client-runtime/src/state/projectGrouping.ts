@@ -12,6 +12,11 @@ export interface ProjectGroupingSettings {
 
 export type ProjectGroupingMode = SidebarProjectGroupingMode;
 
+type GroupableProject = Pick<
+  EnvironmentProject,
+  "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity"
+>;
+
 export function selectProjectGroupingSettings(settings: ClientSettings): ProjectGroupingSettings {
   return {
     sidebarProjectGroupingMode: settings.sidebarProjectGroupingMode,
@@ -92,27 +97,39 @@ export function resolveProjectGroupingMode(
   );
 }
 
-function deriveRepositoryScopedKey(
+function deriveRepositoryScopedKeys(
   project: Pick<EnvironmentProject, "workspaceRoot" | "repositoryIdentity">,
   groupingMode: SidebarProjectGroupingMode,
-): string | null {
+): string[] {
   const canonicalKey = project.repositoryIdentity?.canonicalKey;
   if (!canonicalKey) {
-    return null;
+    return [];
   }
 
+  const repositoryKeys = uniqueNonEmptyValues([
+    canonicalKey,
+    ...(project.repositoryIdentity?.remoteKeys ?? []),
+  ]);
+
   if (groupingMode === "repository") {
-    return canonicalKey;
+    return repositoryKeys;
   }
 
   const relativeProjectPath = deriveRepositoryRelativeProjectPath(project);
   if (relativeProjectPath === null) {
-    return canonicalKey;
+    return repositoryKeys;
   }
 
   return relativeProjectPath.length === 0
-    ? canonicalKey
-    : `${canonicalKey}::${relativeProjectPath}`;
+    ? repositoryKeys
+    : repositoryKeys.map((repositoryKey) => `${repositoryKey}::${relativeProjectPath}`);
+}
+
+function deriveRepositoryScopedKey(
+  project: Pick<EnvironmentProject, "workspaceRoot" | "repositoryIdentity">,
+  groupingMode: SidebarProjectGroupingMode,
+): string | null {
+  return deriveRepositoryScopedKeys(project, groupingMode)[0] ?? null;
 }
 
 export function deriveLogicalProjectKey(
@@ -146,6 +163,100 @@ export function deriveLogicalProjectKeyFromSettings(
   return deriveLogicalProjectKey(project, {
     groupingMode: resolveProjectGroupingMode(project, settings),
   });
+}
+
+/**
+ * Resolve logical keys for a complete project collection. Repository identities
+ * advertise every configured remote so a fork-only clone can join a checkout
+ * whose preferred identity comes from `upstream`.
+ */
+export function deriveLogicalProjectKeyMap(
+  projects: ReadonlyArray<GroupableProject>,
+  settings: ProjectGroupingSettings,
+): Map<string, string> {
+  const entries = projects.map((project) => {
+    const groupingMode = resolveProjectGroupingMode(project, settings);
+    return {
+      project,
+      physicalKey: derivePhysicalProjectKey(project),
+      logicalKey: deriveLogicalProjectKey(project, { groupingMode }),
+      repositoryKeys:
+        groupingMode === "separate" ? [] : deriveRepositoryScopedKeys(project, groupingMode),
+    };
+  });
+  const parents = entries.map((_entry, index) => index);
+
+  const findRoot = (index: number): number => {
+    let root = index;
+    while (parents[root] !== root) {
+      root = parents[root]!;
+    }
+    while (parents[index] !== index) {
+      const next = parents[index]!;
+      parents[index] = root;
+      index = next;
+    }
+    return root;
+  };
+  const union = (left: number, right: number): void => {
+    const leftRoot = findRoot(left);
+    const rightRoot = findRoot(right);
+    if (leftRoot !== rightRoot) {
+      parents[rightRoot] = leftRoot;
+    }
+  };
+
+  const firstProjectByRepositoryKey = new Map<string, number>();
+  for (const [index, entry] of entries.entries()) {
+    for (const repositoryKey of entry.repositoryKeys) {
+      const existingIndex = firstProjectByRepositoryKey.get(repositoryKey);
+      if (existingIndex === undefined) {
+        firstProjectByRepositoryKey.set(repositoryKey, index);
+      } else {
+        union(existingIndex, index);
+      }
+    }
+  }
+
+  const componentMembers = new Map<number, number[]>();
+  for (const index of entries.keys()) {
+    const root = findRoot(index);
+    const members = componentMembers.get(root);
+    if (members) {
+      members.push(index);
+    } else {
+      componentMembers.set(root, [index]);
+    }
+  }
+
+  const logicalKeyByComponent = new Map<number, string>();
+  for (const [root, memberIndexes] of componentMembers) {
+    const representativeIndex = memberIndexes.toSorted((leftIndex, rightIndex) => {
+      const left = entries[leftIndex]!;
+      const right = entries[rightIndex]!;
+      const upstreamPreference =
+        Number(right.project.repositoryIdentity?.locator.remoteName === "upstream") -
+        Number(left.project.repositoryIdentity?.locator.remoteName === "upstream");
+      if (upstreamPreference !== 0) {
+        return upstreamPreference;
+      }
+
+      const remoteCountPreference = right.repositoryKeys.length - left.repositoryKeys.length;
+      if (remoteCountPreference !== 0) {
+        return remoteCountPreference;
+      }
+
+      return left.logicalKey.localeCompare(right.logicalKey);
+    })[0]!;
+    logicalKeyByComponent.set(root, entries[representativeIndex]!.logicalKey);
+  }
+
+  return new Map(
+    entries.map((entry, index) => [
+      entry.physicalKey,
+      logicalKeyByComponent.get(findRoot(index)) ?? entry.logicalKey,
+    ]),
+  );
 }
 
 export function deriveLogicalProjectKeyFromRef(

@@ -51,6 +51,7 @@ export type RepositoryIdentityLocator = typeof RepositoryIdentityLocator.Type;
 
 export const RepositoryIdentity = Schema.Struct({
   canonicalKey: TrimmedNonEmptyString,
+  remoteKeys: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
   locator: RepositoryIdentityLocator,
   rootPath: Schema.optionalKey(TrimmedNonEmptyString),
   displayName: Schema.optionalKey(TrimmedNonEmptyString),

@@ -3175,8 +3175,8 @@ export default function Sidebar() {
   }, [projectOrder, projects]);
 
   // Build a mapping from physical project key → logical project key for
-  // cross-environment grouping.  Projects that share a repositoryIdentity
-  // canonicalKey are treated as one logical project in the sidebar.
+  // cross-environment grouping. Projects whose repository identities share a
+  // configured remote are treated as one logical project in the sidebar.
   const physicalToLogicalKey = useMemo(() => {
     return buildPhysicalToLogicalProjectKeyMap({
       projects: orderedProjects,

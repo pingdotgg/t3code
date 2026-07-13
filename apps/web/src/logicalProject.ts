@@ -1,5 +1,6 @@
 export {
   deriveLogicalProjectKey,
+  deriveLogicalProjectKeyMap,
   deriveLogicalProjectKeyFromRef,
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKey,

@@ -126,6 +126,10 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       expect(identity).not.toBeNull();
       expect(identity?.locator.remoteName).toBe("upstream");
       expect(identity?.canonicalKey).toBe("github.com/t3tools/t3code");
+      expect(identity?.remoteKeys).toEqual([
+        "github.com/julius/t3code",
+        "github.com/t3tools/t3code",
+      ]);
       expect(identity?.displayName).toBe("t3tools/t3code");
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
