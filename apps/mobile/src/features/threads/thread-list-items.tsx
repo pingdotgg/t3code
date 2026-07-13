@@ -441,8 +441,13 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   // when the thread has no resolvable scene, so the row renders exactly as
   // before (title only).
   const names = useThreadDisplayNames(threadKey, thread.title);
-  const health = useThreadHealth({ environmentId: thread.environmentId, threadId: thread.id });
-  const status = resolveThreadStatus(thread, health);
+  const baseStatus = resolveThreadStatus(thread);
+  const health = useThreadHealth(
+    baseStatus?.kind === "working"
+      ? { environmentId: thread.environmentId, threadId: thread.id }
+      : null,
+  );
+  const status = health?.stalled ? resolveThreadStatus(thread, health) : baseStatus;
   const delegatedAgent = hasDelegatedAgentTitle(thread.title);
   // Mirrors what the row actually renders (scene name, plus the
   // server-generated description once titled), not the raw thread.title the
