@@ -13,12 +13,14 @@ import { AppText as Text } from "../../components/AppText";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import { hasDelegatedAgentTitle } from "../../lib/delegatedAgents";
 import { relativeTime } from "../../lib/time";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { SceneryImage } from "../scenery/SceneryImage";
 import { useSceneryPhoto, useThreadDisplayNames } from "../scenery/use-scenery";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useThreadPr } from "../../state/use-thread-pr";
+import { useThreadHealth } from "../../state/use-thread-health";
 import type { HomeGroupDisplayAction } from "../home/homeListItems";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { resolveThreadStatus } from "./threadPresentation";
@@ -34,6 +36,14 @@ export type ThreadListVariant = "compact" | "sidebar";
 /** Left inset that aligns compact secondary rows with the title column. */
 export const THREAD_LIST_COMPACT_INSET = 20;
 const SIDEBAR_ROW_RADIUS = 12;
+const DELEGATED_AGENT_BADGE_STYLE = {
+  alignItems: "center",
+  borderRadius: 99,
+  flexDirection: "row",
+  gap: 3,
+  paddingHorizontal: 5,
+  paddingVertical: 2,
+} as const;
 
 /* ─── Project group header ───────────────────────────────────────────── */
 
@@ -431,12 +441,24 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   // when the thread has no resolvable scene, so the row renders exactly as
   // before (title only).
   const names = useThreadDisplayNames(threadKey, thread.title);
+  const baseStatus = resolveThreadStatus(thread);
+  const health = useThreadHealth(
+    baseStatus?.kind === "working"
+      ? { environmentId: thread.environmentId, threadId: thread.id }
+      : null,
+  );
+  const status = health?.stalled ? resolveThreadStatus(thread, health) : baseStatus;
+  const delegatedAgent = hasDelegatedAgentTitle(thread.title);
   // Mirrors what the row actually renders (scene name, plus the
   // server-generated description once titled), not the raw thread.title the
   // row no longer displays on its own.
-  const rowAccessibilityLabel =
-    names.description !== null ? `${names.primary}, ${names.description}` : names.primary;
-  const status = resolveThreadStatus(thread);
+  const rowAccessibilityLabel = [
+    names.description !== null ? `${names.primary}, ${names.description}` : names.primary,
+    delegatedAgent ? "Delegated agent" : null,
+    status?.kind === "stalled" ? "Stalled — no recent activity" : null,
+  ]
+    .filter((part): part is string => part !== null)
+    .join(", ");
   const pr = useThreadPr(thread, props.projectCwd);
   const timestamp = relativeTime(
     thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
@@ -475,6 +497,9 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
 
   const statusPill = effectiveStatus ? (
     <View
+      accessibilityLabel={
+        effectiveStatus.kind === "stalled" ? "Stalled — no recent activity" : undefined
+      }
       className={effectiveStatus.pillClassName}
       style={{ borderRadius: 99, paddingHorizontal: 6, paddingVertical: 2 }}
     >
@@ -485,8 +510,26 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   ) : null;
 
   const subtitleRow =
-    subtitleParts.length > 0 || pr !== null ? (
+    delegatedAgent || subtitleParts.length > 0 || pr !== null ? (
       <View className="flex-row items-center gap-1.5" style={{ marginTop: 1 }}>
+        {delegatedAgent ? (
+          <View
+            className={selected ? "bg-white/20" : "bg-subtle-strong"}
+            style={DELEGATED_AGENT_BADGE_STYLE}
+          >
+            <SymbolView
+              name="person.2"
+              size={9}
+              tintColor={selected ? selectedMutedColor : compact ? iconSubtleColor : effectiveMuted}
+              type="monochrome"
+            />
+            <Text
+              className={`text-3xs font-t3-bold ${selected ? "text-white" : "text-foreground-muted"}`}
+            >
+              Agent
+            </Text>
+          </View>
+        ) : null}
         {subtitleParts.length > 0 ? (
           <>
             <SymbolView

@@ -269,6 +269,112 @@ describe("buildThreadFeed", () => {
     expect(activityGroups).toHaveLength(0);
   });
 
+  it("keeps session health out of the generic work log", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-health"),
+      projectId: ProjectId.make("project-1"),
+      title: "Health projection",
+      activities: [
+        makeActivity({
+          id: EventId.make("health-stalled"),
+          kind: "session.health",
+          tone: "error",
+          summary: "Session stalled",
+          createdAt: "2026-04-01T00:03:00.000Z",
+          payload: {
+            state: "stalled",
+            lastActivityAt: "2026-04-01T00:00:00.000Z",
+          },
+        }),
+      ],
+    });
+
+    expect(buildThreadFeed(thread)).toEqual([]);
+  });
+
+  it("drops session exits whose stderr tail is empty after trimming", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-quiet-exit"),
+      projectId: ProjectId.make("project-1"),
+      title: "Quiet provider exit",
+      activities: [
+        makeActivity({
+          id: EventId.make("session-exited-empty"),
+          kind: "session.exited",
+          tone: "error",
+          summary: "Provider process exited",
+          createdAt: "2026-04-01T00:04:00.000Z",
+          payload: {
+            reason: "Provider process exited",
+            stderrTail: " \n\t ",
+          },
+        }),
+      ],
+    });
+
+    expect(buildThreadFeed(thread)).toEqual([]);
+  });
+
+  it("maps a session exit with stderr into its dedicated disclosure row", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-provider-exit"),
+      projectId: ProjectId.make("project-1"),
+      title: "Provider exit",
+      activities: [
+        makeActivity({
+          id: EventId.make("session-exited-with-stderr"),
+          kind: "session.exited",
+          tone: "error",
+          summary: "Provider process exited",
+          createdAt: "2026-04-01T00:04:00.000Z",
+          payload: {
+            reason: "  Provider crashed  ",
+            stderrTail: "\nFatal provider error\n",
+          },
+        }),
+      ],
+    });
+
+    expect(buildThreadFeed(thread)).toEqual([
+      {
+        type: "session-exit",
+        id: "session-exited-with-stderr",
+        createdAt: "2026-04-01T00:04:00.000Z",
+        turnId: null,
+        sessionExit: {
+          id: "session-exited-with-stderr",
+          createdAt: "2026-04-01T00:04:00.000Z",
+          turnId: null,
+          summary: "Provider crashed",
+          stderrTail: "\nFatal provider error\n",
+        },
+      },
+    ]);
+  });
+
+  it("uses the provider-exit fallback when the session exit has no reason", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-provider-exit-fallback"),
+      projectId: ProjectId.make("project-1"),
+      title: "Provider exit fallback",
+      activities: [
+        makeActivity({
+          id: EventId.make("session-exited-fallback"),
+          kind: "session.exited",
+          tone: "error",
+          summary: "Runtime session ended",
+          createdAt: "2026-04-01T00:04:00.000Z",
+          payload: { stderrTail: "Fatal provider error" },
+        }),
+      ],
+    });
+
+    expect(buildThreadFeed(thread)[0]).toMatchObject({
+      type: "session-exit",
+      sessionExit: { summary: "Provider process exited" },
+    });
+  });
+
   it("folds settled turn work while leaving the terminal answer visible", () => {
     const turnId = TurnId.make("turn-1");
     const thread = makeThread({

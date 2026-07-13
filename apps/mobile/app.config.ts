@@ -10,10 +10,8 @@ Object.assign(process.env, repoEnv);
 const APP_VARIANT = resolveAppVariant(repoEnv.APP_VARIANT);
 
 // All variants use the plain SurgeCode ./assets/icon.png (see
-// scripts/generate-appicon.swift). assets/icon-composer-{dev,prod}.icon are
-// stale upstream Icon Composer bundles (still carrying the old T3 mark,
-// Assets/T3.svg) — no longer referenced from this config, left in place
-// rather than hand-authoring new .icon bundles.
+// scripts/generate-appicon.swift). The Icon Composer bundles are kept in sync
+// with the canonical mark for source parity but are not referenced by Expo.
 const VARIANT_CONFIG: Record<
   AppVariant,
   {

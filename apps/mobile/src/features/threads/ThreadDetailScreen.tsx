@@ -30,6 +30,7 @@ import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import { CHAT_CONTENT_MAX_WIDTH, type LayoutVariant } from "../../lib/layout";
 import { buildModelDisplayNameMap } from "../../lib/modelOptions";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import { threadHealthStalledForLabel, type ThreadHealth } from "../../lib/threadHealth";
 import type {
   PendingApproval,
   PendingUserInput,
@@ -37,6 +38,7 @@ import type {
   ThreadFeedEntry,
 } from "../../lib/threadActivity";
 import { bannerDrop, materialize } from "../../lib/motion";
+import { useThreadHealth } from "../../state/use-thread-health";
 import { PendingApprovalCard } from "./PendingApprovalCard";
 import { PendingUserInputCard } from "./PendingUserInputCard";
 import {
@@ -209,11 +211,44 @@ const WorkingDurationPill = memo(function WorkingDurationPill(props: {
   );
 });
 
+const ThreadStallHeaderBadge = memo(function ThreadStallHeaderBadge(props: {
+  readonly health: ThreadHealth;
+}) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    const intervalId = setInterval(() => setNowMs(Date.now()), 1_000);
+    return () => clearInterval(intervalId);
+  }, []);
+
+  const relativeLabel = threadHealthStalledForLabel(props.health, nowMs);
+
+  return (
+    <View className="items-center px-4 pb-2 pt-2" style={{ flexShrink: 0 }}>
+      <View
+        accessible
+        accessibilityLabel="Stalled — no recent activity"
+        className="flex-row items-center gap-2 rounded-full border border-amber-500/20 bg-amber-500/10 px-3 py-2"
+      >
+        <View className="h-2 w-2 rounded-full bg-amber-500" />
+        <Text className="font-t3-bold text-xs text-amber-700 dark:text-amber-300">Stalled</Text>
+        {relativeLabel ? (
+          <Text className="text-xs text-amber-700/80 dark:text-amber-300/80">{relativeLabel}</Text>
+        ) : null}
+      </View>
+    </View>
+  );
+});
+
 export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: ThreadDetailScreenProps) {
   const { onOpenDrawer } = props;
 
   const insets = useSafeAreaInsets();
   const agentLabel = `${props.selectedThread.modelSelection.instanceId} agent`;
+  const threadHealth = useThreadHealth({
+    environmentId: props.environmentId,
+    threadId: props.selectedThread.id,
+  });
   const selectedThreadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
   const composerEditorRef = useRef<ComposerEditorHandle>(null);
   const composerOverlayRef = useRef<View>(null);
@@ -244,7 +279,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const selectedThreadFeed = props.selectedThreadFeed;
   const composerChrome = composerExpanded ? COMPOSER_EXPANDED_CHROME : COMPOSER_COLLAPSED_CHROME;
   const composerOverlapHeight = composerChrome + composerBottomInset;
-  const activeWorkIndicatorHeight = props.activeWorkStartedAt ? WORKING_INDICATOR_HEIGHT : 0;
+  const activeWorkIndicatorHeight =
+    props.activeWorkStartedAt && !threadHealth?.stalled ? WORKING_INDICATOR_HEIGHT : 0;
   const estimatedOverlayHeight = composerOverlapHeight + activeWorkIndicatorHeight + 8;
   const { contentInsetEndAdjustment, onComposerLayout } = useKeyboardChatComposerInset(
     listRef,
@@ -387,6 +423,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   return (
     <GestureDetector gesture={headerDrawerGesture}>
       <View className="flex-1">
+        {showContent && threadHealth?.stalled ? (
+          <ThreadStallHeaderBadge health={threadHealth} />
+        ) : null}
         {showContent ? (
           <View
             style={{ flex: 1 }}
@@ -400,6 +439,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               environmentId={props.environmentId}
               threadId={props.selectedThread.id}
               modelDisplayNames={modelDisplayNames}
+              threadHealth={threadHealth}
               workspaceRoot={props.threadCwd}
               feed={props.selectedThreadFeed}
               contentPresentation={props.contentPresentation}
@@ -434,7 +474,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               style={{ width: "100%", paddingTop: 8 }}
             >
               <View style={{ alignSelf: "center", maxWidth: contentMaxWidth, width: "100%" }}>
-                {props.activeWorkStartedAt ? (
+                {props.activeWorkStartedAt && !threadHealth?.stalled ? (
                   <Animated.View entering={bannerDrop()}>
                     <WorkingDurationPill startedAt={props.activeWorkStartedAt} />
                   </Animated.View>
