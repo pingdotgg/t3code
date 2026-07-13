@@ -142,6 +142,7 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
         issue: "providerInstanceId is required for provider session runtime bindings.",
       });
     }
+    const status = binding.status ?? existingRuntime?.status ?? "running";
     yield* repository
       .upsert({
         threadId: resolvedThreadId,
@@ -151,7 +152,7 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
           binding.adapterKey ??
           (providerChanged ? binding.provider : (existingRuntime?.adapterKey ?? binding.provider)),
         runtimeMode: binding.runtimeMode ?? existingRuntime?.runtimeMode ?? "full-access",
-        status: binding.status ?? existingRuntime?.status ?? "running",
+        status,
         lastSeenAt: now,
         resumeCursor:
           binding.resumeCursor !== undefined
@@ -163,7 +164,15 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
         ),
       })
       .pipe(Effect.mapError(toPersistenceError("ProviderSessionDirectory.upsert:upsert")));
-    yield* Ref.update(activityByThread, (current) => new Map(current).set(resolvedThreadId, now));
+    yield* Ref.update(activityByThread, (current) => {
+      const next = new Map(current);
+      if (status === "stopped") {
+        next.delete(resolvedThreadId);
+      } else {
+        next.set(resolvedThreadId, now);
+      }
+      return next;
+    });
   });
 
   const noteActivity: NonNullable<ProviderSessionDirectoryShape["noteActivity"]> = (
@@ -174,6 +183,14 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
       const previous = current.get(threadId);
       if (previous !== undefined && previous >= observedAt) return current;
       return new Map(current).set(threadId, observedAt);
+    });
+
+  const clearActivity: NonNullable<ProviderSessionDirectoryShape["clearActivity"]> = (threadId) =>
+    Ref.update(activityByThread, (current) => {
+      if (!current.has(threadId)) return current;
+      const next = new Map(current);
+      next.delete(threadId);
+      return next;
     });
 
   const getProvider: ProviderSessionDirectoryShape["getProvider"] = (threadId) =>
@@ -202,22 +219,17 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
     repository.list().pipe(
       Effect.mapError(toPersistenceError("ProviderSessionDirectory.listBindings:list")),
       Effect.flatMap((rows) =>
-        Effect.all({
-          bindings: Effect.forEach(
-            rows,
-            (row) => toRuntimeBinding(row, "ProviderSessionDirectory.listBindings"),
-            { concurrency: 4 },
-          ),
-          activity: Ref.get(activityByThread),
-        }),
-      ),
-      Effect.map(({ activity, bindings }) =>
-        bindings.map((binding) => overlayLastSeenAt(binding, activity)),
+        Effect.forEach(
+          rows,
+          (row) => toRuntimeBinding(row, "ProviderSessionDirectory.listBindings"),
+          { concurrency: 4 },
+        ),
       ),
     );
 
   return {
     noteActivity,
+    clearActivity,
     upsert,
     getProvider,
     getBinding,

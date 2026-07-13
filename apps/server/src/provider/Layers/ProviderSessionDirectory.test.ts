@@ -18,6 +18,7 @@ import {
 } from "../../persistence/Layers/Sqlite.ts";
 import * as ProviderSessionRuntime from "../../persistence/ProviderSessionRuntime.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
+import type { ProviderRuntimeBindingWithMetadata } from "../Services/ProviderSessionDirectory.ts";
 import { ProviderSessionDirectoryLive } from "./ProviderSessionDirectory.ts";
 
 function makeDirectoryLayer<E, R>(persistenceLayer: Layer.Layer<SqlClient.SqlClient, E, R>) {
@@ -30,7 +31,7 @@ function makeDirectoryLayer<E, R>(persistenceLayer: Layer.Layer<SqlClient.SqlCli
 }
 
 it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryLive", (it) => {
-  it("refreshes the shared lastSeenAt view without rewriting persistence", () =>
+  it("keeps event activity out of persisted binding listings", () =>
     Effect.gen(function* () {
       const directory = yield* ProviderSessionDirectory;
       const repository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
@@ -44,15 +45,51 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
         yield* directory.noteActivity(threadId, "9999-01-01T00:00:00.000Z");
       }
       const bindings = yield* directory.listBindings();
-      assert.equal(
+      assert.notEqual(
         bindings.find((binding) => binding.threadId === threadId)?.lastSeenAt,
         "9999-01-01T00:00:00.000Z",
       );
+
+      const binding = yield* directory.getBinding(threadId);
+      assert.equal(Option.isSome(binding), true);
+      if (Option.isSome(binding)) {
+        assert.equal(
+          (binding.value as ProviderRuntimeBindingWithMetadata).lastSeenAt,
+          "9999-01-01T00:00:00.000Z",
+        );
+      }
 
       const persisted = yield* repository.getByThreadId({ threadId });
       assert.equal(Option.isSome(persisted), true);
       if (Option.isSome(persisted)) {
         assert.notEqual(persisted.value.lastSeenAt, "9999-01-01T00:00:00.000Z");
+      }
+    }));
+
+  it("evicts event activity when a session stops", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const threadId = ThreadId.make("thread-stopped-activity");
+      yield* directory.upsert({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+      });
+      if (directory.noteActivity) {
+        yield* directory.noteActivity(threadId, "9999-01-01T00:00:00.000Z");
+      }
+      yield* directory.upsert({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        status: "stopped",
+      });
+
+      const binding = yield* directory.getBinding(threadId);
+      assert.equal(Option.isSome(binding), true);
+      if (Option.isSome(binding)) {
+        assert.notEqual(
+          (binding.value as ProviderRuntimeBindingWithMetadata).lastSeenAt,
+          "9999-01-01T00:00:00.000Z",
+        );
       }
     }));
 

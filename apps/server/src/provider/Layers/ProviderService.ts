@@ -334,7 +334,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   ): Effect.Effect<void> =>
     Effect.gen(function* () {
       const canonicalEvent = correlateRuntimeEventWithInstance(source, event);
-      if (directory.noteActivity) {
+      const stopped =
+        canonicalEvent.type === "session.exited" ||
+        (canonicalEvent.type === "session.state.changed" &&
+          canonicalEvent.payload.state === "stopped");
+      if (stopped && directory.clearActivity) {
+        yield* directory.clearActivity(canonicalEvent.threadId);
+      } else if (directory.noteActivity) {
         yield* directory.noteActivity(canonicalEvent.threadId, yield* nowIso);
       }
       yield* increment(providerRuntimeEventsTotal, {
