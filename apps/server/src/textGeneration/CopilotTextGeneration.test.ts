@@ -3,6 +3,7 @@ import { beforeEach, expect, it } from "@effect/vitest";
 import { CopilotSettings, ProviderInstanceId } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import { vi } from "vite-plus/test";
 
@@ -24,6 +25,7 @@ const runtimeMock = vi.hoisted(() => {
       readonly disconnect: ReturnType<typeof vi.fn>;
       readonly sendAndWait: ReturnType<typeof vi.fn>;
     }>,
+    clientStartGate: null as Promise<void> | null,
   };
 
   return {
@@ -32,6 +34,7 @@ const runtimeMock = vi.hoisted(() => {
       state.createdClients = [];
       state.sessionConfigs = [];
       state.sessions = [];
+      state.clientStartGate = null;
     },
   };
 });
@@ -45,7 +48,9 @@ vi.mock("../provider/copilotRuntime.ts", async () => {
     ...actual,
     createCopilotClient: vi.fn(
       (input: { readonly cwd?: string; readonly baseDirectory?: string }) => {
-        const start = vi.fn(async () => undefined);
+        const start = vi.fn(async () => {
+          await runtimeMock.state.clientStartGate;
+        });
         const stop = vi.fn(async () => undefined);
         const createSession = vi.fn(async (config: unknown) => {
           runtimeMock.state.sessionConfigs.push(config);
@@ -130,6 +135,43 @@ it.layer(CopilotTextGenerationTestLayer)("CopilotTextGeneration", (it) => {
       expect(runtimeMock.state.sessions[0]?.disconnect).toHaveBeenCalledTimes(1);
       expect(runtimeMock.state.sessions[1]?.sendAndWait).toHaveBeenCalledTimes(1);
       expect(runtimeMock.state.sessions[1]?.disconnect).toHaveBeenCalledTimes(1);
+    }),
+  );
+
+  it.effect("coalesces concurrent Copilot client startup", () =>
+    Effect.gen(function* () {
+      const textGeneration = yield* makeCopilotTextGeneration(defaultCopilotSettings);
+      const modelSelection = createModelSelection(ProviderInstanceId.make("copilot"), "gpt-4.1");
+      let releaseClientStart: (() => void) | undefined;
+      runtimeMock.state.clientStartGate = new Promise<void>((resolve) => {
+        releaseClientStart = resolve;
+      });
+
+      const request = textGeneration.generateCommitMessage({
+        cwd: process.cwd(),
+        branch: "feature/copilot-text-generation",
+        stagedSummary: "M README.md",
+        stagedPatch: "diff --git a/README.md b/README.md",
+        modelSelection,
+      });
+      const requestsFiber = yield* Effect.all([request, request], {
+        concurrency: "unbounded",
+      }).pipe(Effect.forkChild);
+
+      for (
+        let attempt = 0;
+        attempt < 20 && runtimeMock.state.createdClients.length === 0;
+        attempt += 1
+      ) {
+        yield* Effect.yieldNow;
+      }
+      expect(runtimeMock.state.createdClients).toHaveLength(1);
+
+      releaseClientStart?.();
+      const results = yield* Fiber.join(requestsFiber);
+      expect(results.map((result) => result.subject)).toEqual(["Add change", "Add change"]);
+      expect(runtimeMock.state.createdClients).toHaveLength(1);
+      expect(runtimeMock.state.createdClients[0]?.client.start).toHaveBeenCalledOnce();
     }),
   );
 
