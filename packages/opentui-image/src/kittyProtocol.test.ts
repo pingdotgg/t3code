@@ -21,7 +21,8 @@ describe("Kitty graphics protocol", () => {
       data,
     });
 
-    expect(output).toStartWith("\x1b[4;3H");
+    expect(output).toStartWith("\x1b7\x1b[4;3H");
+    expect(output).toEndWith("\x1b\\\x1b8");
     expect(output).toContain("a=T,f=32,s=1,v=1,x=0,y=0,w=1,h=1,c=4,r=2,C=1,i=7,m=0,q=2;");
     expect(output).toContain("/wCA/w==");
   });
@@ -82,9 +83,10 @@ describe("Kitty graphics protocol", () => {
       "tmux",
     );
 
-    expect(output).toStartWith("\x1b[4;3H\x1bPtmux;\x1b\x1b_G");
-    expect(output).toEndWith("\x1b\x1b\\\x1b\\");
+    expect(output).toStartWith("\x1b7\x1b[4;3H\x1bPtmux;\x1b\x1b_G");
+    expect(output).toEndWith("\x1b\x1b\\\x1b\\\x1b8");
     expect(output).not.toContain("\x1bPtmux;\x1b[4;3H");
+    expect(output).not.toContain("\x1bPtmux;\x1b\x1b7");
   });
 
   it("wraps Kitty deletion for tmux passthrough", () => {

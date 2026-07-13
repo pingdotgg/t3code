@@ -2,6 +2,8 @@ import * as NodeBuffer from "node:buffer";
 
 const ESC = "\x1b";
 const ST = `${ESC}\\`;
+const SAVE_CURSOR = `${ESC}7`;
+const RESTORE_CURSOR = `${ESC}8`;
 
 export type KittyProtocolTransport = "direct" | "tmux";
 
@@ -101,6 +103,7 @@ export function encodeKittyTransmit(
 
   const cursor = `${ESC}[${Math.max(0, Math.trunc(y)) + 1};${Math.max(0, Math.trunc(x)) + 1}H`;
   return (
+    SAVE_CURSOR +
     cursor +
     chunks
       .map((chunk, index) => {
@@ -113,6 +116,7 @@ export function encodeKittyTransmit(
         }
         return encodeKittyCommand(`${ESC}_Gm=${more},q=2;${chunk}${ST}`, transport);
       })
-      .join("")
+      .join("") +
+    RESTORE_CURSOR
   );
 }
