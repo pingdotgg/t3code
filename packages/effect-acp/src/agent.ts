@@ -379,11 +379,13 @@ export const make = Effect.fn("effect-acp/AcpAgent.make")(function* (
         callRpc(
           CLIENT_METHODS.session_request_permission,
           rpc[CLIENT_METHODS.session_request_permission](payload),
+          { timeout: "none" },
         ),
       elicit: (payload) =>
         callRpc(
           CLIENT_METHODS.session_elicitation,
           rpc[CLIENT_METHODS.session_elicitation](payload),
+          { timeout: "none" },
         ),
       readTextFile: (payload) =>
         callRpc(CLIENT_METHODS.fs_read_text_file, rpc[CLIENT_METHODS.fs_read_text_file](payload)),
@@ -409,6 +411,7 @@ export const make = Effect.fn("effect-acp/AcpAgent.make")(function* (
                     sessionId: payload.sessionId,
                     terminalId: response.terminalId,
                   }),
+                  { timeout: "none" },
                 ),
                 kill: callRpc(
                   CLIENT_METHODS.terminal_kill,
