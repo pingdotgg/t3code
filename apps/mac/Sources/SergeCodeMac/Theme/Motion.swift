@@ -70,7 +70,7 @@ enum Motion {
     static var delight: Animation {
         reduceMotion
             ? reducedChange
-            : .spring(response: profile.delightDuration, dampingFraction: 0.82)
+            : .spring(duration: profile.delightDuration, bounce: 0.18)
     }
 
     /// Asynchronous status tint, opacity, and meter changes.

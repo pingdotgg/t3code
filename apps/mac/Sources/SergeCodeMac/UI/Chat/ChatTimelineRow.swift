@@ -695,15 +695,13 @@ private struct SubagentTaskRow: View {
 
     @ViewBuilder
     private func rowChrome(now currentNow: Date) -> some View {
-        let runningSilently = SubagentTaskPresentation.isRunningSilently(
-            task: task, at: currentNow)
         VStack(alignment: .leading, spacing: 4) {
             Button {
                 guard hasExpandableContent else { return }
                 withAnimation(Motion.feedback) { isExpanded.toggle() }
             } label: {
                 HStack(alignment: .top, spacing: 9) {
-                    statusIcon(runningSilently: runningSilently)
+                    statusIcon()
                         .frame(width: TranscriptMetrics.iconColumn, height: 16)
                         .padding(.top, 1)
 
@@ -881,7 +879,7 @@ private struct SubagentTaskRow: View {
     private var title: String { SubagentTaskPresentation.title(for: task) }
 
     @ViewBuilder
-    private func statusIcon(runningSilently: Bool) -> some View {
+    private func statusIcon() -> some View {
         SubagentTaskStatusIcon(task: task)
     }
 }
