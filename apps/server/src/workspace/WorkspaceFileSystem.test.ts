@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@t3tools/contracts";
 import { it, describe, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -163,6 +164,56 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         });
         expect("cause" in error).toBe(false);
         expect("contents" in error).toBe(false);
+      }),
+    );
+
+    it.effect("returns binary workspace files as base64 when explicitly requested", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* fileSystem.writeFile(
+          path.join(cwd, "image.png"),
+          Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0, 0xff]),
+        );
+
+        const result = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "image.png",
+          encoding: "base64",
+        });
+
+        expect(result).toEqual({
+          relativePath: "image.png",
+          contents: "iVBORwD/",
+          byteLength: 6,
+          truncated: false,
+        });
+      }),
+    );
+
+    it.effect("rejects oversized base64 reads without returning a partial payload", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const byteLength = PROVIDER_SEND_TURN_MAX_IMAGE_BYTES + 1;
+        yield* fileSystem.writeFile(path.join(cwd, "large.png"), new Uint8Array(byteLength));
+
+        const result = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "large.png",
+          encoding: "base64",
+        });
+
+        expect(result).toEqual({
+          relativePath: "large.png",
+          contents: "",
+          byteLength,
+          truncated: true,
+        });
       }),
     );
 

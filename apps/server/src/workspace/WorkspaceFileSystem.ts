@@ -15,6 +15,7 @@ import type {
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "@t3tools/contracts";
+import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -213,7 +214,16 @@ export const make = Effect.gen(function* () {
             });
           }
 
-          const bytesToRead = Math.min(stat.size, PROJECT_READ_FILE_MAX_BYTES);
+          const encoding = input.encoding ?? "utf8";
+          const maxBytes =
+            encoding === "base64"
+              ? PROVIDER_SEND_TURN_MAX_IMAGE_BYTES
+              : PROJECT_READ_FILE_MAX_BYTES;
+          // Oversized binary payloads cannot be attached. Return only their
+          // metadata so a remote client can reject them without first moving a
+          // max-sized base64 response over the WebSocket.
+          const bytesToRead =
+            encoding === "base64" && stat.size > maxBytes ? 0 : Math.min(stat.size, maxBytes);
           const buffer = Buffer.alloc(bytesToRead);
           const { bytesRead } = yield* Effect.tryPromise({
             try: () => handle.read(buffer, 0, bytesToRead, 0),
@@ -228,7 +238,7 @@ export const make = Effect.gen(function* () {
               }),
           });
           const fileBytes = buffer.subarray(0, bytesRead);
-          if (fileBytes.includes(0)) {
+          if (encoding === "utf8" && fileBytes.includes(0)) {
             return yield* new WorkspaceBinaryFileError({
               workspaceRoot: input.cwd,
               relativePath: input.relativePath,
@@ -238,9 +248,12 @@ export const make = Effect.gen(function* () {
 
           return {
             relativePath: target.relativePath,
-            contents: new TextDecoder("utf-8").decode(fileBytes),
+            contents:
+              encoding === "base64"
+                ? fileBytes.toString("base64")
+                : new TextDecoder("utf-8").decode(fileBytes),
             byteLength: stat.size,
-            truncated: stat.size > PROJECT_READ_FILE_MAX_BYTES,
+            truncated: stat.size > maxBytes,
           };
         }),
       (handle) =>
