@@ -51,7 +51,19 @@ export function resolveTimelineScrollableNodeIsAtEnd(
   if (!scrollNode) {
     return undefined;
   }
-  return scrollNode.scrollHeight - scrollNode.scrollTop - scrollNode.clientHeight <= 0;
+  return scrollNode.scrollHeight - scrollNode.scrollTop - scrollNode.clientHeight <= 1;
+}
+
+export function timelineManualNavigationReachedEnd({
+  previousScrollTop,
+  scrollTop,
+  isAtEnd,
+}: {
+  readonly previousScrollTop: number;
+  readonly scrollTop: number;
+  readonly isAtEnd: boolean;
+}) {
+  return isAtEnd && scrollTop > previousScrollTop;
 }
 
 export interface TimelineEndState {

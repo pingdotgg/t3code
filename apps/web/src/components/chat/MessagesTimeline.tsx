@@ -79,6 +79,7 @@ import {
   resolveTimelineMinimapIndexFromPointer,
   resolveTimelineMinimapTopPercent,
   resolveTimelineScrollableNodeIsAtEnd,
+  timelineManualNavigationReachedEnd,
   timelineNavigationInputMovesTowardHistory,
   type StableMessagesTimelineRowsState,
   type MessagesTimelineRow,
@@ -330,7 +331,15 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   );
   const [minimapHasPersistentGutter, setMinimapHasPersistentGutter] = useState(false);
   const timelineTouchYRef = useRef<number | null>(null);
-  const manualNavigationTimelineKeyRef = useRef<string | null>(null);
+  const manualNavigationRef = useRef<{
+    readonly timelineKey: string;
+    scrollTop: number;
+  } | null>(null);
+  const pointerNavigationRef = useRef<{
+    readonly pointerId: number;
+    readonly timelineKey: string;
+    scrollTop: number;
+  } | null>(null);
   const handleAnchorReady = useCallback(
     (info: { anchorIndex: number | undefined }) => {
       if (anchorMessageId !== null && info.anchorIndex !== undefined) {
@@ -356,21 +365,49 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       : undefined;
   }, [anchorMessageId, handleAnchorReady, handleAnchorSizeChanged, rows]);
 
+  const markTimelineManualNavigation = useCallback(() => {
+    if (manualNavigationRef.current?.timelineKey !== routeThreadKey) {
+      const scrollTop = listRef.current?.getScrollableNode()?.scrollTop;
+      if (typeof scrollTop !== "number") {
+        return;
+      }
+      manualNavigationRef.current = { timelineKey: routeThreadKey, scrollTop };
+    }
+    onManualNavigation();
+  }, [listRef, onManualNavigation, routeThreadKey]);
+
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
-    if (
-      manualNavigationTimelineKeyRef.current !== null &&
-      manualNavigationTimelineKeyRef.current !== routeThreadKey
-    ) {
-      manualNavigationTimelineKeyRef.current = null;
+    const scrollNode = listRef.current?.getScrollableNode();
+    const scrollTop = scrollNode?.scrollTop ?? state?.scroll ?? null;
+    if (manualNavigationRef.current?.timelineKey !== routeThreadKey) {
+      manualNavigationRef.current = null;
     }
-    const manualNavigationActive = manualNavigationTimelineKeyRef.current === routeThreadKey;
-    const isAtEnd = manualNavigationActive
-      ? (resolveTimelineScrollableNodeIsAtEnd(listRef.current?.getScrollableNode()) ?? false)
-      : resolveTimelineIsAtEnd(state);
-    const scrollTop = state?.scroll ?? null;
-    if (manualNavigationActive && isAtEnd) {
-      manualNavigationTimelineKeyRef.current = null;
+    if (pointerNavigationRef.current?.timelineKey !== routeThreadKey) {
+      pointerNavigationRef.current = null;
+    }
+    const pointerNavigation = pointerNavigationRef.current;
+    if (pointerNavigation && scrollTop !== null && scrollTop < pointerNavigation.scrollTop) {
+      markTimelineManualNavigation();
+    }
+    if (pointerNavigation && scrollTop !== null) {
+      pointerNavigation.scrollTop = scrollTop;
+    }
+    const manualNavigation = manualNavigationRef.current;
+    const scrollNodeIsAtEnd = resolveTimelineScrollableNodeIsAtEnd(scrollNode) ?? false;
+    const isAtEnd =
+      manualNavigation && scrollTop !== null
+        ? timelineManualNavigationReachedEnd({
+            previousScrollTop: manualNavigation.scrollTop,
+            scrollTop,
+            isAtEnd: scrollNodeIsAtEnd,
+          })
+        : resolveTimelineIsAtEnd(state);
+    if (manualNavigation && scrollTop !== null) {
+      manualNavigation.scrollTop = scrollTop;
+      if (isAtEnd) {
+        manualNavigationRef.current = null;
+      }
     }
     if (isAtEnd !== undefined) {
       onIsAtEndChange(isAtEnd);
@@ -379,7 +416,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       return;
     }
 
-    const resolvedScrollTop = scrollTop ?? 0;
+    const resolvedScrollTop = state?.scroll ?? 0;
     const scrollBottom = resolvedScrollTop + (state.scrollLength ?? 0);
 
     for (const item of minimapItems) {
@@ -397,12 +434,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
       strip.dataset.inView = inView ? "true" : "false";
     }
-  }, [listRef, minimapItems, minimapStripMap, onIsAtEndChange, routeThreadKey]);
-
-  const markTimelineManualNavigation = useCallback(() => {
-    manualNavigationTimelineKeyRef.current = routeThreadKey;
-    onManualNavigation();
-  }, [onManualNavigation, routeThreadKey]);
+  }, [
+    listRef,
+    markTimelineManualNavigation,
+    minimapItems,
+    minimapStripMap,
+    onIsAtEndChange,
+    routeThreadKey,
+  ]);
 
   const handleTimelineWheelCapture = useCallback(
     (event: WheelEvent<HTMLDivElement>) => {
@@ -465,16 +504,34 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       ) {
         return;
       }
-      markTimelineManualNavigation();
+      pointerNavigationRef.current = {
+        pointerId: event.pointerId,
+        timelineKey: routeThreadKey,
+        scrollTop: scrollNode.scrollTop,
+      };
     },
-    [listRef, markTimelineManualNavigation],
+    [listRef, routeThreadKey],
   );
-
   useEffect(() => {
     if (autoFollowEnabled) {
-      manualNavigationTimelineKeyRef.current = null;
+      manualNavigationRef.current = null;
     }
+    pointerNavigationRef.current = null;
   }, [autoFollowEnabled, routeThreadKey]);
+
+  useEffect(() => {
+    const resetTimelinePointerTracking = (event: globalThis.PointerEvent) => {
+      if (pointerNavigationRef.current?.pointerId === event.pointerId) {
+        pointerNavigationRef.current = null;
+      }
+    };
+    window.addEventListener("pointercancel", resetTimelinePointerTracking, true);
+    window.addEventListener("pointerup", resetTimelinePointerTracking, true);
+    return () => {
+      window.removeEventListener("pointercancel", resetTimelinePointerTracking, true);
+      window.removeEventListener("pointerup", resetTimelinePointerTracking, true);
+    };
+  }, []);
 
   useEffect(() => {
     const frame = requestAnimationFrame(handleScroll);
