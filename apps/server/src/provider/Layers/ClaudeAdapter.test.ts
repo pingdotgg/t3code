@@ -21,7 +21,7 @@ import {
   ThreadId,
   ProviderInstanceId,
 } from "@t3tools/contracts";
-import { createModelSelection } from "@t3tools/shared/model";
+import { createModelCapabilities, createModelSelection } from "@t3tools/shared/model";
 import { assert, describe, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -161,6 +161,8 @@ function makeHarness(config?: {
   readonly baseDir?: string;
   readonly claudeConfig?: Partial<ClaudeSettings>;
   readonly instanceId?: ProviderInstanceId;
+  readonly getModelCapabilities?: ClaudeAdapterLiveOptions["getModelCapabilities"];
+  readonly normalizeEffort?: ClaudeAdapterLiveOptions["normalizeEffort"];
 }) {
   const query = new FakeClaudeQuery();
   let createInput:
@@ -172,6 +174,8 @@ function makeHarness(config?: {
 
   const adapterOptions: ClaudeAdapterLiveOptions = {
     ...(config?.instanceId ? { instanceId: config.instanceId } : {}),
+    ...(config?.getModelCapabilities ? { getModelCapabilities: config.getModelCapabilities } : {}),
+    ...(config?.normalizeEffort ? { normalizeEffort: config.normalizeEffort } : {}),
     createQuery: (input) => {
       createInput = input;
       return query;
@@ -454,6 +458,48 @@ describe("ClaudeAdapterLive", () => {
       const createInput = harness.getLastCreateQueryInput();
       assert.equal(createInput?.options.permissionMode, "bypassPermissions");
       assert.equal(createInput?.options.allowDangerouslySkipPermissions, true);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("allows adapter-specific capabilities and effort normalization", () => {
+    const capabilities = createModelCapabilities({
+      optionDescriptors: [
+        {
+          id: "effort",
+          label: "Reasoning",
+          type: "select",
+          options: [
+            { id: "low", label: "Low" },
+            { id: "medium", label: "Medium" },
+            { id: "high", label: "High", isDefault: true },
+            { id: "xhigh", label: "Extra High" },
+            { id: "max", label: "Max" },
+          ],
+        },
+      ],
+    });
+    const harness = makeHarness({
+      getModelCapabilities: () => capabilities,
+      normalizeEffort: (effort) => (effort === "xhigh" ? "xhigh" : undefined),
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claudex-luna",
+          [{ id: "effort", value: "xhigh" }],
+        ),
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.effort, "xhigh");
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

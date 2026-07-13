@@ -13,7 +13,11 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-import { type ClaudeSettings, type ModelSelection } from "@t3tools/contracts";
+import {
+  type ClaudeSettings,
+  type ModelCapabilities,
+  type ModelSelection,
+} from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
@@ -49,6 +53,12 @@ import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
 
 const CLAUDE_TIMEOUT_MS = 180_000;
 
+type ClaudeModelCapabilitiesLookup = (model: string | undefined) => ModelCapabilities | undefined;
+type ClaudeEffortNormalizer = (
+  effort: string | null | undefined,
+  model: string | null | undefined,
+) => string | undefined;
+
 /**
  * Schema for the wrapper JSON returned by `claude -p --output-format json`.
  * We only care about `structured_output`.
@@ -63,6 +73,10 @@ const decodeClaudeOutputEnvelope = Schema.decodeEffect(Schema.fromJsonString(Cla
 export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(function* (
   claudeSettings: ClaudeSettings,
   environment?: NodeJS.ProcessEnv,
+  options?: {
+    readonly getModelCapabilities?: ClaudeModelCapabilitiesLookup;
+    readonly normalizeEffort?: ClaudeEffortNormalizer;
+  },
 ) {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
@@ -127,7 +141,9 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       toJsonSchemaObject(outputSchemaJson),
       "Failed to encode structured output schema.",
     );
-    const caps = getClaudeModelCapabilities(modelSelection.model);
+    const caps =
+      options?.getModelCapabilities?.(modelSelection.model) ??
+      getClaudeModelCapabilities(modelSelection.model);
     const descriptors = getProviderOptionDescriptors({
       caps,
       selections: modelSelection.options,
@@ -135,7 +151,10 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     const findDescriptor = (id: string) => descriptors.find((descriptor) => descriptor.id === id);
     const rawEffortSelection = getModelSelectionStringOptionValue(modelSelection, "effort");
     const resolvedEffort = resolveClaudeEffort(caps, rawEffortSelection);
-    const cliEffort = normalizeClaudeCliEffort(resolvedEffort, modelSelection.model);
+    const cliEffort = (options?.normalizeEffort ?? normalizeClaudeCliEffort)(
+      resolvedEffort,
+      modelSelection.model,
+    );
     const ultracode = isClaudeUltracodeEffort(resolvedEffort);
     const thinkingDescriptor = findDescriptor("thinking");
     const fastModeDescriptor = findDescriptor("fastMode");

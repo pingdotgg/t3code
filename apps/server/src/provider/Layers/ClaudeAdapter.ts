@@ -26,6 +26,7 @@ import {
   type CanonicalItemType,
   type CanonicalRequestType,
   type ClaudeSettings,
+  type ModelCapabilities,
   EventId,
   type ProviderApprovalDecision,
   ProviderDriverKind,
@@ -101,6 +102,11 @@ type ClaudeToolResultStreamKind = Extract<
   "command_output" | "file_change_output"
 >;
 type ClaudeSdkEffort = NonNullable<ClaudeQueryOptions["effort"]>;
+type ClaudeModelCapabilitiesLookup = (model: string | undefined) => ModelCapabilities | undefined;
+type ClaudeEffortNormalizer = (
+  effort: string | null | undefined,
+  model: string | null | undefined,
+) => string | undefined;
 
 function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
   const result = encodeUnknownJsonStringExit(input);
@@ -262,6 +268,8 @@ export interface ClaudeAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
   readonly driverKind?: ProviderDriverKind;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly getModelCapabilities?: ClaudeModelCapabilitiesLookup;
+  readonly normalizeEffort?: ClaudeEffortNormalizer;
   readonly createQuery?: (input: {
     readonly prompt: AsyncIterable<SDKUserMessage>;
     readonly options: ClaudeQueryOptions;
@@ -318,8 +326,9 @@ function normalizeClaudeStreamMessages(
 function getEffectiveClaudeAgentEffort(
   effort: string | null | undefined,
   model: string | null | undefined,
+  normalizeEffort: ClaudeEffortNormalizer = normalizeClaudeCliEffort,
 ): ClaudeSdkEffort | null {
-  const normalized = normalizeClaudeCliEffort(effort, model);
+  const normalized = normalizeEffort(effort, model);
   return normalized ? (normalized as ClaudeSdkEffort) : null;
 }
 
@@ -384,6 +393,7 @@ function maxClaudeContextWindowFromModelUsage(
 
 function selectedClaudeContextWindow(
   modelSelection: ModelSelection | undefined,
+  getModelCapabilities: ClaudeModelCapabilitiesLookup = getClaudeModelCapabilities,
 ): number | undefined {
   switch (modelSelection?.model) {
     case "claude-opus-4-8":
@@ -398,7 +408,9 @@ function selectedClaudeContextWindow(
   if (optionValue === "200k") {
     return 200_000;
   }
-  const caps = getClaudeModelCapabilities(modelSelection?.model);
+  const caps =
+    getModelCapabilities(modelSelection?.model) ??
+    getClaudeModelCapabilities(modelSelection?.model);
   const hasContextWindowOption = getProviderOptionDescriptors({ caps }).some(
     (descriptor) => descriptor.type === "select" && descriptor.id === "contextWindow",
   );
@@ -1415,6 +1427,7 @@ function buildPromptText(
   boundInstanceId: ProviderInstanceId,
   options?: {
     readonly appendResumeDeadShellNote?: boolean;
+    readonly getModelCapabilities?: ClaudeModelCapabilitiesLookup | undefined;
   },
 ): string {
   const rawEffort =
@@ -1423,7 +1436,8 @@ function buildPromptText(
       : null;
   const claudeModel =
     input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection.model : undefined;
-  const caps = getClaudeModelCapabilities(claudeModel);
+  const caps =
+    options?.getModelCapabilities?.(claudeModel) ?? getClaudeModelCapabilities(claudeModel);
 
   const promptEffort = resolvePromptInjectedEffort(caps, rawEffort);
   const base = applyClaudePromptEffortPrefix(input.input?.trim() ?? "", promptEffort);
@@ -1484,10 +1498,12 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
     readonly boundInstanceId: ProviderInstanceId;
     readonly provider: ProviderDriverKind;
     readonly appendResumeDeadShellNote?: boolean;
+    readonly getModelCapabilities?: ClaudeModelCapabilitiesLookup | undefined;
   },
 ) {
   const text = buildPromptText(input, dependencies.boundInstanceId, {
     appendResumeDeadShellNote: dependencies.appendResumeDeadShellNote === true,
+    getModelCapabilities: dependencies.getModelCapabilities,
   });
   const sdkContent: Array<Record<string, unknown>> = [];
 
@@ -4252,10 +4268,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const extraArgs = parseCliArgs(claudeSettings.launchArgs).flags;
       const modelSelection =
         input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
-      const caps = getClaudeModelCapabilities(modelSelection?.model);
+      const caps =
+        options?.getModelCapabilities?.(modelSelection?.model) ??
+        getClaudeModelCapabilities(modelSelection?.model);
       const descriptors = getProviderOptionDescriptors({ caps });
       const apiModelId = modelSelection ? resolveClaudeApiModelId(modelSelection) : undefined;
-      const initialContextWindow = selectedClaudeContextWindow(modelSelection);
+      const initialContextWindow = selectedClaudeContextWindow(
+        modelSelection,
+        options?.getModelCapabilities,
+      );
       const rawEffort = getModelSelectionStringOptionValue(modelSelection, "effort");
       const effort = resolveClaudeEffort(caps, rawEffort) ?? null;
       const fastModeSupported = descriptors.some(
@@ -4271,7 +4292,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ? getModelSelectionBooleanOptionValue(modelSelection, "thinking")
         : undefined;
       const ultracode = isClaudeUltracodeEffort(effort);
-      const effectiveEffort = getEffectiveClaudeAgentEffort(effort, modelSelection?.model);
+      const effectiveEffort = getEffectiveClaudeAgentEffort(
+        effort,
+        modelSelection?.model,
+        options?.normalizeEffort,
+      );
       const runtimeModeToPermission: Record<string, PermissionMode> = {
         "auto-accept-edits": "acceptEdits",
         "full-access": "bypassPermissions",
@@ -4583,6 +4608,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       boundInstanceId,
       provider: PROVIDER,
       appendResumeDeadShellNote,
+      getModelCapabilities: options?.getModelCapabilities,
     }).pipe(
       Effect.mapError((cause) => toRequestError(PROVIDER, input.threadId, "turn/start", cause)),
     );
