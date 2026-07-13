@@ -30,7 +30,6 @@ struct SidebarView: View {
     @UIState private var forgetTarget: RemoteDeviceSession?
 
     var body: some View {
-        let threadIDs = model.threads.map(\.id)
         List(selection: Binding(
             get: { multi.selection },
             set: { multi.selection = $0 }
@@ -105,10 +104,8 @@ struct SidebarView: View {
         .navigationTitle("SurgeCode")
         // New/archived/deleted threads and project changes slide the list
         // smoothly rather than snapping the rows into new positions.
-        .animation(Motion.settle, value: threadIDs)
-        .animation(Motion.settle, value: model.pinnedThreadIDs)
-        .animation(Motion.settle, value: model.projects)
-        .animation(Motion.settle, value: multi.remoteSessions.map(\.id))
+        // Session selection, refreshes, and pin reordering are frequent. Rows
+        // own any insertion/removal transition; the complete list stays still.
         .alert(
             "Rename Project",
             isPresented: Binding(
