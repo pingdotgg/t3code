@@ -3,6 +3,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
 import * as ProviderSessionRuntime from "../../persistence/ProviderSessionRuntime.ts";
@@ -85,6 +86,17 @@ function toRuntimeBinding(
 
 const makeProviderSessionDirectory = Effect.gen(function* () {
   const repository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+  const activityByThread = yield* Ref.make<ReadonlyMap<ThreadId, string>>(new Map());
+
+  const overlayLastSeenAt = <A extends ProviderRuntimeBindingWithMetadata>(
+    binding: A,
+    activity: ReadonlyMap<ThreadId, string>,
+  ): A => {
+    const observedAt = activity.get(binding.threadId);
+    return observedAt !== undefined && observedAt > binding.lastSeenAt
+      ? { ...binding, lastSeenAt: observedAt }
+      : binding;
+  };
 
   const getBinding = (threadId: ThreadId) =>
     repository.getByThreadId({ threadId }).pipe(
@@ -93,8 +105,13 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
         Option.match(runtime, {
           onNone: () => Effect.succeed(Option.none<ProviderRuntimeBinding>()),
           onSome: (value) =>
-            toRuntimeBinding(value, "ProviderSessionDirectory.getBinding").pipe(
-              Effect.map((binding) => Option.some(binding)),
+            Effect.all({
+              binding: toRuntimeBinding(value, "ProviderSessionDirectory.getBinding"),
+              activity: Ref.get(activityByThread),
+            }).pipe(
+              Effect.map(({ activity, binding }) =>
+                Option.some(overlayLastSeenAt(binding, activity)),
+              ),
             ),
         }),
       ),
@@ -146,7 +163,18 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
         ),
       })
       .pipe(Effect.mapError(toPersistenceError("ProviderSessionDirectory.upsert:upsert")));
+    yield* Ref.update(activityByThread, (current) => new Map(current).set(resolvedThreadId, now));
   });
+
+  const noteActivity: NonNullable<ProviderSessionDirectoryShape["noteActivity"]> = (
+    threadId,
+    observedAt,
+  ) =>
+    Ref.update(activityByThread, (current) => {
+      const previous = current.get(threadId);
+      if (previous !== undefined && previous >= observedAt) return current;
+      return new Map(current).set(threadId, observedAt);
+    });
 
   const getProvider: ProviderSessionDirectoryShape["getProvider"] = (threadId) =>
     getBinding(threadId).pipe(
@@ -174,15 +202,22 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
     repository.list().pipe(
       Effect.mapError(toPersistenceError("ProviderSessionDirectory.listBindings:list")),
       Effect.flatMap((rows) =>
-        Effect.forEach(
-          rows,
-          (row) => toRuntimeBinding(row, "ProviderSessionDirectory.listBindings"),
-          { concurrency: 4 },
-        ),
+        Effect.all({
+          bindings: Effect.forEach(
+            rows,
+            (row) => toRuntimeBinding(row, "ProviderSessionDirectory.listBindings"),
+            { concurrency: 4 },
+          ),
+          activity: Ref.get(activityByThread),
+        }),
+      ),
+      Effect.map(({ activity, bindings }) =>
+        bindings.map((binding) => overlayLastSeenAt(binding, activity)),
       ),
     );
 
   return {
+    noteActivity,
     upsert,
     getProvider,
     getBinding,

@@ -30,6 +30,32 @@ function makeDirectoryLayer<E, R>(persistenceLayer: Layer.Layer<SqlClient.SqlCli
 }
 
 it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryLive", (it) => {
+  it("refreshes the shared lastSeenAt view without rewriting persistence", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const repository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+      const threadId = ThreadId.make("thread-activity");
+      yield* directory.upsert({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+      });
+
+      if (directory.noteActivity) {
+        yield* directory.noteActivity(threadId, "9999-01-01T00:00:00.000Z");
+      }
+      const bindings = yield* directory.listBindings();
+      assert.equal(
+        bindings.find((binding) => binding.threadId === threadId)?.lastSeenAt,
+        "9999-01-01T00:00:00.000Z",
+      );
+
+      const persisted = yield* repository.getByThreadId({ threadId });
+      assert.equal(Option.isSome(persisted), true);
+      if (Option.isSome(persisted)) {
+        assert.notEqual(persisted.value.lastSeenAt, "9999-01-01T00:00:00.000Z");
+      }
+    }));
+
   it("upserts and reads thread bindings", () =>
     Effect.gen(function* () {
       const directory = yield* ProviderSessionDirectory;
