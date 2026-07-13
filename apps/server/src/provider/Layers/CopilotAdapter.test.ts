@@ -651,6 +651,38 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     }),
   );
 
+  it.effect("does not send a turn when Copilot mode synchronization fails", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-send-mode-sync-failure");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      runtimeMock.state.lastSession.rpc.mode.set.mockRejectedValueOnce(
+        new Error("Copilot mode update rejected"),
+      );
+      runtimeMock.state.lastSession.send.mockClear();
+      const result = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "do not send this prompt",
+          attachments: [],
+          interactionMode: "plan",
+        })
+        .pipe(Effect.result);
+
+      NodeAssert.equal(result._tag, "Failure");
+      NodeAssert.equal(runtimeMock.state.lastSession.send.mock.calls.length, 0);
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("returns a session-scoped SDK approval for acceptForSession", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
