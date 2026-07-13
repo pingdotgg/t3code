@@ -22,41 +22,16 @@ private func shortModelName(_ model: String) -> String {
 
 /// Shared presentation rules for subagent task rows. Keeping these in one
 /// place makes the timeline row and the cross-thread agents panel agree on
-/// identity, timing, stalled state, and status colors.
+/// identity, timing, quiet-running state, and status colors.
 enum SubagentTaskPresentation {
-    static let stalledThreshold: TimeInterval = 3 * 60
+    static let silentThreshold: TimeInterval = 3 * 60
 
-    /// Client-side fallback heuristic (Claude Task subagents only): a running
-    /// task with no activity for `stalledThreshold`. Used only when the server
-    /// has not reported liveness for the owning thread.
-    static func isStalled(task: SubagentTaskItem, at now: Date) -> Bool {
+    /// A quiet task is still running. Long gaps are common while a command
+    /// sub-agent is waiting on a process, tool, or model response, so silence
+    /// is not enough evidence to call the task stalled.
+    static func isRunningSilently(task: SubagentTaskItem, at now: Date) -> Bool {
         guard task.state == .running else { return false }
-        return now.timeIntervalSince(task.lastActivityAt) > stalledThreshold
-    }
-
-    /// Resolved stall state with server precedence: stalled is authoritative;
-    /// active suppresses the client heuristic only while its activity is fresh.
-    /// Never shows a non-running task as stalled.
-    static func isStalled(
-        task: SubagentTaskItem, at now: Date, threadHealth: ThreadHealth?
-    ) -> Bool {
-        guard task.state == .running else { return false }
-        if let threadHealth {
-            if threadHealth.stalled { return true }
-            if now.timeIntervalSince(threadHealth.lastActivityAt) <= stalledThreshold {
-                return false
-            }
-        }
-        return isStalled(task: task, at: now)
-    }
-
-    /// "stalled for 3m" style relative label from the server stall onset.
-    static func stalledForLabel(since: Date, at now: Date) -> String {
-        let seconds = max(0, Int(now.timeIntervalSince(since)))
-        if seconds < 60 { return "stalled for \(seconds)s" }
-        let minutes = seconds / 60
-        if minutes < 60 { return "stalled for \(minutes)m" }
-        return "stalled for \(minutes / 60)h"
+        return now.timeIntervalSince(task.lastActivityAt) > silentThreshold
     }
 
     static func title(for task: SubagentTaskItem) -> String {
@@ -168,12 +143,12 @@ enum SubagentTaskPresentation {
 @MainActor
 struct SubagentTaskStatusIcon: View {
     let task: SubagentTaskItem
-    let stalled: Bool
+    let runningSilently: Bool
     let isLive: Bool
 
-    init(task: SubagentTaskItem, stalled: Bool, isLive: Bool = true) {
+    init(task: SubagentTaskItem, runningSilently: Bool, isLive: Bool = true) {
         self.task = task
-        self.stalled = stalled
+        self.runningSilently = runningSilently
         self.isLive = isLive
     }
 
@@ -182,7 +157,7 @@ struct SubagentTaskStatusIcon: View {
             .symbolEffect(
                 .pulse,
                 isActive: task.state == .running
-                    && !stalled
+                    && !runningSilently
                     && isLive
                     && !Motion.reduceMotion)
             .foregroundStyle(iconTint)
@@ -198,7 +173,7 @@ struct SubagentTaskStatusIcon: View {
 
     private var iconName: String {
         switch task.state {
-        case .running: stalled ? "exclamationmark.circle" : "circle.dotted"
+        case .running: "circle.dotted"
         case .paused: "pause.circle.fill"
         case .completed: "checkmark.circle.fill"
         case .failed: "xmark.circle.fill"
@@ -208,7 +183,7 @@ struct SubagentTaskStatusIcon: View {
 
     private var iconTint: Color {
         switch task.state {
-        case .running: stalled ? .orange : .secondary
+        case .running: .secondary
         case .paused: .secondary
         case .completed: .green
         case .failed: .red
@@ -281,30 +256,25 @@ struct TranscriptPill: View {
 struct SubagentTaskHealthTags: View {
     let task: SubagentTaskItem
     let now: Date
-    /// Server liveness for the owning thread; when present it wins over the
-    /// client 3-min heuristic (no double/conflicting stall states).
-    var threadHealth: ThreadHealth?
 
-    init(task: SubagentTaskItem, now: Date, threadHealth: ThreadHealth? = nil) {
+    init(task: SubagentTaskItem, now: Date) {
         self.task = task
         self.now = now
-        self.threadHealth = threadHealth
     }
 
     @ViewBuilder
     var body: some View {
         if task.state == .running {
-            let stalled = SubagentTaskPresentation.isStalled(
-                task: task, at: now, threadHealth: threadHealth)
+            let runningSilently = SubagentTaskPresentation.isRunningSilently(task: task, at: now)
             HStack(spacing: 6) {
-                Text(activityLabel(stalled: stalled))
+                Text(activityLabel(runningSilently: runningSilently))
                     .font(.caption2)
-                    .foregroundStyle(stalled ? Color.orange : Color.secondary)
-                if stalled {
+                    .foregroundStyle(Color.secondary)
+                if runningSilently {
                     TranscriptPill(
-                        "stalled",
-                        tint: .orange,
-                        fill: AnyShapeStyle(Color.orange.opacity(0.14)))
+                        "running silently",
+                        tint: .secondary,
+                        fill: AnyShapeStyle(Color.secondary.opacity(0.14)))
                 }
                 if task.isBackgrounded {
                     TranscriptPill("background")
@@ -322,11 +292,9 @@ struct SubagentTaskHealthTags: View {
         }
     }
 
-    /// Server-driven stalls show "stalled for Xm" from the reported onset;
-    /// otherwise the ordinary "last activity" line.
-    private func activityLabel(stalled: Bool) -> String {
-        if stalled, let since = threadHealth?.stalledSince {
-            return SubagentTaskPresentation.stalledForLabel(since: since, at: now)
+    private func activityLabel(runningSilently: Bool) -> String {
+        if runningSilently {
+            return "running silently"
         }
         return SubagentTaskPresentation.lastActivityLabel(task: task, at: now)
     }
