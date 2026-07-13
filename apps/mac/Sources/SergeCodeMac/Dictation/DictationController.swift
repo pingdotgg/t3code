@@ -34,8 +34,11 @@ public final class DictationController {
     public private(set) var lastError: String?
     public var micPermissionDenied = false
 
-    /// Set by the composer; receives the final transcript.
-    public var insertHandler: ((String) -> Void)?
+    /// Set by the composer; receives `(threadID, transcript)`. The threadID
+    /// is the one selected when recording *started* (captured in
+    /// `startRecording`), not whatever thread happens to be selected when
+    /// transcription finishes — the user may switch threads mid-recording.
+    public var insertHandler: ((String, String) -> Void)?
 
     public var cleanupEnabled: Bool {
         didSet { UserDefaults.standard.set(cleanupEnabled, forKey: Self.cleanupKey) }
@@ -60,7 +63,10 @@ public final class DictationController {
     private var asrManager: AsrManager?
     /// The composer that owned the recording when it started. The live
     /// handler may be rebound while transcription is in flight.
-    private var recordingInsertHandler: ((String) -> Void)?
+    private var recordingInsertHandler: ((String, String) -> Void)?
+    /// The thread selected when recording started — the transcript is
+    /// delivered to this thread even if the selection changes mid-recording.
+    private var recordingThreadID: String?
     /// In-flight load, shared so the recording warm-up and finishRecording
     /// don't both load the models.
     private var asrLoadTask: Task<AsrManager, Error>?
@@ -78,18 +84,21 @@ public final class DictationController {
 
     // MARK: - Recording
 
-    public func toggleRecording() {
+    /// - Parameter threadID: the currently selected thread, captured as the
+    ///   recording's destination when a new recording starts. Ignored when
+    ///   stopping (the destination was already captured at start).
+    public func toggleRecording(threadID: String?) {
         switch state {
         case .recording:
             finishRecording()
         case .idle where modelStatus == .ready:
-            startRecording()
+            startRecording(threadID: threadID)
         default:
             break
         }
     }
 
-    private func startRecording() {
+    private func startRecording(threadID: String?) {
         lastError = nil
         Task {
             guard await AudioRecorder.requestPermission() else {
@@ -100,6 +109,7 @@ public final class DictationController {
             do {
                 try recorder.start()
                 recordingInsertHandler = insertHandler
+                recordingThreadID = threadID
                 state = .recording
                 // Warm both models while the user is speaking so the
                 // transcript lands near-instantly after they stop.
@@ -115,7 +125,9 @@ public final class DictationController {
 
     private func finishRecording() {
         let recordingInsertHandler = recordingInsertHandler
+        let recordingThreadID = recordingThreadID
         self.recordingInsertHandler = nil
+        self.recordingThreadID = nil
         state = .processing
         let language = Language(rawValue: languageCode)
         Task {
@@ -133,7 +145,9 @@ public final class DictationController {
                     return
                 }
                 let text = cleanupEnabled ? await cleaner.clean(raw) : raw
-                recordingInsertHandler?(text)
+                if let recordingThreadID {
+                    recordingInsertHandler?(recordingThreadID, text)
+                }
             } catch let error as ASRError where isTooShort(error) {
                 presentError("Recording was too short to transcribe.")
             } catch {
