@@ -221,18 +221,20 @@ it.layer(CopilotTextGenerationTestLayer)("CopilotTextGeneration", (it) => {
     }),
   );
 
-  it.effect("generates thread titles without starting a Copilot SDK session", () =>
+  it.effect("keeps client-seeded thread titles without starting a Copilot SDK session", () =>
     Effect.gen(function* () {
       const textGeneration = yield* makeCopilotTextGeneration(defaultCopilotSettings);
       const modelSelection = createModelSelection(ProviderInstanceId.make("copilot"), "gpt-4.1");
 
-      const title = yield* textGeneration.generateThreadTitle({
-        cwd: process.cwd(),
-        message: "Investigate Copilot thread startup errors after reconnecting.",
-        modelSelection,
-      });
+      const result = yield* textGeneration
+        .generateThreadTitle({
+          cwd: process.cwd(),
+          message: "Investigate Copilot thread startup errors after reconnecting.",
+          modelSelection,
+        })
+        .pipe(Effect.result);
 
-      expect(title.title).toBe("Investigate Copilot thread startup errors after...");
+      expect(result._tag).toBe("Failure");
       expect(runtimeMock.state.createdClients).toHaveLength(0);
       expect(runtimeMock.state.sessions).toHaveLength(0);
     }),

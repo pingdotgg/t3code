@@ -31,7 +31,6 @@ import {
   makeBranchNameGenerationResult,
   makeCommitMessageGenerationResult,
   makePrContentGenerationResult,
-  makeThreadTitleGenerationResult,
   toJsonSchemaObject,
 } from "./TextGenerationUtils.ts";
 
@@ -41,8 +40,7 @@ const COPILOT_TEXT_GENERATION_IDLE_TTL = "30 seconds";
 type CopilotTextGenerationOperation =
   | "generateCommitMessage"
   | "generatePrContent"
-  | "generateBranchName"
-  | "generateThreadTitle";
+  | "generateBranchName";
 type CopilotReasoningEffort = NonNullable<SessionConfig["reasoningEffort"]>;
 type CopilotContextTier = NonNullable<SessionConfig["contextTier"]>;
 
@@ -100,16 +98,6 @@ function copilotTextClientKey(input: {
     binaryPath: trimOrUndefined(input.settings.binaryPath) ?? null,
     serverUrl: trimOrUndefined(input.settings.serverUrl) ?? null,
   });
-}
-
-function copilotThreadTitleFallback(input: {
-  readonly message: string;
-  readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
-}): TextGeneration.ThreadTitleGenerationResult {
-  const attachmentName = input.attachments?.[0]?.name;
-  const title =
-    input.message.trim() || (attachmentName ? `Image: ${attachmentName}` : "New thread");
-  return makeThreadTitleGenerationResult({ title });
 }
 
 export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(function* (
@@ -533,9 +521,13 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
       );
     });
 
-  const generateThreadTitle: TextGeneration.TextGeneration["Service"]["generateThreadTitle"] = (
-    input,
-  ) => Effect.succeed(copilotThreadTitleFallback(input));
+  const generateThreadTitle: TextGeneration.TextGeneration["Service"]["generateThreadTitle"] = () =>
+    Effect.fail(
+      new TextGenerationError({
+        operation: "generateThreadTitle",
+        detail: "Copilot uses the client-seeded thread title.",
+      }),
+    );
 
   return {
     generateCommitMessage,
