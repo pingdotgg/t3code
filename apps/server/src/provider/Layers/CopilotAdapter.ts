@@ -2119,7 +2119,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
   const syncSessionMode = (
     context: CopilotSessionContext,
     mode: CopilotMode,
-  ): Effect.Effect<void> =>
+  ): Effect.Effect<void, ProviderAdapterRequestError> =>
     copilotSdk.setMode(context, mode).pipe(
       Effect.flatMap(() =>
         emit({
@@ -2134,6 +2134,13 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           },
         }),
       ),
+    );
+
+  const syncSessionModeBestEffort = (
+    context: CopilotSessionContext,
+    mode: CopilotMode,
+  ): Effect.Effect<void> =>
+    syncSessionMode(context, mode).pipe(
       Effect.catch((cause) =>
         emit({
           ...createBaseEvent({
@@ -3178,7 +3185,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       };
       sessions.set(input.threadId, context);
 
-      yield* syncSessionMode(
+      yield* syncSessionModeBestEffort(
         context,
         requestedCopilotMode({
           runtimeMode: input.runtimeMode,
