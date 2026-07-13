@@ -140,6 +140,7 @@ export interface CopilotAdapterLiveOptions {
 interface CopilotTurnSnapshot {
   readonly id: TurnId;
   readonly items: Array<unknown>;
+  sdkHistoryEventId?: string | undefined;
 }
 
 interface CopilotTurnStartPayload {
@@ -1368,6 +1369,20 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
             cause,
           }),
       }),
+    truncateHistory: (
+      context: CopilotSessionContext,
+      eventId: string,
+    ): Effect.Effect<void, ProviderAdapterRequestError> =>
+      Effect.tryPromise({
+        try: () => context.sdkSession.rpc.history.truncate({ eventId }),
+        catch: (cause) =>
+          new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "session.history.truncate",
+            detail: detailFromCause(cause, "Failed to truncate Copilot history."),
+            cause,
+          }),
+      }).pipe(Effect.asVoid),
     readPlan: (
       context: CopilotSessionContext,
     ): Effect.Effect<string, ProviderAdapterRequestError> =>
@@ -3331,6 +3346,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     );
     if (trimOrUndefined(providerMessageId)) {
       context.turnIdByProviderItemId.set(providerMessageId, turnId);
+      ensureTurnSnapshot(context, turnId).sdkHistoryEventId = providerMessageId;
     }
 
     return {
@@ -3532,18 +3548,61 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
   );
 
   const rollbackThread: CopilotAdapterShape["rollbackThread"] = Effect.fn("rollbackThread")(
-    function* (threadId, _numTurns) {
-      if (!sessions.has(threadId)) {
-        return yield* new ProviderAdapterSessionNotFoundError({
+    function* (threadId, numTurns) {
+      const context = yield* requireSessionContext(sessions, threadId);
+      if (
+        context.activeTurnId !== undefined ||
+        context.activeSdkTurnKey !== undefined ||
+        context.queuedTurnIds.length > 0
+      ) {
+        return yield* new ProviderAdapterRequestError({
           provider: PROVIDER,
-          threadId,
+          method: "thread.rollback",
+          detail: "Cannot roll back Copilot history while a turn is active or queued.",
         });
       }
-      return yield* new ProviderAdapterRequestError({
-        provider: PROVIDER,
-        method: "thread.rollback",
-        detail: "Copilot SDK does not expose thread rollback.",
-      });
+
+      const nextLength = Math.max(0, context.turns.length - numTurns);
+      const removedTurns = context.turns.slice(nextLength);
+      const sdkHistoryEventId = removedTurns.find(
+        (turn) => turn.sdkHistoryEventId,
+      )?.sdkHistoryEventId;
+      if (sdkHistoryEventId) {
+        yield* copilotSdk.truncateHistory(context, sdkHistoryEventId);
+      }
+
+      context.turns.splice(nextLength);
+      const removedTurnIds = new Set(removedTurns.map((turn) => turn.id));
+      for (const turnId of removedTurnIds) {
+        context.turnQueuedAtMsByTurnId.delete(turnId);
+        context.completedTurnIds.delete(turnId);
+        context.emittedTurnStartedIds.delete(turnId);
+        context.turnStartPayloadByTurnId.delete(turnId);
+        context.turnUsageByTurnId.delete(turnId);
+        context.assistantItemIdByTurnId.delete(turnId);
+        context.pendingTaskCompletionTextByTurnId.delete(turnId);
+        context.emittedTurnDiffByTurnId.delete(turnId);
+        context.turnIdsWithAssistantText.delete(turnId);
+        context.turnEndEventsByTurnId.delete(turnId);
+        clearSdkTurnMappingsForTurn(context, turnId);
+      }
+      for (const [providerItemId, turnId] of context.turnIdByProviderItemId) {
+        if (!removedTurnIds.has(turnId)) {
+          continue;
+        }
+        context.turnIdByProviderItemId.delete(providerItemId);
+        context.emittedTextByItemId.delete(providerItemId);
+        context.toolMetaById.delete(providerItemId);
+        context.startedItemIds.delete(providerItemId);
+      }
+
+      return {
+        threadId,
+        turns: context.turns.map((turn) => ({
+          id: turn.id,
+          items: [...turn.items],
+        })),
+      };
     },
   );
 

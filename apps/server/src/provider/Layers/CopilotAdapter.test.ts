@@ -61,6 +61,9 @@ const runtimeMock = vi.hoisted(() => {
       mode: {
         set: vi.fn(async () => undefined),
       },
+      history: {
+        truncate: vi.fn(async () => ({ removedEventCount: 0 })),
+      },
       plan: {
         read: vi.fn(async () => ({ content: "" })),
       },
@@ -509,6 +512,108 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         sessionId: runtimeMock.state.lastSession.sessionId,
       });
 
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("rolls back persisted Copilot history from the first removed user message", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-rollback-history");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* waitForSdkEventQueue();
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      NodeAssert.ok(config?.onEvent);
+      const timestamp = yield* nowIso;
+      const completeTurn = (sdkTurnId: string, eventPrefix: string) => {
+        config.onEvent?.({
+          id: `${eventPrefix}-start`,
+          timestamp,
+          parentId: null,
+          type: "assistant.turn_start",
+          data: { turnId: sdkTurnId },
+        } as SessionEvent);
+        config.onEvent?.({
+          id: `${eventPrefix}-end`,
+          timestamp,
+          parentId: null,
+          type: "assistant.turn_end",
+          data: { turnId: sdkTurnId },
+        } as SessionEvent);
+        config.onEvent?.({
+          id: `${eventPrefix}-idle`,
+          timestamp,
+          parentId: null,
+          type: "session.idle",
+          data: { aborted: false },
+        } as SessionEvent);
+      };
+
+      runtimeMock.state.lastSession.send.mockResolvedValueOnce("user-message-first");
+      const firstTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "first prompt",
+        attachments: [],
+      });
+      completeTurn("sdk-turn-first", "evt-first");
+      for (
+        let attempt = 0;
+        attempt < 20 &&
+        !runtimeEvents.some(
+          (event) =>
+            event.type === "turn.completed" && String(event.turnId) === String(firstTurn.turnId),
+        );
+        attempt += 1
+      ) {
+        yield* waitForSdkEventQueue();
+      }
+
+      runtimeMock.state.lastSession.send.mockResolvedValueOnce("user-message-second");
+      const secondTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "second prompt",
+        attachments: [],
+      });
+      completeTurn("sdk-turn-second", "evt-second");
+      for (
+        let attempt = 0;
+        attempt < 20 &&
+        !runtimeEvents.some(
+          (event) =>
+            event.type === "turn.completed" && String(event.turnId) === String(secondTurn.turnId),
+        );
+        attempt += 1
+      ) {
+        yield* waitForSdkEventQueue();
+      }
+
+      const snapshot = yield* adapter.rollbackThread(threadId, 1);
+      NodeAssert.deepStrictEqual(runtimeMock.state.lastSession.rpc.history.truncate.mock.calls, [
+        [{ eventId: "user-message-second" }],
+      ]);
+      NodeAssert.deepStrictEqual(
+        snapshot.turns.map((turn) => String(turn.id)),
+        [String(firstTurn.turnId)],
+      );
+      NodeAssert.deepStrictEqual(
+        (yield* adapter.readThread(threadId)).turns.map((turn) => String(turn.id)),
+        [String(firstTurn.turnId)],
+      );
+
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
       yield* adapter.stopSession(threadId);
     }),
   );
