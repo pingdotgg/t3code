@@ -274,7 +274,10 @@ const hasMetricSnapshot = (
       Object.entries(attributes).every(([key, value]) => snapshot.attributes?.[key] === value),
   );
 
-function makeProviderServiceLayer() {
+function makeProviderServiceLayer(options?: {
+  readonly turnStallThresholdMs?: number;
+  readonly turnStallPollIntervalMs?: number;
+}) {
   const codex = makeFakeCodexAdapter();
   const claude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
   const cursor = makeFakeCodexAdapter(CURSOR_DRIVER);
@@ -295,7 +298,7 @@ function makeProviderServiceLayer() {
 
   const layer = it.layer(
     Layer.mergeAll(
-      makeProviderServiceLive().pipe(
+      makeProviderServiceLive(options).pipe(
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
         Layer.provide(defaultServerSettingsLayer),
@@ -1785,6 +1788,59 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
           true,
         );
       }),
+  );
+});
+
+const liveness = makeProviderServiceLayer({
+  turnStallThresholdMs: 1_000,
+  turnStallPollIntervalMs: 100,
+});
+liveness.layer("ProviderServiceLive liveness", (it) => {
+  it.effect("emits stalled health events for every provider through canonical fanout", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const receivedRef = yield* Ref.make<Array<ProviderRuntimeEvent>>([]);
+      const consumer = yield* Stream.runForEach(provider.streamEvents, (event) =>
+        Ref.update(receivedRef, (current) => [...current, event]),
+      ).pipe(Effect.forkChild);
+      yield* advanceTestClock(50);
+
+      const cases = [
+        [liveness.codex, CODEX_DRIVER, codexInstanceId],
+        [liveness.claude, CLAUDE_AGENT_DRIVER, claudeAgentInstanceId],
+        [liveness.cursor, CURSOR_DRIVER, ProviderInstanceId.make("cursor")],
+      ] as const;
+
+      for (const [adapter, driver, instanceId] of cases) {
+        const threadId = asThreadId(`health-${driver}`);
+        yield* provider.startSession(threadId, {
+          provider: driver,
+          providerInstanceId: instanceId,
+          threadId,
+          runtimeMode: "full-access",
+        });
+        adapter.emit({
+          type: "turn.started",
+          eventId: asEventId(`turn-started-${driver}`),
+          provider: driver,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          threadId,
+          turnId: asTurnId(`turn-${driver}`),
+          payload: {},
+        });
+      }
+
+      yield* advanceTestClock(1_200);
+      const stalled = (yield* Ref.get(receivedRef)).filter(
+        (event) => event.type === "session.health" && event.payload.state === "stalled",
+      );
+      yield* Fiber.interrupt(consumer);
+
+      assert.deepEqual(
+        stalled.map((event) => event.provider).sort(),
+        [CLAUDE_AGENT_DRIVER, CODEX_DRIVER, CURSOR_DRIVER].sort(),
+      );
+    }),
   );
 });
 

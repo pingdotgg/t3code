@@ -2480,6 +2480,37 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBeNull();
   });
 
+  it("projects session.health events into the client activity flow", async () => {
+    const harness = await createHarness();
+    harness.emit({
+      type: "session.health",
+      eventId: asEventId("evt-session-health-stalled"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: "2026-01-01T00:02:00.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-health"),
+      payload: {
+        state: "stalled",
+        lastActivityAt: "2026-01-01T00:00:00.000Z",
+        stalledForMs: 120_000,
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some((activity) => activity.id === "evt-session-health-stalled"),
+    );
+    const activity = thread.activities.find(
+      (entry: ProviderRuntimeTestActivity) => entry.id === "evt-session-health-stalled",
+    );
+    expect(activity?.kind).toBe("session.health");
+    expect(activity?.tone).toBe("error");
+    expect(activity?.payload).toEqual({
+      state: "stalled",
+      lastActivityAt: "2026-01-01T00:00:00.000Z",
+      stalledForMs: 120_000,
+    });
+  });
+
   it("maps session/thread lifecycle and item.started into session/activity projections", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

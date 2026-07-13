@@ -37,6 +37,15 @@ import type { ProviderInstanceRoutingInfo } from "./ProviderAdapterRegistry.ts";
  * ProviderServiceShape - Service API for provider session and turn orchestration.
  */
 export interface ProviderServiceShape {
+  /** Latest canonical runtime-event activity observed for a session. */
+  readonly getSessionActivity?: (threadId: ThreadId) => Effect.Effect<
+    | {
+        readonly lastActivityAt: string;
+        readonly stalled: boolean;
+      }
+    | undefined
+  >;
+
   /**
    * Start a provider session.
    */

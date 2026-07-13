@@ -348,6 +348,24 @@ function runtimeEventToActivities(
       : {};
   })();
   switch (event.type) {
+    case "session.health": {
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: event.payload.state === "stalled" ? "error" : "info",
+          kind: "session.health",
+          summary:
+            event.payload.state === "stalled"
+              ? "Provider turn appears stalled"
+              : "Provider turn activity recovered",
+          payload: event.payload,
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
     case "request.opened": {
       if (event.payload.requestType === "tool_user_input") {
         return [];
