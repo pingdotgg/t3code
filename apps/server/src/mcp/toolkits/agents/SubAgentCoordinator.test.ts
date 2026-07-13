@@ -412,9 +412,24 @@ it.effect("prefixes explicit unnamed titles so the mac can identify delegated ag
 
     expect(result.title).toBe("Agent: Custom worker title");
     const create = harness.dispatched.find((command) => command.type === "thread.create");
+    expect(create?.type).toBe("thread.create");
     if (create?.type === "thread.create") {
       expect(create.title).toBe("Agent: Custom worker title");
     }
+  }),
+);
+
+it.effect("canonicalizes existing lowercase agent title prefixes", () =>
+  Effect.gen(function* () {
+    const [coordinator] = yield* makeCoordinator();
+
+    const result = yield* coordinator.spawn(makeScope(), {
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      prompt: "Do the work.",
+      title: "agent: lowercase worker",
+    });
+
+    expect(result.title).toBe("Agent: lowercase worker");
   }),
 );
 
@@ -587,7 +602,7 @@ it.effect("returns immediately when tracked activity already marks the sub-agent
     );
     harness.setSessionActivity((threadId) =>
       threadId === spawned.threadId
-        ? { lastActivityAt: "1960-01-01T00:00:00.000Z", stalled: true }
+        ? { lastActivityAt: "9999-01-01T00:00:00.000Z", stalled: true }
         : undefined,
     );
 
@@ -596,8 +611,67 @@ it.effect("returns immediately when tracked activity already marks the sub-agent
       timeoutSeconds: 600,
     });
     expect(result.status).toBe("running");
-    expect(result.lastActivityAt).toBe("1960-01-01T00:00:00.000Z");
+    expect(result.lastActivityAt).toBe("9999-01-01T00:00:00.000Z");
     expect(result.stalled).toBe(true);
+  }),
+);
+
+it.effect("ignores stale pre-send activity when waiting on a follow-up turn", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(
+      DateTime.toEpochMillis(DateTime.makeUnsafe("2026-04-11T00:00:00.000Z")),
+    );
+    const [coordinator, harness] = yield* makeCoordinator();
+    const spawned = yield* coordinator.spawn(makeScope(), {
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      prompt: "Initial task.",
+    });
+
+    harness.setThreadDetail((threadId) =>
+      threadId === spawned.threadId
+        ? Option.some(completedTurnDetail(spawned.threadId))
+        : Option.none(),
+    );
+    const firstWait = yield* coordinator.wait(makeScope(), {
+      threadId: spawned.threadId,
+      timeoutSeconds: 5,
+    });
+    expect(firstWait.status).toBe("completed");
+
+    yield* TestClock.adjust(Duration.minutes(10));
+    const sent = yield* coordinator.send(makeScope(), {
+      threadId: spawned.threadId,
+      prompt: "Follow up.",
+    });
+    expect(sent.status).toBe("running");
+    const turnStart = harness.dispatched
+      .toReversed()
+      .find(
+        (command) => command.type === "thread.turn.start" && command.threadId === spawned.threadId,
+      );
+    expect(turnStart?.type).toBe("thread.turn.start");
+    const requestedAt = turnStart?.type === "thread.turn.start" ? turnStart.createdAt : undefined;
+    expect(requestedAt).toBeDefined();
+
+    harness.setThreadDetail((threadId) =>
+      threadId === spawned.threadId
+        ? Option.some(makeThreadDetail(spawned.threadId, { latestTurn: null }))
+        : Option.none(),
+    );
+    harness.setSessionActivity((threadId) =>
+      threadId === spawned.threadId
+        ? { lastActivityAt: "1960-01-01T00:00:00.000Z", stalled: true }
+        : undefined,
+    );
+
+    const waiting = yield* coordinator
+      .wait(makeScope(), { threadId: spawned.threadId, timeoutSeconds: 1 })
+      .pipe(Effect.forkChild);
+    yield* TestClock.adjust(Duration.seconds(2));
+    const result = yield* Fiber.join(waiting);
+    expect(result.status).toBe("running");
+    expect(result.lastActivityAt).toBe(requestedAt);
+    expect(result.stalled).toBe(false);
   }),
 );
 

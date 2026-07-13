@@ -740,13 +740,18 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       }
       NodeAssert.equal(events[1]?.type, "task.progress");
       if (events[1]?.type === "task.progress") {
+        NodeAssert.equal(events[1].eventId, "evt-collab-started:progress");
         NodeAssert.equal(events[1].payload.taskId, "collab:collab_1");
         NodeAssert.equal(events[1].payload.summary, "Spawned agent");
         NodeAssert.equal(events[1].payload.lastToolName, "spawnAgent");
       }
       NodeAssert.equal(events[2]?.type, "task.progress");
+      if (events[2]?.type === "task.progress") {
+        NodeAssert.equal(events[2].eventId, "evt-collab-completed");
+      }
       NodeAssert.equal(events[3]?.type, "task.completed");
       if (events[3]?.type === "task.completed") {
+        NodeAssert.equal(events[3].eventId, "evt-collab-completed:completed");
         NodeAssert.equal(events[3].payload.taskId, "collab:collab_1");
         NodeAssert.equal(events[3].payload.status, "completed");
         NodeAssert.equal(events[3].payload.summary, "Spawned agent");

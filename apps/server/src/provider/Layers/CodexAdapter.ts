@@ -1037,6 +1037,7 @@ function mapToRuntimeEvents(
         },
         {
           ...runtimeEventBase(event, canonicalThreadId),
+          eventId: EventId.make(`${event.id}:progress`),
           itemId: collabAgentItemId(item),
           type: "task.progress",
           payload: {
@@ -1080,6 +1081,7 @@ function mapToRuntimeEvents(
         },
         {
           ...runtimeEventBase(event, canonicalThreadId),
+          eventId: EventId.make(`${event.id}:completed`),
           itemId: collabAgentItemId(item),
           type: "task.completed",
           payload: {

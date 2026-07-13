@@ -136,7 +136,8 @@ const truncateTitle = (title: string): string =>
 const withAgentTitlePrefix = (title: string): string => {
   const trimmed = title.trim();
   const normalized = trimmed.length > 0 ? trimmed : "Sub-agent task";
-  return /^agent:\s/i.test(normalized) ? normalized : `${AGENT_TITLE_PREFIX}${normalized}`;
+  const seed = normalized.replace(/^agent:\s*/i, "").trim() || "Sub-agent task";
+  return `${AGENT_TITLE_PREFIX}${seed}`;
 };
 
 /**
@@ -370,7 +371,7 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
     if (Option.isNone(detail)) {
       return null;
     }
-    return detail.value.latestTurn?.turnId ?? detail.value.session?.activeTurnId ?? null;
+    return detail.value.session?.activeTurnId ?? detail.value.latestTurn?.turnId ?? null;
   });
 
   const emitSpawnStartedActivity = Effect.fn("SubAgentCoordinator.emitSpawnStartedActivity")(
@@ -752,16 +753,22 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
         const trackedActivity = providerService.getSessionActivity
           ? yield* providerService.getSessionActivity(input.threadId)
           : undefined;
-        const activityAt =
-          trackedActivity?.lastActivityAt ?? lastActivityAt(thread) ?? fresh.lastTurnRequestedAt;
+        const trackedActivityAt = trackedActivity?.lastActivityAt;
+        const activityAt = [trackedActivityAt, lastActivityAt(thread), fresh.lastTurnRequestedAt]
+          .filter((value): value is string => value !== undefined)
+          .reduce((latest, value) => (value > latest ? value : latest), fresh.lastTurnRequestedAt);
         const activityAtMs = Option.match(DateTime.make(activityAt), {
           onNone: () => undefined,
           onSome: DateTime.toEpochMillis,
         });
         const now = DateTime.toEpochMillis(yield* DateTime.now);
         const thresholdMs = readTurnStallThresholdMs();
+        const trackedStalled =
+          trackedActivityAt !== undefined && trackedActivityAt >= fresh.lastTurnRequestedAt
+            ? trackedActivity?.stalled
+            : undefined;
         const stalled =
-          trackedActivity?.stalled ??
+          trackedStalled ??
           (thresholdMs > 0 && activityAtMs !== undefined && now - activityAtMs >= thresholdMs);
         return { activityAt, stalled } as const;
       });
