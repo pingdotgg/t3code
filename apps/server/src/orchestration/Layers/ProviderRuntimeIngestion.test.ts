@@ -2511,6 +2511,58 @@ describe("ProviderRuntimeIngestion", () => {
     });
   });
 
+  it("projects a session.exited stderr tail into the client activity flow", async () => {
+    const harness = await createHarness();
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-session-exited-stderr"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:03:00.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-exit"),
+      payload: {
+        reason: "process exited with code 1",
+        recoverable: false,
+        stderrTail: "panic: boom\n  at main()\n",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some((activity) => activity.id === "evt-session-exited-stderr"),
+    );
+    const activity = thread.activities.find(
+      (entry: ProviderRuntimeTestActivity) => entry.id === "evt-session-exited-stderr",
+    );
+    expect(activity?.kind).toBe("session.exited");
+    expect(activity?.tone).toBe("error");
+    expect(activity?.payload).toEqual({
+      stderrTail: "panic: boom\n  at main()\n",
+      reason: "process exited with code 1",
+      recoverable: false,
+    });
+  });
+
+  it("does not project a session.exited activity without a stderr tail", async () => {
+    const harness = await createHarness();
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-session-exited-clean"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:03:30.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-exit-clean"),
+      payload: { reason: "session stopped" },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.status === "stopped",
+    );
+    expect(thread.activities.some((activity) => activity.id === "evt-session-exited-clean")).toBe(
+      false,
+    );
+  });
+
   it("maps session/thread lifecycle and item.started into session/activity projections", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

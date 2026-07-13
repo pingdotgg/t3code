@@ -366,6 +366,36 @@ function runtimeEventToActivities(
       ];
     }
 
+    case "session.exited": {
+      // Only surface an activity when the provider process left a stderr tail
+      // to show — normal, quiet exits stay silent. The tail rides the client
+      // activity flow so the mac can render an expandable "process output"
+      // disclosure on the failing turn.
+      const stderrTail = event.payload.stderrTail;
+      if (stderrTail === undefined || stderrTail.length === 0) {
+        return [];
+      }
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "error",
+          kind: "session.exited",
+          summary: event.payload.reason ?? "Provider process exited",
+          payload: {
+            stderrTail,
+            ...(event.payload.reason !== undefined ? { reason: event.payload.reason } : {}),
+            ...(event.payload.exitKind !== undefined ? { exitKind: event.payload.exitKind } : {}),
+            ...(event.payload.recoverable !== undefined
+              ? { recoverable: event.payload.recoverable }
+              : {}),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
     case "request.opened": {
       if (event.payload.requestType === "tool_user_input") {
         return [];
