@@ -40,6 +40,7 @@ import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import * as PubSub from "effect/PubSub";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
@@ -239,6 +240,7 @@ interface CopilotSessionContext {
   activeTurnId: TurnId | undefined;
   activeSdkTurnId: string | undefined;
   activeSdkTurnKey: string | undefined;
+  readonly historyMutationSemaphore: Semaphore.Semaphore;
   eventChain: Promise<void>;
   stopped: boolean;
 }
@@ -3025,6 +3027,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       }).pipe(
         Effect.tapError(() => copilotSdk.stopClient(input.threadId, client).pipe(Effect.ignore)),
       );
+      const historyMutationSemaphore = yield* Semaphore.make(1);
 
       context = {
         threadId: input.threadId,
@@ -3071,6 +3074,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         activeTurnId: undefined,
         activeSdkTurnId: undefined,
         activeSdkTurnKey: undefined,
+        historyMutationSemaphore,
         eventChain: Promise.resolve(),
         stopped: false,
       };
@@ -3161,99 +3165,106 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     });
     yield* syncSessionMode(context, mode);
 
-    const queuedAt = yield* DateTime.now;
-    ensureTurnSnapshot(context, turnId);
-    context.turnStartPayloadByTurnId.set(turnId, {
-      model: modelSelection?.model ?? context.session.model,
-      effort: reasoningEffort,
-      contextTier,
-    });
-    context.turnQueuedAtMsByTurnId.set(turnId, epochMsFromIso(DateTime.formatIso(queuedAt)) ?? 0);
-    context.queuedTurnIds.push(turnId);
-    yield* Effect.promise(async () => {
-      context.eventChain = context.eventChain.then(async () => {
-        await completePendingActiveTurnEnd(context);
-      });
-      await context.eventChain;
-    });
-    const shouldPromoteQueuedTurn =
-      context.activeTurnId === undefined && context.activeSdkTurnKey === undefined;
-    if (shouldPromoteQueuedTurn) {
-      context.activeTurnId = turnId;
-    }
-    updateProviderSession(context, {
-      status: "running",
-      ...(shouldPromoteQueuedTurn ? { activeTurnId: turnId } : {}),
-      ...(modelSelection?.model ? { model: modelSelection.model } : {}),
-    });
-
-    if (shouldPromoteQueuedTurn) {
-      yield* emitTurnStarted(context, turnId);
-    }
-
-    const messageOptions: MessageOptions = {
-      prompt: text ?? "",
-      ...(attachments.length > 0 ? { attachments } : {}),
-      mode: "enqueue",
-    };
-
-    const providerMessageId = yield* copilotSdk.send(context, messageOptions).pipe(
-      Effect.catch((error) =>
-        Effect.gen(function* () {
-          const queueIndex = context.queuedTurnIds.indexOf(turnId);
-          if (queueIndex >= 0) {
-            context.queuedTurnIds.splice(queueIndex, 1);
-          }
-          context.turnQueuedAtMsByTurnId.delete(turnId);
-          context.turnStartPayloadByTurnId.delete(turnId);
-          if (context.activeTurnId === turnId) {
-            context.activeTurnId = undefined;
-          }
-          updateProviderSession(context, {
-            status: context.activeTurnId ? "running" : readyStatusAfterTurnCompletion(context),
-            ...(context.activeTurnId
-              ? { activeTurnId: context.activeTurnId }
-              : { activeTurnId: undefined }),
+    return yield* context.historyMutationSemaphore.withPermit(
+      Effect.gen(function* () {
+        const queuedAt = yield* DateTime.now;
+        ensureTurnSnapshot(context, turnId);
+        context.turnStartPayloadByTurnId.set(turnId, {
+          model: modelSelection?.model ?? context.session.model,
+          effort: reasoningEffort,
+          contextTier,
+        });
+        context.turnQueuedAtMsByTurnId.set(
+          turnId,
+          epochMsFromIso(DateTime.formatIso(queuedAt)) ?? 0,
+        );
+        context.queuedTurnIds.push(turnId);
+        yield* Effect.promise(async () => {
+          context.eventChain = context.eventChain.then(async () => {
+            await completePendingActiveTurnEnd(context);
           });
-          yield* emit({
-            ...createBaseEvent({
-              threadId: input.threadId,
-              turnId,
+          await context.eventChain;
+        });
+        const shouldPromoteQueuedTurn =
+          context.activeTurnId === undefined && context.activeSdkTurnKey === undefined;
+        if (shouldPromoteQueuedTurn) {
+          context.activeTurnId = turnId;
+        }
+        updateProviderSession(context, {
+          status: "running",
+          ...(shouldPromoteQueuedTurn ? { activeTurnId: turnId } : {}),
+          ...(modelSelection?.model ? { model: modelSelection.model } : {}),
+        });
+
+        if (shouldPromoteQueuedTurn) {
+          yield* emitTurnStarted(context, turnId);
+        }
+
+        const messageOptions: MessageOptions = {
+          prompt: text ?? "",
+          ...(attachments.length > 0 ? { attachments } : {}),
+          mode: "enqueue",
+        };
+
+        const providerMessageId = yield* copilotSdk.send(context, messageOptions).pipe(
+          Effect.catch((error) =>
+            Effect.gen(function* () {
+              const queueIndex = context.queuedTurnIds.indexOf(turnId);
+              if (queueIndex >= 0) {
+                context.queuedTurnIds.splice(queueIndex, 1);
+              }
+              context.turnQueuedAtMsByTurnId.delete(turnId);
+              context.turnStartPayloadByTurnId.delete(turnId);
+              if (context.activeTurnId === turnId) {
+                context.activeTurnId = undefined;
+              }
+              updateProviderSession(context, {
+                status: context.activeTurnId ? "running" : readyStatusAfterTurnCompletion(context),
+                ...(context.activeTurnId
+                  ? { activeTurnId: context.activeTurnId }
+                  : { activeTurnId: undefined }),
+              });
+              yield* emit({
+                ...createBaseEvent({
+                  threadId: input.threadId,
+                  turnId,
+                }),
+                type: "turn.aborted",
+                payload: {
+                  reason: error.detail,
+                },
+              });
+              yield* Effect.tryPromise({
+                try: () =>
+                  emitTurnCompleted(context, turnId, "failed", {
+                    errorMessage: error.detail,
+                  }),
+                catch: (cause) =>
+                  new ProviderAdapterProcessError({
+                    provider: PROVIDER,
+                    threadId: input.threadId,
+                    detail: detailFromCause(cause, "Failed to emit Copilot turn completion."),
+                    cause,
+                  }),
+              });
+              return yield* error;
             }),
-            type: "turn.aborted",
-            payload: {
-              reason: error.detail,
-            },
-          });
-          yield* Effect.tryPromise({
-            try: () =>
-              emitTurnCompleted(context, turnId, "failed", {
-                errorMessage: error.detail,
-              }),
-            catch: (cause) =>
-              new ProviderAdapterProcessError({
-                provider: PROVIDER,
-                threadId: input.threadId,
-                detail: detailFromCause(cause, "Failed to emit Copilot turn completion."),
-                cause,
-              }),
-          });
-          return yield* error;
-        }),
-      ),
-    );
-    if (trimOrUndefined(providerMessageId)) {
-      context.turnIdByProviderItemId.set(providerMessageId, turnId);
-      ensureTurnSnapshot(context, turnId).sdkHistoryEventId = providerMessageId;
-    }
+          ),
+        );
+        if (trimOrUndefined(providerMessageId)) {
+          context.turnIdByProviderItemId.set(providerMessageId, turnId);
+          ensureTurnSnapshot(context, turnId).sdkHistoryEventId = providerMessageId;
+        }
 
-    return {
-      threadId: input.threadId,
-      turnId,
-      ...(context.session.resumeCursor !== undefined
-        ? { resumeCursor: context.session.resumeCursor }
-        : {}),
-    };
+        return {
+          threadId: input.threadId,
+          turnId,
+          ...(context.session.resumeCursor !== undefined
+            ? { resumeCursor: context.session.resumeCursor }
+            : {}),
+        };
+      }),
+    );
   });
 
   const interruptTurn: CopilotAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
@@ -3448,74 +3459,97 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
   const rollbackThread: CopilotAdapterShape["rollbackThread"] = Effect.fn("rollbackThread")(
     function* (threadId, numTurns) {
       const context = yield* requireSessionContext(sessions, threadId);
-      yield* Effect.promise(() => context.eventChain);
-      if (
-        context.activeTurnId !== undefined ||
-        context.activeSdkTurnKey !== undefined ||
-        context.queuedTurnIds.length > 0
-      ) {
-        return yield* new ProviderAdapterRequestError({
-          provider: PROVIDER,
-          method: "thread.rollback",
-          detail: "Cannot roll back Copilot history while a turn is active or queued.",
-        });
-      }
+      return yield* context.historyMutationSemaphore.withPermit(
+        Effect.acquireUseRelease(
+          Effect.sync(() => {
+            let release!: () => void;
+            const gate = new Promise<void>((resolve) => {
+              release = resolve;
+            });
+            const pendingEvents = context.eventChain;
+            context.eventChain = pendingEvents.then(() => gate);
+            return { pendingEvents, release };
+          }),
+          (eventChainGate) =>
+            Effect.gen(function* () {
+              yield* Effect.promise(() => eventChainGate.pendingEvents);
+              if (
+                context.activeTurnId !== undefined ||
+                context.activeSdkTurnKey !== undefined ||
+                context.queuedTurnIds.length > 0
+              ) {
+                return yield* new ProviderAdapterRequestError({
+                  provider: PROVIDER,
+                  method: "thread.rollback",
+                  detail: "Cannot roll back Copilot history while a turn is active or queued.",
+                });
+              }
 
-      const nextLength = Math.max(0, context.turns.length - numTurns);
-      const removedTurns = context.turns.slice(nextLength);
-      let sdkHistoryEventId = removedTurns[0]?.sdkHistoryEventId;
-      if (removedTurns.length > 0 && !sdkHistoryEventId) {
-        const historyEvents = yield* copilotSdk.getHistoryEvents(context);
-        for (const event of historyEvents) {
-          if (event.type === "user.message") {
-            bindSdkUserMessageToTurn(context, event);
-          }
-        }
-        sdkHistoryEventId = removedTurns[0]?.sdkHistoryEventId;
-      }
-      if (removedTurns.length > 0 && !sdkHistoryEventId) {
-        return yield* new ProviderAdapterRequestError({
-          provider: PROVIDER,
-          method: "thread.rollback",
-          detail: "Cannot roll back Copilot history without the first removed user message ID.",
-        });
-      }
-      if (sdkHistoryEventId) {
-        yield* copilotSdk.truncateHistory(context, sdkHistoryEventId);
-      }
+              const nextLength = Math.max(0, context.turns.length - numTurns);
+              const removedTurns = context.turns.slice(nextLength);
+              let sdkHistoryEventId = removedTurns[0]?.sdkHistoryEventId;
+              if (removedTurns.length > 0 && !sdkHistoryEventId) {
+                const historyEvents = yield* copilotSdk.getHistoryEvents(context);
+                for (const event of historyEvents) {
+                  if (event.type === "user.message") {
+                    bindSdkUserMessageToTurn(context, event);
+                  }
+                }
+                sdkHistoryEventId = removedTurns[0]?.sdkHistoryEventId;
+              }
+              if (removedTurns.length > 0 && !sdkHistoryEventId) {
+                return yield* new ProviderAdapterRequestError({
+                  provider: PROVIDER,
+                  method: "thread.rollback",
+                  detail:
+                    "Cannot roll back Copilot history without the first removed user message ID.",
+                });
+              }
+              if (sdkHistoryEventId) {
+                yield* copilotSdk.truncateHistory(context, sdkHistoryEventId);
+              }
 
-      context.turns.splice(nextLength);
-      const removedTurnIds = new Set(removedTurns.map((turn) => turn.id));
-      for (const turnId of removedTurnIds) {
-        context.turnQueuedAtMsByTurnId.delete(turnId);
-        context.completedTurnIds.delete(turnId);
-        context.emittedTurnStartedIds.delete(turnId);
-        context.turnStartPayloadByTurnId.delete(turnId);
-        context.turnUsageByTurnId.delete(turnId);
-        context.assistantItemIdByTurnId.delete(turnId);
-        context.pendingTaskCompletionTextByTurnId.delete(turnId);
-        context.emittedTurnDiffByTurnId.delete(turnId);
-        context.turnIdsWithAssistantText.delete(turnId);
-        context.turnEndEventsByTurnId.delete(turnId);
-        clearSdkTurnMappingsForTurn(context, turnId);
-      }
-      for (const [providerItemId, turnId] of context.turnIdByProviderItemId) {
-        if (!removedTurnIds.has(turnId)) {
-          continue;
-        }
-        context.turnIdByProviderItemId.delete(providerItemId);
-        context.emittedTextByItemId.delete(providerItemId);
-        context.toolMetaById.delete(providerItemId);
-        context.startedItemIds.delete(providerItemId);
-      }
+              context.turns.splice(nextLength);
+              const removedTurnIds = new Set(removedTurns.map((turn) => turn.id));
+              for (const turnId of removedTurnIds) {
+                context.turnQueuedAtMsByTurnId.delete(turnId);
+                context.completedTurnIds.delete(turnId);
+                context.emittedTurnStartedIds.delete(turnId);
+                context.turnStartPayloadByTurnId.delete(turnId);
+                context.turnUsageByTurnId.delete(turnId);
+                context.assistantItemIdByTurnId.delete(turnId);
+                context.pendingTaskCompletionTextByTurnId.delete(turnId);
+                context.emittedTurnDiffByTurnId.delete(turnId);
+                context.turnIdsWithAssistantText.delete(turnId);
+                context.turnEndEventsByTurnId.delete(turnId);
+                clearSdkTurnMappingsForTurn(context, turnId);
+              }
+              for (const [providerItemId, turnId] of context.turnIdByProviderItemId) {
+                if (!removedTurnIds.has(turnId)) {
+                  continue;
+                }
+                context.turnIdByProviderItemId.delete(providerItemId);
+                context.emittedTextByItemId.delete(providerItemId);
+                context.toolMetaById.delete(providerItemId);
+                context.startedItemIds.delete(providerItemId);
+              }
 
-      return {
-        threadId,
-        turns: context.turns.map((turn) => ({
-          id: turn.id,
-          items: [...turn.items],
-        })),
-      };
+              return {
+                threadId,
+                turns: context.turns.map((turn) => ({
+                  id: turn.id,
+                  items: [...turn.items],
+                })),
+              };
+            }),
+          (eventChainGate) =>
+            Effect.promise(async () => {
+              const gatedEvents = context.eventChain;
+              eventChainGate.release();
+              await gatedEvents;
+            }),
+        ),
+      );
     },
   );
 
