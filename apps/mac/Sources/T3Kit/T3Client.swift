@@ -96,29 +96,56 @@ public actor T3Client {
         }
     }
 
+    /// Serial holder for the lazily-obtained raw `transport.stream` iterator.
+    /// `unfolding` (below) invokes its closure one call at a time, so the
+    /// non-`Sendable` iterator is only ever advanced serially — hence the
+    /// `@unchecked Sendable` is sound.
+    private final class RawStreamBox: @unchecked Sendable {
+        private var iterator: AsyncThrowingStream<JSONValue, Error>.AsyncIterator?
+        private var started = false
+
+        func next(
+            _ makeStream: () async throws -> AsyncThrowingStream<JSONValue, Error>
+        ) async throws -> JSONValue? {
+            if !started {
+                started = true
+                iterator = try await makeStream().makeAsyncIterator()
+            }
+            guard iterator != nil else { return nil }
+            return try await iterator!.next()
+        }
+    }
+
+    /// Pull-based pass-through over `transport.stream`. Each element the
+    /// consumer requests pulls exactly one raw value from the transport, whose
+    /// per-chunk `Ack` is itself deferred until that chunk is drained (§2.3).
+    /// There is deliberately NO second buffer: the earlier design pumped the
+    /// raw stream into an unbounded `AsyncThrowingStream` as fast as it
+    /// arrived, which drained (and thus Ack'd) every chunk regardless of
+    /// whether the app consumed it — defeating the server's backpressure and
+    /// letting a slow consumer grow memory without bound. The raw stream is
+    /// obtained lazily on the first pull, so a stream that is never iterated
+    /// never issues its `Request`.
+    ///
+    /// Cancellation of the consuming task propagates straight through the raw
+    /// iterator's `next()` into `RpcConnection`, which sends the `Interrupt`
+    /// (§2.4); no wrapping task or `onTermination` shim is needed.
     func streamCall<Payload: Encodable & Sendable, Item: Decodable & Sendable>(
         _ tag: String, _ payload: Payload
     ) -> AsyncThrowingStream<Item, Error> {
-        AsyncThrowingStream { continuation in
-            let task = Task {
-                do {
-                    let payloadJSON = try Self.encodeToJSON(payload)
-                    let rawStream = try await self.transport.stream(tag: tag, payload: payloadJSON)
-                    for try await raw in rawStream {
-                        do {
-                            continuation.yield(try raw.decode(as: Item.self, using: WireCoding.decoder))
-                        } catch {
-                            continuation.finish(
-                                throwing: T3Error.decoding("Failed decoding \(Item.self) for \(tag): \(error)"))
-                            return
-                        }
-                    }
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
+        let box = RawStreamBox()
+        let transport = self.transport
+        return AsyncThrowingStream<Item, Error> {
+            let raw = try await box.next {
+                let payloadJSON = try Self.encodeToJSON(payload)
+                return try await transport.stream(tag: tag, payload: payloadJSON)
             }
-            continuation.onTermination = { _ in task.cancel() }
+            guard let raw else { return nil }
+            do {
+                return try raw.decode(as: Item.self, using: WireCoding.decoder)
+            } catch {
+                throw T3Error.decoding("Failed decoding \(Item.self) for \(tag): \(error)")
+            }
         }
     }
 
