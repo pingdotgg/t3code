@@ -2480,7 +2480,7 @@ describe("ProviderCommandReactor", () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
 
-    await Effect.runPromise(
+    await runtime!.runPromise(
       harness.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-for-approval"),
@@ -2498,7 +2498,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await Effect.runPromise(
+    await runtime!.runPromise(
       harness.engine.dispatch({
         type: "thread.approval.respond",
         commandId: CommandId.make("cmd-approval-respond"),
@@ -2521,7 +2521,7 @@ describe("ProviderCommandReactor", () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
 
-    await Effect.runPromise(
+    await runtime!.runPromise(
       harness.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-for-user-input"),
@@ -2593,7 +2593,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await Effect.runPromise(
+    await runtime!.runPromise(
       harness.engine.dispatch({
         type: "thread.activity.append",
         commandId: CommandId.make("cmd-approval-requested"),
@@ -2614,7 +2614,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await Effect.runPromise(
+    await runtime!.runPromise(
       harness.engine.dispatch({
         type: "thread.approval.respond",
         commandId: CommandId.make("cmd-approval-respond-stale"),
@@ -2670,7 +2670,7 @@ describe("ProviderCommandReactor", () => {
       ),
     );
 
-    await Effect.runPromise(
+    await runtime!.runPromise(
       harness.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-for-user-input-error"),
@@ -2688,7 +2688,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await Effect.runPromise(
+    await runtime!.runPromise(
       harness.engine.dispatch({
         type: "thread.activity.append",
         commandId: CommandId.make("cmd-user-input-requested"),
@@ -2721,7 +2721,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await Effect.runPromise(
+    await runtime!.runPromise(
       harness.engine.dispatch({
         type: "thread.user-input.respond",
         commandId: CommandId.make("cmd-user-input-respond-stale"),

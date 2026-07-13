@@ -231,11 +231,11 @@ it.effect("spawns a sub-agent thread next to the caller's thread on another prov
     expect(result.status).toBe("running");
     expect(result.providerInstanceId).toBe("codex");
     expect(result.model).toBe("default-model");
-    expect(result.title).toBe("Review the auth module for bugs.");
+    expect(result.title).toBe("Agent: Review the auth module for bugs.");
     expect(result.name).toBeUndefined();
 
-    expect(harness.dispatched).toHaveLength(2);
-    const [create, turnStart] = harness.dispatched;
+    expect(harness.dispatched).toHaveLength(3);
+    const [create, turnStart, activity] = harness.dispatched;
     expect(create?.type).toBe("thread.create");
     if (create?.type === "thread.create") {
       expect(create.threadId).toBe(result.threadId);
@@ -243,6 +243,7 @@ it.effect("spawns a sub-agent thread next to the caller's thread on another prov
       expect(create.worktreePath).toBe("/tmp/worktrees/foo");
       expect(create.branch).toBe("feature/foo");
       expect(create.runtimeMode).toBe("approval-required");
+      expect(create.title).toBe("Agent: Review the auth module for bugs.");
       expect(create.modelSelection).toEqual({
         instanceId: "codex",
         model: "default-model",
@@ -254,6 +255,18 @@ it.effect("spawns a sub-agent thread next to the caller's thread on another prov
       expect(turnStart.threadId).toBe(result.threadId);
       expect(turnStart.message.text).toBe("Review the auth module for bugs.");
       expect(turnStart.runtimeMode).toBe("approval-required");
+    }
+    expect(activity?.type).toBe("thread.activity.append");
+    if (activity?.type === "thread.activity.append") {
+      expect(activity.threadId).toBe(parentThreadId);
+      expect(activity.activity.kind).toBe("task.started");
+      expect(activity.activity.payload).toMatchObject({
+        description: "Review the auth module for bugs.",
+        taskType: "sub-agent",
+        subagentType: "codex",
+        workflowName: "agent_spawn",
+        toolUseId: result.threadId,
+      });
     }
   }),
 );
@@ -383,6 +396,24 @@ it.effect("prefers name over an explicit title for the Agent: prefix", () =>
     const create = harness.dispatched.find((command) => command.type === "thread.create");
     if (create?.type === "thread.create") {
       expect(create.title).toBe("Agent: worker-a");
+    }
+  }),
+);
+
+it.effect("prefixes explicit unnamed titles so the mac can identify delegated agents", () =>
+  Effect.gen(function* () {
+    const [coordinator, harness] = yield* makeCoordinator();
+
+    const result = yield* coordinator.spawn(makeScope(), {
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      prompt: "Long prompt that should not become the title.",
+      title: "Custom worker title",
+    });
+
+    expect(result.title).toBe("Agent: Custom worker title");
+    const create = harness.dispatched.find((command) => command.type === "thread.create");
+    if (create?.type === "thread.create") {
+      expect(create.title).toBe("Agent: Custom worker title");
     }
   }),
 );
@@ -542,7 +573,7 @@ it.effect("reports running when the sub-agent has not finished before the timeou
   }),
 );
 
-it.effect("returns canonical tracked activity for timed-out stalled sub-agents", () =>
+it.effect("returns immediately when tracked activity already marks the sub-agent stalled", () =>
   Effect.gen(function* () {
     const [coordinator, harness] = yield* makeCoordinator();
     const spawned = yield* coordinator.spawn(makeScope(), {
@@ -560,11 +591,10 @@ it.effect("returns canonical tracked activity for timed-out stalled sub-agents",
         : undefined,
     );
 
-    const waiting = yield* coordinator
-      .wait(makeScope(), { threadId: spawned.threadId, timeoutSeconds: 1 })
-      .pipe(Effect.forkChild);
-    yield* TestClock.adjust(Duration.seconds(2));
-    const result = yield* Fiber.join(waiting);
+    const result = yield* coordinator.wait(makeScope(), {
+      threadId: spawned.threadId,
+      timeoutSeconds: 600,
+    });
     expect(result.status).toBe("running");
     expect(result.lastActivityAt).toBe("1960-01-01T00:00:00.000Z");
     expect(result.stalled).toBe(true);
@@ -704,7 +734,9 @@ it.effect("sanitizes control characters and whitespace runs in agent names", () 
     const create = harness.dispatched.find((command) => command.type === "thread.create");
     if (create?.type === "thread.create") {
       expect(create.title).toBe("Agent: pay ments auditor bot");
-      expect(create.title).not.toMatch(/[\n\t\u0000]/);
+      expect(create.title).not.toContain("\n");
+      expect(create.title).not.toContain("\t");
+      expect(create.title).not.toContain(String.fromCharCode(0));
     }
 
     const listed = yield* coordinator.list(makeScope());

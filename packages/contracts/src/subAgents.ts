@@ -122,7 +122,7 @@ export const SubAgentSpawnInput = Schema.Struct({
   title: Schema.optional(
     TrimmedNonEmptyString.annotate({
       description:
-        "Thread title shown in the UI. Defaults to `Agent: <name>` when name is set, otherwise the first line of the prompt.",
+        "Thread title seed shown in the UI. The server always normalizes spawned thread titles to the `Agent: <name/title/prompt>` convention so clients can identify delegated agents.",
     }),
   ),
 });

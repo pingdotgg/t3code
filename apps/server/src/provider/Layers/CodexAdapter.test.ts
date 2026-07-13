@@ -672,6 +672,88 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("maps collab agent tool calls to subagent task lifecycle events", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const collectedFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 4)).pipe(
+        Effect.forkChild,
+      );
+
+      const startedItem = {
+        type: "collabAgentToolCall" as const,
+        id: "collab_1",
+        tool: "spawnAgent" as const,
+        senderThreadId: "parent-thread",
+        receiverThreadIds: ["child-thread"],
+        agentsStates: { "child-thread": { status: "running" as const } },
+        status: "inProgress" as const,
+        prompt: "Audit the auth module.",
+        model: "gpt-5.6-codex",
+        reasoningEffort: null,
+      };
+      const completedItem = {
+        ...startedItem,
+        status: "completed" as const,
+        agentsStates: { "child-thread": { status: "completed" as const } },
+      };
+
+      yield* runtime.emit({
+        id: asEventId("evt-collab-started"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "item/started",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("collab_1"),
+        payload: {
+          startedAtMs: 1_778_000_000_000,
+          threadId: "thread-1",
+          turnId: "turn-1",
+          item: startedItem,
+        },
+      });
+      yield* runtime.emit({
+        id: asEventId("evt-collab-completed"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:01.000Z",
+        method: "item/completed",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("collab_1"),
+        payload: {
+          completedAtMs: 1_778_000_001_000,
+          threadId: "thread-1",
+          turnId: "turn-1",
+          item: completedItem,
+        },
+      });
+
+      const events = Array.from(yield* Fiber.join(collectedFiber));
+      NodeAssert.equal(events[0]?.type, "task.started");
+      if (events[0]?.type === "task.started") {
+        NodeAssert.equal(events[0].payload.taskId, "collab:collab_1");
+        NodeAssert.equal(events[0].payload.description, "Audit the auth module.");
+        NodeAssert.equal(events[0].payload.taskType, "sub-agent");
+        NodeAssert.equal(events[0].payload.model, "gpt-5.6-codex");
+      }
+      NodeAssert.equal(events[1]?.type, "task.progress");
+      if (events[1]?.type === "task.progress") {
+        NodeAssert.equal(events[1].payload.taskId, "collab:collab_1");
+        NodeAssert.equal(events[1].payload.summary, "Spawned agent");
+        NodeAssert.equal(events[1].payload.lastToolName, "spawnAgent");
+      }
+      NodeAssert.equal(events[2]?.type, "task.progress");
+      NodeAssert.equal(events[3]?.type, "task.completed");
+      if (events[3]?.type === "task.completed") {
+        NodeAssert.equal(events[3].payload.taskId, "collab:collab_1");
+        NodeAssert.equal(events[3].payload.status, "completed");
+        NodeAssert.equal(events[3].payload.summary, "Spawned agent");
+      }
+    }),
+  );
+
   it.effect("maps completed plan items to canonical proposed-plan completion events", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

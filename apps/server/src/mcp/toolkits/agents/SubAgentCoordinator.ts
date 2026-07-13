@@ -13,14 +13,18 @@
  */
 import {
   CommandId,
+  EventId,
   isProviderAvailable,
   MessageId,
   ProviderDriverKind,
+  RuntimeTaskId,
   SUB_AGENT_MAX_SPAWN_DEPTH,
   sanitizeSubAgentName,
   SubAgentError,
   ThreadId,
+  type TurnId,
   type OrchestrationThread,
+  type OrchestrationThreadActivity,
   type RuntimeMode,
   type ServerProvider,
   type SubAgentListResult,
@@ -56,6 +60,7 @@ const CODEX_DRIVER_KIND = ProviderDriverKind.make("codex");
 const CODEX_FAST_SERVICE_TIER_ID = "priority";
 const CODEX_LEGACY_FAST_SERVICE_TIER_ID = "fast";
 const CODEX_STANDARD_SERVICE_TIER_ID = "default";
+const PARENT_ACTIVITY_TEXT_MAX_LENGTH = 2_000;
 
 interface SubAgentRecord {
   readonly parentThreadId: ThreadId;
@@ -67,6 +72,10 @@ interface SubAgentRecord {
   readonly title: string;
   readonly providerInstanceId: SubAgentSpawnInput["providerInstanceId"];
   readonly model: string;
+  /** Parent-log task row for the current child turn. */
+  readonly activityTaskId: RuntimeTaskId;
+  /** Parent turn that spawned/drove this child, if known. */
+  readonly parentTurnId: TurnId | null;
   /** Last observed turn status; updated on spawn/send/wait and refreshed in list. */
   readonly status: SubAgentStatus;
 }
@@ -117,15 +126,28 @@ const resolveSpawnName = (input: SubAgentSpawnInput): string | undefined => {
   return sanitized.length > 0 ? sanitized : undefined;
 };
 
-/** Prefer `Agent: <name>` when named; else explicit title; else prompt seed. */
+const AGENT_TITLE_PREFIX = "Agent: ";
+
+const truncateTitle = (title: string): string =>
+  title.length > DEFAULT_TITLE_MAX_LENGTH
+    ? `${title.slice(0, DEFAULT_TITLE_MAX_LENGTH - 1).trimEnd()}…`
+    : title;
+
+const withAgentTitlePrefix = (title: string): string => {
+  const trimmed = title.trim();
+  const normalized = trimmed.length > 0 ? trimmed : "Sub-agent task";
+  return /^agent:\s/i.test(normalized) ? normalized : `${AGENT_TITLE_PREFIX}${normalized}`;
+};
+
+/**
+ * Every product-native `agent_spawn` child is titled with the `Agent:` prefix
+ * so clients without an explicit parent/child wire marker can still render it
+ * with delegated-agent styling. Prefer an explicit name, then title, then the
+ * prompt-derived seed.
+ */
 const resolveSpawnTitle = (input: SubAgentSpawnInput, name?: string): string => {
-  if (name !== undefined) {
-    const titled = `Agent: ${name}`;
-    return titled.length > DEFAULT_TITLE_MAX_LENGTH
-      ? `${titled.slice(0, DEFAULT_TITLE_MAX_LENGTH - 1).trimEnd()}…`
-      : titled;
-  }
-  return input.title ?? defaultTitleForPrompt(input.prompt);
+  const base = name ?? input.title ?? defaultTitleForPrompt(input.prompt);
+  return truncateTitle(withAgentTitlePrefix(base));
 };
 
 /**
@@ -180,6 +202,30 @@ const finalAssistantText = (thread: OrchestrationThread): string | null => {
   return null;
 };
 
+const taskStatusForSubAgentStatus = (status: SubAgentStatus): "completed" | "failed" | "stopped" =>
+  status === "completed" ? "completed" : status === "interrupted" ? "stopped" : "failed";
+
+const completionSummaryForSubAgentStatus = (status: SubAgentStatus): string => {
+  switch (status) {
+    case "completed":
+      return "Sub-agent completed.";
+    case "interrupted":
+      return "Sub-agent interrupted.";
+    case "error":
+      return "Sub-agent failed.";
+    case "running":
+      return "Sub-agent still running.";
+  }
+};
+
+const stripAgentTitlePrefix = (title: string): string =>
+  title.replace(/^agent:\s*/i, "").trim() || title;
+
+const truncateParentActivityText = (text: string): string =>
+  text.length > PARENT_ACTIVITY_TEXT_MAX_LENGTH
+    ? `${text.slice(0, PARENT_ACTIVITY_TEXT_MAX_LENGTH - 1).trimEnd()}…`
+    : text;
+
 const hasTurnStartFailureSince = (thread: OrchestrationThread, sinceIso: string): boolean =>
   thread.activities.some(
     (activity) =>
@@ -203,7 +249,8 @@ const turnStatus = (thread: OrchestrationThread, sinceIso: string): SubAgentStat
   return latestTurn.state;
 };
 
-const isTerminalStatus = (status: SubAgentStatus): boolean => status !== "running";
+const isTerminalStatus = (status: SubAgentStatus): status is Exclude<SubAgentStatus, "running"> =>
+  status !== "running";
 
 const lastActivityAt = (thread: OrchestrationThread): string | undefined => {
   const timestamps = [
@@ -281,6 +328,135 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
     });
   });
 
+  const appendParentTaskActivity = Effect.fn("SubAgentCoordinator.appendParentTaskActivity")(
+    function* (input: {
+      readonly parentThreadId: ThreadId;
+      readonly taskId: RuntimeTaskId;
+      readonly parentTurnId: TurnId | null;
+      readonly kind: "task.started" | "task.progress" | "task.completed";
+      readonly summary: string;
+      readonly payload: OrchestrationThreadActivity["payload"];
+      readonly createdAt?: string;
+    }) {
+      const createdAt = input.createdAt ?? (yield* nowIso);
+      const commandUuid = yield* randomUuid;
+      const activityUuid = yield* randomUuid;
+      yield* engine
+        .dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make(`server:sub-agent-activity:${commandUuid}`),
+          threadId: input.parentThreadId,
+          createdAt,
+          activity: {
+            id: EventId.make(`sub-agent:${input.taskId}:${input.kind}:${activityUuid}`),
+            tone: "info",
+            kind: input.kind,
+            summary: input.summary,
+            payload: input.payload,
+            turnId: input.parentTurnId,
+            createdAt,
+          },
+        })
+        .pipe(Effect.mapError(dispatchFailed("append sub-agent activity")));
+    },
+  );
+
+  const readParentTurnId = Effect.fn("SubAgentCoordinator.readParentTurnId")(function* (
+    threadId: ThreadId,
+  ) {
+    const detail = yield* snapshotQuery
+      .getThreadDetailById(threadId)
+      .pipe(Effect.orElseSucceed(() => Option.none<OrchestrationThread>()));
+    if (Option.isNone(detail)) {
+      return null;
+    }
+    return detail.value.latestTurn?.turnId ?? detail.value.session?.activeTurnId ?? null;
+  });
+
+  const emitSpawnStartedActivity = Effect.fn("SubAgentCoordinator.emitSpawnStartedActivity")(
+    function* (input: {
+      readonly scope: McpInvocationScope;
+      readonly taskId: RuntimeTaskId;
+      readonly childThreadId: ThreadId;
+      readonly providerLabel: string;
+      readonly title: string;
+      readonly model: string;
+      readonly parentTurnId: TurnId | null;
+      readonly createdAt: string;
+    }) {
+      yield* appendParentTaskActivity({
+        parentThreadId: input.scope.threadId,
+        taskId: input.taskId,
+        parentTurnId: input.parentTurnId,
+        kind: "task.started",
+        summary: "Sub-agent spawned",
+        createdAt: input.createdAt,
+        payload: {
+          taskId: input.taskId,
+          description: stripAgentTitlePrefix(input.title),
+          taskType: "sub-agent",
+          subagentType: input.providerLabel,
+          model: input.model,
+          workflowName: "agent_spawn",
+          toolUseId: input.childThreadId,
+        },
+      });
+    },
+  );
+
+  const emitSpawnProgressActivity = Effect.fn("SubAgentCoordinator.emitSpawnProgressActivity")(
+    function* (input: {
+      readonly record: SubAgentRecord;
+      readonly threadId: ThreadId;
+      readonly detail: string;
+      readonly summary: string;
+    }) {
+      yield* appendParentTaskActivity({
+        parentThreadId: input.record.parentThreadId,
+        taskId: input.record.activityTaskId,
+        parentTurnId: input.record.parentTurnId,
+        kind: "task.progress",
+        summary: "Sub-agent progress",
+        payload: {
+          taskId: input.record.activityTaskId,
+          description: stripAgentTitlePrefix(input.record.title),
+          summary: input.summary,
+          lastToolName: "agent_wait",
+          subagentType: input.record.providerInstanceId,
+          toolUseId: input.threadId,
+          detail: input.detail,
+        },
+      });
+    },
+  );
+
+  const emitCompletionActivity = Effect.fn("SubAgentCoordinator.emitCompletionActivity")(
+    function* (input: {
+      readonly record: SubAgentRecord;
+      readonly threadId: ThreadId;
+      readonly status: Exclude<SubAgentStatus, "running">;
+      readonly finalText: string | null;
+      readonly createdAt?: string;
+    }) {
+      yield* appendParentTaskActivity({
+        parentThreadId: input.record.parentThreadId,
+        taskId: input.record.activityTaskId,
+        parentTurnId: input.record.parentTurnId,
+        kind: "task.completed",
+        summary: "Sub-agent finished",
+        ...(input.createdAt !== undefined ? { createdAt: input.createdAt } : {}),
+        payload: {
+          taskId: input.record.activityTaskId,
+          status: taskStatusForSubAgentStatus(input.status),
+          summary: truncateParentActivityText(
+            input.finalText ?? completionSummaryForSubAgentStatus(input.status),
+          ),
+          toolUseId: input.threadId,
+        },
+      });
+    },
+  );
+
   /**
    * Live turn status for a child, with a best-effort record update so
    * subsequent list/send/wait see the same value without re-reading.
@@ -293,6 +469,14 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
     const status = turnStatus(thread, record.lastTurnRequestedAt);
     if (status !== record.status) {
       yield* writeStatus(threadId, status);
+      if (isTerminalStatus(status)) {
+        yield* emitCompletionActivity({
+          record,
+          threadId,
+          status,
+          finalText: finalAssistantText(thread),
+        }).pipe(Effect.catch(() => Effect.void));
+      }
     }
     return { thread, status } as const;
   });
@@ -345,6 +529,14 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
           status = turnStatus(detail.value, record.lastTurnRequestedAt);
           if (status !== record.status) {
             yield* writeStatus(threadId, status);
+            if (isTerminalStatus(status)) {
+              yield* emitCompletionActivity({
+                record,
+                threadId,
+                status,
+                finalText: finalAssistantText(detail.value),
+              }).pipe(Effect.catch(() => Effect.void));
+            }
           }
         }
         agents.push({
@@ -425,9 +617,11 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
       const commandUuid = yield* randomUuid;
       const threadUuid = yield* randomUuid;
       const childThreadId = ThreadId.make(threadUuid);
+      const activityTaskId = RuntimeTaskId.make(`agent:${threadUuid}`);
       const name = resolveSpawnName(input);
       const title = resolveSpawnTitle(input, name);
       const modelSelection = resolveSpawnModelSelection(target, model, input.fastMode);
+      const parentTurnId = yield* readParentTurnId(scope.threadId);
 
       yield* engine
         .dispatch({
@@ -447,6 +641,17 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
 
       const lastTurnRequestedAt = yield* startTurn(childThreadId, input.prompt, parent.runtimeMode);
 
+      yield* emitSpawnStartedActivity({
+        scope,
+        taskId: activityTaskId,
+        childThreadId,
+        providerLabel: target.displayName ?? target.driver,
+        title,
+        model,
+        parentTurnId,
+        createdAt,
+      }).pipe(Effect.catch(() => Effect.void));
+
       yield* SynchronizedRef.update(children, (current) => {
         const next = new Map(current);
         next.set(childThreadId, {
@@ -457,6 +662,8 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
           title,
           providerInstanceId: target.instanceId,
           model,
+          activityTaskId,
+          parentTurnId,
           status: "running",
         });
         return next;
@@ -489,11 +696,27 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
         input.prompt,
         thread.runtimeMode,
       );
+      const activityTaskId = RuntimeTaskId.make(
+        `agent:${input.threadId}:${lastTurnRequestedAt.replace(/[^A-Za-z0-9_-]/g, "-")}`,
+      );
+      const parentTurnId = yield* readParentTurnId(scope.threadId);
+      yield* emitSpawnStartedActivity({
+        scope,
+        taskId: activityTaskId,
+        childThreadId: input.threadId,
+        providerLabel: record.providerInstanceId,
+        title: record.title,
+        model: record.model,
+        parentTurnId,
+        createdAt: lastTurnRequestedAt,
+      }).pipe(Effect.catch(() => Effect.void));
       yield* SynchronizedRef.update(children, (current) => {
         const next = new Map(current);
         next.set(input.threadId, {
           ...record,
           lastTurnRequestedAt,
+          activityTaskId,
+          parentTurnId,
           status: "running",
         });
         return next;
@@ -522,6 +745,27 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
       const timeoutSeconds = input.timeoutSeconds ?? DEFAULT_WAIT_TIMEOUT_SECONDS;
       const deadline = (yield* Clock.currentTimeMillis) + timeoutSeconds * 1_000;
 
+      const runningSnapshot = Effect.fn("SubAgentCoordinator.wait.runningSnapshot")(function* (
+        thread: OrchestrationThread,
+        fresh: SubAgentRecord,
+      ) {
+        const trackedActivity = providerService.getSessionActivity
+          ? yield* providerService.getSessionActivity(input.threadId)
+          : undefined;
+        const activityAt =
+          trackedActivity?.lastActivityAt ?? lastActivityAt(thread) ?? fresh.lastTurnRequestedAt;
+        const activityAtMs = Option.match(DateTime.make(activityAt), {
+          onNone: () => undefined,
+          onSome: DateTime.toEpochMillis,
+        });
+        const now = DateTime.toEpochMillis(yield* DateTime.now);
+        const thresholdMs = readTurnStallThresholdMs();
+        const stalled =
+          trackedActivity?.stalled ??
+          (thresholdMs > 0 && activityAtMs !== undefined && now - activityAtMs >= thresholdMs);
+        return { activityAt, stalled } as const;
+      });
+
       while (true) {
         // Re-read the record each poll so a concurrent agent_send's new
         // lastTurnRequestedAt is observed.
@@ -534,34 +778,53 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
         if (isTerminalStatus(status)) {
           // First observation of terminal for this turn — return the result.
           const activityAt = lastActivityAt(thread) ?? fresh.lastTurnRequestedAt;
+          const finalText = finalAssistantText(thread);
+          if (status !== fresh.status) {
+            yield* emitCompletionActivity({
+              record: fresh,
+              threadId: input.threadId,
+              status,
+              finalText,
+              createdAt: activityAt,
+            }).pipe(Effect.catch(() => Effect.void));
+          }
           return {
             threadId: input.threadId,
             status,
-            finalText: finalAssistantText(thread),
+            finalText,
             lastActivityAt: activityAt,
             stalled: false,
           };
         }
-        if ((yield* Clock.currentTimeMillis) >= deadline) {
-          const trackedActivity = providerService.getSessionActivity
-            ? yield* providerService.getSessionActivity(input.threadId)
-            : undefined;
-          const activityAt =
-            trackedActivity?.lastActivityAt ?? lastActivityAt(thread) ?? fresh.lastTurnRequestedAt;
-          const activityAtMs = Option.match(DateTime.make(activityAt), {
-            onNone: () => undefined,
-            onSome: DateTime.toEpochMillis,
-          });
-          const now = DateTime.toEpochMillis(yield* DateTime.now);
-          const thresholdMs = readTurnStallThresholdMs();
+        const snapshot = yield* runningSnapshot(thread, fresh);
+        if (snapshot.stalled) {
+          yield* emitSpawnProgressActivity({
+            record: fresh,
+            threadId: input.threadId,
+            detail: `No child-thread activity since ${snapshot.activityAt}.`,
+            summary: "Sub-agent appears stalled",
+          }).pipe(Effect.catch(() => Effect.void));
           return {
             threadId: input.threadId,
             status: "running" as const,
             finalText: null,
-            lastActivityAt: activityAt,
-            stalled:
-              trackedActivity?.stalled ??
-              (thresholdMs > 0 && activityAtMs !== undefined && now - activityAtMs >= thresholdMs),
+            lastActivityAt: snapshot.activityAt,
+            stalled: true,
+          };
+        }
+        if ((yield* Clock.currentTimeMillis) >= deadline) {
+          yield* emitSpawnProgressActivity({
+            record: fresh,
+            threadId: input.threadId,
+            detail: `Child thread is still running; last activity at ${snapshot.activityAt}.`,
+            summary: "Sub-agent still running",
+          }).pipe(Effect.catch(() => Effect.void));
+          return {
+            threadId: input.threadId,
+            status: "running" as const,
+            finalText: null,
+            lastActivityAt: snapshot.activityAt,
+            stalled: snapshot.stalled,
           };
         }
         yield* Effect.sleep(Duration.millis(WAIT_POLL_INTERVAL_MILLIS));
