@@ -130,6 +130,7 @@ export type ModelCapabilities = typeof ModelCapabilities.Type;
 const CODEX_DRIVER_KIND = ProviderDriverKind.make("codex");
 const CLAUDE_DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CLAUDE_SYNTHERO_DRIVER_KIND = ProviderDriverKind.make("claude-synthero");
+const CLAUDEX_DRIVER_KIND = ProviderDriverKind.make("claudex");
 const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");
 const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
 const FUGU_DRIVER_KIND = ProviderDriverKind.make("fugu");
@@ -142,6 +143,7 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
   [CODEX_DRIVER_KIND]: DEFAULT_MODEL,
   [CLAUDE_DRIVER_KIND]: "claude-sonnet-5",
   [CLAUDE_SYNTHERO_DRIVER_KIND]: "claude-sonnet-5",
+  [CLAUDEX_DRIVER_KIND]: "claudex-luna",
   [CURSOR_DRIVER_KIND]: "auto",
   [GROK_DRIVER_KIND]: "grok-4.5",
   [FUGU_DRIVER_KIND]: "fugu",
@@ -205,6 +207,10 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
     "claude-haiku-4.5": "claude-haiku-4-5",
     "claude-haiku-4-5-20251001": "claude-haiku-4-5",
   },
+  [CLAUDEX_DRIVER_KIND]: {
+    luna: "claudex-luna",
+    sol: "claudex-sol",
+  },
   [CURSOR_DRIVER_KIND]: {
     composer: "composer-2",
     "composer-1.5": "composer-1.5",
@@ -231,6 +237,7 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
 export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>> = {
   [CODEX_DRIVER_KIND]: "Codex",
   [CLAUDE_DRIVER_KIND]: "Claude",
+  [CLAUDEX_DRIVER_KIND]: "Claudex",
   [CURSOR_DRIVER_KIND]: "Cursor",
   [GROK_DRIVER_KIND]: "Grok",
   [FUGU_DRIVER_KIND]: "Fugu",
