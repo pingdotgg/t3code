@@ -1,15 +1,19 @@
 {
   "fill": {
-    "solid": "display-p3:0.00000,0.00000,0.00000,1.00000"
+    "solid": "display-p3:0.18431,0.41961,0.69020,1.00000"
   },
   "groups": [
     {
       "layers": [
         {
-          "image-name": "T3.svg",
-          "name": "T3",
+          "blend-mode": "normal",
+          "fill": "automatic",
+          "glass": true,
+          "hidden": false,
+          "image-name": "mark.svg",
+          "name": "mark",
           "position": {
-            "scale": 10,
+            "scale": 1,
             "translation-in-points": [0, 0]
           }
         }
@@ -25,7 +29,6 @@
     }
   ],
   "supported-platforms": {
-    "circles": ["watchOS"],
-    "squares": "shared"
+    "squares": ["macOS"]
   }
 }
