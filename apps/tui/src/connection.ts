@@ -25,6 +25,8 @@ import {
   type ThreadId,
   ThreadId as ThreadIdSchema,
   TrimmedNonEmptyString,
+  type ServerConfig,
+  type VcsListRefsResult,
   type VcsStatusLocalResult,
   type VcsStatusRemoteResult,
   type VcsStatusResult,
@@ -242,6 +244,8 @@ const inMemoryCacheStoreLayer = Layer.sync(EnvironmentCacheStore, () => {
   // cache hit can resume live sync from the right projection sequence.
   const threads = new Map<string, OrchestrationThreadDetailSnapshot>();
   const shells = new Map<string, OrchestrationShellSnapshot>();
+  const serverConfigs = new Map<string, ServerConfig>();
+  const vcsRefs = new Map<string, VcsListRefsResult>();
   const threadKey = (environmentId: string, threadId: string) =>
     `${environmentId}\u0000${threadId}`;
   return EnvironmentCacheStore.of({
@@ -260,9 +264,25 @@ const inMemoryCacheStoreLayer = Layer.sync(EnvironmentCacheStore, () => {
       Effect.sync(() => {
         threads.delete(threadKey(environmentId, threadId));
       }),
+    loadServerConfig: (environmentId) =>
+      Effect.succeed(Option.fromUndefinedOr(serverConfigs.get(environmentId))),
+    saveServerConfig: (environmentId, config) =>
+      Effect.sync(() => {
+        serverConfigs.set(environmentId, config);
+      }),
+    loadVcsRefs: (environmentId, cwd) =>
+      Effect.succeed(Option.fromUndefinedOr(vcsRefs.get(`${environmentId}\u0000${cwd}`))),
+    saveVcsRefs: (environmentId, cwd, refs) =>
+      Effect.sync(() => {
+        vcsRefs.set(`${environmentId}\u0000${cwd}`, refs);
+      }),
     clear: (environmentId) =>
       Effect.sync(() => {
         shells.delete(environmentId);
+        serverConfigs.delete(environmentId);
+        for (const key of vcsRefs.keys()) {
+          if (key.startsWith(`${environmentId}\u0000`)) vcsRefs.delete(key);
+        }
         for (const key of threads.keys()) {
           if (key.startsWith(`${environmentId}\u0000`)) threads.delete(key);
         }
