@@ -26,9 +26,35 @@ private func shortModelName(_ model: String) -> String {
 enum SubagentTaskPresentation {
     static let stalledThreshold: TimeInterval = 3 * 60
 
+    /// Client-side fallback heuristic (Claude Task subagents only): a running
+    /// task with no activity for `stalledThreshold`. Used only when the server
+    /// has not reported liveness for the owning thread.
     static func isStalled(task: SubagentTaskItem, at now: Date) -> Bool {
         guard task.state == .running else { return false }
         return now.timeIntervalSince(task.lastActivityAt) > stalledThreshold
+    }
+
+    /// Resolved stall state with server precedence: when the owning thread has
+    /// a server `session.health` signal it is authoritative (the client 3-min
+    /// heuristic is suppressed); otherwise the heuristic applies. Never shows a
+    /// non-running task as stalled.
+    static func isStalled(
+        task: SubagentTaskItem, at now: Date, threadHealth: ThreadHealth?
+    ) -> Bool {
+        guard task.state == .running else { return false }
+        if let threadHealth {
+            return threadHealth.stalled
+        }
+        return isStalled(task: task, at: now)
+    }
+
+    /// "stalled for 3m" style relative label from the server stall onset.
+    static func stalledForLabel(since: Date, at now: Date) -> String {
+        let seconds = max(0, Int(now.timeIntervalSince(since)))
+        if seconds < 60 { return "stalled for \(seconds)s" }
+        let minutes = seconds / 60
+        if minutes < 60 { return "stalled for \(minutes)m" }
+        return "stalled for \(minutes / 60)h"
     }
 
     static func title(for task: SubagentTaskItem) -> String {
@@ -253,13 +279,23 @@ struct TranscriptPill: View {
 struct SubagentTaskHealthTags: View {
     let task: SubagentTaskItem
     let now: Date
+    /// Server liveness for the owning thread; when present it wins over the
+    /// client 3-min heuristic (no double/conflicting stall states).
+    var threadHealth: ThreadHealth?
+
+    init(task: SubagentTaskItem, now: Date, threadHealth: ThreadHealth? = nil) {
+        self.task = task
+        self.now = now
+        self.threadHealth = threadHealth
+    }
 
     @ViewBuilder
     var body: some View {
         if task.state == .running {
-            let stalled = SubagentTaskPresentation.isStalled(task: task, at: now)
+            let stalled = SubagentTaskPresentation.isStalled(
+                task: task, at: now, threadHealth: threadHealth)
             HStack(spacing: 6) {
-                Text(SubagentTaskPresentation.lastActivityLabel(task: task, at: now))
+                Text(activityLabel(stalled: stalled))
                     .font(.caption2)
                     .foregroundStyle(stalled ? Color.orange : Color.secondary)
                 if stalled {
@@ -282,5 +318,14 @@ struct SubagentTaskHealthTags: View {
         } else if task.isBackgrounded {
             TranscriptPill("background")
         }
+    }
+
+    /// Server-driven stalls show "stalled for Xm" from the reported onset;
+    /// otherwise the ordinary "last activity" line.
+    private func activityLabel(stalled: Bool) -> String {
+        if stalled, let since = threadHealth?.stalledSince {
+            return SubagentTaskPresentation.stalledForLabel(since: since, at: now)
+        }
+        return SubagentTaskPresentation.lastActivityLabel(task: task, at: now)
     }
 }

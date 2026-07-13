@@ -39,7 +39,7 @@ struct ChatHeaderView: View {
                 }
                 HStack(spacing: 10) {
                     ProviderBadge(provider: thread.provider)
-                    StatusBadge(status: thread.status)
+                    StatusBadge(status: thread.status, stalled: thread.isStalled)
                 }
             }
 
@@ -88,6 +88,8 @@ private struct ProviderBadge: View {
 
 private struct StatusBadge: View {
     let status: ThreadStatus
+    /// Server-reported stall for the active turn; warning-tinted (not error).
+    var stalled: Bool = false
 
     var body: some View {
         Label(text, systemImage: icon)
@@ -96,38 +98,42 @@ private struct StatusBadge: View {
             .foregroundStyle(color)
             .contentTransition(.symbolEffect(.replace))
             .animation(Motion.ambient, value: status)
+            .animation(Motion.ambient, value: stalled)
     }
 
     private var text: String {
+        if stalled { return "Stalled" }
         switch status {
-        case .idle: "Idle"
-        case .running: "Running"
-        case .waitingApproval: "Needs approval"
-        case .backgroundWork: "Background work"
-        case .error: "Error"
-        case .archived: "Archived"
+        case .idle: return "Idle"
+        case .running: return "Running"
+        case .waitingApproval: return "Needs approval"
+        case .backgroundWork: return "Background work"
+        case .error: return "Error"
+        case .archived: return "Archived"
         }
     }
 
     private var icon: String {
+        if stalled { return "exclamationmark.circle" }
         switch status {
-        case .idle: "circle"
-        case .running: "bolt.fill"
-        case .waitingApproval: "exclamationmark.circle.fill"
-        case .backgroundWork: "person.2.fill"
-        case .error: "xmark.octagon.fill"
-        case .archived: "archivebox.fill"
+        case .idle: return "circle"
+        case .running: return "bolt.fill"
+        case .waitingApproval: return "exclamationmark.circle.fill"
+        case .backgroundWork: return "person.2.fill"
+        case .error: return "xmark.octagon.fill"
+        case .archived: return "archivebox.fill"
         }
     }
 
     private var color: Color {
+        if stalled { return .orange }
         switch status {
-        case .idle: .secondary
-        case .running: .accentColor
-        case .waitingApproval: .orange
-        case .backgroundWork: .green
-        case .error: .red
-        case .archived: .secondary
+        case .idle: return .secondary
+        case .running: return .accentColor
+        case .waitingApproval: return .orange
+        case .backgroundWork: return .green
+        case .error: return .red
+        case .archived: return .secondary
         }
     }
 }

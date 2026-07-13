@@ -103,6 +103,7 @@ struct ChatTimelineRowView: View {
         case .subagentTask(let task):
             SubagentTaskRow(
                 task: task,
+                threadHealth: model.threads.first { $0.id == threadID }?.health,
                 modelDisplayNames: model.modelDisplayNames,
                 stopError: model.subagentStopErrors[task.taskId],
                 onStopAgent: {
@@ -145,6 +146,8 @@ struct ChatTimelineRowView: View {
             NoticeRow(text: text)
         case .reasoning(_, let text, _):
             ReasoningRow(text: text)
+        case .sessionExit(_, let summary, let stderrTail, _):
+            SessionExitRow(summary: summary, stderrTail: stderrTail)
         }
     }
 
@@ -611,6 +614,8 @@ private struct SubagentTaskRow: View {
     private static let maxVisibleLogEntries = 30
 
     let task: SubagentTaskItem
+    /// Server liveness for the owning thread; wins over the client heuristic.
+    var threadHealth: ThreadHealth?
     let modelDisplayNames: [String: String]
     /// Transient stop-RPC failure (not part of the provider task payload).
     let stopError: String?
@@ -646,7 +651,8 @@ private struct SubagentTaskRow: View {
 
     @ViewBuilder
     private func rowChrome(now currentNow: Date) -> some View {
-        let stalled = SubagentTaskPresentation.isStalled(task: task, at: currentNow)
+        let stalled = SubagentTaskPresentation.isStalled(
+            task: task, at: currentNow, threadHealth: threadHealth)
         VStack(alignment: .leading, spacing: 4) {
             Button {
                 guard hasExpandableContent else { return }
@@ -683,7 +689,8 @@ private struct SubagentTaskRow: View {
                         SubagentTaskIdentityBadge(
                             task: task, modelDisplayNames: modelDisplayNames)
 
-                        SubagentTaskHealthTags(task: task, now: currentNow)
+                        SubagentTaskHealthTags(
+                            task: task, now: currentNow, threadHealth: threadHealth)
 
                         if let subtitle = SubagentTaskPresentation.subtitle(for: task) {
                             Text(subtitle)
@@ -1150,5 +1157,80 @@ private struct NoticeRow: View {
             .foregroundStyle(.secondary)
             .multilineTextAlignment(.center)
             .frame(maxWidth: .infinity, alignment: .center)
+    }
+}
+
+/// Error-styled row for a provider process that died leaving stderr. The tail
+/// is hidden behind a collapsed "Show process output" disclosure and rendered
+/// monospaced, scrollable, and copyable when expanded (`session.exited`).
+private struct SessionExitRow: View {
+    let summary: String
+    let stderrTail: String
+
+    @UIState private var isExpanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                // Deferred one runloop turn — see ToolGroupRow: a state change
+                // that re-vends toolbar items mid-layout trips AppKit's
+                // layout-feedback guard on macOS 26/27.
+                DispatchQueue.main.async {
+                    withAnimation(Motion.settle) { isExpanded.toggle() }
+                }
+            } label: {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.octagon.fill")
+                        .foregroundStyle(.red)
+                        .frame(width: TranscriptMetrics.iconColumn)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(summary)
+                            .font(.callout)
+                            .foregroundStyle(.primary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(isExpanded ? "Hide process output" : "Show process output")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if isExpanded {
+                stderrDisclosure
+                    .transition(Motion.unfold)
+            }
+        }
+        .transcriptCard(fill: Color.red.opacity(0.08), showRail: true, railColor: .red)
+    }
+
+    private var stderrDisclosure: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text("Process output")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                CopyActionButton(text: stderrTail)
+            }
+            ScrollView {
+                Text(stderrTail)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.primary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+            }
+            .frame(maxHeight: 220)
+            .background(
+                Color.primary.opacity(0.06),
+                in: RoundedRectangle(cornerRadius: 8))
+        }
     }
 }

@@ -368,6 +368,14 @@ enum TranscriptTextBuilder {
             appendPlain(text, font: bodyFont, color: .secondaryLabelColor, to: result)
             return true
 
+        case .sessionExit(_, let summary, let stderrTail, _):
+            if leadingBreak { appendBlankLine(to: result) }
+            appendHeader("Process exited", to: result)
+            appendPlain(summary, font: bodyFont, color: .systemRed, to: result)
+            if result.length > 0 { result.append(NSAttributedString(string: "\n")) }
+            appendPlain(stderrTail, font: monoFont, color: .labelColor, to: result)
+            return true
+
         case .checkpoint(let checkpoint):
             if leadingBreak { appendBlankLine(to: result) }
             appendHeader("Checkpoint", to: result)

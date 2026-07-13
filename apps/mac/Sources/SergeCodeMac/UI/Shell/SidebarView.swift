@@ -569,6 +569,9 @@ private struct SidebarStatusDot: View {
     }
 
     private var accessibilityLabel: String {
+        if thread.isStalled {
+            return "Stalled — no recent activity"
+        }
         switch thread.status {
         case .backgroundWork:
             let count = thread.backgroundAgentCount
@@ -590,13 +593,16 @@ private struct SidebarStatusDot: View {
     }
 
     private var statusTint: Color {
+        // A server-reported stall is warning-tinted (not red): the turn is
+        // still running, just gone quiet.
+        if thread.isStalled { return .orange }
         switch thread.status {
-        case .idle: .secondary
-        case .running: .green
-        case .waitingApproval: .yellow
-        case .backgroundWork: .green
-        case .error: .red
-        case .archived: .gray
+        case .idle: return .secondary
+        case .running: return .green
+        case .waitingApproval: return .yellow
+        case .backgroundWork: return .green
+        case .error: return .red
+        case .archived: return .gray
         }
     }
 }
