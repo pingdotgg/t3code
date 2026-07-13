@@ -367,12 +367,15 @@ function runtimeEventToActivities(
     }
 
     case "session.exited": {
-      // Only surface an activity when the provider process left a stderr tail
-      // to show — normal, quiet exits stay silent. The tail rides the client
-      // activity flow so the mac can render an expandable "process output"
-      // disclosure on the failing turn.
+      // Only surface non-graceful exits with meaningful stderr. The tail rides
+      // the client activity flow so the mac can render an expandable "process
+      // output" disclosure on the failing turn.
       const stderrTail = event.payload.stderrTail;
-      if (stderrTail === undefined || stderrTail.length === 0) {
+      if (
+        event.payload.exitKind === "graceful" ||
+        stderrTail === undefined ||
+        stderrTail.trim().length === 0
+      ) {
         return [];
       }
       return [

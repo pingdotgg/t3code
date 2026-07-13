@@ -2522,6 +2522,7 @@ describe("ProviderRuntimeIngestion", () => {
       turnId: asTurnId("turn-exit"),
       payload: {
         reason: "process exited with code 1",
+        exitKind: "error",
         recoverable: false,
         stderrTail: "panic: boom\n  at main()\n",
       },
@@ -2538,8 +2539,59 @@ describe("ProviderRuntimeIngestion", () => {
     expect(activity?.payload).toEqual({
       stderrTail: "panic: boom\n  at main()\n",
       reason: "process exited with code 1",
+      exitKind: "error",
       recoverable: false,
     });
+  });
+
+  it("does not project a session.exited activity for a graceful exit", async () => {
+    const harness = await createHarness();
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-session-exited-graceful"),
+      provider: ProviderDriverKind.make("cursor"),
+      createdAt: "2026-01-01T00:03:15.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-exit-graceful"),
+      payload: {
+        reason: "Cursor ACP process exited.",
+        exitKind: "graceful",
+        stderrTail: "informational shutdown output\n",
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.status === "stopped",
+    );
+    expect(
+      thread.activities.some((activity) => activity.id === "evt-session-exited-graceful"),
+    ).toBe(false);
+  });
+
+  it("does not project a session.exited activity for whitespace-only stderr", async () => {
+    const harness = await createHarness();
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-session-exited-whitespace"),
+      provider: ProviderDriverKind.make("grok"),
+      createdAt: "2026-01-01T00:03:20.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-exit-whitespace"),
+      payload: {
+        reason: "Grok ACP process exited with code 1.",
+        exitKind: "error",
+        stderrTail: " \n\t ",
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.status === "stopped",
+    );
+    expect(
+      thread.activities.some((activity) => activity.id === "evt-session-exited-whitespace"),
+    ).toBe(false);
   });
 
   it("does not project a session.exited activity without a stderr tail", async () => {
