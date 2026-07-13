@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   rememberPreviewUrl: vi.fn(),
   readPreparedConnection: vi.fn(() => ({ httpBaseUrl: "http://172.25.85.75:3773" })),
   submittedUrl: null as ((url: string) => void) | null,
+  emptyStateUrl: null as ((url: string) => void) | null,
+  showEmptyState: false,
 }));
 
 vi.mock("~/state/session", () => ({
@@ -42,20 +44,22 @@ vi.mock("~/previewStateStore", () => ({
       },
     },
     recentlySeenUrls: [],
-    sessions: {
-      "tab-1": {
-        threadId: "thread-1",
-        tabId: "tab-1",
-        navStatus: {
-          _tag: "Success",
-          url: "http://example.com/",
-          title: "Example",
+    sessions: mocks.showEmptyState
+      ? {}
+      : {
+          "tab-1": {
+            threadId: "thread-1",
+            tabId: "tab-1",
+            navStatus: {
+              _tag: "Success",
+              url: "http://example.com/",
+              title: "Example",
+            },
+            canGoBack: false,
+            canGoForward: false,
+            updatedAt: "2026-07-13T00:00:00.000Z",
+          },
         },
-        canGoBack: false,
-        canGoForward: false,
-        updatedAt: "2026-07-13T00:00:00.000Z",
-      },
-    },
   }),
 }));
 
@@ -100,7 +104,12 @@ vi.mock("./PreviewChromeRow", () => ({
   },
 }));
 
-vi.mock("./PreviewEmptyState", () => ({ PreviewEmptyState: () => null }));
+vi.mock("./PreviewEmptyState", () => ({
+  PreviewEmptyState: (props: { onOpenUrl: (url: string) => void }) => {
+    mocks.emptyStateUrl = props.onOpenUrl;
+    return null;
+  },
+}));
 vi.mock("./PreviewMoreMenu", () => ({ PreviewMoreMenu: () => null }));
 vi.mock("./PreviewUnreachable", () => ({ PreviewUnreachable: () => null }));
 vi.mock("./ZoomIndicator", () => ({ ZoomIndicator: () => null }));
@@ -111,12 +120,14 @@ vi.mock("./usePreviewSession", () => ({ usePreviewSession: vi.fn() }));
 
 import { PreviewView } from "./PreviewView";
 
-describe("PreviewView address bar", () => {
+describe("PreviewView navigation", () => {
   beforeEach(() => {
     mocks.navigate.mockClear();
     mocks.rememberPreviewUrl.mockClear();
     mocks.readPreparedConnection.mockClear();
     mocks.submittedUrl = null;
+    mocks.emptyStateUrl = null;
+    mocks.showEmptyState = false;
   });
 
   it("preserves a direct localhost URL in a WSL environment", async () => {
@@ -146,6 +157,37 @@ describe("PreviewView address bar", () => {
         threadId: "thread-1",
       },
       "https://localhost:8000/dashboard?mode=test#top",
+    );
+  });
+
+  it("maps an empty-state localhost server onto the WSL host", async () => {
+    mocks.showEmptyState = true;
+    renderToStaticMarkup(
+      <PreviewView
+        threadRef={{
+          environmentId: EnvironmentId.make("environment-1"),
+          threadId: ThreadId.make("thread-1"),
+        }}
+        tabId="tab-1"
+        visible
+      />,
+    );
+
+    expect(mocks.emptyStateUrl).not.toBeNull();
+    mocks.emptyStateUrl?.("http://localhost:5173/app?mode=test#top");
+
+    await vi.waitFor(() =>
+      expect(mocks.navigate).toHaveBeenCalledWith(
+        "tab-1",
+        "http://172.25.85.75:5173/app?mode=test#top",
+      ),
+    );
+    expect(mocks.rememberPreviewUrl).toHaveBeenCalledWith(
+      {
+        environmentId: "environment-1",
+        threadId: "thread-1",
+      },
+      "http://172.25.85.75:5173/app?mode=test#top",
     );
   });
 });
