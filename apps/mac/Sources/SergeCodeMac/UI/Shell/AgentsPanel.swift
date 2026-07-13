@@ -138,8 +138,8 @@ struct AgentsPanel: View {
     /// easy identification in the UI" (agents/tools.ts) — there is no persisted
     /// parent/child marker on the wire, so that convention is the client signal.
     static func isSiblingAgentThread(_ thread: ChatThread) -> Bool {
-        thread.title.trimmingCharacters(in: .whitespaces)
-            .range(of: "^Agent:\\s", options: [.regularExpression, .caseInsensitive]) != nil
+        // No wire parent/child marker exists, so the exact tool-written title prefix is required.
+        thread.title.trimmingCharacters(in: .whitespaces).hasPrefix("Agent: ")
     }
 
     /// A sibling agent is "working" while its turn runs (or is stalled — a
