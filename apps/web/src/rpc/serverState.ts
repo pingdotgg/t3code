@@ -11,7 +11,7 @@ import {
   type ServerSettings,
 } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
-import { useCallback, useRef } from "react";
+import { useCallback, useLayoutEffect, useRef } from "react";
 
 import type { WsRpcClient } from "./wsRpcClient";
 import { appAtomRegistry, resetAppAtomRegistryForTests } from "./atomRegistry";
@@ -246,7 +246,9 @@ function useLatestAtomSubscription<A>(
   listener: (value: NonNullable<A>) => void,
 ): void {
   const listenerRef = useRef(listener);
-  listenerRef.current = listener;
+  useLayoutEffect(() => {
+    listenerRef.current = listener;
+  }, [listener]);
 
   const stableListener = useCallback((value: A | null) => {
     if (value === null) {

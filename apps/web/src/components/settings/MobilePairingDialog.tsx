@@ -14,6 +14,12 @@ import { QRCodeSvg } from "../ui/qr-code";
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import type { MobilePairingDialogState } from "./useMobilePairing";
+import { useState } from "react";
+
+function PairingExpirationLabel({ expiresAt }: { readonly expiresAt: string }) {
+  const [nowMs] = useState(() => Date.now());
+  return <>{formatExpiresInLabel(expiresAt, nowMs)}.</>;
+}
 
 export function MobilePairingDialog({
   state,
@@ -60,7 +66,12 @@ export function MobilePairingDialog({
                 <p>
                   Server: <span className="font-mono text-foreground">{state.endpointUrl}</span>
                 </p>
-                <p>{formatExpiresInLabel(state.pairingCredential.expiresAt, Date.now())}.</p>
+                <p>
+                  <PairingExpirationLabel
+                    key={state.pairingCredential.expiresAt}
+                    expiresAt={state.pairingCredential.expiresAt}
+                  />
+                </p>
               </div>
               <Textarea
                 readOnly

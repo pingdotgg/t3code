@@ -75,7 +75,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     };
   }, []);
 
-  const handleOptionSelection = useEffectEvent((questionId: string, optionLabel: string) => {
+  const handleOptionSelection = (questionId: string, optionLabel: string) => {
     onToggleOption(questionId, optionLabel);
     if (activeQuestion?.multiSelect) {
       return;
@@ -87,7 +87,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       autoAdvanceTimerRef.current = null;
       onAdvanceRef.current();
     }, 200);
-  });
+  };
+  const handleKeyboardOptionSelection = useEffectEvent(handleOptionSelection);
 
   // Keyboard shortcut: number keys 1-9 select corresponding options when focus is
   // outside editable fields. Multi-select prompts toggle options in place; single-
@@ -113,7 +114,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       const option = activeQuestion.options[optionIndex];
       if (!option) return;
       event.preventDefault();
-      handleOptionSelection(activeQuestion.id, option.label);
+      handleKeyboardOptionSelection(activeQuestion.id, option.label);
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);

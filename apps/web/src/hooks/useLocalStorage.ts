@@ -74,22 +74,21 @@ export function useLocalStorage<T, E>(
   const setValue = useCallback(
     (value: T | ((val: T) => T)) => {
       try {
-        setStoredValue((prev) => {
-          const valueToStore = typeof value === "function" ? (value as (val: T) => T)(prev) : value;
-          if (valueToStore === null) {
-            removeLocalStorageItem(key);
-          } else {
-            setLocalStorageItem(key, valueToStore, schema);
-          }
-          // Dispatch event after state update completes to avoid nested state updates
-          queueMicrotask(() => dispatchLocalStorageChange(key));
-          return valueToStore;
-        });
+        const currentValue = getLocalStorageItem(key, schema) ?? storedValue;
+        const valueToStore =
+          typeof value === "function" ? (value as (val: T) => T)(currentValue) : value;
+        if (valueToStore === null) {
+          removeLocalStorageItem(key);
+        } else {
+          setLocalStorageItem(key, valueToStore, schema);
+        }
+        setStoredValue(valueToStore);
+        queueMicrotask(() => dispatchLocalStorageChange(key));
       } catch (error) {
         console.error("[LOCALSTORAGE] Error:", error);
       }
     },
-    [key, schema],
+    [key, schema, storedValue],
   );
 
   const prevKeyRef = useRef(key);

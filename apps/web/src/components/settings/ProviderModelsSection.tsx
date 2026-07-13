@@ -134,19 +134,13 @@ export function ProviderModelsSection({
     setError(null);
 
     // Scroll the new row into view once the DOM reflects the commit.
-    // `MutationObserver` handles the one-frame gap between `onChange` and
-    // the `models` prop update; the `requestAnimationFrame` covers the
-    // common case where the parent updates synchronously.
+    // Two frames cover the gap between `onChange` and the parent prop update.
     const el = listRef.current;
     if (!el) return;
     const scrollToEnd = () => el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-    requestAnimationFrame(scrollToEnd);
-    const observer = new MutationObserver(() => {
-      scrollToEnd();
-      observer.disconnect();
+    requestAnimationFrame(() => {
+      requestAnimationFrame(scrollToEnd);
     });
-    observer.observe(el, { childList: true, subtree: true });
-    setTimeout(() => observer.disconnect(), 2_000);
   };
 
   const handleRemove = (slug: string) => {

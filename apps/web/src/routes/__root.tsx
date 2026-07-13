@@ -7,7 +7,7 @@ import {
   useLocation,
   useNavigate,
 } from "@tanstack/react-router";
-import { useEffect, useEffectEvent, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
 
 import { APP_DISPLAY_NAME } from "../branding";
@@ -315,13 +315,12 @@ function EventRouter() {
     sidebarProjectGroupingMode: settings.sidebarProjectGroupingMode,
     sidebarProjectGroupingOverrides: settings.sidebarProjectGroupingOverrides,
   }));
-  const readPathname = useEffectEvent(() => pathname);
   const handledBootstrapThreadIdRef = useRef<string | null>(null);
   const seenServerConfigUpdateIdRef = useRef(getServerConfigUpdatedNotification()?.id ?? 0);
   const disposedRef = useRef(false);
   const serverConfig = useServerConfig();
 
-  const handleWelcome = useEffectEvent((payload: ServerLifecycleWelcomePayload | null) => {
+  const handleWelcome = (payload: ServerLifecycleWelcomePayload | null) => {
     if (!payload) return;
 
     updatePrimaryEnvironmentDescriptor(payload.environment);
@@ -351,7 +350,7 @@ function EventRouter() {
         );
       useUiStateStore.getState().setProjectExpanded(bootstrapProjectKey, true);
 
-      if (readPathname() !== "/") {
+      if (pathname !== "/") {
         return;
       }
       if (handledBootstrapThreadIdRef.current === payload.bootstrapThreadId) {
@@ -367,69 +366,67 @@ function EventRouter() {
       });
       handledBootstrapThreadIdRef.current = payload.bootstrapThreadId;
     })().catch(() => undefined);
-  });
+  };
 
-  const handleServerConfigUpdated = useEffectEvent(
-    (notification: ServerConfigUpdatedNotification | null) => {
-      if (!notification) return;
+  const handleServerConfigUpdated = (notification: ServerConfigUpdatedNotification | null) => {
+    if (!notification) return;
 
-      const { id, payload, source } = notification;
-      if (id <= seenServerConfigUpdateIdRef.current) {
-        return;
-      }
-      seenServerConfigUpdateIdRef.current = id;
-      if (source !== "keybindingsUpdated") {
-        return;
-      }
+    const { id, payload, source } = notification;
+    if (id <= seenServerConfigUpdateIdRef.current) {
+      return;
+    }
+    seenServerConfigUpdateIdRef.current = id;
+    if (source !== "keybindingsUpdated") {
+      return;
+    }
 
-      const issue = payload.issues.find((entry) => entry.kind.startsWith("keybindings."));
-      if (!issue) {
-        toastManager.add({
-          type: "success",
-          title: "Keybindings updated",
-          description: "Keybindings configuration reloaded successfully.",
-        });
-        return;
-      }
+    const issue = payload.issues.find((entry) => entry.kind.startsWith("keybindings."));
+    if (!issue) {
+      toastManager.add({
+        type: "success",
+        title: "Keybindings updated",
+        description: "Keybindings configuration reloaded successfully.",
+      });
+      return;
+    }
 
-      toastManager.add(
-        stackedThreadToast({
-          type: "warning",
-          title: "Invalid keybindings configuration",
-          description: issue.message,
-          actionVariant: "outline",
-          actionProps: {
-            children: "Open keybindings.json",
-            onClick: () => {
-              const api = readLocalApi();
-              if (!api) {
-                return;
-              }
+    toastManager.add(
+      stackedThreadToast({
+        type: "warning",
+        title: "Invalid keybindings configuration",
+        description: issue.message,
+        actionVariant: "outline",
+        actionProps: {
+          children: "Open keybindings.json",
+          onClick: () => {
+            const api = readLocalApi();
+            if (!api) {
+              return;
+            }
 
-              void Promise.resolve(serverConfig ?? api.server.getConfig())
-                .then((config) => {
-                  const editor = resolveAndPersistPreferredEditor(config.availableEditors);
-                  if (!editor) {
-                    throw new Error("No available editors found.");
-                  }
-                  return api.shell.openInEditor(config.keybindingsConfigPath, editor);
-                })
-                .catch((error) => {
-                  toastManager.add(
-                    stackedThreadToast({
-                      type: "error",
-                      title: "Unable to open keybindings file",
-                      description:
-                        error instanceof Error ? error.message : "Unknown error opening file.",
-                    }),
-                  );
-                });
-            },
+            void Promise.resolve(serverConfig ?? api.server.getConfig())
+              .then((config) => {
+                const editor = resolveAndPersistPreferredEditor(config.availableEditors);
+                if (!editor) {
+                  throw new Error("No available editors found.");
+                }
+                return api.shell.openInEditor(config.keybindingsConfigPath, editor);
+              })
+              .catch((error) => {
+                toastManager.add(
+                  stackedThreadToast({
+                    type: "error",
+                    title: "Unable to open keybindings file",
+                    description:
+                      error instanceof Error ? error.message : "Unknown error opening file.",
+                  }),
+                );
+              });
           },
-        }),
-      );
-    },
-  );
+        },
+      }),
+    );
+  };
 
   useEffect(() => {
     if (!serverConfig) {
