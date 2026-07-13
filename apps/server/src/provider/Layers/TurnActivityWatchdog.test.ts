@@ -62,7 +62,12 @@ describe("TurnActivityWatchdog", () => {
   it("uses a 120s default and reads the server env override", () => {
     assert.equal(DEFAULT_TURN_STALL_THRESHOLD_MS, 120_000);
     assert.equal(readTurnStallThresholdMs({ T3CODE_TURN_STALL_THRESHOLD_MS: "45000" }), 45_000);
-    assert.equal(readTurnStallThresholdMs({ T3CODE_TURN_STALL_THRESHOLD_MS: "invalid" }), 120_000);
+    for (const malformed of ["invalid", "120000ms", "1.5", "-1", "Infinity"]) {
+      assert.equal(
+        readTurnStallThresholdMs({ T3CODE_TURN_STALL_THRESHOLD_MS: malformed }),
+        120_000,
+      );
+    }
   });
 
   it.effect("emits one stalled transition and one recovery after activity resumes", () =>
