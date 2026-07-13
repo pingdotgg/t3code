@@ -9,7 +9,11 @@ import {
 } from "@t3tools/contracts";
 
 import * as GitHubCli from "./GitHubCli.ts";
-import { findAuthenticatedGitHubAccount, parseGitHubAuthStatus } from "./gitHubAuthStatus.ts";
+import {
+  findAuthenticatedGitHubAccount,
+  parseGitHubAuthStatus,
+  parseGitHubAuthStatusText,
+} from "./gitHubAuthStatus.ts";
 import { decodeGitHubPullRequestListJson } from "./gitHubPullRequests.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
 import {
@@ -44,7 +48,10 @@ function toChangeRequest(summary: GitHubCli.GitHubPullRequestSummary): ChangeReq
 
 function parseGitHubAuth(input: SourceControlAuthProbeInput) {
   const output = combinedAuthOutput(input);
-  const authStatus = parseGitHubAuthStatus(input.stdout);
+  const jsonStatus = parseGitHubAuthStatus(input.stdout);
+  // Older CLIs (< 2.81) lack `auth status --json`; the discovery fallback re-runs
+  // the plain command, whose human-readable output is parsed here.
+  const authStatus = jsonStatus.parsed ? jsonStatus : parseGitHubAuthStatusText(output);
   const authenticatedAccount = findAuthenticatedGitHubAccount(authStatus.accounts);
   const host = authenticatedAccount?.host;
 
@@ -89,6 +96,7 @@ export const discovery = {
   executable: "gh",
   versionArgs: ["--version"],
   authArgs: ["auth", "status", "--json", "hosts"],
+  authFallbackArgs: ["auth", "status"],
   parseAuth: parseGitHubAuth,
   installHint:
     "Install the GitHub command-line tool (`gh`) via https://cli.github.com/ or your package manager (for example `brew install gh`).",

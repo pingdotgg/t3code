@@ -33,6 +33,11 @@ export type SourceControlCliDiscoverySpec = SourceControlDiscoverySpecBase & {
   readonly executable: string;
   readonly versionArgs: ReadonlyArray<string>;
   readonly authArgs: ReadonlyArray<string>;
+  /**
+   * Args retried when `authArgs` exits non-zero without resolving an account —
+   * typically an older CLI that does not support the flags in `authArgs`.
+   */
+  readonly authFallbackArgs?: ReadonlyArray<string>;
   readonly parseAuth: (input: SourceControlAuthProbeInput) => SourceControlProviderAuth;
   readonly refineUnknownRemote?: (
     input: SourceControlUnknownRemoteRefinementInput,
@@ -237,32 +242,52 @@ export function probeSourceControlProvider(input: {
         } satisfies SourceControlProviderDiscoveryItem);
       }
 
-      return input.process
-        .run({
+      const runAuth = (args: ReadonlyArray<string>) =>
+        input.process.run({
           operation: "source-control.discovery.auth",
           command: spec.executable,
-          args: spec.authArgs,
+          args,
           cwd: input.cwd,
           allowNonZeroExit: true,
           timeoutMs: 5_000,
           maxOutputBytes: 8_000,
           appendTruncationMarker: true,
-        })
-        .pipe(
-          Effect.map(
-            (result) =>
-              ({
+        });
+
+      return runAuth(spec.authArgs).pipe(
+        Effect.flatMap((result) => {
+          const auth = spec.parseAuth(result);
+          const fallbackArgs = spec.authFallbackArgs;
+          if (
+            fallbackArgs === undefined ||
+            result.exitCode === 0 ||
+            auth.status === "authenticated"
+          ) {
+            return Effect.succeed({ ...item, auth } satisfies SourceControlProviderDiscoveryItem);
+          }
+
+          // The probe command failed outright. Retry with the fallback args so an
+          // older CLI that predates the primary flags is not reported as signed out.
+          return runAuth(fallbackArgs).pipe(
+            Effect.map((fallbackResult) => {
+              const fallbackAuth = spec.parseAuth(fallbackResult);
+              return {
                 ...item,
-                auth: spec.parseAuth(result),
-              }) satisfies SourceControlProviderDiscoveryItem,
-          ),
-          Effect.catch((cause) =>
-            Effect.succeed({
-              ...item,
-              auth: unknownAuth(Option.getOrUndefined(detailFromCause(cause))),
-            } satisfies SourceControlProviderDiscoveryItem),
-          ),
-        );
+                auth: fallbackAuth.status === "unknown" ? auth : fallbackAuth,
+              } satisfies SourceControlProviderDiscoveryItem;
+            }),
+            Effect.orElseSucceed(
+              () => ({ ...item, auth }) satisfies SourceControlProviderDiscoveryItem,
+            ),
+          );
+        }),
+        Effect.catch((cause) =>
+          Effect.succeed({
+            ...item,
+            auth: unknownAuth(Option.getOrUndefined(detailFromCause(cause))),
+          } satisfies SourceControlProviderDiscoveryItem),
+        ),
+      );
     }),
   );
 }

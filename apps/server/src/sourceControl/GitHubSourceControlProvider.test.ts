@@ -7,7 +7,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitHubCli from "./GitHubCli.ts";
-import { parseGitHubAuthStatus } from "./gitHubAuthStatus.ts";
+import { parseGitHubAuthStatus, parseGitHubAuthStatusText } from "./gitHubAuthStatus.ts";
 import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
 
 const processResult = (
@@ -380,4 +380,67 @@ it("reports unauthenticated when GitHub JSON has accounts but none are valid", (
       detail: Option.some("The token in keyring is invalid."),
     },
   );
+});
+
+it("parses the plain-text auth status emitted by CLIs without --json support", () => {
+  const auth = GitHubSourceControlProvider.discovery.parseAuth(
+    processResult(
+      [
+        "github.com",
+        "  \u2713 Logged in to github.com account octocat (/home/user/.config/gh/hosts.yml)",
+        "  - Active account: true",
+        "  - Token: gho_************",
+      ].join("\n"),
+    ),
+  );
+
+  assert.deepStrictEqual(auth, {
+    status: "authenticated",
+    account: Option.some("octocat"),
+    host: Option.some("github.com"),
+    detail: Option.none(),
+  });
+});
+
+it("parses the legacy `Logged in to <host> as <login>` phrasing", () => {
+  const status = parseGitHubAuthStatusText(
+    [
+      "github.com",
+      "  \u2713 Logged in to github.com as octocat (/home/user/.config/gh/hosts.yml)",
+      "  \u2713 Token scopes: gist, read:org, repo",
+    ].join("\n"),
+  );
+
+  assert.deepStrictEqual(status, {
+    parsed: true,
+    accounts: [
+      {
+        host: "github.com",
+        account: "octocat",
+        authenticated: true,
+        active: true,
+        error: null,
+      },
+    ],
+  });
+});
+
+it("keeps failed plain-text logins unauthenticated", () => {
+  const status = parseGitHubAuthStatusText(
+    [
+      "github.com",
+      "  X Failed to log in to github.com account octocat (keyring)",
+      "  - Active account: true",
+    ].join("\n"),
+  );
+
+  assert.deepStrictEqual(status.accounts, [
+    {
+      host: "github.com",
+      account: "octocat",
+      authenticated: false,
+      active: true,
+      error: null,
+    },
+  ]);
 });
