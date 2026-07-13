@@ -142,6 +142,12 @@ interface CopilotTurnSnapshot {
   readonly items: Array<unknown>;
 }
 
+interface CopilotTurnStartPayload {
+  readonly model?: string | undefined;
+  readonly effort?: CopilotReasoningEffort | undefined;
+  readonly contextTier?: CopilotContextTier | undefined;
+}
+
 interface PendingPermissionHandler {
   readonly signature: string;
   readonly deferred: Deferred.Deferred<PermissionRequestResult>;
@@ -203,6 +209,8 @@ interface CopilotSessionContext {
   readonly turnQueuedAtMsByTurnId: Map<TurnId, number>;
   readonly sdkTurnIdsToTurnIds: Map<string, TurnId>;
   readonly completedTurnIds: Set<TurnId>;
+  readonly emittedTurnStartedIds: Set<TurnId>;
+  readonly turnStartPayloadByTurnId: Map<TurnId, CopilotTurnStartPayload>;
   readonly turnUsageByTurnId: Map<TurnId, ThreadTokenUsageSnapshot>;
   readonly pendingPermissionHandlersBySignature: Map<string, Array<PendingPermissionHandler>>;
   readonly pendingPermissionEventsBySignature: Map<
@@ -1260,6 +1268,31 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
   const emit = (event: ProviderRuntimeEvent) =>
     PubSub.publish(runtimeEventPubSub, event).pipe(Effect.asVoid);
   const emitAsync = (event: ProviderRuntimeEvent) => runWithContext(emit(event));
+  const emitTurnStarted = (
+    context: CopilotSessionContext,
+    turnId: TurnId,
+    raw?: SessionEvent,
+  ): Effect.Effect<void> => {
+    if (context.emittedTurnStartedIds.has(turnId)) {
+      return Effect.void;
+    }
+
+    const payload = context.turnStartPayloadByTurnId.get(turnId);
+    context.emittedTurnStartedIds.add(turnId);
+    return emit({
+      ...createBaseEvent({
+        threadId: context.threadId,
+        turnId,
+        raw,
+      }),
+      type: "turn.started",
+      payload: {
+        ...(payload?.model ? { model: payload.model } : {}),
+        ...(payload?.effort ? { effort: payload.effort } : {}),
+        ...(payload?.contextTier ? { contextTier: payload.contextTier } : {}),
+      },
+    });
+  };
   const writeNativeAsync = (threadId: ThreadId, event: SessionEvent) =>
     nativeEventLogger
       ? runWithContext(
@@ -1491,6 +1524,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     context.turnEndEventsByTurnId.delete(turnId);
     context.pendingTaskCompletionTextByTurnId.delete(turnId);
     context.turnIdsWithAssistantText.delete(turnId);
+    context.turnStartPayloadByTurnId.delete(turnId);
     clearSdkTurnMappingsForTurn(context, turnId);
     if (context.activeTurnId === turnId) {
       context.activeTurnId = undefined;
@@ -2395,6 +2429,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           status: "running",
           activeTurnId: turnId,
         });
+        await runWithContext(emitTurnStarted(context, turnId, event));
         await emitAsync({
           ...createBaseEvent({
             threadId: context.threadId,
@@ -3100,6 +3135,8 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         turnQueuedAtMsByTurnId: new Map(),
         sdkTurnIdsToTurnIds: new Map(),
         completedTurnIds: new Set(),
+        emittedTurnStartedIds: new Set(),
+        turnStartPayloadByTurnId: new Map(),
         turnUsageByTurnId: new Map(),
         pendingPermissionHandlersBySignature: new Map(),
         pendingPermissionEventsBySignature: new Map(),
@@ -3213,6 +3250,11 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
 
     const queuedAt = yield* DateTime.now;
     ensureTurnSnapshot(context, turnId);
+    context.turnStartPayloadByTurnId.set(turnId, {
+      model: modelSelection?.model ?? context.session.model,
+      effort: reasoningEffort,
+      contextTier,
+    });
     context.turnQueuedAtMsByTurnId.set(turnId, epochMsFromIso(DateTime.formatIso(queuedAt)) ?? 0);
     context.queuedTurnIds.push(turnId);
     yield* Effect.promise(async () => {
@@ -3232,18 +3274,9 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       ...(modelSelection?.model ? { model: modelSelection.model } : {}),
     });
 
-    yield* emit({
-      ...createBaseEvent({
-        threadId: input.threadId,
-        turnId,
-      }),
-      type: "turn.started",
-      payload: {
-        model: modelSelection?.model ?? context.session.model,
-        ...(reasoningEffort ? { effort: reasoningEffort } : {}),
-        ...(contextTier ? { contextTier } : {}),
-      },
-    });
+    if (shouldPromoteQueuedTurn) {
+      yield* emitTurnStarted(context, turnId);
+    }
 
     const messageOptions: MessageOptions = {
       prompt: text ?? "",
@@ -3259,6 +3292,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
             context.queuedTurnIds.splice(queueIndex, 1);
           }
           context.turnQueuedAtMsByTurnId.delete(turnId);
+          context.turnStartPayloadByTurnId.delete(turnId);
           if (context.activeTurnId === turnId) {
             context.activeTurnId = undefined;
           }

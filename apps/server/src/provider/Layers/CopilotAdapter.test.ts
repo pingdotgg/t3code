@@ -4064,6 +4064,12 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         input: "second prompt",
         attachments: [],
       });
+      NodeAssert.deepStrictEqual(
+        runtimeEvents
+          .filter((event) => event.type === "turn.started")
+          .map((event) => String(event.turnId)),
+        [String(firstTurn.turnId)],
+      );
       emit({
         id: "evt-copilot-queued-first-turn-end",
         timestamp,
@@ -4124,6 +4130,23 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           turnId: "sdk-turn-queued-second",
         },
       } as SessionEvent);
+      for (
+        let attempt = 0;
+        attempt < 20 &&
+        !runtimeEvents.some(
+          (event) =>
+            event.type === "turn.started" && String(event.turnId) === String(secondTurn.turnId),
+        );
+        attempt += 1
+      ) {
+        yield* waitForSdkEventQueue();
+      }
+      NodeAssert.deepStrictEqual(
+        runtimeEvents
+          .filter((event) => event.type === "turn.started")
+          .map((event) => String(event.turnId)),
+        [String(firstTurn.turnId), String(secondTurn.turnId)],
+      );
       emit({
         id: "evt-copilot-queued-second-turn-end",
         timestamp,
