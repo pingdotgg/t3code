@@ -2,6 +2,7 @@
 import * as NodePath from "node:path";
 import * as NodeOS from "node:os";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeTimersPromises from "node:timers/promises";
 import * as NodeURL from "node:url";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -116,7 +117,7 @@ async function waitForFileContent(filePath: string, attempts = 40) {
 function waitForJsonLogMatch(
   filePath: string,
   predicate: (entry: Record<string, unknown>) => boolean,
-  attempts = 40,
+  attempts = 100,
 ) {
   return Effect.gen(function* () {
     for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -124,7 +125,7 @@ function waitForJsonLogMatch(
       if (requests.some(predicate)) {
         return requests;
       }
-      yield* Effect.yieldNow;
+      yield* Effect.promise(() => NodeTimersPromises.setTimeout(10));
     }
     return yield* Effect.promise(() => readJsonLines(filePath));
   });
