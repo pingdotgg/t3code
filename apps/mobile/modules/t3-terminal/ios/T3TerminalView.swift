@@ -22,12 +22,128 @@ private enum GhosttyRuntime {
   }
 }
 
+/// Encodes hardware-keyboard combos that UITextField never surfaces through its
+/// text-editing delegate (control combos, Escape, Tab, arrow keys) into the byte
+/// sequences a terminal expects.
+///
+/// Capture uses UIKeyCommand with `wantsPriorityOverSystemBehavior` rather than
+/// `pressesBegan`: while a text field is first responder, iPadOS routes hardware key
+/// events through the text-input system, which can consume presses before they reach
+/// responder press callbacks. Registered key commands are matched deterministically
+/// before that happens.
+private enum TerminalHardwareKeyEncoder {
+  /// Characters that produce a control byte when combined with Ctrl.
+  private static let controlInputs = "abcdefghijklmnopqrstuvwxyz@[\\]^_-? "
+
+  static func makeKeyCommands(action: Selector) -> [UIKeyCommand] {
+    var commands: [UIKeyCommand] = []
+
+    let specialInputs = [
+      UIKeyCommand.inputEscape,
+      UIKeyCommand.inputUpArrow,
+      UIKeyCommand.inputDownArrow,
+      UIKeyCommand.inputLeftArrow,
+      UIKeyCommand.inputRightArrow,
+      "\t",
+    ]
+    for input in specialInputs {
+      commands.append(makeCommand(input: input, modifierFlags: [], action: action))
+    }
+    commands.append(makeCommand(input: "\t", modifierFlags: .shift, action: action))
+
+    for character in controlInputs {
+      commands.append(makeCommand(input: String(character), modifierFlags: .control, action: action))
+      commands.append(
+        makeCommand(input: String(character), modifierFlags: [.control, .shift], action: action)
+      )
+    }
+
+    return commands
+  }
+
+  private static func makeCommand(
+    input: String,
+    modifierFlags: UIKeyModifierFlags,
+    action: Selector
+  ) -> UIKeyCommand {
+    let command = UIKeyCommand(input: input, modifierFlags: modifierFlags, action: action)
+    command.wantsPriorityOverSystemBehavior = true
+    return command
+  }
+
+  static func sequence(input: String, modifiers: UIKeyModifierFlags) -> String? {
+    switch input {
+    case UIKeyCommand.inputEscape:
+      return "\u{1B}"
+    case UIKeyCommand.inputUpArrow:
+      return "\u{1B}[A"
+    case UIKeyCommand.inputDownArrow:
+      return "\u{1B}[B"
+    case UIKeyCommand.inputRightArrow:
+      return "\u{1B}[C"
+    case UIKeyCommand.inputLeftArrow:
+      return "\u{1B}[D"
+    case "\t":
+      return modifiers.contains(.shift) ? "\u{1B}[Z" : "\t"
+    default:
+      break
+    }
+
+    guard modifiers.contains(.control) else { return nil }
+    guard let scalar = input.lowercased().unicodeScalars.first else { return nil }
+    return controlSequence(for: scalar)
+  }
+
+  private static func controlSequence(for scalar: Unicode.Scalar) -> String? {
+    switch scalar {
+    case "a"..."z":
+      // Ctrl+A..Z -> 0x01..0x1A (Ctrl+C = ETX, Ctrl+Z = SUB, ...).
+      return UnicodeScalar(scalar.value - 96).map(String.init)
+    case " ", "@":
+      return "\u{00}"
+    case "[":
+      return "\u{1B}"
+    case "\\":
+      return "\u{1C}"
+    case "]":
+      return "\u{1D}"
+    case "^":
+      return "\u{1E}"
+    case "_", "-":
+      return "\u{1F}"
+    case "?":
+      return "\u{7F}"
+    default:
+      return nil
+    }
+  }
+}
+
 private final class TerminalInputField: UITextField {
   var onDeleteBackward: (() -> Void)?
+  var onInsert: ((String) -> Void)?
+
+  private static let hardwareKeyCommands = TerminalHardwareKeyEncoder.makeKeyCommands(
+    action: #selector(handleHardwareKeyCommand(_:))
+  )
+
+  override var keyCommands: [UIKeyCommand]? {
+    Self.hardwareKeyCommands
+  }
 
   override func deleteBackward() {
     onDeleteBackward?()
     super.deleteBackward()
+  }
+
+  @objc
+  private func handleHardwareKeyCommand(_ command: UIKeyCommand) {
+    guard let input = command.input else { return }
+    guard let sequence = TerminalHardwareKeyEncoder.sequence(
+      input: input,
+      modifiers: command.modifierFlags
+    ) else { return }
+    onInsert?(sequence)
   }
 }
 
@@ -108,6 +224,15 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     }
   }
 
+  var focusRequest: Double = 0 {
+    didSet {
+      guard oldValue != focusRequest else { return }
+      DispatchQueue.main.async { [weak self] in
+        self?.requestKeyboardFocus()
+      }
+    }
+  }
+
   var appearanceScheme: String = TerminalAppearanceScheme.dark.rawValue {
     didSet {
       guard oldValue != appearanceScheme else { return }
@@ -166,6 +291,9 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     inputField.addTarget(self, action: #selector(handleInputEditingDidBegin), for: .editingDidBegin)
     inputField.onDeleteBackward = { [weak self] in
       self?.emitInput("\u{7F}")
+    }
+    inputField.onInsert = { [weak self] data in
+      self?.emitInput(data)
     }
 
     focusTapGesture.addTarget(self, action: #selector(handleViewportTap))

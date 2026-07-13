@@ -2,43 +2,12 @@ import { useCallback, useMemo, useState } from "react";
 import type { NativeSyntheticEvent } from "react-native";
 
 import { type NativeReviewDiffHighlightScheme } from "../diffs/nativeReviewDiffHighlighter";
-import {
-  createNativeReviewDiffTheme,
-  NATIVE_REVIEW_DIFF_STYLE,
-  type NativeReviewDiffData,
-} from "./nativeReviewDiffAdapter";
+import { createNativeReviewDiffTheme, type NativeReviewDiffData } from "./nativeReviewDiffAdapter";
+import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";
 import { useNativeReviewDiffHighlighting } from "./useNativeReviewDiffHighlighting";
+import { buildNativeReviewTokensResetKey } from "./reviewDiffBridgeKeys";
 
-export function hashReviewDiffKey(diff: string | null | undefined): string {
-  if (!diff) {
-    return "empty";
-  }
-
-  let hash = 5381;
-  for (let index = 0; index < diff.length; index += 1) {
-    hash = (hash * 33) ^ diff.charCodeAt(index);
-  }
-
-  return `${diff.length}:${(hash >>> 0).toString(36)}`;
-}
-
-export function buildNativeReviewTokensResetKey(input: {
-  readonly threadKey: string | null;
-  readonly sectionId: string | null;
-  readonly scheme: NativeReviewDiffHighlightScheme;
-  readonly diff: string | null | undefined;
-  readonly fileCount: number;
-  readonly rowCount: number;
-}): string {
-  return [
-    input.threadKey ?? "none",
-    input.sectionId ?? "none",
-    input.scheme,
-    hashReviewDiffKey(input.diff),
-    input.fileCount,
-    input.rowCount,
-  ].join(":");
-}
+export { buildNativeReviewTokensResetKey, hashReviewDiffKey } from "./reviewDiffBridgeKeys";
 
 export function useNativeReviewDiffBridge(input: {
   readonly threadKey: string | null;
@@ -62,6 +31,7 @@ export function useNativeReviewDiffBridge(input: {
     threadKey,
     viewedFileIds,
   } = input;
+  const { nativeReviewDiffStyle } = useAppearanceCodeSurface();
   const [collapsedCommentIds, setCollapsedCommentIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -76,7 +46,7 @@ export function useNativeReviewDiffBridge(input: {
     [collapsedCommentIds],
   );
   const themeJson = useMemo(() => JSON.stringify(theme), [theme]);
-  const styleJson = useMemo(() => JSON.stringify(NATIVE_REVIEW_DIFF_STYLE), []);
+  const styleJson = useMemo(() => JSON.stringify(nativeReviewDiffStyle), [nativeReviewDiffStyle]);
   const tokensResetKey = useMemo(
     () =>
       buildNativeReviewTokensResetKey({

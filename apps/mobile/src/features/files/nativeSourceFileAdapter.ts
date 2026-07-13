@@ -3,26 +3,38 @@ import type {
   NativeReviewDiffStyle,
   NativeReviewDiffToken,
 } from "../diffs/nativeReviewDiffSurface";
+import type { ResolvedMobileCodeSurface } from "../../lib/appearancePreferences";
+import { resolveMobileCodeSurface } from "../../lib/appearancePreferences";
 import { MOBILE_CODE_SURFACE, MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import type { SourceHighlightTokens } from "./sourceHighlightingState";
 
 export const NATIVE_SOURCE_ROW_HEIGHT = MOBILE_CODE_SURFACE.rowHeight;
 export const NATIVE_SOURCE_CONTENT_WIDTH = 32_000;
 
-export const NATIVE_SOURCE_STYLE: NativeReviewDiffStyle = {
-  rowHeight: NATIVE_SOURCE_ROW_HEIGHT,
-  contentWidth: NATIVE_SOURCE_CONTENT_WIDTH,
-  changeBarWidth: 0,
-  gutterWidth: MOBILE_CODE_SURFACE.gutterWidth,
-  codePadding: MOBILE_CODE_SURFACE.codePadding,
-  textVerticalInset: MOBILE_CODE_SURFACE.textVerticalInset,
-  codeFontSize: MOBILE_CODE_SURFACE.fontSize,
-  codeFontWeight: "regular",
-  lineNumberFontSize: MOBILE_CODE_SURFACE.lineNumberFontSize,
-  lineNumberFontWeight: "regular",
-  emptyStateFontSize: MOBILE_TYPOGRAPHY.label.fontSize,
-  emptyStateFontWeight: "medium",
-};
+export const NATIVE_SOURCE_STYLE: NativeReviewDiffStyle = createNativeSourceStyle(
+  resolveMobileCodeSurface(MOBILE_CODE_SURFACE.fontSize),
+);
+
+export function createNativeSourceStyle(
+  codeSurface: ResolvedMobileCodeSurface,
+): NativeReviewDiffStyle {
+  return {
+    rowHeight: codeSurface.rowHeight,
+    contentWidth: NATIVE_SOURCE_CONTENT_WIDTH,
+    changeBarWidth: 0,
+    gutterWidth: codeSurface.gutterWidth,
+    codePadding: codeSurface.codePadding,
+    textVerticalInset: codeSurface.textVerticalInset,
+    codeFontSize: codeSurface.fontSize,
+    codeFontWeight: "regular",
+    lineNumberFontSize: codeSurface.lineNumberFontSize,
+    lineNumberFontWeight: "regular",
+    emptyStateFontSize: Math.round(
+      MOBILE_TYPOGRAPHY.label.fontSize * (codeSurface.fontSize / MOBILE_CODE_SURFACE.fontSize),
+    ),
+    emptyStateFontWeight: "medium",
+  };
+}
 
 const SOURCE_FILE_ID = "source-file";
 

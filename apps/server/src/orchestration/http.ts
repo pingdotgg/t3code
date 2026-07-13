@@ -4,6 +4,7 @@ import {
   EnvironmentHttpApi,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import { normalizeDispatchCommand } from "./Normalizer.ts";
@@ -11,6 +12,7 @@ import {
   annotateEnvironmentRequest,
   failEnvironmentInternal,
   failEnvironmentInvalidRequest,
+  failEnvironmentNotFound,
   requireEnvironmentScope,
 } from "../auth/http.ts";
 import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
@@ -36,6 +38,38 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
                 failEnvironmentInternal("orchestration_snapshot_failed", cause),
               ),
             );
+        }),
+      )
+      .handle(
+        "shellSnapshot",
+        Effect.fn("environment.orchestration.shellSnapshot")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          return yield* projectionSnapshotQuery
+            .getShellSnapshot()
+            .pipe(
+              Effect.catch((cause) =>
+                failEnvironmentInternal("orchestration_snapshot_failed", cause),
+              ),
+            );
+        }),
+      )
+      .handle(
+        "threadSnapshot",
+        Effect.fn("environment.orchestration.threadSnapshot")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          const snapshot = yield* projectionSnapshotQuery
+            .getThreadDetailSnapshot(args.params.threadId)
+            .pipe(
+              Effect.catch((cause) =>
+                failEnvironmentInternal("orchestration_thread_snapshot_failed", cause),
+              ),
+            );
+          if (Option.isNone(snapshot)) {
+            return yield* failEnvironmentNotFound("thread_not_found");
+          }
+          return snapshot.value;
         }),
       )
       .handle(

@@ -41,6 +41,15 @@ export const ApnsNotificationPayload = Schema.Struct({
 });
 export type ApnsNotificationPayload = typeof ApnsNotificationPayload.Type;
 
+// Alert copy attached to a Live Activity update/end push. Its presence makes
+// the update "alerting": iOS wakes the screen, plays the haptic, and briefly
+// expands the Dynamic Island instead of silently redrawing.
+export const ApnsLiveActivityAlert = Schema.Struct({
+  title: Schema.String,
+  body: Schema.String,
+});
+export type ApnsLiveActivityAlert = typeof ApnsLiveActivityAlert.Type;
+
 export const ApnsDeliveryJobPayload = Schema.Struct({
   version: Schema.Literal(1),
   jobId: Schema.String,
@@ -49,9 +58,15 @@ export const ApnsDeliveryJobPayload = Schema.Struct({
     userId: Schema.String,
     deviceId: Schema.String,
     token: Schema.String,
+    // Per-device APNs routing; absent on jobs queued by older relay builds,
+    // which fall back to the configured defaults.
+    bundleId: Schema.optional(Schema.NullOr(Schema.String)),
+    apsEnvironment: Schema.optional(Schema.NullOr(Schema.Literals(["sandbox", "production"]))),
   }),
   aggregate: Schema.NullOr(RelayAgentActivityAggregateState),
   notification: Schema.NullOr(ApnsNotificationPayload),
+  // Optional so jobs queued by older relay builds still decode.
+  alert: Schema.optional(Schema.NullOr(ApnsLiveActivityAlert)),
   createdAt: Schema.String,
   expiresAt: Schema.String,
 });
@@ -224,8 +239,11 @@ export function makeApnsDeliveryJobPayload(input: {
   readonly userId: string;
   readonly deviceId: string;
   readonly token: string;
+  readonly bundleId?: string | null | undefined;
+  readonly apsEnvironment?: "sandbox" | "production" | null | undefined;
   readonly aggregate: ApnsDeliveryJobPayload["aggregate"];
   readonly notification?: ApnsNotificationPayload | null;
+  readonly alert?: ApnsLiveActivityAlert | null | undefined;
   readonly createdAt: string;
   readonly expiresAt: string;
   readonly jobId: string;
@@ -238,9 +256,14 @@ export function makeApnsDeliveryJobPayload(input: {
       userId: input.userId,
       deviceId: input.deviceId,
       token: input.token,
+      ...(input.bundleId ? { bundleId: input.bundleId } : {}),
+      ...(input.apsEnvironment ? { apsEnvironment: input.apsEnvironment } : {}),
     },
     aggregate: input.aggregate,
     notification: input.notification ?? null,
+    // Omitted (not null) when absent so signatures stay identical to jobs from
+    // relay builds that predate the field.
+    ...(input.alert ? { alert: input.alert } : {}),
     createdAt: input.createdAt,
     expiresAt: input.expiresAt,
   };

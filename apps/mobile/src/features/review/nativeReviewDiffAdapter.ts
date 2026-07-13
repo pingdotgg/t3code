@@ -5,6 +5,8 @@ import type {
 } from "../diffs/nativeReviewDiffTypes";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
+import type { ResolvedMobileCodeSurface } from "../../lib/appearancePreferences";
+import { resolveMobileCodeSurface } from "../../lib/appearancePreferences";
 import { MOBILE_CODE_SURFACE } from "../../lib/typography";
 import { getPierreTerminalTheme, type TerminalAppearanceScheme } from "../terminal/terminalTheme";
 import { computeWordAltDiffRanges } from "./reviewWordDiffs";
@@ -22,38 +24,44 @@ const NATIVE_REVIEW_MAX_WORD_DIFF_COVERAGE = 0.45;
 export const NATIVE_REVIEW_DIFF_ROW_HEIGHT = MOBILE_CODE_SURFACE.rowHeight;
 export const NATIVE_REVIEW_DIFF_CONTENT_WIDTH = 2_800;
 
-export const NATIVE_REVIEW_DIFF_STYLE = {
-  rowHeight: NATIVE_REVIEW_DIFF_ROW_HEIGHT,
-  contentWidth: NATIVE_REVIEW_DIFF_CONTENT_WIDTH,
-  changeBarWidth: 4,
-  gutterWidth: MOBILE_CODE_SURFACE.gutterWidth,
-  codePadding: MOBILE_CODE_SURFACE.codePadding,
-  textVerticalInset: MOBILE_CODE_SURFACE.textVerticalInset,
-  fileHeaderHeight: 56,
-  fileHeaderHorizontalMargin: 8,
-  fileHeaderVerticalMargin: 6,
-  fileHeaderCornerRadius: 10,
-  fileHeaderHorizontalPadding: 10,
-  fileHeaderPathRightPadding: 118,
-  fileHeaderCountColumnWidth: 38,
-  fileHeaderCountGap: 5,
-  codeFontSize: MOBILE_CODE_SURFACE.fontSize,
-  codeFontWeight: "regular",
-  lineNumberFontSize: MOBILE_CODE_SURFACE.lineNumberFontSize,
-  lineNumberFontWeight: "regular",
-  hunkFontSize: 11,
-  hunkFontWeight: "medium",
-  fileHeaderFontSize: 11,
-  fileHeaderFontWeight: "semibold",
-  fileHeaderMetaFontSize: 10,
-  fileHeaderMetaFontWeight: "semibold",
-  fileHeaderSubtextFontSize: 11,
-  fileHeaderSubtextFontWeight: "medium",
-  fileHeaderStatusFontSize: 9,
-  fileHeaderStatusFontWeight: "bold",
-  emptyStateFontSize: 12,
-  emptyStateFontWeight: "medium",
-} as const;
+export const NATIVE_REVIEW_DIFF_STYLE = createNativeReviewDiffStyle(
+  resolveMobileCodeSurface(MOBILE_CODE_SURFACE.fontSize),
+);
+
+export function createNativeReviewDiffStyle(codeSurface: ResolvedMobileCodeSurface) {
+  return {
+    rowHeight: codeSurface.rowHeight,
+    contentWidth: NATIVE_REVIEW_DIFF_CONTENT_WIDTH,
+    changeBarWidth: 4,
+    gutterWidth: codeSurface.gutterWidth,
+    codePadding: codeSurface.codePadding,
+    textVerticalInset: codeSurface.textVerticalInset,
+    fileHeaderHeight: 56,
+    fileHeaderHorizontalMargin: 8,
+    fileHeaderVerticalMargin: 6,
+    fileHeaderCornerRadius: 10,
+    fileHeaderHorizontalPadding: 10,
+    fileHeaderPathRightPadding: 118,
+    fileHeaderCountColumnWidth: 38,
+    fileHeaderCountGap: 5,
+    codeFontSize: codeSurface.fontSize,
+    codeFontWeight: "regular",
+    lineNumberFontSize: codeSurface.lineNumberFontSize,
+    lineNumberFontWeight: "regular",
+    hunkFontSize: 11,
+    hunkFontWeight: "medium",
+    fileHeaderFontSize: 11,
+    fileHeaderFontWeight: "semibold",
+    fileHeaderMetaFontSize: 10,
+    fileHeaderMetaFontWeight: "semibold",
+    fileHeaderSubtextFontSize: 11,
+    fileHeaderSubtextFontWeight: "medium",
+    fileHeaderStatusFontSize: 9,
+    fileHeaderStatusFontWeight: "bold",
+    emptyStateFontSize: 12,
+    emptyStateFontWeight: "medium",
+  } as const;
+}
 
 export interface NativeReviewDiffData {
   readonly rows: ReadonlyArray<NativeReviewDiffRow>;
@@ -75,6 +83,33 @@ export interface BuildNativeReviewDiffDataInput {
   readonly comments?: ReadonlyArray<ReviewInlineComment>;
 }
 
+interface CachedNativeReviewDiffData {
+  readonly commentsKey: string;
+  readonly data: NativeReviewDiffData;
+}
+
+const nativeReviewDiffDataCache = new WeakMap<ReviewParsedDiff, CachedNativeReviewDiffData>();
+
+function buildReviewCommentsCacheKey(comments: ReadonlyArray<ReviewInlineComment>): string {
+  if (comments.length === 0) {
+    return "none";
+  }
+
+  return comments
+    .map((comment) =>
+      [
+        comment.id,
+        comment.sectionId,
+        comment.filePath,
+        comment.startIndex,
+        comment.endIndex,
+        comment.rangeLabel,
+        comment.text,
+      ].join("\u001f"),
+    )
+    .join("\u001e");
+}
+
 export function createNativeReviewDiffTheme(
   scheme: TerminalAppearanceScheme,
 ): NativeReviewDiffTheme {
@@ -83,10 +118,12 @@ export function createNativeReviewDiffTheme(
 
   if (scheme === "dark") {
     return {
-      background: terminalTheme.background,
+      // Match the app surface (--color-sheet) so code views blend with the rest of
+      // the app instead of using a distinct code-editor background.
+      background: "#0e0e0e",
       text: terminalTheme.foreground,
       mutedText: terminalTheme.mutedForeground,
-      headerBackground: terminalTheme.background,
+      headerBackground: "#0e0e0e",
       border: terminalTheme.border,
       hunkBackground: "#071f28",
       hunkText: terminalBlue ?? "#009fff",
@@ -100,10 +137,12 @@ export function createNativeReviewDiffTheme(
   }
 
   return {
-    background: "#ffffff",
+    // Match the app surface (--color-sheet) so code views blend with the rest of the
+    // app instead of using a distinct code-editor background.
+    background: "#f2f2f7",
     text: "#070707",
     mutedText: terminalTheme.mutedForeground,
-    headerBackground: "#ffffff",
+    headerBackground: "#f2f2f7",
     border: terminalTheme.border,
     hunkBackground: "#e0f2ff",
     hunkText: terminalBlue ?? "#009fff",
@@ -429,4 +468,27 @@ export function buildNativeReviewDiffData(
     additions: parsedDiff.additions,
     deletions: parsedDiff.deletions,
   };
+}
+
+/**
+ * Reuses the expensive flattened native row model across React development
+ * render probes and unrelated draft updates. Only the latest comment version
+ * is retained for each parsed diff so editing a comment cannot grow the cache.
+ */
+export function getCachedNativeReviewDiffData(
+  input: BuildNativeReviewDiffDataInput,
+): NativeReviewDiffData {
+  const comments = input.comments ?? [];
+  const commentsKey = buildReviewCommentsCacheKey(comments);
+  const cached = nativeReviewDiffDataCache.get(input.parsedDiff);
+  if (cached?.commentsKey === commentsKey) {
+    return cached.data;
+  }
+
+  const data = buildNativeReviewDiffData({
+    parsedDiff: input.parsedDiff,
+    comments,
+  });
+  nativeReviewDiffDataCache.set(input.parsedDiff, { commentsKey, data });
+  return data;
 }
