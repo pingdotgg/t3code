@@ -2,10 +2,10 @@
   "name": "@t3tools/tui",
   "version": "0.0.27",
   "private": true,
-  "type": "module",
   "files": [
     "dist"
   ],
+  "type": "module",
   "exports": {
     ".": {
       "default": "./dist/index.js"
@@ -22,6 +22,7 @@
     "@opentui/react": "^0.4.1",
     "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",
+    "@t3tools/opentui-image": "workspace:*",
     "@xterm/headless": "^5.5.0",
     "effect": "catalog:",
     "react": "19.2.6"

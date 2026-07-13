@@ -21,17 +21,10 @@ import { describe, it } from "bun:test";
 // status, Push & create PR / Commit / View PR), thread next/prev + jump (Alt+↑/↓,
 // Alt+1…9), the command palette (^K — fuzzy commands folding in the thread
 // actions), the right-panel Pull action, multiple terminals per thread
-// (terminal tabs — the TUI form of the web's terminal groups), image
-// attachments shown as links, and a workspace file browser (palette → Browse
+// (terminal tabs — the TUI form of the web's terminal groups), inline Kitty
+// image attachments with link fallback, and a workspace file browser (palette → Browse
 // files, projects.listEntries + readFile). See web-parity.test.ts for the
 // keyboard parity table + remaining backlog.
-
-// Image attachments: shown as a resolved link to the file (MessagesTimeline.test)
-// until OpenTUI's inline-image PR lands; INLINE rendering is the only part still
-// blocked (on that upstream PR), tracked here.
-describe.skip("Backlog: inline image rendering (blocked on OpenTUI image PR)", () => {
-  it("renders image attachments inline once OpenTUI supports it (link shown until then)", () => {});
-});
 
 // Multiple terminals per thread (the web's "terminal groups"): SHIPPED as tabs —
 // see terminalTabs.test (add/close/cycle) and ThreadTerminalDrawer.test (tab bar).

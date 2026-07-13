@@ -1,6 +1,13 @@
-import { type ScrollBoxRenderable, SyntaxStyle } from "@opentui/core";
+import {
+  CliRenderEvents,
+  type ScrollBoxRenderable,
+  SyntaxStyle,
+  type TerminalCapabilities,
+} from "@opentui/core";
+import { Image, type RgbaImage } from "@t3tools/opentui-image/react";
 import type { OrchestrationCheckpointSummary } from "@t3tools/contracts";
 import * as React from "react";
+import { useRenderer } from "@opentui/react";
 
 import type { PendingApproval } from "../approvals.ts";
 import type { OrchestrationThread } from "../connection.ts";
@@ -92,9 +99,7 @@ function WorkGroupSection({
   if (groupedEntries.length === 0) return null;
   const hasOverflow = groupedEntries.length > MAX_VISIBLE_WORK_LOG_ENTRIES;
   const visibleEntries =
-    hasOverflow && !expanded
-      ? groupedEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES)
-      : groupedEntries;
+    hasOverflow && !expanded ? groupedEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES) : groupedEntries;
   const hiddenCount = groupedEntries.length - visibleEntries.length;
   return (
     <box flexDirection="column" marginBottom={1}>
@@ -122,50 +127,86 @@ interface RowRenderContext {
   readonly mdClient: Record<string, never>;
   readonly checkpointByMessage: Map<string, OrchestrationCheckpointSummary>;
   readonly onOpenDiff?: (turnCount: number, filePath?: string) => void;
-  /** Resolve a message image attachment to a URL (until OpenTUI renders images inline). */
+  /** Resolve a message image attachment to a signed URL. */
   readonly getAttachmentUrl?: (attachmentId: string) => Promise<string | null>;
+  /** Download and decode an attachment after its signed URL resolves. */
+  readonly getAttachmentImage?: (
+    attachmentId: string,
+    resolvedUrl: string,
+  ) => Promise<RgbaImage | null>;
+  readonly inlineImagesSupported: boolean;
+  readonly imageCellWidth: number;
   /** Surface a resolved attachment URL (e.g. in the status line) when clicked. */
   readonly onOpenUrl?: (url: string) => void;
 }
 
 /**
- * An image attachment shown as a link until OpenTUI can render images inline.
- * Resolves the asset URL on mount; clicking surfaces the full URL (the terminal
- * linkifies it / the status line makes it copyable).
+ * An image attachment with a Kitty preview when supported. The metadata link
+ * remains visible as a reliable fallback and copy target.
  */
-function AttachmentLink({
+function AttachmentPreview({
   attachment,
   ctx,
 }: {
   readonly attachment: { readonly id: string; readonly name: string; readonly sizeBytes: number };
   readonly ctx: RowRenderContext;
 }): React.ReactNode {
-  const { palette, width, getAttachmentUrl, onOpenUrl } = ctx;
+  const {
+    palette,
+    width,
+    getAttachmentUrl,
+    getAttachmentImage,
+    inlineImagesSupported,
+    imageCellWidth,
+    onOpenUrl,
+  } = ctx;
   const [link, setLink] = React.useState<"pending" | "failed" | string>(
     getAttachmentUrl ? "pending" : "failed",
   );
+  const [image, setImage] = React.useState<RgbaImage | null>(null);
   React.useEffect(() => {
-    if (!getAttachmentUrl) return;
+    setImage(null);
+    if (!getAttachmentUrl) {
+      setLink("failed");
+      return;
+    }
     let cancelled = false;
-    void getAttachmentUrl(attachment.id).then((resolved) => {
-      if (!cancelled) setLink(resolved ?? "failed");
-    });
+    setLink("pending");
+    void (async () => {
+      const resolved = await getAttachmentUrl(attachment.id);
+      if (cancelled) return;
+      setLink(resolved ?? "failed");
+      if (!resolved || !inlineImagesSupported || !getAttachmentImage) return;
+      const decoded = await getAttachmentImage(attachment.id, resolved);
+      if (!cancelled) setImage(decoded);
+    })();
     return () => {
       cancelled = true;
     };
-  }, [attachment.id, getAttachmentUrl]);
+  }, [attachment.id, getAttachmentImage, getAttachmentUrl, inlineImagesSupported]);
 
   const url = link !== "pending" && link !== "failed" ? link : null;
   const sizeKb = Math.max(1, Math.round(attachment.sizeBytes / 1024));
   const label = `${TOOL_ICONS.imageView.glyph} ${attachment.name} · ${sizeKb} KB`;
   const tail = url ?? (link === "pending" ? "  (resolving link…)" : "  (link unavailable)");
   const click = url && onOpenUrl ? () => onOpenUrl(url) : undefined;
+  const naturalColumns = image ? Math.max(1, Math.ceil(image.imageWidth / imageCellWidth)) : 1;
+  const maxColumns = Math.max(1, Math.min(40, width - 2));
+  const constrainedColumns = naturalColumns > maxColumns ? maxColumns : undefined;
   return (
-    <box {...(click ? { onMouseDown: click } : {})}>
+    <box flexDirection="column" {...(click ? { onMouseDown: click } : {})}>
       <text>
         <span fg={palette.accent}>{label}</span>
         <span fg={palette.dim}>{`  ${clip(tail, Math.max(8, width - label.length - 4))}`}</span>
       </text>
+      {image ? (
+        <Image
+          data={image.data}
+          imageWidth={image.imageWidth}
+          imageHeight={image.imageHeight}
+          {...(constrainedColumns !== undefined ? { columns: constrainedColumns } : {})}
+        />
+      ) : null}
     </box>
   );
 }
@@ -191,13 +232,12 @@ function FoldableRowView({
   const message = row.message;
   const body = message.text.trim().length > 0 ? message.text : "…";
   const checkpoint = checkpointByMessage.get(message.id);
-  // Image attachments (until OpenTUI renders images inline) — shown as links.
   const images = (message.attachments ?? []).filter((a) => a.type === "image");
   const attachmentsNode =
     images.length > 0 ? (
       <box flexDirection="column" marginTop={1}>
         {images.map((attachment) => (
-          <AttachmentLink key={attachment.id} attachment={attachment} ctx={ctx} />
+          <AttachmentPreview key={attachment.id} attachment={attachment} ctx={ctx} />
         ))}
       </box>
     ) : null;
@@ -236,7 +276,12 @@ function FoldableRowView({
   }
   return (
     <box flexDirection="column" marginTop={1} marginBottom={1}>
-      <markdown content={body} syntaxStyle={syntaxStyle} streaming={message.streaming} {...mdClient} />
+      <markdown
+        content={body}
+        syntaxStyle={syntaxStyle}
+        streaming={message.streaming}
+        {...mdClient}
+      />
       {attachmentsNode}
       {checkpoint ? (
         <ChangedFilesTree
@@ -319,14 +364,12 @@ function ChangedFilesTree({
     <box flexDirection="column" marginTop={1}>
       <box flexDirection="row" justifyContent="space-between">
         <box
-          {...(onOpenDiff
-            ? { onMouseDown: () => onOpenDiff(checkpoint.checkpointTurnCount) }
-            : {})}
+          {...(onOpenDiff ? { onMouseDown: () => onOpenDiff(checkpoint.checkpointTurnCount) } : {})}
         >
           <text>
             <span fg={palette.dim}>{`changed files (${files.length})  `}</span>
             <span fg={ansi("green")}>{`+${additions}`}</span>
-            <span fg={palette.dim}>{" "}</span>
+            <span fg={palette.dim}> </span>
             <span fg={ansi("red")}>{`-${deletions}`}</span>
             {onOpenDiff ? <span fg={palette.dim}>{"   ▸ diff"}</span> : null}
           </text>
@@ -384,7 +427,14 @@ function ContextMeter({
   readonly palette: Palette;
 }): React.ReactNode {
   const pct = snapshot.usedPercentage;
-  const color = pct === null ? palette.dim : pct >= 90 ? ansi("red") : pct >= 70 ? ansi("yellow") : ansi("green");
+  const color =
+    pct === null
+      ? palette.dim
+      : pct >= 90
+        ? ansi("red")
+        : pct >= 70
+          ? ansi("yellow")
+          : ansi("green");
   return (
     <text>
       <span fg={palette.dim}>{"context  "}</span>
@@ -434,6 +484,7 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
   scrollRef,
   onOpenDiff,
   getAttachmentUrl,
+  getAttachmentImage,
   onOpenUrl,
   treeSitterClient,
 }: {
@@ -447,13 +498,32 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
   readonly scrollRef: React.MutableRefObject<ScrollBoxRenderable | null>;
   /** Open the diff viewer scoped to a turn (clicking its changed-files summary). */
   readonly onOpenDiff?: (turnCount: number, filePath?: string) => void;
-  /** Resolve a message image attachment to a URL (shown as a link until inline images land). */
+  /** Resolve a message image attachment to a signed URL. */
   readonly getAttachmentUrl?: (attachmentId: string) => Promise<string | null>;
+  /** Download and decode a bounded image preview. */
+  readonly getAttachmentImage?: (
+    attachmentId: string,
+    resolvedUrl: string,
+  ) => Promise<RgbaImage | null>;
   /** Surface a resolved attachment URL when clicked (e.g. in the status line). */
   readonly onOpenUrl?: (url: string) => void;
   /** Test seam: inject a tree-sitter client so <markdown> can paint in tests. */
   readonly treeSitterClient?: unknown;
 }): React.ReactNode {
+  const renderer = useRenderer();
+  const [inlineImagesSupported, setInlineImagesSupported] = React.useState(
+    renderer.capabilities?.kitty_graphics === true,
+  );
+  React.useEffect(() => {
+    const onCapabilities = (capabilities: TerminalCapabilities) => {
+      setInlineImagesSupported(capabilities.kitty_graphics);
+    };
+    renderer.on(CliRenderEvents.CAPABILITIES, onCapabilities);
+    return () => {
+      renderer.off(CliRenderEvents.CAPABILITIES, onCapabilities);
+    };
+  }, [renderer]);
+  const imageCellWidth = renderer.resolution ? renderer.resolution.width / renderer.width : 18;
   const mdClient = treeSitterClient ? { treeSitterClient: treeSitterClient as never } : {};
   const palette = usePalette();
   const contextWindow = React.useMemo(
@@ -493,8 +563,11 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
     syntaxStyle,
     mdClient,
     checkpointByMessage,
+    inlineImagesSupported,
+    imageCellWidth,
     ...(onOpenDiff ? { onOpenDiff } : {}),
     ...(getAttachmentUrl ? { getAttachmentUrl } : {}),
+    ...(getAttachmentImage ? { getAttachmentImage } : {}),
     ...(onOpenUrl ? { onOpenUrl } : {}),
   };
 
@@ -536,13 +609,19 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
           </text>
         </box>
         <text>
-          <span fg={approvals.length > 0 ? ansi("red") : ansi(sessionStatusColor(detail.session?.status))}>
+          <span
+            fg={
+              approvals.length > 0 ? ansi("red") : ansi(sessionStatusColor(detail.session?.status))
+            }
+          >
             {approvals.length > 0 ? "pending approval" : statusLabel(detail)}
           </span>
           <span fg={detail.interactionMode === "plan" ? palette.accent : palette.dim}>
             {`  ·  ${detail.interactionMode === "plan" ? "plan" : "build"}`}
           </span>
-          <span fg={palette.dim}>{`  ·  ${detail.runtimeMode}  ·  ${relativeTime(detail.updatedAt)}`}</span>
+          <span
+            fg={palette.dim}
+          >{`  ·  ${detail.runtimeMode}  ·  ${relativeTime(detail.updatedAt)}`}</span>
         </text>
       </box>
 
@@ -575,11 +654,20 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
       </scrollbox>
 
       {approvals.length > 0 ? (
-        <box flexDirection="column" border borderStyle="rounded" borderColor={ansi("red")} paddingLeft={1} paddingRight={1}>
+        <box
+          flexDirection="column"
+          border
+          borderStyle="rounded"
+          borderColor={ansi("red")}
+          paddingLeft={1}
+          paddingRight={1}
+        >
           <text>
             <span fg={ansi("red")}>Approval required</span>
             {approvals.length > 1 ? (
-              <span fg={palette.dim}>{`  (${Math.min(approvalIndex, approvals.length - 1) + 1} of ${approvals.length})`}</span>
+              <span
+                fg={palette.dim}
+              >{`  (${Math.min(approvalIndex, approvals.length - 1) + 1} of ${approvals.length})`}</span>
             ) : null}
           </text>
           {approvals.map((approval, index) => {

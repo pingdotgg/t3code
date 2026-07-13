@@ -1,5 +1,6 @@
 import { createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
+import { installKittyImageExtension } from "@t3tools/opentui-image";
 
 import { ChatView } from "./components/ChatView.tsx";
 import { buildTuiRuntime, makeTuiClient, type TuiOptions } from "./connection.ts";
@@ -98,6 +99,7 @@ async function main(): Promise<void> {
     backgroundColor: "transparent",
     enableMouseMovement: false,
   });
+  installKittyImageExtension(renderer);
 
   try {
     // Detect the terminal's actual palette + default fg/bg up front and feed it into

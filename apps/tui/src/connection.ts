@@ -96,6 +96,9 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Socket from "effect/unstable/socket/Socket";
 
+import { createAttachmentImageCache } from "./attachmentImages.ts";
+import type { RgbaImage } from "@t3tools/opentui-image";
+
 /**
  * Connection inputs the host (the server CLI) provides. The TUI never talks to
  * the server's auth internals directly — the host issues a long-lived bearer
@@ -447,6 +450,11 @@ export interface TuiClient {
   ) => () => void;
   /** Resolve a message image attachment to an absolute URL, or null on failure. */
   readonly getAttachmentUrl: (attachmentId: string) => Promise<string | null>;
+  /** Download and decode a bounded RGBA preview for a resolved attachment URL. */
+  readonly getAttachmentImage: (
+    attachmentId: string,
+    resolvedUrl: string,
+  ) => Promise<RgbaImage | null>;
   /** List the workspace's files + directories (bounded index) for the file browser. */
   readonly listEntries: (
     cwd: string,
@@ -472,6 +480,7 @@ interface WarmRef<S> {
 const THREAD_WARM_LIMIT = 8;
 
 export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
+  const attachmentImages = createAttachmentImageCache();
   const forkUnsub = <A>(stream: Stream.Stream<A, unknown, EnvironmentSupervisor>): (() => void) => {
     const fiber = runtime.runFork(Stream.runDrain(stream));
     return () => {
@@ -934,8 +943,12 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
         )
         .catch(() => null),
 
+    getAttachmentImage: (attachmentId, resolvedUrl) =>
+      attachmentImages.load(attachmentId, resolvedUrl),
+
     dispose: () => {
       disposeWarm();
+      attachmentImages.clear();
       return runtime.dispose();
     },
   };

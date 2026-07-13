@@ -1,8 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { SyntaxStyle } from "@opentui/core";
-import { MockTreeSitterClient } from "@opentui/core/testing";
+import { CliRenderEvents, SyntaxStyle } from "@opentui/core";
+import { MockTreeSitterClient, setRendererCapabilities } from "@opentui/core/testing";
 import * as React from "react";
 import { testRender } from "@opentui/react/test-utils";
+import { installKittyImageExtension } from "@t3tools/opentui-image";
 
 import type { OrchestrationThread } from "../connection.ts";
 import { MessagesTimeline } from "./MessagesTimeline.tsx";
@@ -58,7 +59,12 @@ describe("MessagesTimeline header", () => {
 
 async function bodyFrame(
   over: Partial<OrchestrationThread>,
-  approvals: ReadonlyArray<{ requestId: string; requestKind: string; detail?: string; createdAt: string }> = [],
+  approvals: ReadonlyArray<{
+    requestId: string;
+    requestKind: string;
+    detail?: string;
+    createdAt: string;
+  }> = [],
   approvalIndex = 0,
 ): Promise<string> {
   const ref = React.createRef<null>();
@@ -84,7 +90,7 @@ async function bodyFrame(
 }
 
 describe("MessagesTimeline body", () => {
-  it("Given a message with an image attachment, then it shows a link to the file", async () => {
+  it("Given Kitty graphics are unavailable, then an image attachment remains a file link", async () => {
     const full = {
       ...detail("default"),
       messages: [
@@ -96,7 +102,13 @@ describe("MessagesTimeline body", () => {
           updatedAt: "2026-06-19T00:00:00.000Z",
           streaming: false,
           attachments: [
-            { type: "image", id: "att1", name: "diagram.png", mimeType: "image/png", sizeBytes: 24_576 },
+            {
+              type: "image",
+              id: "att1",
+              name: "diagram.png",
+              mimeType: "image/png",
+              sizeBytes: 24_576,
+            },
           ],
         },
       ],
@@ -128,6 +140,70 @@ describe("MessagesTimeline body", () => {
     t.renderer.destroy();
   });
 
+  it("Given Kitty graphics are available, then an image attachment renders inline", async () => {
+    const full = {
+      ...detail("default"),
+      messages: [
+        {
+          id: "u1",
+          role: "user",
+          text: "look at this",
+          createdAt: "2026-06-19T00:00:00.000Z",
+          updatedAt: "2026-06-19T00:00:00.000Z",
+          streaming: false,
+          attachments: [
+            {
+              type: "image",
+              id: "att1",
+              name: "diagram.png",
+              mimeType: "image/png",
+              sizeBytes: 4,
+            },
+          ],
+        },
+      ],
+    } as unknown as OrchestrationThread;
+    const ref = React.createRef<null>();
+    const writes: string[] = [];
+    const loadedUrls: string[] = [];
+    const t = await testRender(
+      <MessagesTimeline
+        detail={full}
+        approvals={[]}
+        approvalIndex={0}
+        projectHint={null}
+        width={88}
+        height={20}
+        syntaxStyle={SyntaxStyle.create()}
+        scrollRef={ref as never}
+        getAttachmentUrl={async () => "https://srv/assets/att1.png"}
+        getAttachmentImage={async (_attachmentId, url) => {
+          loadedUrls.push(url);
+          return {
+            data: new Uint8Array([255, 0, 0, 255]),
+            imageWidth: 1,
+            imageHeight: 1,
+          };
+        }}
+      />,
+      { width: 92, height: 24 },
+    );
+    installKittyImageExtension(t.renderer, {
+      writer: { write: (value) => writes.push(value) },
+    });
+    const capabilities = setRendererCapabilities(t.renderer, { kitty_graphics: true });
+    t.renderer.emit(CliRenderEvents.CAPABILITIES, capabilities);
+    for (let i = 0; i < 8; i += 1) {
+      await t.renderOnce();
+      await t.flush();
+    }
+
+    expect(loadedUrls).toEqual(["https://srv/assets/att1.png"]);
+    expect(writes.join("")).toContain("a=T");
+    expect(t.captureCharFrame()).toContain("diagram.png");
+    t.renderer.destroy();
+  });
+
   it("Given an attachment whose link can't be resolved, then it shows it as unavailable (not stuck resolving)", async () => {
     const full = {
       ...detail("default"),
@@ -140,7 +216,13 @@ describe("MessagesTimeline body", () => {
           updatedAt: "2026-06-19T00:00:00.000Z",
           streaming: false,
           attachments: [
-            { type: "image", id: "att1", name: "broken.png", mimeType: "image/png", sizeBytes: 1024 },
+            {
+              type: "image",
+              id: "att1",
+              name: "broken.png",
+              mimeType: "image/png",
+              sizeBytes: 1024,
+            },
           ],
         },
       ],
@@ -223,7 +305,13 @@ describe("MessagesTimeline body", () => {
     const full = {
       ...detail("default"),
       messages: [
-        { id: "m1", role: "assistant", text: "done", createdAt: "2026-06-19T00:00:00.000Z", streaming: false },
+        {
+          id: "m1",
+          role: "assistant",
+          text: "done",
+          createdAt: "2026-06-19T00:00:00.000Z",
+          streaming: false,
+        },
       ],
       checkpoints: [
         {
@@ -264,7 +352,13 @@ describe("MessagesTimeline body", () => {
     const full = {
       ...detail("default"),
       messages: [
-        { id: "m1", role: "assistant", text: "done", createdAt: "2026-06-19T00:00:00.000Z", streaming: false },
+        {
+          id: "m1",
+          role: "assistant",
+          text: "done",
+          createdAt: "2026-06-19T00:00:00.000Z",
+          streaming: false,
+        },
       ],
       checkpoints: [
         {
@@ -310,7 +404,13 @@ describe("MessagesTimeline body", () => {
     const full = {
       ...detail("default"),
       messages: [
-        { id: "m1", role: "assistant", text: "done", createdAt: "2026-06-19T00:00:00.000Z", streaming: false },
+        {
+          id: "m1",
+          role: "assistant",
+          text: "done",
+          createdAt: "2026-06-19T00:00:00.000Z",
+          streaming: false,
+        },
       ],
       checkpoints: [
         {
@@ -360,8 +460,20 @@ describe("MessagesTimeline body", () => {
     const full = {
       ...detail("default"),
       messages: [
-        { id: "a1", role: "assistant", text: "looking into it", createdAt: "2026-06-19T00:00:00.000Z", streaming: false },
-        { id: "u1", role: "user", text: "ship it please", createdAt: "2026-06-19T00:00:01.000Z", streaming: false },
+        {
+          id: "a1",
+          role: "assistant",
+          text: "looking into it",
+          createdAt: "2026-06-19T00:00:00.000Z",
+          streaming: false,
+        },
+        {
+          id: "u1",
+          role: "user",
+          text: "ship it please",
+          createdAt: "2026-06-19T00:00:01.000Z",
+          streaming: false,
+        },
       ],
     } as unknown as OrchestrationThread;
     const t = await testRender(
@@ -407,8 +519,24 @@ describe("MessagesTimeline body", () => {
   it("Given a settled turn, then its tool work folds behind a 'Worked for' row", async () => {
     const frame = await bodyFrame({
       messages: [
-        { id: "u1", role: "user", text: "go", turnId: "t1", createdAt: "2026-06-19T00:00:00.000Z", updatedAt: "2026-06-19T00:00:00.000Z", streaming: false },
-        { id: "m1", role: "assistant", text: "done", turnId: "t1", createdAt: "2026-06-19T00:00:05.000Z", updatedAt: "2026-06-19T00:00:05.000Z", streaming: false },
+        {
+          id: "u1",
+          role: "user",
+          text: "go",
+          turnId: "t1",
+          createdAt: "2026-06-19T00:00:00.000Z",
+          updatedAt: "2026-06-19T00:00:00.000Z",
+          streaming: false,
+        },
+        {
+          id: "m1",
+          role: "assistant",
+          text: "done",
+          turnId: "t1",
+          createdAt: "2026-06-19T00:00:05.000Z",
+          updatedAt: "2026-06-19T00:00:05.000Z",
+          streaming: false,
+        },
       ] as never,
       activities: [
         {
@@ -505,8 +633,18 @@ describe("MessagesTimeline body", () => {
     const frame = await bodyFrame(
       {},
       [
-        { requestId: "r1", requestKind: "command", detail: "rm -rf build", createdAt: "2026-06-19T00:00:00.000Z" },
-        { requestId: "r2", requestKind: "file-change", detail: "src/app.ts", createdAt: "2026-06-19T00:00:01.000Z" },
+        {
+          requestId: "r1",
+          requestKind: "command",
+          detail: "rm -rf build",
+          createdAt: "2026-06-19T00:00:00.000Z",
+        },
+        {
+          requestId: "r2",
+          requestKind: "file-change",
+          detail: "src/app.ts",
+          createdAt: "2026-06-19T00:00:01.000Z",
+        },
       ],
       1,
     );
