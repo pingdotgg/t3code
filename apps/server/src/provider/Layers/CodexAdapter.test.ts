@@ -1261,6 +1261,54 @@ const scopedLifecycleLayer = it.layer(
 );
 
 scopedLifecycleLayer("CodexAdapterLive scoped lifecycle", (it) => {
+  it.effect("keeps forwarding events after the startSession caller completes", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("thread-detached-start");
+
+      const startFiber = yield* adapter
+        .startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId,
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.forkDetach);
+      yield* Fiber.join(startFiber);
+
+      const runtime = scopedLifecycleRuntimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+      yield* runtime.emit({
+        id: asEventId("evt-after-start-caller-completed"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "turn/started",
+        threadId,
+        turnId: asTurnId("turn-after-start"),
+        payload: {
+          threadId: "provider-thread-after-start",
+          turn: {
+            id: "turn-after-start",
+            items: [],
+            status: "inProgress",
+            error: null,
+          },
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber).pipe(Effect.timeout("1 second"));
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag === "Some") {
+        NodeAssert.equal(firstEvent.value.type, "turn.started");
+        NodeAssert.equal(firstEvent.value.turnId, "turn-after-start");
+      }
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("closes the externally owned session scope on stopSession", () =>
     Effect.gen(function* () {
       scopedLifecycleRuntimeFactory.releasedThreadIds.length = 0;
