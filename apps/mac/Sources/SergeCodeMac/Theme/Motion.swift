@@ -29,7 +29,7 @@ struct MotionProfile: Equatable, Sendable {
 @MainActor
 enum Motion {
     /// Mirrors the system accessibility preference. Also the gate call sites
-    /// use for ongoing decorative movement (e.g. the connection pill pulse).
+    /// use for justified ongoing movement such as the active dictation pulse.
     static var reduceMotion: Bool {
         NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     }
@@ -97,7 +97,7 @@ enum Motion {
             )
     }
 
-    /// Cards and sheets materializing: gentle scale-up from 96% with a fade,
+    /// Cards and sheets materializing: gentle scale-up from 97% with a fade,
     /// anchored center. Reads as "arriving" rather than "growing".
     static var materialize: AnyTransition {
         reduceMotion
