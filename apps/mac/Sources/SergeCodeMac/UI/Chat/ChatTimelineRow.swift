@@ -284,13 +284,8 @@ private struct ToolGroupRow: View {
             Button {
                 // Settle, not snap: expanding can reveal dozens of rows, and
                 // the quick snap curve makes that layout shift feel violent.
-                // Deferred one runloop turn: rapid clicks mid-animation can
-                // land while the window is in a layout pass, and a state
-                // change that re-vends toolbar items during an in-layout
-                // render trips AppKit's layout-feedback-loop guard on
-                // macOS 26/27 (crash in _postWindowNeedsUpdateConstraints).
-                DispatchQueue.main.async {
-                    withAnimation(Motion.settle) { isExpanded.toggle() }
+                withDeferredAnimation(Motion.settle) {
+                    isExpanded.toggle()
                 }
             } label: {
                 HStack(spacing: 8) {
@@ -1172,11 +1167,8 @@ private struct SessionExitRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Button {
-                // Deferred one runloop turn — see ToolGroupRow: a state change
-                // that re-vends toolbar items mid-layout trips AppKit's
-                // layout-feedback guard on macOS 26/27.
-                DispatchQueue.main.async {
-                    withAnimation(Motion.settle) { isExpanded.toggle() }
+                withDeferredAnimation(Motion.settle) {
+                    isExpanded.toggle()
                 }
             } label: {
                 HStack(alignment: .top, spacing: 8) {

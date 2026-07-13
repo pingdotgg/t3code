@@ -66,6 +66,7 @@ struct MessageActionButton: View {
         .disabled(disabled)
         .opacity(disabled ? 0.4 : 1)
         .help(help)
+        .accessibilityLabel(help)
     }
 }
 
