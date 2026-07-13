@@ -241,6 +241,7 @@ interface CopilotSessionContext {
   activeSdkTurnId: string | undefined;
   activeSdkTurnKey: string | undefined;
   readonly historyMutationSemaphore: Semaphore.Semaphore;
+  readonly stopCompletion: Deferred.Deferred<void>;
   eventChain: Promise<void>;
   stopped: boolean;
 }
@@ -3028,6 +3029,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         Effect.tapError(() => copilotSdk.stopClient(input.threadId, client).pipe(Effect.ignore)),
       );
       const historyMutationSemaphore = yield* Semaphore.make(1);
+      const stopCompletion = yield* Deferred.make<void>();
 
       context = {
         threadId: input.threadId,
@@ -3075,6 +3077,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         activeSdkTurnId: undefined,
         activeSdkTurnKey: undefined,
         historyMutationSemaphore,
+        stopCompletion,
         eventChain: Promise.resolve(),
         stopped: false,
       };
@@ -3373,59 +3376,70 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         return;
       }
       if (context.stopped) {
+        yield* Deferred.await(context.stopCompletion);
         return;
       }
 
       context.stopped = true;
-      yield* context.historyMutationSemaphore.withPermit(
-        Effect.gen(function* () {
-          yield* Effect.promise(() => context.eventChain);
-          const activeTurnId = context.activeTurnId;
-          if (activeTurnId && !context.completedTurnIds.has(activeTurnId)) {
-            yield* Effect.promise(() =>
-              emitPendingTaskCompletionAsAssistantMessage(context, activeTurnId),
-            ).pipe(Effect.ignore);
-            yield* Effect.promise(() =>
-              emitTurnCompleted(context, activeTurnId, "interrupted", {
-                stopReason: null,
-              }),
-            ).pipe(Effect.ignore);
-          }
-          cancelTurnEndFallback(context);
-          yield* settlePendingPermissionHandlers(context, (binding) =>
-            emitPermissionRequestResolved(context, binding, "reject", DENIED_PERMISSION_RESULT),
-          );
-          yield* settlePendingUserInputs(context);
-          yield* copilotSdk.disconnect(context).pipe(Effect.ignore);
-          yield* copilotSdk.stopClient(threadId, context.client).pipe(Effect.ignore);
+      yield* context.historyMutationSemaphore
+        .withPermit(
+          Effect.gen(function* () {
+            yield* Effect.promise(() => context.eventChain);
+            const activeTurnId = context.activeTurnId;
+            if (activeTurnId && !context.completedTurnIds.has(activeTurnId)) {
+              yield* Effect.promise(() =>
+                emitPendingTaskCompletionAsAssistantMessage(context, activeTurnId),
+              ).pipe(Effect.ignore);
+              yield* Effect.promise(() =>
+                emitTurnCompleted(context, activeTurnId, "interrupted", {
+                  stopReason: null,
+                }),
+              ).pipe(Effect.ignore);
+            }
+            cancelTurnEndFallback(context);
+            yield* settlePendingPermissionHandlers(context, (binding) =>
+              emitPermissionRequestResolved(context, binding, "reject", DENIED_PERMISSION_RESULT),
+            );
+            yield* settlePendingUserInputs(context);
+            yield* copilotSdk.disconnect(context).pipe(Effect.ignore);
+            yield* copilotSdk.stopClient(threadId, context.client).pipe(Effect.ignore);
 
-          updateProviderSession(context, {
-            status: "closed",
-            activeTurnId: undefined,
-          });
-          yield* emit({
-            ...createBaseEvent({
-              threadId,
+            updateProviderSession(context, {
+              status: "closed",
+              activeTurnId: undefined,
+            });
+            yield* emit({
+              ...createBaseEvent({
+                threadId,
+              }),
+              type: "session.state.changed",
+              payload: {
+                state: "stopped",
+                reason: "Copilot session stopped.",
+              },
+            });
+            yield* emit({
+              ...createBaseEvent({
+                threadId,
+              }),
+              type: "session.exited",
+              payload: {
+                reason: "Copilot session stopped.",
+                exitKind: "graceful",
+              },
+            });
+          }),
+        )
+        .pipe(
+          Effect.ensuring(
+            Effect.gen(function* () {
+              if (sessions.get(threadId) === context) {
+                sessions.delete(threadId);
+              }
+              yield* Deferred.succeed(context.stopCompletion, undefined);
             }),
-            type: "session.state.changed",
-            payload: {
-              state: "stopped",
-              reason: "Copilot session stopped.",
-            },
-          });
-          yield* emit({
-            ...createBaseEvent({
-              threadId,
-            }),
-            type: "session.exited",
-            payload: {
-              reason: "Copilot session stopped.",
-              exitKind: "graceful",
-            },
-          });
-          sessions.delete(threadId);
-        }),
-      );
+          ),
+        );
     });
 
   const stopSession: CopilotAdapterShape["stopSession"] = Effect.fn("stopSession")(
