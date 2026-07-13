@@ -591,20 +591,18 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.title).toBe("Generated title");
   });
 
-  it("retries transient first-turn thread title generation failures", async () => {
+  it("does not retry first-turn thread title generation failures", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
     const seededTitle = "Please investigate reconnect failures after restar...";
-    harness.generateThreadTitle
-      .mockReturnValueOnce(
-        Effect.fail(
-          new TextGenerationError({
-            operation: "generateThreadTitle",
-            detail: "transient provider error",
-          }),
-        ),
-      )
-      .mockReturnValueOnce(Effect.succeed({ title: "Generated after retry" }));
+    harness.generateThreadTitle.mockReturnValueOnce(
+      Effect.fail(
+        new TextGenerationError({
+          operation: "generateThreadTitle",
+          detail: "transient provider error",
+        }),
+      ),
+    );
 
     await runtime!.runPromise(
       harness.engine.dispatch({
@@ -633,12 +631,13 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.generateThreadTitle.mock.calls.length === 2);
+    await waitFor(() => harness.generateThreadTitle.mock.calls.length === 1);
     await harness.drain();
 
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
-    expect(thread?.title).toBe("Generated after retry");
+    expect(harness.generateThreadTitle).toHaveBeenCalledOnce();
+    expect(thread?.title).toBe(seededTitle);
   });
 
   it("generates a Copilot thread title while starting the first Copilot turn", async () => {

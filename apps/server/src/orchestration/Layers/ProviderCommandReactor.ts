@@ -743,14 +743,12 @@ const make = Effect.gen(function* () {
       yield* Effect.gen(function* () {
         const { textGenerationModelSelection: modelSelection } =
           yield* serverSettingsService.getSettings;
-        const generated = yield* Effect.suspend(() =>
-          textGeneration.generateThreadTitle({
-            cwd: input.cwd,
-            message: input.messageText,
-            ...(attachments.length > 0 ? { attachments } : {}),
-            modelSelection,
-          }),
-        ).pipe(Effect.retry({ times: 2 }));
+        const generated = yield* textGeneration.generateThreadTitle({
+          cwd: input.cwd,
+          message: input.messageText,
+          ...(attachments.length > 0 ? { attachments } : {}),
+          modelSelection,
+        });
         if (!generated) return;
 
         const thread = yield* resolveThread(input.threadId);
@@ -1095,7 +1093,9 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const firstTurnAuxiliaryWorker = yield* makeDrainableWorker((job: Effect.Effect<void>) => job);
+  const firstTurnAuxiliaryWorker = yield* makeDrainableWorker((job: Effect.Effect<void>) => job, {
+    concurrency: "unbounded",
+  });
   const worker = yield* makeDrainableWorker(processDomainEventSafely);
 
   const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
