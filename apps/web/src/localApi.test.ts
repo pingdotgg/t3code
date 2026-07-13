@@ -601,6 +601,7 @@ describe("wsApi", () => {
     const clientSettings = {
       autoOpenPlanSidebar: false,
       chatFontSize: 14,
+      statusLineFontSize: 14,
       codeFontSize: 12,
       inputFontSize: 14,
       sidebarFontSize: 12,
@@ -671,6 +672,7 @@ describe("wsApi", () => {
     const clientSettings = {
       autoOpenPlanSidebar: false,
       chatFontSize: 14,
+      statusLineFontSize: 14,
       codeFontSize: 12,
       inputFontSize: 14,
       sidebarFontSize: 12,

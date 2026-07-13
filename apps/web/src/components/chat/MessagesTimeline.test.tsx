@@ -669,6 +669,9 @@ describe("MessagesTimeline", () => {
 
     expect(markup.match(new RegExp(`>${copilotResumeCommand}</span>`, "g"))).toHaveLength(1);
     expect(markup.indexOf(copilotResumeCommand)).toBeGreaterThan(markup.indexOf("All set."));
+    expect(markup).toContain("text-[length:var(--app-status-line-font-size)]");
+    expect(markup).toContain("opacity-0");
+    expect(markup).toContain("group-hover/assistant:opacity-100");
   });
 
   it("hides the Copilot resume command while the terminal assistant message is still active", async () => {

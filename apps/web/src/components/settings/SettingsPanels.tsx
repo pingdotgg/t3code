@@ -32,6 +32,7 @@ import {
   DEFAULT_INPUT_FONT_SIZE,
   DEFAULT_SIDEBAR_FONT_SIZE,
   DEFAULT_SIDEBAR_TRANSLUCENCY,
+  DEFAULT_STATUS_LINE_FONT_SIZE,
   DEFAULT_TOOL_FONT_SIZE,
   DEFAULT_THREAD_COMPLETION_NOTIFICATION_MODE,
   DEFAULT_UI_DENSITY,
@@ -632,6 +633,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.chatFontSize !== DEFAULT_UNIFIED_SETTINGS.chatFontSize
         ? ["Chat font size"]
         : []),
+      ...(settings.statusLineFontSize !== DEFAULT_UNIFIED_SETTINGS.statusLineFontSize
+        ? ["Status line font size"]
+        : []),
       ...(settings.inputFontSize !== DEFAULT_UNIFIED_SETTINGS.inputFontSize
         ? ["Input font size"]
         : []),
@@ -678,6 +682,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.autoOpenPlanSidebar,
       settings.chatFontSize,
       settings.codeFontSize,
+      settings.statusLineFontSize,
       settings.inputFontSize,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
@@ -1421,6 +1426,47 @@ export function GeneralSettingsPanel() {
                 <SelectValue>
                   {FONT_SIZE_OPTIONS.find((option) => option.value === settings.chatFontSize)
                     ?.label ?? `${DEFAULT_CHAT_FONT_SIZE}px`}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {FONT_SIZE_OPTIONS.map((option) => (
+                  <SelectItem hideIndicator key={option.value} value={String(option.value)}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
+          title="Status line font size"
+          description="Font size for assistant metadata lines, including timestamps, elapsed time, and resume commands."
+          resetAction={
+            settings.statusLineFontSize !== DEFAULT_STATUS_LINE_FONT_SIZE ? (
+              <SettingResetButton
+                label="status line font size"
+                onClick={() =>
+                  updateSettings({
+                    statusLineFontSize: DEFAULT_STATUS_LINE_FONT_SIZE,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={String(settings.statusLineFontSize)}
+              onValueChange={(value) => {
+                const num = Number(value);
+                if (isFontSize(num)) {
+                  updateSettings({ statusLineFontSize: num });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Status line font size">
+                <SelectValue>
+                  {FONT_SIZE_OPTIONS.find((option) => option.value === settings.statusLineFontSize)
+                    ?.label ?? `${DEFAULT_STATUS_LINE_FONT_SIZE}px`}
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>

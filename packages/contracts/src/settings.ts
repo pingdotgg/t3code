@@ -32,6 +32,7 @@ export const FontSize = Schema.Int.check(Schema.isGreaterThanOrEqualTo(6)).check
 export type FontSize = typeof FontSize.Type;
 export const DEFAULT_CODE_FONT_SIZE: FontSize = 12 as FontSize;
 export const DEFAULT_CHAT_FONT_SIZE: FontSize = 14 as FontSize;
+export const DEFAULT_STATUS_LINE_FONT_SIZE: FontSize = 14 as FontSize;
 export const DEFAULT_TOOL_FONT_SIZE: FontSize = 12 as FontSize;
 export const DEFAULT_SIDEBAR_FONT_SIZE: FontSize = 12 as FontSize;
 export const DEFAULT_INPUT_FONT_SIZE: FontSize = 14 as FontSize;
@@ -74,6 +75,9 @@ export const DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE: SidebarProjectGroupingMode =
 export const ClientSettingsSchema = Schema.Struct({
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   chatFontSize: FontSize.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_CHAT_FONT_SIZE))),
+  statusLineFontSize: FontSize.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_STATUS_LINE_FONT_SIZE)),
+  ),
   codeFontSize: FontSize.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_CODE_FONT_SIZE))),
   inputFontSize: FontSize.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_INPUT_FONT_SIZE))),
   sidebarFontSize: FontSize.pipe(
@@ -419,6 +423,7 @@ export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 export const ClientSettingsPatch = Schema.Struct({
   autoOpenPlanSidebar: Schema.optionalKey(Schema.Boolean),
   chatFontSize: Schema.optionalKey(FontSize),
+  statusLineFontSize: Schema.optionalKey(FontSize),
   codeFontSize: Schema.optionalKey(FontSize),
   inputFontSize: Schema.optionalKey(FontSize),
   sidebarFontSize: Schema.optionalKey(FontSize),

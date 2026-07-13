@@ -6,6 +6,7 @@ import {
   DEFAULT_INPUT_FONT_SIZE,
   DEFAULT_SIDEBAR_TRANSLUCENCY,
   DEFAULT_SIDEBAR_FONT_SIZE,
+  DEFAULT_STATUS_LINE_FONT_SIZE,
   DEFAULT_TOOL_FONT_SIZE,
   DEFAULT_UI_DENSITY,
   DEFAULT_UI_FONT,
@@ -77,6 +78,7 @@ export function applyCodeFont(font: CodeFont): void {
 export function applyFontSizes(sizes: {
   codeFontSize: FontSize;
   chatFontSize: FontSize;
+  statusLineFontSize: FontSize;
   sidebarFontSize: FontSize;
   toolFontSize: FontSize;
   inputFontSize: FontSize;
@@ -88,6 +90,7 @@ export function applyFontSizes(sizes: {
   const style = document.documentElement.style;
   style.setProperty("--app-code-font-size", `${sizes.codeFontSize}px`);
   style.setProperty("--app-chat-font-size", `${sizes.chatFontSize}px`);
+  style.setProperty("--app-status-line-font-size", `${sizes.statusLineFontSize}px`);
   style.setProperty("--app-sidebar-font-size", `${sizes.sidebarFontSize}px`);
   style.setProperty("--app-tool-font-size", `${sizes.toolFontSize}px`);
   style.setProperty("--app-input-font-size", `${sizes.inputFontSize}px`);
@@ -188,6 +191,10 @@ if (typeof document !== "undefined") {
   applyFontSizes({
     codeFontSize: normalizeFontSize(storedSettings?.codeFontSize, DEFAULT_CODE_FONT_SIZE),
     chatFontSize: normalizeFontSize(storedSettings?.chatFontSize, DEFAULT_CHAT_FONT_SIZE),
+    statusLineFontSize: normalizeFontSize(
+      storedSettings?.statusLineFontSize,
+      DEFAULT_STATUS_LINE_FONT_SIZE,
+    ),
     sidebarFontSize: normalizeFontSize(storedSettings?.sidebarFontSize, DEFAULT_SIDEBAR_FONT_SIZE),
     toolFontSize: normalizeFontSize(storedSettings?.toolFontSize, DEFAULT_TOOL_FONT_SIZE),
     inputFontSize: normalizeFontSize(storedSettings?.inputFontSize, DEFAULT_INPUT_FONT_SIZE),
@@ -199,6 +206,7 @@ export function useAppFont() {
   const codeFont = useSettings((settings) => settings.codeFont);
   const codeFontSize = useSettings((settings) => settings.codeFontSize);
   const chatFontSize = useSettings((settings) => settings.chatFontSize);
+  const statusLineFontSize = useSettings((settings) => settings.statusLineFontSize);
   const sidebarFontSize = useSettings((settings) => settings.sidebarFontSize);
   const toolFontSize = useSettings((settings) => settings.toolFontSize);
   const inputFontSize = useSettings((settings) => settings.inputFontSize);
@@ -214,8 +222,22 @@ export function useAppFont() {
   }, [codeFont]);
 
   useEffect(() => {
-    applyFontSizes({ codeFontSize, chatFontSize, sidebarFontSize, toolFontSize, inputFontSize });
-  }, [chatFontSize, codeFontSize, sidebarFontSize, toolFontSize, inputFontSize]);
+    applyFontSizes({
+      codeFontSize,
+      chatFontSize,
+      statusLineFontSize,
+      sidebarFontSize,
+      toolFontSize,
+      inputFontSize,
+    });
+  }, [
+    chatFontSize,
+    codeFontSize,
+    statusLineFontSize,
+    sidebarFontSize,
+    toolFontSize,
+    inputFontSize,
+  ]);
 
   useEffect(() => {
     applyUiDensity(uiDensity);
@@ -249,6 +271,7 @@ export function useAppFont() {
     codeFont,
     codeFontSize,
     chatFontSize,
+    statusLineFontSize,
     sidebarFontSize,
     toolFontSize,
     inputFontSize,
