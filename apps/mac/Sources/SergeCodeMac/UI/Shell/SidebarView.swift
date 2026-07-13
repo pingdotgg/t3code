@@ -18,9 +18,15 @@ struct SidebarView: View {
         let project: Project
     }
 
+    private struct ThreadActionTarget {
+        let model: AppModel
+        let thread: ChatThread
+    }
+
     @UIState private var renameTarget: ProjectActionTarget?
     @UIState private var renameText = ""
     @UIState private var deleteTarget: ProjectActionTarget?
+    @UIState private var deleteThreadTarget: ThreadActionTarget?
     @UIState private var forgetTarget: RemoteDeviceSession?
 
     var body: some View {
@@ -53,7 +59,8 @@ struct SidebarView: View {
                                     Task { await model.archiveThread(thread) }
                                 }
                                 Button("Delete", systemImage: "trash", role: .destructive) {
-                                    Task { await model.deleteThread(thread) }
+                                    deleteThreadTarget = ThreadActionTarget(
+                                        model: model, thread: thread)
                                 }
                             }
                     }
@@ -141,6 +148,25 @@ struct SidebarView: View {
             }
         }
         .alert(
+            "Delete Session?",
+            isPresented: Binding(
+                get: { deleteThreadTarget != nil },
+                set: { if !$0 { deleteThreadTarget = nil } }
+            )
+        ) {
+            Button("Delete", role: .destructive) {
+                if let target = deleteThreadTarget {
+                    deleteThreadTarget = nil
+                    Task { await target.model.deleteThread(target.thread) }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            if let target = deleteThreadTarget {
+                Text("“\(target.thread.title)” will be permanently deleted. This can't be undone.")
+            }
+        }
+        .alert(
             "Forget Device?",
             isPresented: Binding(
                 get: { forgetTarget != nil },
@@ -211,7 +237,8 @@ struct SidebarView: View {
                                 }
                                 .disabled(session.model.connection != .ready)
                                 Button("Delete", role: .destructive) {
-                                    Task { await session.model.deleteThread(thread) }
+                                    deleteThreadTarget = ThreadActionTarget(
+                                        model: session.model, thread: thread)
                                 }
                                 .disabled(session.model.connection != .ready)
                             }

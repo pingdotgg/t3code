@@ -223,9 +223,19 @@ public struct DiffReviewView: View {
                 filePopoverList
                     .frame(minWidth: 320, maxHeight: 360)
             }
-            .help("Choose file")
+            .help(fileNavigationHelp)
         }
         .controlSize(.small)
+    }
+
+    /// Renamed files get their old path in the tooltip since the button only
+    /// has room for the new path's last component.
+    private var fileNavigationHelp: String {
+        guard let selectedFile else { return "Choose file" }
+        if let oldPath = selectedFile.oldPath, selectedFile.status == .renamed {
+            return "Renamed from \(oldPath)"
+        }
+        return selectedFile.path
     }
 
     private var filePopoverList: some View {
@@ -240,11 +250,25 @@ public struct DiffReviewView: View {
                             .font(.caption2)
                             .foregroundStyle(statusColor(file.status))
                             .frame(width: 12)
-                        Text(file.path)
-                            .font(.system(.body, design: .monospaced))
-                            .lineLimit(1)
-                            .truncationMode(.middle)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(file.path)
+                                .font(.system(.body, design: .monospaced))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            if let oldPath = file.oldPath, file.status == .renamed {
+                                Text("from \(oldPath)")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                        }
                         Spacer(minLength: 4)
+                        if file.isBinary {
+                            Text("Binary")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
                         let add = DiffPresentation.additionCount(in: file)
                         let del = DiffPresentation.deletionCount(in: file)
                         if add > 0 {
@@ -559,16 +583,30 @@ public struct DiffReviewView: View {
     }
 
     private func emptyFileState(for file: DiffFile) -> some View {
+        let title: String
         let description: String
-        switch file.status {
-        case .renamed:
-            description = "File was renamed (no content changes)"
-        case .added, .modified, .deleted:
-            description = "No displayable changes — the file may be binary."
+        let symbol: String
+        if file.isBinary {
+            title = "Binary File"
+            description = "Binary file — contents not shown."
+            symbol = "doc.zipper"
+        } else {
+            switch file.status {
+            case .renamed:
+                title = "Renamed File"
+                description =
+                    file.oldPath.map { "Renamed from \($0)" }
+                    ?? "File was renamed (no content changes)"
+                symbol = statusGlyph(file.status)
+            case .added, .modified, .deleted:
+                title = "No Displayable Changes"
+                description = "No displayable changes."
+                symbol = statusGlyph(file.status)
+            }
         }
         return ContentUnavailableView(
-            file.status == .renamed ? "Renamed File" : "No Displayable Changes",
-            systemImage: statusGlyph(file.status),
+            title,
+            systemImage: symbol,
             description: Text(description)
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
