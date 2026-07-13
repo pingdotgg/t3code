@@ -1194,13 +1194,24 @@ function resolveTurnIdForSdkUserMessage(
     return mappedTurnId;
   }
 
-  return context.queuedTurnIds.find((turnId) => {
-    const snapshot = context.turns.find((turn) => turn.id === turnId);
-    return (
-      snapshot?.sdkHistoryEventId === undefined &&
-      !isSdkEventBeforeQueuedTurn(context, turnId, event.timestamp)
-    );
-  });
+  return context.turns.find(
+    (snapshot) =>
+      snapshot.sdkHistoryEventId === undefined &&
+      !isSdkEventBeforeQueuedTurn(context, snapshot.id, event.timestamp),
+  )?.id;
+}
+
+function bindSdkUserMessageToTurn(
+  context: CopilotSessionContext,
+  event: Extract<SessionEvent, { type: "user.message" }>,
+): TurnId | undefined {
+  const turnId = resolveTurnIdForSdkUserMessage(context, event);
+  if (!turnId) {
+    return undefined;
+  }
+  context.turnIdByProviderItemId.set(event.id, turnId);
+  ensureTurnSnapshot(context, turnId).sdkHistoryEventId = event.id;
+  return turnId;
 }
 
 function resolveTurnIdForEvent(
@@ -1382,6 +1393,19 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
             cause,
           }),
       }).pipe(Effect.asVoid),
+    getHistoryEvents: (
+      context: CopilotSessionContext,
+    ): Effect.Effect<ReadonlyArray<SessionEvent>, ProviderAdapterRequestError> =>
+      Effect.tryPromise({
+        try: () => context.sdkSession.getEvents(),
+        catch: (cause) =>
+          new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "session.getEvents",
+            detail: detailFromCause(cause, "Failed to read Copilot history."),
+            cause,
+          }),
+      }),
     readPlan: (
       context: CopilotSessionContext,
     ): Effect.Effect<string, ProviderAdapterRequestError> =>
@@ -2420,12 +2444,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         return;
       }
       case "user.message": {
-        const turnId = resolveTurnIdForSdkUserMessage(context, event);
-        if (!turnId) {
-          return;
-        }
-        context.turnIdByProviderItemId.set(event.id, turnId);
-        ensureTurnSnapshot(context, turnId).sdkHistoryEventId = event.id;
+        bindSdkUserMessageToTurn(context, event);
         return;
       }
       case "assistant.turn_start": {
@@ -3429,6 +3448,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
   const rollbackThread: CopilotAdapterShape["rollbackThread"] = Effect.fn("rollbackThread")(
     function* (threadId, numTurns) {
       const context = yield* requireSessionContext(sessions, threadId);
+      yield* Effect.promise(() => context.eventChain);
       if (
         context.activeTurnId !== undefined ||
         context.activeSdkTurnKey !== undefined ||
@@ -3443,7 +3463,16 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
 
       const nextLength = Math.max(0, context.turns.length - numTurns);
       const removedTurns = context.turns.slice(nextLength);
-      const sdkHistoryEventId = removedTurns[0]?.sdkHistoryEventId;
+      let sdkHistoryEventId = removedTurns[0]?.sdkHistoryEventId;
+      if (removedTurns.length > 0 && !sdkHistoryEventId) {
+        const historyEvents = yield* copilotSdk.getHistoryEvents(context);
+        for (const event of historyEvents) {
+          if (event.type === "user.message") {
+            bindSdkUserMessageToTurn(context, event);
+          }
+        }
+        sdkHistoryEventId = removedTurns[0]?.sdkHistoryEventId;
+      }
       if (removedTurns.length > 0 && !sdkHistoryEventId) {
         return yield* new ProviderAdapterRequestError({
           provider: PROVIDER,

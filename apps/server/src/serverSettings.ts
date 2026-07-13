@@ -133,9 +133,10 @@ export class ServerSettingsService extends Context.Service<
     readonly streamChanges: Stream.Stream<ServerSettings>;
 
     /**
-     * Acquire a settings change subscription synchronously in the current
-     * fiber. Use this before reading a snapshot when changes between the
-     * snapshot and a lazily started stream must not be lost.
+     * Acquire the settings change subscription synchronously and return a
+     * stream backed by it. Consumers that fork a long-running watcher should
+     * use this instead of `streamChanges` so a publish cannot land between
+     * scheduling the watcher fiber and the fiber subscribing.
      */
     readonly subscribeChanges: Effect.Effect<Stream.Stream<ServerSettings>, never, Scope.Scope>;
   }
