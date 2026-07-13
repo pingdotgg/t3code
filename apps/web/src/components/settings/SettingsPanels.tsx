@@ -7,7 +7,7 @@ import {
   RefreshCwIcon,
   Trash2Icon,
 } from "lucide-react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DEFAULT_REVIEW_CHANGES_PROMPT_TEMPLATE,
@@ -65,7 +65,6 @@ import {
   setDesktopUpdateStateQueryData,
   useDesktopUpdateState,
 } from "../../lib/desktopUpdateReactQuery";
-import { getPrimaryEnvironmentConnection } from "../../environments/runtime";
 import {
   getCustomModelOptionsByInstance,
   resolveAppModelSelectionState,
@@ -2190,11 +2189,6 @@ export function AgentWorkflowsSettingsPanel() {
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
   const customWorkflows = settings.agentWorkflows.customWorkflows;
-  const workflowRunsQuery = useQuery({
-    queryKey: ["workflow-runs", "recent"],
-    queryFn: () => getPrimaryEnvironmentConnection().client.workflow.listRuns({ limit: 25 }),
-    refetchInterval: 10_000,
-  });
 
   const updateAgentWorkflows = useCallback(
     (patch: Partial<typeof settings.agentWorkflows>) => {
@@ -2540,61 +2534,6 @@ export function AgentWorkflowsSettingsPanel() {
               </SettingsRow>
             </div>
           ))
-        )}
-      </SettingsSection>
-      <SettingsSection
-        title="Recent workflow runs"
-        headerAction={
-          <Button
-            size="xs"
-            variant="outline"
-            disabled={workflowRunsQuery.isFetching}
-            onClick={() => void workflowRunsQuery.refetch()}
-          >
-            <RefreshCwIcon className="size-3.5" />
-            Refresh
-          </Button>
-        }
-      >
-        {workflowRunsQuery.isError ? (
-          <SettingsRow
-            title="Unable to load workflow runs"
-            description={
-              workflowRunsQuery.error instanceof Error
-                ? workflowRunsQuery.error.message
-                : "Recent workflow runs could not be loaded."
-            }
-          />
-        ) : (workflowRunsQuery.data?.runs.length ?? 0) === 0 ? (
-          <SettingsRow
-            title="No workflow runs yet"
-            description="Manual and automatic runs appear here."
-          />
-        ) : (
-          <div className="divide-y divide-border/60">
-            {workflowRunsQuery.data?.runs.map((run) => (
-              <div key={run.runId} className="grid gap-1 py-3 text-sm sm:grid-cols-[1fr_auto]">
-                <div>
-                  <div className="font-medium text-foreground">
-                    {run.workflowName}{" "}
-                    <span className="text-xs font-normal text-muted-foreground">
-                      {run.trigger === "manual" ? "manual" : "after assistant completes"}
-                    </span>
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    {run.message ??
-                      (run.targetThreadId
-                        ? `Started in ${run.targetThreadId}`
-                        : `Requested from ${run.requestedThreadId}`)}
-                  </div>
-                </div>
-                <div className="text-left text-xs text-muted-foreground sm:text-right">
-                  <div className="capitalize">{run.status.replace("-", " ")}</div>
-                  <div>{formatRelativeTimeLabel(run.createdAt)}</div>
-                </div>
-              </div>
-            ))}
-          </div>
         )}
       </SettingsSection>
     </SettingsPageContainer>

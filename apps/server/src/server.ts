@@ -67,6 +67,7 @@ import {
 } from "./auth/http.ts";
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
+import { AuthControlPlaneLive, AuthCoreLive } from "./auth/Layers/AuthControlPlane.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
 import {
   clearPersistedServerRuntimeState,
@@ -208,6 +209,16 @@ const AuthLayerLive = ServerAuthLive.pipe(
   Layer.provide(ServerSecretStoreLive),
 );
 
+const AuthControlPlaneLayerLive = AuthControlPlaneLive.pipe(
+  Layer.provideMerge(AuthCoreLive),
+  Layer.provideMerge(PersistenceLayerLive),
+  Layer.provide(ServerSecretStoreLive),
+);
+
+const CloudEnvironmentAuthLayerLive = CloudEnvironmentAuth.runtimeLayer.pipe(
+  Layer.provide(AuthControlPlaneLayerLive),
+);
+
 const CloudRelayClientLayerLive = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig;
@@ -232,8 +243,16 @@ type CloudHttpRuntimeServices = Exclude<
 
 const CloudBaseLayerLive = Layer.mergeAll(
   CloudServerSecretStore.layer,
-  CloudEnvironmentAuth.runtimeLayer,
+  CloudEnvironmentAuthLayerLive,
   CloudRelayClientLayerLive,
+);
+
+const AgentAwarenessRelayLayerLive = AgentAwarenessRelay.layer.pipe(
+  Layer.provide(CloudBaseLayerLive),
+  Layer.provideMerge(ServerEnvironmentLive),
+  Layer.provideMerge(OrchestrationLayerLive),
+  Layer.provideMerge(PersistenceLayerLive),
+  Layer.provideMerge(RepositoryIdentityResolverLive),
 );
 
 export const CloudHttpRuntimeLayerLive = Layer.mergeAll(
@@ -242,9 +261,15 @@ export const CloudHttpRuntimeLayerLive = Layer.mergeAll(
   ManagedEndpointRuntime.layer.pipe(Layer.provide(CloudBaseLayerLive)),
 ) as unknown as Layer.Layer<CloudHttpRuntimeServices>;
 
-export const CloudRuntimeLayerLive = AgentAwarenessRelay.layer.pipe(
-  Layer.provide(CloudBaseLayerLive),
-  Layer.provideMerge(CloudHttpRuntimeLayerLive),
+const CloudRuntimeServicesLayerLive = Layer.mergeAll(
+  CloudHttpRuntimeLayerLive,
+  AgentAwarenessRelayLayerLive,
+);
+
+export const CloudRuntimeLayerLive = Layer.effectDiscard(
+  Effect.logInfo("cloud-runtime-ready"),
+).pipe(
+  Layer.provideMerge(CloudRuntimeServicesLayerLive),
 ) as unknown as Layer.Layer<CloudRuntimeServices>;
 
 const ConnectHttpApiLayerLive = connectHttpApiLayer as unknown as Layer.Layer<never>;
