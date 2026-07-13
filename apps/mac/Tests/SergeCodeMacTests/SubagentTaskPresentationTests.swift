@@ -8,28 +8,26 @@ import Testing
 struct SubagentTaskPresentationTests {
     private let now = Date(timeIntervalSince1970: 1_000)
 
-    @Test("fresh active server health suppresses the client heuristic")
-    func freshActiveHealthSuppressesHeuristic() {
-        let task = runningTask(lastActivityAt: now.addingTimeInterval(-240))
-        let health = ThreadHealth(stalled: false, lastActivityAt: now.addingTimeInterval(-30))
+    @Test("fresh running task is not marked as silently running")
+    func freshTaskIsNotSilent() {
+        let task = runningTask(lastActivityAt: now.addingTimeInterval(-30))
 
-        #expect(!SubagentTaskPresentation.isStalled(task: task, at: now, threadHealth: health))
+        #expect(!SubagentTaskPresentation.isRunningSilently(task: task, at: now))
     }
 
-    @Test("stale active server health falls back to the client heuristic")
-    func staleActiveHealthFallsBackToHeuristic() {
-        let task = runningTask(lastActivityAt: now.addingTimeInterval(-240))
-        let health = ThreadHealth(stalled: false, lastActivityAt: now.addingTimeInterval(-181))
+    @Test("quiet running task is shown as running silently")
+    func quietTaskIsRunningSilently() {
+        let task = runningTask(lastActivityAt: now.addingTimeInterval(-181))
 
-        #expect(SubagentTaskPresentation.isStalled(task: task, at: now, threadHealth: health))
+        #expect(SubagentTaskPresentation.isRunningSilently(task: task, at: now))
     }
 
-    @Test("server stalled health always stalls a running task")
-    func serverStalledHealthAlwaysStalls() {
-        let task = runningTask(lastActivityAt: now)
-        let health = ThreadHealth(stalled: true, lastActivityAt: now)
+    @Test("silence does not relabel a terminal task")
+    func silenceDoesNotRelabelTerminalTask() {
+        var task = runningTask(lastActivityAt: now.addingTimeInterval(-181))
+        task.state = .completed
 
-        #expect(SubagentTaskPresentation.isStalled(task: task, at: now, threadHealth: health))
+        #expect(!SubagentTaskPresentation.isRunningSilently(task: task, at: now))
     }
 
     @Test("agent roster requires the exact tool title prefix")

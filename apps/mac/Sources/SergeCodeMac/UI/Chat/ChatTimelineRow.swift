@@ -103,7 +103,6 @@ struct ChatTimelineRowView: View {
         case .subagentTask(let task):
             SubagentTaskRow(
                 task: task,
-                threadHealth: model.threads.first { $0.id == threadID }?.health,
                 modelDisplayNames: model.modelDisplayNames,
                 stopError: model.subagentStopErrors[task.taskId],
                 onStopAgent: {
@@ -614,8 +613,6 @@ private struct SubagentTaskRow: View {
     private static let maxVisibleLogEntries = 30
 
     let task: SubagentTaskItem
-    /// Server liveness for the owning thread; wins over the client heuristic.
-    var threadHealth: ThreadHealth?
     let modelDisplayNames: [String: String]
     /// Transient stop-RPC failure (not part of the provider task payload).
     let stopError: String?
@@ -651,15 +648,15 @@ private struct SubagentTaskRow: View {
 
     @ViewBuilder
     private func rowChrome(now currentNow: Date) -> some View {
-        let stalled = SubagentTaskPresentation.isStalled(
-            task: task, at: currentNow, threadHealth: threadHealth)
+        let runningSilently = SubagentTaskPresentation.isRunningSilently(
+            task: task, at: currentNow)
         VStack(alignment: .leading, spacing: 4) {
             Button {
                 guard hasExpandableContent else { return }
                 withAnimation(Motion.snap) { isExpanded.toggle() }
             } label: {
                 HStack(alignment: .top, spacing: 9) {
-                    statusIcon(stalled: stalled)
+                    statusIcon(runningSilently: runningSilently)
                         .frame(width: TranscriptMetrics.iconColumn, height: 16)
                         .padding(.top, 1)
 
@@ -690,7 +687,7 @@ private struct SubagentTaskRow: View {
                             task: task, modelDisplayNames: modelDisplayNames)
 
                         SubagentTaskHealthTags(
-                            task: task, now: currentNow, threadHealth: threadHealth)
+                            task: task, now: currentNow)
 
                         if let subtitle = SubagentTaskPresentation.subtitle(for: task) {
                             Text(subtitle)
@@ -721,9 +718,9 @@ private struct SubagentTaskRow: View {
             }
         }
         .transcriptCard(
-            fill: SubagentTaskPresentation.backgroundTint(for: task, stalled: stalled),
+            fill: SubagentTaskPresentation.backgroundTint(for: task, stalled: false),
             showRail: true,
-            railColor: SubagentTaskPresentation.railColor(for: task, stalled: stalled))
+            railColor: SubagentTaskPresentation.railColor(for: task, stalled: false))
         .animation(Motion.ambient, value: task.state)
         .onChange(of: task.state) { _, _ in
             onClearStopError()
@@ -837,8 +834,8 @@ private struct SubagentTaskRow: View {
     private var title: String { SubagentTaskPresentation.title(for: task) }
 
     @ViewBuilder
-    private func statusIcon(stalled: Bool) -> some View {
-        SubagentTaskStatusIcon(task: task, stalled: stalled)
+    private func statusIcon(runningSilently: Bool) -> some View {
+        SubagentTaskStatusIcon(task: task, runningSilently: runningSilently)
     }
 }
 

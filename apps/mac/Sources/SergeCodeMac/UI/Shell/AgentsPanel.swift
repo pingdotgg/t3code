@@ -63,10 +63,6 @@ struct AgentsPanel: View {
         model.subagentTaskAggregator.threadGroups.isEmpty && siblingAgents.isEmpty
     }
 
-    private func threadHealth(for threadID: String) -> ThreadHealth? {
-        model.threads.first { $0.id == threadID }?.health
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
@@ -108,7 +104,6 @@ struct AgentsPanel: View {
                                 ForEach(group.entries) { entry in
                                     AgentsPanelTaskRow(
                                         entry: entry,
-                                        threadHealth: threadHealth(for: entry.threadID),
                                         modelDisplayNames: model.modelDisplayNames,
                                         stopError: model.subagentStopErrors[entry.task.taskId],
                                         onStop: {
@@ -193,8 +188,6 @@ struct AgentsPanel: View {
 @MainActor
 private struct AgentsPanelTaskRow: View {
     let entry: SubagentTaskAggregator.Entry
-    /// Server liveness for the owning thread; wins over the client heuristic.
-    let threadHealth: ThreadHealth?
     let modelDisplayNames: [String: String]
     let stopError: String?
     let onStop: () -> Void
@@ -214,12 +207,12 @@ private struct AgentsPanelTaskRow: View {
 
     @ViewBuilder
     private func rowChrome(now: Date) -> some View {
-        let stalled = SubagentTaskPresentation.isStalled(
-            task: entry.task, at: now, threadHealth: threadHealth)
+        let runningSilently = SubagentTaskPresentation.isRunningSilently(
+            task: entry.task, at: now)
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .top, spacing: 9) {
                 SubagentTaskStatusIcon(
-                    task: entry.task, stalled: stalled, isLive: entry.isLive)
+                    task: entry.task, runningSilently: runningSilently, isLive: entry.isLive)
                     .frame(width: 16, height: 16)
                     .padding(.top, 1)
 
@@ -246,7 +239,7 @@ private struct AgentsPanelTaskRow: View {
                     SubagentTaskIdentityBadge(
                         task: entry.task, modelDisplayNames: modelDisplayNames)
                     SubagentTaskHealthTags(
-                        task: entry.task, now: now, threadHealth: threadHealth)
+                        task: entry.task, now: now)
 
                     if !entry.isLive {
                         Text("Not live — open thread to refresh")
@@ -275,7 +268,7 @@ private struct AgentsPanelTaskRow: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
         .background(
-            SubagentTaskPresentation.backgroundTint(for: entry.task, stalled: stalled),
+            SubagentTaskPresentation.backgroundTint(for: entry.task, stalled: false),
             in: RoundedRectangle(cornerRadius: 10))
         .opacity(entry.isLive ? 1 : 0.58)
         .animation(Motion.ambient, value: entry.task.state)
@@ -320,14 +313,14 @@ private struct AgentsPanelSiblingRow: View {
 
     @ViewBuilder
     private func rowChrome(now: Date) -> some View {
-        let stalled = thread.isStalled
+        let runningSilently = thread.isStalled
         Button(action: onSelect) {
             HStack(alignment: .top, spacing: 9) {
-                Image(systemName: stalled ? "exclamationmark.circle" : "circle.dotted")
+                Image(systemName: "circle.dotted")
                     .symbolEffect(
-                        .pulse, isActive: thread.status == .running && !stalled
+                        .pulse, isActive: thread.status == .running && !runningSilently
                             && !Motion.reduceMotion)
-                    .foregroundStyle(stalled ? .orange : .secondary)
+                    .foregroundStyle(.secondary)
                     .frame(width: 16, height: 16)
                     .padding(.top, 1)
 
@@ -347,13 +340,13 @@ private struct AgentsPanelSiblingRow: View {
                         tint: .secondary,
                         fill: AnyShapeStyle(.quaternary))
                     HStack(spacing: 6) {
-                        Text(activityLabel(now: now, stalled: stalled))
+                        Text(activityLabel(now: now, runningSilently: runningSilently))
                             .font(.caption2)
-                            .foregroundStyle(stalled ? Color.orange : Color.secondary)
-                        if stalled {
+                            .foregroundStyle(Color.secondary)
+                        if runningSilently {
                             TranscriptPill(
-                                "stalled", tint: .orange,
-                                fill: AnyShapeStyle(Color.orange.opacity(0.14)))
+                                "running silently", tint: .secondary,
+                                fill: AnyShapeStyle(Color.secondary.opacity(0.14)))
                         }
                     }
                 }
@@ -364,7 +357,7 @@ private struct AgentsPanelSiblingRow: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
         .background(
-            (stalled ? Color.orange.opacity(0.08) : Color.accentColor.opacity(0.08)),
+            Color.accentColor.opacity(0.08),
             in: RoundedRectangle(cornerRadius: 10))
         .help("Open \(thread.title)")
         .accessibilityLabel("Open agent \(agentName)")
@@ -383,7 +376,7 @@ private struct AgentsPanelSiblingRow: View {
     }
 
     private var statusText: String {
-        if thread.isStalled { return "stalled" }
+        if thread.isStalled { return "running silently" }
         switch thread.status {
         case .running: return "running"
         case .backgroundWork: return "background work"
@@ -394,9 +387,9 @@ private struct AgentsPanelSiblingRow: View {
         }
     }
 
-    private func activityLabel(now: Date, stalled: Bool) -> String {
-        if stalled, let since = thread.health?.stalledSince {
-            return SubagentTaskPresentation.stalledForLabel(since: since, at: now)
+    private func activityLabel(now: Date, runningSilently: Bool) -> String {
+        if runningSilently {
+            return "running silently"
         }
         let reference = thread.health?.lastActivityAt ?? thread.updatedAt
         let seconds = max(0, Int(now.timeIntervalSince(reference)))
