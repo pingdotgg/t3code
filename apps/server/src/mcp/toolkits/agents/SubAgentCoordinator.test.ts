@@ -214,7 +214,11 @@ it.effect("spawns a sub-agent thread next to the caller's thread on another prov
       expect(create.worktreePath).toBe("/tmp/worktrees/foo");
       expect(create.branch).toBe("feature/foo");
       expect(create.runtimeMode).toBe("approval-required");
-      expect(create.modelSelection).toEqual({ instanceId: "codex", model: "default-model" });
+      expect(create.modelSelection).toEqual({
+        instanceId: "codex",
+        model: "default-model",
+        options: [{ id: "serviceTier", value: "priority" }],
+      });
     }
     expect(turnStart?.type).toBe("thread.turn.start");
     if (turnStart?.type === "thread.turn.start") {
@@ -222,6 +226,28 @@ it.effect("spawns a sub-agent thread next to the caller's thread on another prov
       expect(turnStart.message.text).toBe("Review the auth module for bugs.");
       expect(turnStart.runtimeMode).toBe("approval-required");
     }
+  }),
+);
+
+it.effect("lets callers opt Codex sub-agents out of fast mode", () =>
+  Effect.gen(function* () {
+    const [coordinator, harness] = yield* makeCoordinator();
+
+    yield* coordinator.spawn(makeScope(), {
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      prompt: "Use the standard service tier.",
+      fastMode: false,
+    });
+
+    const create = harness.dispatched.find((command) => command.type === "thread.create");
+    expect(create).toMatchObject({
+      type: "thread.create",
+      modelSelection: {
+        instanceId: "codex",
+        model: "default-model",
+        options: [{ id: "serviceTier", value: "default" }],
+      },
+    });
   }),
 );
 

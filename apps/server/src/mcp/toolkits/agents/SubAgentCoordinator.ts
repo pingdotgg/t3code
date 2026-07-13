@@ -15,6 +15,7 @@ import {
   CommandId,
   isProviderAvailable,
   MessageId,
+  ProviderDriverKind,
   SUB_AGENT_MAX_SPAWN_DEPTH,
   sanitizeSubAgentName,
   SubAgentError,
@@ -49,6 +50,10 @@ import type { McpInvocationScope } from "../../McpInvocationContext.ts";
 const WAIT_POLL_INTERVAL_MILLIS = 500;
 const DEFAULT_WAIT_TIMEOUT_SECONDS = 60;
 const DEFAULT_TITLE_MAX_LENGTH = 60;
+const CODEX_DRIVER_KIND = ProviderDriverKind.make("codex");
+const CODEX_FAST_SERVICE_TIER_ID = "priority";
+const CODEX_LEGACY_FAST_SERVICE_TIER_ID = "fast";
+const CODEX_STANDARD_SERVICE_TIER_ID = "default";
 
 interface SubAgentRecord {
   readonly parentThreadId: ThreadId;
@@ -119,6 +124,43 @@ const resolveSpawnTitle = (input: SubAgentSpawnInput, name?: string): string => 
       : titled;
   }
   return input.title ?? defaultTitleForPrompt(input.prompt);
+};
+
+/**
+ * Codex sub-agents use the fast service tier unless the caller explicitly
+ * opts out. Prefer the current catalog's `priority` id, while retaining the
+ * legacy `fast` id for older Codex catalogs.
+ */
+const resolveSpawnModelSelection = (
+  target: ServerProvider,
+  model: string,
+  fastMode: boolean | undefined,
+) => {
+  const base = { instanceId: target.instanceId, model };
+  if (target.driver !== CODEX_DRIVER_KIND) return base;
+
+  const serviceTierDescriptor = target.models
+    .find((candidate) => candidate.slug === model)
+    ?.capabilities?.optionDescriptors?.find(
+      (descriptor) => descriptor.id === "serviceTier" && descriptor.type === "select",
+    );
+  const availableTiers =
+    serviceTierDescriptor?.type === "select"
+      ? new Set(serviceTierDescriptor.options.map((option) => option.id))
+      : undefined;
+  const serviceTier =
+    fastMode === false
+      ? CODEX_STANDARD_SERVICE_TIER_ID
+      : availableTiers?.has(CODEX_FAST_SERVICE_TIER_ID)
+        ? CODEX_FAST_SERVICE_TIER_ID
+        : availableTiers?.has(CODEX_LEGACY_FAST_SERVICE_TIER_ID)
+          ? CODEX_LEGACY_FAST_SERVICE_TIER_ID
+          : CODEX_FAST_SERVICE_TIER_ID;
+
+  return {
+    ...base,
+    options: [{ id: "serviceTier", value: serviceTier }],
+  };
 };
 
 const finalAssistantText = (thread: OrchestrationThread): string | null => {
@@ -366,6 +408,7 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
       const childThreadId = ThreadId.make(threadUuid);
       const name = resolveSpawnName(input);
       const title = resolveSpawnTitle(input, name);
+      const modelSelection = resolveSpawnModelSelection(target, model, input.fastMode);
 
       yield* engine
         .dispatch({
@@ -374,7 +417,7 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
           threadId: childThreadId,
           projectId: parent.projectId,
           title,
-          modelSelection: { instanceId: target.instanceId, model },
+          modelSelection,
           runtimeMode: parent.runtimeMode,
           interactionMode: "default",
           branch: parent.branch,

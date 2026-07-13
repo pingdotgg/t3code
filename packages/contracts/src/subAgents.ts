@@ -107,6 +107,12 @@ export const SubAgentSpawnInput = Schema.Struct({
       description: "Model slug from agent_list. Defaults to the target provider's first model.",
     }),
   ),
+  fastMode: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "Use Codex fast mode for this sub-agent. Defaults to true for Codex targets; pass false to use the standard service tier. Ignored for non-Codex targets.",
+    }),
+  ),
   name: Schema.optional(
     SubAgentName.annotate({
       description:
