@@ -124,8 +124,8 @@ private struct GeneralSettingsTab: View {
             }
 
             Section {
-                LabeledContent("Appearance", value: "Follows System")
-                    .help("SurgeCode does not offer a manual light/dark override; it follows macOS.")
+                LabeledContent("Appearance", value: "Dark")
+                    .help("SurgeCode uses its dark appearance independently of macOS system appearance.")
                 LabeledContent("Version", value: Bundle.main.appVersionDisplay)
             }
         }

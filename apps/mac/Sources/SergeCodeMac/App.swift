@@ -87,6 +87,8 @@ struct SergeCodeApp: App {
         WindowGroup {
             RootView(multi: multi, scenery: scenery, passport: passport)
                 .environment(passport)
+                .environment(\.colorScheme, .dark)
+                .background(DarkAppearanceConfigurator())
                 .tint(AlpineTheme.accent(palette: activeSceneryPalette))
                 // Behind-window liquid glass: strength tracks sceneryTranslucency
                 // (1.0 = solid plate; lower = desktop visible through blur).
@@ -169,6 +171,8 @@ struct SergeCodeApp: App {
                 backend: SergeCodeApp.backend,
                 passport: passport,
                 multi: multi)
+                .environment(\.colorScheme, .dark)
+                .background(DarkAppearanceConfigurator())
         }
     }
 
