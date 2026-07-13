@@ -49,6 +49,28 @@ struct TransparentWindowConfigurator: NSViewRepresentable {
     }
 }
 
+/// Pins a SwiftUI-hosted NSWindow to SurgeCode's dark visual language without
+/// changing macOS's system-wide appearance. Re-applies after AppKit attaches
+/// or reparents the hosting view.
+struct DarkAppearanceConfigurator: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = WindowProbeView()
+        view.onWindowChange = Self.applyAppearance
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        Self.applyAppearance(to: nsView.window)
+    }
+
+    static func applyAppearance(to window: NSWindow?) {
+        guard let window, let darkAppearance = NSAppearance(named: .darkAqua) else { return }
+        if window.appearance?.name != darkAppearance.name {
+            window.appearance = darkAppearance
+        }
+    }
+}
+
 /// Host view that re-applies transparency whenever AppKit attaches a window
 /// (SwiftUI can reparent before the first `window` is non-nil).
 private final class WindowProbeView: NSView {
