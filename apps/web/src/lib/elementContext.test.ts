@@ -252,6 +252,19 @@ describe("buildElementContextBlock + appendElementContextsToPrompt", () => {
       appendElementContextsToPrompt("", [makeSelection()]).startsWith("<element_context>"),
     ).toBe(true);
   });
+
+  it("supports compact serialization for large HTML and CSS payloads", () => {
+    const selection = makeSelection({
+      htmlPreview: `<div>${"x".repeat(2000)}</div>`,
+      styles: `.submit { content: "${"y".repeat(2000)}"; }`,
+    });
+    const full = buildElementContextBlock([selection]);
+    const compact = buildElementContextBlock([selection], { mode: "compact" });
+
+    expect(compact.length).toBeLessThan(full.length);
+    expect(compact).toContain("source: /repo/src/Button.tsx:12:5");
+    expect(compact).toContain("…");
+  });
 });
 
 describe("extractTrailingElementContexts", () => {

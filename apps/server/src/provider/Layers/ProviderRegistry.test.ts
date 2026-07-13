@@ -1186,6 +1186,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 providers: {
                   codex: { enabled: true, binaryPath: firstMissing },
                   claudeAgent: { enabled: false },
+                  "claude-synthero": { enabled: false },
+                  claudex: { enabled: false },
                   cursor: { enabled: false },
                   grok: { enabled: false },
                   fugu: { enabled: false },
@@ -1439,7 +1441,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               );
 
               assert.deepStrictEqual(providers.map((provider) => provider.instanceId).toSorted(), [
+                "claude-synthero",
                 "claudeAgent",
+                "claudex",
                 "codex",
                 "cursor",
                 "fugu",

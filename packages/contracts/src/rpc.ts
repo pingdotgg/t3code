@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
+import { IsoDateTime, NonNegativeInt, ThreadId } from "./baseSchemas.ts";
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import {
   AuthAccessStreamError,
@@ -136,6 +137,7 @@ import {
   GenerateScenerySetResult,
 } from "./server.ts";
 import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings.ts";
+import { ThreadTokenUsageSnapshot } from "./providerRuntime.ts";
 import {
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
@@ -212,6 +214,7 @@ export const WS_METHODS = {
   serverRemoveKeybinding: "server.removeKeybinding",
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
+  providerUsageSummary: "provider.usage.summary",
   serverGenerateScenerySet: "server.generateScenerySet",
   serverDiscoverSourceControl: "server.discoverSourceControl",
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
@@ -287,6 +290,47 @@ export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSetting
   payload: Schema.Struct({ patch: ServerSettingsPatch }),
   success: ServerSettings,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+export const ProviderUsageSummaryInput = Schema.Struct({
+  since: IsoDateTime,
+  until: Schema.optional(IsoDateTime),
+  providerInstanceId: Schema.optional(ProviderInstanceId),
+  threadId: Schema.optional(ThreadId),
+});
+export type ProviderUsageSummaryInput = typeof ProviderUsageSummaryInput.Type;
+
+export const ProviderUsageBucket = Schema.Struct({
+  id: Schema.String,
+  label: Schema.String,
+  turns: NonNegativeInt,
+  usage: ThreadTokenUsageSnapshot,
+  totalCostUsd: Schema.NullOr(Schema.Number),
+  costIsPartial: Schema.Boolean,
+});
+export type ProviderUsageBucket = typeof ProviderUsageBucket.Type;
+
+export const ProviderUsageSummary = Schema.Struct({
+  totalTurns: NonNegativeInt,
+  totalInputTokens: NonNegativeInt,
+  totalUncachedInputTokens: NonNegativeInt,
+  totalCachedInputTokens: NonNegativeInt,
+  totalCacheCreationInputTokens: NonNegativeInt,
+  totalCacheReadInputTokens: NonNegativeInt,
+  totalOutputTokens: NonNegativeInt,
+  totalReasoningOutputTokens: NonNegativeInt,
+  totalProcessedTokens: NonNegativeInt,
+  totalCostUsd: Schema.NullOr(Schema.Number),
+  costIsPartial: Schema.Boolean,
+  byProvider: Schema.Array(ProviderUsageBucket),
+  byModel: Schema.Array(ProviderUsageBucket),
+});
+export type ProviderUsageSummary = typeof ProviderUsageSummary.Type;
+
+export const WsProviderUsageSummaryRpc = Rpc.make(WS_METHODS.providerUsageSummary, {
+  payload: ProviderUsageSummaryInput,
+  success: ProviderUsageSummary,
+  error: Schema.Union([OrchestrationGetSnapshotError, EnvironmentAuthorizationError]),
 });
 
 export const WsServerGenerateScenerySetRpc = Rpc.make(WS_METHODS.serverGenerateScenerySet, {
@@ -709,6 +753,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRemoveKeybindingRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
+  WsProviderUsageSummaryRpc,
   WsServerGenerateScenerySetRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerGetTraceDiagnosticsRpc,

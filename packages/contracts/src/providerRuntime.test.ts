@@ -157,6 +157,48 @@ describe("ProviderRuntimeEvent", () => {
     ).toThrow();
   });
 
+  it("decodes rich token accounting and cost fields", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "thread.token-usage.updated",
+      eventId: "event-token-usage-rich",
+      provider: "claudeAgent",
+      createdAt: "2026-02-28T00:00:04.000Z",
+      threadId: "thread-1",
+      payload: {
+        usage: {
+          usedTokens: 12000,
+          inputTokens: 9000,
+          uncachedInputTokens: 1000,
+          cachedInputTokens: 8000,
+          cacheCreationInputTokens: 3000,
+          cacheReadInputTokens: 5000,
+          outputTokens: 2000,
+          accountingStatus: "exact",
+          cost: {
+            currency: "USD",
+            totalCostUsd: 0.42,
+            source: "provider",
+            confidence: "exact",
+            components: [
+              {
+                category: "provider_reported_total",
+                costUsd: 0.42,
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    expect(parsed.type).toBe("thread.token-usage.updated");
+    if (parsed.type !== "thread.token-usage.updated") {
+      throw new Error("expected thread.token-usage.updated");
+    }
+    expect(parsed.payload.usage.uncachedInputTokens).toBe(1000);
+    expect(parsed.payload.usage.cacheReadInputTokens).toBe(5000);
+    expect(parsed.payload.usage.cost?.source).toBe("provider");
+  });
+
   it("decodes normalized thread token usage snapshots", () => {
     const parsed = decodeRuntimeEvent({
       type: "thread.token-usage.updated",

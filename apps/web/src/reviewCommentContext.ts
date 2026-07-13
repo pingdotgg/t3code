@@ -48,6 +48,8 @@ export type ReviewCommentMessageSegment =
 const REVIEW_COMMENT_BLOCK_PATTERN = /<review_comment\b([^>]*)>\s*([\s\S]*?)<\/review_comment>/g;
 const REVIEW_COMMENT_ATTRIBUTE_PATTERN = /([a-zA-Z][a-zA-Z0-9_-]*)="([^"]*)"/g;
 const REVIEW_COMMENT_FENCE_PATTERN = /(`{3,})([^\s`]*)[^\n]*\n([\s\S]*?)\n\1/g;
+const REVIEW_COMMENT_CONTEXT_MAX_LINES = 160;
+const REVIEW_COMMENT_CONTEXT_MAX_CHARS = 16_000;
 
 function escapeReviewCommentAttribute(value: string): string {
   return value
@@ -197,7 +199,7 @@ export function formatReviewCommentContext(comment: ReviewCommentContext): strin
       ">",
     ].join(""),
     comment.text.trim(),
-    formatReviewCommentFence(comment.fenceLanguage ?? "diff", comment.diff),
+    formatReviewCommentFence(comment.fenceLanguage ?? "diff", boundReviewCommentDiff(comment.diff)),
     "</review_comment>",
   ].join("\n");
 }
@@ -234,7 +236,7 @@ export function buildFileReviewComment(input: {
     endIndex: endLine - 1,
     rangeLabel: startLine === endLine ? `L${startLine}` : `L${startLine} to L${endLine}`,
     text: input.text.trim(),
-    diff: selectedLines.join("\n"),
+    diff: boundReviewCommentDiff(selectedLines.join("\n")),
     fenceLanguage: inferReviewCommentFenceLanguage(input.filePath),
   };
 }
@@ -254,6 +256,50 @@ export function inferReviewCommentFenceLanguage(filePath: string): string {
 
 function stripTrailingNewline(value: string): string {
   return value.endsWith("\n") ? value.slice(0, -1) : value;
+}
+
+function boundReviewCommentDiff(value: string): string {
+  const lines = value.split("\n");
+
+  if (
+    value.length <= REVIEW_COMMENT_CONTEXT_MAX_CHARS &&
+    lines.length <= REVIEW_COMMENT_CONTEXT_MAX_LINES
+  ) {
+    return value;
+  }
+
+  if (lines.length <= REVIEW_COMMENT_CONTEXT_MAX_LINES) {
+    return `${value.slice(0, REVIEW_COMMENT_CONTEXT_MAX_CHARS - 1)}…`;
+  }
+
+  const contentLineLimit = REVIEW_COMMENT_CONTEXT_MAX_LINES - 1;
+  const headCount = Math.max(1, Math.floor(contentLineLimit * 0.25));
+  const tailCount = Math.max(1, contentLineLimit - headCount);
+  const head = lines.slice(0, headCount);
+  const tail = lines.slice(-tailCount);
+  const omitted = Math.max(0, lines.length - head.length - tail.length);
+  const marker = `[trimmed: omitted ${omitted} middle lines from ${lines.length} total lines]`;
+  const headText = head.join("\n");
+  const tailText = tail.join("\n");
+  const suffix = `${marker}\n${tailText}`;
+  const availableHeadChars = REVIEW_COMMENT_CONTEXT_MAX_CHARS - suffix.length - 1;
+
+  if (availableHeadChars >= headText.length) {
+    return `${headText}\n${suffix}`;
+  }
+  if (availableHeadChars > 0) {
+    return `${headText.slice(0, availableHeadChars - 1)}…\n${suffix}`;
+  }
+
+  const availableTailChars = REVIEW_COMMENT_CONTEXT_MAX_CHARS - marker.length - 1;
+  if (availableTailChars <= 1) {
+    return marker.slice(0, REVIEW_COMMENT_CONTEXT_MAX_CHARS - 1) + "…";
+  }
+  const boundedTail =
+    tailText.length <= availableTailChars
+      ? tailText
+      : `…${tailText.slice(-(availableTailChars - 1))}`;
+  return `${marker}\n${boundedTail}`;
 }
 
 function buildDiffReviewLines(fileDiff: FileDiffMetadata): ReadonlyArray<DiffReviewLine> {

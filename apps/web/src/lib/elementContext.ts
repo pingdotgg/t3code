@@ -3,6 +3,8 @@ import type { PickedElementPayload, PickedElementStackFrame } from "@t3tools/con
 
 const ELEMENT_CONTEXT_HTML_PREVIEW_LIMIT = 4000;
 const ELEMENT_CONTEXT_STYLES_LIMIT = 4000;
+const ELEMENT_CONTEXT_COMPACT_HTML_LIMIT = 1000;
+const ELEMENT_CONTEXT_COMPACT_STYLES_LIMIT = 1000;
 const ELEMENT_CONTEXT_LABEL_TAG_MAX = 24;
 
 const TRAILING_ELEMENT_CONTEXT_BLOCK_PATTERN =
@@ -50,6 +52,10 @@ export interface ExtractedElementContexts {
   promptText: string;
   contextCount: number;
   contexts: ParsedElementContextEntry[];
+}
+
+export interface ElementContextSerializationOptions {
+  readonly mode?: "full" | "compact";
 }
 
 function truncateString(value: string, limit: number): string {
@@ -141,7 +147,10 @@ function indentLines(value: string): string[] {
   return value.split("\n").map((line) => `  ${line}`);
 }
 
-function buildSingleContextLines(context: ElementContextSelection): string[] {
+function buildSingleContextLines(
+  context: ElementContextSelection,
+  options: ElementContextSerializationOptions = {},
+): string[] {
   const lines: string[] = [];
   lines.push(`- ${buildContextHeader(context)}:`);
   if (context.pageUrl.length > 0) {
@@ -158,12 +167,20 @@ function buildSingleContextLines(context: ElementContextSelection): string[] {
         : fileName;
     lines.push(`  source: ${location}`);
   }
-  const html = context.htmlPreview.trim();
+  const htmlLimit =
+    options.mode === "compact"
+      ? ELEMENT_CONTEXT_COMPACT_HTML_LIMIT
+      : ELEMENT_CONTEXT_HTML_PREVIEW_LIMIT;
+  const stylesLimit =
+    options.mode === "compact"
+      ? ELEMENT_CONTEXT_COMPACT_STYLES_LIMIT
+      : ELEMENT_CONTEXT_STYLES_LIMIT;
+  const html = truncateString(context.htmlPreview.trim(), htmlLimit);
   if (html.length > 0) {
     lines.push("  html:");
     lines.push(...indentLines(html));
   }
-  const styles = context.styles.trim();
+  const styles = truncateString(context.styles.trim(), stylesLimit);
   if (styles.length > 0) {
     lines.push("  styles:");
     lines.push(...indentLines(styles));
@@ -176,12 +193,15 @@ function buildSingleContextLines(context: ElementContextSelection): string[] {
  * append to the user's outgoing message text. Mirrors the `<terminal_context>`
  * block format so it composes cleanly when both are present.
  */
-export function buildElementContextBlock(contexts: ReadonlyArray<ElementContextSelection>): string {
+export function buildElementContextBlock(
+  contexts: ReadonlyArray<ElementContextSelection>,
+  options: ElementContextSerializationOptions = {},
+): string {
   if (contexts.length === 0) return "";
   const lines: string[] = [];
   for (let index = 0; index < contexts.length; index += 1) {
     const context = contexts[index]!;
-    lines.push(...buildSingleContextLines(context));
+    lines.push(...buildSingleContextLines(context, options));
     if (index < contexts.length - 1) lines.push("");
   }
   return ["<element_context>", ...lines, "</element_context>"].join("\n");
@@ -190,8 +210,9 @@ export function buildElementContextBlock(contexts: ReadonlyArray<ElementContextS
 export function appendElementContextsToPrompt(
   prompt: string,
   contexts: ReadonlyArray<ElementContextSelection>,
+  options: ElementContextSerializationOptions = {},
 ): string {
-  const block = buildElementContextBlock(contexts);
+  const block = buildElementContextBlock(contexts, options);
   if (block.length === 0) return prompt;
   const trimmed = prompt.trim();
   return trimmed.length > 0 ? `${trimmed}\n\n${block}` : block;

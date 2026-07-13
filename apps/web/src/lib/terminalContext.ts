@@ -42,6 +42,18 @@ export interface ParsedTerminalContextEntry {
   body: string;
 }
 
+export interface TerminalContextSerializationOptions {
+  readonly maxLines?: number;
+  readonly maxChars?: number;
+  readonly strategy?: "full" | "tail" | "head-tail";
+}
+
+export const DEFAULT_COMPACT_TERMINAL_CONTEXT_OPTIONS = {
+  maxLines: 400,
+  maxChars: 24_000,
+  strategy: "head-tail",
+} as const satisfies TerminalContextSerializationOptions;
+
 export const INLINE_TERMINAL_CONTEXT_PLACEHOLDER = "\uFFFC";
 
 const TRAILING_TERMINAL_CONTEXT_BLOCK_PATTERN =
@@ -150,14 +162,98 @@ export function buildTerminalContextPreviewTitle(
   return previews.length > 0 ? previews : null;
 }
 
-function buildTerminalContextBodyLines(selection: TerminalContextSelection): string[] {
-  return normalizeTerminalContextText(selection.text)
-    .split("\n")
-    .map((line, index) => `  ${selection.lineStart + index} | ${line}`);
+function trimTerminalContextLines(
+  lines: ReadonlyArray<string>,
+  options: TerminalContextSerializationOptions,
+): { readonly lines: ReadonlyArray<string>; readonly omittedLineCount: number } {
+  const strategy = options.strategy ?? "full";
+  const maxLines = options.maxLines;
+  if (strategy === "full" || maxLines === undefined || maxLines <= 0 || lines.length <= maxLines) {
+    return { lines, omittedLineCount: 0 };
+  }
+  if (strategy === "tail") {
+    return {
+      lines: lines.slice(-maxLines),
+      omittedLineCount: lines.length - maxLines,
+    };
+  }
+  const headCount = Math.max(1, Math.floor(maxLines * 0.2));
+  const tailCount = Math.max(1, maxLines - headCount);
+  return {
+    lines: [...lines.slice(0, headCount), ...lines.slice(-tailCount)],
+    omittedLineCount: Math.max(0, lines.length - headCount - tailCount),
+  };
+}
+
+function trimTerminalContextChars(
+  lines: ReadonlyArray<string>,
+  maxChars: number | undefined,
+): { readonly lines: ReadonlyArray<string>; readonly truncatedByChars: boolean } {
+  if (maxChars === undefined || maxChars <= 0) {
+    return { lines, truncatedByChars: false };
+  }
+  let remaining = maxChars;
+  const kept: string[] = [];
+  let truncated = false;
+  for (const line of lines) {
+    if (remaining <= 0) {
+      truncated = true;
+      break;
+    }
+    if (line.length <= remaining) {
+      kept.push(line);
+      remaining -= line.length + 1;
+      continue;
+    }
+    kept.push(`${line.slice(0, Math.max(0, remaining - 1))}…`);
+    remaining = 0;
+    truncated = true;
+  }
+  return { lines: kept, truncatedByChars: truncated || kept.length < lines.length };
+}
+
+function buildTerminalContextBodyLines(
+  selection: TerminalContextSelection,
+  options: TerminalContextSerializationOptions = {},
+): string[] {
+  const sourceLines = normalizeTerminalContextText(selection.text).split("\n");
+  const lineTrim = trimTerminalContextLines(sourceLines, options);
+  const charTrim = trimTerminalContextChars(lineTrim.lines, options.maxChars);
+  const lines: string[] = [];
+  if (lineTrim.omittedLineCount > 0 && (options.strategy ?? "full") === "tail") {
+    lines.push(
+      `  [trimmed: omitted first ${lineTrim.omittedLineCount} of ${sourceLines.length} lines]`,
+    );
+  }
+  const leadingLineOffset =
+    lineTrim.omittedLineCount > 0 && (options.strategy ?? "full") === "tail"
+      ? sourceLines.length - lineTrim.lines.length
+      : 0;
+  const headTailBreakIndex =
+    lineTrim.omittedLineCount > 0 && (options.strategy ?? "full") === "head-tail"
+      ? Math.max(1, Math.floor((options.maxLines ?? lineTrim.lines.length) * 0.2))
+      : -1;
+  for (let index = 0; index < charTrim.lines.length; index += 1) {
+    if (index === headTailBreakIndex) {
+      lines.push(
+        `  [trimmed: omitted ${lineTrim.omittedLineCount} middle lines from ${sourceLines.length} total lines]`,
+      );
+    }
+    const sourceIndex =
+      headTailBreakIndex >= 0 && index >= headTailBreakIndex
+        ? sourceLines.length - (lineTrim.lines.length - index)
+        : leadingLineOffset + index;
+    lines.push(`  ${selection.lineStart + sourceIndex} | ${charTrim.lines[index] ?? ""}`);
+  }
+  if (charTrim.truncatedByChars) {
+    lines.push("  [trimmed: context exceeded character limit]");
+  }
+  return lines;
 }
 
 export function buildTerminalContextBlock(
   contexts: ReadonlyArray<TerminalContextSelection>,
+  options: TerminalContextSerializationOptions = {},
 ): string {
   const normalizedContexts: TerminalContextSelection[] = [];
   for (const context of contexts) {
@@ -173,7 +269,7 @@ export function buildTerminalContextBlock(
   for (let index = 0; index < normalizedContexts.length; index += 1) {
     const context = normalizedContexts[index]!;
     lines.push(`- ${formatTerminalContextLabel(context)}:`);
-    lines.push(...buildTerminalContextBodyLines(context));
+    lines.push(...buildTerminalContextBodyLines(context, options));
     if (index < normalizedContexts.length - 1) {
       lines.push("");
     }
@@ -211,9 +307,10 @@ export function materializeInlineTerminalContextPrompt(
 export function appendTerminalContextsToPrompt(
   prompt: string,
   contexts: ReadonlyArray<TerminalContextSelection>,
+  options: TerminalContextSerializationOptions = {},
 ): string {
   const trimmedPrompt = materializeInlineTerminalContextPrompt(prompt, contexts).trim();
-  const contextBlock = buildTerminalContextBlock(contexts);
+  const contextBlock = buildTerminalContextBlock(contexts, options);
   if (contextBlock.length === 0) {
     return trimmedPrompt;
   }

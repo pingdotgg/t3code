@@ -86,6 +86,14 @@ export function applyServerSettingsPatch(
     ...(patch.customInstructions !== undefined
       ? { customInstructions: patch.customInstructions }
       : {}),
+    ...(patch.tokenEfficiency?.customModelPricing !== undefined
+      ? {
+          tokenEfficiency: {
+            ...next.tokenEfficiency,
+            customModelPricing: patch.tokenEfficiency.customModelPricing,
+          },
+        }
+      : {}),
     ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
   };
   if (!selectionPatch) {

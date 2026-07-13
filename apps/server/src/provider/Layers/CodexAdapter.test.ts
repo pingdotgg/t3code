@@ -1574,15 +1574,18 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         totalProcessedTokens: 11_839,
         maxTokens: 258_400,
         inputTokens: 120,
+        uncachedInputTokens: 120,
         cachedInputTokens: 0,
         outputTokens: 6,
         reasoningOutputTokens: 0,
         lastUsedTokens: 126,
         lastInputTokens: 120,
+        lastUncachedInputTokens: 120,
         lastCachedInputTokens: 0,
         lastOutputTokens: 6,
         lastReasoningOutputTokens: 0,
         compactsAutomatically: true,
+        accountingStatus: "provider-reported",
       });
     }),
   );
