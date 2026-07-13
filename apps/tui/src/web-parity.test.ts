@@ -3,8 +3,9 @@ import { describe, expect, it } from "bun:test";
 // Web ⇄ TUI parity, expressed as a living BDD batch. Each dimension that already
 // matches the web is asserted as a real spec (here or in the relevant component
 // test); each remaining gap is a `describe.skip` documenting the target Given/
-// When/Then, so `bun test`'s skipped count tracks the parity backlog. Companion
-// to features.backlog.test.ts (which tracks whole un-ported features).
+// When/Then. Whole unported capabilities live in features.backlog.test.ts,
+// whose source-backed catalog makes `bun test`'s skipped count track the parity
+// backlog without duplicating the component-level specs here.
 //
 // Real parity specs live with their subjects:
 //   - composer controls in the box, model-first → ChatComposer.test / ControlsRow.test
@@ -69,32 +70,7 @@ describe("keyboard parity", () => {
   });
 });
 
-// ── Backlog: dimensions not yet at parity ────────────────────────────────────
-//
-// Thread next/prev (Alt+↑/↓) + jump (Alt+1…9): SHIPPED — see store.test
-// (moveThreadSelection / selectThreadByIndex) and the keymap table above.
-
-describe.skip("Composer: provider-traits + plan-sidebar toggle + compact menu", () => {
-  it("Given a provider with traits, then the composer shows its trait controls", () => {});
-  it("Given a narrow terminal, then the controls collapse into a compact menu", () => {});
-});
-
-// Changed files per-file "View diff" + file-type coloured icons: SHIPPED — see
-// MessagesTimeline.test (clicking a file row opens the scoped diff), DiffViewer.test
-// (focusPath filters to one file), and icons.test (fileTypeColor).
-
-// Commit-message dialog: SHIPPED — choosing a commit-bearing action opens the
-// "commit ▸" composer mode (ChatComposer.test) which runs the action with the
-// typed message (store.runGitAction(action, message)).
-// Files surface: SHIPPED — the command palette "Browse files" opens a workspace
-// file browser (FilesView.test) backed by projects.listEntries + readFile.
-// Publish-repo is surfaced as a terminal hint (it needs a provider/visibility
-// dialog); the Browser surface is ~N/A in a terminal.
-describe.skip("Right panel: Browser surface + full publish-repo flow", () => {
-  it("Given a repo with no remote, then a guided 'Publish repository' flow runs in-app", () => {});
-  it("Given the panel, then a Browser surface can be opened (web RightPanelTabs)", () => {});
-});
-
-// Settings overlay: SHIPPED — the palette's "Settings" opens a read-only
-// reference (SettingsView.test) with providers + source-control state and the
-// keybindings reference (keymap.test). Editing settings stays in the web.
+// Thread navigation, changed-file actions, commit-message entry, file browsing,
+// source-control actions, and the read-only settings reference are covered by
+// their component/logic specs. Remaining whole-feature gaps are cataloged once
+// in features.backlog.test.ts.
