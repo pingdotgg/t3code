@@ -310,15 +310,12 @@ private struct DeviceSectionHeader: View {
 private struct DeviceStatusDot: View {
     let phase: ConnectionPhase
 
-    @UIState private var isPulseExpanded = false
-
     var body: some View {
         ZStack {
             if phase.isSettling {
                 Circle()
                     .stroke(Color.secondary, lineWidth: 1.2)
-                    .opacity(pulseOpacity)
-                    .scaleEffect(pulseScale)
+                    .opacity(0.35)
             }
             Circle()
                 .fill(statusTint)
@@ -328,36 +325,12 @@ private struct DeviceStatusDot: View {
         .frame(width: 11, height: 11)
         .accessibilityLabel(phase.accessibilityLabel)
         .animation(Motion.ambient, value: phase)
-        .onAppear { updatePulse(for: phase) }
-        .onChange(of: phase) { _, newPhase in
-            updatePulse(for: newPhase)
-        }
-    }
-
-    private var pulseOpacity: Double {
-        Motion.reduceMotion ? 0.35 : (isPulseExpanded ? 0.1 : 0.45)
-    }
-
-    private var pulseScale: CGFloat {
-        Motion.reduceMotion ? 1.45 : (isPulseExpanded ? 1.85 : 1.0)
     }
 
     private var statusTint: Color {
         phase.statusColor
     }
 
-    private func updatePulse(for phase: ConnectionPhase) {
-        guard phase.isSettling, !Motion.reduceMotion else {
-            withAnimation(Motion.ambient) {
-                isPulseExpanded = false
-            }
-            return
-        }
-        isPulseExpanded = false
-        withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) {
-            isPulseExpanded = true
-        }
-    }
 }
 
 /// Project section header: name, a plus menu that starts a new session with
@@ -516,8 +489,6 @@ private struct SidebarThreadRow: View {
 private struct SidebarStatusDot: View {
     let thread: ChatThread
 
-    @UIState private var isBackgroundPulseExpanded = false
-
     var body: some View {
         Group {
             if thread.status == .backgroundWork {
@@ -532,10 +503,6 @@ private struct SidebarStatusDot: View {
         .accessibilityLabel(accessibilityLabel)
         .animation(Motion.ambient, value: thread.status)
         .animation(Motion.ambient, value: thread.backgroundAgentCount)
-        .onAppear { updatePulse(for: thread.status) }
-        .onChange(of: thread.status) { _, status in
-            updatePulse(for: status)
-        }
     }
 
     private var dot: some View {
@@ -549,8 +516,7 @@ private struct SidebarStatusDot: View {
         ZStack {
             Circle()
                 .stroke(Color.green, lineWidth: 1.2)
-                .opacity(backgroundPulseOpacity)
-                .scaleEffect(backgroundPulseScale)
+                .opacity(0.45)
             dot
         }
     }
@@ -568,27 +534,6 @@ private struct SidebarStatusDot: View {
                     .frame(minWidth: 12, minHeight: 12)
                     .background(.background, in: Capsule())
             }
-        }
-    }
-
-    private var backgroundPulseOpacity: Double {
-        Motion.reduceMotion ? 0.35 : (isBackgroundPulseExpanded ? 0.1 : 0.45)
-    }
-
-    private var backgroundPulseScale: CGFloat {
-        Motion.reduceMotion ? 1.45 : (isBackgroundPulseExpanded ? 1.85 : 1.0)
-    }
-
-    private func updatePulse(for status: ThreadStatus) {
-        guard status == .backgroundWork, !Motion.reduceMotion else {
-            withAnimation(Motion.ambient) {
-                isBackgroundPulseExpanded = false
-            }
-            return
-        }
-        isBackgroundPulseExpanded = false
-        withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) {
-            isBackgroundPulseExpanded = true
         }
     }
 
