@@ -22,6 +22,22 @@ struct MarkdownSafeSplitScanner {
     private var fenceChar: UInt8 = 0
     private var fenceRunLength = 0
     private var fenceIndent = 0
+    /// Byte offset where the content of the currently open fence begins
+    /// (right after the opening fence line finishes), or nil outside a
+    /// fence. `StreamingMarkdownCache` uses this plus `openFenceIndent` to
+    /// reconstruct a long-running open fence's code text by direct byte
+    /// slicing instead of re-running the full parser on every delta.
+    private(set) var openFenceContentStart: Int?
+
+    /// True while a fence is open and unterminated. A tail entirely inside
+    /// such a fence has one guaranteed shape (a single still-open code
+    /// block), which is what lets the streaming cache bypass parsing it.
+    var isInFence: Bool { inFence }
+
+    /// Leading indent (0-3 spaces) of the currently open fence. Only the
+    /// zero-indent case has a trivial, provably-correct reconstruction
+    /// (verbatim byte slice), so callers should gate any fast path on this.
+    var openFenceIndent: Int { fenceIndent }
 
     /// Consumes only bytes that have not already been passed to this scanner.
     /// The state is deliberately byte-based so offsets remain valid for UTF-8
@@ -50,6 +66,7 @@ struct MarkdownSafeSplitScanner {
                 fenceChar = 0
                 fenceRunLength = 0
                 fenceIndent = 0
+                openFenceContentStart = nil
                 _ = close
             }
             return
@@ -72,6 +89,7 @@ struct MarkdownSafeSplitScanner {
             fenceChar = opening.char
             fenceRunLength = opening.runLength
             fenceIndent = opening.indent
+            openFenceContentStart = lineEnd
         }
     }
 
@@ -207,6 +225,10 @@ enum StreamingMarkdownCache {
     private(set) static var segmentParseCount = 0
     private(set) static var tailBytesParsedTotal = 0
     private(set) static var resetCount = 0
+    /// Times `openFenceFastPathDocument` reconstructed the tail by byte
+    /// slicing instead of a real parse. Exists so a test can prove the fast
+    /// path documented below actually fires for a long streamed code block.
+    private(set) static var openFenceFastPathHitCount = 0
 
     static func document(
         threadID: String, messageID: String, markdown: String
@@ -214,20 +236,29 @@ enum StreamingMarkdownCache {
         let session = session(threadID: threadID, messageID: messageID)
         let byteCount = markdown.utf8.count
 
-        // SwiftUI can reevaluate a view many times between two stream flushes.
-        // The count is the cheap identity key for that unchanged body value.
+        // SwiftUI can reevaluate a view many times between two stream
+        // flushes with the identical accumulated string, and the byte count
+        // is a cheap identity check for that case. But a same-length
+        // edit-in-place would also match on count alone, so this still
+        // confirms the trailing bytes agree — the same bounded comparison
+        // the slow path below uses — before trusting the cached document
+        // instead of assuming the append-only invariant holds unchecked.
         if byteCount == session.lastCount {
-            return session.lastDocument
+            let unchanged = withContiguousUTF8(markdown) { input in
+                input.count == session.bytes.count
+                    && matchesTrailingBytes(of: input, comparedTo: session.bytes, count: input.count)
+            }
+            if unchanged {
+                return session.lastDocument
+            }
         }
 
         withContiguousUTF8(markdown) { input in
             let previousCount = session.bytes.count
             var appendOnly = input.count >= previousCount
             if appendOnly, previousCount > 0 {
-                let comparisonCount = min(64, previousCount)
-                let start = previousCount - comparisonCount
-                appendOnly = input[start..<previousCount].elementsEqual(
-                    session.bytes[start..<previousCount])
+                appendOnly = matchesTrailingBytes(
+                    of: input, comparedTo: session.bytes, count: previousCount)
             }
 
             if !appendOnly {
@@ -253,9 +284,15 @@ enum StreamingMarkdownCache {
         }
 
         let tailByteCount = session.bytes.count - session.settledUpTo
-        let tail = String(decoding: session.bytes[session.settledUpTo...], as: UTF8.self)
-        let tailDocument = MarkdownBlockCache.document(for: tail)
-        tailBytesParsedTotal += tailByteCount
+        let tailDocument: ParsedMarkdownDocument
+        if let fastPath = openFenceFastPathDocument(session: session) {
+            tailDocument = fastPath
+        } else {
+            let tail = String(decoding: session.bytes[session.settledUpTo...], as: UTF8.self)
+            tailDocument = MarkdownBlockCache.document(for: tail)
+            tailBytesParsedTotal += tailByteCount
+            updateOpenFenceFastPathState(session: session, tailDocument: tailDocument)
+        }
 
         // Segment-relative source keys can repeat across segments; the
         // renderer disambiguates identical keys by occurrence, so the
@@ -265,6 +302,98 @@ enum StreamingMarkdownCache {
             blockKeys: session.settledKeys + tailDocument.blockKeys)
         session.lastCount = byteCount
         return session.lastDocument
+    }
+
+    /// Whether the trailing `min(64, count)` bytes of `input` match the same
+    /// trailing window of `bytes`. `count` is the length being compared over
+    /// (the previously-accumulated byte count in both callers), so this is
+    /// O(1) regardless of how large the accumulated message has grown.
+    private static func matchesTrailingBytes(
+        of input: UnsafeBufferPointer<UInt8>, comparedTo bytes: [UInt8], count: Int
+    ) -> Bool {
+        guard count > 0 else { return true }
+        guard input.count >= count, bytes.count >= count else { return false }
+        let comparisonCount = min(64, count)
+        let start = count - comparisonCount
+        return input[start..<count].elementsEqual(bytes[start..<count])
+    }
+
+    /// One huge unbroken streaming code fence used to force a full Markdown
+    /// re-parse of a growing tail on every delta (O(n^2) over the stream),
+    /// because `MarkdownSafeSplitScanner` never promotes a boundary while
+    /// `inFence` — freezing part of an unterminated fence would otherwise
+    /// require re-deriving cmark's own fence-content rules (indent
+    /// stripping, tab handling) independently, which is exactly the kind of
+    /// subtle mismatch this file's streaming/full-parse equivalence
+    /// contract cannot afford.
+    ///
+    /// Instead, whenever the entire streaming tail is known to be one
+    /// still-open, zero-indent fence, this reconstructs its sole
+    /// `.codeBlock` directly from the raw accumulated bytes rather than
+    /// re-running the parser. CommonMark's fenced-code accumulation is a
+    /// pure, order-preserving, per-line function of the fence's own indent
+    /// with no dependency on later lines (other than recognizing the
+    /// closing fence, which cannot appear here since the scanner confirms
+    /// the fence is still open) — so for indent zero, "strip N leading
+    /// spaces per line" is the identity function, and the code content is
+    /// exactly the raw bytes since the fence opened, with the single
+    /// trailing newline `normalizedCode` also strips. This is therefore
+    /// byte-identical to a from-scratch parse at every call, not an
+    /// approximation; it only narrows *when* the expensive parser runs, not
+    /// what it would have produced. The eligibility precondition (the tail
+    /// really is only that one open fence) is (re)established by a real
+    /// parse in `updateOpenFenceFastPathState` whenever this fast path
+    /// isn't available, so a fence sharing the tail with preceding content,
+    /// a non-zero indent, or CRLF bytes all safely fall back to the real
+    /// parser instead of guessing.
+    private static func openFenceFastPathDocument(
+        session: StreamingMarkdownSession
+    ) -> ParsedMarkdownDocument? {
+        guard session.scanner.isInFence,
+            session.scanner.openFenceIndent == 0,
+            let contentStart = session.scanner.openFenceContentStart,
+            let cachedStart = session.fastPathFenceContentStart,
+            contentStart == cachedStart
+        else { return nil }
+
+        let contentBytes = session.bytes[contentStart...]
+        // CommonMark line-ending preprocessing normalizes CRLF before fence
+        // content is captured. This fast path only reconstructs the common
+        // LF-only case byte-for-byte, so bail to the real parser rather than
+        // risk a mismatch when a CR shows up in the raw buffer.
+        guard !contentBytes.contains(0x0D) else { return nil }
+
+        var code = String(decoding: contentBytes, as: UTF8.self)
+        if code.hasSuffix("\n") {
+            code.removeLast()
+        }
+        openFenceFastPathHitCount += 1
+        return ParsedMarkdownDocument(
+            blocks: [.codeBlock(language: session.fastPathFenceLanguage, code: code)],
+            blockKeys: [code])
+    }
+
+    /// Records (or clears) the state `openFenceFastPathDocument` needs,
+    /// after a real parse of the tail. The fast path may only be reused
+    /// while the tail keeps being exactly one still-open code block for the
+    /// same fence occurrence — anything else (multiple blocks, a closed
+    /// fence, no fence at all) clears the cached state so later calls keep
+    /// going through the real parser until eligibility is reestablished.
+    private static func updateOpenFenceFastPathState(
+        session: StreamingMarkdownSession, tailDocument: ParsedMarkdownDocument
+    ) {
+        guard session.scanner.isInFence,
+            session.scanner.openFenceIndent == 0,
+            let contentStart = session.scanner.openFenceContentStart,
+            tailDocument.blocks.count == 1,
+            case .codeBlock(let language, _) = tailDocument.blocks[0]
+        else {
+            session.fastPathFenceContentStart = nil
+            session.fastPathFenceLanguage = nil
+            return
+        }
+        session.fastPathFenceContentStart = contentStart
+        session.fastPathFenceLanguage = language
     }
 
     static func finish(threadID: String, messageID: String) {
@@ -291,6 +420,7 @@ enum StreamingMarkdownCache {
         segmentParseCount = 0
         tailBytesParsedTotal = 0
         resetCount = 0
+        openFenceFastPathHitCount = 0
     }
 
     private static func session(threadID: String, messageID: String) -> StreamingMarkdownSession {
@@ -320,6 +450,8 @@ enum StreamingMarkdownCache {
         session.settledUpTo = 0
         session.lastCount = -1
         session.lastDocument = ParsedMarkdownDocument(blocks: [], blockKeys: [])
+        session.fastPathFenceContentStart = nil
+        session.fastPathFenceLanguage = nil
         resetCount += 1
     }
 
@@ -353,4 +485,9 @@ private final class StreamingMarkdownSession {
     var settledUpTo = 0
     var lastCount = -1
     var lastDocument = ParsedMarkdownDocument(blocks: [], blockKeys: [])
+    // Reconstruction state for openFenceFastPathDocument(session:); non-nil
+    // contentStart means "the tail is a still-open, zero-indent fence whose
+    // content starts here, with this language" as of the last real parse.
+    var fastPathFenceContentStart: Int?
+    var fastPathFenceLanguage: String?
 }

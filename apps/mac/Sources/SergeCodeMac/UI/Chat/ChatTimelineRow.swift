@@ -117,18 +117,19 @@ struct ChatTimelineRowView: View {
                 }
             )
         case .approval(let request):
-            ApprovalCard(request: request) { approve in
+            ApprovalCard(request: request, isActive: isMostRecentApproval(request)) { approve in
                 Task { await model.respond(to: request, approve: approve) }
             }
         case .userInput(let request):
-            UserInputCard(request: request) { answers in
+            UserInputCard(request: request, isActive: isMostRecentUserInput(request)) { answers in
                 Task { await model.respond(to: request, answers: answers) }
             }
         case .usageLimit(let notice):
             UsageLimitCard(
                 notice: notice,
                 state: model.usageLimitActions[notice.id] ?? .idle,
-                switchModels: switchModels(for: notice)
+                switchModels: switchModels(for: notice),
+                isActive: isMostRecentUsageLimit(notice)
             ) {
                 model.waitForUsageLimitReset(notice)
             } onSwitch: { option in
@@ -137,7 +138,7 @@ struct ChatTimelineRowView: View {
                 model.dismissUsageLimit(notice)
             }
         case .plan(let plan):
-            PlanCard(plan: plan, model: model) {
+            PlanCard(plan: plan, model: model, isActive: isMostRecentPlan(plan)) {
                 Task { await model.implementPlan(plan) }
             }
         case .checkpoint(let checkpoint):
@@ -158,6 +159,55 @@ struct ChatTimelineRowView: View {
             currentInstanceID: thread?.modelInstanceID,
             currentModelID: thread?.modelID,
             exhaustedProvider: notice.provider)
+    }
+
+    // MARK: - Decision-card keyboard shortcut gating
+    //
+    // Approve/Deny/Submit/Implement/Wait/Dismiss gain keyboard shortcuts
+    // (ApprovalCard, UserInputCard, PlanCard, UsageLimitCard), but only the
+    // single most-recent pending card of each kind should own them — a
+    // scrollback full of historical cards must never let a keystroke
+    // resolve the wrong one. Approvals and user-input requests are removed
+    // from the timeline once resolved (AppModel.resolveInteraction), so in
+    // steady state at most one of each is ever present; usage-limit notices
+    // and already-implemented plans can still legitimately sit alongside a
+    // newer pending one of the same kind, so these scan from the end of the
+    // timeline and match the nearest item of that case.
+
+    private func isMostRecentApproval(_ request: ApprovalRequest) -> Bool {
+        for item in (model.threadState(threadID)?.timeline ?? []).reversed() {
+            if case .approval(let candidate) = item {
+                return candidate.id == request.id
+            }
+        }
+        return false
+    }
+
+    private func isMostRecentUserInput(_ request: UserInputRequest) -> Bool {
+        for item in (model.threadState(threadID)?.timeline ?? []).reversed() {
+            if case .userInput(let candidate) = item {
+                return candidate.id == request.id
+            }
+        }
+        return false
+    }
+
+    private func isMostRecentUsageLimit(_ notice: UsageLimitNotice) -> Bool {
+        for item in (model.threadState(threadID)?.timeline ?? []).reversed() {
+            if case .usageLimit(let candidate) = item {
+                return candidate.id == notice.id
+            }
+        }
+        return false
+    }
+
+    private func isMostRecentPlan(_ plan: ProposedPlan) -> Bool {
+        for item in (model.threadState(threadID)?.timeline ?? []).reversed() {
+            if case .plan(let candidate) = item {
+                return candidate.id == plan.id
+            }
+        }
+        return false
     }
 }
 

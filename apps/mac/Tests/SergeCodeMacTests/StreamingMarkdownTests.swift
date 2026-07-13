@@ -175,6 +175,47 @@ struct StreamingMarkdownTests {
         #expect(StreamingMarkdownCache.segmentParseCount > 10)
     }
 
+    @Test("a long unbroken streaming code fence stays cheap and byte-identical to a full parse")
+    func openFenceFastPathStaysEquivalentAndCheap() {
+        var codeLines: [String] = []
+        var codeByteCount = 0
+        while codeByteCount < 60_000 {
+            let line = "let line\(codeLines.count) = \(codeLines.count) // padding padding padding\n"
+            codeLines.append(line)
+            codeByteCount += line.utf8.count
+        }
+        let markdown =
+            "Before the fence.\n\n```swift\n" + codeLines.joined() + "```\n\nAfter the fence.\n"
+        let sourceBytes = Array(markdown.utf8)
+
+        StreamingMarkdownCache.resetForTesting()
+        MarkdownBlockCache.resetForTesting()
+
+        var prefix = ""
+        var offset = 0
+        while offset < sourceBytes.count {
+            // An odd, non-line-aligned chunk size deliberately lands most
+            // cuts mid code-line, the exact case the byte-slice
+            // reconstruction (as opposed to a synthetic-line reparse) has to
+            // get right.
+            let end = min(offset + 997, sourceBytes.count)
+            prefix += String(decoding: sourceBytes[offset..<end], as: UTF8.self)
+            let actual = StreamingMarkdownCache.document(
+                threadID: "fence-fast-path-thread", messageID: "big-fence", markdown: prefix)
+            let expected = MarkdownBlockCache.document(for: prefix)
+            #expect(actual.blocks == expected.blocks)
+            offset = end
+        }
+
+        #expect(StreamingMarkdownCache.resetCount == 0)
+        // Without the fast path this loop's cumulative tail-reparse cost is
+        // roughly quadratic in the stream length (~1.8M bytes for this
+        // fixture); the fast path keeps it to a couple of real parses
+        // (an early bootstrap plus the one at fence close).
+        #expect(StreamingMarkdownCache.tailBytesParsedTotal < 8 * sourceBytes.count)
+        #expect(StreamingMarkdownCache.openFenceFastPathHitCount > 10)
+    }
+
     @Test("a non-append update resets the session and reparses correctly")
     func resetPath() {
         StreamingMarkdownCache.resetForTesting()
