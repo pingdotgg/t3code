@@ -348,9 +348,8 @@ function createBaseEvent(input: {
 function contentActivityEventId(input: {
   readonly threadId: ThreadId;
   readonly itemId: string;
-  readonly streamKind: "reasoning_text" | "command_output" | "file_change_output" | "unknown";
 }): EventId {
-  return EventId.make(`copilot-content:${input.threadId}:${input.itemId}:${input.streamKind}`);
+  return EventId.make(`copilot-content:${input.threadId}:${input.itemId}`);
 }
 
 function ensureTurnSnapshot(context: CopilotSessionContext, turnId: TurnId): CopilotTurnSnapshot {
@@ -1697,7 +1696,6 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
             eventId: contentActivityEventId({
               threadId: input.context.threadId,
               itemId: input.itemId,
-              streamKind: input.streamKind,
             }),
           }
         : {}),
@@ -2727,7 +2725,6 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           eventId: contentActivityEventId({
             threadId: context.threadId,
             itemId,
-            streamKind,
           }),
           type: "content.delta",
           payload: {

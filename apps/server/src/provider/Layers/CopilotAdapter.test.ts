@@ -3133,6 +3133,16 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         },
       } as SessionEvent);
       emit({
+        id: "evt-copilot-command-output-before-start",
+        timestamp,
+        parentId: null,
+        type: "tool.execution_partial_result",
+        data: {
+          toolCallId: "tool-command",
+          partialOutput: "On branch ",
+        },
+      } as SessionEvent);
+      emit({
         id: "evt-copilot-command-start",
         timestamp,
         parentId: null,
@@ -3146,17 +3156,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         },
       } as SessionEvent);
       emit({
-        id: "evt-copilot-command-output-1",
-        timestamp,
-        parentId: null,
-        type: "tool.execution_partial_result",
-        data: {
-          toolCallId: "tool-command",
-          partialOutput: "On branch ",
-        },
-      } as SessionEvent);
-      emit({
-        id: "evt-copilot-command-output-2",
+        id: "evt-copilot-command-output-after-start",
         timestamp,
         parentId: null,
         type: "tool.execution_partial_result",
@@ -3241,10 +3241,17 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       );
 
       const commandOutputDeltas = runtimeEvents.filter(
-        (event) => event.type === "content.delta" && event.payload.streamKind === "command_output",
+        (event) =>
+          event.type === "content.delta" && String(event.itemId) === "copilot-tool-tool-command",
       );
       NodeAssert.equal(commandOutputDeltas.length, 2);
       NodeAssert.equal(commandOutputDeltas[0]?.eventId, commandOutputDeltas[1]?.eventId);
+      NodeAssert.deepStrictEqual(
+        commandOutputDeltas.map((event) =>
+          event.type === "content.delta" ? event.payload.streamKind : undefined,
+        ),
+        ["unknown", "command_output"],
+      );
       NodeAssert.deepStrictEqual(
         commandOutputDeltas.map((event) =>
           event.type === "content.delta" ? event.payload.delta : "",
