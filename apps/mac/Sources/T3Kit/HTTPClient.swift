@@ -6,7 +6,11 @@ internal enum HTTPClient {
     static func perform(
         _ request: URLRequest,
         urlSession: URLSession,
-        mapTransportError: @Sendable (String, String) -> any Error,
+        // Raw `Error`, not a pre-stringified detail: callers that need to
+        // classify the failure (e.g. PairingClient distinguishing a macOS
+        // Local Network privacy denial from a genuine offline/unreachable
+        // error) need the original URLError/NSError, not its description.
+        mapTransportError: @Sendable (String, Error) -> any Error,
         mapNonHTTPResponse: @Sendable (String) -> any Error,
         mapHTTPStatus: @Sendable (String, Int, String) -> any Error
     ) async throws -> Data {
@@ -16,7 +20,7 @@ internal enum HTTPClient {
         do {
             (data, response) = try await urlSession.data(for: request)
         } catch {
-            throw mapTransportError(endpoint, String(describing: error))
+            throw mapTransportError(endpoint, error)
         }
 
         guard let httpResponse = response as? HTTPURLResponse else {

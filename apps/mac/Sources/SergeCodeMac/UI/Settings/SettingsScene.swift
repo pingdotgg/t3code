@@ -1,4 +1,6 @@
+import AppKit
 import SwiftUI
+import T3Kit
 
 /// Settings tab identifiers — public so debug harnesses (UIProbe) can open
 /// the window on a specific tab.
@@ -734,6 +736,9 @@ struct RemoteMacsSettingsTab: View {
     @UIState private var pairingLink = ""
     @UIState private var isPairing = false
     @UIState private var pairingError: String?
+    /// True when `pairingError` is the macOS Local Network privacy denial —
+    /// shows the "Open Local Network Settings" shortcut instead of just text.
+    @UIState private var pairingErrorIsLocalNetworkDenial = false
     @UIState private var forgetTarget: DeviceID?
 
     var body: some View {
@@ -758,6 +763,10 @@ struct RemoteMacsSettingsTab: View {
                         .font(.caption)
                         .foregroundStyle(.red)
                         .fixedSize(horizontal: false, vertical: true)
+                    if pairingErrorIsLocalNetworkDenial {
+                        Button("Open Local Network Settings") { openLocalNetworkSettings() }
+                            .controlSize(.small)
+                    }
                 }
 
                 Text("On the other Mac, open Settings > Devices and copy its pairing link or scan its QR code.")
@@ -862,15 +871,28 @@ struct RemoteMacsSettingsTab: View {
         guard !link.isEmpty, !isPairing else { return }
         isPairing = true
         pairingError = nil
+        pairingErrorIsLocalNetworkDenial = false
         Task {
             do {
                 _ = try await multi.addRemoteDevice(pairingLink: link)
                 pairingLink = ""
             } catch {
-                pairingError = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+                if case PairingClientError.localNetworkDenied = error {
+                    pairingErrorIsLocalNetworkDenial = true
+                    pairingError =
+                        "macOS is blocking local network access for SurgeCode. Enable SurgeCode under Privacy & Security → Local Network, then try again."
+                } else {
+                    pairingError = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+                }
             }
             isPairing = false
         }
+    }
+
+    private func openLocalNetworkSettings() {
+        let url = URL(
+            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork")!
+        NSWorkspace.shared.open(url)
     }
 }
 

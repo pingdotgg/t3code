@@ -7,6 +7,10 @@ public enum PairingClientError: Error, LocalizedError, Sendable {
     case httpStatus(endpoint: String, statusCode: Int, body: String)
     case nonHTTPResponse(endpoint: String)
     case network(endpoint: String, detail: String)
+    /// macOS Local Network privacy (TCC) denial — see `LocalNetworkDenial`.
+    /// Kept distinct from `.network` so callers (the pairing UI) can offer
+    /// an actionable fix instead of a raw transport error dump.
+    case localNetworkDenied(endpoint: String)
     case decoding(endpoint: String, detail: String)
 
     public var errorDescription: String? {
@@ -23,6 +27,8 @@ public enum PairingClientError: Error, LocalizedError, Sendable {
             return "Non-HTTP response from \(endpoint)."
         case .network(let endpoint, let detail):
             return "Could not reach \(endpoint): \(detail)"
+        case .localNetworkDenied(let endpoint):
+            return "macOS is blocking local network access to \(endpoint)."
         case .decoding(let endpoint, let detail):
             return "Failed to decode \(endpoint) response: \(detail)"
         }
@@ -207,8 +213,11 @@ public enum PairingClient {
         try await HTTPClient.perform(
             request,
             urlSession: urlSession,
-            mapTransportError: { endpoint, detail in
-                PairingClientError.network(endpoint: endpoint, detail: detail)
+            mapTransportError: { endpoint, error in
+                if LocalNetworkDenial.matches(error, url: URL(string: endpoint)) {
+                    return PairingClientError.localNetworkDenied(endpoint: endpoint)
+                }
+                return PairingClientError.network(endpoint: endpoint, detail: String(describing: error))
             },
             mapNonHTTPResponse: { endpoint in
                 PairingClientError.nonHTTPResponse(endpoint: endpoint)

@@ -287,8 +287,8 @@ public actor AuthClient {
         try await HTTPClient.perform(
             request,
             urlSession: urlSession,
-            mapTransportError: { endpoint, detail in
-                T3Error.auth("HTTP request to \(endpoint) failed: \(detail)")
+            mapTransportError: { endpoint, error in
+                T3Error.auth("HTTP request to \(endpoint) failed: \(String(describing: error))")
             },
             mapNonHTTPResponse: { endpoint in
                 T3Error.auth("Non-HTTP response from \(endpoint)")
