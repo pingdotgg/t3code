@@ -16,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as Duration from "effect/Duration";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
@@ -540,6 +541,34 @@ it.effect("returns canonical tracked activity for timed-out stalled sub-agents",
     const result = yield* Fiber.join(waiting);
     expect(result.status).toBe("running");
     expect(result.lastActivityAt).toBe("1960-01-01T00:00:00.000Z");
+    expect(result.stalled).toBe(true);
+  }),
+);
+
+it.effect("uses the Effect clock for fallback stall detection", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(
+      DateTime.toEpochMillis(DateTime.makeUnsafe("2026-04-11T00:00:00.000Z")),
+    );
+    const [coordinator, harness] = yield* makeCoordinator();
+    const spawned = yield* coordinator.spawn(makeScope(), {
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      prompt: "Slow task without tracked activity.",
+    });
+    harness.setThreadDetail((threadId) =>
+      threadId === spawned.threadId
+        ? Option.some(makeThreadDetail(spawned.threadId, { latestTurn: null }))
+        : Option.none(),
+    );
+
+    const waiting = yield* coordinator
+      .wait(makeScope(), { threadId: spawned.threadId, timeoutSeconds: 121 })
+      .pipe(Effect.forkChild);
+    yield* TestClock.adjust(Duration.seconds(122));
+    const result = yield* Fiber.join(waiting);
+
+    expect(result.status).toBe("running");
+    expect(result.lastActivityAt).toBe("2026-04-11T00:00:00.000Z");
     expect(result.stalled).toBe(true);
   }),
 );

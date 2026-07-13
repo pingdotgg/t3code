@@ -505,8 +505,11 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
             : undefined;
           const activityAt =
             trackedActivity?.lastActivityAt ?? lastActivityAt(thread) ?? fresh.lastTurnRequestedAt;
-          const activityAtMs = Date.parse(activityAt);
-          const now = yield* Clock.currentTimeMillis;
+          const activityAtMs = Option.match(DateTime.make(activityAt), {
+            onNone: () => undefined,
+            onSome: DateTime.toEpochMillis,
+          });
+          const now = DateTime.toEpochMillis(yield* DateTime.now);
           const thresholdMs = readTurnStallThresholdMs();
           return {
             threadId: input.threadId,
@@ -515,7 +518,7 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
             lastActivityAt: activityAt,
             stalled:
               trackedActivity?.stalled ??
-              (thresholdMs > 0 && !Number.isNaN(activityAtMs) && now - activityAtMs >= thresholdMs),
+              (thresholdMs > 0 && activityAtMs !== undefined && now - activityAtMs >= thresholdMs),
           };
         }
         yield* Effect.sleep(Duration.millis(WAIT_POLL_INTERVAL_MILLIS));
