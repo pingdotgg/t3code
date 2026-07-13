@@ -101,10 +101,10 @@ struct ScenerySettingsTab: View {
         }
         .formStyle(.grouped)
         .padding()
-        .animation(Motion.settle, value: scenery.availableSets.map(\.id))
-        .animation(Motion.settle, value: scenery.defaultSetId)
-        .animation(Motion.fade, value: composer.state)
-        .animation(Motion.settle, value: scenery.sceneryTranslucency)
+        .animation(Motion.structure, value: scenery.availableSets.map(\.id))
+        .animation(Motion.feedback, value: scenery.defaultSetId)
+        .animation(Motion.reveal, value: composer.state)
+        .animation(Motion.feedback, value: scenery.sceneryTranslucency)
         .confirmationDialog(
             "Delete scenery set?",
             isPresented: $showDeleteConfirm,

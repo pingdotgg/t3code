@@ -45,20 +45,20 @@ struct ChatFollowUpBar: View {
                 let vcs = model.selectedVcsStatus()
                 if let vcs, vcs.prState == .merged {
                     archiveSuggestion(thread: thread, vcs: vcs)
-                        .transition(Motion.bannerDrop)
+                        .transition(Motion.banner)
                 } else if let vcs, shouldOfferReviewFixes(thread: thread, vcs: vcs) {
                     fixReviewCommentsSuggestion
-                        .transition(Motion.bannerDrop)
+                        .transition(Motion.banner)
                 } else if let vcs, vcs.prState == .open, let url = pullRequestURL(vcs) {
                     openPullRequestChip(vcs: vcs, url: url)
-                        .transition(Motion.bannerDrop)
+                        .transition(Motion.banner)
                 } else if let vcs, shouldOfferPR(thread: thread, vcs: vcs) {
                     createPRSuggestion
-                        .transition(Motion.bannerDrop)
+                        .transition(Motion.banner)
                 }
             }
         }
-        .animation(Motion.settle, value: model.selectedVcsStatus())
+        .animation(Motion.structure, value: model.selectedVcsStatus())
     }
 
     // MARK: - PR open → link

@@ -80,7 +80,9 @@ private struct ComposerSegmentLabel: View {
             Image(systemName: icon)
                 .font(.caption)
                 .foregroundStyle(isAccented ? Color.accentColor : Color.secondary)
-                .contentTransition(animateSymbol ? .symbolEffect(.replace) : .identity)
+                .contentTransition(
+                    animateSymbol && !Motion.reduceMotion
+                        ? .symbolEffect(.replace) : .identity)
             Text(title)
                 .font(.caption.weight(.medium))
                 .foregroundStyle(isAccented ? Color.accentColor : Color.primary)
@@ -280,7 +282,7 @@ private struct PlanModeToggle: View {
             )
         }
         .buttonStyle(.plain)
-        .animation(Motion.snap, value: isPlan)
+        .animation(Motion.feedback, value: isPlan)
         .help(isPlan ? "Plan mode on — the agent proposes a plan instead of editing" : "Turn on plan mode")
         .onHover { isHovering = $0 }
     }

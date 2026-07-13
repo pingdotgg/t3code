@@ -475,7 +475,8 @@ public struct ComposerBar: View {
             }
         } label: {
             Image(systemName: sendIconName)
-                .contentTransition(.symbolEffect(.replace))
+                .contentTransition(
+                    Motion.reduceMotion ? .identity : .symbolEffect(.replace))
                 .alpineIconLabel()
         }
         .buttonBorderShape(.circle)
@@ -513,7 +514,8 @@ public struct ComposerBar: View {
                         .controlSize(.small)
                 default:
                     dictationMicIcon
-                        .contentTransition(.symbolEffect(.replace))
+                        .contentTransition(
+                            Motion.reduceMotion ? .identity : .symbolEffect(.replace))
                         .symbolEffect(.pulse, isActive: isRecording && !Motion.reduceMotion)
                 }
             }

@@ -83,7 +83,7 @@ public struct UserInputCard: View {
     private func optionRow(_ option: UserInputOption, question: UserInputQuestionItem) -> some View {
         let isSelected = selections[question.id]?.contains(option.label) ?? false
         return Button {
-            withAnimation(Motion.snap) { toggle(option.label, question: question) }
+            withAnimation(Motion.feedback) { toggle(option.label, question: question) }
         } label: {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Image(
@@ -91,7 +91,8 @@ public struct UserInputCard: View {
                         ? (question.multiSelect ? "checkmark.square.fill" : "largecircle.fill.circle")
                         : (question.multiSelect ? "square" : "circle"))
                 .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
-                .contentTransition(.symbolEffect(.replace))
+                .contentTransition(
+                    Motion.reduceMotion ? .identity : .symbolEffect(.replace))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(option.label)
                         .font(.callout)

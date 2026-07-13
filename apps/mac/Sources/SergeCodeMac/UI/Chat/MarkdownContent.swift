@@ -790,8 +790,8 @@ struct AssistantMarkdownView: View {
             }
         }
         .onHover { isHovering = $0 }
-        .animation(Motion.fade, value: isHovering)
-        .animation(Motion.fade, value: isStreaming)
+        .animation(Motion.feedback, value: isHovering)
+        .animation(Motion.reveal, value: isStreaming)
         .modifier(
             RemoteFileLinkHelpModifier(
                 message: model.capabilities.opensLocalEditor
@@ -1493,7 +1493,7 @@ private struct MarkdownCodeBlock: View {
                         systemImage: isWrapped ? "arrow.left.and.right" : "arrow.down.right.and.line.horizontal.and.line.vertical.and.arrow.down",
                         help: isWrapped ? "Disable word wrap" : "Enable word wrap"
                     ) {
-                        withAnimation(Motion.fade) { isWrapped.toggle() }
+                        withAnimation(Motion.feedback) { isWrapped.toggle() }
                     }
                     .transition(.opacity)
                 }
@@ -1514,8 +1514,8 @@ private struct MarkdownCodeBlock: View {
                 .padding(10)
         }
         .onHover { isHovering = $0 }
-        .animation(Motion.fade, value: isHovering)
-        .animation(Motion.fade, value: isWrapped)
+        .animation(Motion.feedback, value: isHovering)
+        .animation(Motion.feedback, value: isWrapped)
         .frame(maxWidth: .infinity, alignment: .leading)
         // Solid opaque fill — code blocks live inside long-form assistant
         // text, so no glass/material here per Liquid Glass content rules.
@@ -1534,7 +1534,7 @@ private struct MarkdownCodeBlock: View {
             // its hosting view is still laying out.
             try? await Task.sleep(for: .milliseconds(1))
             guard !Task.isCancelled else { return }
-            withAnimation(Motion.fade) {
+            withAnimation(Motion.feedback) {
                 displayedText = highlighted
             }
         }

@@ -78,9 +78,6 @@ enum Motion {
         .timingCurve(0.77, 0, 0.175, 1, duration: reduceMotion ? 0.12 : 0.22)
     }
 
-    /// Quick fades for lightweight chrome (spinners, hints, tooltips).
-    static var fade: Animation { reveal }
-
     /// Occasional scenery changes are atmospheric rather than interactive.
     static var scenery: Animation {
         .timingCurve(0.77, 0, 0.175, 1, duration: reduceMotion ? 0.12 : 0.30)
@@ -149,11 +146,4 @@ enum Motion {
     static var paneChange: AnyTransition {
         reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.992))
     }
-
-    // Compatibility aliases while call sites migrate by semantic purpose.
-    static var snap: Animation { feedback }
-    static var settle: Animation { structure }
-    static var enter: Animation { reveal }
-    static var bannerDrop: AnyTransition { banner }
-    static var paneSwap: AnyTransition { paneChange }
 }
