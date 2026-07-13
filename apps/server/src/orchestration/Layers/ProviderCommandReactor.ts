@@ -44,6 +44,7 @@ import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
+const COPILOT_DRIVER_KIND = ProviderDriverKind.make("copilot");
 
 type ProviderIntentEvent = Extract<
   OrchestrationEvent,
@@ -743,6 +744,12 @@ const make = Effect.gen(function* () {
       yield* Effect.gen(function* () {
         const { textGenerationModelSelection: modelSelection } =
           yield* serverSettingsService.getSettings;
+        const textGenerationProvider = yield* providerService.getInstanceInfo(
+          modelSelection.instanceId,
+        );
+        if (textGenerationProvider.driverKind === COPILOT_DRIVER_KIND) {
+          return;
+        }
         const generated = yield* textGeneration.generateThreadTitle({
           cwd: input.cwd,
           message: input.messageText,
