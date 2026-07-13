@@ -1,0 +1,43 @@
+{
+  "name": "@t3tools/opentui-image",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./react": {
+      "types": "./src/react.ts",
+      "import": "./src/react.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsgo --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "sharp": "^0.34.5"
+  },
+  "devDependencies": {
+    "@opentui/core": "^0.4.1",
+    "@opentui/react": "^0.4.1",
+    "@types/bun": "1.3.14",
+    "@types/node": "catalog:",
+    "@types/react": "~19.2.14",
+    "react": "19.2.6"
+  },
+  "peerDependencies": {
+    "@opentui/core": "^0.4.1",
+    "@opentui/react": "^0.4.1",
+    "react": "^19.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@opentui/react": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    }
+  }
+}
