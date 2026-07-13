@@ -70,6 +70,23 @@ const isStoppedEvent = (event: ProviderRuntimeEvent): boolean =>
 const isTurnEndedEvent = (event: ProviderRuntimeEvent): boolean =>
   event.type === "turn.completed" || event.type === "turn.aborted";
 
+const PROGRESS_EVENT_PREFIXES = [
+  "session.",
+  "turn.",
+  "item.",
+  "content.",
+  "request.",
+  "user-input.",
+  "task.",
+  "hook.",
+  "tool.",
+  "thread.realtime.",
+] as const;
+
+const isProgressBearingEvent = (event: ProviderRuntimeEvent): boolean =>
+  event.type === "files.persisted" ||
+  PROGRESS_EVENT_PREFIXES.some((prefix) => event.type.startsWith(prefix));
+
 export const makeTurnActivityWatchdog = Effect.fn("makeTurnActivityWatchdog")(function* (
   options: TurnActivityWatchdogOptions,
 ): Effect.fn.Return<TurnActivityWatchdog, never, Scope.Scope> {
@@ -96,6 +113,17 @@ export const makeTurnActivityWatchdog = Effect.fn("makeTurnActivityWatchdog")(fu
   ) {
     if (event.type === "session.health") return;
 
+    if (isStoppedEvent(event)) {
+      yield* Ref.update(activityByThread, (current) => {
+        if (!current.has(event.threadId)) return current;
+        const next = new Map(current);
+        next.delete(event.threadId);
+        return next;
+      });
+      return;
+    }
+    if (!isProgressBearingEvent(event)) return;
+
     const now = yield* DateTime.now;
     const nowMs = DateTime.toEpochMillis(now);
     const nowIso = DateTime.formatIso(now);
@@ -105,7 +133,7 @@ export const makeTurnActivityWatchdog = Effect.fn("makeTurnActivityWatchdog")(fu
       const activeTurnId =
         event.type === "turn.started"
           ? event.turnId
-          : isTurnEndedEvent(event) || isStoppedEvent(event)
+          : isTurnEndedEvent(event)
             ? undefined
             : previous?.activeTurnId;
 
@@ -122,11 +150,6 @@ export const makeTurnActivityWatchdog = Effect.fn("makeTurnActivityWatchdog")(fu
               lastActivityAt: nowIso,
             } satisfies TurnHealthTransition)
           : undefined;
-
-      if (isStoppedEvent(event)) {
-        nextMap.delete(event.threadId);
-        return [recovered, nextMap] as const;
-      }
 
       nextMap.set(event.threadId, {
         provider: event.provider,

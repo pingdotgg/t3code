@@ -23,7 +23,12 @@ const turnId = TurnId.make("turn-1");
 const provider = ProviderDriverKind.make("claudeAgent");
 
 const event = (
-  type: "session.started" | "session.exited" | "turn.started" | "content.delta",
+  type:
+    | "session.started"
+    | "session.exited"
+    | "turn.started"
+    | "content.delta"
+    | "account.rate-limits.updated",
 ): ProviderRuntimeEvent => {
   const base = {
     eventId: EventId.make(`event-${type}`),
@@ -45,6 +50,8 @@ const event = (
         turnId,
         payload: { delta: "working", streamKind: "assistant_text" as const },
       };
+    case "account.rate-limits.updated":
+      return { ...base, type, payload: { rateLimits: { remaining: 100 } } };
   }
 };
 
@@ -109,7 +116,32 @@ describe("TurnActivityWatchdog", () => {
     ),
   );
 
-  it.effect("recovers once and removes stopped sessions", () =>
+  it.effect("ignores chatter while a turn is stalled", () =>
+    withTestClock(
+      Effect.gen(function* () {
+        const transitions = yield* Ref.make<Array<TurnHealthTransition>>([]);
+        const watchdog = yield* makeTurnActivityWatchdog({
+          thresholdMs: 1_000,
+          pollIntervalMs: 100,
+          onTransition: (transition) =>
+            Ref.update(transitions, (current) => [...current, transition]),
+        });
+
+        yield* watchdog.observe(event("turn.started"));
+        yield* TestClock.adjust(Duration.millis(1_200));
+        const stalledSnapshot = yield* watchdog.getSnapshot(threadId);
+        yield* watchdog.observe(event("account.rate-limits.updated"));
+
+        assert.deepEqual(
+          (yield* Ref.get(transitions)).map((transition) => transition.state),
+          ["stalled"],
+        );
+        assert.deepEqual(yield* watchdog.getSnapshot(threadId), stalledSnapshot);
+      }),
+    ),
+  );
+
+  it.effect("removes stopped sessions without emitting recovery", () =>
     withTestClock(
       Effect.gen(function* () {
         const transitions = yield* Ref.make<Array<TurnHealthTransition>>([]);
@@ -126,11 +158,11 @@ describe("TurnActivityWatchdog", () => {
 
         assert.deepEqual(
           (yield* Ref.get(transitions)).map((transition) => transition.state),
-          ["stalled", "active"],
+          ["stalled"],
         );
         assert.isUndefined(yield* watchdog.getSnapshot(threadId));
         yield* TestClock.adjust(Duration.minutes(10));
-        assert.equal((yield* Ref.get(transitions)).length, 2);
+        assert.equal((yield* Ref.get(transitions)).length, 1);
       }),
     ),
   );
