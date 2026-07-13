@@ -6,7 +6,12 @@ import type { ThreadId } from "@t3tools/contracts";
 import * as React from "react";
 
 import type { TuiClient } from "../connection.ts";
-import { readTerminalFrame, readTerminalViewport, type TermSegment } from "../terminalView.ts";
+import {
+  encodeTerminalPaste,
+  readTerminalFrame,
+  readTerminalViewport,
+  type TermSegment,
+} from "../terminalView.ts";
 import { ansi, THEME, usePalette } from "../theme.ts";
 
 // The embedded terminal pane (mirrors apps/web/src/components/ThreadTerminalDrawer.tsx).
@@ -196,7 +201,7 @@ const TerminalPane = React.memo(function TerminalPane({
     if (!focused) return;
     const text = new TextDecoder().decode(event.bytes);
     if (text.length === 0) return;
-    const data = term.modes.bracketedPasteMode ? `[200~${text}[201~` : text;
+    const data = encodeTerminalPaste(text, term.modes.bracketedPasteMode);
     void client.terminalWrite(info.threadId, info.terminalId, data).catch(() => {});
   });
 

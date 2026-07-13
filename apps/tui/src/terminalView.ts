@@ -144,3 +144,21 @@ export function readTerminalViewport(term: Terminal): string {
   }
   return lines.join("\n").replace(/\s*\n+$/u, "");
 }
+
+/**
+ * Encode clipboard text for forwarding to a PTY, honouring the running program's
+ * bracketed-paste mode.
+ *
+ * Security: when bracketed paste is active the text is framed with the real
+ * `ESC [ 200 ~` / `ESC [ 201 ~` introducers, and any embedded end-of-paste
+ * marker is stripped first. Without that strip a crafted clipboard payload
+ * containing `ESC [ 201 ~` would close paste mode early, so the bytes after it
+ * reach the shell as if typed — a bracketed-paste injection that can run
+ * arbitrary commands from a single paste. Both the 7-bit `ESC [ 201 ~` and the
+ * 8-bit C1 `0x9b 201 ~` forms are neutralised.
+ */
+export function encodeTerminalPaste(text: string, bracketedPasteMode: boolean): string {
+  if (!bracketedPasteMode) return text;
+  const guarded = text.replace(/\x1b\[201~/g, "").replace(/\x9b201~/g, "");
+  return `\x1b[200~${guarded}\x1b[201~`;
+}
