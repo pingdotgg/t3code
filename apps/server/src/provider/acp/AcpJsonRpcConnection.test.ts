@@ -293,6 +293,64 @@ describe("AcpSessionRuntime", () => {
     ),
   );
 
+  it.effect("segments thought chunks separately from assistant text", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+
+      const promptResult = yield* runtime.prompt({
+        prompt: [{ type: "text", text: "hi" }],
+      });
+      expect(promptResult).toMatchObject({ stopReason: "end_turn" });
+
+      const notes = Array.from(yield* Stream.runCollect(Stream.take(runtime.getEvents(), 7)));
+      expect(notes.map((note) => note._tag)).toEqual([
+        "AssistantItemStarted",
+        "ContentDelta",
+        "ContentDelta",
+        "AssistantItemCompleted",
+        "AssistantItemStarted",
+        "ContentDelta",
+        "AssistantItemCompleted",
+      ]);
+
+      const thoughtStarted = notes[0];
+      const thoughtCompleted = notes[3];
+      const assistantStarted = notes[4];
+      if (
+        thoughtStarted?._tag === "AssistantItemStarted" &&
+        thoughtCompleted?._tag === "AssistantItemCompleted" &&
+        assistantStarted?._tag === "AssistantItemStarted"
+      ) {
+        expect(thoughtStarted.channel).toBe("thought");
+        expect(thoughtStarted.itemId).toMatch(/^thought:/);
+        expect(thoughtCompleted.itemId).toBe(thoughtStarted.itemId);
+        // The completed thought segment carries the accumulated text.
+        expect(thoughtCompleted.text).toBe("thinking about the answer");
+        expect(assistantStarted.channel).toBe("assistant");
+        expect(assistantStarted.itemId).toMatch(/^assistant:/);
+        expect(assistantStarted.itemId).not.toBe(thoughtStarted.itemId);
+      }
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: {
+              T3_ACP_EMIT_THOUGHT_CHUNKS: "1",
+            },
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          authMethodId: "test",
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+
   it.effect("suppresses generic placeholder tool updates until completion", () =>
     Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;

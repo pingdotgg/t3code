@@ -95,6 +95,14 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
             sessionId: "session-1",
           },
         });
+        // JSON-RPC 2.0 notifications must omit `id` entirely; agents treat a
+        // present-but-empty id as a malformed request and drop the message.
+        const outboundText =
+          typeof outbound === "string" ? outbound : new TextDecoder().decode(outbound);
+        assert.equal(
+          outboundText,
+          '{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"session-1"}}\n',
+        );
 
         yield* Queue.offer(
           input,
@@ -211,7 +219,7 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
           direction: "outgoing",
           stage: "raw",
           payload:
-            '{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"session-1"},"id":"","headers":[]}\n',
+            '{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"session-1"}}\n',
         },
       ]);
     }),
