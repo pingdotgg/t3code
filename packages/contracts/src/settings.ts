@@ -344,6 +344,7 @@ const AgentWorkflowSettingsPatch = Schema.Struct({
   reviewChanges: Schema.optionalKey(
     Schema.Struct({
       enabled: Schema.optionalKey(Schema.Boolean),
+      modelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
       defaultScope: Schema.optionalKey(ReviewChangesScope),
       promptTemplate: Schema.optionalKey(Schema.String),
     }),
@@ -366,6 +367,7 @@ const AgentWorkflowSettingsPatch = Schema.Struct({
         name: TrimmedNonEmptyString,
         buttonLabel: TrimmedNonEmptyString,
         promptTemplate: Schema.String,
+        modelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
         showInHeader: Schema.optionalKey(Schema.Boolean),
         destinationMode: Schema.optionalKey(AgentWorkflowDestinationMode),
         automation: Schema.optionalKey(CustomAgentWorkflowAutomationSettings),

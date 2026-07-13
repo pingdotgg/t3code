@@ -3763,7 +3763,13 @@ function ChatViewBody(
       }
 
       const sendCtx = composerRef.current?.getSendContext();
+      const workflowModelSelection =
+        workflowId === REVIEW_CHANGES_WORKFLOW_ID
+          ? settings.agentWorkflows.reviewChanges.modelSelection
+          : settings.agentWorkflows.customWorkflows.find((workflow) => workflow.id === workflowId)
+              ?.modelSelection;
       const modelSelection =
+        workflowModelSelection ??
         sendCtx?.selectedModelSelection ??
         activeProject.defaultModelSelection ??
         activeThread.modelSelection;

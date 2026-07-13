@@ -17,6 +17,7 @@ import {
   DEFAULT_AGENT_WORKFLOW_MAX_RUNS_PER_THREAD,
   defaultInstanceIdForDriver,
   type DesktopUpdateChannel,
+  type ModelSelection,
   ProviderDriverKind,
   type ProviderInstanceConfig,
   type ProviderInstanceId,
@@ -187,6 +188,90 @@ function withoutProviderInstanceKey<V>(
   const next = { ...record } as Record<ProviderInstanceId, V>;
   delete next[key];
   return next;
+}
+
+function WorkflowModelControls({
+  modelSelection,
+  onModelSelectionChange,
+}: {
+  readonly modelSelection: ModelSelection | null | undefined;
+  readonly onModelSelectionChange: (modelSelection: ModelSelection | null) => void;
+}) {
+  const settings = useSettings();
+  const serverProviders = useServerProviders();
+  const instanceEntries = useMemo(
+    () => sortProviderInstanceEntries(deriveProviderInstanceEntries(serverProviders)),
+    [serverProviders],
+  );
+  const selectedInstanceId = modelSelection?.instanceId ?? instanceEntries[0]?.instanceId;
+  const selectedInstanceEntry = instanceEntries.find(
+    (entry) => entry.instanceId === selectedInstanceId,
+  );
+  const selectedModel = modelSelection?.model ?? selectedInstanceEntry?.models[0]?.slug ?? "";
+  const modelOptionsByInstance = useMemo(
+    () =>
+      getCustomModelOptionsByInstance(settings, serverProviders, selectedInstanceId, selectedModel),
+    [selectedInstanceId, selectedModel, serverProviders, settings],
+  );
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-2 sm:col-span-2">
+      <div>
+        <div className="text-xs text-muted-foreground">Model and reasoning</div>
+        <div className="mt-0.5 text-xs text-muted-foreground/80">
+          {modelSelection
+            ? "Use this model and reasoning level whenever the workflow runs."
+            : "Inherit the model and reasoning level from the chat that starts the workflow."}
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center justify-end gap-1.5">
+        {modelSelection && selectedInstanceId && selectedInstanceEntry ? (
+          <>
+            <ProviderModelPicker
+              activeInstanceId={selectedInstanceId}
+              model={selectedModel}
+              lockedProvider={null}
+              instanceEntries={instanceEntries}
+              modelOptionsByInstance={modelOptionsByInstance}
+              triggerVariant="outline"
+              triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
+              onInstanceModelChange={(instanceId, model) =>
+                onModelSelectionChange(createModelSelection(instanceId, model))
+              }
+            />
+            <TraitsPicker
+              provider={selectedInstanceEntry.driverKind}
+              instanceId={selectedInstanceId}
+              models={selectedInstanceEntry.models}
+              model={selectedModel}
+              prompt=""
+              onPromptChange={() => {}}
+              modelOptions={modelSelection.options}
+              allowPromptInjectedEffort={false}
+              triggerVariant="outline"
+              onModelOptionsChange={(options) =>
+                onModelSelectionChange(
+                  createModelSelection(selectedInstanceId, selectedModel, options),
+                )
+              }
+            />
+          </>
+        ) : null}
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={!modelSelection && (!selectedInstanceId || !selectedModel)}
+          onClick={() =>
+            onModelSelectionChange(
+              modelSelection ? null : createModelSelection(selectedInstanceId!, selectedModel),
+            )
+          }
+        >
+          {modelSelection ? "Inherit chat model" : "Choose model"}
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 function withoutProviderInstanceFavorites(
@@ -2348,7 +2433,16 @@ export function AgentWorkflowsSettingsPanel() {
               aria-label="Enable Review Code workflow"
             />
           }
-        />
+        >
+          <div className="mt-4">
+            <WorkflowModelControls
+              modelSelection={settings.agentWorkflows.reviewChanges.modelSelection}
+              onModelSelectionChange={(modelSelection) =>
+                updateReviewChangesWorkflow({ modelSelection })
+              }
+            />
+          </div>
+        </SettingsRow>
 
         <SettingsRow
           title="Review scope"
@@ -2505,6 +2599,12 @@ export function AgentWorkflowsSettingsPanel() {
                       ))}
                     </SelectPopup>
                   </Select>
+                  <WorkflowModelControls
+                    modelSelection={workflow.modelSelection}
+                    onModelSelectionChange={(modelSelection) =>
+                      updateCustomWorkflow(workflow.id, { modelSelection })
+                    }
+                  />
                   <div className="flex items-center justify-between rounded-lg border px-3 py-2">
                     <span className="text-xs text-muted-foreground">
                       Run after assistant completes

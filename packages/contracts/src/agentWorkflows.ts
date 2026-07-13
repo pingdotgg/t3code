@@ -28,6 +28,7 @@ Use the code-review skill's systematic review workflow.`;
 
 export const ReviewChangesWorkflowSettings = Schema.Struct({
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  modelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   defaultScope: ReviewChangesScope.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_REVIEW_CHANGES_SCOPE)),
   ),
@@ -81,6 +82,7 @@ export const AgentWorkflowSettings = Schema.Struct({
       name: TrimmedNonEmptyString,
       buttonLabel: TrimmedNonEmptyString,
       promptTemplate: Schema.String,
+      modelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
       showInHeader: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
       destinationMode: AgentWorkflowDestinationMode.pipe(
         Schema.withDecodingDefault(Effect.succeed("child-chat" as const)),
