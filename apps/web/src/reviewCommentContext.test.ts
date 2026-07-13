@@ -273,3 +273,19 @@ describe("review comment context parsing", () => {
     });
   });
 });
+
+it("bounds very large review comment diffs with an omission marker", () => {
+  const comment = buildFileReviewComment({
+    id: "comment-large",
+    filePath: "src/large.ts",
+    startLine: 1,
+    endLine: 300,
+    text: "Review this large range.",
+    contents: Array.from({ length: 300 }, (_, index) => `line ${index + 1}`).join("\n"),
+  });
+
+  expect(comment.diff).toContain("line 1");
+  expect(comment.diff).toContain("line 300");
+  expect(comment.diff).toContain("[trimmed: omitted");
+  expect(comment.diff).not.toContain("line 100\nline 101\nline 102");
+});

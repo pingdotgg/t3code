@@ -53,7 +53,7 @@ export function buildPreviewAnnotationPrompt(annotation: PreviewAnnotationPayloa
   const elementContexts = annotation.elements
     .map((target) => normalizeElementContextSelection(target.element))
     .filter((context) => context !== null);
-  const elementBlock = buildElementContextBlock(elementContexts);
+  const elementBlock = buildElementContextBlock(elementContexts, { mode: "compact" });
   if (elementBlock) lines.push(elementBlock);
   return ["<preview_annotation>", ...lines, "</preview_annotation>"].join("\n");
 }

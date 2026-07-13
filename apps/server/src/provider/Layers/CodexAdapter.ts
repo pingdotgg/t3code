@@ -177,6 +177,10 @@ function normalizeCodexTokenUsage(
   const maxTokens = usage.modelContextWindow ?? undefined;
   const inputTokens = usage.last.inputTokens;
   const cachedInputTokens = usage.last.cachedInputTokens;
+  const uncachedInputTokens =
+    inputTokens !== undefined && cachedInputTokens !== undefined
+      ? Math.max(0, inputTokens - cachedInputTokens)
+      : undefined;
   const outputTokens = usage.last.outputTokens;
   const reasoningOutputTokens = usage.last.reasoningOutputTokens;
 
@@ -187,17 +191,20 @@ function normalizeCodexTokenUsage(
       : {}),
     ...(maxTokens !== undefined ? { maxTokens } : {}),
     ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(uncachedInputTokens !== undefined ? { uncachedInputTokens } : {}),
     ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
     ...(outputTokens !== undefined ? { outputTokens } : {}),
     ...(reasoningOutputTokens !== undefined ? { reasoningOutputTokens } : {}),
     ...(usedTokens !== undefined ? { lastUsedTokens: usedTokens } : {}),
     ...(inputTokens !== undefined ? { lastInputTokens: inputTokens } : {}),
+    ...(uncachedInputTokens !== undefined ? { lastUncachedInputTokens: uncachedInputTokens } : {}),
     ...(cachedInputTokens !== undefined ? { lastCachedInputTokens: cachedInputTokens } : {}),
     ...(outputTokens !== undefined ? { lastOutputTokens: outputTokens } : {}),
     ...(reasoningOutputTokens !== undefined
       ? { lastReasoningOutputTokens: reasoningOutputTokens }
       : {}),
     compactsAutomatically: true,
+    accountingStatus: "provider-reported",
   };
 }
 

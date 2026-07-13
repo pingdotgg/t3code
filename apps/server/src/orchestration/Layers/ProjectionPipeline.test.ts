@@ -2643,3 +2643,131 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
     }),
   );
 });
+
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-usage-")))(
+  "OrchestrationProjectionPipeline usage projection",
+  (it) => {
+    it.effect("persists context-window usage rows for summary queries", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const now = "2026-01-01T00:00:00.000Z";
+        const threadId = ThreadId.make("thread-usage-1");
+        const turnId = TurnId.make("turn-usage-1");
+
+        yield* eventStore
+          .append({
+            type: "thread.created",
+            eventId: EventId.make("evt-usage-thread-created"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: now,
+            commandId: CommandId.make("cmd-usage-thread-created"),
+            causationEventId: null,
+            correlationId: CommandId.make("cmd-usage-thread-created"),
+            metadata: {},
+            payload: {
+              threadId,
+              projectId: ProjectId.make("project-usage-1"),
+              title: "Usage thread",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("codex"),
+                model: "gpt-5-codex",
+              },
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+              createdAt: now,
+              updatedAt: now,
+            },
+          })
+          .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+
+        yield* eventStore
+          .append({
+            type: "thread.session-set",
+            eventId: EventId.make("evt-usage-session-set"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: now,
+            commandId: CommandId.make("cmd-usage-session-set"),
+            causationEventId: null,
+            correlationId: CommandId.make("cmd-usage-session-set"),
+            metadata: {},
+            payload: {
+              threadId,
+              session: {
+                threadId,
+                status: "running",
+                providerName: "codex",
+                providerInstanceId: ProviderInstanceId.make("codex"),
+                runtimeMode: "full-access",
+                activeTurnId: turnId,
+                lastError: null,
+                updatedAt: now,
+              },
+            },
+          })
+          .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+
+        yield* eventStore
+          .append({
+            type: "thread.activity-appended",
+            eventId: EventId.make("evt-usage-activity"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: now,
+            commandId: CommandId.make("cmd-usage-activity"),
+            causationEventId: null,
+            correlationId: CommandId.make("cmd-usage-activity"),
+            metadata: {},
+            payload: {
+              threadId,
+              activity: {
+                id: EventId.make("activity-usage-1"),
+                tone: "info",
+                kind: "context-window.updated",
+                summary: "Context window updated",
+                payload: {
+                  usedTokens: 1000,
+                  inputTokens: 700,
+                  uncachedInputTokens: 200,
+                  cachedInputTokens: 500,
+                  outputTokens: 300,
+                },
+                turnId,
+                createdAt: now,
+              },
+            },
+          })
+          .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+
+        const rows = yield* sql<{
+          readonly provider: string;
+          readonly providerInstanceId: string | null;
+          readonly model: string | null;
+          readonly usageJson: string;
+        }>`
+          SELECT
+            provider,
+            provider_instance_id AS "providerInstanceId",
+            model,
+            usage_json AS "usageJson"
+          FROM projection_turn_usage
+          WHERE thread_id = ${threadId}
+        `;
+
+        assert.equal(rows.length, 1);
+        assert.deepEqual(rows[0], {
+          provider: "codex",
+          providerInstanceId: "codex",
+          model: "gpt-5-codex",
+          usageJson:
+            '{"usedTokens":1000,"inputTokens":700,"uncachedInputTokens":200,"cachedInputTokens":500,"outputTokens":300}',
+        });
+      }),
+    );
+  },
+);

@@ -12,9 +12,25 @@ function asBoolean(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
 }
 
+function asCost(value: unknown): ContextWindowSnapshot["cost"] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (
+    record.currency !== "USD" ||
+    typeof record.totalCostUsd !== "number" ||
+    !Number.isFinite(record.totalCostUsd) ||
+    typeof record.source !== "string" ||
+    typeof record.confidence !== "string" ||
+    !Array.isArray(record.components)
+  ) {
+    return null;
+  }
+  return value as ContextWindowSnapshot["cost"];
+}
+
 type NullableContextWindowUsage = {
   readonly [Key in keyof ThreadTokenUsageSnapshot]: undefined extends ThreadTokenUsageSnapshot[Key]
-    ? Exclude<ThreadTokenUsageSnapshot[Key], undefined> | null
+    ? Exclude<ThreadTokenUsageSnapshot[Key], undefined> | null | undefined
     : ThreadTokenUsageSnapshot[Key];
 };
 
@@ -77,17 +93,28 @@ export function deriveLatestContextWindowSnapshot(
       usedPercentage,
       remainingPercentage,
       inputTokens: asFiniteNumber(payload?.inputTokens),
+      uncachedInputTokens: asFiniteNumber(payload?.uncachedInputTokens),
       cachedInputTokens: asFiniteNumber(payload?.cachedInputTokens),
+      cacheCreationInputTokens: asFiniteNumber(payload?.cacheCreationInputTokens),
+      cacheReadInputTokens: asFiniteNumber(payload?.cacheReadInputTokens),
       outputTokens: asFiniteNumber(payload?.outputTokens),
       reasoningOutputTokens: asFiniteNumber(payload?.reasoningOutputTokens),
       lastUsedTokens: asFiniteNumber(payload?.lastUsedTokens),
       lastInputTokens: asFiniteNumber(payload?.lastInputTokens),
+      lastUncachedInputTokens: asFiniteNumber(payload?.lastUncachedInputTokens),
       lastCachedInputTokens: asFiniteNumber(payload?.lastCachedInputTokens),
+      lastCacheCreationInputTokens: asFiniteNumber(payload?.lastCacheCreationInputTokens),
+      lastCacheReadInputTokens: asFiniteNumber(payload?.lastCacheReadInputTokens),
       lastOutputTokens: asFiniteNumber(payload?.lastOutputTokens),
       lastReasoningOutputTokens: asFiniteNumber(payload?.lastReasoningOutputTokens),
       toolUses: asFiniteNumber(payload?.toolUses),
       durationMs: asFiniteNumber(payload?.durationMs),
       compactsAutomatically: asBoolean(payload?.compactsAutomatically) ?? false,
+      cost: asCost(payload?.cost),
+      accountingStatus:
+        typeof payload?.accountingStatus === "string"
+          ? (payload.accountingStatus as ContextWindowSnapshot["accountingStatus"])
+          : null,
       updatedAt: activity.createdAt,
     };
   }

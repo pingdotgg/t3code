@@ -186,6 +186,10 @@
     "./processStderrCapture": {
       "types": "./src/processStderrCapture.ts",
       "import": "./src/processStderrCapture.ts"
+    },
+    "./tokenAccounting": {
+      "types": "./src/tokenAccounting.ts",
+      "import": "./src/tokenAccounting.ts"
     }
   },
   "scripts": {

@@ -332,22 +332,70 @@ const ThreadMetadataUpdatedPayload = Schema.Struct({
 });
 export type ThreadMetadataUpdatedPayload = typeof ThreadMetadataUpdatedPayload.Type;
 
+export const ThreadUsageCostComponent = Schema.Struct({
+  category: Schema.Literals([
+    "input",
+    "uncached_input",
+    "cached_input",
+    "cache_creation_input",
+    "cache_read_input",
+    "output",
+    "reasoning_output",
+    "image",
+    "service_tier",
+    "provider_reported_total",
+  ]),
+  tokens: Schema.optional(NonNegativeInt),
+  ratePerMillionUsd: Schema.optional(Schema.Number),
+  costUsd: Schema.Number,
+});
+export type ThreadUsageCostComponent = typeof ThreadUsageCostComponent.Type;
+
+export const ThreadUsageCostSnapshot = Schema.Struct({
+  currency: Schema.Literal("USD"),
+  totalCostUsd: Schema.Number,
+  source: Schema.Literals(["provider", "builtin-pricing", "user-pricing", "not-priced"]),
+  confidence: Schema.Literals(["exact", "high", "medium", "low"]),
+  model: Schema.optional(TrimmedNonEmptyStringSchema),
+  serviceTier: Schema.optional(TrimmedNonEmptyStringSchema),
+  pricingVersion: Schema.optional(TrimmedNonEmptyStringSchema),
+  components: Schema.Array(ThreadUsageCostComponent),
+});
+export type ThreadUsageCostSnapshot = typeof ThreadUsageCostSnapshot.Type;
+
+export const ThreadTokenUsageAccountingStatus = Schema.Literals([
+  "exact",
+  "provider-reported",
+  "estimated",
+  "partial",
+  "unavailable",
+]);
+export type ThreadTokenUsageAccountingStatus = typeof ThreadTokenUsageAccountingStatus.Type;
+
 export const ThreadTokenUsageSnapshot = Schema.Struct({
   usedTokens: NonNegativeInt,
   totalProcessedTokens: Schema.optional(NonNegativeInt),
   maxTokens: Schema.optional(PositiveInt),
   inputTokens: Schema.optional(NonNegativeInt),
+  uncachedInputTokens: Schema.optional(NonNegativeInt),
   cachedInputTokens: Schema.optional(NonNegativeInt),
+  cacheCreationInputTokens: Schema.optional(NonNegativeInt),
+  cacheReadInputTokens: Schema.optional(NonNegativeInt),
   outputTokens: Schema.optional(NonNegativeInt),
   reasoningOutputTokens: Schema.optional(NonNegativeInt),
   lastUsedTokens: Schema.optional(NonNegativeInt),
   lastInputTokens: Schema.optional(NonNegativeInt),
+  lastUncachedInputTokens: Schema.optional(NonNegativeInt),
   lastCachedInputTokens: Schema.optional(NonNegativeInt),
+  lastCacheCreationInputTokens: Schema.optional(NonNegativeInt),
+  lastCacheReadInputTokens: Schema.optional(NonNegativeInt),
   lastOutputTokens: Schema.optional(NonNegativeInt),
   lastReasoningOutputTokens: Schema.optional(NonNegativeInt),
   toolUses: Schema.optional(NonNegativeInt),
   durationMs: Schema.optional(NonNegativeInt),
   compactsAutomatically: Schema.optional(Schema.Boolean),
+  cost: Schema.optional(ThreadUsageCostSnapshot),
+  accountingStatus: Schema.optional(ThreadTokenUsageAccountingStatus),
 });
 export type ThreadTokenUsageSnapshot = typeof ThreadTokenUsageSnapshot.Type;
 

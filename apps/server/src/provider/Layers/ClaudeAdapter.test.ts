@@ -2275,6 +2275,7 @@ describe("ClaudeAdapterLive", () => {
             lastUsedTokens: 321,
             toolUses: 2,
             durationMs: 654,
+            accountingStatus: "provider-reported",
           },
         });
       }
@@ -3101,8 +3102,17 @@ describe("ClaudeAdapterLive", () => {
             usedTokens: 24542,
             lastUsedTokens: 24542,
             inputTokens: 23863,
+            uncachedInputTokens: 4,
+            cachedInputTokens: 23859,
+            cacheCreationInputTokens: 2715,
+            cacheReadInputTokens: 21144,
+            lastUncachedInputTokens: 4,
+            lastCachedInputTokens: 23859,
+            lastCacheCreationInputTokens: 2715,
+            lastCacheReadInputTokens: 21144,
             outputTokens: 679,
             maxTokens: 200000,
+            accountingStatus: "provider-reported",
           },
         });
       }
@@ -3166,6 +3176,7 @@ describe("ClaudeAdapterLive", () => {
             lastUsedTokens: 200000,
             totalProcessedTokens: 535000,
             maxTokens: 200000,
+            accountingStatus: "provider-reported",
           },
         });
       }
@@ -3246,6 +3257,7 @@ describe("ClaudeAdapterLive", () => {
               lastUsedTokens: 190000,
               totalProcessedTokens: 535000,
               maxTokens: 200000,
+              accountingStatus: "provider-reported",
             },
           });
         }

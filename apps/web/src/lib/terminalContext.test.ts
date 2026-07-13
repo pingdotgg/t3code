@@ -209,3 +209,29 @@ describe("terminalContext", () => {
     ).toBe("Investigate @terminal-1:12-13 carefully");
   });
 });
+
+it("can serialize terminal context in compact head-tail form", () => {
+  const lines = Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n");
+  const result = buildTerminalContextBlock(
+    [makeContext({ lineStart: 1, lineEnd: 10, text: lines })],
+    { maxLines: 5, strategy: "head-tail" },
+  );
+
+  expect(result).toContain("1 | line 1");
+  expect(result).toContain("[trimmed: omitted 5 middle lines from 10 total lines]");
+  expect(result).toContain("10 | line 10");
+  expect(result).not.toContain("3 | line 3");
+});
+
+it("can serialize terminal context in compact tail form", () => {
+  const lines = Array.from({ length: 6 }, (_, index) => `line ${index + 1}`).join("\n");
+  const result = buildTerminalContextBlock(
+    [makeContext({ lineStart: 10, lineEnd: 15, text: lines })],
+    { maxLines: 2, strategy: "tail" },
+  );
+
+  expect(result).toContain("[trimmed: omitted first 4 of 6 lines]");
+  expect(result).toContain("14 | line 5");
+  expect(result).toContain("15 | line 6");
+  expect(result).not.toContain("10 | line 1");
+});

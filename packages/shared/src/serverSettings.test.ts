@@ -245,3 +245,27 @@ describe("serverSettings helpers", () => {
     expect(applyServerSettingsPatch(current, {}).customInstructions).toEqual(customInstructions);
   });
 });
+
+it("replaces token efficiency custom pricing maps so stale model prices are cleared", () => {
+  const current = {
+    ...DEFAULT_SERVER_SETTINGS,
+    tokenEfficiency: {
+      ...DEFAULT_SERVER_SETTINGS.tokenEfficiency,
+      customModelPricing: {
+        "codex/old": { inputPerMillionUsd: 1 },
+      },
+    },
+  };
+
+  expect(
+    applyServerSettingsPatch(current, {
+      tokenEfficiency: {
+        customModelPricing: {
+          "codex/new": { outputPerMillionUsd: 2 },
+        },
+      },
+    }).tokenEfficiency.customModelPricing,
+  ).toEqual({
+    "codex/new": { outputPerMillionUsd: 2 },
+  });
+});

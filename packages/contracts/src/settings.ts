@@ -523,6 +523,41 @@ export const ObservabilitySettings = Schema.Struct({
 });
 export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
+export const ModelPricingOverride = Schema.Struct({
+  inputPerMillionUsd: Schema.optional(Schema.Number),
+  uncachedInputPerMillionUsd: Schema.optional(Schema.Number),
+  cachedInputPerMillionUsd: Schema.optional(Schema.Number),
+  cacheCreationInputPerMillionUsd: Schema.optional(Schema.Number),
+  cacheReadInputPerMillionUsd: Schema.optional(Schema.Number),
+  outputPerMillionUsd: Schema.optional(Schema.Number),
+  reasoningOutputPerMillionUsd: Schema.optional(Schema.Number),
+});
+export type ModelPricingOverride = typeof ModelPricingOverride.Type;
+
+export const TokenEfficiencySettings = Schema.Struct({
+  showComposerHints: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  showCostWarnings: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  efficiencyProfile: Schema.Literals(["manual", "balanced", "cost_saver"]).pipe(
+    Schema.withDecodingDefault(Effect.succeed("manual" as const)),
+  ),
+  perTurnEstimatedCostWarningUsd: Schema.NullOr(Schema.Number).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  dailyEstimatedCostWarningUsd: Schema.NullOr(Schema.Number).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  monthlyEstimatedCostWarningUsd: Schema.NullOr(Schema.Number).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  customModelPricing: Schema.Record(TrimmedNonEmptyString, ModelPricingOverride).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+});
+export type TokenEfficiencySettings = typeof TokenEfficiencySettings.Type;
+export const DEFAULT_TOKEN_EFFICIENCY_SETTINGS: TokenEfficiencySettings = Schema.decodeSync(
+  TokenEfficiencySettings,
+)({});
+
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 
 export const ServerSettings = Schema.Struct({
@@ -577,6 +612,7 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_CUSTOM_INSTRUCTIONS_CONFIG)),
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  tokenEfficiency: TokenEfficiencySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -707,6 +743,19 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),
       otlpMetricsUrl: Schema.optionalKey(TrimmedString),
+    }),
+  ),
+  tokenEfficiency: Schema.optionalKey(
+    Schema.Struct({
+      showComposerHints: Schema.optionalKey(Schema.Boolean),
+      showCostWarnings: Schema.optionalKey(Schema.Boolean),
+      efficiencyProfile: Schema.optionalKey(Schema.Literals(["manual", "balanced", "cost_saver"])),
+      perTurnEstimatedCostWarningUsd: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+      dailyEstimatedCostWarningUsd: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+      monthlyEstimatedCostWarningUsd: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+      customModelPricing: Schema.optionalKey(
+        Schema.Record(TrimmedNonEmptyString, ModelPricingOverride),
+      ),
     }),
   ),
   providers: Schema.optionalKey(

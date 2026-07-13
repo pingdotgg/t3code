@@ -295,6 +295,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverRemoveKeybinding, AuthOrchestrationOperateScope],
   [WS_METHODS.serverGetSettings, AuthOrchestrationReadScope],
   [WS_METHODS.serverUpdateSettings, AuthOrchestrationOperateScope],
+  [WS_METHODS.providerUsageSummary, AuthOrchestrationReadScope],
   [WS_METHODS.serverGenerateScenerySet, AuthOrchestrationOperateScope],
   [WS_METHODS.serverDiscoverSourceControl, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetTraceDiagnostics, AuthOrchestrationReadScope],
@@ -1274,6 +1275,28 @@ const makeWsRpcLayer = (
               .pipe(Effect.map(ServerSettings.redactServerSettingsForClient)),
             {
               "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.providerUsageSummary]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.providerUsageSummary,
+            projectionSnapshotQuery.getProviderUsageSummary === undefined
+              ? Effect.fail(
+                  new OrchestrationGetSnapshotError({
+                    message: "Provider usage summary query is unavailable",
+                  }),
+                )
+              : projectionSnapshotQuery.getProviderUsageSummary(input).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new OrchestrationGetSnapshotError({
+                        message: "Failed to load provider usage summary",
+                        cause,
+                      }),
+                  ),
+                ),
+            {
+              "rpc.aggregate": "provider",
             },
           ),
         [WS_METHODS.serverGenerateScenerySet]: ({ location }) =>
