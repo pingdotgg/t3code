@@ -507,12 +507,22 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
       return Effect.succeed(ctx);
     };
 
-    const stopSessionInternal = (ctx: GrokSessionContext) =>
+    const retireSession = (
+      ctx: GrokSessionContext,
+      options: { readonly emitGracefulExit: boolean },
+    ) =>
       Effect.gen(function* () {
         if (ctx.stopped) return;
         ctx.stopped = true;
         yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
         yield* settlePendingUserInputsAsCancelled(ctx.pendingUserInputs);
+
+        if (!options.emitGracefulExit) {
+          sessions.delete(ctx.threadId);
+          yield* Effect.ignore(Scope.close(ctx.scope, Exit.void));
+          return;
+        }
+
         if (ctx.notificationFiber) {
           yield* Fiber.interrupt(ctx.notificationFiber);
         }
@@ -526,6 +536,9 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           payload: { exitKind: "graceful" },
         });
       });
+
+    const stopSessionInternal = (ctx: GrokSessionContext) =>
+      retireSession(ctx, { emitGracefulExit: true });
 
     const startSession: GrokAdapterShape["startSession"] = (input) =>
       withThreadLock(
@@ -845,6 +858,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                       },
                     });
                   }
+                  yield* retireSession(ctx, { emitGracefulExit: false });
                   return;
                 }
                 if (

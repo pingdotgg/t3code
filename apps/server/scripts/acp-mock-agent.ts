@@ -13,6 +13,7 @@ import type * as AcpSchema from "effect-acp/schema";
 
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const exitLogPath = process.env.T3_ACP_EXIT_LOG_PATH;
+const pidPath = process.env.T3_ACP_PID_PATH;
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
@@ -49,6 +50,10 @@ const permissionOptionIds = {
 };
 const sessionId = "mock-session-1";
 const agentArgs = process.argv.slice(2);
+
+if (pidPath) {
+  NodeFS.writeFileSync(pidPath, String(process.pid), "utf8");
+}
 
 function initialAgentStringFlag(...flagNames: ReadonlyArray<string>): string | undefined {
   for (let index = 0; index < agentArgs.length; index += 1) {
@@ -101,6 +106,11 @@ process.once("SIGTERM", () => {
 process.once("SIGINT", () => {
   logExit("SIGINT");
   process.exit(0);
+});
+
+process.once("SIGUSR2", () => {
+  logExit("SIGUSR2");
+  process.exit(7);
 });
 
 process.once("exit", (code) => {

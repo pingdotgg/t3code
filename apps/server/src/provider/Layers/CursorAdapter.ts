@@ -460,12 +460,22 @@ export function makeCursorAdapter(
       return Effect.succeed(ctx);
     };
 
-    const stopSessionInternal = (ctx: CursorSessionContext) =>
+    const retireSession = (
+      ctx: CursorSessionContext,
+      options: { readonly emitGracefulExit: boolean },
+    ) =>
       Effect.gen(function* () {
         if (ctx.stopped) return;
         ctx.stopped = true;
         yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
         yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
+
+        if (!options.emitGracefulExit) {
+          sessions.delete(ctx.threadId);
+          yield* Effect.ignore(Scope.close(ctx.scope, Exit.void));
+          return;
+        }
+
         if (ctx.notificationFiber) {
           yield* Fiber.interrupt(ctx.notificationFiber);
         }
@@ -479,6 +489,9 @@ export function makeCursorAdapter(
           payload: { exitKind: "graceful" },
         });
       });
+
+    const stopSessionInternal = (ctx: CursorSessionContext) =>
+      retireSession(ctx, { emitGracefulExit: true });
 
     const startSession: CursorAdapterShape["startSession"] = (input) =>
       withThreadLock(
@@ -937,6 +950,7 @@ export function makeCursorAdapter(
                         },
                       });
                     }
+                    yield* retireSession(ctx, { emitGracefulExit: false });
                     return;
                   }
                 }
