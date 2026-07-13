@@ -846,7 +846,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     }),
   );
 
-  it.effect("lets rollback finish before gated events drain while stop waits for both", () =>
+  it.effect("retries interrupted stop before replacing a session", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
       const threadId = asThreadId("copilot-rollback-stop-serialization");
@@ -932,6 +932,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* Effect.promise(() => truncateStarted);
 
       let releaseNativeWrite: () => void = () => undefined;
+      const nativeWritesBeforeLateEvent = runtimeMock.state.nativeWriteCalls;
       runtimeMock.state.nativeWriteGate = new Promise<void>((resolve) => {
         releaseNativeWrite = resolve;
       });
@@ -942,11 +943,18 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         type: "user.message",
         data: { content: "late SDK event" },
       } as SessionEvent);
-      releaseTruncate();
 
+      const interruptedStopFiber = yield* adapter.stopSession(threadId).pipe(Effect.forkChild);
+      yield* waitForSdkEventQueue();
+      yield* Fiber.interrupt(interruptedStopFiber).pipe(Effect.ignore);
+      const sessionPresentAfterInterruptedStop = yield* adapter.hasSession(threadId);
+      const disconnectsAfterInterruptedStop =
+        runtimeMock.state.lastSession.disconnect.mock.calls.length;
+
+      releaseTruncate();
       for (
         let attempt = 0;
-        attempt < 20 && runtimeMock.state.nativeWriteCalls === 0;
+        attempt < 20 && runtimeMock.state.nativeWriteCalls === nativeWritesBeforeLateEvent;
         attempt += 1
       ) {
         yield* waitForSdkEventQueue();
@@ -958,21 +966,35 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         ]),
       );
 
-      const stopFiber = yield* adapter.stopSession(threadId).pipe(Effect.forkChild);
+      const replacementFiber = yield* adapter
+        .startSession({
+          provider: COPILOT_DRIVER,
+          threadId,
+          cwd: process.cwd(),
+          runtimeMode: "approval-required",
+        })
+        .pipe(Effect.forkChild);
       yield* waitForSdkEventQueue();
+      const sessionCreationsBeforeEventDrain = runtimeMock.state.createSessionConfigs.length;
       const disconnectsBeforeEventDrain =
         runtimeMock.state.lastSession.disconnect.mock.calls.length;
 
       releaseNativeWrite();
       const rolledBack = yield* Fiber.join(rollbackFiber);
-      yield* Fiber.join(stopFiber);
+      yield* Fiber.join(replacementFiber);
       yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
 
       NodeAssert.equal(rollbackFinishedBeforeEventDrain, true);
       NodeAssert.deepStrictEqual(rolledBack.turns, []);
+      NodeAssert.equal(sessionPresentAfterInterruptedStop, true);
+      NodeAssert.equal(disconnectsAfterInterruptedStop, 0);
+      NodeAssert.equal(sessionCreationsBeforeEventDrain, 1);
       NodeAssert.equal(disconnectsBeforeEventDrain, 0);
       NodeAssert.equal(runtimeMock.state.lastSession.disconnect.mock.calls.length, 1);
       NodeAssert.equal(runtimeMock.state.stopCalls, 1);
+      NodeAssert.equal(yield* adapter.hasSession(threadId), true);
+
+      yield* adapter.stopSession(threadId);
     }),
   );
 
@@ -5285,6 +5307,14 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           runtimeMode: "approval-required",
         })
         .pipe(Effect.forkChild);
+      const secondReplacementFiber = yield* adapter
+        .startSession({
+          provider: COPILOT_DRIVER,
+          threadId,
+          cwd: process.cwd(),
+          runtimeMode: "approval-required",
+        })
+        .pipe(Effect.forkChild);
       yield* waitForSdkEventQueue();
       const sessionCreationsBeforeDrain = runtimeMock.state.createSessionConfigs.length;
       const disconnectsBeforeDrain = runtimeMock.state.lastSession.disconnect.mock.calls.length;
@@ -5292,6 +5322,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       yield* TestClock.adjust("25 millis");
       yield* Fiber.join(stopFiber);
       yield* Fiber.join(replacementFiber);
+      yield* Fiber.join(secondReplacementFiber);
 
       for (
         let attempt = 0;
@@ -5305,8 +5336,10 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       NodeAssert.equal(runtimeMock.state.nativeWriteCalls > 0, true);
       NodeAssert.equal(sessionCreationsBeforeDrain, 1);
       NodeAssert.equal(disconnectsBeforeDrain, 0);
-      NodeAssert.equal(runtimeMock.state.lastSession.disconnect.mock.calls.length, 1);
-      NodeAssert.equal(runtimeMock.state.stopCalls, 1);
+      NodeAssert.equal(runtimeMock.state.createSessionConfigs.length, 3);
+      NodeAssert.equal(runtimeMock.state.lastSession.disconnect.mock.calls.length, 2);
+      NodeAssert.equal(runtimeMock.state.startCalls, 3);
+      NodeAssert.equal(runtimeMock.state.stopCalls, 2);
       NodeAssert.equal(yield* adapter.hasSession(threadId), true);
 
       const completed = runtimeEvents.find((event) => event.type === "turn.completed");
