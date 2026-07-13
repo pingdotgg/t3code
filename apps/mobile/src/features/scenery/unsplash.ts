@@ -9,7 +9,7 @@ import Constants from "expo-constants";
  */
 
 /** utm_source value Unsplash attribution links must carry. */
-export const UNSPLASH_APP_NAME = "SergeCode";
+export const UNSPLASH_APP_NAME = "SurgeCode";
 export const UNSPLASH_UTM = `?utm_source=${UNSPLASH_APP_NAME}&utm_medium=referral`;
 
 /**

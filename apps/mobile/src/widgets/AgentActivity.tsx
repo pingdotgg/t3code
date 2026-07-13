@@ -201,7 +201,7 @@ export function AgentActivity(
       </VStack>
     ),
     compactLeading: (
-      <Text modifiers={[font({ weight: "bold", size: 11 }), foregroundStyle(tint)]}>T3</Text>
+      <Text modifiers={[font({ weight: "bold", size: 11 }), foregroundStyle(tint)]}>SurgeCode</Text>
     ),
     compactTrailing: (
       <Text modifiers={[font({ weight: "semibold", size: 11 }), foregroundStyle(tint)]}>
@@ -209,7 +209,7 @@ export function AgentActivity(
       </Text>
     ),
     minimal: (
-      <Text modifiers={[font({ weight: "bold", size: 11 }), foregroundStyle(tint)]}>T3</Text>
+      <Text modifiers={[font({ weight: "bold", size: 11 }), foregroundStyle(tint)]}>SurgeCode</Text>
     ),
     expandedLeading: (
       <VStack modifiers={[padding({ all: 8 })]}>

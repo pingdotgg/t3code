@@ -5,7 +5,7 @@
   "main": "index.ts",
   "scripts": {
     "dev": "expo start --clear",
-    "dev:client": "APP_VARIANT=development expo start --dev-client --scheme t3code-dev --clear",
+    "dev:client": "APP_VARIANT=development expo start --dev-client --scheme surgecode-dev --clear",
     "start": "expo start",
     "start:dev": "APP_VARIANT=development expo start",
     "start:preview": "APP_VARIANT=preview expo start",
