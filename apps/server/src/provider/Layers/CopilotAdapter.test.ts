@@ -618,6 +618,82 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     }),
   );
 
+  it.effect("keeps assistant call usage on the turn without publishing context usage", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-assistant-call-usage");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* waitForSdkEventQueue();
+
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "measure this turn",
+        attachments: [],
+      });
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      NodeAssert.ok(config?.onEvent);
+      const timestamp = yield* nowIso;
+      config.onEvent({
+        id: "evt-call-usage-turn-start",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_start",
+        data: { turnId: "sdk-turn-call-usage" },
+      } as SessionEvent);
+      config.onEvent({
+        id: "evt-call-usage",
+        timestamp,
+        parentId: null,
+        type: "assistant.usage",
+        ephemeral: true,
+        data: {
+          inputTokens: 100,
+          cacheReadTokens: 20,
+          outputTokens: 5,
+          duration: 250,
+        },
+      } as SessionEvent);
+      yield* waitForSdkEventQueue();
+      yield* adapter.stopSession(threadId);
+      yield* waitForSdkEventQueue();
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+
+      NodeAssert.equal(
+        runtimeEvents.some((event) => event.type === "thread.token-usage.updated"),
+        false,
+      );
+      const completed = runtimeEvents.find(
+        (event) => event.type === "turn.completed" && String(event.turnId) === String(turn.turnId),
+      );
+      NodeAssert.equal(completed?.type, "turn.completed");
+      if (completed?.type === "turn.completed") {
+        NodeAssert.deepStrictEqual(completed.payload.usage, {
+          usedTokens: 125,
+          lastUsedTokens: 125,
+          inputTokens: 100,
+          lastInputTokens: 100,
+          cachedInputTokens: 20,
+          lastCachedInputTokens: 20,
+          outputTokens: 5,
+          lastOutputTokens: 5,
+          durationMs: 250,
+        });
+      }
+    }),
+  );
+
   it.effect("passes selected Copilot context tier when changing models for a turn", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;

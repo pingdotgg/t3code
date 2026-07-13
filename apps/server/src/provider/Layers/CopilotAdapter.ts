@@ -2652,17 +2652,6 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         }
         const usage = usageSnapshotFromAssistantUsage(event);
         context.turnUsageByTurnId.set(turnId, usage);
-        await emitAsync({
-          ...createBaseEvent({
-            threadId: context.threadId,
-            turnId,
-            raw: event,
-          }),
-          type: "thread.token-usage.updated",
-          payload: {
-            usage,
-          },
-        });
         return;
       }
       case "abort": {
