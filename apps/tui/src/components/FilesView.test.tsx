@@ -8,14 +8,31 @@ import { FilesView, type ViewingFile } from "./FilesView.tsx";
 
 const rows: ReadonlyArray<FlatTreeRow> = [
   { kind: "dir", name: "src", path: "src", depth: 0, additions: 0, deletions: 0, collapsed: false },
-  { kind: "file", name: "app.ts", path: "src/app.ts", depth: 1, additions: 0, deletions: 0, collapsed: false },
-  { kind: "file", name: "README.md", path: "README.md", depth: 0, additions: 0, deletions: 0, collapsed: false },
+  {
+    kind: "file",
+    name: "app.ts",
+    path: "src/app.ts",
+    depth: 1,
+    additions: 0,
+    deletions: 0,
+    collapsed: false,
+  },
+  {
+    kind: "file",
+    name: "README.md",
+    path: "README.md",
+    depth: 0,
+    additions: 0,
+    deletions: 0,
+    collapsed: false,
+  },
 ];
 
 async function frameOf(props: {
   status?: "loading" | "ready" | "empty" | "error";
   selectedIndex?: number;
   viewing?: ViewingFile | null;
+  purpose?: "browse" | "attach-image";
 }): Promise<string> {
   const ref = React.createRef<null>();
   const t = await testRender(
@@ -29,6 +46,7 @@ async function frameOf(props: {
       height={16}
       syntaxStyle={SyntaxStyle.create()}
       scrollRef={ref as never}
+      {...(props.purpose ? { purpose: props.purpose } : {})}
     />,
     { width: 74, height: 18 },
   );
@@ -57,6 +75,12 @@ describe("FilesView", () => {
 
   it("Given a failed listing, then it shows an error", async () => {
     expect(await frameOf({ status: "error" })).toContain("failed to list files");
+  });
+
+  it("Given image attachment mode, then it explains that Enter attaches the selection", async () => {
+    const frame = await frameOf({ purpose: "attach-image" });
+    expect(frame).toContain("attach image");
+    expect(frame).toContain("Enter attach");
   });
 
   it("Given a viewed file, then it shows the file header and its contents", async () => {

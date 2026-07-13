@@ -21,6 +21,17 @@ export interface ViewingFile {
   readonly content: string;
 }
 
+function keyedTextLines(
+  content: string,
+): ReadonlyArray<{ readonly key: string; readonly line: string }> {
+  const occurrences = new Map<string, number>();
+  return content.split("\n").map((line) => {
+    const occurrence = (occurrences.get(line) ?? 0) + 1;
+    occurrences.set(line, occurrence);
+    return { key: `${line}\u0000${occurrence}`, line };
+  });
+}
+
 export const FilesView = React.memo(function FilesView({
   cwdLabel,
   status,
@@ -31,6 +42,7 @@ export const FilesView = React.memo(function FilesView({
   height,
   syntaxStyle,
   scrollRef,
+  purpose = "browse",
 }: {
   /** A short label for the workspace root (shown in the header). */
   readonly cwdLabel: string;
@@ -44,6 +56,7 @@ export const FilesView = React.memo(function FilesView({
   readonly height: number;
   readonly syntaxStyle: SyntaxStyle;
   readonly scrollRef: React.MutableRefObject<ScrollBoxRenderable | null>;
+  readonly purpose?: "browse" | "attach-image";
 }): React.ReactNode {
   const palette = usePalette();
   const bodyHeight = Math.max(1, height - 3);
@@ -69,8 +82,8 @@ export const FilesView = React.memo(function FilesView({
             // rows (a bare <text> doesn't split on newlines).
             <code content={content} filetype={filetype} syntaxStyle={syntaxStyle} />
           ) : (
-            content.split("\n").map((line, index) => (
-              <text key={index} fg={palette.text}>
+            keyedTextLines(content).map(({ key, line }) => (
+              <text key={key} fg={palette.text}>
                 {line.length > 0 ? line : " "}
               </text>
             ))
@@ -100,8 +113,12 @@ export const FilesView = React.memo(function FilesView({
           if (row.kind === "dir") {
             return (
               <text key={`d:${row.path}`} {...(active ? { bg: palette.selectedBg } : {})}>
-                <span fg={active ? palette.accent : palette.dim}>{`${marker}${indent}${row.collapsed ? "▸" : "▾"} `}</span>
-                <span fg={active ? palette.text : palette.dim}>{clip(`${row.name}/`, nameRoom)}</span>
+                <span
+                  fg={active ? palette.accent : palette.dim}
+                >{`${marker}${indent}${row.collapsed ? "▸" : "▾"} `}</span>
+                <span fg={active ? palette.text : palette.dim}>
+                  {clip(`${row.name}/`, nameRoom)}
+                </span>
               </text>
             );
           }
@@ -129,11 +146,19 @@ export const FilesView = React.memo(function FilesView({
       paddingRight={1}
     >
       <text>
-        <span fg={palette.accent}>{viewing ? `file · ${clip(viewing.path, 40)}` : `files · ${clip(cwdLabel, 40)}`}</span>
+        <span fg={palette.accent}>
+          {viewing
+            ? `file · ${clip(viewing.path, 40)}`
+            : purpose === "attach-image"
+              ? `attach image · ${clip(cwdLabel, 34)}`
+              : `files · ${clip(cwdLabel, 40)}`}
+        </span>
         <span fg={palette.dim}>
           {viewing
             ? "  ·  PgUp/PgDn scroll · Esc back"
-            : "  ·  ↑/↓ select · Enter open/expand · Esc close"}
+            : purpose === "attach-image"
+              ? "  ·  ↑/↓ select · Enter attach/expand · Esc cancel"
+              : "  ·  ↑/↓ select · Enter open/expand · Esc close"}
         </span>
       </text>
       {body}

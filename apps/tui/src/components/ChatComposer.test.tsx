@@ -30,6 +30,8 @@ const base = {
     reasoning: "high",
   },
   working: false,
+  attachments: [],
+  inlineImagesSupported: false,
   width: 56,
   pendingUserInput: null,
   uiQuestionIndex: 0,
@@ -50,6 +52,7 @@ const base = {
   onStop: noop,
   onSend: noop,
   onSubmitAnswer: noop,
+  onRemoveAttachment: noop,
 } as const;
 
 async function frameOf(node: React.ReactNode): Promise<string> {
@@ -121,20 +124,53 @@ describe("ChatComposer", () => {
     t.renderer.destroy();
   });
 
+  it("Given a staged image, when the composer renders, then it shows a removal affordance", async () => {
+    const attachment = {
+      relativePath: "docs/diagram.png",
+      upload: {
+        type: "image" as const,
+        name: "diagram.png",
+        mimeType: "image/png",
+        sizeBytes: 4,
+        dataUrl: "data:image/png;base64,/wAA/w==",
+      },
+      preview: {
+        data: new Uint8Array([255, 0, 0, 255]),
+        imageWidth: 1,
+        imageHeight: 1,
+      },
+    };
+    const t = await testRender(
+      <ChatComposer {...base} mode="compose" inputFocused attachments={[attachment]} />,
+      { width: 90, height: 10 },
+    );
+    await t.renderOnce();
+    const frame = t.captureCharFrame();
+    expect(frame).toContain("× diagram.png");
+    expect(frame).toContain("▸ Send");
+    t.renderer.destroy();
+  });
+
   it("Given rename mode, when rendered, then it shows the rename label and hint", async () => {
-    const frame = await frameOf(<ChatComposer {...base} mode="rename" auxValue="old title" inputFocused />);
+    const frame = await frameOf(
+      <ChatComposer {...base} mode="rename" auxValue="old title" inputFocused />,
+    );
     expect(frame).toContain("rename");
     expect(frame).toContain("Enter rename");
   });
 
   it("Given filter mode, when rendered, then it shows the find label and hint", async () => {
-    const frame = await frameOf(<ChatComposer {...base} mode="filter" auxValue="log" inputFocused />);
+    const frame = await frameOf(
+      <ChatComposer {...base} mode="filter" auxValue="log" inputFocused />,
+    );
     expect(frame).toContain("find");
     expect(frame).toContain("Enter keep");
   });
 
   it("Given commit mode, when rendered, then it shows the commit label, message, and hint", async () => {
-    const frame = await frameOf(<ChatComposer {...base} mode="commit" auxValue="fix the bug" inputFocused />);
+    const frame = await frameOf(
+      <ChatComposer {...base} mode="commit" auxValue="fix the bug" inputFocused />,
+    );
     expect(frame).toContain("commit");
     expect(frame).toContain("fix the bug");
     expect(frame).toContain("Enter commit");
@@ -142,7 +178,13 @@ describe("ChatComposer", () => {
 
   it("Given new-thread mode, when rendered, then it shows the dialog, project, and options", async () => {
     const frame = await frameOf(
-      <ChatComposer {...base} mode="new" newRuntimeMode="approval-required" interactionMode="plan" inputFocused />,
+      <ChatComposer
+        {...base}
+        mode="new"
+        newRuntimeMode="approval-required"
+        interactionMode="plan"
+        inputFocused
+      />,
     );
     expect(frame).toContain("new thread");
     expect(frame).toContain("Acme");
@@ -216,7 +258,9 @@ describe("ChatComposer", () => {
   it("Given a draft, when a global Ctrl-shortcut key is pressed, then the editor keeps the draft", async () => {
     function Harness(): React.ReactNode {
       const [reply, setReply] = React.useState("");
-      return <ChatComposer {...base} mode="compose" reply={reply} inputFocused onReplyInput={setReply} />;
+      return (
+        <ChatComposer {...base} mode="compose" reply={reply} inputFocused onReplyInput={setReply} />
+      );
     }
     const t = await testRender(<Harness />, { width: 60, height: 8 });
     await t.renderOnce();

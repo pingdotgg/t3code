@@ -1,7 +1,10 @@
 import { defaultTextareaKeyBindings, type TextareaRenderable } from "@opentui/core";
+import { Image } from "@t3tools/opentui-image/react";
 import * as React from "react";
 
+import type { ComposerImageAttachment } from "../composerAttachments.ts";
 import type { ComposerControls } from "../controls.ts";
+import { clip } from "../format.ts";
 import { usePalette } from "../theme.ts";
 import type { PendingUserInput } from "../userInput.ts";
 import { ComposerFooter } from "./ComposerFooter.tsx";
@@ -88,6 +91,54 @@ function NewThreadField({
   );
 }
 
+function ComposerImageAttachments({
+  attachments,
+  inlineImagesSupported,
+  width,
+  onRemove,
+}: {
+  readonly attachments: ReadonlyArray<ComposerImageAttachment>;
+  readonly inlineImagesSupported: boolean;
+  readonly width: number;
+  readonly onRemove: (relativePath: string) => void;
+}): React.ReactNode {
+  const palette = usePalette();
+  if (attachments.length === 0) return null;
+  const itemWidth = 14;
+  const visibleCount = Math.max(1, Math.min(4, Math.floor(width / (itemWidth + 1))));
+  const visible = attachments.slice(0, visibleCount);
+  const hiddenCount = attachments.length - visible.length;
+
+  return (
+    <box flexDirection="row" flexShrink={0}>
+      {visible.map((attachment) => (
+        <box
+          key={attachment.relativePath}
+          flexDirection="column"
+          width={itemWidth}
+          marginRight={1}
+          onMouseDown={() => onRemove(attachment.relativePath)}
+        >
+          <text>
+            <span fg={palette.accent}>× </span>
+            <span fg={palette.text}>{clip(attachment.upload.name, itemWidth - 2)}</span>
+          </text>
+          {inlineImagesSupported ? (
+            <Image
+              data={attachment.preview.data}
+              imageWidth={attachment.preview.imageWidth}
+              imageHeight={attachment.preview.imageHeight}
+              columns={8}
+              rows={3}
+            />
+          ) : null}
+        </box>
+      ))}
+      {hiddenCount > 0 ? <text fg={palette.dim}>{`+${hiddenCount} more`}</text> : null}
+    </box>
+  );
+}
+
 export const ChatComposer = React.memo(function ChatComposer({
   mode,
   reply,
@@ -105,6 +156,8 @@ export const ChatComposer = React.memo(function ChatComposer({
   composerEpoch,
   controls,
   working,
+  attachments,
+  inlineImagesSupported,
   width,
   pendingUserInput,
   uiQuestionIndex,
@@ -125,6 +178,7 @@ export const ChatComposer = React.memo(function ChatComposer({
   onStop,
   onSend,
   onSubmitAnswer,
+  onRemoveAttachment,
 }: {
   readonly mode: "compose" | "new" | "rename" | "filter" | "commit";
   readonly reply: string;
@@ -150,6 +204,8 @@ export const ChatComposer = React.memo(function ChatComposer({
   /** Composer controls shown inside the box (compose mode only), mirroring web. */
   readonly controls: ComposerControls;
   readonly working: boolean;
+  readonly attachments: ReadonlyArray<ComposerImageAttachment>;
+  readonly inlineImagesSupported: boolean;
   /** Content width for the pending-question panel's wrapping. */
   readonly width: number;
   /** When set, a question panel renders above the input and Enter submits the answer. */
@@ -173,6 +229,7 @@ export const ChatComposer = React.memo(function ChatComposer({
   readonly onStop: () => void;
   readonly onSend: () => void;
   readonly onSubmitAnswer: () => void;
+  readonly onRemoveAttachment: (relativePath: string) => void;
 }): React.ReactNode {
   const palette = usePalette();
   const replyRef = React.useRef<TextareaRenderable | null>(null);
@@ -290,8 +347,7 @@ export const ChatComposer = React.memo(function ChatComposer({
   // A free-text answer only makes sense for single-select questions (multi-select
   // toggles options); for those, Space must type rather than toggle (see the
   // `answerTyping` flag in ChatView/useKeyBindings).
-  const allowCustomAnswer =
-    answering && !pendingUserInput.questions[uiQuestionIndex]?.multiSelect;
+  const allowCustomAnswer = answering && !pendingUserInput.questions[uiQuestionIndex]?.multiSelect;
   const showReplyEditor = inputFocused && !answering;
   const showAnswerInput = inputFocused && allowCustomAnswer;
   return (
@@ -313,6 +369,12 @@ export const ChatComposer = React.memo(function ChatComposer({
           width={width}
         />
       ) : null}
+      <ComposerImageAttachments
+        attachments={attachments}
+        inlineImagesSupported={inlineImagesSupported}
+        width={width}
+        onRemove={onRemoveAttachment}
+      />
       <box flexDirection="row" flexShrink={0}>
         <text>
           <span fg={palette.accent}>{"› "}</span>
@@ -368,7 +430,7 @@ export const ChatComposer = React.memo(function ChatComposer({
         controls={controls}
         working={working}
         answering={answering}
-        hasText={reply.length > 0}
+        hasText={reply.length > 0 || attachments.length > 0}
         onTogglePlan={onTogglePlan}
         onOpenAccess={onOpenAccess}
         onOpenModel={onOpenModel}
