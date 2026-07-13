@@ -108,7 +108,7 @@ async function waitForFileContent(filePath: string, attempts = 40) {
         return raw;
       }
     } catch {}
-    await Effect.runPromise(Effect.yieldNow);
+    await new Promise((resolve) => setTimeout(resolve, 25));
   }
   throw new Error(`Timed out waiting for file content at ${filePath}`);
 }
@@ -124,9 +124,18 @@ function waitForJsonLogMatch(
       if (requests.some(predicate)) {
         return requests;
       }
-      yield* Effect.yieldNow;
+      // Wall-clock wait (not Effect.sleep): these tests run under TestClock, and
+      // ACP mock agent log writes are real process I/O. yieldNow alone can
+      // exhaust attempts under CI load before the file is updated.
+      yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 25)));
     }
-    return yield* Effect.promise(() => readJsonLines(filePath));
+    const requests = yield* Effect.promise(() => readJsonLines(filePath));
+    if (!requests.some(predicate)) {
+      return yield* Effect.fail(
+        new Error(`Timed out waiting for matching JSON log entry at ${filePath}`),
+      );
+    }
+    return requests;
   });
 }
 
