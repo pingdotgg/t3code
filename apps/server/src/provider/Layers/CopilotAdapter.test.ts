@@ -77,7 +77,7 @@ const runtimeMock = vi.hoisted(() => {
     },
     disconnect: vi.fn(async () => undefined),
     setModel: vi.fn(async () => undefined),
-    send: vi.fn(async () => undefined),
+    send: vi.fn(async (): Promise<string | undefined> => undefined),
     abort: vi.fn(async () => undefined),
   });
 
