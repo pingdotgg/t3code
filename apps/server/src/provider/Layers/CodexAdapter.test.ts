@@ -1048,6 +1048,42 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect(
+    "forces detail.surface to process/stderr even when payload carries a conflicting surface",
+    () =>
+      Effect.gen(function* () {
+        const { adapter, runtime } = yield* startLifecycleRuntime();
+        const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+        yield* runtime.emit({
+          id: asEventId("evt-process-stderr-conflicting-surface"),
+          kind: "notification",
+          provider: ProviderDriverKind.make("codex"),
+          threadId: asThreadId("thread-1"),
+          createdAt: "2026-01-01T00:00:00.000Z",
+          method: "process/stderr",
+          turnId: asTurnId("turn-1"),
+          message: "warning line with conflicting payload surface",
+          payload: { surface: "something-else", extra: "keep-me" },
+        } satisfies ProviderEvent);
+
+        const firstEvent = yield* Fiber.join(firstEventFiber);
+
+        NodeAssert.equal(firstEvent._tag, "Some");
+        if (firstEvent._tag !== "Some") {
+          return;
+        }
+        NodeAssert.equal(firstEvent.value.type, "runtime.warning");
+        if (firstEvent.value.type !== "runtime.warning") {
+          return;
+        }
+        NodeAssert.deepStrictEqual(firstEvent.value.payload.detail, {
+          surface: "process/stderr",
+          extra: "keep-me",
+        });
+      }),
+  );
+
   it.effect("maps realtime started notifications with upstream realtime session ids", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();
