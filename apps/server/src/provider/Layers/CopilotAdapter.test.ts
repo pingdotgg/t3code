@@ -694,6 +694,127 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     }),
   );
 
+  it.effect("serializes rollback with SDK events and new sends", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-rollback-serialization");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* waitForSdkEventQueue();
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      NodeAssert.ok(config?.onEvent);
+      const timestamp = yield* nowIso;
+
+      const firstTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "first prompt",
+        attachments: [],
+      });
+      config.onEvent?.({
+        id: "rollback-serialization-start",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_start",
+        data: { turnId: "sdk-turn-first" },
+      } as SessionEvent);
+      config.onEvent?.({
+        id: "rollback-serialization-end",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_end",
+        data: { turnId: "sdk-turn-first" },
+      } as SessionEvent);
+      config.onEvent?.({
+        id: "rollback-serialization-idle",
+        timestamp,
+        parentId: null,
+        type: "session.idle",
+        data: { aborted: false },
+      } as SessionEvent);
+      for (
+        let attempt = 0;
+        attempt < 20 &&
+        !runtimeEvents.some(
+          (event) =>
+            event.type === "turn.completed" && String(event.turnId) === String(firstTurn.turnId),
+        );
+        attempt += 1
+      ) {
+        yield* waitForSdkEventQueue();
+      }
+
+      let markHistoryReadStarted!: () => void;
+      const historyReadStarted = new Promise<void>((resolve) => {
+        markHistoryReadStarted = resolve;
+      });
+      let resolveHistoryEvents!: (events: SessionEvent[]) => void;
+      const historyEvents = new Promise<SessionEvent[]>((resolve) => {
+        resolveHistoryEvents = resolve;
+      });
+      runtimeMock.state.lastSession.getEvents.mockImplementationOnce(async () => {
+        markHistoryReadStarted();
+        return historyEvents;
+      });
+
+      const rollbackFiber = yield* adapter.rollbackThread(threadId, 1).pipe(Effect.forkChild);
+      yield* Effect.promise(() => historyReadStarted);
+
+      runtimeMock.state.lastSession.send.mockResolvedValueOnce("user-message-new");
+      const sendFiber = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "new prompt",
+          attachments: [],
+        })
+        .pipe(Effect.forkChild);
+      config.onEvent?.({
+        id: "late-user-message",
+        timestamp,
+        parentId: null,
+        type: "user.message",
+        data: { content: "late event during rollback" },
+      } as SessionEvent);
+      yield* waitForSdkEventQueue();
+
+      NodeAssert.equal(runtimeMock.state.lastSession.send.mock.calls.length, 1);
+      resolveHistoryEvents([
+        {
+          id: "user-message-first",
+          timestamp,
+          parentId: null,
+          type: "user.message",
+          data: { content: "first prompt" },
+        } as SessionEvent,
+      ]);
+
+      const rolledBack = yield* Fiber.join(rollbackFiber);
+      const newTurn = yield* Fiber.join(sendFiber);
+      NodeAssert.deepStrictEqual(rolledBack.turns, []);
+      NodeAssert.deepStrictEqual(runtimeMock.state.lastSession.rpc.history.truncate.mock.calls, [
+        [{ eventId: "user-message-first" }],
+      ]);
+      NodeAssert.deepStrictEqual(
+        (yield* adapter.readThread(threadId)).turns.map((turn) => String(turn.id)),
+        [String(newTurn.turnId)],
+      );
+
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("keeps assistant call usage on the turn without publishing context usage", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
