@@ -257,6 +257,10 @@ public actor ServerProcess {
             guard runID == currentRunID else { return }
             if await probeReady(url: url) {
                 guard runID == currentRunID else { return }
+                guard let process,
+                    process.processIdentifier == pid,
+                    process.isRunning
+                else { return }
                 restartAttempt = 0
                 emit(.ready(pid: pid))
                 return

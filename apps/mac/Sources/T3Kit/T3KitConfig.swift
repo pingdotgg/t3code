@@ -29,13 +29,31 @@ public struct T3KitConfig: Sendable {
 
     /// `http://<host>:<port>` — base for the local auth HTTP API (§1.2).
     public var httpBaseURL: URL {
-        URL(string: "http://\(host):\(port)")!
+        baseURL(scheme: "http")
     }
 
     /// `ws://<host>:<port>` — base for the RPC socket; `AuthClient` forces
     /// the path to `/ws` on every connect (§1.1).
     public var wsBaseURL: URL {
-        URL(string: "ws://\(host):\(port)")!
+        baseURL(scheme: "ws")
+    }
+
+    private func baseURL(scheme: String) -> URL {
+        var components = URLComponents()
+        components.scheme = scheme
+        components.host = Self.componentsHost(host)
+        components.port = port
+        guard let url = components.url else {
+            preconditionFailure("Invalid T3Kit server address: \(host):\(port)")
+        }
+        return url
+    }
+
+    private static func componentsHost(_ host: String) -> String {
+        guard host.contains(":"), !(host.hasPrefix("[") && host.hasSuffix("]")) else {
+            return host
+        }
+        return "[\(host)]"
     }
 
     /// Derives the `AuthConfig` consumed by `AuthClient`.

@@ -13,8 +13,13 @@ public struct DiffReviewView: View {
     @UIState private var showFilePopover = false
     @UIState private var unifiedRows: [UnifiedDiffRow] = []
     @UIState private var sideBySideRows: [SideBySideDiffRow] = []
-    @UIState private var preparedPath: String?
+    @UIState private var preparedUnifiedKey: DiffSelectionKey?
+    @UIState private var preparedSideBySideKey: DiffSelectionKey?
+    @UIState private var rowPreparationTask: Task<Void, Never>?
+    @UIState private var inFlightRequest: DiffPreparationRequest?
+    @UIState private var preparationGeneration = 0
     @UIState private var isPreparing = false
+    @UIState private var contentWidth: CGFloat = 0
     @UIState private var magnifyBaseZoom: Double?
 
     public init(model: AppModel, threadID: String) {
@@ -22,7 +27,7 @@ public struct DiffReviewView: View {
         self.threadID = threadID
     }
 
-    private enum DiffViewMode: String, CaseIterable {
+    private enum DiffViewMode: String, CaseIterable, Sendable {
         case unified
         case sideBySide
 
@@ -32,6 +37,16 @@ public struct DiffReviewView: View {
             case .sideBySide: "Side by Side"
             }
         }
+    }
+
+    private struct DiffSelectionKey: Equatable, Hashable, Sendable {
+        let path: String?
+        let contentHash: Int?
+    }
+
+    private struct DiffPreparationRequest: Equatable, Hashable, Sendable {
+        let selection: DiffSelectionKey
+        let mode: DiffViewMode
     }
 
     private var threadState: ThreadState? {
@@ -57,6 +72,13 @@ public struct DiffReviewView: View {
         return files.first
     }
 
+    private var selectedFileKey: DiffSelectionKey {
+        guard let file = selectedFile else {
+            return DiffSelectionKey(path: nil, contentHash: nil)
+        }
+        return DiffSelectionKey(path: file.path, contentHash: contentHash(for: file))
+    }
+
     private var selectedIndex: Int? {
         guard let path = selectedPath else { return files.isEmpty ? nil : 0 }
         return files.firstIndex(where: { $0.path == path })
@@ -64,6 +86,10 @@ public struct DiffReviewView: View {
 
     private var effectiveZoom: Double {
         DiffZoom.clamp(zoomFactor)
+    }
+
+    private var renderedMode: DiffViewMode {
+        viewMode == .sideBySide && contentWidth >= 700 ? .sideBySide : .unified
     }
 
     public var body: some View {
@@ -74,14 +100,21 @@ public struct DiffReviewView: View {
         }
         .background(.background)
         .onAppear(perform: normalizeZoom)
-        .onChange(of: selectedFile?.path) { _, newPath in
-            prepareRows(forPath: newPath)
+        .onChange(of: selectedFileKey) { _, newKey in
+            prepareRows(for: newKey, mode: renderedMode)
         }
         .onChange(of: files.map(\.path)) { _, _ in
-            prepareRows(forPath: selectedFile?.path)
+            prepareRows(for: selectedFileKey, mode: renderedMode)
         }
-        .task(id: selectedFile?.path) {
-            prepareRows(forPath: selectedFile?.path)
+        .onChange(of: renderedMode) { _, newMode in
+            prepareRows(for: selectedFileKey, mode: newMode)
+        }
+        .task(id: selectedFileKey) {
+            prepareRows(for: selectedFileKey, mode: renderedMode)
+        }
+        .onDisappear {
+            rowPreparationTask?.cancel()
+            rowPreparationTask = nil
         }
         .focusable()
         .onKeyPress(.escape) {
@@ -167,9 +200,10 @@ public struct DiffReviewView: View {
                 showFilePopover.toggle()
             } label: {
                 HStack(spacing: 6) {
-                    Circle()
-                        .fill(statusColor(selectedFile?.status ?? .modified))
-                        .frame(width: 7, height: 7)
+                    Image(systemName: statusGlyph(selectedFile?.status ?? .modified))
+                        .font(.caption2)
+                        .foregroundStyle(statusColor(selectedFile?.status ?? .modified))
+                        .frame(width: 12)
                     Text(selectedFile.map { ($0.path as NSString).lastPathComponent } ?? "—")
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -202,9 +236,10 @@ public struct DiffReviewView: View {
                     showFilePopover = false
                 } label: {
                     HStack(spacing: 8) {
-                        Circle()
-                            .fill(statusColor(file.status))
-                            .frame(width: 8, height: 8)
+                        Image(systemName: statusGlyph(file.status))
+                            .font(.caption2)
+                            .foregroundStyle(statusColor(file.status))
+                            .frame(width: 12)
                         Text(file.path)
                             .font(.system(.body, design: .monospaced))
                             .lineLimit(1)
@@ -277,29 +312,36 @@ public struct DiffReviewView: View {
                 description: Text("This scope has no pending diff.")
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if isPreparing && preparedPath != selectedFile?.path {
-            ProgressView()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let selectedFile, selectedFile.hunks.isEmpty {
+            emptyFileState(for: selectedFile)
         } else {
             GeometryReader { geo in
-                let useSideBySide =
-                    viewMode == .sideBySide && geo.size.width >= 700
-                VStack(spacing: 0) {
-                    if viewMode == .sideBySide && geo.size.width < 700 {
-                        Text("Side-by-side needs a wider window — showing unified.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 4)
-                            .background(Color.secondary.opacity(0.08))
-                    }
-                    if useSideBySide {
-                        sideBySideScroll
+                let effectiveMode = renderedMode
+                Group {
+                    if isPreparing && !hasPreparedRows(for: selectedFileKey, mode: effectiveMode) {
+                        ProgressView()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
-                        unifiedScroll
+                        VStack(spacing: 0) {
+                            if viewMode == .sideBySide && geo.size.width < 700 {
+                                Text("Side-by-side needs a wider window — showing unified.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 4)
+                                    .background(Color.secondary.opacity(0.08))
+                            }
+                            if effectiveMode == .sideBySide {
+                                sideBySideScroll
+                            } else {
+                                unifiedScroll
+                            }
+                        }
                     }
                 }
+                .onAppear { contentWidth = geo.size.width }
+                .onChange(of: geo.size.width) { _, width in contentWidth = width }
             }
         }
     }
@@ -318,9 +360,10 @@ public struct DiffReviewView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .textSelection(.enabled)
         }
         .background(.background)
-        .id(selectedFile?.path ?? "")
+        .id(selectedFileKey)
         .transition(Motion.paneSwap)
     }
 
@@ -338,9 +381,10 @@ public struct DiffReviewView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .textSelection(.enabled)
         }
         .background(.background)
-        .id("sbs-\(selectedFile?.path ?? "")")
+        .id("sbs-\(selectedFileKey.path ?? "")-\(selectedFileKey.contentHash ?? 0)")
         .transition(Motion.paneSwap)
     }
 
@@ -358,34 +402,113 @@ public struct DiffReviewView: View {
 
     // MARK: - Row preparation
 
-    private func prepareRows(forPath path: String?) {
-        guard let path, let file = files.first(where: { $0.path == path }) else {
+    private func prepareRows(for key: DiffSelectionKey, mode: DiffViewMode) {
+        guard let path = key.path, let file = files.first(where: { $0.path == path }) else {
+            rowPreparationTask?.cancel()
+            rowPreparationTask = nil
+            inFlightRequest = nil
             unifiedRows = []
             sideBySideRows = []
-            preparedPath = path
+            preparedUnifiedKey = nil
+            preparedSideBySideKey = nil
+            isPreparing = false
             return
         }
-        if preparedPath == path && !unifiedRows.isEmpty { return }
+
+        let request = DiffPreparationRequest(selection: key, mode: mode)
+        guard !hasPreparedRows(for: key, mode: mode) else {
+            if inFlightRequest == nil || inFlightRequest == request {
+                isPreparing = false
+            }
+            return
+        }
+        guard inFlightRequest != request else { return }
+
+        rowPreparationTask?.cancel()
+        preparationGeneration += 1
+        let generation = preparationGeneration
+        inFlightRequest = request
         isPreparing = true
+        if mode == .unified {
+            unifiedRows = []
+        } else {
+            sideBySideRows = []
+        }
+
         let captured = file
-        Task.detached(priority: .userInitiated) {
-            let unified = DiffPresentation.buildUnifiedRows(for: captured)
-            let sbs = DiffPresentation.buildSideBySideRows(for: captured)
-            await MainActor.run {
-                // Still the same file? Only the task that applies rows may
-                // clear the loading flag — a stale task must not blank the
-                // spinner for a newer selection still preparing.
-                if model.threadState(threadID)?.reviewSelectedPath == path
-                    || (model.threadState(threadID)?.reviewSelectedPath == nil
-                        && files.first?.path == path)
-                {
-                    unifiedRows = unified
-                    sideBySideRows = sbs
-                    preparedPath = path
+        rowPreparationTask = Task.detached(priority: .userInitiated) {
+            do {
+                switch mode {
+                case .unified:
+                    let rows = try DiffPresentation.buildUnifiedRows(for: captured)
+                    try Task.checkCancellation()
+                    await MainActor.run {
+                        guard generation == preparationGeneration,
+                              selectedFileKey == key,
+                              renderedMode == mode else { return }
+                        unifiedRows = rows
+                        preparedUnifiedKey = key
+                        inFlightRequest = nil
+                        isPreparing = false
+                        rowPreparationTask = nil
+                    }
+                case .sideBySide:
+                    let rows = try DiffPresentation.buildSideBySideRows(for: captured)
+                    try Task.checkCancellation()
+                    await MainActor.run {
+                        guard generation == preparationGeneration,
+                              selectedFileKey == key,
+                              renderedMode == mode else { return }
+                        sideBySideRows = rows
+                        preparedSideBySideKey = key
+                        inFlightRequest = nil
+                        isPreparing = false
+                        rowPreparationTask = nil
+                    }
+                }
+            } catch is CancellationError {
+                // A newer selection or mode owns the loading state.
+            } catch {
+                // Keep the empty/previous view state if row preparation fails.
+                await MainActor.run {
+                    guard generation == preparationGeneration else { return }
+                    inFlightRequest = nil
                     isPreparing = false
+                    rowPreparationTask = nil
                 }
             }
         }
+    }
+
+    private func hasPreparedRows(for key: DiffSelectionKey, mode: DiffViewMode) -> Bool {
+        switch mode {
+        case .unified:
+            preparedUnifiedKey == key
+        case .sideBySide:
+            preparedSideBySideKey == key
+        }
+    }
+
+    private func contentHash(for file: DiffFile) -> Int {
+        var hasher = Hasher()
+        hasher.combine(file.path)
+        hasher.combine(file.status.rawValue)
+        hasher.combine(file.hunks.count)
+        for hunk in file.hunks {
+            hasher.combine(hunk.header)
+            hasher.combine(hunk.lines.count)
+            for line in hunk.lines {
+                switch line.kind {
+                case .context: hasher.combine(0)
+                case .addition: hasher.combine(1)
+                case .deletion: hasher.combine(2)
+                }
+                hasher.combine(line.text)
+                hasher.combine(line.oldNumber)
+                hasher.combine(line.newNumber)
+            }
+        }
+        return hasher.finalize()
     }
 
     // MARK: - Navigation / zoom
@@ -425,6 +548,31 @@ public struct DiffReviewView: View {
         case .renamed: .blue
         }
     }
+
+    private func statusGlyph(_ status: DiffFileStatus) -> String {
+        switch status {
+        case .added: "plus.circle"
+        case .modified: "pencil.circle"
+        case .deleted: "minus.circle"
+        case .renamed: "arrow.right.circle"
+        }
+    }
+
+    private func emptyFileState(for file: DiffFile) -> some View {
+        let description: String
+        switch file.status {
+        case .renamed:
+            description = "File was renamed (no content changes)"
+        case .added, .modified, .deleted:
+            description = "No displayable changes — the file may be binary."
+        }
+        return ContentUnavailableView(
+            file.status == .renamed ? "Renamed File" : "No Displayable Changes",
+            systemImage: statusGlyph(file.status),
+            description: Text(description)
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
 }
 
 // MARK: - Unified line
@@ -444,7 +592,6 @@ private struct UnifiedLineView: View {
                     .foregroundStyle(.secondary)
                 highlightedText
                     .font(contentFont)
-                    .textSelection(.enabled)
                     // Soft wrap at word boundaries; hanging indent past gutter
                     // is achieved by the HStack padding layout.
                     .lineLimit(nil)
@@ -533,7 +680,6 @@ private struct SideBySideLineView: View {
                             .system(
                                 size: DiffZoom.contentFontSize(for: zoomFactor), design: .monospaced)
                         )
-                        .textSelection(.enabled)
                     .lineLimit(nil)
                     .fixedSize(horizontal: false, vertical: true)
                 } else {

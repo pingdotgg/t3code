@@ -255,7 +255,7 @@ enum DiffTextBuilder {
 
 enum DiffPresentation {
     /// Build unified rows for a file off the render path.
-    static func buildUnifiedRows(for file: DiffFile) -> [UnifiedDiffRow] {
+    static func buildUnifiedRows(for file: DiffFile) throws -> [UnifiedDiffRow] {
         let startedAt = PerfLog.now()
         let language = SyntaxLanguage.language(forPath: file.path)
         var rows: [UnifiedDiffRow] = []
@@ -268,6 +268,7 @@ enum DiffPresentation {
         }
 
         for (hunkIndex, hunk) in file.hunks.enumerated() {
+            try Task.checkCancellation()
             rows.append(
                 UnifiedDiffRow(
                     id: "h\(hunkIndex)-hdr",
@@ -284,6 +285,7 @@ enum DiffPresentation {
 
             let paired = IntralineDiff.pairHunkLines(hunk.lines)
             for (lineIndex, line) in hunk.lines.enumerated() {
+                try Task.checkCancellation()
                 let spans = paired[lineIndex]
                 let syntax = SyntaxTint.tokenize(line.text, language: language)
                 let attributed = DiffTextBuilder.attributedLine(
@@ -310,7 +312,7 @@ enum DiffPresentation {
     }
 
     /// Build side-by-side rows: pair deletions with additions inside each hunk.
-    static func buildSideBySideRows(for file: DiffFile) -> [SideBySideDiffRow] {
+    static func buildSideBySideRows(for file: DiffFile) throws -> [SideBySideDiffRow] {
         let startedAt = PerfLog.now()
         let language = SyntaxLanguage.language(forPath: file.path)
         var rows: [SideBySideDiffRow] = []
@@ -322,6 +324,7 @@ enum DiffPresentation {
         }
 
         for (hunkIndex, hunk) in file.hunks.enumerated() {
+            try Task.checkCancellation()
             rows.append(
                 SideBySideDiffRow(
                     id: "s\(hunkIndex)-hdr",
@@ -337,6 +340,7 @@ enum DiffPresentation {
             var index = 0
             let lines = hunk.lines
             while index < lines.count {
+                try Task.checkCancellation()
                 let line = lines[index]
                 switch line.kind {
                 case .context:
@@ -397,6 +401,7 @@ enum DiffPresentation {
                         continue
                     }
                     for k in 0..<count {
+                        try Task.checkCancellation()
                         let del = k < deletions.count ? deletions[k] : nil
                         let add = k < additions.count ? additions[k] : nil
                         let oldSyntax =

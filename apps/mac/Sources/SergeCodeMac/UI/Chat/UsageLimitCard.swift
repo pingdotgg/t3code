@@ -6,14 +6,25 @@ public struct UsageLimitCard: View {
     let notice: UsageLimitNotice
     let state: UsageLimitActionState
     let switchModels: [ModelOption]
+    /// Whether this is the most-recent usage-limit notice in the thread's
+    /// timeline — unlike approvals/user-input, a handled notice is not
+    /// removed from the timeline, so an older one can still be on screen
+    /// alongside a newer pending one. Gates `waitShortcut`/`dismissShortcut`
+    /// (see ApprovalCard.swift for why Command-Shift-Return/Command-Delete
+    /// were chosen over the composer's own Command-Return send shortcut).
+    let isActive: Bool
     let onWait: () -> Void
     let onSwitch: (ModelOption) -> Void
     let onDismiss: () -> Void
+
+    private static let waitShortcut = KeyboardShortcut(.return, modifiers: [.command, .shift])
+    private static let dismissShortcut = KeyboardShortcut(.delete, modifiers: .command)
 
     public init(
         notice: UsageLimitNotice,
         state: UsageLimitActionState,
         switchModels: [ModelOption],
+        isActive: Bool,
         onWait: @escaping () -> Void,
         onSwitch: @escaping (ModelOption) -> Void,
         onDismiss: @escaping () -> Void
@@ -21,6 +32,7 @@ public struct UsageLimitCard: View {
         self.notice = notice
         self.state = state
         self.switchModels = switchModels
+        self.isActive = isActive
         self.onWait = onWait
         self.onSwitch = onSwitch
         self.onDismiss = onDismiss
@@ -40,7 +52,8 @@ public struct UsageLimitCard: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
-                .help("Dismiss")
+                .keyboardShortcut(isActive ? Self.dismissShortcut : nil)
+                .help(isActive ? "Dismiss (⌘⌫)" : "Dismiss")
             }
 
             Text(resetLine)
@@ -62,6 +75,8 @@ public struct UsageLimitCard: View {
                 }
                 .buttonStyle(.glass)
                 .disabled(notice.resetsAt == nil || isBusy)
+                .keyboardShortcut(isActive ? Self.waitShortcut : nil)
+                .help(isActive ? "Wait (⌘⇧⏎)" : "Wait")
 
                 Menu {
                     ForEach(switchModels) { option in
