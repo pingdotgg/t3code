@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -133,25 +134,31 @@ export function ComposerEditor({
     () => new Map(skills.map((skill) => [skill.name, skill.displayName?.trim() || skill.name])),
     [skills],
   );
-  const tokensJson = useMemo(() => {
+  const tokenRenderState = useMemo(() => {
     const tokens = collectComposerInlineTokens(props.value, {
       preserveTrailingFrom: confirmedTokensRef.current,
     });
-    confirmedTokensRef.current = tokens;
-    return JSON.stringify(
-      tokens.map((token) => ({
-        type: token.type,
-        source: token.source,
-        start: token.start,
-        end: token.end,
-        label:
-          token.type === "skill"
-            ? (skillLabels.get(token.value) ?? token.value)
-            : basename(token.value),
-        iconUri: token.type === "mention" ? fileIconUri(token.value) : null,
-      })),
-    );
+    return {
+      tokens,
+      tokensJson: JSON.stringify(
+        tokens.map((token) => ({
+          type: token.type,
+          source: token.source,
+          start: token.start,
+          end: token.end,
+          label:
+            token.type === "skill"
+              ? (skillLabels.get(token.value) ?? token.value)
+              : basename(token.value),
+          iconUri: token.type === "mention" ? fileIconUri(token.value) : null,
+        })),
+      ),
+    };
   }, [props.value, skillLabels]);
+  useLayoutEffect(() => {
+    confirmedTokensRef.current = tokenRenderState.tokens;
+  }, [tokenRenderState.tokens]);
+  const tokensJson = tokenRenderState.tokensJson;
   const includesNativeEvent = nativeEventSequence !== previousRenderedEventSequenceRef.current;
   const controlledEventCount = includesNativeEvent
     ? resolveComposerControlledEventCount(

@@ -43,8 +43,8 @@ export function PairingRouteSurface({
   initialErrorMessage?: string;
   onAuthenticated: () => void;
 }) {
-  const autoPairTokenRef = useRef<string | null>(peekPairingTokenFromUrl());
-  const [credential, setCredential] = useState(() => autoPairTokenRef.current ?? "");
+  const [autoPairToken] = useState(peekPairingTokenFromUrl);
+  const [credential, setCredential] = useState(() => autoPairToken ?? "");
   const [errorMessage, setErrorMessage] = useState(initialErrorMessage ?? "");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const autoSubmitAttemptedRef = useRef(false);
@@ -82,15 +82,14 @@ export function PairingRouteSurface({
   );
 
   useEffect(() => {
-    const token = autoPairTokenRef.current;
-    if (!token || autoSubmitAttemptedRef.current) {
+    if (!autoPairToken || autoSubmitAttemptedRef.current) {
       return;
     }
 
     autoSubmitAttemptedRef.current = true;
     stripPairingTokenFromUrl();
-    void submitCredential(token);
-  }, [submitCredential]);
+    void submitCredential(autoPairToken);
+  }, [autoPairToken, submitCredential]);
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-10 text-foreground sm:px-6">

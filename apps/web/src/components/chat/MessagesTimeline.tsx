@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import {
   createContext,
+  createElement,
   memo,
   use,
   useCallback,
@@ -1148,7 +1149,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
 }) {
   const { workEntry, workspaceRoot } = props;
   const iconConfig = workToneIcon(workEntry.tone);
-  const EntryIcon = workEntryIcon(workEntry);
+  const entryIcon = createElement(workEntryIcon(workEntry), { className: "size-3" });
   const heading = toolWorkEntryHeading(workEntry);
   const rawPreview = workEntryPreview(workEntry, workspaceRoot);
   const preview =
@@ -1168,7 +1169,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
         <span
           className={cn("flex size-5 shrink-0 items-center justify-center", iconConfig.className)}
         >
-          <EntryIcon className="size-3" />
+          {entryIcon}
         </span>
         <div className="min-w-0 flex-1 overflow-hidden">
           {rawCommand ? (

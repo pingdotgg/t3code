@@ -2058,11 +2058,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     async (threadRef: ScopedThreadRef, newTitle: string, originalTitle: string) => {
       const threadKey = scopedThreadKey(threadRef);
       const finishRename = () => {
-        setRenamingThreadKey((current) => {
-          if (current !== threadKey) return current;
+        if (renamingThreadKey === threadKey) {
           renamingInputRef.current = null;
-          return null;
-        });
+          setRenamingThreadKey(null);
+        }
       };
 
       const trimmed = newTitle.trim();
@@ -2101,7 +2100,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       }
       finishRename();
     },
-    [],
+    [renamingThreadKey],
   );
 
   const closeProjectRenameDialog = useCallback(() => {

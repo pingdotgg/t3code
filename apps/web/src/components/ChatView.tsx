@@ -37,7 +37,16 @@ import {
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
 import { Debouncer } from "@tanstack/react-pacer";
-import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { flushSync } from "react-dom";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useShallow } from "zustand/react/shallow";
@@ -705,7 +714,9 @@ function ChatViewBody(
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
-  optimisticUserMessagesRef.current = optimisticUserMessages;
+  useLayoutEffect(() => {
+    optimisticUserMessagesRef.current = optimisticUserMessages;
+  }, [optimisticUserMessages]);
   const [localDraftErrorsByDraftId, setLocalDraftErrorsByDraftId] = useState<
     Record<string, string | null>
   >({});
@@ -1219,15 +1230,13 @@ function ChatViewBody(
       delete attachmentPreviewPromotionInFlightByMessageIdRef.current[messageId];
       const currentPreviewUrls =
         previewUrls ?? attachmentPreviewHandoffByMessageIdRef.current[messageId] ?? [];
-      setAttachmentPreviewHandoffByMessageId((existing) => {
-        if (!(messageId in existing)) {
-          return existing;
-        }
+      const existing = attachmentPreviewHandoffByMessageIdRef.current;
+      if (messageId in existing) {
         const next = { ...existing };
         delete next[messageId];
         attachmentPreviewHandoffByMessageIdRef.current = next;
-        return next;
-      });
+        setAttachmentPreviewHandoffByMessageId(next);
+      }
       for (const previewUrl of currentPreviewUrls) {
         revokeBlobPreviewUrl(previewUrl);
       }
@@ -1261,14 +1270,12 @@ function ChatViewBody(
         revokeBlobPreviewUrl(previewUrl);
       }
     }
-    setAttachmentPreviewHandoffByMessageId((existing) => {
-      const next = {
-        ...existing,
-        [messageId]: previewUrls,
-      };
-      attachmentPreviewHandoffByMessageIdRef.current = next;
-      return next;
-    });
+    const next = {
+      ...attachmentPreviewHandoffByMessageIdRef.current,
+      [messageId]: previewUrls,
+    };
+    attachmentPreviewHandoffByMessageIdRef.current = next;
+    setAttachmentPreviewHandoffByMessageId(next);
   }, []);
   const serverMessages = activeThread?.messages;
   useEffect(() => {
@@ -2075,16 +2082,12 @@ function ChatViewBody(
     handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan");
   }, [handleInteractionModeChange, interactionMode]);
   const togglePlanSidebar = useCallback(() => {
-    setPlanSidebarOpen((open) => {
-      if (open) {
-        planSidebarDismissedForTurnRef.current =
-          activePlan?.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
-      } else {
-        planSidebarDismissedForTurnRef.current = null;
-      }
-      return !open;
-    });
-  }, [activePlan?.turnId, sidebarProposedPlan?.turnId]);
+    const nextOpen = !planSidebarOpen;
+    planSidebarDismissedForTurnRef.current = nextOpen
+      ? null
+      : (activePlan?.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__");
+    setPlanSidebarOpen(nextOpen);
+  }, [activePlan?.turnId, planSidebarOpen, sidebarProposedPlan?.turnId]);
   const closePlanSidebar = useCallback(() => {
     setPlanSidebarOpen(false);
     planSidebarDismissedForTurnRef.current =
@@ -3882,9 +3885,11 @@ function ChatViewBody(
   // Both the Map and the revert handler are read from refs at call-time so
   // the callback reference is fully stable and never busts context identity.
   const revertTurnCountRef = useRef(revertTurnCountByUserMessageId);
-  revertTurnCountRef.current = revertTurnCountByUserMessageId;
   const onRevertToTurnCountRef = useRef(onRevertToTurnCount);
-  onRevertToTurnCountRef.current = onRevertToTurnCount;
+  useLayoutEffect(() => {
+    revertTurnCountRef.current = revertTurnCountByUserMessageId;
+    onRevertToTurnCountRef.current = onRevertToTurnCount;
+  }, [onRevertToTurnCount, revertTurnCountByUserMessageId]);
   const onRevertUserMessage = useCallback((messageId: MessageId) => {
     const targetTurnCount = revertTurnCountRef.current.get(messageId);
     if (typeof targetTurnCount !== "number") {
