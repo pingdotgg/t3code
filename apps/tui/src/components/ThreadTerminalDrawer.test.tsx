@@ -27,6 +27,11 @@ describe("ThreadTerminalDrawer tab bar", () => {
     const copyRef = React.createRef<(() => string) | null>() as React.MutableRefObject<
       (() => string) | null
     >;
+    const scrollRef = React.createRef<
+      ((action: "line-up" | "line-down" | "page-up" | "page-down" | "bottom") => void) | null
+    >() as React.MutableRefObject<
+      ((action: "line-up" | "line-down" | "page-up" | "page-down" | "bottom") => void) | null
+    >;
     const t = await testRender(
       <ThreadTerminalDrawer
         client={stubClient}
@@ -35,6 +40,7 @@ describe("ThreadTerminalDrawer tab bar", () => {
         rows={4}
         focused={false}
         copyRef={copyRef}
+        scrollRef={scrollRef}
         tabIds={["term-1", "term-2"]}
         activeTabId="term-1"
         onSelectTab={() => {}}
@@ -72,6 +78,9 @@ describe("ThreadTerminalDrawer tab bar", () => {
     function Harness(): React.ReactNode {
       const [active, setActive] = React.useState("term-1");
       const copyRef = React.useRef<(() => string) | null>(null);
+      const scrollRef = React.useRef<
+        ((action: "line-up" | "line-down" | "page-up" | "page-down" | "bottom") => void) | null
+      >(null);
       return (
         <ThreadTerminalDrawer
           client={countingClient}
@@ -80,6 +89,7 @@ describe("ThreadTerminalDrawer tab bar", () => {
           rows={4}
           focused={false}
           copyRef={copyRef}
+          scrollRef={scrollRef}
           tabIds={["term-1", "term-2"]}
           activeTabId={active}
           onSelectTab={setActive}
@@ -111,6 +121,11 @@ describe("ThreadTerminalDrawer tab bar", () => {
     const copyRef = React.createRef<(() => string) | null>() as React.MutableRefObject<
       (() => string) | null
     >;
+    const scrollRef = React.createRef<
+      ((action: "line-up" | "line-down" | "page-up" | "page-down" | "bottom") => void) | null
+    >() as React.MutableRefObject<
+      ((action: "line-up" | "line-down" | "page-up" | "page-down" | "bottom") => void) | null
+    >;
     const t = await testRender(
       <ThreadTerminalDrawer
         client={stubClient}
@@ -119,6 +134,7 @@ describe("ThreadTerminalDrawer tab bar", () => {
         rows={4}
         focused={false}
         copyRef={copyRef}
+        scrollRef={scrollRef}
         tabIds={["term-1", "term-2"]}
         activeTabId="term-1"
         onSelectTab={(id) => selected.push(id)}

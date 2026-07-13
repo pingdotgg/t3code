@@ -21,6 +21,7 @@ import {
   type RuntimeMode,
   type GitStackedAction,
   type TerminalAttachStreamEvent,
+  type TerminalMetadataStreamEvent,
   type ThreadId,
   ThreadId as ThreadIdSchema,
   TrimmedNonEmptyString,
@@ -416,6 +417,14 @@ export interface TuiClient {
   ) => Promise<void>;
   /** Close one terminal session (and its history) for a thread. */
   readonly terminalClose: (threadId: ThreadId, terminalId: string) => Promise<void>;
+  /**
+   * Subscribe to the environment's terminal-metadata stream so the UI can
+   * discover sessions it didn't open itself (agent-spawned, web-created, or
+   * from a prior run). Emits a snapshot, then upsert/remove deltas.
+   */
+  readonly subscribeTerminalMetadata: (
+    onEvent: (event: TerminalMetadataStreamEvent) => void,
+  ) => () => void;
   /** Resolve a message image attachment to an absolute URL, or null on failure. */
   readonly getAttachmentUrl: (attachmentId: string) => Promise<string | null>;
   /** List the workspace's files + directories (bounded index) for the file browser. */
@@ -737,6 +746,13 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
           Effect.asVoid,
         ),
       ),
+
+    subscribeTerminalMetadata: (onEvent) => {
+      const stream = subscribe(WS_METHODS.subscribeTerminalMetadata, {}).pipe(
+        Stream.tap((event) => Effect.sync(() => onEvent(event))),
+      );
+      return forkUnsub(stream);
+    },
 
     subscribeVcsStatus: (cwd, onStatus) => {
       // The stream delivers split local/remote results; fold them into the

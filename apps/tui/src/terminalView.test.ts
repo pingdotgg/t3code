@@ -51,3 +51,32 @@ describe("readTerminalViewport", () => {
     expect(text).toBe("first line\nsecond line");
   });
 });
+
+describe("readTerminalFrame scrollback", () => {
+  it("Given more output than rows, when scrolled up, then it renders older lines and hides the cursor", async () => {
+    const term = new Terminal({ cols: 20, rows: 3, allowProposedApi: true, scrollback: 100 });
+    await new Promise<void>((resolve) => {
+      term.write("L1\r\nL2\r\nL3\r\nL4\r\nL5\r\n", () => resolve());
+    });
+    const tail = readTerminalFrame(term);
+    expect(tail.scrollOffset).toBe(0);
+    expect(tail.maxScroll).toBeGreaterThan(0);
+
+    const scrolled = readTerminalFrame(term, 2);
+    expect(scrolled.scrollOffset).toBe(2);
+    // Cursor is suppressed while viewing history.
+    expect(scrolled.cursor).toEqual({ x: -1, y: -1 });
+    // The top visible row is older than the tail's top row.
+    const topText = (scrolled.rows[0] ?? []).map((seg) => seg.text).join("");
+    expect(topText).toContain("L");
+  });
+
+  it("Given an offset past the scrollback, then it clamps to maxScroll", async () => {
+    const term = new Terminal({ cols: 20, rows: 2, allowProposedApi: true, scrollback: 100 });
+    await new Promise<void>((resolve) => {
+      term.write("A\r\nB\r\nC\r\n", () => resolve());
+    });
+    const frame = readTerminalFrame(term, 9999);
+    expect(frame.scrollOffset).toBe(frame.maxScroll);
+  });
+});

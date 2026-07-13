@@ -39,6 +39,9 @@ export interface KeyBindingActions {
   readonly onShrinkTerminal: () => void;
   readonly onTerminalCopy: () => void;
   readonly onTerminalKey: (sequence: string) => void;
+  readonly onTerminalScroll: (
+    action: "line-up" | "line-down" | "page-up" | "page-down" | "bottom",
+  ) => void;
   // Command palette (^K): a fuzzy filter input (owns typed chars) over commands;
   // ↑/↓ move the highlight, Enter runs, Esc closes.
   readonly onOpenCommandPalette: () => void;
@@ -136,7 +139,18 @@ export function useKeyBindings(actions: KeyBindingActions): void {
       if (key.ctrl && key.name === "up") return actions.onGrowTerminal();
       if (key.ctrl && key.name === "down") return actions.onShrinkTerminal();
       if (key.ctrl && key.name === "o") return actions.onTerminalCopy();
-      if (key.sequence) actions.onTerminalKey(key.sequence);
+      // Scrollback (emulator, not the program): Shift+PageUp/PageDown by a page,
+      // Shift+Up/Down by a line — plain PageUp/arrows still reach the running
+      // program. Any other keystroke snaps back to the live tail first, so typing
+      // a command always shows it.
+      if (key.shift && key.name === "pageup") return actions.onTerminalScroll("page-up");
+      if (key.shift && key.name === "pagedown") return actions.onTerminalScroll("page-down");
+      if (key.shift && key.name === "up") return actions.onTerminalScroll("line-up");
+      if (key.shift && key.name === "down") return actions.onTerminalScroll("line-down");
+      if (key.sequence) {
+        actions.onTerminalScroll("bottom");
+        actions.onTerminalKey(key.sequence);
+      }
       return;
     }
 

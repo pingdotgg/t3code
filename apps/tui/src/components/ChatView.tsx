@@ -48,6 +48,8 @@ import {
   closeTab,
   cycleActiveId,
   initialTabs,
+  reduceKnownTerminals,
+  tabsWithDiscovered,
   type ThreadTabs,
 } from "../terminalTabs.ts";
 
@@ -145,8 +147,9 @@ export function ChatView({
   const [renameDraft, setRenameDraft] = React.useState("");
   // The commit-message dialog: the draft + which commit-bearing action to run on submit.
   const [commitDraft, setCommitDraft] = React.useState("");
-  const [pendingCommitAction, setPendingCommitAction] =
-    React.useState<GitStackedAction | null>(null);
+  const [pendingCommitAction, setPendingCommitAction] = React.useState<GitStackedAction | null>(
+    null,
+  );
   const [projectIndex, setProjectIndex] = React.useState(0);
   // Options for the new-thread dialog (^O cycles runtime, ^B toggles plan/build).
   const [newRuntimeMode, setNewRuntimeMode] = React.useState<RuntimeMode>("full-access");
@@ -169,6 +172,12 @@ export function ChatView({
   const [terminalTabs, setTerminalTabs] = React.useState<ReadonlyMap<string, ThreadTabs>>(
     () => new Map(),
   );
+  // Terminal ids the server knows about per thread (agent-spawned, web-created,
+  // or from a prior run), streamed from the terminal-metadata subscription so the
+  // tab bar reflects reality rather than only the tabs this TUI opened.
+  const [knownTerminals, setKnownTerminals] = React.useState<
+    ReadonlyMap<string, ReadonlyArray<string>>
+  >(() => new Map());
   // The terminal drawer coexists with the prompt; this tracks which one keystrokes go to.
   const [terminalFocused, setTerminalFocused] = React.useState(false);
   // User-set terminal-drawer height in rows; null = the default proportion.
@@ -177,6 +186,10 @@ export function ChatView({
   const scrollRef = React.useRef<ScrollBoxRenderable | null>(null);
   // Filled by the terminal drawer with a getter for its viewport text (for ^O copy).
   const terminalCopyRef = React.useRef<(() => string) | null>(null);
+  // Routes key-driven scrollback navigation to the active terminal pane.
+  const terminalScrollRef = React.useRef<
+    ((action: "line-up" | "line-down" | "page-up" | "page-down" | "bottom") => void) | null
+  >(null);
 
   const projects = state.shell?.projects ?? [];
   // projectIndex is held across shell updates; clamp it so a shrinking project
@@ -184,7 +197,8 @@ export function ChatView({
   const activeProjectIndex = projects.length > 0 ? Math.min(projectIndex, projects.length - 1) : 0;
   const selectedThreadId = state.selection?.kind === "thread" ? state.selection.id : null;
   const rows = React.useMemo(
-    () => buildRows(state.shell, state.expanded, state.loadedInFull, selectedThreadId, state.filter),
+    () =>
+      buildRows(state.shell, state.expanded, state.loadedInFull, selectedThreadId, state.filter),
     [state.shell, state.expanded, state.loadedInFull, selectedThreadId, state.filter],
   );
   const detail = state.detail;
@@ -376,7 +390,13 @@ export function ChatView({
       store.setStatus("Select a model first.", "info");
       return;
     }
-    setPicker({ kind: "reasoning", title: "reasoning", status: "loading", options: [], selectedIndex: 0 });
+    setPicker({
+      kind: "reasoning",
+      title: "reasoning",
+      status: "loading",
+      options: [],
+      selectedIndex: 0,
+    });
     void client
       .getReasoningChoices(selection.instanceId, selection.model)
       .then((result) =>
@@ -488,8 +508,7 @@ export function ChatView({
     !!picker || overlay === "command" || overlay === "revert" || overlay === "confirmDelete";
   // A pending question renders a panel inside the composer (header + question +
   // options + hint + spacer), so the composer grows to fit it.
-  const pendingPanelHeight =
-    userInputActive && uiQuestion ? uiQuestion.options.length + 4 : 0;
+  const pendingPanelHeight = userInputActive && uiQuestion ? uiQuestion.options.length + 4 : 0;
   const composerHeight =
     focus === "new"
       ? 9
@@ -659,6 +678,25 @@ export function ChatView({
       return next;
     });
 
+  // Discover terminals the TUI didn't open (agent-spawned, web-created, or from
+  // a prior run) via the metadata stream, so the tab bar isn't blind to them.
+  React.useEffect(() => {
+    const unsubscribe = client.subscribeTerminalMetadata((event) => {
+      setKnownTerminals((prev) => reduceKnownTerminals(prev, event));
+    });
+    return unsubscribe;
+  }, [client]);
+
+  // Union discovered ids into the open thread's tabs. tabsWithDiscovered returns
+  // the same reference when nothing is new, so updateThreadTabs no-ops then.
+  const detailIdForTabs = detail?.id ?? null;
+  React.useEffect(() => {
+    if (!terminalOpen || detailIdForTabs === null) return;
+    const discovered = knownTerminals.get(detailIdForTabs) ?? [];
+    if (discovered.length === 0) return;
+    updateThreadTabs(detailIdForTabs, (tabs) => tabsWithDiscovered(tabs, discovered));
+  }, [terminalOpen, detailIdForTabs, knownTerminals]);
+
   // ^E shows/hides the drawer (opening focuses it); ^P flips focus between the
   // prompt and the terminal. Opening seeds a default terminal tab for the thread.
   const toggleTerminal = () => {
@@ -760,7 +798,9 @@ export function ChatView({
       filesScroll(delta);
       return;
     }
-    setFilesIndex((index) => Math.min(Math.max(0, index + delta), Math.max(0, fileRows.length - 1)));
+    setFilesIndex((index) =>
+      Math.min(Math.max(0, index + delta), Math.max(0, fileRows.length - 1)),
+    );
   };
   const filesActivate = () => {
     if (viewingFile) return;
@@ -882,9 +922,8 @@ export function ChatView({
         run: () =>
           runCommand(() => {
             const archived = detail.archivedAt !== null;
-            void (archived
-              ? client.unarchiveThread(detail.id)
-              : client.archiveThread(detail.id)
+            void (
+              archived ? client.unarchiveThread(detail.id) : client.archiveThread(detail.id)
             ).catch(() => {});
             store.setStatus(archived ? "Unarchived." : "Archived.", "success");
           }),
@@ -938,7 +977,12 @@ export function ChatView({
         run: () => runCommand(openRuntimePicker),
       });
       if (actionablePlan) {
-        list.push({ id: "implement", title: "Implement plan", hint: "^Y", run: () => runCommand(implementPlan) });
+        list.push({
+          id: "implement",
+          title: "Implement plan",
+          hint: "^Y",
+          run: () => runCommand(implementPlan),
+        });
       }
     }
     list.push({
@@ -948,11 +992,26 @@ export function ChatView({
       run: () => runCommand(toggleTerminal),
     });
     if (detail) {
-      list.push({ id: "terminal-new", title: "New terminal", keywords: "shell group tab", run: () => runCommand(newTerminal) });
+      list.push({
+        id: "terminal-new",
+        title: "New terminal",
+        keywords: "shell group tab",
+        run: () => runCommand(newTerminal),
+      });
     }
     if (detailTabs && detailTabs.ids.length > 1) {
-      list.push({ id: "terminal-next", title: "Next terminal", keywords: "tab", run: () => runCommand(() => cycleTerminal(1)) });
-      list.push({ id: "terminal-prev", title: "Previous terminal", keywords: "tab", run: () => runCommand(() => cycleTerminal(-1)) });
+      list.push({
+        id: "terminal-next",
+        title: "Next terminal",
+        keywords: "tab",
+        run: () => runCommand(() => cycleTerminal(1)),
+      });
+      list.push({
+        id: "terminal-prev",
+        title: "Previous terminal",
+        keywords: "tab",
+        run: () => runCommand(() => cycleTerminal(-1)),
+      });
     }
     if (terminalOpen && detailTabs) {
       list.push({
@@ -992,7 +1051,15 @@ export function ChatView({
     });
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detail, checkpoints.length, activeTerminal, detailTabs, terminalOpen, rightPanelOpen, actionablePlan]);
+  }, [
+    detail,
+    checkpoints.length,
+    activeTerminal,
+    detailTabs,
+    terminalOpen,
+    rightPanelOpen,
+    actionablePlan,
+  ]);
 
   const filteredCommands = React.useMemo(
     () => filterCommands(paletteCommands, commandQuery),
@@ -1009,28 +1076,28 @@ export function ChatView({
       : settingsOpen
         ? "settings"
         : filesOpen
-        ? "files"
-        : diffOpen
-        ? "diff"
-        : picker
-          ? "select"
-          : overlay === "command"
-        ? "command"
-        : overlay === "confirmDelete"
-          ? "confirmDelete"
-          : overlay === "revert"
-            ? "revert"
-            : focus === "new"
-            ? "new"
-            : focus === "rename"
-              ? "rename"
-              : focus === "filter"
-                ? "filter"
-                : focus === "commit"
-                  ? "commit"
-                  : userInputActive
-                    ? "userInput"
-                    : "compose";
+          ? "files"
+          : diffOpen
+            ? "diff"
+            : picker
+              ? "select"
+              : overlay === "command"
+                ? "command"
+                : overlay === "confirmDelete"
+                  ? "confirmDelete"
+                  : overlay === "revert"
+                    ? "revert"
+                    : focus === "new"
+                      ? "new"
+                      : focus === "rename"
+                        ? "rename"
+                        : focus === "filter"
+                          ? "filter"
+                          : focus === "commit"
+                            ? "commit"
+                            : userInputActive
+                              ? "userInput"
+                              : "compose";
 
   useKeyBindings({
     mode: keyMode,
@@ -1042,6 +1109,7 @@ export function ChatView({
           .catch(() => {});
       }
     },
+    onTerminalScroll: (action) => terminalScrollRef.current?.(action),
     onToggleFocus: toggleFocus,
     onCancelNew: () => {
       setDraft("");
@@ -1058,8 +1126,7 @@ export function ChatView({
         const current = RUNTIME_MODES.indexOf(mode);
         return RUNTIME_MODES[(current + 1) % RUNTIME_MODES.length] ?? "full-access";
       }),
-    onNewTogglePlan: () =>
-      setNewInteractionMode((mode) => (mode === "plan" ? "default" : "plan")),
+    onNewTogglePlan: () => setNewInteractionMode((mode) => (mode === "plan" ? "default" : "plan")),
     onNewCycleField: () =>
       setNewField((field) =>
         field === "message" ? "branch" : field === "branch" ? "worktree" : "message",
@@ -1119,7 +1186,9 @@ export function ChatView({
     },
     onCommandPrev: () =>
       setCommandIndex((index) =>
-        filteredCommands.length === 0 ? 0 : (index - 1 + filteredCommands.length) % filteredCommands.length,
+        filteredCommands.length === 0
+          ? 0
+          : (index - 1 + filteredCommands.length) % filteredCommands.length,
       ),
     onCommandNext: () =>
       setCommandIndex((index) =>
@@ -1280,7 +1349,9 @@ export function ChatView({
     "^N new",
     "^E term",
     ...(actionablePlan ? ["^Y implement"] : []),
-    ...(approvals.length > 0 ? [approvals.length > 1 ? "^A/^R approve (↑/↓)" : "^A/^R approve"] : []),
+    ...(approvals.length > 0
+      ? [approvals.length > 1 ? "^A/^R approve (↑/↓)" : "^A/^R approve"]
+      : []),
     "^K commands",
     "^F find",
     ...(width >= RIGHT_PANEL_MIN_TERMINAL_WIDTH ? [`^L panel ${rightPanelOpen ? "▾" : "▸"}`] : []),
@@ -1379,6 +1450,7 @@ export function ChatView({
           rows={termRows}
           focused={terminalFocused}
           copyRef={terminalCopyRef}
+          scrollRef={terminalScrollRef}
           tabIds={detailTabs.ids}
           activeTabId={detailTabs.activeId}
           onSelectTab={selectTerminal}
@@ -1413,59 +1485,70 @@ export function ChatView({
           onRun={(index) => filteredCommands[index]?.run()}
         />
       ) : overlay === "revert" && detail ? (
-        <RevertMenu checkpoints={checkpoints} selected={Math.min(revertIndex, checkpoints.length - 1)} />
+        <RevertMenu
+          checkpoints={checkpoints}
+          selected={Math.min(revertIndex, checkpoints.length - 1)}
+        />
       ) : overlay === "confirmDelete" && detail ? (
         <ConfirmDeleteMenu title={detail.title} />
       ) : null}
 
       <ChatComposer
-          // Search/filter now lives in the sidebar; the composer never owns it.
-          mode={focus === "filter" ? "compose" : focus}
-          reply={reply}
-          draft={draft}
-          auxValue={focus === "rename" ? renameDraft : focus === "commit" ? commitDraft : ""}
-          placeholder={placeholder}
-          projectName={projects[activeProjectIndex]?.title ?? "(none)"}
-          interactionMode={focus === "new" ? newInteractionMode : (detail?.interactionMode ?? "default")}
-          newRuntimeMode={newRuntimeMode}
-          newBranch={newBranch}
-          newWorktree={newWorktree}
-          newField={newField}
-          editorRows={promptLines}
-          inputFocused={
-            !terminalFocused &&
-            !diffOpen &&
-            !filesOpen &&
-            !settingsOpen &&
-            !popoverOpen &&
-            focus !== "filter"
-          }
-          composerEpoch={composerEpoch}
-          controls={controls}
-          working={working}
-          width={chatWidth}
-          pendingUserInput={userInputActive ? pendingUserInput : null}
-          uiQuestionIndex={uiQuestionIndex}
-          uiOptionIndex={uiOptionIndex}
-          uiSelectedLabels={uiSelectedLabels}
-          answerDraft={customAnswer}
-          onAnswerInput={setCustomAnswer}
-          onReplyInput={setReply}
-          onReplySubmit={sendReply}
-          onDraftInput={(value) => setDraft(value.replace(/\t/g, ""))}
-          onBranchInput={(value) => setNewBranch(value.replace(/\t/g, ""))}
-          onWorktreeInput={(value) => setNewWorktree(value.replace(/\t/g, ""))}
-          onAuxInput={focus === "commit" ? setCommitDraft : setRenameDraft}
-          onTogglePlan={togglePlanMode}
-          onOpenAccess={openRuntimePicker}
-          onOpenModel={openModelPicker}
-          onOpenReasoning={openReasoningPicker}
-          onStop={stopTurn}
-          onSend={sendReply}
-          onSubmitAnswer={submitUserInput}
-        />
+        // Search/filter now lives in the sidebar; the composer never owns it.
+        mode={focus === "filter" ? "compose" : focus}
+        reply={reply}
+        draft={draft}
+        auxValue={focus === "rename" ? renameDraft : focus === "commit" ? commitDraft : ""}
+        placeholder={placeholder}
+        projectName={projects[activeProjectIndex]?.title ?? "(none)"}
+        interactionMode={
+          focus === "new" ? newInteractionMode : (detail?.interactionMode ?? "default")
+        }
+        newRuntimeMode={newRuntimeMode}
+        newBranch={newBranch}
+        newWorktree={newWorktree}
+        newField={newField}
+        editorRows={promptLines}
+        inputFocused={
+          !terminalFocused &&
+          !diffOpen &&
+          !filesOpen &&
+          !settingsOpen &&
+          !popoverOpen &&
+          focus !== "filter"
+        }
+        composerEpoch={composerEpoch}
+        controls={controls}
+        working={working}
+        width={chatWidth}
+        pendingUserInput={userInputActive ? pendingUserInput : null}
+        uiQuestionIndex={uiQuestionIndex}
+        uiOptionIndex={uiOptionIndex}
+        uiSelectedLabels={uiSelectedLabels}
+        answerDraft={customAnswer}
+        onAnswerInput={setCustomAnswer}
+        onReplyInput={setReply}
+        onReplySubmit={sendReply}
+        onDraftInput={(value) => setDraft(value.replace(/\t/g, ""))}
+        onBranchInput={(value) => setNewBranch(value.replace(/\t/g, ""))}
+        onWorktreeInput={(value) => setNewWorktree(value.replace(/\t/g, ""))}
+        onAuxInput={focus === "commit" ? setCommitDraft : setRenameDraft}
+        onTogglePlan={togglePlanMode}
+        onOpenAccess={openRuntimePicker}
+        onOpenModel={openModelPicker}
+        onOpenReasoning={openReasoningPicker}
+        onStop={stopTurn}
+        onSend={sendReply}
+        onSubmitAnswer={submitUserInput}
+      />
 
-      <box flexDirection="row" justifyContent="space-between" paddingLeft={1} paddingRight={1} flexShrink={0}>
+      <box
+        flexDirection="row"
+        justifyContent="space-between"
+        paddingLeft={1}
+        paddingRight={1}
+        flexShrink={0}
+      >
         <text fg={palette.dim}>{hint}</text>
         <text>
           <span fg={statusStyle.color}>{` ${statusStyle.glyph} `}</span>

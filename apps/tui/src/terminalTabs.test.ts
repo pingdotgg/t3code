@@ -1,6 +1,14 @@
 import { describe, expect, it } from "bun:test";
 
-import { addTab, closeTab, cycleActiveId, initialTabs, nextTerminalId } from "./terminalTabs.ts";
+import {
+  addTab,
+  closeTab,
+  cycleActiveId,
+  initialTabs,
+  nextTerminalId,
+  reduceKnownTerminals,
+  tabsWithDiscovered,
+} from "./terminalTabs.ts";
 
 describe("terminal tabs", () => {
   it("nextTerminalId picks the next free term-N", () => {
@@ -41,5 +49,62 @@ describe("terminal tabs", () => {
     expect(cycleActiveId(tabs, 1)).toBe("term-1");
     expect(cycleActiveId(tabs, -1)).toBe("term-2");
     expect(cycleActiveId({ ids: ["term-1"], activeId: "term-1" }, 1)).toBe("term-1");
+  });
+});
+
+describe("tabsWithDiscovered", () => {
+  it("Given no local tabs, when terminals are discovered, then it seeds a sorted list", () => {
+    const tabs = tabsWithDiscovered(null, ["term-2", "term-1"]);
+    expect(tabs).toEqual({ ids: ["term-1", "term-2"], activeId: "term-1" });
+  });
+
+  it("Given existing tabs, when a new terminal is discovered, then it is unioned in, active preserved", () => {
+    const tabs = tabsWithDiscovered({ ids: ["term-1"], activeId: "term-1" }, ["term-1", "term-2"]);
+    expect(tabs).toEqual({ ids: ["term-1", "term-2"], activeId: "term-1" });
+  });
+
+  it("Given nothing new, then it returns the same reference (no state write)", () => {
+    const original = { ids: ["term-1", "term-2"], activeId: "term-2" };
+    expect(tabsWithDiscovered(original, ["term-1"])).toBe(original);
+  });
+
+  it("Given no discovered ids, then it returns the tabs untouched", () => {
+    const original = { ids: ["term-1"], activeId: "term-1" };
+    expect(tabsWithDiscovered(original, [])).toBe(original);
+  });
+});
+
+describe("reduceKnownTerminals", () => {
+  const snapshot = {
+    type: "snapshot" as const,
+    terminals: [
+      { threadId: "t1", terminalId: "term-1" },
+      { threadId: "t1", terminalId: "term-2" },
+      { threadId: "t2", terminalId: "term-1" },
+    ],
+  };
+
+  it("Given a snapshot, then it groups terminal ids by thread", () => {
+    const map = reduceKnownTerminals(new Map(), snapshot);
+    expect(map.get("t1")).toEqual(["term-1", "term-2"]);
+    expect(map.get("t2")).toEqual(["term-1"]);
+  });
+
+  it("Given an upsert of a new terminal, then it appends it to that thread", () => {
+    const map = reduceKnownTerminals(reduceKnownTerminals(new Map(), snapshot), {
+      type: "upsert",
+      terminal: { threadId: "t2", terminalId: "term-2" },
+    });
+    expect(map.get("t2")).toEqual(["term-1", "term-2"]);
+  });
+
+  it("Given a remove, then it drops the id (and the thread entry when empty)", () => {
+    const map = reduceKnownTerminals(reduceKnownTerminals(new Map(), snapshot), {
+      type: "remove",
+      threadId: "t2",
+      terminalId: "term-1",
+    });
+    expect(map.has("t2")).toBe(false);
+    expect(map.get("t1")).toEqual(["term-1", "term-2"]);
   });
 });

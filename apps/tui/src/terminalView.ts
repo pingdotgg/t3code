@@ -21,6 +21,10 @@ export interface TermSegment {
 export interface TermFrame {
   readonly rows: ReadonlyArray<ReadonlyArray<TermSegment>>;
   readonly cursor: { readonly x: number; readonly y: number };
+  /** Lines of scrollback above the live viewport (the clamp ceiling for scrolling). */
+  readonly maxScroll: number;
+  /** The offset actually rendered (the requested offset clamped to `[0, maxScroll]`). */
+  readonly scrollOffset: number;
 }
 
 function cellColor(cell: IBufferCell, foreground: boolean): TermColor | undefined {
@@ -72,14 +76,22 @@ function cellStyle(cell: IBufferCell): Omit<TermSegment, "text"> {
  * Ink can render — runs of same-styled cells are coalesced into segments, and
  * the cursor cell is emitted inverted.
  */
-export function readTerminalFrame(term: Terminal): TermFrame {
+export function readTerminalFrame(term: Terminal, scrollOffset = 0): TermFrame {
   const buffer = term.buffer.active;
   const cell = buffer.getNullCell();
-  const cursor = { x: buffer.cursorX, y: buffer.cursorY };
+  // `baseY` is the top row of the LIVE viewport (== scrollback length). Scrolling
+  // up renders from `baseY - offset`; offset 0 is the live tail. Clamp so a stale
+  // offset (buffer trimmed to its scrollback cap) can't read a negative row.
+  const maxScroll = buffer.baseY;
+  const offset = Math.max(0, Math.min(scrollOffset, maxScroll));
+  const top = maxScroll - offset;
+  // The cursor only belongs to the live tail; hide it while viewing history so a
+  // stray inverted cell doesn't appear over old output.
+  const cursor = offset === 0 ? { x: buffer.cursorX, y: buffer.cursorY } : { x: -1, y: -1 };
   const rows: TermSegment[][] = [];
 
   for (let y = 0; y < term.rows; y++) {
-    const line = buffer.getLine(buffer.baseY + y);
+    const line = buffer.getLine(top + y);
     const segments: TermSegment[] = [];
     if (!line) {
       rows.push(segments);
@@ -116,7 +128,7 @@ export function readTerminalFrame(term: Terminal): TermFrame {
     rows.push(segments);
   }
 
-  return { rows, cursor };
+  return { rows, cursor, maxScroll, scrollOffset: offset };
 }
 
 /**

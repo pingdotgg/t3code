@@ -21,6 +21,17 @@ const { Terminal } = NodeModule.createRequire(import.meta.url)(
 ) as typeof import("@xterm/headless");
 type XTerm = InstanceType<typeof Terminal>;
 
+/** A scrollback navigation request routed from the key handler to the active pane. */
+export type TerminalScrollAction = "line-up" | "line-down" | "page-up" | "page-down" | "bottom";
+
+/** Structural shape of OpenTUI's mouse event — only the scroll info is needed here. */
+interface TermWheelEvent {
+  readonly scroll?: {
+    readonly direction: "up" | "down" | "left" | "right";
+    readonly delta: number;
+  };
+}
+
 /** Replay at most this many bytes of terminal history on attach (keeps it fast). */
 const TERMINAL_HISTORY_TAIL = 128 * 1024;
 
@@ -36,7 +47,9 @@ export interface TerminalInfo {
 function renderSegment(segment: TermSegment, key: number): React.ReactNode {
   // Default cells inherit the terminal's own fg/bg; inverse swaps them so the
   // cursor cell and reverse-video runs read correctly on any theme.
-  const fg = segment.inverse ? (segment.backgroundColor ?? THEME.bg) : (segment.color ?? THEME.text);
+  const fg = segment.inverse
+    ? (segment.backgroundColor ?? THEME.bg)
+    : (segment.color ?? THEME.text);
   const bg = segment.inverse ? (segment.color ?? THEME.text) : segment.backgroundColor;
   let node: React.ReactNode = segment.text;
   if (segment.underline) node = <u>{node}</u>;
@@ -67,6 +80,7 @@ const TerminalPane = React.memo(function TerminalPane({
   visible,
   focused,
   copyRef,
+  scrollRef,
 }: {
   readonly client: TuiClient;
   readonly info: TerminalInfo;
@@ -75,10 +89,15 @@ const TerminalPane = React.memo(function TerminalPane({
   readonly visible: boolean;
   readonly focused: boolean;
   readonly copyRef: React.MutableRefObject<(() => string) | null>;
+  readonly scrollRef: React.MutableRefObject<((action: TerminalScrollAction) => void) | null>;
 }): React.ReactNode {
   const safeCols = Math.max(2, cols);
   const safeRows = Math.max(2, rows);
   const termRef = React.useRef<XTerm | null>(null);
+  // Lines scrolled up from the live tail (0 = tail). A ref, not state, so the
+  // wheel/key handlers read the latest value without a re-render race; `bump()`
+  // triggers the repaint.
+  const scrollOffsetRef = React.useRef(0);
   const scheduled = React.useRef(false);
   const renderTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const visibleRef = React.useRef(visible);
@@ -103,6 +122,62 @@ const TerminalPane = React.memo(function TerminalPane({
     },
     [],
   );
+
+  // Scroll the emulator's scrollback. UP moves into history (offset grows),
+  // clamped to the buffered scrollback; `bottom` snaps back to the live tail.
+  const scrollBy = React.useCallback(
+    (action: TerminalScrollAction) => {
+      const active = termRef.current?.buffer.active;
+      if (!active) return;
+      const max = active.baseY;
+      const page = Math.max(1, safeRows - 1);
+      const cur = scrollOffsetRef.current;
+      const next = Math.max(
+        0,
+        Math.min(
+          max,
+          action === "line-up"
+            ? cur + 1
+            : action === "line-down"
+              ? cur - 1
+              : action === "page-up"
+                ? cur + page
+                : action === "page-down"
+                  ? cur - page
+                  : 0, // "bottom"
+        ),
+      );
+      if (next !== scrollOffsetRef.current) {
+        scrollOffsetRef.current = next;
+        bump();
+      }
+    },
+    [safeRows],
+  );
+
+  const handleWheel = React.useCallback((event: TermWheelEvent) => {
+    const direction = event.scroll?.direction;
+    if (direction !== "up" && direction !== "down") return;
+    const active = termRef.current?.buffer.active;
+    if (!active) return;
+    const next = Math.max(
+      0,
+      Math.min(active.baseY, scrollOffsetRef.current + (direction === "up" ? 3 : -3)),
+    );
+    if (next !== scrollOffsetRef.current) {
+      scrollOffsetRef.current = next;
+      bump();
+    }
+  }, []);
+
+  // Route key-driven scrolling to the visible pane (mirrors the copy handle).
+  React.useEffect(() => {
+    if (!visible) return;
+    scrollRef.current = scrollBy;
+    return () => {
+      if (scrollRef.current === scrollBy) scrollRef.current = null;
+    };
+  }, [visible, scrollRef, scrollBy]);
 
   // Expose the viewport text for ^O copy while this is the visible terminal.
   React.useEffect(() => {
@@ -131,7 +206,9 @@ const TerminalPane = React.memo(function TerminalPane({
     // the visible one — background tabs needn't trigger N PTY resizes per window
     // resize; a hidden pane resyncs when it becomes visible (visible is a dep).
     if (visible) {
-      void client.terminalResize(info.threadId, info.terminalId, safeCols, safeRows).catch(() => {});
+      void client
+        .terminalResize(info.threadId, info.terminalId, safeCols, safeRows)
+        .catch(() => {});
     }
   }, [safeCols, safeRows, visible]);
 
@@ -158,6 +235,7 @@ const TerminalPane = React.memo(function TerminalPane({
       (event) => {
         if (event.type === "snapshot" || event.type === "restarted") {
           term.reset();
+          scrollOffsetRef.current = 0;
           const history = event.snapshot.history;
           term.write(
             history.length > TERMINAL_HISTORY_TAIL
@@ -186,15 +264,26 @@ const TerminalPane = React.memo(function TerminalPane({
   }, [visible]);
 
   if (!visible) return null;
-  const frame = readTerminalFrame(term);
+  const frame = readTerminalFrame(term, scrollOffsetRef.current);
+  const scrolled = frame.scrollOffset > 0;
+  // When the indicator line is shown it takes a row; drop the newest rendered
+  // row so the pane's height stays constant (the indicator replaces the tail).
+  const bodyRows = scrolled ? frame.rows.slice(0, Math.max(0, frame.rows.length - 1)) : frame.rows;
   return (
-    <>
-      {frame.rows.map((segments, index) => (
+    <box flexDirection="column" flexGrow={1} onMouseScroll={handleWheel}>
+      {scrolled ? (
+        <text>
+          <span fg={ansi("yellow")}>
+            {`▲ scrollback −${frame.scrollOffset}/${frame.maxScroll} · ⇧PgUp/PgDn · type to return`}
+          </span>
+        </text>
+      ) : null}
+      {bodyRows.map((segments, index) => (
         <text key={index}>
           {segments.length === 0 ? " " : segments.map((segment, i) => renderSegment(segment, i))}
         </text>
       ))}
-    </>
+    </box>
   );
 });
 
@@ -205,6 +294,7 @@ export const ThreadTerminalDrawer = React.memo(function ThreadTerminalDrawer({
   rows,
   focused,
   copyRef,
+  scrollRef,
   tabIds,
   activeTabId,
   onSelectTab,
@@ -220,6 +310,8 @@ export const ThreadTerminalDrawer = React.memo(function ThreadTerminalDrawer({
   readonly focused: boolean;
   /** Filled with a getter for the viewport text so the app can copy it (OSC 52). */
   readonly copyRef: React.MutableRefObject<(() => string) | null>;
+  /** Routes key-driven scrollback navigation to the active pane. */
+  readonly scrollRef: React.MutableRefObject<((action: TerminalScrollAction) => void) | null>;
   /** This thread's terminal tabs + the active one, for the tab bar. */
   readonly tabIds: ReadonlyArray<string>;
   readonly activeTabId: string;
@@ -285,6 +377,7 @@ export const ThreadTerminalDrawer = React.memo(function ThreadTerminalDrawer({
           visible={id === activeTabId}
           focused={focused && id === activeTabId}
           copyRef={copyRef}
+          scrollRef={scrollRef}
         />
       ))}
     </box>
