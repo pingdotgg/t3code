@@ -125,7 +125,6 @@ const WEB_UI_GAPS = [
     webSource: "apps/web/src/components/chat/MessagesTimeline.tsx",
     scenarios: [
       "Given a message is visible, when the user opens its actions, then the TUI can copy the message text to the terminal clipboard.",
-      "Given an inline image is visible, when the user opens it, then the TUI offers a larger preview or an external-open action.",
     ],
   },
   {

@@ -166,6 +166,7 @@ describe("MessagesTimeline body", () => {
     const ref = React.createRef<null>();
     const writes: string[] = [];
     const loadedUrls: string[] = [];
+    const openedImages: string[] = [];
     const t = await testRender(
       <MessagesTimeline
         detail={full}
@@ -185,6 +186,7 @@ describe("MessagesTimeline body", () => {
             imageHeight: 1,
           };
         }}
+        onOpenImage={(preview) => openedImages.push(preview.name)}
       />,
       { width: 92, height: 24 },
     );
@@ -200,7 +202,12 @@ describe("MessagesTimeline body", () => {
 
     expect(loadedUrls).toEqual(["https://srv/assets/att1.png"]);
     expect(writes.join("")).toContain("a=T");
-    expect(t.captureCharFrame()).toContain("diagram.png");
+    const frame = t.captureCharFrame();
+    expect(frame).toContain("diagram.png");
+    const metadataRow = frame.split("\n").findIndex((line) => line.includes("diagram.png"));
+    expect(metadataRow).toBeGreaterThanOrEqual(0);
+    await t.mockMouse.click(2, metadataRow + 1);
+    expect(openedImages).toEqual(["diagram.png"]);
     t.renderer.destroy();
   });
 

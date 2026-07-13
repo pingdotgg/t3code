@@ -17,6 +17,7 @@ import { clip } from "../format.ts";
 import { fileTypeColor, STATUS_ICONS, TOOL_ICONS } from "../icons.ts";
 import { type ActionableProposedPlan, latestActionableProposedPlan } from "../proposedPlan.ts";
 import { WorkingIndicator } from "./WorkingIndicator.tsx";
+import type { ExpandedImagePreview } from "./ImageLightbox.tsx";
 import {
   changedFilesByMessage,
   deriveTimelineEntries,
@@ -134,6 +135,8 @@ interface RowRenderContext {
   readonly imageCellWidth: number;
   /** Surface a resolved attachment URL (e.g. in the status line) when clicked. */
   readonly onOpenUrl?: (url: string) => void;
+  /** Open an already-decoded image in the conversation lightbox. */
+  readonly onOpenImage?: (preview: ExpandedImagePreview) => void;
 }
 
 /**
@@ -155,6 +158,7 @@ function AttachmentPreview({
     inlineImagesSupported,
     imageCellWidth,
     onOpenUrl,
+    onOpenImage,
   } = ctx;
   const [link, setLink] = React.useState<"pending" | "failed" | string>(
     getAttachmentUrl ? "pending" : "failed",
@@ -184,24 +188,38 @@ function AttachmentPreview({
   const url = link !== "pending" && link !== "failed" ? link : null;
   const sizeKb = Math.max(1, Math.round(attachment.sizeBytes / 1024));
   const label = `${TOOL_ICONS.imageView.glyph} ${attachment.name} · ${sizeKb} KB`;
-  const tail = url ?? (link === "pending" ? "  (resolving link…)" : "  (link unavailable)");
-  const click = url && onOpenUrl ? () => onOpenUrl(url) : undefined;
+  const linkText = url ?? (link === "pending" ? "resolving link…" : "link unavailable");
+  const tail = image && onOpenImage ? `click image to expand · ${linkText}` : linkText;
+  const openUrl = url && onOpenUrl ? () => onOpenUrl(url) : undefined;
+  const openImage =
+    image && onOpenImage
+      ? () =>
+          onOpenImage({
+            name: attachment.name,
+            sizeBytes: attachment.sizeBytes,
+            image,
+          })
+      : undefined;
   const naturalColumns = image ? Math.max(1, Math.ceil(image.imageWidth / imageCellWidth)) : 1;
   const maxColumns = Math.max(1, Math.min(40, width - 2));
   const constrainedColumns = naturalColumns > maxColumns ? maxColumns : undefined;
   return (
-    <box flexDirection="column" {...(click ? { onMouseDown: click } : {})}>
-      <text>
-        <span fg={palette.accent}>{label}</span>
-        <span fg={palette.dim}>{`  ${clip(tail, Math.max(8, width - label.length - 4))}`}</span>
-      </text>
+    <box flexDirection="column">
+      <box {...(openUrl ? { onMouseDown: openUrl } : {})}>
+        <text>
+          <span fg={palette.accent}>{label}</span>
+          <span fg={palette.dim}>{`  ${clip(tail, Math.max(8, width - label.length - 4))}`}</span>
+        </text>
+      </box>
       {image ? (
-        <Image
-          data={image.data}
-          imageWidth={image.imageWidth}
-          imageHeight={image.imageHeight}
-          {...(constrainedColumns !== undefined ? { columns: constrainedColumns } : {})}
-        />
+        <box {...(openImage ? { onMouseDown: openImage } : {})}>
+          <Image
+            data={image.data}
+            imageWidth={image.imageWidth}
+            imageHeight={image.imageHeight}
+            {...(constrainedColumns !== undefined ? { columns: constrainedColumns } : {})}
+          />
+        </box>
       ) : null}
     </box>
   );
@@ -482,6 +500,7 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
   getAttachmentUrl,
   getAttachmentImage,
   onOpenUrl,
+  onOpenImage,
   treeSitterClient,
 }: {
   readonly detail: OrchestrationThread | null;
@@ -503,6 +522,8 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
   ) => Promise<RgbaImage | null>;
   /** Surface a resolved attachment URL when clicked (e.g. in the status line). */
   readonly onOpenUrl?: (url: string) => void;
+  /** Open an already-decoded attachment in a larger conversation preview. */
+  readonly onOpenImage?: (preview: ExpandedImagePreview) => void;
   /** Test seam: inject a tree-sitter client so <markdown> can paint in tests. */
   readonly treeSitterClient?: unknown;
 }): React.ReactNode {
@@ -554,6 +575,7 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
     ...(getAttachmentUrl ? { getAttachmentUrl } : {}),
     ...(getAttachmentImage ? { getAttachmentImage } : {}),
     ...(onOpenUrl ? { onOpenUrl } : {}),
+    ...(onOpenImage ? { onOpenImage } : {}),
   };
 
   if (!detail) {

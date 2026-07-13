@@ -15,6 +15,7 @@ import { useKeyboard } from "@opentui/react";
 
 export type KeyBindingMode =
   | "terminal"
+  | "imagePreview"
   | "command"
   | "files"
   | "settings"
@@ -42,6 +43,8 @@ export interface KeyBindingActions {
   readonly onTerminalScroll: (
     action: "line-up" | "line-down" | "page-up" | "page-down" | "bottom",
   ) => void;
+  // Expanded image preview: Escape closes without affecting the draft/session.
+  readonly onImagePreviewClose: () => void;
   // Command palette (^K): a fuzzy filter input (owns typed chars) over commands;
   // ↑/↓ move the highlight, Enter runs, Esc closes.
   readonly onOpenCommandPalette: () => void;
@@ -156,6 +159,11 @@ export function useKeyBindings(actions: KeyBindingActions): void {
 
     // Ctrl+C always exits cleanly (outside the terminal).
     if (key.ctrl && key.name === "c") return actions.onExit();
+
+    if (actions.mode === "imagePreview") {
+      if (key.name === "escape") return actions.onImagePreviewClose();
+      return;
+    }
 
     // ── Command palette (filter input owns typed chars) ─────────────────────
     if (actions.mode === "command") {

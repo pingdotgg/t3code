@@ -39,6 +39,7 @@ import { CommandPalette } from "./CommandPalette.tsx";
 import { FilesView, type FilesStatus, type ViewingFile } from "./FilesView.tsx";
 import { SettingsView } from "./SettingsView.tsx";
 import { MessagesTimeline } from "./MessagesTimeline.tsx";
+import { ImageLightbox, type ExpandedImagePreview } from "./ImageLightbox.tsx";
 import { RightPanel } from "./RightPanel.tsx";
 import { SelectOverlay, type SelectStatus } from "./SelectOverlay.tsx";
 import { Sidebar } from "./Sidebar.tsx";
@@ -156,6 +157,7 @@ export function ChatView({
   const [composerImages, setComposerImages] = React.useState<
     ReadonlyArray<ComposerImageAttachment>
   >([]);
+  const [expandedImage, setExpandedImage] = React.useState<ExpandedImagePreview | null>(null);
   // Bumped to remount (clear) the uncontrolled multiline reply editor.
   const [composerEpoch, setComposerEpoch] = React.useState(0);
   const [draft, setDraft] = React.useState("");
@@ -246,6 +248,7 @@ export function ChatView({
     // thread switch stops keystrokes routing to whichever shell the new thread
     // happens to have, until the user re-focuses it (^P) explicitly.
     setTerminalFocused(false);
+    setExpandedImage(null);
   }, [detailId]);
   const actionablePlan = React.useMemo(
     () => (detail ? latestActionableProposedPlan(detail) : null),
@@ -561,7 +564,8 @@ export function ChatView({
     width >= RIGHT_PANEL_MIN_TERMINAL_WIDTH &&
     !diffOpen &&
     !filesOpen &&
-    !settingsOpen;
+    !settingsOpen &&
+    !expandedImage;
   const rightWidth = rightPanelVisible ? RIGHT_PANEL_WIDTH : 0;
   const chatWidth = Math.max(20, width - listWidth - rightWidth - 4);
 
@@ -1155,8 +1159,9 @@ export function ChatView({
   // end — no highlight, Enter no-ops.
   const safeCommandIndex = Math.min(commandIndex, Math.max(0, filteredCommands.length - 1));
 
-  const keyMode =
-    activeTerminal && terminalFocused
+  const keyMode = expandedImage
+    ? "imagePreview"
+    : activeTerminal && terminalFocused
       ? "terminal"
       : settingsOpen
         ? "settings"
@@ -1195,6 +1200,7 @@ export function ChatView({
       }
     },
     onTerminalScroll: (action) => terminalScrollRef.current?.(action),
+    onImagePreviewClose: () => setExpandedImage(null),
     onToggleFocus: toggleFocus,
     onCancelNew: () => {
       setDraft("");
@@ -1443,8 +1449,9 @@ export function ChatView({
     ...(working ? ["Esc stop"] : []),
     "^C quit",
   ].join(" · ");
-  const hint =
-    pendingUserInput && userInputDeferred
+  const hint = expandedImage
+    ? "image preview · Esc or click to close · ^C quit"
+    : pendingUserInput && userInputDeferred
       ? "⚠ question pending — ^U to answer · ^C quit"
       : activeTerminal
         ? "^P prompt · ^E close term · ^↑/^↓ size term · keys → shell"
@@ -1500,6 +1507,13 @@ export function ChatView({
             scrollRef={diffScrollRef}
             {...(diffFocusPath ? { focusPath: diffFocusPath } : {})}
           />
+        ) : expandedImage ? (
+          <ImageLightbox
+            preview={expandedImage}
+            width={chatWidth}
+            height={panesHeight}
+            onClose={() => setExpandedImage(null)}
+          />
         ) : (
           <MessagesTimeline
             detail={detail}
@@ -1514,6 +1528,10 @@ export function ChatView({
             getAttachmentUrl={client.getAttachmentUrl}
             getAttachmentImage={client.getAttachmentImage}
             onOpenUrl={(url) => store.setStatus(url, "info")}
+            onOpenImage={(preview) => {
+              setTerminalFocused(false);
+              setExpandedImage(preview);
+            }}
           />
         )}
         {rightPanelVisible ? (
@@ -1601,6 +1619,7 @@ export function ChatView({
           !diffOpen &&
           !filesOpen &&
           !settingsOpen &&
+          !expandedImage &&
           !popoverOpen &&
           focus !== "filter"
         }
