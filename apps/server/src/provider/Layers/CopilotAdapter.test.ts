@@ -998,6 +998,53 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     }),
   );
 
+  it.effect("stops a replacement that wins the lifecycle lock before stop", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-stop-after-replacement");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      let markDisconnectStarted!: () => void;
+      const disconnectStarted = new Promise<void>((resolve) => {
+        markDisconnectStarted = resolve;
+      });
+      let releaseDisconnect!: () => void;
+      const disconnectGate = new Promise<void>((resolve) => {
+        releaseDisconnect = resolve;
+      });
+      runtimeMock.state.lastSession.disconnect.mockImplementationOnce(async () => {
+        markDisconnectStarted();
+        await disconnectGate;
+      });
+
+      const replacementFiber = yield* adapter
+        .startSession({
+          provider: COPILOT_DRIVER,
+          threadId,
+          cwd: process.cwd(),
+          runtimeMode: "approval-required",
+        })
+        .pipe(Effect.forkChild);
+      yield* Effect.promise(() => disconnectStarted);
+
+      const stopFiber = yield* adapter.stopSession(threadId).pipe(Effect.forkChild);
+      releaseDisconnect();
+      yield* Fiber.join(replacementFiber);
+      yield* Fiber.join(stopFiber);
+
+      NodeAssert.equal(runtimeMock.state.startCalls, 2);
+      NodeAssert.equal(runtimeMock.state.stopCalls, 2);
+      NodeAssert.equal(runtimeMock.state.lastSession.disconnect.mock.calls.length, 2);
+      NodeAssert.equal(yield* adapter.hasSession(threadId), false);
+    }),
+  );
+
   it.effect("keeps assistant call usage on the turn without publishing context usage", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
