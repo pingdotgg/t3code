@@ -514,11 +514,12 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       ]);
       const afterRemove = yield* readPersistedSnapshot(baseDir);
       assert.isTrue(
-        afterRemove.projects.find((candidate) => candidate.id === project!.id)?.deletedAt !== null,
+        (afterRemove.projects.find((candidate) => candidate.id === project!.id)?.deletedAt ??
+          null) !== null,
       );
       assert.isTrue(
-        afterRemove.threads.find((thread) => thread.id === "thread-cli-force-remove")?.deletedAt !==
-          null,
+        (afterRemove.threads.find((thread) => thread.id === "thread-cli-force-remove")?.deletedAt ??
+          null) !== null,
       );
     }),
   );
