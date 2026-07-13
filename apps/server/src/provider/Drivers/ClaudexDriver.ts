@@ -12,9 +12,11 @@ import {
   type ClaudeSettings,
   DEFAULT_MODEL_BY_PROVIDER,
   MODEL_SLUG_ALIASES_BY_PROVIDER,
+  type ModelCapabilities,
   type ModelSelection,
   ProviderDriverKind,
   type ServerProvider,
+  type ServerProviderModel,
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as Duration from "effect/Duration";
@@ -45,7 +47,7 @@ import {
   type ProviderInstance,
 } from "../ProviderDriver.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
-import type { ServerProviderDraft } from "../providerSnapshot.ts";
+import { buildSelectOptionDescriptor, type ServerProviderDraft } from "../providerSnapshot.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makeManualOnlyProviderMaintenanceCapabilities,
@@ -66,23 +68,60 @@ const CLAUDEX_DEFAULT_MODEL = DEFAULT_MODEL_BY_PROVIDER[DRIVER_KIND] ?? "claudex
 const CLAUDEX_MODEL_SLUGS = new Set(
   Object.values(MODEL_SLUG_ALIASES_BY_PROVIDER[DRIVER_KIND] ?? {}),
 );
+const CLAUDEX_EFFORT_VALUES = ["low", "medium", "high", "xhigh", "max"] as const;
 
-/** Remove Claude-only effort flags from user-supplied Claudex launch arguments. */
-export function stripClaudexEffortArgs(launchArgs: string): string {
-  const tokens = launchArgs.trim().split(/\s+/).filter(Boolean);
-  const retained: string[] = [];
-  for (let index = 0; index < tokens.length; index += 1) {
-    const token = tokens[index]!;
-    if (token === "--effort") {
-      if (tokens[index + 1] !== undefined && !tokens[index + 1]!.startsWith("--")) {
-        index += 1;
-      }
-      continue;
-    }
-    if (token.startsWith("--effort=")) continue;
-    retained.push(token);
-  }
-  return retained.join(" ");
+function createClaudexCapabilities(
+  defaultEffort: (typeof CLAUDEX_EFFORT_VALUES)[number],
+): ModelCapabilities {
+  return createModelCapabilities({
+    optionDescriptors: [
+      buildSelectOptionDescriptor({
+        id: "effort",
+        label: "Reasoning",
+        options: [
+          { value: "low", label: "Low" },
+          { value: "medium", label: "Medium" },
+          { value: "high", label: "High" },
+          { value: "xhigh", label: "Extra High" },
+          { value: "max", label: "Max" },
+        ].map((option) => ({
+          ...option,
+          ...(option.value === defaultEffort ? { isDefault: true } : {}),
+        })),
+      }),
+    ],
+  });
+}
+
+export const CLAUDEX_MODELS: ReadonlyArray<ServerProviderModel> = [
+  {
+    slug: "claudex-luna",
+    name: "Claudex Luna",
+    isCustom: false,
+    capabilities: createClaudexCapabilities("max"),
+  },
+  {
+    slug: "claudex-sol",
+    name: "Claudex Sol",
+    isCustom: false,
+    capabilities: createClaudexCapabilities("high"),
+  },
+];
+
+export function getClaudexModelCapabilities(
+  model: string | undefined,
+): ModelCapabilities | undefined {
+  const capabilities = CLAUDEX_MODELS.find((candidate) => candidate.slug === model)?.capabilities;
+  return capabilities ? (capabilities as ModelCapabilities) : undefined;
+}
+
+export function normalizeClaudexEffort(
+  effort: string | null | undefined,
+  _model?: string | null | undefined,
+): string | undefined {
+  return effort && CLAUDEX_EFFORT_VALUES.includes(effort as (typeof CLAUDEX_EFFORT_VALUES)[number])
+    ? effort
+    : undefined;
 }
 
 export function normalizeClaudexModelSelection(
@@ -90,7 +129,7 @@ export function normalizeClaudexModelSelection(
 ): ModelSelection | undefined {
   if (modelSelection === undefined) return undefined;
   return {
-    instanceId: modelSelection.instanceId,
+    ...modelSelection,
     model: CLAUDEX_MODEL_SLUGS.has(modelSelection.model)
       ? modelSelection.model
       : CLAUDEX_DEFAULT_MODEL,
@@ -127,7 +166,7 @@ function toClaudeSettings(config: ClaudexSettingsType): ClaudeSettings {
     binaryPath: config.binaryPath,
     homePath: config.homePath,
     customModels: config.customModels,
-    launchArgs: stripClaudexEffortArgs(config.launchArgs),
+    launchArgs: config.launchArgs,
   } satisfies ClaudeSettings;
 }
 
@@ -140,23 +179,9 @@ export function makeClaudexContinuationGroupKey(
 export function normalizeClaudexProviderSnapshot(
   snapshot: ServerProviderDraft,
 ): ServerProviderDraft {
-  const capabilities = createModelCapabilities({ optionDescriptors: [] });
   return {
     ...snapshot,
-    models: [
-      {
-        slug: "claudex-luna",
-        name: "Claudex Luna",
-        isCustom: false,
-        capabilities,
-      },
-      {
-        slug: "claudex-sol",
-        name: "Claudex Sol",
-        isCustom: false,
-        capabilities,
-      },
-    ],
+    models: CLAUDEX_MODELS,
   };
 }
 
@@ -224,6 +249,8 @@ export const ClaudexDriver: ProviderDriver<ClaudexSettingsType, ClaudexDriverEnv
         instanceId,
         driverKind: DRIVER_KIND,
         environment: processEnv,
+        getModelCapabilities: getClaudexModelCapabilities,
+        normalizeEffort: normalizeClaudexEffort,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       });
       const adapter = {
@@ -243,7 +270,10 @@ export const ClaudexDriver: ProviderDriver<ClaudexSettingsType, ClaudexDriverEnv
               : {}),
           }),
       } satisfies typeof rawAdapter;
-      const rawTextGeneration = yield* makeClaudeTextGeneration(claudeSettings, processEnv);
+      const rawTextGeneration = yield* makeClaudeTextGeneration(claudeSettings, processEnv, {
+        getModelCapabilities: getClaudexModelCapabilities,
+        normalizeEffort: normalizeClaudexEffort,
+      });
       const textGeneration = {
         ...rawTextGeneration,
         generateCommitMessage: (input) =>

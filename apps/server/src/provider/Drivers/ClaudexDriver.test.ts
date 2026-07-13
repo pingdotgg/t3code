@@ -13,12 +13,19 @@ import {
 import { createModelCapabilities } from "@t3tools/shared/model";
 
 import {
+  CLAUDEX_MODELS,
+  getClaudexModelCapabilities,
   makeClaudexContinuationGroupKey,
+  normalizeClaudexEffort,
   normalizeClaudexModelSelection,
   normalizeClaudexProviderSnapshot,
 } from "./ClaudexDriver.ts";
 import { makeClaudeContinuationGroupKey } from "./ClaudeHome.ts";
-import { getClaudeModelCapabilities, resolveClaudeEffort } from "../Layers/ClaudeProvider.ts";
+import {
+  getClaudeModelCapabilities,
+  normalizeClaudeCliEffort,
+  resolveClaudeEffort,
+} from "../Layers/ClaudeProvider.ts";
 import { buildServerProvider, type ServerProviderDraft } from "../providerSnapshot.ts";
 
 const decodeClaudexSettings = Schema.decodeSync(ClaudexSettings);
@@ -102,10 +109,23 @@ describe("ClaudexDriver", () => {
 
     for (const model of normalized.models) {
       const descriptors = model.capabilities?.optionDescriptors ?? [];
-      expect(
-        descriptors.some(({ id }) => ["effort", "reasoningEffort", "thinking"].includes(id)),
-      ).toBe(false);
-      expect(descriptors).toEqual([]);
+      expect(descriptors.map(({ id }) => id)).toEqual(["effort"]);
+      expect(descriptors[0]).toMatchObject({
+        id: "effort",
+        label: "Reasoning",
+        type: "select",
+        options: [
+          { id: "low", label: "Low" },
+          { id: "medium", label: "Medium" },
+          { id: "high", label: "High" },
+          { id: "xhigh", label: "Extra High" },
+          { id: "max", label: "Max" },
+        ],
+      });
+      expect(descriptors[0]).not.toHaveProperty("promptInjectedValues");
+      expect(descriptors[0]?.type === "select" ? descriptors[0].currentValue : undefined).toBe(
+        model.slug === "claudex-luna" ? "max" : "high",
+      );
     }
   });
 
@@ -116,9 +136,16 @@ describe("ClaudexDriver", () => {
       instanceId,
       model: "claudex-sol",
     });
-    expect(normalizeClaudexModelSelection({ instanceId, model: "claude-fable-5" })).toEqual({
+    expect(
+      normalizeClaudexModelSelection({
+        instanceId,
+        model: "claude-fable-5",
+        options: [{ id: "effort", value: "xhigh" }],
+      }),
+    ).toEqual({
       instanceId,
       model: "claudex-luna",
+      options: [{ id: "effort", value: "xhigh" }],
     });
   });
 
@@ -126,11 +153,30 @@ describe("ClaudexDriver", () => {
     expect(normalizeClaudexModelSelection(undefined)).toBeUndefined();
   });
 
-  it("does not expose or resolve effort for Claudex model slugs", () => {
-    const capabilities = getClaudeModelCapabilities("claudex-luna");
+  it("exposes Claudex effort capabilities and defaults", () => {
+    expect(CLAUDEX_MODELS).toHaveLength(2);
+    expect(getClaudexModelCapabilities("claudex-sol")).toBe(CLAUDEX_MODELS[1]?.capabilities);
+    expect(getClaudexModelCapabilities("unknown")).toBeUndefined();
+    expect(resolveClaudeEffort(getClaudexModelCapabilities("claudex-luna")!, "xhigh")).toBe(
+      "xhigh",
+    );
+    expect(resolveClaudeEffort(getClaudexModelCapabilities("claudex-luna")!, undefined)).toBe(
+      "max",
+    );
+    expect(resolveClaudeEffort(getClaudexModelCapabilities("claudex-sol")!, undefined)).toBe(
+      "high",
+    );
+  });
 
-    expect(capabilities.optionDescriptors ?? []).toEqual([]);
-    expect(resolveClaudeEffort(capabilities, "high")).toBeUndefined();
+  it("normalizes only the effort values supported by Claudex", () => {
+    for (const effort of ["low", "medium", "high", "xhigh", "max"]) {
+      expect(normalizeClaudexEffort(effort)).toBe(effort);
+    }
+    for (const effort of [undefined, "ultrathink", "ultracode", "garbage"]) {
+      expect(normalizeClaudexEffort(effort)).toBeUndefined();
+    }
+    expect(normalizeClaudeCliEffort("xhigh", "claudex-luna")).toBe("max");
+    expect(getClaudeModelCapabilities("claudex-luna").optionDescriptors ?? []).toEqual([]);
   });
 });
 
