@@ -3,6 +3,8 @@ import * as NodeBuffer from "node:buffer";
 const ESC = "\x1b";
 const ST = `${ESC}\\`;
 
+export type KittyProtocolTransport = "direct" | "tmux";
+
 // Kitty recommends keeping the full APC command below 4096 bytes. Leaving
 // ample room for control parameters keeps this true as ids and dimensions grow.
 export const KITTY_CHUNK_SIZE = 3_072;
@@ -39,12 +41,25 @@ export function assertRgbaImage(data: Uint8Array, imageWidth: number, imageHeigh
   }
 }
 
-export function encodeKittyDelete(imageId: number): string {
-  assertPositiveInteger(imageId, "imageId");
-  return `${ESC}_Ga=d,d=i,i=${imageId},q=2${ST}`;
+function encodeKittyCommand(command: string, transport: KittyProtocolTransport): string {
+  if (transport === "direct") return command;
+  // tmux passthrough is a DCS payload prefixed with "tmux;". Every ESC in the
+  // wrapped command must be doubled so tmux forwards it instead of parsing it.
+  return `${ESC}Ptmux;${command.replaceAll(ESC, ESC + ESC)}${ST}`;
 }
 
-export function encodeKittyTransmit(options: KittyTransmitOptions): string {
+export function encodeKittyDelete(
+  imageId: number,
+  transport: KittyProtocolTransport = "direct",
+): string {
+  assertPositiveInteger(imageId, "imageId");
+  return encodeKittyCommand(`${ESC}_Ga=d,d=i,i=${imageId},q=2${ST}`, transport);
+}
+
+export function encodeKittyTransmit(
+  options: KittyTransmitOptions,
+  transport: KittyProtocolTransport = "direct",
+): string {
   const { imageId, x, y, imageWidth, imageHeight, columns, rows, data } = options;
   assertPositiveInteger(imageId, "imageId");
   assertPositiveInteger(columns, "columns");
@@ -69,9 +84,12 @@ export function encodeKittyTransmit(options: KittyTransmitOptions): string {
       .map((chunk, index) => {
         const more = index === chunks.length - 1 ? 0 : 1;
         if (index === 0) {
-          return `${ESC}_Ga=T,f=32,s=${imageWidth},v=${imageHeight},c=${columns},r=${rows},i=${imageId},m=${more},q=2;${chunk}${ST}`;
+          return encodeKittyCommand(
+            `${ESC}_Ga=T,f=32,s=${imageWidth},v=${imageHeight},c=${columns},r=${rows},i=${imageId},m=${more},q=2;${chunk}${ST}`,
+            transport,
+          );
         }
-        return `${ESC}_Gm=${more},q=2;${chunk}${ST}`;
+        return encodeKittyCommand(`${ESC}_Gm=${more},q=2;${chunk}${ST}`, transport);
       })
       .join("")
   );

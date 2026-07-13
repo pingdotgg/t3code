@@ -48,6 +48,32 @@ describe("Kitty graphics protocol", () => {
     expect(encodeKittyDelete(42)).toBe("\x1b_Ga=d,d=i,i=42,q=2\x1b\\");
   });
 
+  it("wraps every graphics command for tmux while leaving cursor positioning in the pane", () => {
+    const output = encodeKittyTransmit(
+      {
+        imageId: 7,
+        x: 2,
+        y: 3,
+        imageWidth: 1,
+        imageHeight: 1,
+        columns: 4,
+        rows: 2,
+        data: new Uint8Array([255, 0, 128, 255]),
+      },
+      "tmux",
+    );
+
+    expect(output).toStartWith("\x1b[4;3H\x1bPtmux;\x1b\x1b_G");
+    expect(output).toEndWith("\x1b\x1b\\\x1b\\");
+    expect(output).not.toContain("\x1bPtmux;\x1b[4;3H");
+  });
+
+  it("wraps Kitty deletion for tmux passthrough", () => {
+    expect(encodeKittyDelete(42, "tmux")).toBe(
+      "\x1bPtmux;\x1b\x1b_Ga=d,d=i,i=42,q=2\x1b\x1b\\\x1b\\",
+    );
+  });
+
   it("rejects malformed RGBA buffers before emitting terminal bytes", () => {
     expect(() => assertRgbaImage(new Uint8Array(3), 1, 1)).toThrow(
       "RGBA data length must be 4 bytes",

@@ -3,7 +3,11 @@ import * as NodeEvents from "node:events";
 import { CliRenderEvents, type CliRenderer, type TerminalCapabilities } from "@opentui/core";
 import { describe, expect, it } from "bun:test";
 
-import { KittyImageManager, type KittyImagePatch } from "./KittyImageManager.ts";
+import {
+  installKittyImageExtension,
+  KittyImageManager,
+  type KittyImagePatch,
+} from "./KittyImageManager.ts";
 
 class FakeRenderer extends NodeEvents.EventEmitter {
   capabilities: TerminalCapabilities | null = null;
@@ -36,11 +40,12 @@ const patch = (overrides: Partial<KittyImagePatch> = {}): KittyImagePatch => ({
   ...overrides,
 });
 
-function createHarness(capability: "auto" | "always" = "always") {
+function createHarness(capability: "auto" | "always" = "always", tmuxPassthrough = false) {
   const renderer = new FakeRenderer();
   const writes: string[] = [];
   const manager = new KittyImageManager(renderer as unknown as CliRenderer, {
     capability,
+    tmuxPassthrough,
     writer: { write: (value) => writes.push(value) },
   });
   return { renderer, manager, writes };
@@ -99,6 +104,52 @@ describe("KittyImageManager", () => {
     manager.submit(patch());
     manager.flushFrame();
     expect(writes).toHaveLength(1);
+  });
+
+  it("uses tmux passthrough when the multiplexer masks outer Kitty support", () => {
+    const { renderer, manager, writes } = createHarness("auto", true);
+    renderer.capabilities = {
+      kitty_graphics: false,
+      multiplexer: "tmux",
+    } as TerminalCapabilities;
+
+    expect(manager.isSupported).toBe(true);
+    manager.beginFrame();
+    manager.submit(patch());
+    manager.flushFrame();
+
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toContain("\x1bPtmux;\x1b\x1b_Ga=T");
+  });
+
+  it("does not assume an unidentified tmux host supports Kitty graphics", () => {
+    const { renderer, manager, writes } = createHarness("auto");
+    renderer.capabilities = {
+      kitty_graphics: false,
+      multiplexer: "tmux",
+    } as TerminalCapabilities;
+
+    expect(manager.isSupported).toBe(false);
+    manager.beginFrame();
+    manager.submit(patch());
+    manager.flushFrame();
+    expect(writes).toHaveLength(0);
+  });
+
+  it("applies explicit options when a renderable installed the manager first", () => {
+    const renderer = new FakeRenderer();
+    const first = installKittyImageExtension(renderer as unknown as CliRenderer);
+    const writes: string[] = [];
+    const configured = installKittyImageExtension(renderer as unknown as CliRenderer, {
+      capability: "always",
+      writer: { write: (value) => writes.push(value) },
+    });
+
+    expect(configured).toBe(first);
+    configured.beginFrame();
+    configured.submit(patch());
+    configured.flushFrame();
+    expect(writes.join("")).toContain("a=T");
   });
 
   it("cleans active images and detaches hooks on dispose", () => {

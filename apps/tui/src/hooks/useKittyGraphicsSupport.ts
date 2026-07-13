@@ -1,21 +1,23 @@
-import { CliRenderEvents, type TerminalCapabilities } from "@opentui/core";
+import { CliRenderEvents } from "@opentui/core";
 import { useRenderer } from "@opentui/react";
+import { getKittyImageManager } from "@t3tools/opentui-image";
 import * as React from "react";
 
 /** Reactive view of OpenTUI's asynchronously-detected Kitty graphics capability. */
 export function useKittyGraphicsSupport(): boolean {
   const renderer = useRenderer();
-  const [supported, setSupported] = React.useState(renderer.capabilities?.kitty_graphics === true);
+  const manager = getKittyImageManager(renderer);
+  const [supported, setSupported] = React.useState(manager.isSupported);
 
   React.useEffect(() => {
-    const onCapabilities = (capabilities: TerminalCapabilities) => {
-      setSupported(capabilities.kitty_graphics);
+    const onCapabilities = () => {
+      setSupported(manager.isSupported);
     };
     renderer.on(CliRenderEvents.CAPABILITIES, onCapabilities);
     return () => {
       renderer.off(CliRenderEvents.CAPABILITIES, onCapabilities);
     };
-  }, [renderer]);
+  }, [manager, renderer]);
 
   return supported;
 }

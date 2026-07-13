@@ -52,6 +52,18 @@ The extension only emits images when OpenTUI reports Kitty graphics support.
 Pass `{ capability: "always" }` to `installKittyImageExtension` only when the
 host has already established support itself.
 
+Kitty graphics commands must be wrapped in tmux's DCS passthrough envelope. If
+the host has positively identified a Kitty-capable outer terminal, pass
+`{ tmuxPassthrough: true }`. tmux also needs passthrough enabled:
+
+```tmux
+set -g allow-passthrough on
+```
+
+The option is deliberately not inferred from tmux alone: an unidentified outer
+terminal may not implement Kitty graphics and should retain the text/link
+fallback.
+
 ## Difference from the native PR
 
 The PR adds pixel buffers to OpenTUI's Zig renderer, allowing image and text

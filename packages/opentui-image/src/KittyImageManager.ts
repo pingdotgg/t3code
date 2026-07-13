@@ -1,6 +1,11 @@
 import { CliRenderEvents, type CliRenderer } from "@opentui/core";
 
-import { assertRgbaImage, encodeKittyDelete, encodeKittyTransmit } from "./kittyProtocol.ts";
+import {
+  assertRgbaImage,
+  encodeKittyDelete,
+  encodeKittyTransmit,
+  type KittyProtocolTransport,
+} from "./kittyProtocol.ts";
 
 export interface KittyImageWriter {
   write(chunk: string): unknown;
@@ -21,20 +26,24 @@ export interface KittyImagePatch {
 export interface KittyImageExtensionOptions {
   /** Use `always` only if the host independently established Kitty support. */
   readonly capability?: "auto" | "always";
+  /** Enable DCS passthrough after the host identified a Kitty-capable outer terminal. */
+  readonly tmuxPassthrough?: boolean;
   /** Defaults to `process.stdout`. Required for renderers using a custom stream. */
   readonly writer?: KittyImageWriter;
 }
 
 interface ActivePatch extends KittyImagePatch {
   readonly imageId: number;
+  readonly transport: KittyProtocolTransport;
 }
 
 const managers = new WeakMap<CliRenderer, KittyImageManager>();
 
 export class KittyImageManager {
   readonly #renderer: CliRenderer;
-  readonly #writer: KittyImageWriter;
-  readonly #capability: "auto" | "always";
+  #writer: KittyImageWriter;
+  #capability: "auto" | "always";
+  #tmuxPassthrough: boolean;
   readonly #pending = new Map<number, KittyImagePatch>();
   #active = new Map<number, ActivePatch>();
   #nextImageId = 1;
@@ -60,6 +69,7 @@ export class KittyImageManager {
     this.#renderer = renderer;
     this.#writer = options.writer ?? process.stdout;
     this.#capability = options.capability ?? "auto";
+    this.#tmuxPassthrough = options.tmuxPassthrough ?? false;
     renderer.setFrameCallback(this.#beforeFrame);
     renderer.on(CliRenderEvents.FRAME, this.#afterFrame);
     renderer.on(CliRenderEvents.CAPABILITIES, this.#onCapabilities);
@@ -67,11 +77,27 @@ export class KittyImageManager {
   }
 
   get isSupported(): boolean {
-    return this.#capability === "always" || this.#renderer.capabilities?.kitty_graphics === true;
+    const capabilities = this.#renderer.capabilities;
+    return (
+      this.#capability === "always" ||
+      capabilities?.kitty_graphics === true ||
+      (this.#tmuxPassthrough && capabilities?.multiplexer === "tmux")
+    );
   }
 
   get isDisposed(): boolean {
     return this.#disposed;
+  }
+
+  /** Apply explicit installation options even if a renderable created the manager first. */
+  configure(options: KittyImageExtensionOptions): void {
+    if (this.#disposed) return;
+    if (options.writer !== undefined) this.#writer = options.writer;
+    if (options.capability !== undefined) this.#capability = options.capability;
+    if (options.tmuxPassthrough !== undefined) {
+      this.#tmuxPassthrough = options.tmuxPassthrough;
+    }
+    this.#renderer.requestRender();
   }
 
   beginFrame(): void {
@@ -101,24 +127,25 @@ export class KittyImageManager {
 
     const output: string[] = [];
     const nextActive = new Map<number, ActivePatch>();
+    const transport = this.#transport();
 
     for (const [key, active] of this.#active) {
       const pending = this.#pending.get(key);
-      if (!pending || !samePatch(active, pending)) {
-        output.push(encodeKittyDelete(active.imageId));
+      if (!pending || active.transport !== transport || !samePatch(active, pending)) {
+        output.push(encodeKittyDelete(active.imageId, active.transport));
       }
     }
 
     for (const [key, pending] of this.#pending) {
       const active = this.#active.get(key);
-      if (active && samePatch(active, pending)) {
+      if (active && active.transport === transport && samePatch(active, pending)) {
         nextActive.set(key, active);
         continue;
       }
 
       const imageId = this.#allocateImageId();
-      output.push(encodeKittyTransmit({ ...pending, imageId }));
-      nextActive.set(key, { ...pending, imageId });
+      output.push(encodeKittyTransmit({ ...pending, imageId }, transport));
+      nextActive.set(key, { ...pending, imageId, transport });
     }
 
     this.#active = nextActive;
@@ -150,10 +177,16 @@ export class KittyImageManager {
     return imageId;
   }
 
+  #transport(): KittyProtocolTransport {
+    return this.#renderer.capabilities?.multiplexer === "tmux" ? "tmux" : "direct";
+  }
+
   #deleteAllActive(): void {
     if (this.#active.size > 0) {
       this.#writer.write(
-        [...this.#active.values()].map(({ imageId }) => encodeKittyDelete(imageId)).join(""),
+        [...this.#active.values()]
+          .map(({ imageId, transport }) => encodeKittyDelete(imageId, transport))
+          .join(""),
       );
       this.#active.clear();
     }
@@ -177,7 +210,10 @@ export function installKittyImageExtension(
   options: KittyImageExtensionOptions = {},
 ): KittyImageManager {
   const existing = managers.get(renderer);
-  if (existing && !existing.isDisposed) return existing;
+  if (existing && !existing.isDisposed) {
+    existing.configure(options);
+    return existing;
+  }
   const manager = new KittyImageManager(renderer, options);
   managers.set(renderer, manager);
   return manager;

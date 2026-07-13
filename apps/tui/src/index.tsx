@@ -5,6 +5,7 @@ import { installKittyImageExtension } from "@t3tools/opentui-image";
 import { ChatView } from "./components/ChatView.tsx";
 import { buildTuiRuntime, makeTuiClient, type TuiOptions } from "./connection.ts";
 import { applyTerminalColors } from "./theme.ts";
+import { detectKittyGraphicsTerminal } from "./terminalGraphics.ts";
 
 // This is the Bun entry point spawned by the Node `t3 tui` command. It receives
 // the server origin + a bearer token via env, and mints fresh websocket URLs by
@@ -94,12 +95,15 @@ async function main(): Promise<void> {
   // copy-on-select, e.g. Ghostty's) working on the rendered text — the same way
   // the prompt copies — instead of OpenTUI capturing the drag for its own
   // selection. Our UI only needs clicks and wheel scroll, so nothing is lost.
+  const tmuxPassthrough = detectKittyGraphicsTerminal();
   const renderer = await createCliRenderer({
     exitOnCtrlC: false,
     backgroundColor: "transparent",
     enableMouseMovement: false,
   });
-  installKittyImageExtension(renderer);
+  installKittyImageExtension(renderer, {
+    tmuxPassthrough,
+  });
 
   try {
     // Detect the terminal's actual palette + default fg/bg up front and feed it into
