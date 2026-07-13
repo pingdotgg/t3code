@@ -157,6 +157,11 @@ export function ChatView({
   const [composerImages, setComposerImages] = React.useState<
     ReadonlyArray<ComposerImageAttachment>
   >([]);
+  // These refs close the same-event gap before React can paint a pending state:
+  // rapid Enter presses must never start the same mutation twice.
+  const replySubmissionPendingRef = React.useRef(false);
+  const [replySubmissionPending, setReplySubmissionPending] = React.useState(false);
+  const userInputSubmissionRequestRef = React.useRef<string | null>(null);
   const [expandedImage, setExpandedImage] = React.useState<ExpandedImagePreview | null>(null);
   // Bumped to remount (clear) the uncontrolled multiline reply editor.
   const [composerEpoch, setComposerEpoch] = React.useState(0);
@@ -490,7 +495,10 @@ export function ChatView({
   );
   // Reset the answer draft whenever a different request comes in (or it clears).
   const pendingRequestId = pendingUserInput?.requestId ?? null;
+  const pendingRequestIdRef = React.useRef(pendingRequestId);
+  pendingRequestIdRef.current = pendingRequestId;
   React.useEffect(() => {
+    userInputSubmissionRequestRef.current = null;
     setUserInputDeferred(false);
     setUiQuestionIndex(0);
     setUiOptionIndex(0);
@@ -597,6 +605,7 @@ export function ChatView({
   };
 
   const sendReply = () => {
+    if (replySubmissionPendingRef.current) return;
     const typedText = reply.trim();
     if (typedText.length === 0 && composerImages.length === 0) {
       // Empty prompt → Enter activates the highlighted row.
@@ -610,11 +619,33 @@ export function ChatView({
     }
     const text = typedText.length > 0 ? typedText : IMAGE_ONLY_PROMPT;
     const attachments = composerImages.map((image) => image.upload);
-    void client
-      .sendReply(detail, text, attachments)
-      .catch((error) => store.setStatus(`send failed: ${String(error)}`, "error"));
-    store.setStatus("Reply sent.", "success");
-    clearReply();
+    const submittedReply = reply;
+    const submittedImagePaths = new Set(composerImages.map((image) => image.relativePath));
+    replySubmissionPendingRef.current = true;
+    setReplySubmissionPending(true);
+    store.setStatus("Sending reply…", "busy");
+    void Promise.resolve()
+      .then(() => client.sendReply(detail, text, attachments))
+      .then(
+        () => {
+          replySubmissionPendingRef.current = false;
+          setReplySubmissionPending(false);
+          // The prompt is temporarily unfocused while sending, but other surfaces
+          // may still update its state. Clear only the submitted snapshot and keep
+          // anything staged after the request began.
+          setReply((current) => (current === submittedReply ? "" : current));
+          setComposerImages((current) =>
+            current.filter((image) => !submittedImagePaths.has(image.relativePath)),
+          );
+          setComposerEpoch((epoch) => epoch + 1);
+          store.setStatus("Reply sent.", "success");
+        },
+        (error) => {
+          replySubmissionPendingRef.current = false;
+          setReplySubmissionPending(false);
+          store.setStatus(`send failed: ${String(error)}`, "error");
+        },
+      );
   };
 
   // Submit the active pending question (Enter, or the composer's Submit-answer
@@ -635,22 +666,38 @@ export function ChatView({
       store.setStatus("Pick an option or type an answer first.");
       return;
     }
-    setCustomAnswer("");
     const isLast = uiQuestionIndex >= pendingUserInput.questions.length - 1;
     if (!isLast) {
+      setCustomAnswer("");
       setUiSelections(selections);
       setUiQuestionIndex((index) => index + 1);
       setUiOptionIndex(0);
       return;
     }
+    if (userInputSubmissionRequestRef.current === pendingUserInput.requestId) return;
     const answers = buildUserInputAnswers(pendingUserInput.questions, selections);
-    void client
-      .respondUserInput(detail.id, pendingUserInput.requestId, answers)
-      .catch((error) => store.setStatus(`answer failed: ${String(error)}`, "error"));
-    store.setStatus("Answer sent.", "success");
-    setUiSelections({});
-    setUiQuestionIndex(0);
-    setUiOptionIndex(0);
+    const requestId = pendingUserInput.requestId;
+    userInputSubmissionRequestRef.current = requestId;
+    store.setStatus("Sending answer…", "busy");
+    void Promise.resolve()
+      .then(() => client.respondUserInput(detail.id, requestId, answers))
+      .then(
+        () => {
+          if (pendingRequestIdRef.current !== requestId) return;
+          // Keep the local values until the live activity stream resolves the
+          // request. Deferring avoids a second submit during that short interval.
+          setUserInputDeferred(true);
+          store.setStatus("Answer sent.", "success");
+        },
+        (error) => {
+          if (userInputSubmissionRequestRef.current === requestId) {
+            userInputSubmissionRequestRef.current = null;
+          }
+          if (pendingRequestIdRef.current === requestId) {
+            store.setStatus(`answer failed: ${String(error)}`, "error");
+          }
+        },
+      );
   };
 
   const submitNewThread = () => {
@@ -1616,6 +1663,7 @@ export function ChatView({
         editorRows={promptLines}
         inputFocused={
           !terminalFocused &&
+          !replySubmissionPending &&
           !diffOpen &&
           !filesOpen &&
           !settingsOpen &&
