@@ -143,31 +143,17 @@ enum SubagentTaskPresentation {
 @MainActor
 struct SubagentTaskStatusIcon: View {
     let task: SubagentTaskItem
-    let runningSilently: Bool
-    let isLive: Bool
-
-    init(task: SubagentTaskItem, runningSilently: Bool, isLive: Bool = true) {
-        self.task = task
-        self.runningSilently = runningSilently
-        self.isLive = isLive
-    }
 
     var body: some View {
         let icon = Image(systemName: iconName)
-            .symbolEffect(
-                .pulse,
-                isActive: task.state == .running
-                    && !runningSilently
-                    && isLive
-                    && !Motion.reduceMotion)
             .foregroundStyle(iconTint)
             .contentTransition(
                 Motion.reduceMotion ? .identity : .symbolEffect(.replace))
         if Motion.reduceMotion {
             icon
         } else {
-            // Completion beat: one bounce when the task changes state.
-            icon.symbolEffect(.bounce, value: task.state)
+            // Completion beat: only a live transition into success bounces.
+            icon.symbolEffect(.bounce, value: task.state == .completed)
         }
     }
 

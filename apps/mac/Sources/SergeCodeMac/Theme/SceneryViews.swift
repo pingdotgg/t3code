@@ -27,7 +27,7 @@ struct SceneryImageView: View {
                     .id(loadedPhotoID)
             }
         }
-        .animation(.easeInOut(duration: 0.45), value: loadedPhotoID)
+        .animation(Motion.scenery, value: loadedPhotoID)
         .clipped()
         .task(id: taskKey) {
             await scenery.ensureImage(photo, variant: variant, setId: setId)

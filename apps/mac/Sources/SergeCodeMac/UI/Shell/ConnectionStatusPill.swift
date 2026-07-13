@@ -7,24 +7,16 @@ import SwiftUI
 struct ConnectionStatusPill: View {
     let phase: ConnectionPhase
 
-    // Mirrors `isSettling`, but set after the first frame (onAppear) so the
-    // heartbeat animates even when the app launches already mid-connect —
-    // `.animation(_, value:)` only fires on a *change*.
-    @UIState private var isPulsing = false
+    /// Changes only for a live non-ready → ready transition. An already-ready
+    /// toolbar render does not replay the success accent.
+    @UIState private var connectionSuccessBeat = 0
 
     var body: some View {
         HStack(spacing: 6) {
-            Circle()
-                .fill(tint)
-                .frame(width: 6, height: 6)
-                // Gentle heartbeat while the connection is in flight; steady
-                // once ready (or failed).
-                .scaleEffect(isPulsing ? 1.25 : 1.0)
-                .animation(
-                    isPulsing
-                        ? Motion.ambient.repeatForever(autoreverses: true)
-                        : Motion.ambient,
-                    value: isPulsing)
+            Image(systemName: "circle.fill")
+                .font(.system(size: 6, weight: .semibold))
+                .foregroundStyle(tint)
+                .symbolEffect(.bounce, value: connectionSuccessBeat)
             Text(label)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -34,9 +26,11 @@ struct ConnectionStatusPill: View {
         .padding(.horizontal, 4)
         .fixedSize()
         .animation(Motion.ambient, value: phase)
-        .onAppear { isPulsing = phase.isSettling && !Motion.reduceMotion }
-        .onChange(of: phase.isSettling) { _, settling in
-            isPulsing = settling && !Motion.reduceMotion
+        .onChange(of: phase) { oldPhase, newPhase in
+            guard oldPhase != .ready, newPhase == .ready,
+                Motion.profile.allowsDecorativeEffects
+            else { return }
+            connectionSuccessBeat += 1
         }
     }
 
@@ -45,8 +39,7 @@ struct ConnectionStatusPill: View {
     }
 
     private var tint: Color {
-        // The toolbar intentionally uses a yellow heartbeat for in-flight
-        // work; the canonical settling color remains `.secondary` elsewhere.
+        // Yellow communicates in-flight work without perpetual movement.
         phase.isSettling ? .yellow : phase.statusColor
     }
 }

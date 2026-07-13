@@ -134,7 +134,7 @@ private struct GeneralSettingsTab: View {
         .formStyle(.grouped)
         .padding()
         // Loaded settings fade in over the placeholder spinner.
-        .animation(Motion.settle, value: draft == nil)
+        .animation(Motion.reveal, value: draft == nil)
         .task {
             await model.loadSettings()
             draft = model.settings
@@ -323,7 +323,7 @@ private struct ArchiveSettingsTab: View {
         }
         .formStyle(.grouped)
         .padding()
-        .animation(Motion.settle, value: model.archivedThreads.map(\.id))
+        .animation(Motion.structure, value: model.archivedThreads.map(\.id))
         .alert(
             "Delete Session?",
             isPresented: Binding(
@@ -383,7 +383,7 @@ private struct ProvidersSettingsTab: View {
                         }
                     }
                     .disabled(isRefreshing)
-                    .animation(Motion.fade, value: isRefreshing)
+                    .animation(Motion.reveal, value: isRefreshing)
                 }
             }
         }
@@ -446,7 +446,7 @@ private struct ProviderRow: View {
                 }
                 .controlSize(.small)
                 .disabled(isUpdating)
-                .animation(Motion.fade, value: isUpdating)
+                .animation(Motion.reveal, value: isUpdating)
                 .help("Run \(provider.kind.cliCommand)'s own updater")
             }
 
@@ -591,8 +591,8 @@ private struct PhoneSettingsTab: View {
         }
         .formStyle(.grouped)
         .padding()
-        .animation(Motion.settle, value: allowConnections)
-        .animation(Motion.settle, value: pairing)
+        .animation(Motion.structure, value: allowConnections)
+        .animation(Motion.structure, value: pairing)
         // Re-probe whenever the connection phase moves (the sidecar may
         // still be launching when Settings opens) or the toggle flips —
         // a one-shot .task would leave `lanReachable` stale.
@@ -832,7 +832,8 @@ struct RemoteMacsSettingsTab: View {
                 systemImage: session.connection.symbolName)
                 .font(.caption)
                 .foregroundStyle(session.connection.statusColor)
-                .contentTransition(.symbolEffect(.replace))
+                .contentTransition(
+                    Motion.reduceMotion ? .identity : .symbolEffect(.replace))
                 .animation(Motion.ambient, value: session.connection)
 
             if expiresSoon(session) {
@@ -934,7 +935,8 @@ private struct ConnectionSettingsTab: View {
                 LabeledContent("Status") {
                     Label(model.connection.statusText, systemImage: model.connection.symbolName)
                         .foregroundStyle(model.connection.statusColor)
-                        .contentTransition(.symbolEffect(.replace))
+                        .contentTransition(
+                            Motion.reduceMotion ? .identity : .symbolEffect(.replace))
                         .animation(Motion.ambient, value: model.connection)
                 }
             }

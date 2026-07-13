@@ -174,7 +174,7 @@ public struct ComposerBar: View {
                     onSendNow: sendQueuedMessageNow,
                     onRemove: removeQueuedMessage
                 )
-                .transition(Motion.bannerDrop)
+                .transition(Motion.banner)
             }
 
             if let thread = model.selectedThread {
@@ -374,17 +374,15 @@ public struct ComposerBar: View {
             }
             .glassEffect(.regular, in: .rect(cornerRadius: 25))
         }
-        // One animation domain for the whole composer: draft edits drive the
-        // editor's height growth and suggestion filtering; the other keys
-        // cover async arrivals (mention results, staged files, errors).
-        .animation(Motion.settle, value: draft)
-        .animation(Motion.enter, value: mentionResults.map(\.id))
-        .animation(Motion.enter, value: attachments.map(\.id))
-        .animation(Motion.enter, value: model.selectedQueuedMessages.map(\.id))
-        .animation(Motion.enter, value: attachmentError)
-        .animation(Motion.enter, value: model.dictation.lastError)
-        .animation(Motion.enter, value: model.lastError)
-        .animation(Motion.snap, value: isThreadRunning)
+        // Typing and suggestion filtering are deliberately unanimated. Async
+        // arrivals reveal independently without moving the entire composer on
+        // every keystroke.
+        .animation(Motion.reveal, value: attachments.map(\.id))
+        .animation(Motion.reveal, value: model.selectedQueuedMessages.map(\.id))
+        .animation(Motion.reveal, value: attachmentError)
+        .animation(Motion.reveal, value: model.dictation.lastError)
+        .animation(Motion.reveal, value: model.lastError)
+        .animation(Motion.feedback, value: isThreadRunning)
         .task {
             model.dictation.insertHandler = { threadID, text in
                 appendDictated(text, to: threadID)
@@ -450,9 +448,9 @@ public struct ComposerBar: View {
             .keyboardShortcut(.return, modifiers: .command)
             .help(sendHelp)
             .accessibilityLabel(sendHelp)
-            .animation(Motion.snap, value: canSend)
-            .animation(Motion.snap, value: showsStop)
-            .animation(Motion.snap, value: isThreadRunning)
+            // `canSend` follows typing and must update immediately.
+            .animation(Motion.feedback, value: showsStop)
+            .animation(Motion.feedback, value: isThreadRunning)
     }
 
     @ViewBuilder
@@ -477,7 +475,8 @@ public struct ComposerBar: View {
             }
         } label: {
             Image(systemName: sendIconName)
-                .contentTransition(.symbolEffect(.replace))
+                .contentTransition(
+                    Motion.reduceMotion ? .identity : .symbolEffect(.replace))
                 .alpineIconLabel()
         }
         .buttonBorderShape(.circle)
@@ -515,7 +514,8 @@ public struct ComposerBar: View {
                         .controlSize(.small)
                 default:
                     dictationMicIcon
-                        .contentTransition(.symbolEffect(.replace))
+                        .contentTransition(
+                            Motion.reduceMotion ? .identity : .symbolEffect(.replace))
                         .symbolEffect(.pulse, isActive: isRecording && !Motion.reduceMotion)
                 }
             }
@@ -529,7 +529,7 @@ public struct ComposerBar: View {
         )
         .help(dictationHelp)
         .accessibilityLabel(dictationHelp)
-        .animation(Motion.snap, value: isRecording)
+        .animation(Motion.feedback, value: isRecording)
     }
 
     @ViewBuilder

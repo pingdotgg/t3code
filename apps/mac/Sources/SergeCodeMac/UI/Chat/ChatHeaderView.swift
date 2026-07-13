@@ -51,7 +51,6 @@ struct ChatHeaderView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .animation(Motion.enter, value: thread.status)
     }
 
     private var projectPrefs: ProjectSceneryPrefs? {
@@ -96,7 +95,8 @@ private struct StatusBadge: View {
             .labelStyle(.titleAndIcon)
             .font(.caption)
             .foregroundStyle(color)
-            .contentTransition(.symbolEffect(.replace))
+            .contentTransition(
+                Motion.reduceMotion ? .identity : .symbolEffect(.replace))
             .animation(Motion.ambient, value: status)
             .animation(Motion.ambient, value: stalled)
     }
