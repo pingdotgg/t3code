@@ -711,6 +711,46 @@ describe("deriveWorkLogEntries", () => {
     expect(entries.map((entry) => entry.id)).toEqual(["tool-complete"]);
   });
 
+  it("omits process stderr runtime diagnostics but preserves other runtime errors", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "stderr-warning",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        summary: "The filename or extension is too long. (os error 206)",
+        kind: "runtime.warning",
+        tone: "info",
+        payload: {
+          message: "The filename or extension is too long. (os error 206)",
+          source: "process/stderr",
+        },
+      }),
+      makeActivity({
+        id: "stderr-error",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        summary: "Runtime error",
+        kind: "runtime.error",
+        tone: "error",
+        payload: {
+          message: "failed to connect to websocket",
+          source: "process/stderr",
+        },
+      }),
+      makeActivity({
+        id: "usage-error",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        summary: "Runtime error",
+        kind: "runtime.error",
+        tone: "error",
+        payload: {
+          message: "Usage limit reached",
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries.map((entry) => entry.id)).toEqual(["usage-error"]);
+  });
+
   it("omits task.started but shows task.progress and task.completed", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

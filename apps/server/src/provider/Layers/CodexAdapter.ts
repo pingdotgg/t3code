@@ -1536,6 +1536,15 @@ function mapToRuntimeEvents(
 
   if (event.method === "process/stderr") {
     const message = event.message ?? "Codex process stderr";
+    const detail =
+      event.payload !== undefined &&
+      typeof event.payload === "object" &&
+      !Array.isArray(event.payload)
+        ? // Spread the payload first so the `surface` tag always wins — downstream
+          // diagnostics filtering keys off `detail.surface === "process/stderr"`
+          // and must not be clobbered by a conflicting payload `surface`.
+          { ...event.payload, surface: "process/stderr" as const }
+        : { surface: "process/stderr" as const };
     // log-only lines are written to native NDJSON by the adapter event loop but
     // must not spam the live runtime event stream.
     const logOnly =
@@ -1555,7 +1564,7 @@ function mapToRuntimeEvents(
             payload: {
               message,
               class: "provider_error" as const,
-              ...(event.payload !== undefined ? { detail: event.payload } : {}),
+              detail,
             },
           }
         : {
@@ -1563,7 +1572,7 @@ function mapToRuntimeEvents(
             ...runtimeEventBase(event, canonicalThreadId),
             payload: {
               message,
-              ...(event.payload !== undefined ? { detail: event.payload } : {}),
+              detail,
             },
           },
     ];

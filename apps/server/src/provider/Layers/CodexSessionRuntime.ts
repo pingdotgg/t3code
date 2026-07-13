@@ -52,6 +52,8 @@ const CODEX_STDERR_LOG_REGEX =
 const BENIGN_ERROR_LOG_SNIPPETS = [
   "state db missing rollout path for thread",
   "state db record_discrepancy: find_thread_path_by_id_str_in_subdir, falling_back",
+  "fail to get common stream",
+  "sse client event stream terminated",
 ];
 const CODEX_APP_SERVER_FORCE_KILL_AFTER = "2 seconds" as const;
 const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
@@ -419,10 +421,65 @@ export function buildTurnStartParams(input: {
   );
 }
 
-function classifyCodexStderrLine(rawLine: string): { readonly message: string } | null {
+function parseCodexStructuredStderrLog(line: string): {
+  readonly level: string;
+  readonly message?: string;
+} | null {
+  if (!line.startsWith("{") || !line.endsWith("}")) {
+    return null;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return null;
+  }
+
+  const record = parsed as Record<string, unknown>;
+  if (typeof record.level !== "string") {
+    return null;
+  }
+  const fields =
+    record.fields !== null && typeof record.fields === "object" && !Array.isArray(record.fields)
+      ? (record.fields as Record<string, unknown>)
+      : undefined;
+  const message = typeof fields?.message === "string" ? fields.message : undefined;
+  const fallbackMessage = typeof record.message === "string" ? record.message : undefined;
+  return {
+    level: record.level.toUpperCase(),
+    ...(message !== undefined
+      ? { message }
+      : fallbackMessage !== undefined
+        ? { message: fallbackMessage }
+        : {}),
+  };
+}
+
+function isBenignCodexErrorLog(line: string): boolean {
+  const normalized = line.toLowerCase();
+  return BENIGN_ERROR_LOG_SNIPPETS.some((snippet) => normalized.includes(snippet));
+}
+
+export function classifyCodexStderrLine(rawLine: string): { readonly message: string } | null {
   const line = rawLine.replaceAll(ANSI_ESCAPE_REGEX, "").trim();
   if (!line) {
     return null;
+  }
+
+  const structured = parseCodexStructuredStderrLog(line);
+  if (structured) {
+    if (structured.level !== "ERROR") {
+      return null;
+    }
+    const message = structured.message?.trim();
+    if (isBenignCodexErrorLog(line) || (message !== undefined && isBenignCodexErrorLog(message))) {
+      return null;
+    }
+    return { message: message && message.length > 0 ? message : line };
   }
 
   const match = line.match(CODEX_STDERR_LOG_REGEX);
@@ -431,7 +488,7 @@ function classifyCodexStderrLine(rawLine: string): { readonly message: string } 
     if (level && level !== "ERROR") {
       return null;
     }
-    if (BENIGN_ERROR_LOG_SNIPPETS.some((snippet) => line.includes(snippet))) {
+    if (isBenignCodexErrorLog(line)) {
       return null;
     }
   }

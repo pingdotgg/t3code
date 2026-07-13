@@ -2792,6 +2792,7 @@ describe("ProviderRuntimeIngestion", () => {
         : undefined;
     expect(warning?.kind).toBe("runtime.warning");
     expect(warningPayload?.message).toBe("Provider got slow");
+    expect(warningPayload?.source).toBe(undefined);
 
     const checkpoint = thread.checkpoints.find(
       (entry: ProviderRuntimeTestCheckpoint) => entry.turnId === "turn-p1",
@@ -2799,6 +2800,79 @@ describe("ProviderRuntimeIngestion", () => {
     expect(checkpoint?.status).toBe("missing");
     expect(checkpoint?.assistantMessageId).toBe("assistant:item-p1-assistant");
     expect(checkpoint?.checkpointRef).toBe("provider-diff:evt-turn-diff-updated");
+  });
+
+  it("tags process stderr runtime warnings so native clients can hide diagnostic noise", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "runtime.warning",
+      eventId: asEventId("evt-runtime-warning-stderr"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-stderr"),
+      payload: {
+        message: "The filename or extension is too long. (os error 206)",
+        detail: { surface: "process/stderr" },
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-runtime-warning-stderr",
+      ),
+    );
+    const warning = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-runtime-warning-stderr",
+    );
+    const payload =
+      warning?.payload && typeof warning.payload === "object"
+        ? (warning.payload as Record<string, unknown>)
+        : undefined;
+
+    expect(warning?.kind).toBe("runtime.warning");
+    expect(payload?.message).toBe("The filename or extension is too long. (os error 206)");
+    expect(payload?.source).toBe("process/stderr");
+  });
+
+  it("tags process stderr runtime errors so native clients can hide diagnostic noise", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "runtime.error",
+      eventId: asEventId("evt-runtime-error-stderr"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-stderr"),
+      payload: {
+        message: "failed to connect to websocket",
+        class: "provider_error",
+        detail: { surface: "process/stderr" },
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-runtime-error-stderr",
+      ),
+    );
+    const error = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-runtime-error-stderr",
+    );
+    const payload =
+      error?.payload && typeof error.payload === "object"
+        ? (error.payload as Record<string, unknown>)
+        : undefined;
+
+    expect(error?.kind).toBe("runtime.error");
+    expect(payload?.message).toBe("failed to connect to websocket");
+    expect(payload?.source).toBe("process/stderr");
+    expect(thread.session?.status).toBe("error");
+    expect(thread.session?.lastError).toBe("failed to connect to websocket");
   });
 
   it("projects context window updates into normalized thread activities", async () => {
