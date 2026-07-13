@@ -53,8 +53,6 @@ type GoalActivityState = Pick<OrchestrationThreadGoal, "objective" | "status">;
 
 const TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY = 10_000;
 const TURN_MESSAGE_IDS_BY_TURN_TTL = Duration.minutes(120);
-const STALE_REPLAY_ITEM_IDS_BY_TURN_CACHE_CAPACITY = 10_000;
-const STALE_REPLAY_ITEM_IDS_BY_TURN_TTL = Duration.minutes(120);
 const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY = 20_000;
 const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL = Duration.minutes(120);
 const BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY = 10_000;
@@ -243,50 +241,14 @@ function proposedPlanIdFromEvent(event: ProviderRuntimeEvent, threadId: ThreadId
   return `plan:${threadId}:event:${event.eventId}`;
 }
 
-function assistantSegmentBaseKeyFromEvent(event: ProviderRuntimeEvent, turnId?: TurnId): string {
-  const providerKey = String(event.itemId ?? event.turnId ?? event.eventId);
-  return turnId ? `turn:${turnId}:${providerKey}` : providerKey;
+function assistantSegmentBaseKeyFromEvent(event: ProviderRuntimeEvent): string {
+  return String(event.itemId ?? event.turnId ?? event.eventId);
 }
 
 function assistantSegmentMessageId(baseKey: string, segmentIndex: number): MessageId {
   return MessageId.make(
     segmentIndex === 0 ? `assistant:${baseKey}` : `assistant:${baseKey}:segment:${segmentIndex}`,
   );
-}
-
-function runtimeAssistantMessageIdFromEvent(
-  event: ProviderRuntimeEvent,
-  turnId?: TurnId,
-): MessageId {
-  return assistantSegmentMessageId(assistantSegmentBaseKeyFromEvent(event, turnId), 0);
-}
-
-function isTurnOutputRuntimeEvent(event: ProviderRuntimeEvent): boolean {
-  switch (event.type) {
-    case "content.delta":
-    case "item.started":
-    case "item.updated":
-    case "item.completed":
-    case "request.opened":
-    case "request.resolved":
-    case "runtime.warning":
-    case "task.started":
-    case "task.progress":
-    case "task.completed":
-    case "thread.state.changed":
-    case "thread.token-usage.updated":
-    case "tool.denied":
-    case "turn.completed":
-    case "turn.diff.updated":
-    case "turn.plan.updated":
-    case "turn.proposed.completed":
-    case "turn.proposed.delta":
-    case "user-input.requested":
-    case "user-input.resolved":
-      return true;
-    default:
-      return false;
-  }
 }
 function buildContextWindowActivityPayload(
   event: ProviderRuntimeEvent,
@@ -791,12 +753,6 @@ const make = Effect.gen(function* () {
       ),
   });
 
-  const staleReplayItemIdsByTurnKey = yield* Cache.make<string, Set<string>>({
-    capacity: STALE_REPLAY_ITEM_IDS_BY_TURN_CACHE_CAPACITY,
-    timeToLive: STALE_REPLAY_ITEM_IDS_BY_TURN_TTL,
-    lookup: () => Effect.succeed(new Set<string>()),
-  });
-
   const bufferedProposedPlanById = yield* Cache.make<string, { text: string; createdAt: string }>({
     capacity: BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY,
     timeToLive: BUFFERED_PROPOSED_PLAN_BY_ID_TTL,
@@ -878,37 +834,6 @@ const make = Effect.gen(function* () {
   const clearAssistantSegmentStateForTurn = (threadId: ThreadId, turnId: TurnId) =>
     Cache.invalidate(assistantSegmentStateByTurnKey, providerTurnKey(threadId, turnId));
 
-  const rememberStaleReplayItemForTurn = (threadId: ThreadId, turnId: TurnId, itemId: string) =>
-    Cache.getOption(staleReplayItemIdsByTurnKey, providerTurnKey(threadId, turnId)).pipe(
-      Effect.flatMap((existingIds) =>
-        Cache.set(
-          staleReplayItemIdsByTurnKey,
-          providerTurnKey(threadId, turnId),
-          Option.match(existingIds, {
-            onNone: () => new Set([itemId]),
-            onSome: (ids) => {
-              const nextIds = new Set(ids);
-              nextIds.add(itemId);
-              return nextIds;
-            },
-          }),
-        ),
-      ),
-    );
-
-  const hasStaleReplayItemForTurn = (threadId: ThreadId, turnId: TurnId, itemId: string) =>
-    Cache.getOption(staleReplayItemIdsByTurnKey, providerTurnKey(threadId, turnId)).pipe(
-      Effect.map((existingIds) =>
-        Option.match(existingIds, {
-          onNone: () => false,
-          onSome: (ids) => ids.has(itemId),
-        }),
-      ),
-    );
-
-  const clearStaleReplayItemsForTurn = (threadId: ThreadId, turnId: TurnId) =>
-    Cache.invalidate(staleReplayItemIdsByTurnKey, providerTurnKey(threadId, turnId));
-
   const getActiveAssistantMessageIdForTurn = (threadId: ThreadId, turnId: TurnId) =>
     getAssistantSegmentStateForTurn(threadId, turnId).pipe(
       Effect.map((state) =>
@@ -955,7 +880,7 @@ const make = Effect.gen(function* () {
   }) =>
     Effect.gen(function* () {
       if (!input.turnId) {
-        return runtimeAssistantMessageIdFromEvent(input.event);
+        return assistantSegmentMessageId(assistantSegmentBaseKeyFromEvent(input.event), 0);
       }
 
       const activeMessageId = yield* getActiveAssistantMessageIdForTurn(
@@ -969,7 +894,7 @@ const make = Effect.gen(function* () {
       return yield* startAssistantSegmentForTurn({
         threadId: input.threadId,
         turnId: input.turnId,
-        baseKey: assistantSegmentBaseKeyFromEvent(input.event, input.turnId),
+        baseKey: assistantSegmentBaseKeyFromEvent(input.event),
       });
     });
 
@@ -1263,7 +1188,6 @@ const make = Effect.gen(function* () {
       const proposedPlanPrefix = `plan:${threadId}:`;
       const turnKeys = Array.from(yield* Cache.keys(turnMessageIdsByTurnKey));
       const assistantSegmentKeys = Array.from(yield* Cache.keys(assistantSegmentStateByTurnKey));
-      const staleReplayKeys = Array.from(yield* Cache.keys(staleReplayItemIdsByTurnKey));
       const proposedPlanKeys = Array.from(yield* Cache.keys(bufferedProposedPlanById));
       yield* Effect.forEach(
         turnKeys,
@@ -1290,12 +1214,6 @@ const make = Effect.gen(function* () {
           key.startsWith(prefix)
             ? Cache.invalidate(assistantSegmentStateByTurnKey, key)
             : Effect.void,
-        { concurrency: 1 },
-      ).pipe(Effect.asVoid);
-      yield* Effect.forEach(
-        staleReplayKeys,
-        (key) =>
-          key.startsWith(prefix) ? Cache.invalidate(staleReplayItemIdsByTurnKey, key) : Effect.void,
         { concurrency: 1 },
       ).pipe(Effect.asVoid);
       yield* Effect.forEach(
@@ -1539,23 +1457,6 @@ const make = Effect.gen(function* () {
         }
       }
 
-      const eventItemId = event.itemId === undefined ? undefined : String(event.itemId);
-      const staleReplayItemForActiveTurn =
-        activeTurnId !== null && eventItemId !== undefined
-          ? yield* hasStaleReplayItemForTurn(thread.id, activeTurnId, eventItemId)
-          : false;
-      const shouldSkipRuntimeOutput =
-        STRICT_PROVIDER_LIFECYCLE_GUARD &&
-        isTurnOutputRuntimeEvent(event) &&
-        (conflictsWithActiveTurn || missingTurnForActiveTurn || staleReplayItemForActiveTurn);
-
-      if (shouldSkipRuntimeOutput) {
-        if (missingTurnForActiveTurn && activeTurnId !== null && eventItemId !== undefined) {
-          yield* rememberStaleReplayItemForTurn(thread.id, activeTurnId, eventItemId);
-        }
-        return;
-      }
-
       const assistantDelta =
         event.type === "content.delta" && event.payload.streamKind === "assistant_text"
           ? event.payload.delta
@@ -1657,7 +1558,9 @@ const make = Effect.gen(function* () {
       const assistantCompletion =
         event.type === "item.completed" && event.payload.itemType === "assistant_message"
           ? {
-              messageId: runtimeAssistantMessageIdFromEvent(event, toTurnId(event.turnId)),
+              messageId: MessageId.make(
+                `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
+              ),
               fallbackText: event.payload.detail,
             }
           : undefined;
@@ -1759,7 +1662,6 @@ const make = Effect.gen(function* () {
           ).pipe(Effect.asVoid);
           yield* clearAssistantMessageIdsForTurn(thread.id, turnId);
           yield* clearAssistantSegmentStateForTurn(thread.id, turnId);
-          yield* clearStaleReplayItemsForTurn(thread.id, turnId);
 
           yield* finalizeBufferedProposedPlan({
             event,
@@ -1858,7 +1760,9 @@ const make = Effect.gen(function* () {
           if (hasCheckpointForTurn(checkpointContext.checkpoints, turnId)) {
             // Already tracked; no-op.
           } else {
-            const assistantMessageId = runtimeAssistantMessageIdFromEvent(event, turnId);
+            const assistantMessageId = MessageId.make(
+              `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
+            );
             yield* orchestrationEngine.dispatch({
               type: "thread.turn.diff.complete",
               commandId: yield* providerCommandId(event, "thread-turn-diff-complete"),
