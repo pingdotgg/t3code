@@ -177,14 +177,14 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.deepStrictEqual(
       resolveDesktopRuntimeDependencies(
         {
-          "@github/copilot": "1.0.60",
+          "@github/copilot": "1.0.68",
           "@github/copilot-sdk": "1.0.0",
           "@t3tools/contracts": "workspace:*",
         },
         {},
       ),
       {
-        "@github/copilot": "1.0.60",
+        "@github/copilot": "1.0.68",
         "@github/copilot-sdk": "1.0.0",
       },
     );
