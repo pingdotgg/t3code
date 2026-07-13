@@ -55,6 +55,30 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         // Mock has no live subscriptions to tear down.
     }
 
+    #if DEBUG
+        /// Probe hook: toggle server stall state on a thread.
+        public func probeSetThreadHealth(threadID: String, stalled: Bool) async {
+            await state.setThreadHealth(threadID: threadID, stalled: stalled)
+        }
+
+        /// Probe hook: spawn a sibling-agent thread (optionally stalled).
+        @discardableResult
+        public func probeCreateSiblingAgent(
+            name: String, provider: ProviderKind, projectID: String, stalled: Bool
+        ) async -> ChatThread {
+            await state.createSiblingAgent(
+                name: name, provider: provider, projectID: projectID, stalled: stalled)
+        }
+
+        /// Probe hook: append a `session.exited` stderr disclosure row.
+        public func probeAppendSessionExit(
+            threadID: String, summary: String, stderrTail: String
+        ) async {
+            await state.appendSessionExit(
+                threadID: threadID, summary: summary, stderrTail: stderrTail)
+        }
+    #endif
+
     public func providers() async throws -> [ProviderInstance] {
         await state.providers()
     }
@@ -587,6 +611,49 @@ private actor MockState {
             }
         }
         throw MockBackendError.taskNotFound(threadID: threadID, taskId: taskId)
+    }
+
+    // MARK: Probe injection (subagent-stability verification)
+
+    /// Sets (or clears) server `session.health` stall state on a thread, as if
+    /// a `session.health` activity had folded into its projection.
+    func setThreadHealth(threadID: String, stalled: Bool) {
+        guard var thread = threadsByID[threadID] else { return }
+        let lastActivityAt = Date().addingTimeInterval(stalled ? -180 : 0)
+        thread.health = ThreadHealth(
+            stalled: stalled, lastActivityAt: lastActivityAt,
+            stalledSince: stalled ? lastActivityAt : nil)
+        thread.updatedAt = Date()
+        threadsByID[threadID] = thread
+        emit(.threadUpserted(thread))
+    }
+
+    /// Spawns a running sibling-agent thread (`Agent: <name>`), optionally
+    /// already stalled, mirroring an MCP `agent_spawn`.
+    func createSiblingAgent(
+        name: String, provider: ProviderKind, projectID: String, stalled: Bool
+    ) -> ChatThread {
+        let id = nextID("agent-thread")
+        let lastActivityAt = Date().addingTimeInterval(stalled ? -240 : -5)
+        let thread = ChatThread(
+            id: id, projectID: projectID, title: "Agent: \(name)", provider: provider,
+            status: .running, updatedAt: Date(),
+            health: ThreadHealth(
+                stalled: stalled, lastActivityAt: lastActivityAt,
+                stalledSince: stalled ? lastActivityAt : nil))
+        threadsByID[id] = thread
+        timelinesByThread[id] = []
+        emit(.threadUpserted(thread))
+        return thread
+    }
+
+    /// Appends a `session.exited` transcript row carrying stderr, as if a
+    /// provider CLI process had died.
+    func appendSessionExit(threadID: String, summary: String, stderrTail: String) {
+        let item = TimelineItem.sessionExit(
+            id: nextID("exit"), summary: summary, stderrTail: stderrTail, at: Date())
+        timelinesByThread[threadID, default: []].append(item)
+        emit(.timelineAppended(threadID: threadID, item: item))
     }
 
     func models() -> [ModelOption] {
