@@ -308,7 +308,7 @@ private struct AgentsPanelSiblingRow: View {
 
     var body: some View {
         Group {
-            if thread.status == .running || thread.isStalled {
+            if AgentsPanel.isWorking(thread) {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     rowChrome(now: context.date)
                 }
