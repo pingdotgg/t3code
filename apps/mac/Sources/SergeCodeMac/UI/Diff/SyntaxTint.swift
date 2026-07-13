@@ -7,6 +7,8 @@ public enum SyntaxLanguage: Sendable, Equatable {
     case swift
     case typescript  // also covers JavaScript
     case json
+    case hashComment // Python, Ruby, shell, YAML, TOML
+    case cFamily // C/C++, C#, Java, Kotlin, Go, Rust, PHP
     case plain
 
     public static func language(forPath path: String) -> SyntaxLanguage {
@@ -15,6 +17,12 @@ public enum SyntaxLanguage: Sendable, Equatable {
         case "swift": return .swift
         case "ts", "tsx", "js", "jsx", "mjs", "cjs": return .typescript
         case "json": return .json
+        case "py", "pyw", "rb", "rake", "sh", "bash", "zsh", "fish",
+            "yaml", "yml", "toml":
+            return .hashComment
+        case "c", "h", "cc", "cpp", "cxx", "hh", "hpp", "cs", "java", "kt", "kts",
+            "go", "rs", "php", "phtml", "m", "mm":
+            return .cFamily
         default: return .plain
         }
     }
@@ -46,7 +54,9 @@ public enum SyntaxTint: Sendable {
             return [SyntaxSpan(text: text, kind: .plain)]
         case .json:
             return tokenizeJSON(text)
-        case .swift, .typescript:
+        case .hashComment:
+            return tokenizeHashComment(text, keywords: keywords(for: language))
+        case .swift, .typescript, .cFamily:
             return tokenizeCode(text, keywords: keywords(for: language))
         }
     }
@@ -79,12 +89,42 @@ public enum SyntaxTint: Sendable {
                 "abstract", "namespace", "module", "declare", "keyof", "infer",
                 "never", "unknown", "any", "boolean", "number", "string", "symbol",
             ]
+        case .hashComment:
+            return [
+                "and", "as", "assert", "async", "await", "break", "case", "class", "def",
+                "elif", "else", "end", "except", "False", "finally", "for", "from",
+                "function", "if", "import", "in", "is", "lambda", "local", "match",
+                "module", "None", "not", "or", "pass", "raise", "readonly", "require",
+                "return", "set", "source", "then", "True", "try", "unless", "until",
+                "when", "while", "with", "yield", "do", "done", "export", "fi", "esac",
+                "true", "false", "null",
+            ]
+        case .cFamily:
+            return [
+                "alignas", "alignof", "and", "asm", "auto", "await", "bool", "break",
+                "by", "case", "catch", "chan", "char", "class", " companion", "const",
+                "constexpr", "continue", "crate", "data", "default", "defer", "delete",
+                "do", "double", "dyn", "else", "enum", "echo", "except", "export",
+                "extends", "extern", "false", "final", "finally", "float", "for",
+                "foreach", "friend", "fn", "func", "fun", "function", "go", "goto", "if",
+                "implements", "impl", "import", "in", "include", "inline", "instanceof",
+                "int", "interface", "is", "lateinit", "let", "long", "loop", "map",
+                "match", "mod", "move", "mut", "namespace", "native", "new", "noexcept",
+                "null", "nullptr", "object", "open", "operator", "override", "package",
+                "private", "protected", "pub", "public", "range", "ref", "register",
+                "reinterpret_cast", "return", "sealed", "select", "self", "Self", "short",
+                "signed", "sizeof", "static", "struct", "super", "switch", "synchronized",
+                "template", "this", "throw", "throws", "trait", "transient", "true", "try",
+                "typedef", "type", "typename", "union", "unsigned", "use", "using", "val",
+                "var", "virtual", "void", "volatile", "when", "where", "while", "with",
+                "yield", "mut", "fn", "pub", "crate",
+            ]
         case .json, .plain:
             return []
         }
     }
 
-    // MARK: - Code (swift / ts)
+    // MARK: - Code (Swift / TS / C-family)
 
     private static func tokenizeCode(_ text: String, keywords: Set<String>) -> [SyntaxSpan] {
         var spans: [SyntaxSpan] = []
@@ -173,6 +213,75 @@ public enum SyntaxTint: Sendable {
                 continue
             }
             spans.append(SyntaxSpan(text: chunk, kind: .plain))
+            i = j
+        }
+
+        return mergeAdjacentPlain(spans)
+    }
+
+    // MARK: - Hash-comment languages
+
+    private static func tokenizeHashComment(_ text: String, keywords: Set<String>) -> [SyntaxSpan] {
+        var spans: [SyntaxSpan] = []
+        var i = text.startIndex
+
+        while i < text.endIndex {
+            if text[i] == "#" {
+                spans.append(SyntaxSpan(text: String(text[i...]), kind: .comment))
+                break
+            }
+            if text[i] == "\"" || text[i] == "'" || text[i] == "`" {
+                let quote = text[i]
+                let triple = text[i...].hasPrefix(String(repeating: quote, count: 3))
+                var j = text.index(i, offsetBy: triple ? 3 : 1)
+                var escaped = false
+                let terminator = String(repeating: quote, count: triple ? 3 : 1)
+                while j < text.endIndex {
+                    if !triple && escaped {
+                        escaped = false
+                    } else if !triple && text[j] == "\\" {
+                        escaped = true
+                    } else if text[j...].hasPrefix(terminator) {
+                        j = text.index(j, offsetBy: terminator.count)
+                        break
+                    }
+                    j = text.index(after: j)
+                }
+                spans.append(SyntaxSpan(text: String(text[i..<j]), kind: .string))
+                i = j
+                continue
+            }
+            if text[i].isNumber {
+                var j = i
+                while j < text.endIndex && (text[j].isNumber || text[j] == "." || text[j] == "_") {
+                    j = text.index(after: j)
+                }
+                spans.append(SyntaxSpan(text: String(text[i..<j]), kind: .number))
+                i = j
+                continue
+            }
+            if text[i].isLetter || text[i] == "_" {
+                var j = i
+                while j < text.endIndex && (text[j].isLetter || text[j].isNumber || text[j] == "_") {
+                    j = text.index(after: j)
+                }
+                let word = String(text[i..<j])
+                spans.append(
+                    SyntaxSpan(text: word, kind: keywords.contains(word) ? .keyword : .plain))
+                i = j
+                continue
+            }
+            var j = text.index(after: i)
+            while j < text.endIndex {
+                let ch = text[j]
+                if ch.isLetter || ch.isNumber || ch == "_" || ch == "\"" || ch == "'"
+                    || ch == "`" || ch == "#"
+                {
+                    break
+                }
+                j = text.index(after: j)
+            }
+            spans.append(SyntaxSpan(text: String(text[i..<j]), kind: .plain))
             i = j
         }
 
