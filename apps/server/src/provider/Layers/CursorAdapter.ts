@@ -896,7 +896,7 @@ export function makeCursorAdapter(
                       event.exitCode === 0
                         ? "Cursor ACP process exited."
                         : `Cursor ACP process exited with code ${event.exitCode}.`;
-                    const reason = event.stderrTail
+                    const runtimeErrorReason = event.stderrTail
                       ? `${baseReason}\nLast stderr:\n${event.stderrTail}`
                       : baseReason;
                     yield* logNative(
@@ -914,7 +914,7 @@ export function makeCursorAdapter(
                       provider: PROVIDER,
                       threadId: ctx.threadId,
                       payload: {
-                        reason,
+                        reason: baseReason,
                         ...(event.stderrTail ? { stderrTail: event.stderrTail } : {}),
                         ...(event.exitCode === 0
                           ? { exitKind: "graceful" as const }
@@ -928,7 +928,7 @@ export function makeCursorAdapter(
                         provider: PROVIDER,
                         threadId: ctx.threadId,
                         payload: {
-                          message: reason,
+                          message: runtimeErrorReason,
                           class: "provider_error" as const,
                           detail: {
                             exitCode: event.exitCode,

@@ -250,6 +250,67 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
+  it.effect("keeps stderr out of the session.exited reason", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-process-exit-reason");
+      const stderrTail = "fatal: cursor mock crashed";
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({
+          T3_ACP_EXIT_ON_PROMPT: "1",
+          T3_ACP_EXIT_STDERR: stderrTail,
+        }),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeErrorReceived = yield* Deferred.make<void>();
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => runtimeEvents.push(event)).pipe(
+          Effect.andThen(
+            event.type === "runtime.error"
+              ? Deferred.succeed(runtimeErrorReceived, undefined)
+              : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      const sendTurnFiber = yield* adapter
+        .sendTurn({ threadId, input: "crash now", attachments: [] })
+        .pipe(Effect.ignore, Effect.forkChild);
+      yield* Deferred.await(runtimeErrorReceived);
+
+      const exited = runtimeEvents.find((event) => event.type === "session.exited");
+      assert.isDefined(exited);
+      if (exited?.type === "session.exited") {
+        assert.equal(exited.payload.reason, "Cursor ACP process exited with code 7.");
+        assert.equal(exited.payload.stderrTail, stderrTail);
+      }
+
+      const runtimeError = runtimeEvents.find((event) => event.type === "runtime.error");
+      assert.isDefined(runtimeError);
+      if (runtimeError?.type === "runtime.error") {
+        assert.equal(
+          runtimeError.payload.message,
+          `Cursor ACP process exited with code 7.\nLast stderr:\n${stderrTail}`,
+        );
+      }
+
+      yield* adapter.stopSession(threadId).pipe(Effect.ignore);
+      yield* Fiber.interrupt(sendTurnFiber);
+      yield* Fiber.interrupt(runtimeEventsFiber);
+    }),
+  );
+
   it.effect("steers a running turn instead of opening a new one on mid-turn sendTurn", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;

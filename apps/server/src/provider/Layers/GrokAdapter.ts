@@ -809,7 +809,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                     event.exitCode === 0
                       ? "Grok ACP process exited."
                       : `Grok ACP process exited with code ${event.exitCode}.`;
-                  const reason = event.stderrTail
+                  const runtimeErrorReason = event.stderrTail
                     ? `${baseReason}\nLast stderr:\n${event.stderrTail}`
                     : baseReason;
                   yield* logNative(ctx.threadId, "session/exited", {
@@ -822,7 +822,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                     provider: PROVIDER,
                     threadId: ctx.threadId,
                     payload: {
-                      reason,
+                      reason: baseReason,
                       ...(event.stderrTail ? { stderrTail: event.stderrTail } : {}),
                       ...(event.exitCode === 0
                         ? { exitKind: "graceful" as const }
@@ -836,7 +836,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                       provider: PROVIDER,
                       threadId: ctx.threadId,
                       payload: {
-                        message: reason,
+                        message: runtimeErrorReason,
                         class: "provider_error" as const,
                         detail: {
                           exitCode: event.exitCode,
