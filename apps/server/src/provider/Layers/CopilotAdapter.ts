@@ -42,6 +42,7 @@ import * as Predicate from "effect/Predicate";
 import * as PubSub from "effect/PubSub";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { parseTurnDiffFilesFromUnifiedDiff } from "../../checkpointing/Diffs.ts";
@@ -241,7 +242,6 @@ interface CopilotSessionContext {
   activeSdkTurnId: string | undefined;
   activeSdkTurnKey: string | undefined;
   readonly historyMutationSemaphore: Semaphore.Semaphore;
-  readonly stopCompletion: Deferred.Deferred<void>;
   eventChain: Promise<void>;
   stopped: boolean;
 }
@@ -1270,6 +1270,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
   const managedNativeEventLogger =
     options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
   const sessions = new Map<ThreadId, CopilotSessionContext>();
+  const lifecycleLocksRef = yield* SynchronizedRef.make(new Map<ThreadId, Semaphore.Semaphore>());
   const path = yield* Path.Path;
   const runtimeContext = yield* Effect.context();
   const runWithContext = Effect.runPromiseWith(runtimeContext);
@@ -1281,6 +1282,22 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
 
   const emit = (event: ProviderRuntimeEvent) =>
     PubSub.publish(runtimeEventPubSub, event).pipe(Effect.asVoid);
+  const getLifecycleSemaphore = (threadId: ThreadId) =>
+    SynchronizedRef.modifyEffect(lifecycleLocksRef, (current) => {
+      const existing = current.get(threadId);
+      if (existing) {
+        return Effect.succeed([existing, current] as const);
+      }
+      return Semaphore.make(1).pipe(
+        Effect.map((semaphore) => {
+          const next = new Map(current);
+          next.set(threadId, semaphore);
+          return [semaphore, next] as const;
+        }),
+      );
+    });
+  const withLifecycleLock = <A, E, R>(threadId: ThreadId, effect: Effect.Effect<A, E, R>) =>
+    Effect.flatMap(getLifecycleSemaphore(threadId), (semaphore) => semaphore.withPermit(effect));
   const emitAsync = (event: ProviderRuntimeEvent) => runWithContext(emit(event));
   const emitTurnStarted = (
     context: CopilotSessionContext,
@@ -3029,7 +3046,6 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         Effect.tapError(() => copilotSdk.stopClient(input.threadId, client).pipe(Effect.ignore)),
       );
       const historyMutationSemaphore = yield* Semaphore.make(1);
-      const stopCompletion = yield* Deferred.make<void>();
 
       context = {
         threadId: input.threadId,
@@ -3077,7 +3093,6 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         activeSdkTurnId: undefined,
         activeSdkTurnKey: undefined,
         historyMutationSemaphore,
-        stopCompletion,
         eventChain: Promise.resolve(),
         stopped: false,
       };
@@ -3111,6 +3126,9 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       return context.session;
     },
   );
+
+  const startSessionWithLifecycleLock: CopilotAdapterShape["startSession"] = (input) =>
+    withLifecycleLock(input.threadId, startSession(input));
 
   const sendTurn: CopilotAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
     const context = yield* requireSessionContext(sessions, input.threadId);
@@ -3375,82 +3393,75 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       if (!context) {
         return;
       }
-      if (context.stopped) {
-        yield* Deferred.await(context.stopCompletion);
-        return;
-      }
 
       context.stopped = true;
-      yield* context.historyMutationSemaphore
-        .withPermit(
-          Effect.gen(function* () {
-            yield* Effect.promise(() => context.eventChain);
-            const activeTurnId = context.activeTurnId;
-            if (activeTurnId && !context.completedTurnIds.has(activeTurnId)) {
-              yield* Effect.promise(() =>
-                emitPendingTaskCompletionAsAssistantMessage(context, activeTurnId),
-              ).pipe(Effect.ignore);
-              yield* Effect.promise(() =>
-                emitTurnCompleted(context, activeTurnId, "interrupted", {
-                  stopReason: null,
-                }),
-              ).pipe(Effect.ignore);
-            }
-            cancelTurnEndFallback(context);
-            yield* settlePendingPermissionHandlers(context, (binding) =>
-              emitPermissionRequestResolved(context, binding, "reject", DENIED_PERMISSION_RESULT),
-            );
-            yield* settlePendingUserInputs(context);
-            yield* copilotSdk.disconnect(context).pipe(Effect.ignore);
-            yield* copilotSdk.stopClient(threadId, context.client).pipe(Effect.ignore);
+      yield* context.historyMutationSemaphore.withPermit(
+        Effect.gen(function* () {
+          yield* Effect.promise(() => context.eventChain);
+          const activeTurnId = context.activeTurnId;
+          if (activeTurnId && !context.completedTurnIds.has(activeTurnId)) {
+            yield* Effect.promise(() =>
+              emitPendingTaskCompletionAsAssistantMessage(context, activeTurnId),
+            ).pipe(Effect.ignore);
+            yield* Effect.promise(() =>
+              emitTurnCompleted(context, activeTurnId, "interrupted", {
+                stopReason: null,
+              }),
+            ).pipe(Effect.ignore);
+          }
+          cancelTurnEndFallback(context);
+          yield* settlePendingPermissionHandlers(context, (binding) =>
+            emitPermissionRequestResolved(context, binding, "reject", DENIED_PERMISSION_RESULT),
+          );
+          yield* settlePendingUserInputs(context);
+          yield* copilotSdk.disconnect(context).pipe(Effect.ignore);
+          yield* copilotSdk.stopClient(threadId, context.client).pipe(Effect.ignore);
 
-            updateProviderSession(context, {
-              status: "closed",
-              activeTurnId: undefined,
-            });
-            yield* emit({
-              ...createBaseEvent({
-                threadId,
-              }),
-              type: "session.state.changed",
-              payload: {
-                state: "stopped",
-                reason: "Copilot session stopped.",
-              },
-            });
-            yield* emit({
-              ...createBaseEvent({
-                threadId,
-              }),
-              type: "session.exited",
-              payload: {
-                reason: "Copilot session stopped.",
-                exitKind: "graceful",
-              },
-            });
-          }),
-        )
-        .pipe(
-          Effect.ensuring(
-            Effect.gen(function* () {
-              if (sessions.get(threadId) === context) {
-                sessions.delete(threadId);
-              }
-              yield* Deferred.succeed(context.stopCompletion, undefined);
+          updateProviderSession(context, {
+            status: "closed",
+            activeTurnId: undefined,
+          });
+          yield* emit({
+            ...createBaseEvent({
+              threadId,
             }),
-          ),
-        );
+            type: "session.state.changed",
+            payload: {
+              state: "stopped",
+              reason: "Copilot session stopped.",
+            },
+          });
+          yield* emit({
+            ...createBaseEvent({
+              threadId,
+            }),
+            type: "session.exited",
+            payload: {
+              reason: "Copilot session stopped.",
+              exitKind: "graceful",
+            },
+          });
+          if (sessions.get(threadId) === context) {
+            sessions.delete(threadId);
+          }
+        }),
+      );
     });
 
   const stopSession: CopilotAdapterShape["stopSession"] = Effect.fn("stopSession")(
     function* (threadId) {
-      if (!sessions.has(threadId)) {
-        return yield* new ProviderAdapterSessionNotFoundError({
-          provider: PROVIDER,
-          threadId,
-        });
-      }
-      yield* stopSessionInternal(threadId);
+      yield* withLifecycleLock(
+        threadId,
+        Effect.gen(function* () {
+          if (!sessions.has(threadId)) {
+            return yield* new ProviderAdapterSessionNotFoundError({
+              provider: PROVIDER,
+              threadId,
+            });
+          }
+          yield* stopSessionInternal(threadId);
+        }),
+      );
     },
   );
 
@@ -3567,10 +3578,14 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
 
   const stopAll: CopilotAdapterShape["stopAll"] = () =>
     Effect.gen(function* () {
-      yield* Effect.forEach(Array.from(sessions.keys()), stopSessionInternal, {
-        concurrency: "unbounded",
-        discard: true,
-      });
+      yield* Effect.forEach(
+        Array.from(sessions.keys()),
+        (threadId) => withLifecycleLock(threadId, stopSessionInternal(threadId)),
+        {
+          concurrency: "unbounded",
+          discard: true,
+        },
+      );
       if (managedNativeEventLogger) {
         yield* managedNativeEventLogger.close();
       }
@@ -3581,7 +3596,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     capabilities: {
       sessionModelSwitch: "in-session",
     },
-    startSession,
+    startSession: startSessionWithLifecycleLock,
     sendTurn,
     interruptTurn,
     respondToRequest,
