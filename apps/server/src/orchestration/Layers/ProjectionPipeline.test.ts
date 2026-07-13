@@ -2744,6 +2744,35 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-usag
           })
           .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
 
+        yield* eventStore
+          .append({
+            type: "thread.activity-appended",
+            eventId: EventId.make("evt-usage-invalid-activity"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: now,
+            commandId: CommandId.make("cmd-usage-invalid-activity"),
+            causationEventId: null,
+            correlationId: CommandId.make("cmd-usage-invalid-activity"),
+            metadata: {},
+            payload: {
+              threadId,
+              activity: {
+                id: EventId.make("activity-usage-invalid"),
+                tone: "info",
+                kind: "context-window.updated",
+                summary: "Context window updated",
+                payload: {
+                  usedTokens: 100,
+                  inputTokens: -1,
+                },
+                turnId: TurnId.make("turn-usage-invalid"),
+                createdAt: now,
+              },
+            },
+          })
+          .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+
         const rows = yield* sql<{
           readonly provider: string;
           readonly providerInstanceId: string | null;

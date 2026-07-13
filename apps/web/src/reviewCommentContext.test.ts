@@ -289,3 +289,38 @@ it("bounds very large review comment diffs with an omission marker", () => {
   expect(comment.diff).toContain("[trimmed: omitted");
   expect(comment.diff).not.toContain("line 100\nline 101\nline 102");
 });
+
+it("bounds review comment diffs to non-overlapping head and tail lines", () => {
+  const comment = buildFileReviewComment({
+    id: "comment-exact-line-limit",
+    filePath: "src/exact.ts",
+    startLine: 1,
+    endLine: 161,
+    text: "Review this exact overflow.",
+    contents: Array.from({ length: 161 }, (_, index) => `line ${index + 1}`).join("\n"),
+  });
+  const diffLines = comment.diff.split("\n");
+
+  expect(diffLines).toHaveLength(160);
+  expect(comment.diff).toContain("[trimmed: omitted 2 middle lines from 161 total lines]");
+  expect(comment.diff).toContain("line 1");
+  expect(comment.diff).toContain("line 161");
+});
+
+it("keeps trim markers and tail content when character-clamping review diffs", () => {
+  const comment = buildFileReviewComment({
+    id: "comment-long-lines",
+    filePath: "src/long.ts",
+    startLine: 1,
+    endLine: 220,
+    text: "Review long lines.",
+    contents: Array.from(
+      { length: 220 },
+      (_, index) => `line ${index + 1} ${"x".repeat(220)}`,
+    ).join("\n"),
+  });
+
+  expect(comment.diff.length).toBeLessThanOrEqual(16_000);
+  expect(comment.diff).toContain("[trimmed: omitted");
+  expect(comment.diff).toContain("line 220");
+});

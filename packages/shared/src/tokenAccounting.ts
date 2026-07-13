@@ -155,18 +155,17 @@ export function computeUsageCost(input: {
     input.usage.uncachedInputTokens,
     pricing.uncachedInputPerMillionUsd ?? pricing.inputPerMillionUsd,
   );
-  const hasCompleteSpecificCachePricing =
-    input.usage.cachedInputTokens !== undefined &&
+  const hasCacheCreationCost =
     input.usage.cacheCreationInputTokens !== undefined &&
+    pricing.cacheCreationInputPerMillionUsd !== undefined;
+  const hasCacheReadCost =
     input.usage.cacheReadInputTokens !== undefined &&
-    input.usage.cacheCreationInputTokens + input.usage.cacheReadInputTokens ===
-      input.usage.cachedInputTokens &&
-    pricing.cacheCreationInputPerMillionUsd !== undefined &&
     pricing.cacheReadInputPerMillionUsd !== undefined;
-  if (!hasCompleteSpecificCachePricing && pricing.cachedInputPerMillionUsd !== undefined) {
+  const hasGranularCacheCost = hasCacheCreationCost || hasCacheReadCost;
+  if (!hasGranularCacheCost) {
     push("cached_input", input.usage.cachedInputTokens, pricing.cachedInputPerMillionUsd);
   }
-  if (hasCompleteSpecificCachePricing || pricing.cachedInputPerMillionUsd === undefined) {
+  if (hasGranularCacheCost) {
     push(
       "cache_creation_input",
       input.usage.cacheCreationInputTokens,

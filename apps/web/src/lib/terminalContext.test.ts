@@ -235,3 +235,26 @@ it("can serialize terminal context in compact tail form", () => {
   expect(result).toContain("15 | line 6");
   expect(result).not.toContain("10 | line 1");
 });
+
+it("does not mark terminal context as character-trimmed when it exactly fits", () => {
+  const result = buildTerminalContextBlock(
+    [makeContext({ lineStart: 1, lineEnd: 2, text: ["1234", "567"].join("\n") })],
+    { maxChars: 9 },
+  );
+
+  expect(result).toContain("1 | 1234");
+  expect(result).toContain("2 | 567");
+  expect(result).not.toContain("[trimmed: context exceeded character limit]");
+});
+
+it("marks terminal context as character-trimmed when it drops a line", () => {
+  const result = buildTerminalContextBlock(
+    [makeContext({ lineStart: 1, lineEnd: 3, text: ["1234", "567", "890"].join("\n") })],
+    { maxChars: 9 },
+  );
+
+  expect(result).toContain("1 | 1234");
+  expect(result).toContain("2 | 567");
+  expect(result).not.toContain("3 | 890");
+  expect(result).toContain("[trimmed: context exceeded character limit]");
+});
