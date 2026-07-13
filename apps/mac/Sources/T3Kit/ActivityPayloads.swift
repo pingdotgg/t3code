@@ -37,6 +37,8 @@ public enum ActivityKind {
     /// Tone `.info`: adapter-side warning about a provider message the
     /// server couldn't project (ProviderRuntimeIngestion.ts).
     public static let runtimeWarning = "runtime.warning"
+    /// Tone `.error`: adapter-side provider runtime failure.
+    public static let runtimeError = "runtime.error"
     /// Server-driven turn liveness for ALL providers (codex/grok/cursor/
     /// claude): tone `.error` when `state == "stalled"`, `.info` on recovery.
     /// Payload is `SessionHealthActivityPayload`. Emitted once on stall and

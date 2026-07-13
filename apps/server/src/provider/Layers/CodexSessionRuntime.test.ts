@@ -14,6 +14,7 @@ import {
 } from "../CodexDeveloperInstructions.ts";
 import {
   buildTurnStartParams,
+  classifyCodexStderrLine,
   formatCodexProcessExitError,
   hasConfiguredMcpServer,
   isRecoverableThreadResumeError,
@@ -245,6 +246,60 @@ describe("formatCodexProcessExitError", () => {
     NodeAssert.equal(
       formatCodexProcessExitError(7, "fatal: boom"),
       "Codex App Server exited with code 7.\nLast stderr:\nfatal: boom",
+    );
+  });
+});
+
+describe("classifyCodexStderrLine", () => {
+  it("drops structured warning logs instead of surfacing them as chat runtime warnings", () => {
+    NodeAssert.equal(
+      classifyCodexStderrLine(
+        '{"timestamp":"2026-07-13T06:41:55.975915Z","level":"WARN","fields":{"message":"Model personality requested but model does not support it"}}',
+      ),
+      null,
+    );
+    NodeAssert.equal(
+      classifyCodexStderrLine(
+        '{"timestamp":"2026-07-13T06:41:56.071135Z","level":"WARN","fields":{"message":"failed to warm featured plugin ids cache"}}',
+      ),
+      null,
+    );
+    NodeAssert.equal(
+      classifyCodexStderrLine(
+        '{"timestamp":"2026-07-13T06:41:56.634533Z","level":"WARN","fields":{"message":"Ignoring interface.defaultPrompt[0]: provider does not accept this option"}}',
+      ),
+      null,
+    );
+  });
+
+  it("drops known noisy structured error logs produced during startup stream teardown", () => {
+    NodeAssert.equal(
+      classifyCodexStderrLine(
+        '{"timestamp":"2026-07-13T06:41:56.103641Z","level":"ERROR","fields":{"message":"fail to get common stream: Unexpected end of file"}}',
+      ),
+      null,
+    );
+    NodeAssert.equal(
+      classifyCodexStderrLine(
+        '{"timestamp":"2026-07-13T06:41:56.117852Z","level":"ERROR","fields":{"message":"sse client event stream terminated with incomplete response body"}}',
+      ),
+      null,
+    );
+  });
+
+  it("keeps actionable structured error logs with a concise message", () => {
+    NodeAssert.deepStrictEqual(
+      classifyCodexStderrLine(
+        '{"timestamp":"2026-07-13T06:41:56.103641Z","level":"ERROR","fields":{"message":"failed to connect to websocket"}}',
+      ),
+      { message: "failed to connect to websocket" },
+    );
+  });
+
+  it("keeps non-log stderr so OS and transport failures remain visible", () => {
+    NodeAssert.deepStrictEqual(
+      classifyCodexStderrLine("The filename or extension is too long. (os error 206)"),
+      { message: "The filename or extension is too long. (os error 206)" },
     );
   });
 });

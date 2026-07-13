@@ -1042,6 +1042,9 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         firstEvent.value.payload.message,
         "The filename or extension is too long. (os error 206)",
       );
+      NodeAssert.deepStrictEqual(firstEvent.value.payload.detail, {
+        surface: "process/stderr",
+      });
     }),
   );
 
@@ -1112,6 +1115,9 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         firstEvent.value.payload.message,
         "2026-03-31T18:14:06.833399Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: HTTP error: 503 Service Unavailable, url: wss://chatgpt.com/backend-api/codex/responses",
       );
+      NodeAssert.deepStrictEqual(firstEvent.value.payload.detail, {
+        surface: "process/stderr",
+      });
     }),
   );
 

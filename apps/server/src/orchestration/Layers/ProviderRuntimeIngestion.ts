@@ -338,6 +338,16 @@ function requestKindFromCanonicalRequestType(
   }
 }
 
+function isProcessStderrRuntimeDetail(value: unknown): boolean {
+  return (
+    value !== undefined &&
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    (value as { readonly surface?: unknown }).surface === "process/stderr"
+  );
+}
+
 function runtimeEventToActivities(
   event: ProviderRuntimeEvent,
 ): ReadonlyArray<OrchestrationThreadActivity> {
@@ -492,6 +502,9 @@ function runtimeEventToActivities(
           summary: "Runtime error",
           payload: {
             message: truncateDetail(event.payload.message),
+            ...(isProcessStderrRuntimeDetail(event.payload.detail)
+              ? { source: "process/stderr" }
+              : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -531,6 +544,9 @@ function runtimeEventToActivities(
           summary: truncateDetail(event.payload.message, 120),
           payload: {
             message: truncateDetail(event.payload.message),
+            ...(isProcessStderrRuntimeDetail(event.payload.detail)
+              ? { source: "process/stderr" }
+              : {}),
             ...(event.payload.detail !== undefined ? { detail: event.payload.detail } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,

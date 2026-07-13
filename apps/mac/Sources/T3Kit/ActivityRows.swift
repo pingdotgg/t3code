@@ -54,14 +54,22 @@ public enum ActivityRows {
             // mapping one event here would split/lose lifecycle aggregation.
             return nil
 
-        case ActivityKind.runtimeWarning:
+        case ActivityKind.runtimeWarning, ActivityKind.runtimeError:
             // Unknown-SDK-message warnings whose whole body is the server's
             // no-content marker (describeUnknownSdkMessage) carry nothing a
             // user can act on — e.g. Claude's 'commands_changed' pushes in
             // threads persisted before the server learned to ignore them.
-            // Warnings with real preview text keep their notice row via the
-            // tone fallthrough below.
-            if activity.summary.hasSuffix("(no displayable text content)") {
+            if activity.kind == ActivityKind.runtimeWarning,
+                activity.summary.hasSuffix("(no displayable text content)")
+            {
+                return nil
+            }
+            // Provider stderr diagnostics are retained in provider NDJSON logs
+            // for troubleshooting but should not take over the transcript at
+            // turn start. Fatal process exits still arrive as session.exited
+            // with stderrTail, and provider errors that are not process/stderr
+            // remain visible via the tone fallthrough below.
+            if activity.payload.objectValue?["source"]?.stringValue == "process/stderr" {
                 return nil
             }
 

@@ -55,6 +55,41 @@ struct ActivityRowTests {
         #expect(row == nil)
     }
 
+    @Test func processStderrRuntimeWarningIsSkipped() {
+        let row = ActivityRows.row(
+            for: activity(
+                tone: .info, kind: "runtime.warning",
+                summary: "The filename or extension is too long. (os error 206)",
+                payload: .object([
+                    "message": .string("The filename or extension is too long. (os error 206)"),
+                    "source": .string("process/stderr"),
+                ])))
+        #expect(row == nil)
+    }
+
+    @Test func processStderrRuntimeErrorIsSkipped() {
+        let row = ActivityRows.row(
+            for: activity(
+                tone: .error, kind: "runtime.error",
+                summary: "failed to connect to websocket",
+                payload: .object([
+                    "message": .string("failed to connect to websocket"),
+                    "source": .string("process/stderr"),
+                ])))
+        #expect(row == nil)
+    }
+
+    @Test func runtimeErrorWithoutProcessStderrRemainsVisible() {
+        let row = ActivityRows.row(
+            for: activity(
+                tone: .error, kind: "runtime.error", summary: "Usage limit reached",
+                payload: .object(["message": .string("Usage limit reached")])))
+        #expect(
+            row == .tool(
+                id: "a1", title: "Usage limit reached", detail: "Usage limit reached",
+                itemType: nil, phase: .failed, output: nil, outputIsError: false))
+    }
+
     @Test func runtimeWarningWithPreviewKeepsNoticeRow() {
         let row = ActivityRows.row(
             for: activity(
