@@ -57,6 +57,7 @@ import { detectCodexUsageLimit } from "../UsageLimit.ts";
 import {
   CodexResumeCursorSchema,
   CodexSessionRuntimeThreadIdMissingError,
+  formatCodexProcessExitError,
   makeCodexSessionRuntime,
   type CodexSessionRuntimeError,
   type CodexSessionRuntimeOptions,
@@ -763,16 +764,16 @@ function mapToRuntimeEvents(
           ...(stderrTail ? { stderrTail } : {}),
         },
       },
-      ...(exitCode !== undefined && exitCode !== 0 && stderrTail
+      ...(exitCode !== undefined && exitCode !== 0
         ? [
             {
               ...runtimeEventBase(event, canonicalThreadId),
               eventId: EventId.make(`${event.id}:stderr-tail`),
               type: "runtime.error" as const,
               payload: {
-                message: event.message ?? `Codex App Server exited with code ${exitCode}.`,
+                message: formatCodexProcessExitError(exitCode, stderrTail, event.message),
                 class: "provider_error" as const,
-                detail: { exitCode, stderrTail },
+                detail: { exitCode, ...(stderrTail ? { stderrTail } : {}) },
               },
             },
           ]

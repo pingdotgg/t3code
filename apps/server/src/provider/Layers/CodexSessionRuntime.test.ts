@@ -14,6 +14,7 @@ import {
 } from "../CodexDeveloperInstructions.ts";
 import {
   buildTurnStartParams,
+  formatCodexProcessExitError,
   hasConfiguredMcpServer,
   isRecoverableThreadResumeError,
   openCodexThread,
@@ -231,6 +232,19 @@ describe("hasConfiguredMcpServer", () => {
     NodeAssert.equal(
       hasConfiguredMcpServer(["-c", 'mcp_servers.t3-code.url="http://127.0.0.1/mcp"']),
       true,
+    );
+  });
+});
+
+describe("formatCodexProcessExitError", () => {
+  it("reports non-zero exits without stderr", () => {
+    NodeAssert.equal(formatCodexProcessExitError(7), "Codex App Server exited with code 7.");
+  });
+
+  it("appends stderr when available", () => {
+    NodeAssert.equal(
+      formatCodexProcessExitError(7, "fatal: boom"),
+      "Codex App Server exited with code 7.\nLast stderr:\nfatal: boom",
     );
   });
 });

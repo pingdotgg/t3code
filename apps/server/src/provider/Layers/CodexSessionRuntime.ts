@@ -66,6 +66,14 @@ export function hasConfiguredMcpServer(appServerArgs: ReadonlyArray<string> | un
   return appServerArgs?.some((argument) => argument.includes("mcp_servers.")) === true;
 }
 
+export function formatCodexProcessExitError(
+  exitCode: number,
+  stderrTail?: string,
+  message: string = `Codex App Server exited with code ${exitCode}.`,
+): string {
+  return stderrTail ? `${message}\nLast stderr:\n${stderrTail}` : message;
+}
+
 export const CodexResumeCursorSchema = Schema.Struct({
   threadId: Schema.String,
 });
@@ -1197,8 +1205,8 @@ export const makeCodexSessionRuntime = (
             return updateSession(sessionRef, {
               status: nextStatus,
               activeTurnId: undefined,
-              ...(exitCode !== 0 && stderrTail
-                ? { lastError: `Codex App Server exited with code ${exitCode}.` }
+              ...(exitCode !== 0
+                ? { lastError: formatCodexProcessExitError(Number(exitCode), stderrTail) }
                 : {}),
             }).pipe(
               Effect.andThen(

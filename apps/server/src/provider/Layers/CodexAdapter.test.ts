@@ -788,6 +788,39 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         exitCode: 1,
         stderrTail: "fatal: boom",
       });
+      NodeAssert.equal(
+        runtimeError.payload.message,
+        "Codex App Server exited with code 1.\nLast stderr:\nfatal: boom",
+      );
+    }),
+  );
+
+  it.effect("maps non-zero session exits without stderr to runtime.error", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const collectedFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(
+        Effect.forkChild,
+      );
+
+      yield* runtime.emit({
+        id: asEventId("evt-session-exited-no-stderr"),
+        kind: "session",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "session/exited",
+        message: "Codex App Server exited with code 7.",
+        payload: { exitCode: 7 },
+      });
+
+      const events = Array.from(yield* Fiber.join(collectedFiber));
+      const runtimeError = events.find((event) => event.type === "runtime.error");
+      NodeAssert.ok(runtimeError);
+      if (!runtimeError || runtimeError.type !== "runtime.error") {
+        return;
+      }
+      NodeAssert.equal(runtimeError.payload.message, "Codex App Server exited with code 7.");
+      NodeAssert.deepEqual(runtimeError.payload.detail, { exitCode: 7 });
     }),
   );
 
