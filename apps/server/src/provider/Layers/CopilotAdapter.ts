@@ -3450,14 +3450,18 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
 
   const stopSession: CopilotAdapterShape["stopSession"] = Effect.fn("stopSession")(
     function* (threadId) {
+      const context = sessions.get(threadId);
+      if (!context) {
+        return yield* new ProviderAdapterSessionNotFoundError({
+          provider: PROVIDER,
+          threadId,
+        });
+      }
       yield* withLifecycleLock(
         threadId,
         Effect.gen(function* () {
-          if (!sessions.has(threadId)) {
-            return yield* new ProviderAdapterSessionNotFoundError({
-              provider: PROVIDER,
-              threadId,
-            });
+          if (sessions.get(threadId) !== context) {
+            return;
           }
           yield* stopSessionInternal(threadId);
         }),

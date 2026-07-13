@@ -5298,6 +5298,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       ) {
         yield* waitForSdkEventQueue();
       }
+      const coalescedStopFiber = yield* adapter.stopSession(threadId).pipe(Effect.forkChild);
 
       const replacementFiber = yield* adapter
         .startSession({
@@ -5321,6 +5322,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       releaseNativeWrite();
       yield* TestClock.adjust("25 millis");
       yield* Fiber.join(stopFiber);
+      yield* Fiber.join(coalescedStopFiber);
       yield* Fiber.join(replacementFiber);
       yield* Fiber.join(secondReplacementFiber);
 
