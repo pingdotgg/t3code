@@ -1,11 +1,25 @@
 import AppKit
 import SwiftUI
 
+/// Pure timing and accessibility policy for the app's motion language.
+/// Keeping the policy free of SwiftUI values makes its responsiveness and
+/// Reduce Motion guarantees directly testable.
+struct MotionProfile: Equatable, Sendable {
+    let reduceMotion: Bool
+
+    let feedbackDuration = 0.14
+    let revealDuration = 0.19
+    let structureDuration = 0.24
+    let delightDuration = 0.40
+
+    var changeDuration: Double { reduceMotion ? 0.12 : revealDuration }
+    var usesMovement: Bool { !reduceMotion }
+    var allowsDecorativeEffects: Bool { !reduceMotion }
+}
+
 /// The app's motion language. Every interactive state change routes through
-/// these curves so the whole app shares one physical feel: springs for
-/// structure (things that move or grow), eases for atmosphere (color,
-/// opacity). Nothing in the UI should flip instantly — if a view appears,
-/// disappears, or changes shape, it does so through one of these.
+/// purpose-specific curves so frequent feedback stays crisp while occasional
+/// structure and rare success moments retain a calm alpine personality.
 ///
 /// Accessibility: when macOS Reduce Motion is on, every movement-bearing
 /// curve collapses to a quick fade and every transition to plain opacity —
@@ -20,38 +34,57 @@ enum Motion {
         NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     }
 
-    /// What movement-bearing curves degrade to under Reduce Motion: a fade
-    /// fast enough to read as a state change, not an animation.
-    private static let reducedChange = Animation.easeOut(duration: 0.15)
+    static var profile: MotionProfile {
+        MotionProfile(reduceMotion: reduceMotion)
+    }
+
+    private static var reducedChange: Animation {
+        .easeOut(duration: profile.changeDuration)
+    }
 
     // MARK: Curves
 
-    /// Small state flips the user triggers directly and expects to feel
-    /// immediate: chevrons, toggles, selection highlights, button states.
-    static var snap: Animation {
-        reduceMotion ? reducedChange : .snappy(duration: 0.28, extraBounce: 0.0)
+    /// Pointer-driven press feedback and small icon changes. Keyboard actions
+    /// should not opt into this animation at all.
+    static var feedback: Animation {
+        reduceMotion
+            ? reducedChange
+            : .timingCurve(0.23, 1, 0.32, 1, duration: profile.feedbackDuration)
     }
 
-    /// Structural changes: panels swapping, cards expanding, layout shifts.
-    /// A settled spring — responsive but with no overshoot, so text stays
-    /// readable while it moves.
-    static var settle: Animation {
-        reduceMotion ? reducedChange : .smooth(duration: 0.38)
+    /// Compact content entering or leaving: suggestions, chips, banners, and
+    /// newly appended user-visible blocks.
+    static var reveal: Animation {
+        reduceMotion
+            ? reducedChange
+            : .timingCurve(0.23, 1, 0.32, 1, duration: profile.revealDuration)
     }
 
-    /// Elements entering the stage (cards, banners, menus). A touch of
-    /// bounce gives arrivals some life without feeling springy.
-    static var enter: Animation {
-        reduceMotion ? reducedChange : .spring(response: 0.42, dampingFraction: 0.8)
+    /// Occasional panels, disclosures, and intentional layout changes. The
+    /// smooth curve is interruptible and avoids overshoot around text.
+    static var structure: Animation {
+        reduceMotion ? reducedChange : .smooth(duration: profile.structureDuration)
     }
 
-    /// Ambient property changes the user didn't directly cause: status
-    /// tints, connection phases, progress meters, badge counts. Pure
-    /// color/opacity eases, so they stay as-is under Reduce Motion.
-    static let ambient = Animation.easeInOut(duration: 0.3)
+    /// A one-shot accent for rare successful state transitions.
+    static var delight: Animation {
+        reduceMotion
+            ? reducedChange
+            : .spring(response: profile.delightDuration, dampingFraction: 0.82)
+    }
+
+    /// Asynchronous status tint, opacity, and meter changes.
+    static var ambient: Animation {
+        .timingCurve(0.77, 0, 0.175, 1, duration: reduceMotion ? 0.12 : 0.22)
+    }
 
     /// Quick fades for lightweight chrome (spinners, hints, tooltips).
-    static let fade = Animation.easeOut(duration: 0.18)
+    static var fade: Animation { reveal }
+
+    /// Occasional scenery changes are atmospheric rather than interactive.
+    static var scenery: Animation {
+        .timingCurve(0.77, 0, 0.175, 1, duration: reduceMotion ? 0.12 : 0.30)
+    }
 
     // MARK: Transitions
 
@@ -62,7 +95,7 @@ enum Motion {
         reduceMotion
             ? .opacity
             : .asymmetric(
-                insertion: .opacity.combined(with: .offset(y: 12)),
+                insertion: .opacity.combined(with: .offset(y: 6)),
                 removal: .opacity
             )
     }
@@ -73,8 +106,8 @@ enum Motion {
         reduceMotion
             ? .opacity
             : .asymmetric(
-                insertion: .opacity.combined(with: .scale(scale: 0.96)),
-                removal: .opacity.combined(with: .scale(scale: 0.98))
+                insertion: .opacity.combined(with: .scale(scale: 0.97)),
+                removal: .opacity.combined(with: .scale(scale: 0.99))
             )
     }
 
@@ -83,15 +116,16 @@ enum Motion {
     static func pop(from anchor: UnitPoint) -> AnyTransition {
         reduceMotion
             ? .opacity
-            : .scale(scale: 0.94, anchor: anchor).combined(with: .opacity)
+            : .scale(scale: 0.96, anchor: anchor).combined(with: .opacity)
     }
 
-    /// Banners and pills sliding in from the top of their container.
-    static var bannerDrop: AnyTransition {
+    /// Banners and pills reveal from their nearby container edge, never from a
+    /// full-height offscreen position.
+    static var banner: AnyTransition {
         reduceMotion
             ? .opacity
             : .asymmetric(
-                insertion: .move(edge: .top).combined(with: .opacity),
+                insertion: .offset(y: -8).combined(with: .opacity),
                 removal: .opacity
             )
     }
@@ -105,14 +139,21 @@ enum Motion {
         reduceMotion
             ? .opacity
             : .asymmetric(
-                insertion: .opacity.combined(with: .offset(y: -6)),
+                insertion: .opacity.combined(with: .offset(y: -4)),
                 removal: .opacity
             )
     }
 
     /// Cross-fade with a whisper of scale for swapping whole panes
     /// (inspector tabs, list ↔ preview).
-    static var paneSwap: AnyTransition {
-        reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.985))
+    static var paneChange: AnyTransition {
+        reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.992))
     }
+
+    // Compatibility aliases while call sites migrate by semantic purpose.
+    static var snap: Animation { feedback }
+    static var settle: Animation { structure }
+    static var enter: Animation { reveal }
+    static var bannerDrop: AnyTransition { banner }
+    static var paneSwap: AnyTransition { paneChange }
 }
