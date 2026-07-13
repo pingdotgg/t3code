@@ -244,15 +244,9 @@ public struct ComposerBar: View {
                         .font(.body)
                         .focused($editorFocused)
                         .scrollContentBackground(.hidden)
-                        // The editor sits inside a glass capsule, but Liquid
-                        // Glass must never render directly behind long-form
-                        // typed text — back the editor itself with an opaque
-                        // fill so glass stays confined to the surrounding
-                        // chrome (buttons, capsule).
-                        .background(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(Color(nsColor: .textBackgroundColor))
-                        )
+                        // Keep editor transparent so composer remains one
+                        // continuous Liquid Glass surface; draft field does
+                        // not create a second light plate inside outer glass.
                         .frame(minHeight: 22, maxHeight: 120)
                         .fixedSize(horizontal: false, vertical: true)
                         .overlay(alignment: .topLeading) {
@@ -1092,7 +1086,7 @@ private struct QueuedMessageRow: View {
         .background(
             failedToSend
                 ? AnyShapeStyle(Color.red.opacity(0.12))
-                : AnyShapeStyle(Color(nsColor: .textBackgroundColor).opacity(0.9)),
+                : AnyShapeStyle(Color.black.opacity(0.22)),
             in: RoundedRectangle(cornerRadius: 8)
         )
         .overlay(

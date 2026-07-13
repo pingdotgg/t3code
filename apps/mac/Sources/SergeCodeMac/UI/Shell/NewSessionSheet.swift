@@ -361,6 +361,7 @@ final class NewSessionWindowController: NSObject, NSWindowDelegate {
                 multi: multi, scenery: scenery, passport: passport, isPresented: dismiss))
         hosting.sizingOptions = [.preferredContentSize]
         let panel = NSWindow(contentViewController: hosting)
+        DarkAppearanceConfigurator.applyAppearance(to: panel)
         panel.styleMask = [.titled, .closable, .fullSizeContentView]
         panel.titlebarAppearsTransparent = true
         panel.titleVisibility = .hidden
