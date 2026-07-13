@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it, assert } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -279,8 +280,9 @@ function makeMutableServerSettingsService(
   return Effect.gen(function* () {
     const settingsRef = yield* Ref.make(initial);
     const changes = yield* PubSub.unbounded<ContractServerSettings>();
+    const changesSubscribed = yield* Deferred.make<void>();
 
-    return {
+    const service = {
       start: Effect.void,
       ready: Effect.void,
       getSettings: Ref.get(settingsRef),
@@ -294,9 +296,18 @@ function makeMutableServerSettingsService(
           return next;
         }),
       get streamChanges() {
-        return Stream.fromPubSub(changes);
+        return Stream.unwrap(
+          PubSub.subscribe(changes).pipe(
+            Effect.tap(() => Deferred.succeed(changesSubscribed, undefined)),
+            Effect.map(Stream.fromSubscription),
+          ),
+        );
       },
     } satisfies ServerSettingsModule.ServerSettingsService["Service"];
+
+    return Object.assign(service, {
+      changesSubscribed: Deferred.await(changesSubscribed),
+    });
   });
 }
 
@@ -1228,6 +1239,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
 
           yield* Effect.gen(function* () {
             const registry = yield* ProviderRegistry.ProviderRegistry;
+            yield* serverSettings.changesSubscribed;
             // Boot-time probe: the default codex instance is enabled with
             // `firstMissing`, so the real spawner yields ENOENT and the
             // snapshot should be `status: "error"`.
