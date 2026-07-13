@@ -110,8 +110,10 @@ export interface KeyBindingActions {
   readonly onNewCycleField: () => void;
   readonly onSubmitNew: () => void;
   // Compose mode
-  readonly onNavUp: () => void;
-  readonly onNavDown: () => void;
+  /** True when unmodified ↑/↓ should choose between multiple pending approvals. */
+  readonly approvalNavigation: boolean;
+  readonly onApprovalPrev: () => void;
+  readonly onApprovalNext: () => void;
   readonly onScrollUp: () => void;
   readonly onScrollDown: () => void;
   readonly onNewThread: () => void;
@@ -258,13 +260,23 @@ export function useKeyBindings(actions: KeyBindingActions): void {
     // ── Compose mode (default) ──────────────────────────────────────────────
     if (key.ctrl && key.name === "e") return actions.onToggleTerminal();
     if (key.ctrl && key.name === "p") return actions.onToggleFocus();
-    // Alt+↑/↓ jump thread-to-thread; ^↑/^↓ resize the prompt; plain arrows
-    // navigate every sidebar row. Alt+1…9 jumps straight to a visible thread.
+    // Alt+↑/↓ jump thread-to-thread; ^↑/^↓ resize the prompt. Unmodified arrows
+    // belong to the focused textarea. This is also important under tmux: when a
+    // client cannot forward a wheel event it may translate it to arrow keys, and
+    // scrolling the conversation must never change the selected thread.
     if (key.option && key.name === "up") return actions.onThreadPrev();
     if (key.option && key.name === "down") return actions.onThreadNext();
     if (key.option && /^[1-9]$/.test(key.name)) return actions.onThreadJump(Number(key.name));
-    if (key.name === "up") return key.ctrl ? actions.onGrowPrompt() : actions.onNavUp();
-    if (key.name === "down") return key.ctrl ? actions.onShrinkPrompt() : actions.onNavDown();
+    if (key.ctrl && key.name === "up") return actions.onGrowPrompt();
+    if (key.ctrl && key.name === "down") return actions.onShrinkPrompt();
+    if (actions.approvalNavigation && key.name === "up") {
+      key.preventDefault();
+      return actions.onApprovalPrev();
+    }
+    if (actions.approvalNavigation && key.name === "down") {
+      key.preventDefault();
+      return actions.onApprovalNext();
+    }
     if (key.name === "pageup") return actions.onScrollUp();
     if (key.name === "pagedown") return actions.onScrollDown();
     if (key.ctrl && key.name === "n") return actions.onNewThread();

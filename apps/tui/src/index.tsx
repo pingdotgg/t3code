@@ -6,6 +6,7 @@ import { ChatView } from "./components/ChatView.tsx";
 import { buildTuiRuntime, makeTuiClient, type TuiOptions } from "./connection.ts";
 import { applyTerminalColors } from "./theme.ts";
 import { detectKittyGraphicsTerminal } from "./terminalGraphics.ts";
+import { prepareTerminalViewport, TUI_RENDERER_CONFIG } from "./terminalStartup.ts";
 
 // This is the Bun entry point spawned by the Node `t3 tui` command. It receives
 // the server origin + a bearer token via env, and mints fresh websocket URLs by
@@ -88,19 +89,17 @@ async function main(): Promise<void> {
   const runtime = buildTuiRuntime(options);
   const client = makeTuiClient(runtime, origin);
 
+  // A tmux pane can still be showing scrollback when this child starts. Return it
+  // to the live screen before entering OpenTUI's alternate screen so the complete
+  // first frame is visible without requiring the user to scroll to the bottom.
+  prepareTerminalViewport();
+
   // Render on a transparent background so the user's terminal theme (and its own
-  // background colour) shows through instead of OpenTUI's opaque default.
-  // `enableMouseMovement: false` requests basic mouse reporting (clicks + wheel)
-  // without motion tracking. That leaves the terminal's own drag-selection (and
-  // copy-on-select, e.g. Ghostty's) working on the rendered text — the same way
-  // the prompt copies — instead of OpenTUI capturing the drag for its own
-  // selection. Our UI only needs clicks and wheel scroll, so nothing is lost.
+  // background colour) shows through instead of OpenTUI's opaque default. Mouse
+  // motion stays disabled so terminal drag-selection works, while clicks and wheel
+  // reporting remain enabled explicitly in the shared renderer configuration.
   const tmuxPassthrough = detectKittyGraphicsTerminal();
-  const renderer = await createCliRenderer({
-    exitOnCtrlC: false,
-    backgroundColor: "transparent",
-    enableMouseMovement: false,
-  });
+  const renderer = await createCliRenderer(TUI_RENDERER_CONFIG);
   installKittyImageExtension(renderer, {
     tmuxPassthrough,
   });

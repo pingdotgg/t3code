@@ -614,7 +614,7 @@ export function ChatView({
       return;
     }
     if (!detail) {
-      store.setStatus("Select a thread (↑/↓) to send a message.");
+      store.setStatus("Select a thread (Alt+↑/↓ or click) to send a message.");
       return;
     }
     const text = typedText.length > 0 ? typedText : IMAGE_ONLY_PROMPT;
@@ -1270,25 +1270,12 @@ export function ChatView({
         field === "message" ? "branch" : field === "branch" ? "worktree" : "message",
       ),
     onSubmitNew: submitNewThread,
-    // ↑/↓ move the approval cursor while a pending approval is up (and the reply is
-    // empty), otherwise navigate the sidebar — yielding to a multiline reply editor
-    // so the cursor can move vertically within the prompt.
-    onNavUp: () => {
-      if (approvals.length > 1 && reply.length === 0) {
-        setApprovalIndex((index) => (index <= 0 ? approvals.length - 1 : index - 1));
-        return;
-      }
-      if (reply.includes("\n")) return;
-      store.moveSelection(-1);
-    },
-    onNavDown: () => {
-      if (approvals.length > 1 && reply.length === 0) {
-        setApprovalIndex((index) => (index + 1) % approvals.length);
-        return;
-      }
-      if (reply.includes("\n")) return;
-      store.moveSelection(1);
-    },
+    // Plain arrows stay with the composer except while choosing between multiple
+    // pending approvals. Threads use the explicit Alt+↑/↓ shortcuts or mouse.
+    approvalNavigation: approvals.length > 1 && reply.length === 0,
+    onApprovalPrev: () =>
+      setApprovalIndex((index) => (index <= 0 ? approvals.length - 1 : index - 1)),
+    onApprovalNext: () => setApprovalIndex((index) => (index + 1) % approvals.length),
     onScrollUp: () => scrollRef.current?.scrollBy({ x: 0, y: -SCROLL_STEP }),
     onScrollDown: () => scrollRef.current?.scrollBy({ x: 0, y: SCROLL_STEP }),
     onNewThread: openNewThread,
@@ -1473,14 +1460,14 @@ export function ChatView({
   const placeholder = detail
     ? "Type a reply, Enter to send"
     : state.selection?.kind === "project"
-      ? "Enter to expand · ↑/↓ to move"
-      : "Select a thread with ↑/↓";
+      ? "Enter to expand · Alt+↑/↓ to pick a thread"
+      : "Select a thread with Alt+↑/↓ or click";
 
   // Contextual footer: only show keys that apply now (^Y with a plan, ^A/^R with
   // approvals). The persistent state (^B/^O/model/reasoning) lives in the controls
   // row, so it isn't duplicated here.
   const composeHint = [
-    "↑/↓",
+    "Alt+↑/↓ threads",
     "Enter send",
     "^G editor",
     "^↑/^↓ size",

@@ -48,31 +48,40 @@ function thread(activities: OrchestrationThread["activities"] = []): Orchestrati
   } as unknown as OrchestrationThread;
 }
 
-function shell(): OrchestrationShellSnapshot {
+function shell(
+  threads: OrchestrationShellSnapshot["threads"] = [
+    {
+      id: "t1",
+      projectId: "p1",
+      title: "Thread one",
+      updatedAt: "2026-07-13T00:00:00.000Z",
+      session: { status: "idle" },
+    },
+  ] as unknown as OrchestrationShellSnapshot["threads"],
+): OrchestrationShellSnapshot {
   return {
     projects: [project],
-    threads: [
-      {
-        id: "t1",
-        projectId: "p1",
-        title: "Thread one",
-        updatedAt: "2026-07-13T00:00:00.000Z",
-        session: { status: "idle" },
-      },
-    ],
+    threads,
   } as unknown as OrchestrationShellSnapshot;
 }
 
 function fakeClient({
   detail,
+  shellSnapshot = shell(),
   sendReply = () => Promise.resolve(),
   respondUserInput = () => Promise.resolve(),
 }: {
   readonly detail: OrchestrationThread;
+  readonly shellSnapshot?: OrchestrationShellSnapshot;
   readonly sendReply?: TuiClient["sendReply"];
   readonly respondUserInput?: TuiClient["respondUserInput"];
-}): { readonly client: TuiClient; readonly connect: () => void } {
+}): {
+  readonly client: TuiClient;
+  readonly connect: () => void;
+  readonly subscribedThreadIds: string[];
+} {
   let shellSubscriber: ((snapshot: OrchestrationShellSnapshot) => void) | null = null;
+  const subscribedThreadIds: string[] = [];
   const client = {
     subscribeShell: (onSnapshot: (snapshot: OrchestrationShellSnapshot) => void) => {
       shellSubscriber = onSnapshot;
@@ -80,7 +89,10 @@ function fakeClient({
         shellSubscriber = null;
       };
     },
-    subscribeThread: () => () => {},
+    subscribeThread: (threadId: string) => {
+      subscribedThreadIds.push(threadId);
+      return () => {};
+    },
     peekThread: () => detail,
     subscribeVcsStatus: () => () => {},
     subscribeTerminalMetadata: () => () => {},
@@ -92,7 +104,7 @@ function fakeClient({
     runGitStackedAction: async () => {},
     runGitPull: async () => {},
   } as unknown as TuiClient;
-  return { client, connect: () => shellSubscriber?.(shell()) };
+  return { client, connect: () => shellSubscriber?.(shellSnapshot), subscribedThreadIds };
 }
 
 async function selectThread(
@@ -108,16 +120,78 @@ async function selectThread(
   await setup.waitForFrame((frame) => frame.includes("Project one"));
 
   // The initial selection is the collapsed project. Empty Enter expands it;
-  // Down then selects the first thread and attaches its live detail.
+  // Alt+Down then selects the first thread and attaches its live detail.
   await React.act(async () => {
     setup.mockInput.pressEnter();
-    setup.mockInput.pressArrow("down");
+    setup.mockInput.pressKey("\x1b\x1b[B");
     await setup.renderOnce();
   });
   await setup.waitForFrame(
     (frame) => frame.includes("Thread one") && !frame.includes("Enter to expand"),
   );
 }
+
+describe("ChatView tmux scrolling", () => {
+  it("Given an image is visible, when tmux delivers a scroll fallback as an arrow key, then the selected thread does not change", async () => {
+    const detail = {
+      ...thread(),
+      messages: [
+        {
+          id: "u1",
+          role: "user",
+          text: "image under review",
+          createdAt: "2026-07-13T00:00:00.000Z",
+          updatedAt: "2026-07-13T00:00:00.000Z",
+          streaming: false,
+          attachments: [
+            {
+              type: "image",
+              id: "att1",
+              name: "diagram.png",
+              mimeType: "image/png",
+              sizeBytes: 1024,
+            },
+          ],
+        },
+      ],
+    } as unknown as OrchestrationThread;
+    const fake = fakeClient({
+      detail,
+      shellSnapshot: shell([
+        {
+          id: "t1",
+          projectId: "p1",
+          title: "Thread one",
+          updatedAt: "2026-07-13T00:00:01.000Z",
+          session: { status: "idle" },
+        },
+        {
+          id: "t2",
+          projectId: "p1",
+          title: "Thread two",
+          updatedAt: "2026-07-13T00:00:00.000Z",
+          session: { status: "idle" },
+        },
+      ] as unknown as OrchestrationShellSnapshot["threads"]),
+    });
+    const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
+      width: 110,
+      height: 28,
+    });
+
+    await selectThread(setup, fake.connect);
+    await setup.waitForFrame((frame) => frame.includes("diagram.png"));
+    expect(fake.subscribedThreadIds.at(-1)).toBe("t1");
+
+    await React.act(async () => {
+      setup.mockInput.pressArrow("down");
+      await setup.renderOnce();
+    });
+
+    expect(fake.subscribedThreadIds).toEqual(["t1"]);
+    setup.renderer.destroy();
+  });
+});
 
 describe("ChatView acknowledged submissions", () => {
   it("Given a reply is in flight, when Enter repeats and the request fails, then one request is made and the exact draft remains", async () => {

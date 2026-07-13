@@ -593,7 +593,7 @@ export const MessagesTimeline = React.memo(function MessagesTimeline({
       >
         <text fg={palette.dim}>
           {projectHint
-            ? `${projectHint} — Enter to expand, then ↑/↓ to pick a thread.`
+            ? `${projectHint} — Enter to expand, then Alt+↑/↓ to pick a thread.`
             : "Select a thread to view its conversation."}
         </text>
       </box>

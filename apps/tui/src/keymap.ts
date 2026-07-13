@@ -26,7 +26,6 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
   {
     title: "Conversation",
     bindings: [
-      { keys: "↑/↓", description: "Navigate the sidebar" },
       { keys: "Alt+↑/↓", description: "Previous / next thread" },
       { keys: "Alt+1…9", description: "Jump to the Nth thread" },
       { keys: "PgUp/PgDn", description: "Scroll the conversation" },
