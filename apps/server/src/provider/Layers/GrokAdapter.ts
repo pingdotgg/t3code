@@ -41,7 +41,7 @@ import {
   ProviderAdapterSessionNotFoundError,
   ProviderAdapterValidationError,
 } from "../Errors.ts";
-import { mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
+import { isNoteworthyAcpStderrLine, mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
 import type * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 import {
   makeAcpAssistantItemEvent,
@@ -786,6 +786,65 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               Effect.gen(function* () {
                 if (event._tag === "EventStreamBarrier") {
                   yield* Deferred.succeed(event.acknowledge, undefined);
+                  return;
+                }
+                if (event._tag === "ProcessStderr") {
+                  yield* logNative(ctx.threadId, "process/stderr", { message: event.message });
+                  if (isNoteworthyAcpStderrLine(event.message)) {
+                    yield* offerRuntimeEvent({
+                      type: "runtime.warning",
+                      ...(yield* makeEventStamp()),
+                      provider: PROVIDER,
+                      threadId: ctx.threadId,
+                      payload: { message: event.message },
+                    });
+                  }
+                  return;
+                }
+                if (event._tag === "ProcessExited") {
+                  if (ctx.stopped) {
+                    return;
+                  }
+                  const baseReason =
+                    event.exitCode === 0
+                      ? "Grok ACP process exited."
+                      : `Grok ACP process exited with code ${event.exitCode}.`;
+                  const reason = event.stderrTail
+                    ? `${baseReason}\nLast stderr:\n${event.stderrTail}`
+                    : baseReason;
+                  yield* logNative(ctx.threadId, "session/exited", {
+                    exitCode: event.exitCode,
+                    ...(event.stderrTail ? { stderrTail: event.stderrTail } : {}),
+                  });
+                  yield* offerRuntimeEvent({
+                    type: "session.exited",
+                    ...(yield* makeEventStamp()),
+                    provider: PROVIDER,
+                    threadId: ctx.threadId,
+                    payload: {
+                      reason,
+                      ...(event.stderrTail ? { stderrTail: event.stderrTail } : {}),
+                      ...(event.exitCode === 0
+                        ? { exitKind: "graceful" as const }
+                        : { exitKind: "error" as const }),
+                    },
+                  });
+                  if (event.exitCode !== 0) {
+                    yield* offerRuntimeEvent({
+                      type: "runtime.error",
+                      ...(yield* makeEventStamp()),
+                      provider: PROVIDER,
+                      threadId: ctx.threadId,
+                      payload: {
+                        message: reason,
+                        class: "provider_error" as const,
+                        detail: {
+                          exitCode: event.exitCode,
+                          ...(event.stderrTail ? { stderrTail: event.stderrTail } : {}),
+                        },
+                      },
+                    });
+                  }
                   return;
                 }
                 if (

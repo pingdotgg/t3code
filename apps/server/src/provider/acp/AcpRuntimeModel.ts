@@ -108,6 +108,15 @@ export type AcpParsedSessionEvent =
       readonly itemId?: string;
       readonly text: string;
       readonly rawPayload: unknown;
+    }
+  | {
+      readonly _tag: "ProcessExited";
+      readonly exitCode: number;
+      readonly stderrTail?: string;
+    }
+  | {
+      readonly _tag: "ProcessStderr";
+      readonly message: string;
     };
 
 type AcpSessionSetupResponse =

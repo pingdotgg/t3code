@@ -21,6 +21,7 @@ export function mapAcpToAdapterError(
   error: EffectAcpErrors.AcpError,
 ): ProviderAdapterError {
   if (isAcpProcessExitedError(error)) {
+    // stderrTail remains on the typed cause for post-mortem diagnostics.
     return new ProviderAdapterSessionClosedError({
       provider,
       threadId,
@@ -53,4 +54,15 @@ export function acpPermissionOutcome(decision: ProviderApprovalDecision): string
     default:
       return "reject-once";
   }
+}
+
+/**
+ * Whether a captured ACP child stderr line should surface as a live
+ * `runtime.warning` in the work log. All lines are persisted to the native
+ * NDJSON log regardless; this only gates the visible event stream so chatty
+ * CLIs (grok logs INFO/WARN diagnostics to stderr continuously) do not flood
+ * the timeline. Stall diagnostics from the turn watchdog always pass.
+ */
+export function isNoteworthyAcpStderrLine(line: string): boolean {
+  return /\b(error|fatal|panic|stalled|traceback|unhandled)\b/i.test(line);
 }

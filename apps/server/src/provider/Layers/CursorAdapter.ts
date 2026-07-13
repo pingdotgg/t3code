@@ -49,7 +49,11 @@ import {
   ProviderAdapterSessionNotFoundError,
   ProviderAdapterValidationError,
 } from "../Errors.ts";
-import { acpPermissionOutcome, mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
+import {
+  acpPermissionOutcome,
+  isNoteworthyAcpStderrLine,
+  mapAcpToAdapterError,
+} from "../acp/AcpAdapterSupport.ts";
 import type * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 import {
   makeAcpAssistantItemEvent,
@@ -866,6 +870,75 @@ export function makeCursorAdapter(
                       }),
                     );
                     return;
+                  case "ProcessStderr": {
+                    yield* logNative(
+                      ctx.threadId,
+                      "process/stderr",
+                      { message: event.message },
+                      "acp.jsonrpc",
+                    );
+                    if (isNoteworthyAcpStderrLine(event.message)) {
+                      yield* offerRuntimeEvent({
+                        type: "runtime.warning",
+                        ...(yield* makeEventStamp()),
+                        provider: PROVIDER,
+                        threadId: ctx.threadId,
+                        payload: { message: event.message },
+                      });
+                    }
+                    return;
+                  }
+                  case "ProcessExited": {
+                    if (ctx.stopped) {
+                      return;
+                    }
+                    const baseReason =
+                      event.exitCode === 0
+                        ? "Cursor ACP process exited."
+                        : `Cursor ACP process exited with code ${event.exitCode}.`;
+                    const reason = event.stderrTail
+                      ? `${baseReason}\nLast stderr:\n${event.stderrTail}`
+                      : baseReason;
+                    yield* logNative(
+                      ctx.threadId,
+                      "session/exited",
+                      {
+                        exitCode: event.exitCode,
+                        ...(event.stderrTail ? { stderrTail: event.stderrTail } : {}),
+                      },
+                      "acp.jsonrpc",
+                    );
+                    yield* offerRuntimeEvent({
+                      type: "session.exited",
+                      ...(yield* makeEventStamp()),
+                      provider: PROVIDER,
+                      threadId: ctx.threadId,
+                      payload: {
+                        reason,
+                        ...(event.stderrTail ? { stderrTail: event.stderrTail } : {}),
+                        ...(event.exitCode === 0
+                          ? { exitKind: "graceful" as const }
+                          : { exitKind: "error" as const }),
+                      },
+                    });
+                    if (event.exitCode !== 0) {
+                      yield* offerRuntimeEvent({
+                        type: "runtime.error",
+                        ...(yield* makeEventStamp()),
+                        provider: PROVIDER,
+                        threadId: ctx.threadId,
+                        payload: {
+                          message: reason,
+                          class: "provider_error" as const,
+                          detail: {
+                            exitCode: event.exitCode,
+                            ...(event.stderrTail ? { stderrTail: event.stderrTail } : {}),
+                          },
+                        },
+                      });
+                    }
+                    return;
+                  }
                 }
               }),
             ),

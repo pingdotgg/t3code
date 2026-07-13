@@ -70,9 +70,12 @@ export const makeAcpNativeLoggerFactory = Effect.fn("makeAcpNativeLoggerFactory"
     readonly nativeEventLogger: EventNdjsonLogger | undefined;
     readonly provider: ProviderDriverKind;
     readonly threadId: ThreadId;
-  }): Pick<AcpSessionRuntime.AcpSessionRuntimeOptions, "requestLogger" | "protocolLogging"> => {
+  }): Pick<
+    AcpSessionRuntime.AcpSessionRuntimeOptions,
+    "requestLogger" | "protocolLogging" | "onStderrLine"
+  > => {
     const writeNativeAcpLog = (logInput: {
-      readonly kind: "request" | "protocol";
+      readonly kind: "request" | "protocol" | "stderr";
       readonly payload: unknown;
     }) =>
       Effect.gen(function* () {
@@ -122,6 +125,11 @@ export const makeAcpNativeLoggerFactory = Effect.fn("makeAcpNativeLoggerFactory"
                   payload: formatProtocolLogPayload(event),
                 }),
             } satisfies NonNullable<AcpSessionRuntime.AcpSessionRuntimeOptions["protocolLogging"]>,
+            onStderrLine: (line: string) =>
+              writeNativeAcpLog({
+                kind: "stderr",
+                payload: { method: "process/stderr", line },
+              }),
           }
         : {}),
     };

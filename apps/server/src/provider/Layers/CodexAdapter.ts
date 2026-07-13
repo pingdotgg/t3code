@@ -717,6 +717,15 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "session/exited" || event.method === "session/closed") {
+    const exitPayload =
+      event.payload && typeof event.payload === "object" && !Array.isArray(event.payload)
+        ? (event.payload as Record<string, unknown>)
+        : undefined;
+    const stderrTail =
+      typeof exitPayload?.stderrTail === "string" && exitPayload.stderrTail.length > 0
+        ? exitPayload.stderrTail
+        : undefined;
+    const exitCode = typeof exitPayload?.exitCode === "number" ? exitPayload.exitCode : undefined;
     return [
       ...(options?.pendingUsageLimit !== undefined
         ? [
@@ -750,9 +759,24 @@ function mapToRuntimeEvents(
         type: "session.exited",
         payload: {
           ...(event.message ? { reason: event.message } : {}),
-          ...(event.method === "session/closed" ? { exitKind: "graceful" } : {}),
+          ...(event.method === "session/closed" ? { exitKind: "graceful" as const } : {}),
+          ...(stderrTail ? { stderrTail } : {}),
         },
       },
+      ...(exitCode !== undefined && exitCode !== 0 && stderrTail
+        ? [
+            {
+              ...runtimeEventBase(event, canonicalThreadId),
+              eventId: EventId.make(`${event.id}:stderr-tail`),
+              type: "runtime.error" as const,
+              payload: {
+                message: event.message ?? `Codex App Server exited with code ${exitCode}.`,
+                class: "provider_error" as const,
+                detail: { exitCode, stderrTail },
+              },
+            },
+          ]
+        : []),
     ];
   }
 
@@ -1402,6 +1426,16 @@ function mapToRuntimeEvents(
 
   if (event.method === "process/stderr") {
     const message = event.message ?? "Codex process stderr";
+    // log-only lines are written to native NDJSON by the adapter event loop but
+    // must not spam the live runtime event stream.
+    const logOnly =
+      event.payload !== undefined &&
+      typeof event.payload === "object" &&
+      !Array.isArray(event.payload) &&
+      (event.payload as { surface?: unknown }).surface === "log-only";
+    if (logOnly) {
+      return [];
+    }
     const isFatal = isFatalCodexProcessStderrMessage(message);
     return [
       isFatal

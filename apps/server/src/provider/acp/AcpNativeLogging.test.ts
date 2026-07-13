@@ -134,4 +134,30 @@ nodeServicesIt("ACP native logging", (it) => {
       }
     }),
   );
+
+  it.effect("routes child-process stderr lines into the native event log", () =>
+    Effect.gen(function* () {
+      const records: Array<unknown> = [];
+      const makeLogger = yield* makeAcpNativeLoggerFactory();
+      const logger = makeLogger({
+        nativeEventLogger: {
+          filePath: "/tmp/provider-native.ndjson",
+          write: (event) => Effect.sync(() => void records.push(event)),
+          close: () => Effect.void,
+        },
+        provider: ProviderDriverKind.make("grok"),
+        threadId: ThreadId.make("thread-stderr"),
+      });
+      assert.exists(logger.onStderrLine);
+      if (!logger.onStderrLine) return;
+
+      yield* logger.onStderrLine("agent crashed: stack trace");
+
+      const serialized = encodeUnknownJson(records);
+      assert.include(serialized, '"kind":"stderr"');
+      assert.include(serialized, '"method":"process/stderr"');
+      assert.include(serialized, "agent crashed: stack trace");
+      assert.include(serialized, "thread-stderr");
+    }),
+  );
 });
