@@ -31,7 +31,7 @@ public struct PlanCard: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Button {
-                withAnimation(Motion.snap) { isExpanded.toggle() }
+                withAnimation(Motion.feedback) { isExpanded.toggle() }
             } label: {
                 HStack(spacing: 8) {
                     Label("Proposed plan", systemImage: "list.clipboard")
@@ -85,6 +85,6 @@ public struct PlanCard: View {
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
         // Implemented state arrives from the model, not a tap, so the badge
         // swap and button removal animate off this value change.
-        .animation(Motion.settle, value: plan.isImplemented)
+        .animation(Motion.structure, value: plan.isImplemented)
     }
 }

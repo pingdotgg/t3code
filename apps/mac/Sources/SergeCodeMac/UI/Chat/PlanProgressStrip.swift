@@ -27,15 +27,14 @@ struct PlanProgressStrip: View {
             .glassEffect(.regular, in: .rect(cornerRadius: 16))
             .onReceive(NotificationCenter.default.publisher(for: .uiProbeToggleSection)) { note in
                 guard note.object as? String == "plan" else { return }
-                withDeferredAnimation(Motion.snap) {
+                withDeferredAnimation(Motion.feedback) {
                     isExpanded.toggle()
                 }
             }
-            .animation(Motion.settle, value: isExpanded)
-            // Live todo updates stream in from the agent: the count ticks,
-            // the current-step label swaps, expanded rows morph their icons.
-            .animation(Motion.settle, value: progress.steps)
-            .transition(Motion.bannerDrop)
+            .animation(Motion.structure, value: isExpanded)
+            // Live todo updates stream in from the agent; row-local content
+            // transitions handle them without reanimating the whole strip.
+            .transition(Motion.banner)
         }
     }
 
@@ -44,7 +43,7 @@ struct PlanProgressStrip: View {
     private func headerButton(_ progress: PlanProgress) -> some View {
         let completed = progress.steps.filter { $0.status == .completed }.count
         return Button {
-            withAnimation(Motion.snap) { isExpanded.toggle() }
+            withAnimation(Motion.feedback) { isExpanded.toggle() }
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "checklist")
@@ -133,9 +132,9 @@ struct PlanProgressStrip: View {
     /// `.contentTransition` rather than swapping glyphs.
     private func statusIcon(_ status: PlanStepStatus) -> some View {
         Image(systemName: iconName(status))
-            .symbolEffect(.pulse, isActive: status == .inProgress)
             .foregroundStyle(iconTint(status))
-            .contentTransition(.symbolEffect(.replace))
+            .contentTransition(
+                Motion.reduceMotion ? .identity : .symbolEffect(.replace))
     }
 
     private func iconName(_ status: PlanStepStatus) -> String {
