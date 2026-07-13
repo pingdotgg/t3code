@@ -280,7 +280,7 @@ function makeMutableServerSettingsService(
   return Effect.gen(function* () {
     const settingsRef = yield* Ref.make(initial);
     const changes = yield* PubSub.unbounded<ContractServerSettings>();
-    const changesSubscribed = yield* Deferred.make<void>();
+    const settingsWatcherSubscribed = yield* Deferred.make<void>();
 
     const service = {
       start: Effect.void,
@@ -296,17 +296,18 @@ function makeMutableServerSettingsService(
           return next;
         }),
       get streamChanges() {
-        return Stream.unwrap(
-          PubSub.subscribe(changes).pipe(
-            Effect.tap(() => Deferred.succeed(changesSubscribed, undefined)),
-            Effect.map(Stream.fromSubscription),
-          ),
+        return Stream.fromPubSub(changes);
+      },
+      get subscribeChanges() {
+        return PubSub.subscribe(changes).pipe(
+          Effect.tap(() => Deferred.succeed(settingsWatcherSubscribed, undefined)),
+          Effect.map(Stream.fromSubscription),
         );
       },
     } satisfies ServerSettingsModule.ServerSettingsService["Service"];
 
     return Object.assign(service, {
-      changesSubscribed: Deferred.await(changesSubscribed),
+      settingsWatcherSubscribed: Deferred.await(settingsWatcherSubscribed),
     });
   });
 }
@@ -1239,7 +1240,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
 
           yield* Effect.gen(function* () {
             const registry = yield* ProviderRegistry.ProviderRegistry;
-            yield* serverSettings.changesSubscribed;
+            yield* serverSettings.settingsWatcherSubscribed;
             // Boot-time probe: the default codex instance is enabled with
             // `firstMissing`, so the real spawner yields ENOENT and the
             // snapshot should be `status: "error"`.

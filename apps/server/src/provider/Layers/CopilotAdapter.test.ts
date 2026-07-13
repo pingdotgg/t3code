@@ -76,6 +76,7 @@ const runtimeMock = vi.hoisted(() => {
       },
     },
     disconnect: vi.fn(async () => undefined),
+    getEvents: vi.fn(async (): Promise<SessionEvent[]> => []),
     setModel: vi.fn(async () => undefined),
     send: vi.fn(async (): Promise<string | undefined> => undefined),
     abort: vi.fn(async () => undefined),
@@ -587,13 +588,6 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         input: "second prompt",
         attachments: [],
       });
-      config.onEvent?.({
-        id: "user-message-second",
-        timestamp,
-        parentId: null,
-        type: "user.message",
-        data: { content: "second prompt" },
-      } as SessionEvent);
       completeTurn("sdk-turn-second", "evt-second");
       for (
         let attempt = 0;
@@ -607,7 +601,43 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         yield* waitForSdkEventQueue();
       }
 
-      const snapshot = yield* adapter.rollbackThread(threadId, 1);
+      runtimeMock.state.lastSession.send.mockResolvedValueOnce(undefined);
+      const thirdTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "third prompt",
+        attachments: [],
+      });
+      // The second turn's SDK user event can arrive after that turn completed
+      // and after a new app turn was queued. It must bind to the oldest local
+      // turn missing a history boundary instead of hijacking the new queue.
+      config.onEvent?.({
+        id: "user-message-second",
+        timestamp,
+        parentId: null,
+        type: "user.message",
+        data: { content: "second prompt" },
+      } as SessionEvent);
+      config.onEvent?.({
+        id: "user-message-third",
+        timestamp,
+        parentId: null,
+        type: "user.message",
+        data: { content: "third prompt" },
+      } as SessionEvent);
+      completeTurn("sdk-turn-third", "evt-third");
+      for (
+        let attempt = 0;
+        attempt < 20 &&
+        !runtimeEvents.some(
+          (event) =>
+            event.type === "turn.completed" && String(event.turnId) === String(thirdTurn.turnId),
+        );
+        attempt += 1
+      ) {
+        yield* waitForSdkEventQueue();
+      }
+
+      const snapshot = yield* adapter.rollbackThread(threadId, 2);
       NodeAssert.deepStrictEqual(runtimeMock.state.lastSession.rpc.history.truncate.mock.calls, [
         [{ eventId: "user-message-second" }],
       ]);
@@ -617,6 +647,45 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       );
       NodeAssert.deepStrictEqual(
         (yield* adapter.readThread(threadId)).turns.map((turn) => String(turn.id)),
+        [String(firstTurn.turnId)],
+      );
+
+      runtimeMock.state.lastSession.send.mockResolvedValueOnce(undefined);
+      const recoveredTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "recover persisted boundary",
+        attachments: [],
+      });
+      completeTurn("sdk-turn-recovered", "evt-recovered");
+      for (
+        let attempt = 0;
+        attempt < 20 &&
+        !runtimeEvents.some(
+          (event) =>
+            event.type === "turn.completed" &&
+            String(event.turnId) === String(recoveredTurn.turnId),
+        );
+        attempt += 1
+      ) {
+        yield* waitForSdkEventQueue();
+      }
+      runtimeMock.state.lastSession.getEvents.mockResolvedValueOnce([
+        {
+          id: "user-message-recovered",
+          timestamp,
+          parentId: null,
+          type: "user.message",
+          data: { content: "recover persisted boundary" },
+        } as SessionEvent,
+      ]);
+
+      const recoveredSnapshot = yield* adapter.rollbackThread(threadId, 1);
+      NodeAssert.deepStrictEqual(runtimeMock.state.lastSession.rpc.history.truncate.mock.calls, [
+        [{ eventId: "user-message-second" }],
+        [{ eventId: "user-message-recovered" }],
+      ]);
+      NodeAssert.deepStrictEqual(
+        recoveredSnapshot.turns.map((turn) => String(turn.id)),
         [String(firstTurn.turnId)],
       );
 
