@@ -131,6 +131,9 @@ function buildDiffPanelUnsafeCss(zoom: number, basePx: number): string {
 [data-diff],
 [data-file],
 [data-file-info],
+[data-file-info] *,
+[data-diffs-header],
+[data-diffs-header] *,
 [data-line],
 [data-code],
 [data-code] *,
@@ -141,6 +144,14 @@ function buildDiffPanelUnsafeCss(zoom: number, basePx: number): string {
 [data-diff] td {
   font-size: ${fontSizePx}px !important;
   line-height: ${lineHeight} !important;
+}
+
+[data-diffs-header] svg,
+[data-file-info] svg,
+[data-change-icon],
+[data-rename-icon] {
+  width: 1em !important;
+  height: 1em !important;
 }
 `;
 }
@@ -657,7 +668,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
 
   const headerRow = (
     <>
-      <div className="relative min-w-0 flex-1 [-webkit-app-region:no-drag]">
+      <div className="relative min-w-0 flex-1 text-[length:var(--app-code-font-size)] [-webkit-app-region:no-drag]">
         <button
           type="button"
           className={cn(
@@ -670,7 +681,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           disabled={!canScrollTurnStripLeft}
           aria-label="Scroll turn list left"
         >
-          <ChevronLeftIcon className="size-3.5" />
+          <ChevronLeftIcon className="size-[1em]" />
         </button>
         <button
           type="button"
@@ -684,7 +695,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           disabled={!canScrollTurnStripRight}
           aria-label="Scroll turn list right"
         >
-          <ChevronRightIcon className="size-3.5" />
+          <ChevronRightIcon className="size-[1em]" />
         </button>
         <div
           ref={turnStripRef}
@@ -712,7 +723,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                   : "border-border/70 bg-background/70 text-muted-foreground/80 hover:border-border hover:text-foreground/80",
               )}
             >
-              <div className="text-[10px] leading-tight font-medium">All turns</div>
+              <div className="leading-tight font-medium">All turns</div>
             </div>
           </button>
           {orderedTurnDiffSummaries.map((summary) => (
@@ -733,13 +744,13 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                 )}
               >
                 <div className="flex items-center gap-1">
-                  <span className="text-[10px] leading-tight font-medium">
+                  <span className="leading-tight font-medium">
                     Turn{" "}
                     {summary.checkpointTurnCount ??
                       inferredCheckpointTurnCountByTurnId[summary.turnId] ??
                       "?"}
                   </span>
-                  <span className="text-[9px] leading-tight opacity-70">
+                  <span className="leading-tight opacity-70">
                     {formatShortTimestamp(summary.completedAt, settings.timestampFormat)}
                   </span>
                 </div>
@@ -748,7 +759,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           ))}
         </div>
       </div>
-      <div className="flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]">
+      <div className="flex shrink-0 items-center gap-1 text-[length:var(--app-code-font-size)] [-webkit-app-region:no-drag]">
         {selectedTurn && (
           <DiffScopeToggle value={selectedScope} onChange={setSelectedScope} className="shrink-0" />
         )}
@@ -765,10 +776,10 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           }}
         >
           <Toggle aria-label="Stacked diff view" value="stacked">
-            <Rows3Icon className="size-3" />
+            <Rows3Icon className="size-[1em]" />
           </Toggle>
           <Toggle aria-label="Split diff view" value="split">
-            <Columns2Icon className="size-3" />
+            <Columns2Icon className="size-[1em]" />
           </Toggle>
         </ToggleGroup>
         <Toggle
@@ -781,9 +792,9 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
             setDiffWordWrap(Boolean(pressed));
           }}
         >
-          <TextWrapIcon className="size-3" />
+          <TextWrapIcon className="size-[1em]" />
         </Toggle>
-        <div className="flex shrink-0 items-center rounded-md border border-border/70 text-[10px]">
+        <div className="flex shrink-0 items-center rounded-md border border-border/70">
           <button
             type="button"
             aria-label="Zoom out diff"
@@ -792,7 +803,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
             onClick={() => setDiffZoom((z) => Math.max(DIFF_ZOOM_MIN, z - DIFF_ZOOM_STEP))}
             className="flex size-6 items-center justify-center rounded-l-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
           >
-            <MinusIcon className="size-2.5" />
+            <MinusIcon className="size-[1em]" />
           </button>
           <span className="min-w-[2.6rem] select-none text-center font-medium tabular-nums text-muted-foreground">
             {diffZoom}%
@@ -805,7 +816,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
             onClick={() => setDiffZoom((z) => Math.min(DIFF_ZOOM_MAX, z + DIFF_ZOOM_STEP))}
             className="flex size-6 items-center justify-center rounded-r-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
           >
-            <PlusIcon className="size-2.5" />
+            <PlusIcon className="size-[1em]" />
           </button>
         </div>
       </div>
@@ -815,24 +826,24 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   return (
     <DiffPanelShell mode={mode} header={headerRow}>
       {!activeThread ? (
-        <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
+        <div className="flex flex-1 items-center justify-center px-5 text-center text-[length:var(--app-code-font-size)] text-muted-foreground/70">
           Select a thread to inspect turn diffs.
         </div>
       ) : !isGitRepo ? (
-        <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
+        <div className="flex flex-1 items-center justify-center px-5 text-center text-[length:var(--app-code-font-size)] text-muted-foreground/70">
           Turn diffs are unavailable because this project is not a git repository.
         </div>
       ) : orderedTurnDiffSummaries.length === 0 ? (
-        <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
+        <div className="flex flex-1 items-center justify-center px-5 text-center text-[length:var(--app-code-font-size)] text-muted-foreground/70">
           No completed turns yet.
         </div>
       ) : selectedTurnRequestedButMissing ? (
-        <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
+        <div className="flex flex-1 items-center justify-center px-5 text-center text-[length:var(--app-code-font-size)] text-muted-foreground/70">
           The selected turn is unavailable. It may have been removed by a revert or is no longer
           present in this thread.
         </div>
       ) : selectedTurnRangeMissing ? (
-        <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
+        <div className="flex flex-1 items-center justify-center px-5 text-center text-[length:var(--app-code-font-size)] text-muted-foreground/70">
           A diff for this turn is not yet available. Checkpoint metadata is missing.
         </div>
       ) : (
@@ -843,12 +854,14 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           >
             {checkpointDiffError && !renderablePatch && (
               <div className="px-3">
-                <p className="mb-2 text-[11px] text-red-500/80">{checkpointDiffError}</p>
+                <p className="mb-2 text-[length:var(--app-code-font-size)] text-red-500/80">
+                  {checkpointDiffError}
+                </p>
               </div>
             )}
             {displayDiffState?._tag === "stale" && renderablePatch && (
               <div className="px-3 pt-2">
-                <p className="rounded-md border border-border/70 bg-background/70 px-2 py-1 text-[11px] text-muted-foreground/75">
+                <p className="rounded-md border border-border/70 bg-background/70 px-2 py-1 text-[length:var(--app-code-font-size)] text-muted-foreground/75">
                   Showing the last loaded diff while the latest checkpoint is unavailable:{" "}
                   {displayDiffState.message}
                 </p>
@@ -858,7 +871,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
               isLoadingCheckpointDiff ? (
                 <DiffPanelLoadingState label="Loading checkpoint diff..." />
               ) : (
-                <div className="flex h-full items-center justify-center px-3 py-2 text-xs text-muted-foreground/70">
+                <div className="flex h-full items-center justify-center px-3 py-2 text-[length:var(--app-code-font-size)] text-muted-foreground/70">
                   <p>
                     {hasNoNetChanges
                       ? "No net changes in this selection."
@@ -890,13 +903,13 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                       >
                         <button
                           type="button"
-                          className="mb-2 block max-w-full truncate font-mono text-xs text-foreground underline decoration-transparent underline-offset-2 transition-colors hover:decoration-current"
+                          className="mb-2 block max-w-full truncate font-mono text-[length:var(--app-code-font-size)] text-foreground underline decoration-transparent underline-offset-2 transition-colors hover:decoration-current"
                           onClick={() => openDiffFileInEditor(filePath)}
                           title={filePath}
                         >
                           {filePath}
                         </button>
-                        <p className="text-xs text-muted-foreground/80">
+                        <p className="text-[length:var(--app-code-font-size)] text-muted-foreground/80">
                           {safetyLabel ?? "Diff is not renderable."}
                         </p>
                       </div>
@@ -919,7 +932,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                       }}
                     >
                       {safetyLabel && (
-                        <div className="rounded-t-md border border-b-0 border-border/70 bg-background/70 px-3 py-1 text-[11px] text-muted-foreground/75">
+                        <div className="rounded-t-md border border-b-0 border-border/70 bg-background/70 px-3 py-1 text-[length:var(--app-code-font-size)] text-muted-foreground/75">
                           {safetyLabel}
                         </div>
                       )}
@@ -929,7 +942,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                           <button
                             type="button"
                             className={cn(
-                              "inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 transition-colors hover:bg-foreground/10 focus-visible:outline-hidden",
+                              "inline-flex size-[1.25em] shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 transition-colors hover:bg-foreground/10 focus-visible:outline-hidden",
                               getDiffCollapseIconClassName(fileDiff),
                             )}
                             aria-label={collapsed ? `Expand ${filePath}` : `Collapse ${filePath}`}
@@ -941,9 +954,9 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                             }}
                           >
                             {collapsed ? (
-                              <ChevronRightIcon className="size-4" />
+                              <ChevronRightIcon className="size-[1em]" />
                             ) : (
-                              <ChevronDownIcon className="size-4" />
+                              <ChevronDownIcon className="size-[1em]" />
                             )}
                           </button>
                         )}
@@ -964,7 +977,9 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
             ) : (
               <div className="h-full overflow-auto p-2">
                 <div className="space-y-2">
-                  <p className="text-[11px] text-muted-foreground/75">{renderablePatch.reason}</p>
+                  <p className="text-[length:var(--app-code-font-size)] text-muted-foreground/75">
+                    {renderablePatch.reason}
+                  </p>
                   <pre
                     className={cn(
                       "max-h-[72vh] rounded-md border border-border/70 bg-background/70 p-3 font-mono text-muted-foreground/90",
