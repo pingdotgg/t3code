@@ -102,7 +102,7 @@ public enum SyntaxTint: Sendable {
         case .cFamily:
             return [
                 "alignas", "alignof", "and", "asm", "auto", "await", "bool", "break",
-                "by", "case", "catch", "chan", "char", "class", " companion", "const",
+                "by", "case", "catch", "chan", "char", "class", "companion", "const",
                 "constexpr", "continue", "crate", "data", "default", "defer", "delete",
                 "do", "double", "dyn", "else", "enum", "echo", "except", "export",
                 "extends", "extern", "false", "final", "finally", "float", "for",

@@ -169,6 +169,12 @@ public struct NodeRuntimeLocator: Sendable {
     }
 
     private static func runProbe(_ process: Process, timeout: TimeInterval = 5) -> String? {
+        DispatchQueue.global(qos: .utility).sync {
+            runProbeOnUtilityQueue(process, timeout: timeout)
+        }
+    }
+
+    private static func runProbeOnUtilityQueue(_ process: Process, timeout: TimeInterval) -> String? {
         let stdout = Pipe()
         process.standardOutput = stdout
         process.standardError = FileHandle.nullDevice

@@ -19,6 +19,7 @@ public struct DiffReviewView: View {
     @UIState private var inFlightRequest: DiffPreparationRequest?
     @UIState private var preparationGeneration = 0
     @UIState private var isPreparing = false
+    @UIState private var contentWidth: CGFloat = 0
     @UIState private var magnifyBaseZoom: Double?
 
     public init(model: AppModel, threadID: String) {
@@ -87,6 +88,10 @@ public struct DiffReviewView: View {
         DiffZoom.clamp(zoomFactor)
     }
 
+    private var renderedMode: DiffViewMode {
+        viewMode == .sideBySide && contentWidth >= 700 ? .sideBySide : .unified
+    }
+
     public var body: some View {
         VStack(spacing: 0) {
             header
@@ -96,16 +101,16 @@ public struct DiffReviewView: View {
         .background(.background)
         .onAppear(perform: normalizeZoom)
         .onChange(of: selectedFileKey) { _, newKey in
-            prepareRows(for: newKey, mode: viewMode)
+            prepareRows(for: newKey, mode: renderedMode)
         }
         .onChange(of: files.map(\.path)) { _, _ in
-            prepareRows(for: selectedFileKey, mode: viewMode)
+            prepareRows(for: selectedFileKey, mode: renderedMode)
         }
-        .onChange(of: viewMode) { _, newMode in
+        .onChange(of: renderedMode) { _, newMode in
             prepareRows(for: selectedFileKey, mode: newMode)
         }
         .task(id: selectedFileKey) {
-            prepareRows(for: selectedFileKey, mode: viewMode)
+            prepareRows(for: selectedFileKey, mode: renderedMode)
         }
         .onDisappear {
             rowPreparationTask?.cancel()
@@ -309,29 +314,34 @@ public struct DiffReviewView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let selectedFile, selectedFile.hunks.isEmpty {
             emptyFileState(for: selectedFile)
-        } else if isPreparing && !hasPreparedRows(for: selectedFileKey, mode: viewMode) {
-            ProgressView()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             GeometryReader { geo in
-                let useSideBySide =
-                    viewMode == .sideBySide && geo.size.width >= 700
-                VStack(spacing: 0) {
-                    if viewMode == .sideBySide && geo.size.width < 700 {
-                        Text("Side-by-side needs a wider window — showing unified.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 4)
-                            .background(Color.secondary.opacity(0.08))
-                    }
-                    if useSideBySide {
-                        sideBySideScroll
+                let effectiveMode = renderedMode
+                Group {
+                    if isPreparing && !hasPreparedRows(for: selectedFileKey, mode: effectiveMode) {
+                        ProgressView()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
-                        unifiedScroll
+                        VStack(spacing: 0) {
+                            if viewMode == .sideBySide && geo.size.width < 700 {
+                                Text("Side-by-side needs a wider window — showing unified.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 4)
+                                    .background(Color.secondary.opacity(0.08))
+                            }
+                            if effectiveMode == .sideBySide {
+                                sideBySideScroll
+                            } else {
+                                unifiedScroll
+                            }
+                        }
                     }
                 }
+                .onAppear { contentWidth = geo.size.width }
+                .onChange(of: geo.size.width) { _, width in contentWidth = width }
             }
         }
     }
@@ -435,7 +445,7 @@ public struct DiffReviewView: View {
                     await MainActor.run {
                         guard generation == preparationGeneration,
                               selectedFileKey == key,
-                              viewMode == mode else { return }
+                              renderedMode == mode else { return }
                         unifiedRows = rows
                         preparedUnifiedKey = key
                         inFlightRequest = nil
@@ -448,7 +458,7 @@ public struct DiffReviewView: View {
                     await MainActor.run {
                         guard generation == preparationGeneration,
                               selectedFileKey == key,
-                              viewMode == mode else { return }
+                              renderedMode == mode else { return }
                         sideBySideRows = rows
                         preparedSideBySideKey = key
                         inFlightRequest = nil
