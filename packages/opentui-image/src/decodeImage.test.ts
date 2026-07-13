@@ -16,6 +16,8 @@ describe("decodeImage", () => {
     expect(image.imageWidth).toBe(1);
     expect(image.imageHeight).toBe(1);
     expect(image.data).toHaveLength(4);
+    expect(image.data.byteOffset).toBe(0);
+    expect(image.data.buffer.byteLength).toBe(image.data.byteLength);
   });
 
   it("rejects invalid encoded data", async () => {

@@ -42,7 +42,9 @@ export async function decodeImage(
 
   const result = await pipeline.ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   return {
-    data: new Uint8Array(result.data.buffer, result.data.byteOffset, result.data.byteLength),
+    // Sharp owns the returned Buffer through a native N-API allocation. Copy it
+    // so render transitions never depend on the native allocation's lifetime.
+    data: Uint8Array.from(result.data),
     imageWidth: result.info.width,
     imageHeight: result.info.height,
   };

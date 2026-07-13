@@ -15,6 +15,7 @@ import {
 import { buildFileTree, collectDirPaths, flattenFileTree } from "../fileTree.ts";
 import { clip } from "../format.ts";
 import { fileTypeColor, STATUS_ICONS, TOOL_ICONS } from "../icons.ts";
+import { deferMouseAction } from "../mouse.ts";
 import { type ActionableProposedPlan, latestActionableProposedPlan } from "../proposedPlan.ts";
 import { WorkingIndicator } from "./WorkingIndicator.tsx";
 import type { ExpandedImagePreview } from "./ImageLightbox.tsx";
@@ -193,12 +194,13 @@ function AttachmentPreview({
   const openUrl = url && onOpenUrl ? () => onOpenUrl(url) : undefined;
   const openImage =
     image && onOpenImage
-      ? () =>
+      ? deferMouseAction(() =>
           onOpenImage({
             name: attachment.name,
             sizeBytes: attachment.sizeBytes,
             image,
-          })
+          }),
+        )
       : undefined;
   const naturalColumns = image ? Math.max(1, Math.ceil(image.imageWidth / imageCellWidth)) : 1;
   const maxColumns = Math.max(1, Math.min(40, width - 2));
