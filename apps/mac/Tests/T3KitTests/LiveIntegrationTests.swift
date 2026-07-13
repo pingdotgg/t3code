@@ -53,7 +53,6 @@ private enum LiveE2EError: Error, CustomStringConvertible {
 /// matching SidecarKit.BootstrapEnvelope's wire shape.
 private struct TestBootstrapEnvelope: Encodable {
     var mode = "desktop"
-    var noBrowser = true
     var port: Int
     var t3Home: String?
     var host: String
@@ -215,7 +214,6 @@ private func spawnServer(
         "--port", String(port),
         "--host", host,
         "--base-dir", baseDir,
-        "--no-browser",
     ]
     let stdinPipe = Pipe()
     process.standardInput = stdinPipe

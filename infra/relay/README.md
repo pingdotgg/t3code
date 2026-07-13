@@ -7,16 +7,15 @@ The relay is the hosted control plane for T3 Connect. It helps clients discover 
 remote environments, manages the cloud-side records needed for those connections, and delivers
 optional mobile notifications and Live Activities.
 
-The relay is intentionally not in the hot path for normal T3 Code traffic. After a client connects,
+The relay is intentionally not in the hot path for normal SergeCode traffic. After a client connects,
 regular API and WebSocket traffic goes directly between that client and the selected environment.
-See the [T3 Connect architecture overview](../../docs/cloud/t3-code-connect-auth-flow.html) for the larger system
-design.
+See the [architecture overview](../../docs/architecture/overview.md) for the larger system design.
 
 ## Responsibilities
 
 The relay currently owns:
 
-- Linking T3 Code environments to a cloud account.
+- Linking SergeCode environments to a cloud account.
 - Provisioning and tracking managed environment endpoints.
 - Issuing short-lived credentials used to connect clients to linked environments.
 - Listing linked environments and registered mobile devices for an account.
@@ -25,7 +24,7 @@ The relay currently owns:
 - Persisting relay state and exposing relay-specific traces for diagnostics.
 
 The environment server and relay have separate credentials and trust boundaries. Read
-[Environment Authentication Profile](../../docs/environment-auth.md) before changing token,
+[Environment Authentication Profile](../../docs/cloud/environment-auth.md) before changing token,
 credential, or authorization behavior.
 
 ## Code Map
@@ -153,14 +152,9 @@ The `production` GitHub environment must define these Actions secrets:
 
 The account-scoped repository credentials are consumed by Alchemy while provisioning relay stages; they
 are not bound into the relay Worker. The production deployment uses an Axiom personal access token,
-so `AXIOM_ORG_ID` must accompany `AXIOM_TOKEN`. The release workflow reads the production relay's
-derived public URL and Clerk publishable key from the same environment for downstream desktop, CLI,
-and hosted web builds.
+so `AXIOM_ORG_ID` must accompany `AXIOM_TOKEN`.
 
 See:
 
-- [T3 Connect Clerk Setup](../../docs/cloud/t3-connect-clerk.md) for Clerk keys, JWT templates, and waitlist
-  setup.
-- [Relay Observability](../../docs/relay-observability.md) for deployment tracing and diagnostics.
-- [T3 Connect Architecture Overview](../../docs/cloud/t3-code-connect-auth-flow.html) for the full link,
-  connect, endpoint, and notification flows.
+- [Relay Observability](../../docs/operations/relay-observability.md) for deployment tracing and diagnostics.
+- [Architecture Overview](../../docs/architecture/overview.md) for the native clients and backend.

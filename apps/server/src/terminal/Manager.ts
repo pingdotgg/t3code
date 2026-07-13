@@ -58,7 +58,6 @@ import {
   terminalSessionsTotal,
 } from "../observability/Metrics.ts";
 import * as ProcessRunner from "../processRunner.ts";
-import * as PortScanner from "../preview/PortScanner.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
 
 export {
@@ -81,7 +80,7 @@ const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
 const DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS = 128;
 const DEFAULT_OPEN_COLS = 120;
 const DEFAULT_OPEN_ROWS = 30;
-const TERMINAL_ENV_BLOCKLIST = new Set(["PORT", "ELECTRON_RENDERER_PORT", "ELECTRON_RUN_AS_NODE"]);
+const TERMINAL_ENV_BLOCKLIST = new Set(["PORT"]);
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const MAX_TERMINAL_LABEL_LENGTH = 128;
 
@@ -1102,26 +1101,14 @@ interface TerminalManagerOptions {
   subprocessPollIntervalMs?: number;
   processKillGraceMs?: number;
   maxRetainedInactiveSessions?: number;
-  registerTerminalProcesses?: (input: {
-    readonly threadId: string;
-    readonly terminalId: string;
-    readonly processIds: ReadonlyArray<number>;
-  }) => Effect.Effect<void>;
-  unregisterTerminal?: (input: {
-    readonly threadId: string;
-    readonly terminalId: string;
-  }) => Effect.Effect<void>;
 }
 
 export const make = Effect.fn("TerminalManager.make")(function* () {
   const { terminalLogsDir } = yield* ServerConfig.ServerConfig;
   const ptyAdapter = yield* PtyAdapter.PtyAdapter;
-  const portDiscovery = yield* PortScanner.PortDiscovery;
   return yield* makeWithOptions({
     logsDir: terminalLogsDir,
     ptyAdapter,
-    registerTerminalProcesses: portDiscovery.registerTerminalProcesses,
-    unregisterTerminal: portDiscovery.unregisterTerminal,
   });
 });
 
@@ -1154,8 +1141,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const processKillGraceMs = options.processKillGraceMs ?? DEFAULT_PROCESS_KILL_GRACE_MS;
   const maxRetainedInactiveSessions =
     options.maxRetainedInactiveSessions ?? DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS;
-  const registerTerminalProcesses = options.registerTerminalProcesses ?? (() => Effect.void);
-  const unregisterTerminal = options.unregisterTerminal ?? (() => Effect.void);
 
   yield* fileSystem.makeDirectory(logsDir, { recursive: true }).pipe(Effect.orDie);
 
@@ -1697,10 +1682,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }
 
       yield* clearKillFiber(action.process);
-      yield* unregisterTerminal({
-        threadId: action.threadId,
-        terminalId: action.terminalId,
-      });
       yield* publishEvent({
         type: "exited",
         threadId: action.threadId,
@@ -1735,10 +1716,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     });
 
     yield* clearKillFiber(process);
-    yield* unregisterTerminal({
-      threadId: session.threadId,
-      terminalId: session.terminalId,
-    });
     yield* startKillEscalation(process, session.threadId, session.terminalId);
     yield* evictInactiveSessionsIfNeeded();
   });
@@ -1905,10 +1882,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         advanceEventSequence(session);
         return [undefined, state] as const;
       });
-      yield* unregisterTerminal({
-        threadId: session.threadId,
-        terminalId: session.terminalId,
-      });
 
       yield* evictInactiveSessionsIfNeeded();
 
@@ -1940,7 +1913,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
     if (Option.isSome(session)) {
       yield* stopProcess(session.value);
-      yield* unregisterTerminal({ threadId, terminalId });
       yield* persistHistory(threadId, terminalId, session.value.history);
     }
 
@@ -2001,11 +1973,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }
 
       const next = inspectResult.value;
-      yield* registerTerminalProcesses({
-        threadId: session.threadId,
-        terminalId: session.terminalId,
-        processIds: next.processIds,
-      });
       const nextChildLabel = next.hasRunningSubprocess ? next.childCommand : null;
       const event = yield* modifyManagerState((state) => {
         const liveSession: Option.Option<TerminalSessionState> = Option.fromNullishOr(

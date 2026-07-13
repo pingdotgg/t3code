@@ -16,7 +16,7 @@ const UUID_REPAIR = `${MARKER}
     end.max || -1
 
     # Pod::Project generates sequential UUIDs without collision checks because CocoaPods
-    # normally creates the project in this process. EAS can restore Pods.xcodeproj from
+    # normally creates the project in this process. A build cache can restore Pods.xcodeproj from
     # cache, leaving the allocator behind the loaded objects. React Native's SPM support
     # then reuses an existing UUID and silently corrupts the project graph.
     next_index = highest_index + 1

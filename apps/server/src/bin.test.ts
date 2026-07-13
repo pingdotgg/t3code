@@ -57,7 +57,7 @@ const captureStdout = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 
 const makeCliTestServerConfig = (baseDir: string) =>
   Effect.gen(function* () {
-    const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, undefined);
+    const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir);
     return {
       logLevel: "Info",
       traceMinLevel: "Info",
@@ -75,10 +75,6 @@ const makeCliTestServerConfig = (baseDir: string) =>
       cwd: process.cwd(),
       baseDir,
       ...derivedPaths,
-      staticDir: undefined,
-      devUrl: undefined,
-      noBrowser: true,
-      startupPresentation: "browser",
       desktopBootstrapToken: undefined,
       autoBootstrapProjectFromCwd: false,
       logWebSocketEvents: false,
@@ -241,7 +237,7 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       const baseDir = NodeFS.mkdtempSync(
         NodePath.join(NodeOS.tmpdir(), "t3-cli-cloud-login-test-"),
       );
-      const { secretsDir } = yield* ServerConfig.deriveServerPaths(baseDir, undefined);
+      const { secretsDir } = yield* ServerConfig.deriveServerPaths(baseDir);
       NodeFS.mkdirSync(secretsDir, { recursive: true });
       NodeFS.writeFileSync(
         NodePath.join(secretsDir, "cloud-cli-oauth-token.bin"),
@@ -289,7 +285,7 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       const baseDir = NodeFS.mkdtempSync(
         NodePath.join(NodeOS.tmpdir(), "t3-cli-cloud-logout-test-"),
       );
-      const { secretsDir } = yield* ServerConfig.deriveServerPaths(baseDir, undefined);
+      const { secretsDir } = yield* ServerConfig.deriveServerPaths(baseDir);
       const tokenPath = NodePath.join(secretsDir, "cloud-cli-oauth-token.bin");
       NodeFS.mkdirSync(secretsDir, { recursive: true });
       NodeFS.writeFileSync(tokenPath, "invalid persisted token");
@@ -489,34 +485,6 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
           assert.equal(addedProject?.title, "Live Project");
         }),
       );
-    }),
-  );
-
-  it.effect("rejects dev-url on project commands", () =>
-    Effect.gen(function* () {
-      const workspaceRoot = NodeFS.mkdtempSync(
-        NodePath.join(NodeOS.tmpdir(), "t3-cli-projects-unknown-option-workspace-"),
-      );
-      const error = yield* runCliWithRuntime([
-        "project",
-        "add",
-        workspaceRoot,
-        "--dev-url",
-        "http://127.0.0.1:5173",
-      ]).pipe(Effect.flip);
-
-      if (!CliError.isCliError(error)) {
-        assert.fail(`Expected CliError, got ${String(error)}`);
-      }
-      if (error._tag !== "ShowHelp") {
-        assert.fail(`Expected ShowHelp, got ${error._tag}`);
-      }
-      assert.deepEqual(error.commandPath, ["t3", "project", "add"]);
-      const optionError = error.errors[0] as CliError.CliError | undefined;
-      if (!optionError || optionError._tag !== "UnrecognizedOption") {
-        assert.fail(`Expected UnrecognizedOption, got ${String(optionError?._tag)}`);
-      }
-      assert.equal(optionError.option, "--dev-url");
     }),
   );
 });

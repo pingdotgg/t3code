@@ -27,10 +27,10 @@ body:
       label: Area
       description: Which part of the project is affected?
       options:
-        - apps/web
+        - apps/mac
+        - apps/mobile
         - apps/server
-        - apps/desktop
-        - packages/contracts or packages/shared
+        - Shared packages or relay
         - Build, CI, or release tooling
         - Docs
         - Not sure
@@ -90,8 +90,8 @@ body:
     id: environment
     attributes:
       label: Environment
-      description: OS, browser or desktop app version, Node/Bun version, provider/model if relevant.
-      placeholder: macOS 15.3, Chrome 135, Bun 1.3.9, Codex app-server ...
+      description: OS, SergeCode version, Node version, provider/model, and connection type if relevant.
+      placeholder: macOS 26, SergeCode main @ abc1234, Node 24, Codex app-server ...
 
   - type: textarea
     id: logs

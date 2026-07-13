@@ -22,7 +22,7 @@
 - **Path:** `GET /ws`, upgraded to WebSocket.
   Registered server-side at `apps/server/src/ws.ts:1796-1798`
   (`HttpRouter.add("GET", "/ws", …)`).
-- **Scheme/host/port:** the same HTTP server that serves the web app and the
+- **Scheme/host/port:** the same HTTP server that exposes the API and the
   `/api/*` REST endpoints. Default listen port is **3773**
   (`apps/server/src/config.ts:17`, `DEFAULT_PORT = 3773`). Local desktop
   connections therefore use `ws://127.0.0.1:3773/ws`; remote/relay/SSH

@@ -174,7 +174,7 @@ describe("buildHomeThreadGroups", () => {
     expect(groups[0]?.threads.map((thread) => thread.environmentId)).toEqual([remoteEnvironmentId]);
   });
 
-  it("matches web repository, repository-path, and separate grouping modes", () => {
+  it("supports repository, repository-path, and separate grouping modes", () => {
     const environmentId = EnvironmentId.make("environment-1");
     const repositoryIdentity = {
       canonicalKey: "github.com/t3tools/t3code",
@@ -192,9 +192,9 @@ describe("buildHomeThreadGroups", () => {
     const projects = [
       makeProject({
         environmentId,
-        id: ProjectId.make("project-web"),
-        title: "Web",
-        workspaceRoot: "/workspaces/t3code/apps/web",
+        id: ProjectId.make("project-mac"),
+        title: "Mac",
+        workspaceRoot: "/workspaces/t3code/apps/mac",
         repositoryIdentity,
       }),
       makeProject({

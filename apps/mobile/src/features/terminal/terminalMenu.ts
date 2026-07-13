@@ -15,7 +15,7 @@ export interface TerminalMenuSession {
   readonly cwd: string | null;
   readonly status: "starting" | "running" | "exited" | "error" | "closed";
   readonly hasRunningSubprocess: boolean;
-  /** Server-authoritative title with the same fallback rules as web. */
+  /** Server-authoritative title with stable fallback rules. */
   readonly displayLabel: string;
   readonly updatedAt: string | null;
 }

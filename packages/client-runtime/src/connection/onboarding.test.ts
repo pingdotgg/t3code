@@ -5,14 +5,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { remoteHttpClientLayer } from "../rpc/http.ts";
-import { ClientPresentation, SshEnvironmentGateway } from "../platform/capabilities.ts";
+import { ClientPresentation } from "../platform/capabilities.ts";
 import { BearerConnectionCredential, BearerConnectionProfile } from "./catalog.ts";
 import { BearerConnectionTarget } from "./model.ts";
-import {
-  prepareBearerConnectionUpdate,
-  preparePairingRegistration,
-  prepareSshRegistration,
-} from "./onboarding.ts";
+import { prepareBearerConnectionUpdate, preparePairingRegistration } from "./onboarding.ts";
 
 const CLIENT_PRESENTATION_LAYER = Layer.succeed(
   ClientPresentation,
@@ -202,55 +198,6 @@ describe("connection onboarding", () => {
           wsBaseUrl: "ws://100.65.180.100:3773/",
         },
         credential: { token: "bearer-token" },
-      });
-    }),
-  );
-
-  it.effect("prepares an SSH registration from the provisioned platform environment", () =>
-    Effect.gen(function* () {
-      const target = {
-        alias: "devbox",
-        hostname: "devbox.example.test",
-        username: "developer",
-        port: 22,
-      };
-      const registration = yield* prepareSshRegistration({
-        target,
-      }).pipe(
-        Effect.provideService(
-          SshEnvironmentGateway,
-          SshEnvironmentGateway.of({
-            provision: () =>
-              Effect.succeed({
-                environmentId: EnvironmentId.make("environment-ssh"),
-                label: "Remote development box",
-                bootstrap: {
-                  target,
-                  httpBaseUrl: "http://127.0.0.1:3201",
-                  wsBaseUrl: "ws://127.0.0.1:3201",
-                  pairingToken: "pairing-token",
-                },
-                bearerToken: "bearer-token",
-              }),
-            prepare: () => Effect.die("unused"),
-            disconnect: () => Effect.die("unused"),
-          }),
-        ),
-      );
-
-      expect(registration).toMatchObject({
-        _tag: "SshConnectionRegistration",
-        target: {
-          environmentId: "environment-ssh",
-          label: "Remote development box",
-          connectionId: "ssh:environment-ssh",
-        },
-        profile: {
-          environmentId: "environment-ssh",
-          label: "Remote development box",
-          connectionId: "ssh:environment-ssh",
-          target,
-        },
       });
     }),
   );

@@ -13,12 +13,9 @@ export {
   type BearerConnectionUpdateInput,
   ConnectionOnboarding,
   type PairingConnectionInput,
-  type SshConnectionInput,
   prepareBearerConnectionUpdate,
   preparePairingRegistration,
-  prepareSshRegistration,
   registerPairingConnection,
-  registerSshConnection,
   updateBearerConnection,
 } from "./onboarding.ts";
 export * from "./presentation.ts";

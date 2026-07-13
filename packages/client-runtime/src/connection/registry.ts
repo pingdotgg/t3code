@@ -12,13 +12,11 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
-import * as ClientCapabilities from "../platform/capabilities.ts";
 import {
   type ConnectionCatalogEntry,
   type ConnectionRegistration,
   type PlatformConnectionRegistration,
   type PrimaryConnectionRegistration,
-  SshConnectionProfile,
   connectionRegistrationCatalogEntry,
 } from "./catalog.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
@@ -34,8 +32,6 @@ import * as Persistence from "../platform/persistence.ts";
 import * as EnvironmentSupervisor from "./supervisor.ts";
 import * as ConnectionDriver from "./driver.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
-
-const isSshConnectionProfile = Schema.is(SshConnectionProfile);
 
 export class EnvironmentNotRegisteredError extends Schema.TaggedErrorClass<EnvironmentNotRegisteredError>()(
   "EnvironmentNotRegisteredError",
@@ -135,14 +131,13 @@ export const make = Effect.gen(function* () {
   const connectivity = yield* Connectivity.Connectivity;
   const driver = yield* ConnectionDriver.ConnectionDriver;
   const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
-  const ssh = yield* ClientCapabilities.SshEnvironmentGateway;
   const persistedTargets = yield* storage.list;
   const initialEntries = new Map(
     yield* Effect.forEach(
       persistedTargets,
       Effect.fn("EnvironmentRegistry.loadCatalogEntry")(function* (target) {
         const profile =
-          target._tag === "BearerConnectionTarget" || target._tag === "SshConnectionTarget"
+          target._tag === "BearerConnectionTarget"
             ? yield* profiles.get(target.connectionId)
             : Option.none();
         return [
@@ -551,11 +546,6 @@ export const make = Effect.gen(function* () {
           });
         }
         const target = (yield* getEntry(environmentId)).target;
-        const profile =
-          target._tag === "BearerConnectionTarget" || target._tag === "SshConnectionTarget"
-            ? yield* profiles.get(target.connectionId)
-            : Option.none();
-
         yield* registrations.remove(target);
         yield* Ref.update(persistedTargetsByEnvironment, (current) => {
           const next = new Map(current);
@@ -582,22 +572,6 @@ export const make = Effect.gen(function* () {
           ],
           { concurrency: "unbounded", discard: true },
         );
-
-        if (
-          target._tag === "SshConnectionTarget" &&
-          Option.isSome(profile) &&
-          isSshConnectionProfile(profile.value)
-        ) {
-          yield* ssh.disconnect(profile.value.target).pipe(
-            Effect.tapError((error) =>
-              Effect.logWarning("Could not disconnect the managed SSH environment.", {
-                environmentId,
-                error,
-              }),
-            ),
-            Effect.ignore,
-          );
-        }
       }),
     );
   });
