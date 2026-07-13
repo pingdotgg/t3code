@@ -751,6 +751,79 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("maps session/exited payload stderrTail onto canonical session.exited", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const collectedFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(
+        Effect.forkChild,
+      );
+
+      yield* runtime.emit({
+        id: asEventId("evt-session-exited-stderr"),
+        kind: "session",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "session/exited",
+        message: "Codex App Server exited with code 1.",
+        payload: {
+          exitCode: 1,
+          stderrTail: "fatal: boom",
+        },
+      });
+      const events = Array.from(yield* Fiber.join(collectedFiber));
+      const exited = events.find((event) => event.type === "session.exited");
+      NodeAssert.ok(exited);
+      if (!exited || exited.type !== "session.exited") {
+        return;
+      }
+      NodeAssert.equal(exited.payload.stderrTail, "fatal: boom");
+      NodeAssert.equal(exited.payload.reason, "Codex App Server exited with code 1.");
+      const runtimeError = events.find((event) => event.type === "runtime.error");
+      NodeAssert.ok(runtimeError);
+      if (!runtimeError || runtimeError.type !== "runtime.error") {
+        return;
+      }
+      NodeAssert.deepEqual(runtimeError.payload.detail, {
+        exitCode: 1,
+        stderrTail: "fatal: boom",
+      });
+      NodeAssert.equal(
+        runtimeError.payload.message,
+        "Codex App Server exited with code 1.\nLast stderr:\nfatal: boom",
+      );
+    }),
+  );
+
+  it.effect("maps non-zero session exits without stderr to runtime.error", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const collectedFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(
+        Effect.forkChild,
+      );
+
+      yield* runtime.emit({
+        id: asEventId("evt-session-exited-no-stderr"),
+        kind: "session",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "session/exited",
+        message: "Codex App Server exited with code 7.",
+        payload: { exitCode: 7 },
+      });
+
+      const events = Array.from(yield* Fiber.join(collectedFiber));
+      const runtimeError = events.find((event) => event.type === "runtime.error");
+      NodeAssert.ok(runtimeError);
+      if (!runtimeError || runtimeError.type !== "runtime.error") {
+        return;
+      }
+      NodeAssert.equal(runtimeError.payload.message, "Codex App Server exited with code 7.");
+      NodeAssert.deepEqual(runtimeError.payload.detail, { exitCode: 7 });
+    }),
+  );
+
   it.effect("maps session/closed lifecycle events to canonical session.exited runtime events", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

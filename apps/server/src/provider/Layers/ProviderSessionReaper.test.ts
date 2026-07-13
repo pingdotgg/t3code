@@ -22,6 +22,7 @@ import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import * as ProviderSessionRuntime from "../../persistence/ProviderSessionRuntime.ts";
 import { ProviderValidationError } from "../Errors.ts";
 import { ProviderSessionReaper } from "../Services/ProviderSessionReaper.ts";
+import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import { ProviderService, type ProviderServiceShape } from "../Services/ProviderService.ts";
 import { ProviderSessionDirectoryLive } from "./ProviderSessionDirectory.ts";
 import { makeProviderSessionReaperLive } from "./ProviderSessionReaper.ts";
@@ -117,7 +118,9 @@ function makeReadModel(
 
 describe("ProviderSessionReaper", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
-    ProviderSessionReaper | ProviderSessionRuntime.ProviderSessionRuntimeRepository,
+    | ProviderSessionDirectory
+    | ProviderSessionReaper
+    | ProviderSessionRuntime.ProviderSessionRuntimeRepository,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -219,7 +222,7 @@ describe("ProviderSessionReaper", () => {
     return { stopSession, stoppedThreadIds };
   }
 
-  it("reaps stale persisted sessions without active turns", async () => {
+  it("reaps stale persisted sessions despite recent event activity", async () => {
     const threadId = ThreadId.make("thread-reaper-stale");
     const now = "2026-01-01T00:00:00.000Z";
     const harness = await createHarness({
@@ -256,6 +259,10 @@ describe("ProviderSessionReaper", () => {
         },
         runtimePayload: null,
       }),
+    );
+    const directory = await runtime!.runPromise(Effect.service(ProviderSessionDirectory));
+    await runtime!.runPromise(
+      directory.noteActivity?.(threadId, "9999-01-01T00:00:00.000Z") ?? Effect.void,
     );
 
     const reaper = await runtime!.runPromise(Effect.service(ProviderSessionReaper));

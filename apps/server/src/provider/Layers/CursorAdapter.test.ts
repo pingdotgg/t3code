@@ -250,6 +250,129 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
+  it.effect("keeps stderr out of the session.exited reason", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-process-exit-reason");
+      const stderrTail = "fatal: cursor mock crashed";
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({
+          T3_ACP_EXIT_ON_PROMPT: "1",
+          T3_ACP_EXIT_STDERR: stderrTail,
+        }),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeErrorReceived = yield* Deferred.make<void>();
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => runtimeEvents.push(event)).pipe(
+          Effect.andThen(
+            event.type === "runtime.error"
+              ? Deferred.succeed(runtimeErrorReceived, undefined)
+              : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      const sendTurnFiber = yield* adapter
+        .sendTurn({ threadId, input: "crash now", attachments: [] })
+        .pipe(Effect.ignore, Effect.forkChild);
+      yield* Deferred.await(runtimeErrorReceived);
+
+      const exited = runtimeEvents.find((event) => event.type === "session.exited");
+      assert.isDefined(exited);
+      if (exited?.type === "session.exited") {
+        assert.equal(exited.payload.reason, "Cursor ACP process exited with code 7.");
+        assert.equal(exited.payload.stderrTail, stderrTail);
+      }
+
+      const runtimeError = runtimeEvents.find((event) => event.type === "runtime.error");
+      assert.isDefined(runtimeError);
+      if (runtimeError?.type === "runtime.error") {
+        assert.equal(
+          runtimeError.payload.message,
+          `Cursor ACP process exited with code 7.\nLast stderr:\n${stderrTail}`,
+        );
+      }
+
+      yield* adapter.stopSession(threadId).pipe(Effect.ignore);
+      yield* Fiber.interrupt(sendTurnFiber);
+      yield* Fiber.interrupt(runtimeEventsFiber);
+    }),
+  );
+
+  it.effect("retires a crashed session and settles its pending approval", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-crash-pending-approval");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-crash-")),
+      );
+      const pidPath = NodePath.join(tempDir, "pid");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({
+          T3_ACP_EMIT_TOOL_CALLS: "1",
+          T3_ACP_PID_PATH: pidPath,
+        }),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const approvalRequested = yield* Deferred.make<void>();
+      const sessionExited = yield* Deferred.make<void>();
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => runtimeEvents.push(event)).pipe(
+          Effect.andThen(
+            event.type === "request.opened"
+              ? Deferred.succeed(approvalRequested, undefined)
+              : event.type === "session.exited"
+                ? Deferred.succeed(sessionExited, undefined)
+                : Effect.void,
+          ),
+          Effect.ignore,
+        ),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      const sendTurnFiber = yield* adapter
+        .sendTurn({ threadId, input: "crash during approval", attachments: [] })
+        .pipe(Effect.ignore, Effect.forkChild);
+      yield* Deferred.await(approvalRequested);
+      const pid = Number(yield* Effect.promise(() => NodeFSP.readFile(pidPath, "utf8")));
+      process.kill(pid, "SIGUSR2");
+
+      yield* Deferred.await(sessionExited);
+      yield* Fiber.await(sendTurnFiber);
+      yield* adapter.stopSession(threadId).pipe(Effect.ignore);
+
+      assert.equal(runtimeEvents.filter((event) => event.type === "session.exited").length, 1);
+      assert.isFalse(
+        (yield* adapter.listSessions()).some((session) => session.threadId === threadId),
+      );
+      assert.equal(yield* adapter.hasSession(threadId), false);
+
+      yield* Fiber.interrupt(runtimeEventsFiber);
+    }),
+  );
+
   it.effect("steers a running turn instead of opening a new one on mid-turn sendTurn", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;

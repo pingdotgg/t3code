@@ -10,6 +10,7 @@
  * @module ProviderServiceLive
  */
 import {
+  EventId,
   ModelSelection,
   NonNegativeInt,
   ThreadId,
@@ -56,6 +57,7 @@ import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
+import { makeTurnActivityWatchdog, type TurnHealthTransition } from "./TurnActivityWatchdog.ts";
 const isModelSelection = Schema.is(ModelSelection);
 
 /**
@@ -65,6 +67,8 @@ const isModelSelection = Schema.is(ModelSelection);
  */
 export interface ProviderServiceLiveOptions {
   readonly canonicalEventLogger?: EventNdjsonLogger;
+  readonly turnStallThresholdMs?: number;
+  readonly turnStallPollIntervalMs?: number;
 }
 
 type ProviderServiceMethod<Name extends keyof ProviderService.ProviderService["Service"]> =
@@ -214,6 +218,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistry;
   const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
+  const healthEventSequence = yield* Ref.make(0);
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
     McpSessionRegistry.issueActiveMcpCredential({ threadId, providerInstanceId }).pipe(
@@ -238,6 +243,44 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       Effect.flatMap((canonicalEvent) => PubSub.publish(runtimeEventPubSub, canonicalEvent)),
       Effect.asVoid,
     );
+
+  const publishTurnHealthTransition = Effect.fn("publishTurnHealthTransition")(function* (
+    transition: TurnHealthTransition,
+  ) {
+    const sequence = yield* Ref.modify(
+      healthEventSequence,
+      (current) => [current, current + 1] as const,
+    );
+    const createdAt = yield* nowIso;
+    yield* publishRuntimeEvent({
+      eventId: EventId.make(
+        `session-health:${transition.threadId}:${transition.turnId}:${transition.state}:${sequence}`,
+      ),
+      provider: transition.provider,
+      ...(transition.providerInstanceId !== undefined
+        ? { providerInstanceId: transition.providerInstanceId }
+        : {}),
+      threadId: transition.threadId,
+      turnId: transition.turnId,
+      createdAt,
+      type: "session.health",
+      payload: {
+        state: transition.state,
+        lastActivityAt: transition.lastActivityAt,
+        ...(transition.stalledForMs !== undefined ? { stalledForMs: transition.stalledForMs } : {}),
+      },
+    });
+  });
+
+  const turnActivityWatchdog = yield* makeTurnActivityWatchdog({
+    ...(options?.turnStallThresholdMs !== undefined
+      ? { thresholdMs: options.turnStallThresholdMs }
+      : {}),
+    ...(options?.turnStallPollIntervalMs !== undefined
+      ? { pollIntervalMs: options.turnStallPollIntervalMs }
+      : {}),
+    onTransition: publishTurnHealthTransition,
+  });
 
   const requireBindingInstanceId = (
     operation: string,
@@ -289,14 +332,24 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
     event: ProviderRuntimeEvent,
   ): Effect.Effect<void> =>
-    Effect.sync(() => correlateRuntimeEventWithInstance(source, event)).pipe(
-      Effect.flatMap((canonicalEvent) =>
-        increment(providerRuntimeEventsTotal, {
-          provider: canonicalEvent.provider,
-          eventType: canonicalEvent.type,
-        }).pipe(Effect.andThen(publishRuntimeEvent(canonicalEvent))),
-      ),
-    );
+    Effect.gen(function* () {
+      const canonicalEvent = correlateRuntimeEventWithInstance(source, event);
+      const stopped =
+        canonicalEvent.type === "session.exited" ||
+        (canonicalEvent.type === "session.state.changed" &&
+          canonicalEvent.payload.state === "stopped");
+      if (stopped && directory.clearActivity) {
+        yield* directory.clearActivity(canonicalEvent.threadId);
+      } else if (directory.noteActivity) {
+        yield* directory.noteActivity(canonicalEvent.threadId, yield* nowIso);
+      }
+      yield* increment(providerRuntimeEventsTotal, {
+        provider: canonicalEvent.provider,
+        eventType: canonicalEvent.type,
+      });
+      yield* publishRuntimeEvent(canonicalEvent);
+      yield* turnActivityWatchdog.observe(canonicalEvent);
+    });
 
   // `subscribedAdapters` is our source-of-truth for "which instance adapters
   // are currently wired into the runtime event bus". It both tracks the set
@@ -1090,6 +1143,16 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   );
 
   return {
+    getSessionActivity: (threadId) =>
+      turnActivityWatchdog
+        .getSnapshot(threadId)
+        .pipe(
+          Effect.map((snapshot) =>
+            snapshot === undefined
+              ? undefined
+              : { lastActivityAt: snapshot.lastActivityAt, stalled: snapshot.stalled },
+          ),
+        ),
     startSession,
     sendTurn,
     interruptTurn,

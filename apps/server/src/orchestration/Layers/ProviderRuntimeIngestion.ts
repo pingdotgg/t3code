@@ -348,6 +348,57 @@ function runtimeEventToActivities(
       : {};
   })();
   switch (event.type) {
+    case "session.health": {
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: event.payload.state === "stalled" ? "error" : "info",
+          kind: "session.health",
+          summary:
+            event.payload.state === "stalled"
+              ? "Provider turn appears stalled"
+              : "Provider turn activity recovered",
+          payload: event.payload,
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
+    case "session.exited": {
+      // Only surface non-graceful exits with meaningful stderr. The tail rides
+      // the client activity flow so the mac can render an expandable "process
+      // output" disclosure on the failing turn.
+      const stderrTail = event.payload.stderrTail;
+      if (
+        event.payload.exitKind === "graceful" ||
+        stderrTail === undefined ||
+        stderrTail.trim().length === 0
+      ) {
+        return [];
+      }
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "error",
+          kind: "session.exited",
+          summary: event.payload.reason ?? "Provider process exited",
+          payload: {
+            stderrTail,
+            ...(event.payload.reason !== undefined ? { reason: event.payload.reason } : {}),
+            ...(event.payload.exitKind !== undefined ? { exitKind: event.payload.exitKind } : {}),
+            ...(event.payload.recoverable !== undefined
+              ? { recoverable: event.payload.recoverable }
+              : {}),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
     case "request.opened": {
       if (event.payload.requestType === "tool_user_input") {
         return [];

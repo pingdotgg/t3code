@@ -49,7 +49,11 @@ import {
   ProviderAdapterSessionNotFoundError,
   ProviderAdapterValidationError,
 } from "../Errors.ts";
-import { acpPermissionOutcome, mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
+import {
+  acpPermissionOutcome,
+  isNoteworthyAcpStderrLine,
+  mapAcpToAdapterError,
+} from "../acp/AcpAdapterSupport.ts";
 import type * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 import {
   makeAcpAssistantItemEvent,
@@ -456,12 +460,22 @@ export function makeCursorAdapter(
       return Effect.succeed(ctx);
     };
 
-    const stopSessionInternal = (ctx: CursorSessionContext) =>
+    const retireSession = (
+      ctx: CursorSessionContext,
+      options: { readonly emitGracefulExit: boolean },
+    ) =>
       Effect.gen(function* () {
         if (ctx.stopped) return;
         ctx.stopped = true;
         yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
         yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
+
+        if (!options.emitGracefulExit) {
+          sessions.delete(ctx.threadId);
+          yield* Effect.ignore(Scope.close(ctx.scope, Exit.void));
+          return;
+        }
+
         if (ctx.notificationFiber) {
           yield* Fiber.interrupt(ctx.notificationFiber);
         }
@@ -475,6 +489,9 @@ export function makeCursorAdapter(
           payload: { exitKind: "graceful" },
         });
       });
+
+    const stopSessionInternal = (ctx: CursorSessionContext) =>
+      retireSession(ctx, { emitGracefulExit: true });
 
     const startSession: CursorAdapterShape["startSession"] = (input) =>
       withThreadLock(
@@ -866,6 +883,76 @@ export function makeCursorAdapter(
                       }),
                     );
                     return;
+                  case "ProcessStderr": {
+                    yield* logNative(
+                      ctx.threadId,
+                      "process/stderr",
+                      { message: event.message },
+                      "acp.jsonrpc",
+                    );
+                    if (isNoteworthyAcpStderrLine(event.message)) {
+                      yield* offerRuntimeEvent({
+                        type: "runtime.warning",
+                        ...(yield* makeEventStamp()),
+                        provider: PROVIDER,
+                        threadId: ctx.threadId,
+                        payload: { message: event.message },
+                      });
+                    }
+                    return;
+                  }
+                  case "ProcessExited": {
+                    if (ctx.stopped) {
+                      return;
+                    }
+                    const baseReason =
+                      event.exitCode === 0
+                        ? "Cursor ACP process exited."
+                        : `Cursor ACP process exited with code ${event.exitCode}.`;
+                    const runtimeErrorReason = event.stderrTail
+                      ? `${baseReason}\nLast stderr:\n${event.stderrTail}`
+                      : baseReason;
+                    yield* logNative(
+                      ctx.threadId,
+                      "session/exited",
+                      {
+                        exitCode: event.exitCode,
+                        ...(event.stderrTail ? { stderrTail: event.stderrTail } : {}),
+                      },
+                      "acp.jsonrpc",
+                    );
+                    yield* offerRuntimeEvent({
+                      type: "session.exited",
+                      ...(yield* makeEventStamp()),
+                      provider: PROVIDER,
+                      threadId: ctx.threadId,
+                      payload: {
+                        reason: baseReason,
+                        ...(event.stderrTail ? { stderrTail: event.stderrTail } : {}),
+                        ...(event.exitCode === 0
+                          ? { exitKind: "graceful" as const }
+                          : { exitKind: "error" as const }),
+                      },
+                    });
+                    if (event.exitCode !== 0) {
+                      yield* offerRuntimeEvent({
+                        type: "runtime.error",
+                        ...(yield* makeEventStamp()),
+                        provider: PROVIDER,
+                        threadId: ctx.threadId,
+                        payload: {
+                          message: runtimeErrorReason,
+                          class: "provider_error" as const,
+                          detail: {
+                            exitCode: event.exitCode,
+                            ...(event.stderrTail ? { stderrTail: event.stderrTail } : {}),
+                          },
+                        },
+                      });
+                    }
+                    yield* retireSession(ctx, { emitGracefulExit: false });
+                    return;
+                  }
                 }
               }),
             ),

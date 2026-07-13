@@ -184,6 +184,10 @@ public actor LiveBackend: BackendService {
     /// Active/background delegated task lifecycle, rebuilt from thread
     /// snapshots and advanced by live `task.*` activity events.
     private var subagentTasksByThread: [String: T3SubagentTaskActivityState] = [:]
+    /// Server-authoritative turn liveness folded from `session.health`
+    /// activities (all providers), keyed by thread. The stored sort key keeps
+    /// the newest transition authoritative across the unfiltered live tail.
+    private var threadHealthByThread: [String: ThreadHealthEntry] = [:]
 
     private static let nodePathCacheKey = "sergecode.nodePathCache"
 
@@ -569,6 +573,7 @@ public actor LiveBackend: BackendService {
                 threadEnvByThread[id] = nil
                 threadShellsByID[id] = nil
                 subagentTasksByThread[id] = nil
+                threadHealthByThread[id] = nil
                 clearRunningLivenessState(threadID: id)
                 emitOrdered(threadID: id, event: .threadRemoved(id: id))
             }
@@ -607,6 +612,7 @@ public actor LiveBackend: BackendService {
                 threadEnvByThread[threadID] = nil
                 threadShellsByID[threadID] = nil
                 subagentTasksByThread[threadID] = nil
+                threadHealthByThread[threadID] = nil
                 clearRunningLivenessState(threadID: threadID)
                 emitOrdered(threadID: threadID, event: .threadRemoved(id: threadID))
             }
@@ -900,7 +906,8 @@ public actor LiveBackend: BackendService {
                 threadID: threadID, event: .timelineReset(threadID: threadID, items: items))
         }
         resolveSnapshotWaiters(threadID: threadID, items: items)
-        if hadSubagentTasks || hasSubagentTasks {
+        let healthChanged = rebuildThreadHealth(threadID: threadID, from: thread.activities)
+        if hadSubagentTasks || hasSubagentTasks || healthChanged {
             reemitThreadWithCurrentProjection(threadID: threadID)
         }
 
@@ -1044,7 +1051,8 @@ public actor LiveBackend: BackendService {
                     retainedMessageIDs.insert(id)
                 case .toolEvent(let id, _, _, _, _, _, _, _),
                     .reasoning(let id, _, _),
-                    .notice(let id, _, _):
+                    .notice(let id, _, _),
+                    .sessionExit(let id, _, _, _):
                     retainedActivityIDs.insert(id)
                 case .subagentTask(let task):
                     retainedActivityIDs.insert(task.id)
@@ -1177,6 +1185,32 @@ public actor LiveBackend: BackendService {
             emitOrdered(
                 threadID: threadID,
                 event: .subagentStopFailed(taskId: taskId, message: message))
+            return true
+
+        case ActivityKind.sessionHealth:
+            // Server-authoritative turn liveness (all providers). Fold onto the
+            // stored health, keeping the newest transition, and re-emit the
+            // thread so the sidebar/agents-panel stalled indicator updates.
+            let prior = threadHealthByThread[threadID]
+            let folded = ThreadHealthProjection.apply(
+                activity, onto: prior?.health, priorSortKey: prior?.sortKey)
+            if let health = folded.health, let sortKey = folded.sortKey,
+                folded.health != prior?.health || prior == nil
+            {
+                threadHealthByThread[threadID] = ThreadHealthEntry(
+                    health: health, sortKey: sortKey)
+                reemitThreadWithCurrentProjection(threadID: threadID)
+            }
+            return true
+
+        case ActivityKind.sessionExited:
+            // Provider process died with captured stderr: append the error
+            // disclosure row to the transcript.
+            if appendToTimeline, let item = mapSessionExit(activity, at: at) {
+                emitOrdered(
+                    threadID: threadID,
+                    event: .timelineAppended(threadID: threadID, item: item))
+            }
             return true
 
         default:
@@ -2302,6 +2336,59 @@ public actor LiveBackend: BackendService {
         Project(id: shell.id, name: shell.title, path: shell.workspaceRoot)
     }
 
+    /// Folded `session.health` state plus the sort key of the transition that
+    /// produced it, so the newest event wins on the unfiltered live tail.
+    struct ThreadHealthEntry {
+        var health: T3ThreadHealth
+        var sortKey: (Date, Int)
+    }
+
+    /// UI mirror of the stored server health for a thread; `nil` when the
+    /// server has not reported health, so client heuristics apply.
+    private func uiThreadHealth(for threadID: String) -> ThreadHealth? {
+        guard let entry = threadHealthByThread[threadID] else { return nil }
+        return ThreadHealth(
+            stalled: entry.health.stalled,
+            lastActivityAt: entry.health.lastActivityAt,
+            stalledSince: entry.health.stalledSince)
+    }
+
+    /// Recomputes a thread's server health from an authoritative activity list
+    /// (snapshot rebuild). Returns true when the stored value changed.
+    @discardableResult
+    private func rebuildThreadHealth(
+        threadID: String, from activities: [OrchestrationThreadActivity]
+    ) -> Bool {
+        var entry: ThreadHealthEntry?
+        for activity in activities {
+            let folded = ThreadHealthProjection.apply(
+                activity, onto: entry?.health, priorSortKey: entry?.sortKey)
+            if let health = folded.health, let sortKey = folded.sortKey {
+                entry = ThreadHealthEntry(health: health, sortKey: sortKey)
+            }
+        }
+        let changed = entry?.health != threadHealthByThread[threadID]?.health
+        threadHealthByThread[threadID] = entry
+        return changed
+    }
+
+    /// Maps a `session.exited` activity into its transcript disclosure row;
+    /// `nil` when no stderr tail is present (nothing to disclose).
+    private func mapSessionExit(
+        _ activity: OrchestrationThreadActivity, at: Date
+    ) -> TimelineItem? {
+        guard let payload = activity.decodePayload(SessionExitedActivityPayload.self) else {
+            return nil
+        }
+        let tail = payload.stderrTail
+        guard !tail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        let summary =
+            payload.reason?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            ? payload.reason!
+            : (activity.summary.isEmpty ? "Provider process exited" : activity.summary)
+        return .sessionExit(id: activity.id, summary: summary, stderrTail: tail, at: at)
+    }
+
     private func mapThread(_ shell: OrchestrationThreadShell) -> ChatThread {
         let kind = resolveProviderKind(
             instanceId: shell.modelSelection.instanceId, providerName: shell.session?.providerName)
@@ -2328,7 +2415,8 @@ public actor LiveBackend: BackendService {
             modelInstanceID: shell.modelSelection.instanceId, modelID: shell.modelSelection.model,
             reasoningEffort: Self.effortValue(of: shell.modelSelection),
             serviceTier: Self.serviceTierValue(of: shell.modelSelection),
-            backgroundAgentCount: activeSubagentCount)
+            backgroundAgentCount: activeSubagentCount,
+            health: uiThreadHealth(for: shell.id))
     }
 
     // MARK: - Mode mapping (wire <-> UI)
@@ -2407,10 +2495,15 @@ public actor LiveBackend: BackendService {
                 return .usageLimit(notice)
             case ActivityKind.userInputResolved, ActivityKind.turnPlanUpdated,
                 ActivityKind.contextWindowUpdated,
+                // Side-channel: server liveness drives the stalled indicator,
+                // not a transcript row (health is rebuilt separately).
+                ActivityKind.sessionHealth,
                 // Live path routes this to per-task stop-error UI only; a
                 // stale failure must not reappear as a timeline row on reopen.
                 ActivityKind.providerTaskStopFailed:
                 return nil
+            case ActivityKind.sessionExited:
+                return mapSessionExit(activity, at: at)
             default:
                 return mapActivity(activity, at: at)
             }
@@ -2498,6 +2591,7 @@ public actor LiveBackend: BackendService {
         guard var thread = threadsByID[threadID] else { return }
         let activeCount = subagentTasksByThread[threadID]?.activeTaskCount ?? 0
         thread.backgroundAgentCount = activeCount
+        thread.health = uiThreadHealth(for: threadID)
         if thread.status == .idle, activeCount > 0 {
             thread.status = .backgroundWork
         } else if thread.status == .backgroundWork, activeCount == 0 {

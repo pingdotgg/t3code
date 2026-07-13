@@ -16,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as Duration from "effect/Duration";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
@@ -25,6 +26,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
+import { ProviderService } from "../../../provider/Services/ProviderService.ts";
 import type { McpInvocationScope } from "../../McpInvocationContext.ts";
 import { __testing } from "./SubAgentCoordinator.ts";
 import type { SubAgentCoordinator } from "./SubAgentCoordinator.ts";
@@ -122,6 +124,11 @@ interface Harness {
   readonly setThreadDetail: (
     lookup: (threadId: ThreadId) => Option.Option<OrchestrationThread>,
   ) => void;
+  readonly setSessionActivity: (
+    lookup: (
+      threadId: ThreadId,
+    ) => { readonly lastActivityAt: string; readonly stalled: boolean } | undefined,
+  ) => void;
 }
 
 const makeCoordinator = (options?: {
@@ -130,6 +137,9 @@ const makeCoordinator = (options?: {
   const dispatched: Array<OrchestrationCommand> = [];
   let threadDetailLookup: (threadId: ThreadId) => Option.Option<OrchestrationThread> = () =>
     Option.none();
+  let sessionActivityLookup: (
+    threadId: ThreadId,
+  ) => { readonly lastActivityAt: string; readonly stalled: boolean } | undefined = () => undefined;
 
   const engine = OrchestrationEngineService.of({
     readEvents: () => Stream.empty,
@@ -171,11 +181,29 @@ const makeCoordinator = (options?: {
     setProviderMaintenanceActionState: unused,
     streamChanges: Stream.never,
   });
+  const providerService = ProviderService.of({
+    getSessionActivity: (threadId) => Effect.sync(() => sessionActivityLookup(threadId)),
+    startSession: unused,
+    sendTurn: unused,
+    interruptTurn: unused,
+    stopTask: unused,
+    respondToRequest: unused,
+    respondToUserInput: unused,
+    stopSession: unused,
+    listSessions: unused,
+    getCapabilities: unused,
+    getInstanceInfo: unused,
+    rollbackConversation: unused,
+    streamEvents: Stream.never,
+  });
 
   const harness: Harness = {
     dispatched,
     setThreadDetail: (lookup) => {
       threadDetailLookup = lookup;
+    },
+    setSessionActivity: (lookup) => {
+      sessionActivityLookup = lookup;
     },
   };
 
@@ -183,6 +211,7 @@ const makeCoordinator = (options?: {
     Effect.provideService(OrchestrationEngineService, engine),
     Effect.provideService(ProjectionSnapshotQuery, snapshotQuery),
     Effect.provideService(ProviderRegistry, providerRegistry),
+    Effect.provideService(ProviderService, providerService),
     Effect.provide(NodeServices.layer),
     Effect.map((coordinator) => [coordinator, harness] as const),
   );
@@ -508,6 +537,65 @@ it.effect("reports running when the sub-agent has not finished before the timeou
     const result = yield* Fiber.join(waiting);
     expect(result.status).toBe("running");
     expect(result.finalText).toBeNull();
+    expect(result.lastActivityAt).toBeDefined();
+    expect(result.stalled).toBe(false);
+  }),
+);
+
+it.effect("returns canonical tracked activity for timed-out stalled sub-agents", () =>
+  Effect.gen(function* () {
+    const [coordinator, harness] = yield* makeCoordinator();
+    const spawned = yield* coordinator.spawn(makeScope(), {
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      prompt: "Wedged task.",
+    });
+    harness.setThreadDetail((threadId) =>
+      threadId === spawned.threadId
+        ? Option.some(makeThreadDetail(spawned.threadId, { latestTurn: null }))
+        : Option.none(),
+    );
+    harness.setSessionActivity((threadId) =>
+      threadId === spawned.threadId
+        ? { lastActivityAt: "1960-01-01T00:00:00.000Z", stalled: true }
+        : undefined,
+    );
+
+    const waiting = yield* coordinator
+      .wait(makeScope(), { threadId: spawned.threadId, timeoutSeconds: 1 })
+      .pipe(Effect.forkChild);
+    yield* TestClock.adjust(Duration.seconds(2));
+    const result = yield* Fiber.join(waiting);
+    expect(result.status).toBe("running");
+    expect(result.lastActivityAt).toBe("1960-01-01T00:00:00.000Z");
+    expect(result.stalled).toBe(true);
+  }),
+);
+
+it.effect("uses the Effect clock for fallback stall detection", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(
+      DateTime.toEpochMillis(DateTime.makeUnsafe("2026-04-11T00:00:00.000Z")),
+    );
+    const [coordinator, harness] = yield* makeCoordinator();
+    const spawned = yield* coordinator.spawn(makeScope(), {
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      prompt: "Slow task without tracked activity.",
+    });
+    harness.setThreadDetail((threadId) =>
+      threadId === spawned.threadId
+        ? Option.some(makeThreadDetail(spawned.threadId, { latestTurn: null }))
+        : Option.none(),
+    );
+
+    const waiting = yield* coordinator
+      .wait(makeScope(), { threadId: spawned.threadId, timeoutSeconds: 121 })
+      .pipe(Effect.forkChild);
+    yield* TestClock.adjust(Duration.seconds(122));
+    const result = yield* Fiber.join(waiting);
+
+    expect(result.status).toBe("running");
+    expect(result.lastActivityAt).toBe("2026-04-11T00:00:00.000Z");
+    expect(result.stalled).toBe(true);
   }),
 );
 

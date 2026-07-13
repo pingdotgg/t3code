@@ -1,6 +1,8 @@
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
@@ -13,6 +15,100 @@ import { JsonRpcId, JsonRpcResponseEnvelope } from "./_internal/shared.ts";
 const isJsonRpcId = Schema.is(JsonRpcId);
 const isJsonRpcResponseEnvelope = Schema.is(JsonRpcResponseEnvelope);
 const isCodexAppServerError = Schema.is(CodexError.CodexAppServerError);
+
+/** Default timeout for control-plane JSON-RPC requests (initialize, session, etc.). */
+export const DEFAULT_CONTROL_PLANE_REQUEST_TIMEOUT = Duration.seconds(60);
+export const MAX_PROTOCOL_LINE_BYTES = 32 * 1024 * 1024;
+
+const NO_DEFAULT_TIMEOUT_METHODS = new Set(["turn/start", "thread/resume", "thread/read"]);
+const textEncoder = new TextEncoder();
+
+interface ProtocolLineReaderState {
+  readonly remainder: string;
+  readonly remainderBytes: number;
+  readonly discarding: boolean;
+  readonly discardedBytes: number;
+}
+
+interface ProtocolLineChunkResult {
+  readonly state: ProtocolLineReaderState;
+  readonly lines: ReadonlyArray<string>;
+  readonly skippedByteCounts: ReadonlyArray<number>;
+}
+
+const initialProtocolLineReaderState: ProtocolLineReaderState = {
+  remainder: "",
+  remainderBytes: 0,
+  discarding: false,
+  discardedBytes: 0,
+};
+
+function splitProtocolLines(
+  initialState: ProtocolLineReaderState,
+  chunk: string,
+): ProtocolLineChunkResult {
+  let state = initialState;
+  const lines: Array<string> = [];
+  const skippedByteCounts: Array<number> = [];
+  let offset = 0;
+
+  while (offset < chunk.length) {
+    const newlineIndex = chunk.indexOf("\n", offset);
+    const hasNewline = newlineIndex !== -1;
+    const end = hasNewline ? newlineIndex : chunk.length;
+    const segment = chunk.slice(offset, end);
+    const segmentBytes = textEncoder.encode(segment).byteLength;
+
+    if (state.discarding) {
+      state = {
+        remainder: "",
+        remainderBytes: 0,
+        discarding: true,
+        discardedBytes: state.discardedBytes + segmentBytes,
+      };
+    } else if (state.remainderBytes + segmentBytes > MAX_PROTOCOL_LINE_BYTES) {
+      state = {
+        remainder: "",
+        remainderBytes: 0,
+        discarding: true,
+        discardedBytes: state.remainderBytes + segmentBytes,
+      };
+    } else if (hasNewline) {
+      lines.push(`${state.remainder}${segment}`.replace(/\r$/, ""));
+      state = initialProtocolLineReaderState;
+    } else {
+      state = {
+        remainder: state.remainder + segment,
+        remainderBytes: state.remainderBytes + segmentBytes,
+        discarding: false,
+        discardedBytes: 0,
+      };
+    }
+
+    if (!hasNewline) {
+      break;
+    }
+    if (state.discarding) {
+      skippedByteCounts.push(state.discardedBytes);
+      state = initialProtocolLineReaderState;
+    }
+    offset = newlineIndex + 1;
+  }
+
+  return { state, lines, skippedByteCounts };
+}
+
+/**
+ * Per-request timeout options for {@link CodexAppServerPatchedProtocol.request}.
+ * - omit / `undefined`: use the 60s control-plane default
+ * - `"none"`: no timeout (long-running turn-start / thread hydration calls)
+ * - duration input: explicit timeout
+ */
+export type CodexAppServerRequestTimeout = Duration.Input | "none";
+
+export interface CodexAppServerRequestOptions {
+  readonly timeout?: CodexAppServerRequestTimeout;
+}
 
 export interface CodexAppServerProtocolLogEvent {
   readonly direction: "incoming" | "outgoing";
@@ -52,6 +148,7 @@ export interface CodexAppServerPatchedProtocol {
   readonly request: (
     method: string,
     payload?: unknown,
+    options?: CodexAppServerRequestOptions,
   ) => Effect.Effect<unknown, CodexError.CodexAppServerError>;
   readonly notify: (
     method: string,
@@ -157,7 +254,7 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
     const incomingRequests = yield* Queue.unbounded<CodexAppServerIncomingRequest>();
     const pending = yield* Ref.make(new Map<string, CodexAppServerPendingRequest>());
     const nextRequestId = yield* Ref.make(1);
-    const remainder = yield* Ref.make("");
+    const lineReaderState = yield* Ref.make(initialProtocolLineReaderState);
     const terminationHandled = yield* Ref.make(false);
 
     const logProtocol = (event: CodexAppServerProtocolLogEvent) => {
@@ -351,15 +448,26 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
       );
     };
 
+    const logSkippedMessage = (byteCount: number) =>
+      Effect.logWarning("Codex App Server skipped an oversized protocol message.", {
+        byteCount,
+        maximumByteCount: MAX_PROTOCOL_LINE_BYTES,
+      });
+
     yield* options.stdio.stdin.pipe(
       Stream.decodeText(),
       Stream.runForEach((chunk) =>
-        Ref.modify(remainder, (current) => {
-          const combined = current + chunk;
-          const lines = combined.split("\n");
-          const nextRemainder = lines.pop() ?? "";
-          return [lines.map((line) => line.replace(/\r$/, "")), nextRemainder] as const;
-        }).pipe(Effect.flatMap((lines) => Effect.forEach(lines, handleLine, { discard: true }))),
+        Ref.modify(lineReaderState, (current) => {
+          const split = splitProtocolLines(current, chunk);
+          return [split, split.state] as const;
+        }).pipe(
+          Effect.flatMap(({ lines, skippedByteCounts }) =>
+            Effect.gen(function* () {
+              yield* Effect.forEach(skippedByteCounts, logSkippedMessage, { discard: true });
+              yield* Effect.forEach(lines, handleLine, { discard: true });
+            }),
+          ),
+        ),
       ),
       Effect.matchEffect({
         onFailure: (error) =>
@@ -367,8 +475,14 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
             Effect.succeed(normalizeIncomingError(error, "read-input-stream")),
           ),
         onSuccess: () =>
-          Ref.get(remainder).pipe(
-            Effect.flatMap((line) => (line.trim().length === 0 ? Effect.void : handleLine(line))),
+          Ref.get(lineReaderState).pipe(
+            Effect.flatMap((state) =>
+              state.discarding
+                ? logSkippedMessage(state.discardedBytes)
+                : state.remainder.trim().length === 0
+                  ? Effect.void
+                  : handleLine(state.remainder),
+            ),
             Effect.matchEffect({
               onFailure: (error) => handleTermination(() => Effect.succeed(error)),
               onSuccess: () =>
@@ -385,7 +499,11 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
 
     yield* Stream.fromQueue(outgoing).pipe(Stream.run(options.stdio.stdout()), Effect.forkScoped);
 
-    const request = (method: string, payload?: unknown) =>
+    const request = (
+      method: string,
+      payload?: unknown,
+      requestOptions?: CodexAppServerRequestOptions,
+    ) =>
       Effect.gen(function* () {
         const requestId = yield* Ref.modify(
           nextRequestId,
@@ -400,8 +518,42 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
           method,
           ...(payload !== undefined ? { params: payload } : {}),
         }).pipe(Effect.tapError(() => removePending(String(requestId))));
-        return yield* Deferred.await(deferred).pipe(
+
+        const awaitResponse = Deferred.await(deferred).pipe(
           Effect.onInterrupt(() => removePending(String(requestId))),
+        );
+
+        const timeoutOpt =
+          requestOptions?.timeout ?? (NO_DEFAULT_TIMEOUT_METHODS.has(method) ? "none" : undefined);
+        if (timeoutOpt === "none") {
+          return yield* awaitResponse;
+        }
+        const timeoutDuration =
+          timeoutOpt === undefined ? DEFAULT_CONTROL_PLANE_REQUEST_TIMEOUT : timeoutOpt;
+        const timeoutMs = Duration.toMillis(Duration.fromInputUnsafe(timeoutDuration));
+        if (timeoutMs <= 0) {
+          return yield* awaitResponse;
+        }
+
+        return yield* awaitResponse.pipe(
+          Effect.timeoutOption(timeoutDuration),
+          Effect.flatMap((result) =>
+            Option.match(result, {
+              onNone: () =>
+                removePending(String(requestId)).pipe(
+                  Effect.andThen(
+                    Effect.fail(
+                      new CodexError.CodexAppServerRequestTimeoutError({
+                        method,
+                        requestId: String(requestId),
+                        timeoutMs,
+                      }),
+                    ),
+                  ),
+                ),
+              onSome: Effect.succeed,
+            }),
+          ),
         );
       });
 

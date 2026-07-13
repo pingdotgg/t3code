@@ -21,6 +21,27 @@ describe("Codex App Server child process termination", () => {
     }),
   );
 
+  it.effect("attaches a non-empty stderr tail to process-exited errors", () =>
+    Effect.gen(function* () {
+      const stderrCapture = {
+        getTail: () => "panic: oops",
+      };
+      const error = yield* makeTerminationError(
+        {
+          pid: ChildProcessSpawner.ProcessId(53),
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+        },
+        stderrCapture as never,
+      );
+
+      assert.instanceOf(error, CodexError.CodexAppServerProcessExitedError);
+      assert.equal(
+        (error as CodexError.CodexAppServerProcessExitedError).stderrTail,
+        "panic: oops",
+      );
+    }),
+  );
+
   it.effect("retains the process identifier and exact exit-status cause", () =>
     Effect.gen(function* () {
       const rootCause = new Error("private process diagnostics");

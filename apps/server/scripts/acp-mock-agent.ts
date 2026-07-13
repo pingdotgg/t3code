@@ -13,6 +13,7 @@ import type * as AcpSchema from "effect-acp/schema";
 
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const exitLogPath = process.env.T3_ACP_EXIT_LOG_PATH;
+const pidPath = process.env.T3_ACP_PID_PATH;
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
@@ -36,6 +37,8 @@ const emitStaleXAiPromptCompleteBeforeSecondHang =
 const emitOverlappingXAiPromptCompleteOutOfOrder =
   process.env.T3_ACP_EMIT_OVERLAPPING_XAI_PROMPT_COMPLETE_OUT_OF_ORDER === "1";
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
+const exitOnPrompt = process.env.T3_ACP_EXIT_ON_PROMPT === "1";
+const exitStderr = process.env.T3_ACP_EXIT_STDERR;
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
@@ -47,6 +50,10 @@ const permissionOptionIds = {
 };
 const sessionId = "mock-session-1";
 const agentArgs = process.argv.slice(2);
+
+if (pidPath) {
+  NodeFS.writeFileSync(pidPath, String(process.pid), "utf8");
+}
 
 function initialAgentStringFlag(...flagNames: ReadonlyArray<string>): string | undefined {
   for (let index = 0; index < agentArgs.length; index += 1) {
@@ -99,6 +106,11 @@ process.once("SIGTERM", () => {
 process.once("SIGINT", () => {
   logExit("SIGINT");
   process.exit(0);
+});
+
+process.once("SIGUSR2", () => {
+  logExit("SIGUSR2");
+  process.exit(7);
 });
 
 process.once("exit", (code) => {
@@ -503,6 +515,15 @@ const program = Effect.gen(function* () {
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
       promptCount += 1;
+
+      if (exitOnPrompt) {
+        return yield* Effect.sync(() => {
+          if (exitStderr) {
+            process.stderr.write(exitStderr);
+          }
+          process.exit(7);
+        });
+      }
 
       if (Number.isFinite(promptDelayMs) && promptDelayMs > 0) {
         yield* Effect.sleep(`${promptDelayMs} millis`);

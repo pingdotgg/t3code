@@ -75,6 +75,11 @@ export interface AcpSessionRuntimeOptions {
     readonly logOutgoing?: boolean;
     readonly logger?: (event: EffectAcpProtocol.AcpProtocolLogEvent) => Effect.Effect<void, never>;
   };
+  /**
+   * Best-effort hook for each completed child-process stderr line (NDJSON /
+   * observability). Failures are ignored by the capture fiber.
+   */
+  readonly onStderrLine?: (line: string) => Effect.Effect<void>;
 }
 
 export interface AcpSessionRequestLogEvent {
@@ -242,6 +247,11 @@ export class AcpSessionRuntime extends Context.Service<
       method: string,
       payload: unknown,
     ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
+    /**
+     * Bounded tail of the child process stderr. Empty when no stderr has been
+     * captured yet.
+     */
+    readonly getStderrTail: () => string;
   }
 >()("t3/provider/acp/AcpSessionRuntime") {}
 
@@ -342,6 +352,10 @@ export const make = (
         ),
       );
 
+    const stderrLineHandlerRef = yield* Ref.make<(line: string) => Effect.Effect<void>>(
+      () => Effect.void,
+    );
+
     const acpContext = yield* Layer.build(
       EffectAcpClient.layerChildProcess(child, {
         ...(options.protocolLogging?.logIncoming !== undefined
@@ -351,10 +365,42 @@ export const make = (
           ? { logOutgoing: options.protocolLogging.logOutgoing }
           : {}),
         ...(options.protocolLogging?.logger ? { logger: options.protocolLogging.logger } : {}),
+        onStderrLine: (line: string) =>
+          Ref.get(stderrLineHandlerRef).pipe(Effect.flatMap((handler) => handler(line))),
       }),
     ).pipe(Effect.provideService(Scope.Scope, runtimeScope));
 
     const acp = yield* Effect.service(EffectAcpClient.AcpClient).pipe(Effect.provide(acpContext));
+
+    const emitProcessStderr = (message: string) =>
+      Queue.offer(eventQueue, {
+        _tag: "ProcessStderr" as const,
+        message,
+      }).pipe(Effect.asVoid);
+
+    yield* Ref.set(stderrLineHandlerRef, (line) =>
+      Effect.gen(function* () {
+        if (options.onStderrLine) {
+          yield* options.onStderrLine(line).pipe(Effect.ignore);
+        }
+        const trimmed = line.trim();
+        if (trimmed.length > 0) {
+          yield* emitProcessStderr(trimmed);
+        }
+      }),
+    );
+
+    yield* child.exitCode.pipe(
+      Effect.flatMap((exitCode) => {
+        const stderrTail = acp.getStderrTail();
+        return Queue.offer(eventQueue, {
+          _tag: "ProcessExited" as const,
+          exitCode: Number(exitCode),
+          ...(stderrTail ? { stderrTail } : {}),
+        }).pipe(Effect.asVoid);
+      }),
+      Effect.forkIn(runtimeScope),
+    );
 
     yield* acp.handleSessionUpdate((notification) =>
       Effect.gen(function* () {
@@ -794,6 +840,7 @@ export const make = (
       request: (method, payload) =>
         runLoggedRequest(method, payload, acp.raw.request(method, payload)),
       notify: acp.raw.notify,
+      getStderrTail: () => acp.getStderrTail(),
     } satisfies AcpSessionRuntime["Service"];
   });
 

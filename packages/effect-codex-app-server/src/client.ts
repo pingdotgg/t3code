@@ -4,8 +4,11 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stdio from "effect/Stdio";
-import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import {
+  type ProcessStderrCapture,
+  runProcessStderrCapture,
+} from "@t3tools/shared/processStderrCapture";
 
 import * as CodexRpc from "./_generated/meta.gen.ts";
 import * as CodexError from "./errors.ts";
@@ -24,6 +27,11 @@ export interface CodexAppServerClientOptions {
   readonly logger?: (
     event: CodexProtocol.CodexAppServerProtocolLogEvent,
   ) => Effect.Effect<void, never>;
+  /**
+   * Invoked for each completed stderr line from a child process client.
+   * Best-effort; failures from this callback are ignored by the capture fiber.
+   */
+  readonly onStderrLine?: (line: string) => Effect.Effect<void>;
 }
 
 interface CodexAppServerClientRaw {
@@ -42,6 +50,7 @@ export class CodexAppServerClient extends Context.Service<
     readonly request: <M extends CodexRpc.ClientRequestMethod>(
       method: M,
       payload: CodexRpc.ClientRequestParamsByMethod[M],
+      options?: CodexProtocol.CodexAppServerRequestOptions,
     ) => Effect.Effect<CodexRpc.ClientRequestResponsesByMethod[M], CodexError.CodexAppServerError>;
     readonly notify: <M extends CodexRpc.ClientNotificationMethod>(
       method: M,
@@ -74,6 +83,11 @@ export class CodexAppServerClient extends Context.Service<
         params: unknown,
       ) => Effect.Effect<void, CodexError.CodexAppServerError>,
     ) => Effect.Effect<void>;
+    /**
+     * Bounded tail of child-process stderr. Empty when not attached to a child
+     * process or when no stderr has been captured yet.
+     */
+    readonly getStderrTail: () => string;
   }
 >()("effect-codex-app-server/client/CodexAppServerClient") {}
 
@@ -88,6 +102,7 @@ export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make
   stdio: Stdio.Stdio,
   options: CodexAppServerClientOptions = {},
   terminationError?: Effect.Effect<CodexError.CodexAppServerError>,
+  stderrCapture?: ProcessStderrCapture,
 ): Effect.fn.Return<CodexAppServerClient["Service"], never, Scope.Scope> {
   const requestHandlers = new Map<string, ServerRequestHandler>();
   const notificationHandlers = new Map<string, Array<ServerNotificationHandler>>();
@@ -197,9 +212,10 @@ export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make
   const request = <M extends CodexRpc.ClientRequestMethod>(
     method: M,
     payload: CodexRpc.ClientRequestParamsByMethod[M],
+    options?: CodexProtocol.CodexAppServerRequestOptions,
   ): Effect.Effect<CodexRpc.ClientRequestResponsesByMethod[M], CodexError.CodexAppServerError> =>
     encodeOptionalPayload(method, getClientRequestParamSchema(method), payload).pipe(
-      Effect.flatMap((encoded) => transport.request(method, encoded)),
+      Effect.flatMap((encoded) => transport.request(method, encoded, options)),
       Effect.flatMap(
         (
           raw,
@@ -247,6 +263,7 @@ export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make
       Effect.sync(() => {
         unknownNotificationHandler = handler;
       }),
+    getStderrTail: () => stderrCapture?.getTail() ?? "",
   });
 });
 
@@ -264,6 +281,22 @@ export const layerChildProcess = (
 const makeChildProcessClient = Effect.fn(
   "effect-codex-app-server/CodexAppServerClient.makeChildProcessClient",
 )(function* (handle: ChildProcessSpawner.ChildProcessHandle, options: CodexAppServerClientOptions) {
-  yield* Stream.runDrain(handle.stderr).pipe(Effect.ignore, Effect.forkScoped);
-  return yield* make(makeChildStdio(handle), options, makeTerminationError(handle));
+  const stderrCapture = yield* runProcessStderrCapture(handle.stderr, {
+    logLabel: "codex app-server child process stderr",
+    annotations: {
+      transport: "codex-app-server",
+      pid: handle.pid,
+    },
+    ...(options.onStderrLine
+      ? {
+          onLine: (line: string) => options.onStderrLine!(line).pipe(Effect.ignore),
+        }
+      : {}),
+  });
+  return yield* make(
+    makeChildStdio(handle),
+    options,
+    makeTerminationError(handle, stderrCapture),
+    stderrCapture,
+  );
 });

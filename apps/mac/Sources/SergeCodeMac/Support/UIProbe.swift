@@ -60,6 +60,11 @@
             try? await Task.sleep(for: .seconds(1))
             snapshot("1-inspector-timeline", dir: dir)
 
+            // Subagent stability: server-driven stall badge (appears on a
+            // synthetic session.health stall, clears on active), the delegated
+            // sibling-agent roster, and the session.exited stderr disclosure.
+            await probeSubagentStability(model: model, multi: multi, dir: dir)
+
             if let remote = multi.remoteSessions.first {
                 await probeRemoteDevice(
                     remote, multi: multi, scenery: scenery, passport: PassportStore(), dir: dir)
@@ -406,6 +411,72 @@
 
             print("UIProbe: done")
             NSApp.terminate(nil)
+        }
+
+        /// Exercises the subagent-stability surfaces against the mock backend:
+        /// a server `session.health` stall that badges the thread + agents
+        /// panel and then clears on recovery, the delegated sibling-agent
+        /// roster, and the `session.exited` stderr disclosure row.
+        private static func probeSubagentStability(
+            model: AppModel, multi: MultiDeviceModel, dir: String
+        ) async {
+            guard let mock = model.backendForShutdown as? MockBackend else {
+                print("UIProbe: subagent-stability skipped (live backend run)")
+                return
+            }
+            guard let threadID = model.selectedThreadID else {
+                print("UIProbe: subagent-stability no selected thread")
+                return
+            }
+            let projectID =
+                model.threads.first { $0.id == threadID }?.projectID
+                ?? model.projects.first?.id ?? "project-1"
+
+            // Spawn a stalled delegated sibling agent (different provider) so
+            // the roster and its stalled badge render.
+            let sibling = await mock.probeCreateSiblingAgent(
+                name: "codex worker", provider: .codex, projectID: projectID, stalled: true)
+            // Stall the open thread's turn: subagent task rows + header +
+            // sidebar dot flip to the server-driven warning state.
+            await mock.probeSetThreadHealth(threadID: threadID, stalled: true)
+            try? await Task.sleep(for: .seconds(1))
+            let stalledThread = model.threads.first { $0.id == threadID }
+            let stalledSibling = model.threads.first { $0.id == sibling.id }
+            print(
+                "UIProbe: stall injected threadStalled=\(stalledThread?.isStalled ?? false) "
+                    + "siblingStalled=\(stalledSibling?.isStalled ?? false) "
+                    + "siblingTitle=\(stalledSibling?.title ?? "nil")")
+            toggleSection("agents")
+            try? await Task.sleep(for: .seconds(1))
+            snapshotAllWindows("2b-agents-stalled", dir: dir)
+            toggleSection("agents")
+            try? await Task.sleep(for: .seconds(0.5))
+
+            // Recovery: server reports activity resumed — the badge clears.
+            await mock.probeSetThreadHealth(threadID: threadID, stalled: false)
+            try? await Task.sleep(for: .seconds(1))
+            let recoveredThread = model.threads.first { $0.id == threadID }
+            print(
+                "UIProbe: stall cleared threadStalled=\(recoveredThread?.isStalled ?? false)")
+            snapshot("2c-agents-active", dir: dir)
+
+            // Provider process death with captured stderr → disclosure row.
+            let stderr = """
+                Traceback (most recent call last):
+                  File \"agent.py\", line 42, in run
+                    raise RuntimeError(\"provider process crashed\")
+                RuntimeError: provider process crashed
+                """
+            await mock.probeAppendSessionExit(
+                threadID: threadID, summary: "Provider process exited (code 1)",
+                stderrTail: stderr)
+            try? await Task.sleep(for: .seconds(1))
+            let hasSessionExit = model.selectedTimeline().contains {
+                if case .sessionExit = $0 { return true }
+                return false
+            }
+            print("UIProbe: session-exit row present=\(hasSessionExit)")
+            snapshot("2d-session-stderr", dir: dir)
         }
 
         private static func runStreamPerf(model: AppModel, dir: String) async {

@@ -3,6 +3,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
 import * as ProviderSessionRuntime from "../../persistence/ProviderSessionRuntime.ts";
@@ -85,6 +86,17 @@ function toRuntimeBinding(
 
 const makeProviderSessionDirectory = Effect.gen(function* () {
   const repository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+  const activityByThread = yield* Ref.make<ReadonlyMap<ThreadId, string>>(new Map());
+
+  const overlayLastSeenAt = <A extends ProviderRuntimeBindingWithMetadata>(
+    binding: A,
+    activity: ReadonlyMap<ThreadId, string>,
+  ): A => {
+    const observedAt = activity.get(binding.threadId);
+    return observedAt !== undefined && observedAt > binding.lastSeenAt
+      ? { ...binding, lastSeenAt: observedAt }
+      : binding;
+  };
 
   const getBinding = (threadId: ThreadId) =>
     repository.getByThreadId({ threadId }).pipe(
@@ -93,8 +105,13 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
         Option.match(runtime, {
           onNone: () => Effect.succeed(Option.none<ProviderRuntimeBinding>()),
           onSome: (value) =>
-            toRuntimeBinding(value, "ProviderSessionDirectory.getBinding").pipe(
-              Effect.map((binding) => Option.some(binding)),
+            Effect.all({
+              binding: toRuntimeBinding(value, "ProviderSessionDirectory.getBinding"),
+              activity: Ref.get(activityByThread),
+            }).pipe(
+              Effect.map(({ activity, binding }) =>
+                Option.some(overlayLastSeenAt(binding, activity)),
+              ),
             ),
         }),
       ),
@@ -125,6 +142,7 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
         issue: "providerInstanceId is required for provider session runtime bindings.",
       });
     }
+    const status = binding.status ?? existingRuntime?.status ?? "running";
     yield* repository
       .upsert({
         threadId: resolvedThreadId,
@@ -134,7 +152,7 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
           binding.adapterKey ??
           (providerChanged ? binding.provider : (existingRuntime?.adapterKey ?? binding.provider)),
         runtimeMode: binding.runtimeMode ?? existingRuntime?.runtimeMode ?? "full-access",
-        status: binding.status ?? existingRuntime?.status ?? "running",
+        status,
         lastSeenAt: now,
         resumeCursor:
           binding.resumeCursor !== undefined
@@ -146,7 +164,34 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
         ),
       })
       .pipe(Effect.mapError(toPersistenceError("ProviderSessionDirectory.upsert:upsert")));
+    yield* Ref.update(activityByThread, (current) => {
+      const next = new Map(current);
+      if (status === "stopped") {
+        next.delete(resolvedThreadId);
+      } else {
+        next.set(resolvedThreadId, now);
+      }
+      return next;
+    });
   });
+
+  const noteActivity: NonNullable<ProviderSessionDirectoryShape["noteActivity"]> = (
+    threadId,
+    observedAt,
+  ) =>
+    Ref.update(activityByThread, (current) => {
+      const previous = current.get(threadId);
+      if (previous !== undefined && previous >= observedAt) return current;
+      return new Map(current).set(threadId, observedAt);
+    });
+
+  const clearActivity: NonNullable<ProviderSessionDirectoryShape["clearActivity"]> = (threadId) =>
+    Ref.update(activityByThread, (current) => {
+      if (!current.has(threadId)) return current;
+      const next = new Map(current);
+      next.delete(threadId);
+      return next;
+    });
 
   const getProvider: ProviderSessionDirectoryShape["getProvider"] = (threadId) =>
     getBinding(threadId).pipe(
@@ -183,6 +228,8 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
     );
 
   return {
+    noteActivity,
+    clearActivity,
     upsert,
     getProvider,
     getBinding,

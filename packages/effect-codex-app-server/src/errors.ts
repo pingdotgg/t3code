@@ -148,6 +148,8 @@ export class CodexAppServerProcessExitedError extends Schema.TaggedErrorClass<Co
     code: Schema.optional(Schema.Number),
     pid: Schema.optionalKey(Schema.Int),
     cause: Schema.optional(Schema.Defect()),
+    /** Bounded tail of process stderr captured before exit (may be empty). */
+    stderrTail: Schema.optionalKey(Schema.String),
   },
 ) {
   override get message() {
@@ -261,6 +263,19 @@ export class CodexAppServerInputStreamEndedError extends Schema.TaggedErrorClass
 ) {
   override get message() {
     return "Codex App Server input stream ended.";
+  }
+}
+
+export class CodexAppServerRequestTimeoutError extends Schema.TaggedErrorClass<CodexAppServerRequestTimeoutError>()(
+  "CodexAppServerRequestTimeoutError",
+  {
+    method: Schema.String,
+    requestId: Schema.optionalKey(Schema.String),
+    timeoutMs: Schema.Number,
+  },
+) {
+  override get message() {
+    return `Codex App Server request '${this.method}' timed out after ${this.timeoutMs}ms.`;
   }
 }
 
@@ -422,6 +437,7 @@ export const CodexAppServerError = Schema.Union([
   CodexAppServerTransportError,
   CodexAppServerIdentifierGenerationError,
   CodexAppServerInputStreamEndedError,
+  CodexAppServerRequestTimeoutError,
 ]);
 
 export type CodexAppServerError = typeof CodexAppServerError.Type;

@@ -55,7 +55,7 @@ export const AgentSendTool = Tool.make("agent_send", {
 
 export const AgentWaitTool = Tool.make("agent_wait", {
   description:
-    'Wait for a sub-agent thread (created with agent_spawn) to finish its current turn and return the final assistant message. Blocks up to timeoutSeconds (default 60, max 600); a status of "running" means the sub-agent is still working — call agent_wait again to keep waiting.',
+    "Wait for a sub-agent thread (created with agent_spawn) to finish its current turn and return the final assistant message. Blocks up to timeoutSeconds (default 60, max 600); a running result includes lastActivityAt and stalled so callers can distinguish progress from a wedged turn.",
   parameters: SubAgentWaitInput,
   success: SubAgentWaitResult,
   failure: SubAgentError,

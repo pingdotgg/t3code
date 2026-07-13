@@ -66,6 +66,14 @@ export function hasConfiguredMcpServer(appServerArgs: ReadonlyArray<string> | un
   return appServerArgs?.some((argument) => argument.includes("mcp_servers.")) === true;
 }
 
+export function formatCodexProcessExitError(
+  exitCode: number,
+  stderrTail?: string,
+  message: string = `Codex App Server exited with code ${exitCode}.`,
+): string {
+  return stderrTail ? `${message}\nLast stderr:\n${stderrTail}` : message;
+}
+
 export const CodexResumeCursorSchema = Schema.Struct({
   threadId: Schema.String,
 });
@@ -761,10 +769,19 @@ export const makeCodexSessionRuntime = (
         ),
       );
 
-    const clientContext = yield* CodexClient.layerChildProcess(child).pipe(
-      Layer.build,
-      Effect.provideService(Scope.Scope, runtimeScope),
-    );
+    // Installed after `emitEvent` is defined so stderr lines can be routed into
+    // the provider event stream (and thus native NDJSON) without reordering
+    // the rest of session setup.
+    const stderrLineHandlerRef = yield* Ref.make<
+      (line: string) => Effect.Effect<void, CodexErrors.CodexAppServerError>
+    >(() => Effect.void);
+    const clientContext = yield* CodexClient.layerChildProcess(child, {
+      onStderrLine: (line) =>
+        Ref.get(stderrLineHandlerRef).pipe(
+          Effect.flatMap((handler) => handler(line)),
+          Effect.ignore,
+        ),
+    }).pipe(Layer.build, Effect.provideService(Scope.Scope, runtimeScope));
     const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
       Effect.provide(clientContext),
     );
@@ -808,13 +825,36 @@ export const makeCodexSessionRuntime = (
           ...event,
         });
       });
-    const emitSessionEvent = (method: string, message: string) =>
+    const emitSessionEvent = (
+      method: string,
+      message: string,
+      payload?: ProviderEvent["payload"],
+    ) =>
       emitEvent({
         kind: "session",
         threadId: options.threadId,
         method,
         message,
+        ...(payload !== undefined ? { payload } : {}),
       });
+
+    yield* Ref.set(stderrLineHandlerRef, (line) => {
+      // Persist every line to the native event log via the provider event stream
+      // (best-effort). CodexAdapter only surfaces classified ERROR lines as
+      // runtime.warning / runtime.error; log-only lines still hit NDJSON.
+      const classified = classifyCodexStderrLine(line);
+      const message = classified?.message ?? line.replaceAll(ANSI_ESCAPE_REGEX, "").trim();
+      if (!message) {
+        return Effect.void;
+      }
+      return emitEvent({
+        kind: "notification",
+        threadId: options.threadId,
+        method: "process/stderr",
+        message,
+        ...(classified ? {} : { payload: { surface: "log-only" as const } }),
+      });
+    });
 
     const settlePendingApprovals = (decision: ProviderApprovalDecision) =>
       Ref.get(pendingApprovalsRef).pipe(
@@ -1153,39 +1193,6 @@ export const makeCodexSessionRuntime = (
       Effect.forkIn(runtimeScope),
     );
 
-    const stderrRemainderRef = yield* Ref.make("");
-    yield* child.stderr.pipe(
-      Stream.decodeText(),
-      Stream.runForEach((chunk) =>
-        Ref.modify(stderrRemainderRef, (current) => {
-          const combined = current + chunk;
-          const lines = combined.split("\n");
-          const remainder = lines.pop() ?? "";
-          return [lines.map((line) => line.replace(/\r$/, "")), remainder] as const;
-        }).pipe(
-          Effect.flatMap((lines) =>
-            Effect.forEach(
-              lines,
-              (line) => {
-                const classified = classifyCodexStderrLine(line);
-                if (!classified) {
-                  return Effect.void;
-                }
-                return emitEvent({
-                  kind: "notification",
-                  threadId: options.threadId,
-                  method: "process/stderr",
-                  message: classified.message,
-                });
-              },
-              { discard: true },
-            ),
-          ),
-        ),
-      ),
-      Effect.forkIn(runtimeScope),
-    );
-
     yield* child.exitCode.pipe(
       Effect.flatMap((exitCode) =>
         Ref.get(closedRef).pipe(
@@ -1194,9 +1201,13 @@ export const makeCodexSessionRuntime = (
               return Effect.void;
             }
             const nextStatus = exitCode === 0 ? "closed" : "error";
+            const stderrTail = client.getStderrTail();
             return updateSession(sessionRef, {
               status: nextStatus,
               activeTurnId: undefined,
+              ...(exitCode !== 0
+                ? { lastError: formatCodexProcessExitError(Number(exitCode), stderrTail) }
+                : {}),
             }).pipe(
               Effect.andThen(
                 emitSessionEvent(
@@ -1204,6 +1215,10 @@ export const makeCodexSessionRuntime = (
                   exitCode === 0
                     ? "Codex App Server exited."
                     : `Codex App Server exited with code ${exitCode}.`,
+                  {
+                    exitCode: Number(exitCode),
+                    ...(stderrTail ? { stderrTail } : {}),
+                  },
                 ),
               ),
             );
@@ -1316,7 +1331,11 @@ export const makeCodexSessionRuntime = (
             ...(effectiveEffort ? { effort: effectiveEffort } : {}),
             ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
           });
-          const rawResponse = yield* client.raw.request("turn/start", params);
+          // turn/start can block while the agent works; liveness is governed by
+          // the turn activity watchdog, not a fixed control-plane timeout.
+          const rawResponse = yield* client.raw.request("turn/start", params, {
+            timeout: "none",
+          });
           const response = yield* decodeV2TurnStartResponse(rawResponse).pipe(
             Effect.mapError((error) =>
               CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(

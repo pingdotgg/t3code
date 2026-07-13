@@ -13,7 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
-import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { IsoDateTime, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ServerProviderAuthStatus, ServerProviderState } from "./server.ts";
 
@@ -172,6 +172,10 @@ export const SubAgentWaitResult = Schema.Struct({
   status: SubAgentStatus,
   /** Final assistant message of the awaited turn; null while running or when unavailable. */
   finalText: Schema.NullOr(Schema.String),
+  /** Most recent projected provider activity for the awaited turn, when known. */
+  lastActivityAt: Schema.optional(IsoDateTime),
+  /** True when a running turn has exceeded the configured activity threshold. */
+  stalled: Schema.Boolean,
 });
 export type SubAgentWaitResult = typeof SubAgentWaitResult.Type;
 

@@ -7,6 +7,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as TestClock from "effect/testing/TestClock";
 
 import { assert, it } from "@effect/vitest";
 
@@ -27,6 +28,13 @@ const RequestPermissionRequest = jsonRpcRequest(
 const InitializeRequest = jsonRpcRequest("initialize", AcpSchema.InitializeRequest);
 const InitializeResponse = jsonRpcResponse(AcpSchema.InitializeResponse);
 const RequestPermissionResponse = jsonRpcResponse(AcpSchema.RequestPermissionResponse);
+const CreateTerminalRequest = jsonRpcRequest("terminal/create", AcpSchema.CreateTerminalRequest);
+const CreateTerminalResponse = jsonRpcResponse(AcpSchema.CreateTerminalResponse);
+const WaitForTerminalExitRequest = jsonRpcRequest(
+  "terminal/wait_for_exit",
+  AcpSchema.WaitForTerminalExitRequest,
+);
+const WaitForTerminalExitResponse = jsonRpcResponse(AcpSchema.WaitForTerminalExitResponse);
 const SessionCancelNotification = jsonRpcNotification(
   "session/cancel",
   AcpSchema.CancelNotification,
@@ -38,6 +46,12 @@ const decodeRequestPermissionRequest = Schema.decodeEffect(
   Schema.fromJsonString(RequestPermissionRequest),
 );
 const decodeInitializeResponse = Schema.decodeEffect(Schema.fromJsonString(InitializeResponse));
+const decodeCreateTerminalRequest = Schema.decodeEffect(
+  Schema.fromJsonString(CreateTerminalRequest),
+);
+const decodeWaitForTerminalExitRequest = Schema.decodeEffect(
+  Schema.fromJsonString(WaitForTerminalExitRequest),
+);
 
 it.effect("effect-acp agent handles core agent requests and outbound client requests", () =>
   Effect.gen(function* () {
@@ -250,6 +264,50 @@ it.effect("effect-acp agent uses distinct ids for RPC calls and extension reques
       const permission = yield* Fiber.join(permissionFiber);
       assert.equal(permission.outcome.outcome, "selected");
       assert.deepEqual(yield* Fiber.join(extFiber), { ok: true });
+    }).pipe(Effect.provide(context), Effect.ensuring(Scope.close(scope, Exit.void)));
+  }),
+);
+
+it.effect("terminal waitForExit remains pending past the control-plane timeout", () =>
+  Effect.gen(function* () {
+    const { stdio, input, output } = yield* makeInMemoryStdio();
+    const scope = yield* Scope.make();
+    const context = yield* Layer.buildWithScope(AcpAgent.layer(stdio), scope);
+
+    yield* Effect.gen(function* () {
+      const agent = yield* AcpAgent.AcpAgent;
+      const terminalFiber = yield* agent.client
+        .createTerminal({
+          sessionId: "session-1",
+          command: "sleep",
+          args: ["120"],
+        })
+        .pipe(Effect.forkScoped);
+      const createRequest = yield* decodeCreateTerminalRequest(yield* Queue.take(output));
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(CreateTerminalResponse, {
+          jsonrpc: "2.0",
+          id: createRequest.id,
+          result: { terminalId: "terminal-1" },
+        }),
+      );
+      const terminal = yield* Fiber.join(terminalFiber);
+
+      const waitFiber = yield* terminal.waitForExit.pipe(Effect.forkScoped);
+      const waitRequest = yield* decodeWaitForTerminalExitRequest(yield* Queue.take(output));
+      yield* TestClock.adjust("61 seconds");
+      assert.isUndefined(waitFiber.pollUnsafe());
+
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(WaitForTerminalExitResponse, {
+          jsonrpc: "2.0",
+          id: waitRequest.id,
+          result: { exitCode: 0 },
+        }),
+      );
+      assert.deepEqual(yield* Fiber.join(waitFiber), { exitCode: 0 });
     }).pipe(Effect.provide(context), Effect.ensuring(Scope.close(scope, Exit.void)));
   }),
 );

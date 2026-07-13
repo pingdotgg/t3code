@@ -1,7 +1,9 @@
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -202,6 +204,34 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
           },
         });
       }),
+  );
+
+  it.effect("skips an oversized line and parses the next valid message", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const terminations = yield* Ref.make<Array<CodexError.CodexAppServerError>>([]);
+      const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio,
+        onTermination: (error) => Ref.update(terminations, (current) => [...current, error]),
+      });
+
+      const notification = yield* transport.incomingNotifications.pipe(
+        Stream.take(1),
+        Stream.runHead,
+        Effect.forkScoped,
+      );
+      const valid = encodeUnknownJsonString({ method: "x/after-oversized" });
+      yield* Queue.offer(
+        input,
+        encoder.encode(`${"x".repeat(CodexProtocol.MAX_PROTOCOL_LINE_BYTES + 1)}\n${valid}\n`),
+      );
+
+      assert.deepEqual(
+        yield* Fiber.join(notification),
+        Option.some({ method: "x/after-oversized" }),
+      );
+      assert.deepEqual(yield* Ref.get(terminations), []);
+    }),
   );
 
   it.effect("surfaces JSON encoding failures as protocol parse errors", () =>

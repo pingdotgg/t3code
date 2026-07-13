@@ -162,6 +162,7 @@ const ProviderRuntimeEventType = Schema.Literals([
   "session.configured",
   "session.state.changed",
   "session.exited",
+  "session.health",
   "thread.started",
   "thread.state.changed",
   "thread.metadata.updated",
@@ -213,6 +214,7 @@ const SessionStartedType = Schema.Literal("session.started");
 const SessionConfiguredType = Schema.Literal("session.configured");
 const SessionStateChangedType = Schema.Literal("session.state.changed");
 const SessionExitedType = Schema.Literal("session.exited");
+const SessionHealthType = Schema.Literal("session.health");
 const ThreadStartedType = Schema.Literal("thread.started");
 const ThreadStateChangedType = Schema.Literal("thread.state.changed");
 const ThreadMetadataUpdatedType = Schema.Literal("thread.metadata.updated");
@@ -298,8 +300,20 @@ const SessionExitedPayload = Schema.Struct({
   reason: Schema.optional(TrimmedNonEmptyStringSchema),
   recoverable: Schema.optional(Schema.Boolean),
   exitKind: Schema.optional(RuntimeSessionExitKind),
+  /**
+   * Bounded tail of the provider process stderr captured around exit/error.
+   * Omitted when no stderr was captured.
+   */
+  stderrTail: Schema.optional(Schema.String),
 });
 export type SessionExitedPayload = typeof SessionExitedPayload.Type;
+
+const SessionHealthPayload = Schema.Struct({
+  state: Schema.Literals(["stalled", "active"]),
+  lastActivityAt: IsoDateTime,
+  stalledForMs: Schema.optional(NonNegativeInt),
+});
+export type SessionHealthPayload = typeof SessionHealthPayload.Type;
 
 const ThreadStartedPayload = Schema.Struct({
   providerThreadId: Schema.optional(TrimmedNonEmptyStringSchema),
@@ -685,6 +699,13 @@ const ProviderRuntimeSessionExitedEvent = Schema.Struct({
 });
 export type ProviderRuntimeSessionExitedEvent = typeof ProviderRuntimeSessionExitedEvent.Type;
 
+const ProviderRuntimeSessionHealthEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: SessionHealthType,
+  payload: SessionHealthPayload,
+});
+export type ProviderRuntimeSessionHealthEvent = typeof ProviderRuntimeSessionHealthEvent.Type;
+
 const ProviderRuntimeThreadStartedEvent = Schema.Struct({
   ...ProviderRuntimeEventBase.fields,
   type: ThreadStartedType,
@@ -1020,6 +1041,7 @@ export const ProviderRuntimeEventV2 = Schema.Union([
   ProviderRuntimeSessionConfiguredEvent,
   ProviderRuntimeSessionStateChangedEvent,
   ProviderRuntimeSessionExitedEvent,
+  ProviderRuntimeSessionHealthEvent,
   ProviderRuntimeThreadStartedEvent,
   ProviderRuntimeThreadStateChangedEvent,
   ProviderRuntimeThreadMetadataUpdatedEvent,

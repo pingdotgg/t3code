@@ -41,6 +41,11 @@ export type ProviderSessionDirectoryWriteError =
   | ProviderSessionDirectoryPersistenceError;
 
 export interface ProviderSessionDirectoryShape {
+  /** Refresh the in-process lastSeenAt view without a persistence write per event. */
+  readonly noteActivity?: (threadId: ThreadId, observedAt: string) => Effect.Effect<void>;
+  /** Evict in-process activity after a provider session stops. */
+  readonly clearActivity?: (threadId: ThreadId) => Effect.Effect<void>;
+
   readonly upsert: (
     binding: ProviderRuntimeBinding,
   ) => Effect.Effect<void, ProviderSessionDirectoryWriteError>;

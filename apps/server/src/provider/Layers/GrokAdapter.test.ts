@@ -188,6 +188,125 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     }),
   );
 
+  it.effect("keeps stderr out of the session.exited reason", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-process-exit-reason");
+      const stderrTail = "fatal: grok mock crashed";
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({
+          T3_ACP_EXIT_ON_PROMPT: "1",
+          T3_ACP_EXIT_STDERR: stderrTail,
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeErrorReceived = yield* Deferred.make<void>();
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => runtimeEvents.push(event)).pipe(
+          Effect.andThen(
+            event.type === "runtime.error"
+              ? Deferred.succeed(runtimeErrorReceived, undefined)
+              : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-4.5" },
+      });
+
+      const sendTurnFiber = yield* adapter
+        .sendTurn({ threadId, input: "crash now", attachments: [] })
+        .pipe(Effect.ignore, Effect.forkChild);
+      yield* Deferred.await(runtimeErrorReceived);
+
+      const exited = runtimeEvents.find((event) => event.type === "session.exited");
+      assert.isDefined(exited);
+      if (exited?.type === "session.exited") {
+        assert.equal(exited.payload.reason, "Grok ACP process exited with code 7.");
+        assert.equal(exited.payload.stderrTail, stderrTail);
+      }
+
+      const runtimeError = runtimeEvents.find((event) => event.type === "runtime.error");
+      assert.isDefined(runtimeError);
+      if (runtimeError?.type === "runtime.error") {
+        assert.equal(
+          runtimeError.payload.message,
+          `Grok ACP process exited with code 7.\nLast stderr:\n${stderrTail}`,
+        );
+      }
+
+      yield* adapter.stopSession(threadId).pipe(Effect.ignore);
+      yield* Fiber.interrupt(sendTurnFiber);
+      yield* Fiber.interrupt(runtimeEventsFiber);
+    }),
+  );
+
+  it.effect("retires a crashed session and settles its pending approval", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-crash-pending-approval");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-acp-crash-")),
+      );
+      const pidPath = NodePath.join(tempDir, "pid");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({
+          T3_ACP_EMIT_TOOL_CALLS: "1",
+          T3_ACP_PID_PATH: pidPath,
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const approvalRequested = yield* Deferred.make<void>();
+      const sessionExited = yield* Deferred.make<void>();
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => runtimeEvents.push(event)).pipe(
+          Effect.andThen(
+            event.type === "request.opened"
+              ? Deferred.succeed(approvalRequested, undefined)
+              : event.type === "session.exited"
+                ? Deferred.succeed(sessionExited, undefined)
+                : Effect.void,
+          ),
+          Effect.ignore,
+        ),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+        modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-4.5" },
+      });
+
+      const sendTurnFiber = yield* adapter
+        .sendTurn({ threadId, input: "crash during approval", attachments: [] })
+        .pipe(Effect.ignore, Effect.forkChild);
+      yield* Deferred.await(approvalRequested);
+      const pid = Number(yield* Effect.promise(() => NodeFSP.readFile(pidPath, "utf8")));
+      process.kill(pid, "SIGUSR2");
+
+      yield* Deferred.await(sessionExited);
+      yield* Fiber.await(sendTurnFiber);
+      yield* adapter.stopSession(threadId).pipe(Effect.ignore);
+
+      assert.equal(runtimeEvents.filter((event) => event.type === "session.exited").length, 1);
+      assert.isFalse(
+        (yield* adapter.listSessions()).some((session) => session.threadId === threadId),
+      );
+      assert.equal(yield* adapter.hasSession(threadId), false);
+
+      yield* Fiber.interrupt(runtimeEventsFiber);
+    }),
+  );
+
   it.effect("closes the ACP child process when a session stops", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-stop-session-close");
