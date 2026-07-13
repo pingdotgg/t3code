@@ -57,6 +57,17 @@ interface SharedCopilotTextClientLease {
   readonly client: CopilotClient;
 }
 
+type SharedCopilotTextClientAcquisition =
+  | { readonly _tag: "Existing"; readonly client: CopilotClient }
+  | {
+      readonly _tag: "Pending";
+      readonly deferred: Deferred.Deferred<CopilotClient, TextGenerationError>;
+    }
+  | {
+      readonly _tag: "Start";
+      readonly deferred: Deferred.Deferred<CopilotClient, TextGenerationError>;
+    };
+
 function isTextGenerationError(error: unknown): error is TextGenerationError {
   return (
     typeof error === "object" &&
@@ -178,26 +189,40 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
         cwd: input.cwd,
       });
 
-      // First check if a client is already started — done inside the mutex so the
-      // lookup and activeRequests increment are atomic and cannot race with the
-      // idle-close fiber removing the entry.
-      const existingClient = yield* sharedClientMutex.withPermit(
+      const acquisition = yield* sharedClientMutex.withPermit(
         Effect.gen(function* () {
           const existing = sharedClients.get(clientKey);
-          if (!existing) return null;
-          yield* cancelIdleCloseFiber(existing);
-          existing.activeRequests += 1;
-          return existing.client;
+          if (existing) {
+            yield* cancelIdleCloseFiber(existing);
+            existing.activeRequests += 1;
+            return {
+              _tag: "Existing",
+              client: existing.client,
+            } satisfies SharedCopilotTextClientAcquisition;
+          }
+
+          const pending = pendingClients.get(clientKey);
+          if (pending) {
+            return {
+              _tag: "Pending",
+              deferred: pending,
+            } satisfies SharedCopilotTextClientAcquisition;
+          }
+
+          const deferred = yield* Deferred.make<CopilotClient, TextGenerationError>();
+          pendingClients.set(clientKey, deferred);
+          return {
+            _tag: "Start",
+            deferred,
+          } satisfies SharedCopilotTextClientAcquisition;
         }),
       );
-      if (existingClient !== null) {
-        return { clientKey, client: existingClient };
+      if (acquisition._tag === "Existing") {
+        return { clientKey, client: acquisition.client };
       }
 
-      // Check if a client is currently being started (pending)
-      const pendingDeferred = pendingClients.get(clientKey);
-      if (pendingDeferred) {
-        const client = yield* Deferred.await(pendingDeferred);
+      if (acquisition._tag === "Pending") {
+        const client = yield* Deferred.await(acquisition.deferred);
         yield* sharedClientMutex.withPermit(
           Effect.gen(function* () {
             const state = sharedClients.get(clientKey);
@@ -210,9 +235,7 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
         return { clientKey, client };
       }
 
-      // Create a deferred for this client startup
-      const startupDeferred = yield* Deferred.make<CopilotClient, TextGenerationError>();
-      pendingClients.set(clientKey, startupDeferred);
+      const startupDeferred = acquisition.deferred;
 
       // Start the client. If any step fails we must fail and remove
       // startupDeferred so pending waiters are unblocked rather than
