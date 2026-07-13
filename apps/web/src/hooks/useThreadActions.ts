@@ -2,7 +2,7 @@ import { parseScopedThreadKey, scopeProjectRef, scopeThreadRef } from "@t3tools/
 import { type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
-import { useCallback, useRef } from "react";
+import { useCallback, useLayoutEffect, useRef } from "react";
 
 import { getFallbackThreadIdAfterDelete } from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
@@ -38,7 +38,9 @@ export function useThreadActions() {
   // the projects list) and would otherwise cascade new references into every
   // sidebar row via archiveThread → attemptArchiveThread.
   const handleNewThreadRef = useRef(handleNewThread);
-  handleNewThreadRef.current = handleNewThread;
+  useLayoutEffect(() => {
+    handleNewThreadRef.current = handleNewThread;
+  }, [handleNewThread]);
   const queryClient = useQueryClient();
 
   const resolveThreadTarget = useCallback((target: ScopedThreadRef) => {

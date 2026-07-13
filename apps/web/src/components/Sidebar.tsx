@@ -21,7 +21,15 @@ import {
 } from "./ThreadStatusIndicators";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { autoAnimate } from "@formkit/auto-animate";
-import React, { useCallback, useEffect, memo, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  memo,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
   DndContext,
@@ -1300,7 +1308,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   // dependency arrays (avoids invalidating every thread-row memo on each
   // thread-list change).
   const sidebarThreadByKeyRef = useRef(sidebarThreadByKey);
-  sidebarThreadByKeyRef.current = sidebarThreadByKey;
+  useLayoutEffect(() => {
+    sidebarThreadByKeyRef.current = sidebarThreadByKey;
+  }, [sidebarThreadByKey]);
   const projectThreads = sidebarThreads;
   const projectExpanded = useUiStateStore(
     (state) => state.projectExpandedById[project.projectKey] ?? true,

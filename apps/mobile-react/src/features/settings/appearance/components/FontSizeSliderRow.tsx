@@ -1,6 +1,6 @@
 import * as Haptics from "expo-haptics";
 import { SymbolView } from "expo-symbols";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { View, type AccessibilityActionEvent } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
@@ -42,7 +42,9 @@ export function FontSizeSliderRow(props: {
   const fillColor = String(useThemeColor("--color-primary"));
 
   const latest = useRef(props);
-  latest.current = props;
+  useLayoutEffect(() => {
+    latest.current = props;
+  }, [props]);
 
   const { min, max, step, value, disabled } = props;
   const fraction = (value - min) / (max - min);

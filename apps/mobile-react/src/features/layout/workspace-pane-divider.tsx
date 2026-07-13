@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Platform,
   PlatformColor,
@@ -25,7 +25,9 @@ interface WorkspacePaneDividerProps {
 /** A forgiving divider target for touch, pointer, and VoiceOver users. */
 export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
   const latestProps = useRef(props);
-  latestProps.current = props;
+  useLayoutEffect(() => {
+    latestProps.current = props;
+  }, [props]);
   const [hovered, setHovered] = useState(false);
   const [dragging, setDragging] = useState(false);
   const handleResizeStart = useCallback(() => {

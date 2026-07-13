@@ -15,9 +15,11 @@ export function useCopyToClipboard<TContext = void>({
   const onErrorRef = React.useRef(onError);
   const timeoutRef = React.useRef(timeout);
 
-  onCopyRef.current = onCopy;
-  onErrorRef.current = onError;
-  timeoutRef.current = timeout;
+  React.useLayoutEffect(() => {
+    onCopyRef.current = onCopy;
+    onErrorRef.current = onError;
+    timeoutRef.current = timeout;
+  }, [onCopy, onError, timeout]);
 
   const copyToClipboard = React.useCallback((value: string, ctx: TContext): void => {
     if (typeof window === "undefined" || !navigator.clipboard?.writeText) {

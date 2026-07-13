@@ -1,6 +1,6 @@
 import type { ProjectEntry } from "@t3tools/contracts";
 import { SymbolView } from "expo-symbols";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -134,7 +134,9 @@ export function FileTreeBrowser(props: {
   const { onPreviewFile, onSelectFile, selectedPath: controlledSelectedPath } = props;
   const controlledSelectedPathRef = useRef(controlledSelectedPath);
   const pendingSelectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  controlledSelectedPathRef.current = controlledSelectedPath;
+  useLayoutEffect(() => {
+    controlledSelectedPathRef.current = controlledSelectedPath;
+  }, [controlledSelectedPath]);
 
   const selectedPath =
     pendingSelection?.selectedPathAtPress === controlledSelectedPath

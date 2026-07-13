@@ -5,7 +5,15 @@ import {
   useNavigation,
   type StaticScreenProps,
 } from "@react-navigation/native";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import * as Option from "effect/Option";
 import { EnvironmentId, ThreadId, type ProjectScript } from "@t3tools/contracts";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
@@ -350,11 +358,13 @@ function ThreadRouteContent(
     openFilesInspector: handleOpenFilesInspector,
     toggleAuxiliaryPane,
   });
-  inspectorToggleActionRef.current = {
-    inspectorMode,
-    openFilesInspector: handleOpenFilesInspector,
-    toggleAuxiliaryPane,
-  };
+  useLayoutEffect(() => {
+    inspectorToggleActionRef.current = {
+      inspectorMode,
+      openFilesInspector: handleOpenFilesInspector,
+      toggleAuxiliaryPane,
+    };
+  }, [handleOpenFilesInspector, inspectorMode, toggleAuxiliaryPane]);
   const handleToggleInspector = useCallback(() => {
     const action = inspectorToggleActionRef.current;
     if (action.inspectorMode === null) {

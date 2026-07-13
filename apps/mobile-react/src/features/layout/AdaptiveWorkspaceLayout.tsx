@@ -15,6 +15,7 @@ import {
   use,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -137,7 +138,9 @@ export function useRegisterWorkspaceInspector(render: (() => ReactNode) | undefi
   }, [navigation, render, route]);
 
   const wrappedRenderRef = useRef(wrappedRender);
-  wrappedRenderRef.current = wrappedRender;
+  useLayoutEffect(() => {
+    wrappedRenderRef.current = wrappedRender;
+  }, [wrappedRender]);
   const focusedRef = useRef(false);
   const deactivateRef = useRef<(() => void) | null>(null);
 

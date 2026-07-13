@@ -967,9 +967,11 @@ export const ChatComposer = memo(
       composerMenuSearchKey,
     ]);
 
-    composerMenuOpenRef.current = composerMenuOpen;
-    composerMenuItemsRef.current = composerMenuItems;
-    activeComposerMenuItemRef.current = activeComposerMenuItem;
+    useLayoutEffect(() => {
+      composerMenuOpenRef.current = composerMenuOpen;
+      composerMenuItemsRef.current = composerMenuItems;
+      activeComposerMenuItemRef.current = activeComposerMenuItem;
+    }, [activeComposerMenuItem, composerMenuItems, composerMenuOpen]);
 
     const nonPersistedComposerImageIdSet = useMemo(
       () => new Set(nonPersistedComposerImageIds),

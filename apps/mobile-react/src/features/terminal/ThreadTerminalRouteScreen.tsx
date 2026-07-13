@@ -245,7 +245,6 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   const [isAccessoryDismissed, setIsAccessoryDismissed] = useState(false);
   const bufferReplayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const firstNonEmptyBufferLoggedRef = useRef(false);
-  const lastBufferReplayKeyRef = useRef<string | null>(null);
   const sentInitialInputKeyRef = useRef<string | null>(null);
   const [readyBufferReplayKey, setReadyBufferReplayKey] = useState<string | null>(null);
   /** Default grid is always valid for attach; onResize refines cols/rows. Requiring a cached size blocked bootstrap for new terminal routes. */
@@ -336,9 +335,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     () => getTerminalBufferReplayKey({ terminalKey, fontSize }),
     [fontSize, terminalKey],
   );
-  if (lastBufferReplayKeyRef.current === null) {
-    lastBufferReplayKeyRef.current = bufferReplayKey;
-  }
+  const lastBufferReplayKeyRef = useRef(bufferReplayKey);
   const terminalSurfaceBuffer = getTerminalSurfaceReplayBuffer({
     buffer: terminal.buffer,
     replayKey: bufferReplayKey,
