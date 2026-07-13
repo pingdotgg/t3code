@@ -95,6 +95,21 @@ struct WireCodingTests {
         #expect(decoded == DefaultedThread(runtimeMode: "approval-required", proposedPlans: ["p1"]))
     }
 
+    @Test("thread projections default an omitted runtimeMode")
+    func threadProjectionsDefaultRuntimeMode() throws {
+        let thread = try WireCoding.decoder.decode(
+            OrchestrationThread.self,
+            from: Data(FixtureFrames.orchestrationThreadWithoutRuntimeMode.utf8)
+        )
+        let shell = try WireCoding.decoder.decode(
+            OrchestrationThreadShell.self,
+            from: Data(FixtureFrames.orchestrationThreadShellWithoutRuntimeMode.utf8)
+        )
+
+        #expect(thread.runtimeMode == .wireDefault)
+        #expect(shell.runtimeMode == .wireDefault)
+    }
+
     // MARK: - §5.3/§5.4 no-value encoding matrix (absent key vs null vs Option)
 
     @Test("absent key, explicit null, and Option-None are three distinct wire shapes")

@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// A parsed `major.minor.patch` version, e.g. from `node --version` output
@@ -146,21 +147,8 @@ public struct NodeRuntimeLocator: Sendable {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
         process.arguments = ["-ilc", "command -v node"]
-        let stdout = Pipe()
-        process.standardOutput = stdout
-        process.standardError = Pipe()
-
-        do {
-            try process.run()
-        } catch {
-            return nil
-        }
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else { return nil }
-
-        let data = stdout.fileHandleForReading.readDataToEndOfFile()
-        guard let text = String(data: data, encoding: .utf8) else { return nil }
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let output = runProbe(process) else { return nil }
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
 
@@ -177,21 +165,63 @@ public struct NodeRuntimeLocator: Sendable {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: path)
         process.arguments = ["--version"]
+        return runProbe(process)?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func runProbe(_ process: Process, timeout: TimeInterval = 5) -> String? {
         let stdout = Pipe()
         process.standardOutput = stdout
-        process.standardError = Pipe()
+        process.standardError = FileHandle.nullDevice
+
+        let output = ProbeOutput()
+        let outputDrained = DispatchSemaphore(value: 0)
+        stdout.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                outputDrained.signal()
+            } else {
+                output.append(data)
+            }
+        }
 
         do {
             try process.run()
         } catch {
+            stdout.fileHandleForReading.readabilityHandler = nil
+            return nil
+        }
+
+        let deadline = Date().addingTimeInterval(timeout)
+        while process.isRunning && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        if process.isRunning {
+            process.terminate()
+            let terminateDeadline = Date().addingTimeInterval(0.5)
+            while process.isRunning && Date() < terminateDeadline {
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+            if process.isRunning {
+                kill(process.processIdentifier, SIGKILL)
+                let killDeadline = Date().addingTimeInterval(0.5)
+                while process.isRunning && Date() < killDeadline {
+                    Thread.sleep(forTimeInterval: 0.05)
+                }
+            }
+        }
+        guard !process.isRunning else {
+            stdout.fileHandleForReading.readabilityHandler = nil
             return nil
         }
         process.waitUntilExit()
-        guard process.terminationStatus == 0 else { return nil }
+        guard outputDrained.wait(timeout: .now() + 1) == .success else {
+            stdout.fileHandleForReading.readabilityHandler = nil
+            return nil
+        }
+        stdout.fileHandleForReading.readabilityHandler = nil
 
-        let data = stdout.fileHandleForReading.readDataToEndOfFile()
-        guard let text = String(data: data, encoding: .utf8) else { return nil }
-        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard process.terminationStatus == 0 else { return nil }
+        return String(data: output.data, encoding: .utf8)
     }
 
     /// Pure predicate mirroring the server's `engines.node` range from
@@ -216,5 +246,18 @@ public struct NodeRuntimeLocator: Sendable {
     public static func versionSatisfies(_ rawVersion: String) -> Bool {
         guard let version = SemanticVersion(parsing: rawVersion) else { return false }
         return satisfiesEngineRange(version)
+    }
+}
+
+private final class ProbeOutput: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage = Data()
+
+    func append(_ data: Data) {
+        lock.withLock { storage.append(data) }
+    }
+
+    var data: Data {
+        lock.withLock { storage }
     }
 }

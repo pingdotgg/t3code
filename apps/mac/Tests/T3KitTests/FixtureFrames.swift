@@ -142,6 +142,16 @@ enum FixtureFrames {
     {"_tag":"None"}
     """#
 
+    // MARK: - §5.3 omitted decoding-default fields
+
+    static let orchestrationThreadWithoutRuntimeMode = #"""
+    {"id":"th_1","projectId":"pr_1","title":"Thread","modelSelection":{"instanceId":"codex","model":"gpt-5.5"},"interactionMode":"default","createdAt":"2026-07-04T12:00:00.000Z","updatedAt":"2026-07-04T12:00:00.000Z","messages":[],"activities":[],"checkpoints":[]}
+    """#
+
+    static let orchestrationThreadShellWithoutRuntimeMode = #"""
+    {"id":"th_1","projectId":"pr_1","title":"Thread","modelSelection":{"instanceId":"codex","model":"gpt-5.5"},"interactionMode":"default","createdAt":"2026-07-04T12:00:00.000Z","updatedAt":"2026-07-04T12:00:00.000Z","hasPendingApprovals":false,"hasPendingUserInput":false,"hasActionableProposedPlan":false}
+    """#
+
     // MARK: - §5.5 discriminator variants (`_tag` vs `type` vs `kind`)
 
     /// Envelope-style union discriminated by `_tag` (protocol frames, tagged errors).
