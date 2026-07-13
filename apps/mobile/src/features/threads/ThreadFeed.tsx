@@ -90,6 +90,7 @@ import {
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { ThreadWorkGroupToggle, ThreadWorkLog } from "./thread-work-log";
 import { SubagentTaskRow } from "./SubagentTaskRow";
+import { SessionExitRow } from "./SessionExitRow";
 import { useAssetUrl } from "../../state/assets";
 import { resolveWorkspaceRelativeFilePath } from "../files/filePath";
 import { threadEnvironment } from "../../state/threads";
@@ -884,6 +885,10 @@ function renderFeedEntry(
         onStopAgent={() => props.onStopSubagentTask(entry.task.taskId, entry.turnId)}
       />
     );
+  }
+
+  if (entry.type === "session-exit") {
+    return <SessionExitRow key={entry.id} sessionExit={entry.sessionExit} />;
   }
 
   return (

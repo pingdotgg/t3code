@@ -57,6 +57,15 @@ export interface ThreadFeedActivity {
   readonly status: "success" | "failure" | "neutral" | null;
 }
 
+export interface ThreadFeedSessionExit {
+  readonly id: string;
+  readonly createdAt: string;
+  readonly turnId: TurnId | null;
+  readonly summary: string;
+  /** Original provider stderr tail, including surrounding whitespace. */
+  readonly stderrTail: string;
+}
+
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
 
 type WorkLogToolLifecycleStatus = "inProgress" | "completed" | "failed" | "declined" | "stopped";
@@ -103,11 +112,19 @@ type RawThreadFeedEntry =
       readonly createdAt: string;
       readonly turnId: TurnId | null;
       readonly task: SubagentTaskItem;
+    }
+  | {
+      readonly type: "session-exit";
+      readonly id: string;
+      readonly createdAt: string;
+      readonly turnId: TurnId | null;
+      readonly sessionExit: ThreadFeedSessionExit;
     };
 
 export type ThreadFeedEntry =
   | Extract<RawThreadFeedEntry, { type: "message" }>
   | Extract<RawThreadFeedEntry, { type: "subagent-task" }>
+  | Extract<RawThreadFeedEntry, { type: "session-exit" }>
   | {
       readonly type: "activity-group";
       readonly id: string;
@@ -256,8 +273,8 @@ function deriveWorkLogEntries(
     ) {
       continue;
     }
-    // Health activities drive the thread status projection, not work-log rows.
-    if (activity.kind === "session.health") continue;
+    // Health and process-exit activities have dedicated projections/rows.
+    if (activity.kind === "session.health" || activity.kind === "session.exited") continue;
     if (activity.kind === "context-window.updated") continue;
     if (activity.summary === "Checkpoint captured") continue;
     if (isPlanBoundaryToolActivity(activity)) continue;
@@ -1341,6 +1358,22 @@ export function buildThreadFeed(
     options?.loadedMessages !== undefined ? (loadedMessages[0]?.createdAt ?? null) : null;
   const workLogEntries = deriveWorkLogEntries(thread.activities);
   const subagentTasks = deriveSubagentTasks(thread.activities);
+  const sessionExits = thread.activities.flatMap((activity) => {
+    if (activity.kind !== "session.exited") return [];
+    const payload = asRecord(activity.payload);
+    const stderrTail = typeof payload?.stderrTail === "string" ? payload.stderrTail : null;
+    if (stderrTail === null || stderrTail.trim().length === 0) return [];
+    const reason = typeof payload?.reason === "string" ? payload.reason.trim() : "";
+    return [
+      {
+        id: activity.id,
+        createdAt: activity.createdAt,
+        turnId: activity.turnId,
+        summary: reason || "Provider process exited",
+        stderrTail,
+      } satisfies ThreadFeedSessionExit,
+    ];
+  });
   const entries = Arr.sortWith(
     [
       ...loadedMessages.map<RawThreadFeedEntry>((message) => ({
@@ -1364,6 +1397,23 @@ export function buildThreadFeed(
           createdAt: task.startedAt,
           turnId: task.turnId,
           task,
+        })),
+      ...sessionExits
+        .filter((sessionExit) => {
+          if (options?.loadedMessages === undefined) {
+            return true;
+          }
+          return (
+            oldestLoadedMessageCreatedAt === null ||
+            sessionExit.createdAt >= oldestLoadedMessageCreatedAt
+          );
+        })
+        .map<RawThreadFeedEntry>((sessionExit) => ({
+          type: "session-exit",
+          id: sessionExit.id,
+          createdAt: sessionExit.createdAt,
+          turnId: sessionExit.turnId,
+          sessionExit,
         })),
       ...workLogEntries
         .filter((entry) => {
