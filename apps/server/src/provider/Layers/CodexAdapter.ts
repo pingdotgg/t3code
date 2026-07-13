@@ -12,6 +12,7 @@ import {
   type CanonicalRequestType,
   EventId,
   ProviderDriverKind,
+  ProviderItemId,
   type ProviderEvent,
   ProviderInstanceId,
   type ProviderRuntimeEvent,
@@ -93,6 +94,11 @@ export interface CodexAdapterLiveOptions {
   >;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  /** Map low-level Responses API completed items into canonical events.
+   * Disabled for plain Codex to avoid duplicate messages when high-level item
+   * deltas are already emitted; enabled by Fugu, which may only surface these.
+   */
+  readonly mapRawResponseItems?: boolean;
 }
 
 interface CodexAdapterSessionContext {
@@ -136,6 +142,8 @@ function mapCodexRuntimeError(
 type CodexLifecycleItem =
   | EffectCodexSchema.V2ItemStartedNotification["item"]
   | EffectCodexSchema.V2ItemCompletedNotification["item"];
+
+type CodexRawResponseItem = EffectCodexSchema.V2RawResponseItemCompletedNotification["item"];
 
 type CodexToolUserInputQuestion =
   | EffectCodexSchema.ServerRequest__ToolRequestUserInputQuestion
@@ -282,24 +290,165 @@ function itemTitle(itemType: CanonicalItemType, item?: CodexLifecycleItem): stri
   }
 }
 
-function itemDetail(item: CodexLifecycleItem): string | undefined {
-  if (item.type === "collabAgentToolCall") {
-    return trimText(item.prompt) ?? `${item.tool} agent`;
-  }
-  const candidates = [
-    "command" in item ? item.command : undefined,
-    "title" in item ? item.title : undefined,
-    "summary" in item ? item.summary : undefined,
-    "text" in item ? item.text : undefined,
-    "path" in item ? item.path : undefined,
-    "prompt" in item ? item.prompt : undefined,
-  ];
+function firstTrimmedString(candidates: ReadonlyArray<unknown>): string | undefined {
   for (const candidate of candidates) {
     const trimmed = typeof candidate === "string" ? trimText(candidate) : undefined;
     if (!trimmed) continue;
     return trimmed;
   }
   return undefined;
+}
+
+function joinTrimmedStrings(candidates: ReadonlyArray<unknown>): string | undefined {
+  const text = candidates
+    .filter((candidate): candidate is string => typeof candidate === "string")
+    .join("")
+    .trim();
+  return text.length > 0 ? text : undefined;
+}
+
+function responseContentText(
+  content: ReadonlyArray<EffectCodexSchema.V2RawResponseItemCompletedNotification__ContentItem>,
+): string | undefined {
+  return joinTrimmedStrings(
+    content.map((part) =>
+      part.type === "output_text" || part.type === "input_text" ? part.text : undefined,
+    ),
+  );
+}
+
+function responseReasoningText(
+  item: Extract<CodexRawResponseItem, { type: "reasoning" }>,
+): string | undefined {
+  return joinTrimmedStrings([
+    ...(item.summary ?? []).map((summary) => summary.text),
+    ...(item.content ?? []).map((content) => content.text),
+  ]);
+}
+
+function responseFunctionOutputText(
+  output: EffectCodexSchema.V2RawResponseItemCompletedNotification__FunctionCallOutputBody,
+): string | undefined {
+  if (typeof output === "string") {
+    return trimText(output);
+  }
+  return joinTrimmedStrings(
+    output.map((part) => (part.type === "input_text" ? part.text : undefined)),
+  );
+}
+
+function responseItemId(item: CodexRawResponseItem, fallback: string): string {
+  if ("id" in item && typeof item.id === "string" && item.id.length > 0) {
+    return item.id;
+  }
+  if ("call_id" in item && typeof item.call_id === "string" && item.call_id.length > 0) {
+    return item.call_id;
+  }
+  return fallback ?? "raw-response-item";
+}
+
+function responseItemDetail(item: CodexRawResponseItem): string | undefined {
+  switch (item.type) {
+    case "message":
+      return responseContentText(item.content);
+    case "reasoning":
+      return responseReasoningText(item);
+    case "local_shell_call":
+      return firstTrimmedString([item.action.command.join(" ")]);
+    case "function_call":
+      return firstTrimmedString([`${item.name}: ${item.arguments}`, item.name]);
+    case "custom_tool_call":
+      return firstTrimmedString([`${item.name}: ${item.input}`, item.name]);
+    case "function_call_output":
+    case "custom_tool_call_output":
+      return responseFunctionOutputText(item.output);
+    case "web_search_call":
+      return firstTrimmedString([
+        item.action && "query" in item.action ? item.action.query : undefined,
+        item.action && "queries" in item.action ? item.action.queries?.join(", ") : undefined,
+        item.action && "url" in item.action ? item.action.url : undefined,
+      ]);
+    case "image_generation_call":
+      return firstTrimmedString([item.revised_prompt, item.result]);
+    case "tool_search_call":
+    case "tool_search_output":
+      return item.execution;
+    case "agent_message":
+    case "compaction":
+    case "compaction_trigger":
+    case "context_compaction":
+    case "other":
+      return undefined;
+  }
+}
+
+function responseItemTitle(
+  itemType: CanonicalItemType,
+  item: CodexRawResponseItem,
+): string | undefined {
+  switch (item.type) {
+    case "function_call":
+      return item.namespace ? `${item.namespace} · ${item.name}` : item.name;
+    case "custom_tool_call":
+      return item.name;
+    case "custom_tool_call_output":
+      return item.name ?? undefined;
+    case "local_shell_call":
+      return "Ran command";
+    case "web_search_call":
+      return "Web search";
+    case "image_generation_call":
+      return "Image generation";
+    case "tool_search_call":
+    case "tool_search_output":
+      return "Tool search";
+    default:
+      return itemTitle(itemType);
+  }
+}
+
+function rawResponseItemType(item: CodexRawResponseItem): CanonicalItemType {
+  switch (item.type) {
+    case "message":
+      return item.role === "assistant" ? "assistant_message" : "user_message";
+    case "agent_message":
+      return "assistant_message";
+    case "reasoning":
+      return "reasoning";
+    case "local_shell_call":
+      return "command_execution";
+    case "function_call":
+    case "function_call_output":
+    case "custom_tool_call":
+    case "custom_tool_call_output":
+    case "tool_search_call":
+    case "tool_search_output":
+      return "dynamic_tool_call";
+    case "web_search_call":
+      return "web_search";
+    case "image_generation_call":
+      return "image_view";
+    case "compaction":
+    case "compaction_trigger":
+    case "context_compaction":
+      return "context_compaction";
+    case "other":
+      return "unknown";
+  }
+}
+
+function itemDetail(item: CodexLifecycleItem): string | undefined {
+  if (item.type === "collabAgentToolCall") {
+    return trimText(item.prompt) ?? `${item.tool} agent`;
+  }
+  return firstTrimmedString([
+    "command" in item ? item.command : undefined,
+    "title" in item ? item.title : undefined,
+    "summary" in item ? item.summary : undefined,
+    "text" in item ? item.text : undefined,
+    "path" in item ? item.path : undefined,
+    "prompt" in item ? item.prompt : undefined,
+  ]);
 }
 
 function collabAgentTaskId(item: Extract<CodexLifecycleItem, { type: "collabAgentToolCall" }>) {
@@ -579,6 +728,7 @@ function mapToRuntimeEvents(
   canonicalThreadId: ThreadId,
   options?: {
     readonly pendingUsageLimit?: RuntimeUsageLimitDetail | undefined;
+    readonly mapRawResponseItems?: boolean;
   },
 ): ReadonlyArray<ProviderRuntimeEvent> {
   if (event.kind === "error") {
@@ -1115,6 +1265,89 @@ function mapToRuntimeEvents(
     }
     const completed = mapItemLifecycle(event, canonicalThreadId, "item.completed");
     return completed ? [completed] : [];
+  }
+
+  if (event.method === "rawResponseItem/completed") {
+    if (options?.mapRawResponseItems !== true) {
+      return [];
+    }
+    const payload = readPayload(
+      EffectCodexSchema.V2RawResponseItemCompletedNotification,
+      event.payload,
+    );
+    if (!payload) {
+      return [];
+    }
+    const item = payload.item;
+    const itemType = rawResponseItemType(item);
+    const detail = responseItemDetail(item);
+    const itemId = responseItemId(item, event.itemId ?? event.id);
+    const base = {
+      ...runtimeEventBase(event, canonicalThreadId),
+      itemId: asRuntimeItemId(ProviderItemId.make(itemId)),
+      providerRefs: {
+        ...providerRefsFromEvent(event),
+        providerItemId: ProviderItemId.make(itemId),
+      },
+    };
+
+    if (itemType === "assistant_message") {
+      return [
+        ...(detail
+          ? [
+              {
+                ...base,
+                type: "content.delta" as const,
+                payload: { streamKind: "assistant_text" as const, delta: detail },
+              },
+            ]
+          : []),
+        {
+          ...base,
+          eventId: EventId.make(`${event.id}:completed`),
+          type: "item.completed" as const,
+          payload: {
+            itemType,
+            status: "completed" as const,
+            ...(responseItemTitle(itemType, item)
+              ? { title: responseItemTitle(itemType, item) }
+              : {}),
+            ...(detail ? { detail } : {}),
+            data: event.payload,
+          },
+        },
+      ];
+    }
+
+    if (itemType === "reasoning" && detail) {
+      return [
+        {
+          ...base,
+          type: "content.delta",
+          payload: { streamKind: "reasoning_summary_text", delta: detail },
+        },
+      ];
+    }
+
+    if (itemType === "unknown") {
+      return [];
+    }
+
+    return [
+      {
+        ...base,
+        type: "item.completed",
+        payload: {
+          itemType,
+          status: "completed",
+          ...(responseItemTitle(itemType, item)
+            ? { title: responseItemTitle(itemType, item) }
+            : {}),
+          ...(detail ? { detail } : {}),
+          data: event.payload,
+        },
+      },
+    ];
   }
 
   if (
@@ -1754,6 +1987,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             pendingUsageLimit = detectCodexRateLimitEventUsageLimit(event) ?? pendingUsageLimit;
             const runtimeEvents = mapToRuntimeEvents(event, event.threadId, {
               pendingUsageLimit,
+              mapRawResponseItems: options?.mapRawResponseItems === true,
             });
             if (runtimeEvents.length === 0) {
               yield* Effect.logDebug("ignoring unhandled Codex provider event", {

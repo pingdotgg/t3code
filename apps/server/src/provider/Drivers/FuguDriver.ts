@@ -238,6 +238,7 @@ export const FuguDriver: ProviderDriver<FuguSettings, FuguDriverEnv> = {
         driverKind: DRIVER_KIND,
         defaultReasoningEffort: "high",
         allowedReasoningEfforts: FUGU_ALLOWED_REASONING_EFFORTS,
+        mapRawResponseItems: true,
         environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       });
