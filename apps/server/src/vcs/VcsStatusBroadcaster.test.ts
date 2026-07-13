@@ -406,9 +406,10 @@ describe("VcsStatusBroadcaster", () => {
         return Effect.void;
       }).pipe(Effect.forkScoped);
 
-      const snapshot = yield* Deferred.await(snapshotDeferred);
-      yield* broadcaster.refreshStatus("/repo");
-      const remoteUpdated = yield* Deferred.await(remoteUpdatedDeferred);
+      const snapshot = yield* Deferred.await(snapshotDeferred).pipe(Effect.timeout("2 seconds"));
+      const remoteUpdated = yield* Deferred.await(remoteUpdatedDeferred).pipe(
+        Effect.timeout("2 seconds"),
+      );
 
       assert.deepStrictEqual(snapshot, {
         _tag: "snapshot",
