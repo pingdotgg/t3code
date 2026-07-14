@@ -2707,6 +2707,7 @@ public actor LiveBackend: BackendService {
                 description: task.description,
                 subagentType: task.subagentType,
                 model: task.model,
+                effort: task.effort,
                 workflowName: task.workflowName,
                 toolUseId: task.toolUseId,
                 state: Self.uiSubagentTaskState(task.state),

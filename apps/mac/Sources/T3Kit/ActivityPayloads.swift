@@ -90,7 +90,7 @@ public struct ToolLifecycleActivityPayload: Decodable, Sendable {
 // MARK: - task.started / task.progress / task.updated / task.completed
 
 /// Activity payload for kind `task.started`:
-/// `{ taskId, description?, taskType?, subagentType?, model?, workflowName?, toolUseId? }`.
+/// `{ taskId, description?, taskType?, subagentType?, model?, effort?, workflowName?, toolUseId? }`.
 /// All identity fields are optional so older persisted activities still decode.
 public struct TaskStartedActivityPayload: Decodable, Sendable {
     public var taskId: String?
@@ -99,6 +99,8 @@ public struct TaskStartedActivityPayload: Decodable, Sendable {
     public var detail: String?
     public var subagentType: String?
     public var model: String?
+    /// Reasoning effort the subagent's turns run at, when the provider has one.
+    public var effort: String?
     public var workflowName: String?
     public var toolUseId: String?
 }

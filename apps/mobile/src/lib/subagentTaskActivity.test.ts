@@ -106,6 +106,34 @@ describe("deriveSubagentTasks", () => {
     expect(subagentTaskSubtitle(task)).toBe("Found 3 usages");
   });
 
+  it("shows the subagent's reasoning effort alongside its model", () => {
+    const started = makeActivity({
+      id: EventId.make("evt-effort-1"),
+      kind: "task.started",
+      summary: "Task started",
+      createdAt: "2026-04-01T00:00:00.000Z",
+      payload: {
+        taskId: "task-effort",
+        description: "Explore the repo",
+        subagentType: "Explore",
+        model: "claude-sonnet-5",
+        effort: "xhigh",
+      },
+    });
+
+    const task = deriveSubagentTasks([started])[0];
+    expect(task).toBeDefined();
+    if (!task) return;
+
+    expect(task.effort).toBe("xhigh");
+    expect(subagentTaskIdentityBadge(task, new Map([["claude-sonnet-5", "Sonnet 5"]]))).toBe(
+      "Explore · Sonnet 5 · Extra High",
+    );
+
+    // Effort qualifies the model, so it stays hidden until the model is known.
+    expect(subagentTaskIdentityBadge({ ...task, model: null })).toBe("Explore");
+  });
+
   it("treats task.updated paused/killed status transitions like mac's state machine", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

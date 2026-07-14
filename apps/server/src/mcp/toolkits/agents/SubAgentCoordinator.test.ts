@@ -307,6 +307,57 @@ it.effect("forces fast-capable Claude-backed sub-agents into standard mode", () 
   }),
 );
 
+it.effect("reports the sub-agent's resolved reasoning effort on the parent task row", () =>
+  Effect.gen(function* () {
+    const [coordinator, harness] = yield* makeCoordinator({
+      providers: [
+        makeProvider("claudex", "claudeAgent", {
+          models: [
+            {
+              slug: "claudex-luna",
+              name: "Claudex Luna",
+              isCustom: true,
+              capabilities: {
+                optionDescriptors: [
+                  {
+                    id: "effort",
+                    label: "Reasoning",
+                    type: "select",
+                    options: [
+                      { id: "low", label: "Low" },
+                      { id: "max", label: "Max", isDefault: true },
+                      { id: "ultrathink", label: "Ultrathink" },
+                    ],
+                    promptInjectedValues: ["ultrathink"],
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      ],
+    });
+
+    yield* coordinator.spawn(makeScope(), {
+      providerInstanceId: ProviderInstanceId.make("claudex"),
+      prompt: "Audit the reducer.",
+    });
+
+    const activity = harness.dispatched.find(
+      (command) => command.type === "thread.activity.append",
+    );
+    expect(activity?.type).toBe("thread.activity.append");
+    if (activity?.type === "thread.activity.append") {
+      // The child session resolves the same descriptor default, so the badge
+      // reports what the sub-agent actually runs at.
+      expect(activity.activity.payload).toMatchObject({
+        model: "claudex-luna",
+        effort: "max",
+      });
+    }
+  }),
+);
+
 it.effect("inherits the caller model when the target instance exposes it", () =>
   Effect.gen(function* () {
     const [coordinator, harness] = yield* makeCoordinator({

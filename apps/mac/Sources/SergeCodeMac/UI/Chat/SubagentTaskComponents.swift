@@ -20,6 +20,13 @@ private func shortModelName(_ model: String) -> String {
     return model
 }
 
+/// Readable label for a reasoning-effort slug: "xhigh" → "Extra High".
+func effortDisplayName(_ effort: String) -> String {
+    let trimmed = effort.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.lowercased() == "xhigh" { return "Extra High" }
+    return trimmed.prefix(1).uppercased() + trimmed.dropFirst()
+}
+
 /// Shared presentation rules for subagent task rows. Keeping these in one
 /// place makes the timeline row and the cross-thread agents panel agree on
 /// identity, timing, quiet-running state, and status colors.
@@ -40,8 +47,10 @@ enum SubagentTaskPresentation {
             : "Subagent task"
     }
 
-    /// Compact identity badge: "Explore · Sonnet 5" or "workflow · Opus 4.8".
+    /// Compact identity badge: "Explore · Sonnet 5 · High" or "workflow · Opus 4.8".
     /// Model names resolve through the server catalog when it knows the slug.
+    /// Reasoning effort qualifies the model, so it only shows once the model is
+    /// known.
     static func identityBadge(
         for task: SubagentTaskItem, modelDisplayNames: [String: String]
     ) -> String? {
@@ -55,6 +64,9 @@ enum SubagentTaskPresentation {
         }
         if let model = nonEmpty(task.model) {
             parts.append(displayModelName(slug: model, catalog: modelDisplayNames))
+            if let effort = nonEmpty(task.effort) {
+                parts.append(effortDisplayName(effort))
+            }
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
