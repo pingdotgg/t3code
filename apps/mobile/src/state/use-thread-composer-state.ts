@@ -19,7 +19,7 @@ import {
   pasteComposerClipboard,
   pickComposerImages,
 } from "../lib/composerImages";
-import type { DraftComposerImageAttachment } from "../lib/composerImages";
+import type { DraftComposerAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildThreadFeed } from "../lib/threadActivity";
 import { appAtomRegistry } from "../state/atom-registry";
@@ -45,7 +45,7 @@ export function appendReviewCommentToDraft(input: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly text: string;
-  readonly attachments?: ReadonlyArray<DraftComposerImageAttachment>;
+  readonly attachments?: ReadonlyArray<DraftComposerAttachment>;
 }): void {
   const threadKey = scopedThreadKey(input.environmentId, input.threadId);
   const existing = appAtomRegistry.get(composerDraftsAtom)[threadKey]?.text ?? "";
@@ -211,6 +211,9 @@ export function useThreadComposerState() {
     });
     if (result.images.length > 0) {
       appendComposerDraftAttachments(threadKey, result.images);
+    }
+    if (result.textAttachment) {
+      appendComposerDraftAttachments(threadKey, [result.textAttachment]);
     }
     if (result.text) {
       appendComposerDraftText(threadKey, result.text);

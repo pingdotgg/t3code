@@ -2,6 +2,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type UploadChatImageAttachment,
+  type UploadChatTextAttachment,
 } from "@t3tools/contracts";
 import { uuidv4 } from "./uuid";
 
@@ -9,6 +10,10 @@ export interface DraftComposerImageAttachment extends UploadChatImageAttachment 
   readonly id: string;
   readonly previewUri: string;
 }
+export interface DraftComposerTextAttachment extends UploadChatTextAttachment {
+  readonly id: string;
+}
+export type DraftComposerAttachment = DraftComposerImageAttachment | DraftComposerTextAttachment;
 
 const OWNED_PASTED_IMAGE_DIRECTORY = "t3-composer-paste";
 
@@ -120,6 +125,7 @@ export async function pickComposerImages(input: { readonly existingCount: number
 
 export async function pasteComposerClipboard(input: { readonly existingCount: number }): Promise<{
   readonly images: ReadonlyArray<DraftComposerImageAttachment>;
+  readonly textAttachment?: DraftComposerTextAttachment;
   readonly text: string | null;
   readonly error: string | null;
 }> {
@@ -182,6 +188,25 @@ export async function pasteComposerClipboard(input: { readonly existingCount: nu
 
   if (await clipboard.hasStringAsync()) {
     const text = await clipboard.getStringAsync();
+    if (text.length > 12_000) {
+      const bytes = new TextEncoder().encode(text);
+      let binary = "";
+      for (const byte of bytes) binary += String.fromCharCode(byte);
+      return {
+        images: [],
+        text: null,
+        textAttachment: {
+          id: uuidv4(),
+          type: "text",
+          name: "pasted-text.txt",
+          mimeType: "text/plain",
+          sizeBytes: bytes.byteLength,
+          dataUrl: `data:text/plain;base64,${btoa(binary)}`,
+          preview: text.slice(0, 1_600),
+        },
+        error: null,
+      };
+    }
     return {
       images: [],
       text: text.length > 0 ? text : null,

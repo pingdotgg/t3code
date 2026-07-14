@@ -5,6 +5,7 @@ import {
   type ClientOrchestrationCommand,
   type OrchestrationCommand,
   OrchestrationDispatchCommandError,
+  PROVIDER_SEND_TURN_MAX_TEXT_ATTACHMENT_BYTES,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
 
@@ -74,16 +75,23 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
       (attachment) =>
         Effect.gen(function* () {
           const parsed = parseBase64DataUrl(attachment.dataUrl);
-          if (!parsed || !parsed.mimeType.startsWith("image/")) {
+          if (
+            !parsed ||
+            (!parsed.mimeType.startsWith("image/") && !parsed.mimeType.startsWith("text/"))
+          ) {
             return yield* new OrchestrationDispatchCommandError({
-              message: `Invalid image attachment payload for '${attachment.name}'.`,
+              message: `Invalid attachment payload for '${attachment.name}'.`,
             });
           }
 
           const bytes = Buffer.from(parsed.base64, "base64");
-          if (bytes.byteLength === 0 || bytes.byteLength > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
+          const maxBytes =
+            attachment.type === "text"
+              ? PROVIDER_SEND_TURN_MAX_TEXT_ATTACHMENT_BYTES
+              : PROVIDER_SEND_TURN_MAX_IMAGE_BYTES;
+          if (bytes.byteLength === 0 || bytes.byteLength > maxBytes) {
             return yield* new OrchestrationDispatchCommandError({
-              message: `Image attachment '${attachment.name}' is empty or too large.`,
+              message: `Attachment '${attachment.name}' is empty or too large.`,
             });
           }
 
@@ -94,13 +102,23 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
             });
           }
 
-          const persistedAttachment = {
-            type: "image" as const,
-            id: attachmentId,
-            name: attachment.name,
-            mimeType: parsed.mimeType.toLowerCase(),
-            sizeBytes: bytes.byteLength,
-          };
+          const persistedAttachment =
+            attachment.type === "text"
+              ? {
+                  type: "text" as const,
+                  id: attachmentId,
+                  name: attachment.name,
+                  mimeType: parsed.mimeType.toLowerCase(),
+                  sizeBytes: bytes.byteLength,
+                  preview: attachment.preview,
+                }
+              : {
+                  type: "image" as const,
+                  id: attachmentId,
+                  name: attachment.name,
+                  mimeType: parsed.mimeType.toLowerCase(),
+                  sizeBytes: bytes.byteLength,
+                };
 
           const attachmentPath = resolveAttachmentPath({
             attachmentsDir: serverConfig.attachmentsDir,
@@ -134,10 +152,19 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
       { concurrency: 1 },
     );
 
+    const attachedText = yield* Effect.forEach(command.message.attachments, (attachment) => {
+      if (attachment.type !== "text") return Effect.succeed("");
+      const parsed = parseBase64DataUrl(attachment.dataUrl);
+      return Effect.succeed(parsed ? Buffer.from(parsed.base64, "base64").toString("utf8") : "");
+    });
     return {
       ...command,
       message: {
         ...command.message,
+        text: `${command.message.text}${attachedText
+          .filter(Boolean)
+          .map((text) => `\n\n[Attached text: ${text.slice(0, 80)}...]\n${text}\n[/Attached text]`)
+          .join("")}`,
         attachments: normalizedAttachments,
       },
     } satisfies OrchestrationCommand;

@@ -12,8 +12,11 @@ import * as Schema from "effect/Schema";
 import { useEffect } from "react";
 import { Atom } from "effect/unstable/reactivity";
 
-import { DraftComposerImageAttachmentSchema } from "../lib/composer-image-schema";
-import type { DraftComposerImageAttachment } from "../lib/composerImages";
+import {
+  DraftComposerImageAttachmentSchema,
+  DraftComposerTextAttachmentSchema,
+} from "../lib/composer-image-schema";
+import type { DraftComposerAttachment } from "../lib/composerImages";
 import { appAtomRegistry } from "./atom-registry";
 
 const COMPOSER_DRAFTS_SCHEMA_VERSION = 1;
@@ -37,7 +40,7 @@ export class ComposerDraftPersistenceError extends Schema.TaggedErrorClass<Compo
 
 export interface ComposerDraft {
   readonly text: string;
-  readonly attachments: ReadonlyArray<DraftComposerImageAttachment>;
+  readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly modelSelection?: ModelSelection;
   readonly runtimeMode?: RuntimeMode;
   readonly interactionMode?: ProviderInteractionMode;
@@ -65,7 +68,9 @@ const ComposerDraftWorkspaceSelectionSchema = Schema.Struct({
 
 const ComposerDraftSchema = Schema.Struct({
   text: Schema.String,
-  attachments: Schema.Array(DraftComposerImageAttachmentSchema),
+  attachments: Schema.Array(
+    Schema.Union([DraftComposerImageAttachmentSchema, DraftComposerTextAttachmentSchema]),
+  ),
   modelSelection: Schema.optional(ModelSelectionSchema),
   runtimeMode: Schema.optional(RuntimeModeSchema),
   interactionMode: Schema.optional(ProviderInteractionModeSchema),
@@ -280,7 +285,7 @@ export function appendComposerDraftText(draftKey: string, value: string): void {
 
 export function appendComposerDraftAttachments(
   draftKey: string,
-  attachments: ReadonlyArray<DraftComposerImageAttachment>,
+  attachments: ReadonlyArray<DraftComposerAttachment>,
 ): void {
   if (attachments.length === 0) {
     return;
@@ -299,7 +304,7 @@ export function appendComposerDraftAttachments(
 
 export function replaceComposerDraftAttachments(
   draftKey: string,
-  attachments: ReadonlyArray<DraftComposerImageAttachment>,
+  attachments: ReadonlyArray<DraftComposerAttachment>,
 ): void {
   updateComposerDrafts((current) => {
     const draft = {

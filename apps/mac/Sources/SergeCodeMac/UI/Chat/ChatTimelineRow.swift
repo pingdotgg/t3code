@@ -228,6 +228,7 @@ private struct UserMessageBubble: View {
     let at: Date?
 
     @UIState private var isHovering = false
+    @UIState private var isExpanded = false
     /// Local double-click guard: `canResend` flips only after the thread's
     /// status round-trips to `.running`, which is async.
     @UIState private var isResending = false
@@ -239,12 +240,18 @@ private struct UserMessageBubble: View {
         model.connection == .ready && model.selectedThread?.status != .running && !isResending
     }
 
+    private var isLarge: Bool { text.count > 12_000 }
+    private var visibleText: String {
+        guard isLarge, !isExpanded else { return text }
+        return String(text.prefix(1_600)) + "\n\n…"
+    }
+
     var body: some View {
         HStack {
             Spacer(minLength: 48)
             VStack(alignment: .trailing, spacing: 2) {
                 AssistantMarkdownView(
-                    markdown: text,
+                    markdown: visibleText,
                     isStreaming: false,
                     threadID: threadID,
                     model: model,
@@ -283,6 +290,18 @@ private struct UserMessageBubble: View {
                     .overlay(
                         RoundedRectangle(cornerRadius: 16)
                             .strokeBorder(Color.white.opacity(0.12), lineWidth: 1))
+                    .overlay(alignment: .bottomLeading) {
+                        if isLarge {
+                            Button(isExpanded ? "Show Less" : "Show More") {
+                                isExpanded.toggle()
+                            }
+                            .buttonStyle(.plain)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.white.opacity(0.8))
+                            .padding(.leading, 14)
+                            .padding(.bottom, 5)
+                        }
+                    }
                     .contextMenu {
                         Button("Copy") { Pasteboard.copy(text) }
                         Button("Edit in Composer") {

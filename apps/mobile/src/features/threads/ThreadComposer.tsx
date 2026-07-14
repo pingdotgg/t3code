@@ -20,6 +20,7 @@ import {
   ActivityIndicator,
   Image,
   Pressable,
+  Text as NativeText,
   useColorScheme,
   View,
   type ViewStyle,
@@ -43,7 +44,7 @@ import {
 } from "../../components/ComposerToolbarTrigger";
 import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
 import { ProviderIcon } from "../../components/ProviderIcon";
-import type { DraftComposerImageAttachment } from "../../lib/composerImages";
+import type { DraftComposerAttachment } from "../../lib/composerImages";
 import { buildModelOptions, groupByProvider } from "../../lib/modelOptions";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
@@ -75,7 +76,7 @@ export const COMPOSER_EXPANDED_CHROME = 174;
 
 export interface ThreadComposerProps {
   readonly draftMessage: string;
-  readonly draftAttachments: ReadonlyArray<DraftComposerImageAttachment>;
+  readonly draftAttachments: ReadonlyArray<DraftComposerAttachment>;
   readonly placeholder: string;
   readonly contentMaxWidth?: number;
   readonly bottomInset?: number;
@@ -779,20 +780,26 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           </View>
           {!isExpanded && props.draftAttachments.length > 0 ? (
             <View style={{ flexDirection: "row", gap: 4, paddingLeft: 4 }}>
-              {props.draftAttachments.slice(0, 3).map((image) => (
-                <Pressable key={image.id} onPress={() => onPressImage(image.previewUri)}>
-                  <Image
-                    source={{ uri: image.previewUri }}
-                    className="bg-subtle"
-                    style={{
-                      width: 30,
-                      height: 30,
-                      borderRadius: 8,
-                    }}
-                    resizeMode="cover"
-                  />
-                </Pressable>
-              ))}
+              {props.draftAttachments.slice(0, 3).map((image) =>
+                image.type === "image" ? (
+                  <Pressable key={image.id} onPress={() => onPressImage(image.previewUri)}>
+                    <Image
+                      source={{ uri: image.previewUri }}
+                      className="bg-subtle"
+                      style={{ width: 30, height: 30, borderRadius: 8 }}
+                      resizeMode="cover"
+                    />
+                  </Pressable>
+                ) : (
+                  <View
+                    key={image.id}
+                    className="bg-subtle items-center justify-center"
+                    style={{ width: 30, height: 30, borderRadius: 8 }}
+                  >
+                    <NativeText style={{ fontSize: 14 }}>▤</NativeText>
+                  </View>
+                ),
+              )}
               {props.draftAttachments.length > 3 ? (
                 <View
                   className="bg-subtle-strong"
