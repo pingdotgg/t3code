@@ -13,7 +13,7 @@ import * as Path from "effect/Path";
 
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
-import { isNightlyDesktopVersion } from "../updates/updateChannels.ts";
+import { isNightlyDesktopVersion, resolveDesktopAppBundleId } from "../updates/updateChannels.ts";
 
 export interface MakeDesktopEnvironmentInput {
   readonly dirname: string;
@@ -157,7 +157,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
   const displayName = branding.displayName;
   const stateDir = path.join(baseDir, isDevelopment ? "dev" : "userdata");
   const userDataDirName = isDevelopment ? "t3code-dev" : "t3code";
-  const legacyUserDataDirName = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+  const legacyUserDataDirName = branding.displayName;
   const resourcesPath = input.resourcesPath;
 
   return DesktopEnvironment.of({
@@ -197,7 +197,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
     branding,
     displayName,
     appUserModelId: Option.getOrElse(config.appUserModelIdOverride, () =>
-      isDevelopment ? "com.t3tools.t3code.dev" : "com.t3tools.t3code",
+      resolveDesktopAppBundleId({ isDevelopment, appVersion: input.appVersion }),
     ),
     linuxDesktopEntryName: isDevelopment ? "t3code-dev.desktop" : "t3code.desktop",
     linuxWmClass: isDevelopment ? "t3code-dev" : "t3code",
