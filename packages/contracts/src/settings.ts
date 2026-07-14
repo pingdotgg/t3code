@@ -522,6 +522,96 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
 );
 export type OpenCodeSettings = typeof OpenCodeSettings.Type;
 
+export const ChatGptBrowserSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    cdpEndpoint: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("http://127.0.0.1:9222")),
+      Schema.annotateKey({
+        title: "Browser debugging endpoint",
+        description:
+          "Chrome/Chromium DevTools endpoint for an already-open ChatGPT browser, for example http://127.0.0.1:9222 or a ws://.../devtools/browser/... URL.",
+        providerSettingsForm: {
+          placeholder: "http://127.0.0.1:9222",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    browserExecutablePath: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Browser executable path",
+        description:
+          "Optional path to Chrome/Chromium. When set, SergeCode launches a visible persistent browser instead of connecting to cdpEndpoint.",
+        providerSettingsForm: {
+          placeholder: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    userDataDir: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("~/.sergecode/chatgpt-browser-profile")),
+      Schema.annotateKey({
+        title: "Browser profile directory",
+        description:
+          "Persistent browser profile used only when launching a browser executable. Log in to ChatGPT once in this profile.",
+        providerSettingsForm: {
+          placeholder: "~/.sergecode/chatgpt-browser-profile",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    conversationUrl: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Conversation URL",
+        description:
+          "Optional fixed ChatGPT conversation URL. Leave blank to create or reuse a chatgpt.com tab.",
+        providerSettingsForm: {
+          placeholder: "https://chatgpt.com/c/...",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    newConversationPerThread: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({
+        title: "New conversation per thread",
+        description:
+          "Open a fresh ChatGPT tab for each SergeCode thread instead of reusing an existing ChatGPT tab.",
+        providerSettingsForm: { control: "switch", clearWhenEmpty: "omit" },
+      }),
+    ),
+    headless: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({
+        title: "Headless browser",
+        description:
+          "Launch without a visible browser window when browserExecutablePath is set. Usually keep this off so login challenges are visible.",
+        providerSettingsForm: { control: "switch", clearWhenEmpty: "omit" },
+      }),
+    ),
+    customModels: Schema.Array(Schema.String).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  {
+    order: [
+      "cdpEndpoint",
+      "browserExecutablePath",
+      "userDataDir",
+      "conversationUrl",
+      "newConversationPerThread",
+      "headless",
+    ],
+  },
+);
+export type ChatGptBrowserSettings = typeof ChatGptBrowserSettings.Type;
+
 export const ObservabilitySettings = Schema.Struct({
   otlpTracesUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   otlpMetricsUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
@@ -621,6 +711,7 @@ export const ServerSettings = Schema.Struct({
     grok: GrokSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     fugu: FuguSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     opencode: OpenCodeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    chatgpt: ChatGptBrowserSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
   // are `ProviderInstanceConfig` envelopes. The driver-specific config blob
@@ -758,6 +849,17 @@ const OpenCodeSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
+const ChatGptBrowserSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  cdpEndpoint: Schema.optionalKey(TrimmedString),
+  browserExecutablePath: Schema.optionalKey(TrimmedString),
+  userDataDir: Schema.optionalKey(TrimmedString),
+  conversationUrl: Schema.optionalKey(TrimmedString),
+  newConversationPerThread: Schema.optionalKey(Schema.Boolean),
+  headless: Schema.optionalKey(Schema.Boolean),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
 export const ServerSettingsPatch = Schema.Struct({
   // Server settings
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
@@ -785,6 +887,7 @@ export const ServerSettingsPatch = Schema.Struct({
       grok: Schema.optionalKey(GrokSettingsPatch),
       fugu: Schema.optionalKey(FuguSettingsPatch),
       opencode: Schema.optionalKey(OpenCodeSettingsPatch),
+      chatgpt: Schema.optionalKey(ChatGptBrowserSettingsPatch),
     }),
   ),
   // Whole-map replacement for the new instance config. Patching individual
