@@ -1,7 +1,8 @@
 import SwiftUI
 import T3Kit
 
-private enum TranscriptMetrics {
+/// Shared transcript card geometry — also used by the subagent inner thread.
+enum TranscriptMetrics {
     static let cardRadius: CGFloat = 10
     static let cardPadH: CGFloat = 10
     static let cardPadV: CGFloat = 7
@@ -105,6 +106,9 @@ struct ChatTimelineRowView: View {
                 task: task,
                 modelDisplayNames: model.modelDisplayNames,
                 stopError: model.subagentStopErrors[task.taskId],
+                onOpenInnerThread: {
+                    model.openSubagent(taskId: task.taskId, threadID: threadID)
+                },
                 onStopAgent: {
                     Task { await model.stopSubagentTask(taskId: task.taskId) }
                 },
@@ -663,6 +667,8 @@ private struct SubagentTaskRow: View {
     let modelDisplayNames: [String: String]
     /// Transient stop-RPC failure (not part of the provider task payload).
     let stopError: String?
+    /// Drill into the agent's own transcript (see SubagentInnerThreadView).
+    let onOpenInnerThread: () -> Void
     let onStopAgent: () -> Void
     let onStopTurn: () -> Void
     let onClearStopError: () -> Void
@@ -716,6 +722,9 @@ private struct SubagentTaskRow: View {
                                 .lineLimit(2)
                                 .fixedSize(horizontal: false, vertical: true)
                             Spacer(minLength: 8)
+                            if isHovering {
+                                openInnerThreadButton
+                            }
                             if task.state == .running || task.state == .paused, isHovering {
                                 stopAgentButton
                             }
@@ -772,6 +781,9 @@ private struct SubagentTaskRow: View {
         }
         .onHover { isHovering = $0 }
         .contextMenu {
+            Button("Open agent thread") {
+                onOpenInnerThread()
+            }
             if task.state == .running || task.state == .paused {
                 Button("Stop agent", role: .destructive) {
                     onStopAgent()
@@ -795,6 +807,20 @@ private struct SubagentTaskRow: View {
                 "Stopping interrupts the whole turn, including all running agents — not just this one."
             )
         }
+    }
+
+    @ViewBuilder
+    private var openInnerThreadButton: some View {
+        Button {
+            onOpenInnerThread()
+        } label: {
+            Image(systemName: "arrow.up.forward.app")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.plain)
+        .help("Open agent thread")
+        .accessibilityLabel("Open agent thread")
     }
 
     @ViewBuilder

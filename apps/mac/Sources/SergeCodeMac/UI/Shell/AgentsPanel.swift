@@ -28,6 +28,8 @@ struct AgentsToolbarPill: View {
 struct AgentsPanel: View {
     let model: AppModel
     let onSelectThread: (String) -> Void
+    /// Drill straight into one agent's inner thread (thread id, task id).
+    let onOpenTask: (String, String) -> Void
 
     /// Sibling agent threads (MCP `agent_*` toolkit spawns, any provider):
     /// ordinary threads titled `Agent: <name>` whose session is still working.
@@ -92,6 +94,9 @@ struct AgentsPanel: View {
                                         entry: entry,
                                         modelDisplayNames: model.modelDisplayNames,
                                         stopError: model.subagentStopErrors[entry.task.taskId],
+                                        onOpen: {
+                                            onOpenTask(entry.threadID, entry.task.taskId)
+                                        },
                                         onStop: {
                                             Task {
                                                 await model.stopSubagentTask(
@@ -176,6 +181,8 @@ private struct AgentsPanelTaskRow: View {
     let entry: SubagentTaskAggregator.Entry
     let modelDisplayNames: [String: String]
     let stopError: String?
+    /// Opens the agent's inner thread, switching threads when needed.
+    let onOpen: () -> Void
     let onStop: () -> Void
     let onClearStopError: () -> Void
 
@@ -217,6 +224,9 @@ private struct AgentsPanelTaskRow: View {
                             stopButton
                         }
                         SubagentTaskDurationLabel(task: entry.task)
+                        Image(systemName: "chevron.right")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                     }
 
                     SubagentTaskIdentityBadge(
@@ -254,6 +264,11 @@ private struct AgentsPanelTaskRow: View {
             SubagentTaskPresentation.backgroundTint(for: entry.task, stalled: false),
             in: RoundedRectangle(cornerRadius: 10))
         .opacity(entry.isLive ? 1 : 0.58)
+        // Tap (not a wrapping Button) so the nested stop button stays clickable.
+        .contentShape(RoundedRectangle(cornerRadius: 10))
+        .onTapGesture { onOpen() }
+        .help("Open \(SubagentTaskPresentation.title(for: entry.task))")
+        .accessibilityLabel("Open agent \(SubagentTaskPresentation.title(for: entry.task))")
         .animation(Motion.ambient, value: entry.task.state)
         .onChange(of: entry.task.state) { _, _ in
             onClearStopError()

@@ -864,6 +864,45 @@ public final class AppModel {
         }
     }
 
+    // MARK: - Subagent inner threads
+
+    /// Opens a subagent's inner thread in the main area, switching threads
+    /// first when the task belongs to another thread (the agents panel can
+    /// open a task on a thread that is not selected).
+    public func openSubagent(taskId: String, threadID: String) {
+        if selectedThreadID != threadID {
+            selectedThreadID = threadID
+        }
+        // Review mode owns the same real estate; a subagent drill-down leaves it.
+        closeReview(threadID: threadID)
+        state(creating: threadID).focusedSubagentTaskID = taskId
+    }
+
+    public func closeSubagent(threadID: String) {
+        threadStates[threadID]?.focusedSubagentTaskID = nil
+    }
+
+    public func closeSubagent() {
+        guard let threadID = selectedThreadID else { return }
+        closeSubagent(threadID: threadID)
+    }
+
+    /// The task behind an open inner thread, or nil once it has been pruned
+    /// (thread eviction, timeline reset) — callers fall back to the transcript.
+    public func focusedSubagentTask(threadID: String) -> SubagentTaskItem? {
+        guard let taskId = threadStates[threadID]?.focusedSubagentTaskID else { return nil }
+        return subagentTaskAggregator.task(taskId: taskId, threadID: threadID)
+    }
+
+    /// Stages `text` into the selected thread's composer, appending to any
+    /// existing draft so promoting a result never clobbers what was typed.
+    public func stageComposerTextAppending(_ text: String) {
+        guard let threadID = selectedThreadID else { return }
+        let existing = composerDraft(for: threadID).text
+        let trimmed = existing.trimmingCharacters(in: .whitespacesAndNewlines)
+        stageComposerText(trimmed.isEmpty ? text : existing + "\n\n" + text)
+    }
+
     // MARK: - Diff review mode
 
     /// Enter main-area review for a scope, optionally focusing a file path.
