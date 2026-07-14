@@ -456,8 +456,9 @@ export function subagentTaskIdentityBadge(
   if (task.model) {
     const displayName = modelDisplayNames?.get(task.model.trim())?.trim();
     parts.push(displayName || shortModelName(task.model));
-    if (task.effort) {
-      parts.push(effortDisplayName(task.effort));
+    const effort = task.effort?.trim();
+    if (effort) {
+      parts.push(effortDisplayName(effort));
     }
   }
   return parts.length > 0 ? parts.join(" · ") : null;

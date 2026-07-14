@@ -130,6 +130,13 @@ describe("deriveSubagentTasks", () => {
       "Explore · Sonnet 5 · Extra High",
     );
 
+    expect(
+      subagentTaskIdentityBadge(
+        { ...task, effort: "   " },
+        new Map([["claude-sonnet-5", "Sonnet 5"]]),
+      ),
+    ).toBe("Explore · Sonnet 5");
+
     // Effort qualifies the model, so it stays hidden until the model is known.
     expect(subagentTaskIdentityBadge({ ...task, model: null })).toBe("Explore");
   });
