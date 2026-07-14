@@ -88,14 +88,23 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
 });
 
 describe("ServerSettings worktree defaults", () => {
-  it("defaults start-from-origin off for legacy configs", () => {
-    expect(decodeServerSettings({}).newWorktreesStartFromOrigin).toBe(false);
+  it("defaults legacy configs to local branches with the T3 Code prefix", () => {
+    const settings = decodeServerSettings({});
+    expect(settings.newWorktreesStartFromOrigin).toBe(false);
+    expect(settings.worktreeBranchPrefix).toBe("t3code");
   });
 
-  it("accepts start-from-origin updates", () => {
-    expect(
-      decodeServerSettingsPatch({ newWorktreesStartFromOrigin: true }).newWorktreesStartFromOrigin,
-    ).toBe(true);
+  it("accepts worktree default updates", () => {
+    const patch = decodeServerSettingsPatch({
+      newWorktreesStartFromOrigin: true,
+      worktreeBranchPrefix: "codex/feature",
+    });
+    expect(patch.newWorktreesStartFromOrigin).toBe(true);
+    expect(patch.worktreeBranchPrefix).toBe("codex/feature");
+  });
+
+  it("rejects branch prefixes that are not canonical Git namespaces", () => {
+    expect(() => decodeServerSettingsPatch({ worktreeBranchPrefix: "Codex Branch" })).toThrow();
   });
 });
 

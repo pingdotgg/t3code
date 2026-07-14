@@ -5,13 +5,14 @@ import type {
   VcsStatusRemoteResult,
   VcsStatusResult,
   VcsStatusStreamEvent,
+  WorktreeBranchPrefix,
 } from "@t3tools/contracts";
+import { DEFAULT_WORKTREE_BRANCH_PREFIX } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import { detectSourceControlProviderFromRemoteUrl } from "./sourceControl.ts";
 
-export const WORKTREE_BRANCH_PREFIX = "t3code";
-const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(`^${WORKTREE_BRANCH_PREFIX}\\/[0-9a-f]{8}$`);
+export { DEFAULT_WORKTREE_BRANCH_PREFIX };
 
 /**
  * Sanitize an arbitrary string into a valid, lowercase git refName fragment.
@@ -33,6 +34,59 @@ export function sanitizeBranchFragment(raw: string): string {
     .replace(/[./_-]+$/g, "");
 
   return branchFragment.length > 0 ? branchFragment : "update";
+}
+
+/**
+ * Canonicalize the namespace used for branches created by T3 Code. Keeping
+ * this at the Git boundary makes settings, temporary branches, and generated
+ * names obey the same ref rules.
+ */
+export function normalizeWorktreeBranchPrefix(
+  raw: string | null | undefined,
+): WorktreeBranchPrefix {
+  const normalized = raw
+    ? raw
+        .trim()
+        .toLowerCase()
+        .replace(/^refs\/heads\//, "")
+        .replace(/['"`]/g, "")
+    : "";
+  const prefix = normalized
+    .replace(/[^a-z0-9/_-]+/g, "-")
+    .replace(/\/+/g, "/")
+    .replace(/-+/g, "-")
+    .replace(/^[./_-]+|[./_-]+$/g, "")
+    .slice(0, 64)
+    .replace(/[./_-]+$/g, "");
+
+  return prefix.length > 0 ? prefix : DEFAULT_WORKTREE_BRANCH_PREFIX;
+}
+
+export function extractTemporaryWorktreeBranchPrefix(refName: string): WorktreeBranchPrefix | null {
+  const normalized = refName
+    .trim()
+    .toLowerCase()
+    .replace(/^refs\/heads\//, "");
+  const match = /^(?<prefix>.+)\/(?<token>[0-9a-f]{8})$/u.exec(normalized);
+  const prefix = match?.groups?.prefix?.trim();
+  return prefix ? normalizeWorktreeBranchPrefix(prefix) : null;
+}
+
+export function buildGeneratedWorktreeBranchName(
+  raw: string,
+  prefix: string | null | undefined,
+): string {
+  const normalizedPrefix = normalizeWorktreeBranchPrefix(prefix);
+  const normalized = raw
+    .trim()
+    .toLowerCase()
+    .replace(/^refs\/heads\//, "")
+    .replace(/['"`]/g, "");
+  const withoutPrefix = normalized.startsWith(`${normalizedPrefix}/`)
+    ? normalized.slice(`${normalizedPrefix}/`.length)
+    : normalized;
+
+  return `${normalizedPrefix}/${sanitizeBranchFragment(withoutPrefix)}`;
 }
 
 /**
@@ -88,13 +142,14 @@ export function deriveLocalBranchNameFromRemoteRef(branchName: string): string {
 
 export function buildTemporaryWorktreeBranchName(
   randomHex: (byteLength: number) => string,
+  prefix?: string | null,
 ): string {
   const token = randomHex(4).toLowerCase();
-  return `${WORKTREE_BRANCH_PREFIX}/${token}`;
+  return `${normalizeWorktreeBranchPrefix(prefix)}/${token}`;
 }
 
 export function isTemporaryWorktreeBranch(refName: string): boolean {
-  return TEMP_WORKTREE_BRANCH_PATTERN.test(refName.trim().toLowerCase());
+  return extractTemporaryWorktreeBranchPrefix(refName) !== null;
 }
 
 /**

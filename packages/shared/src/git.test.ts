@@ -3,11 +3,14 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   applyGitStatusStreamEvent,
+  buildGeneratedWorktreeBranchName,
   buildTemporaryWorktreeBranchName,
+  DEFAULT_WORKTREE_BRANCH_PREFIX,
+  extractTemporaryWorktreeBranchPrefix,
   isTemporaryWorktreeBranch,
   normalizeGitRemoteUrl,
+  normalizeWorktreeBranchPrefix,
   parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
-  WORKTREE_BRANCH_PREFIX,
 } from "./git.ts";
 
 describe("normalizeGitRemoteUrl", () => {
@@ -66,15 +69,39 @@ describe("isTemporaryWorktreeBranch", () => {
   });
 
   it("matches generated temporary worktree refs", () => {
-    expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/deadbeef`)).toBe(true);
-    expect(isTemporaryWorktreeBranch(` ${WORKTREE_BRANCH_PREFIX}/deadbeef `)).toBe(true);
-    expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/DEADBEEF`)).toBe(true);
+    expect(isTemporaryWorktreeBranch(`${DEFAULT_WORKTREE_BRANCH_PREFIX}/deadbeef`)).toBe(true);
+    expect(isTemporaryWorktreeBranch(` ${DEFAULT_WORKTREE_BRANCH_PREFIX}/deadbeef `)).toBe(true);
+    expect(isTemporaryWorktreeBranch("codex/feature/DEADBEEF")).toBe(true);
   });
 
   it("rejects non-temporary refName names", () => {
-    expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/feature/demo`)).toBe(false);
+    expect(isTemporaryWorktreeBranch(`${DEFAULT_WORKTREE_BRANCH_PREFIX}/feature/demo`)).toBe(false);
     expect(isTemporaryWorktreeBranch("main")).toBe(false);
-    expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/deadbeef-extra`)).toBe(false);
+    expect(isTemporaryWorktreeBranch(`${DEFAULT_WORKTREE_BRANCH_PREFIX}/deadbeef-extra`)).toBe(
+      false,
+    );
+  });
+});
+
+describe("worktree branch prefixes", () => {
+  it("normalizes user input into a stable Git namespace", () => {
+    expect(normalizeWorktreeBranchPrefix(" refs/heads/Codex Team//Feature/ ")).toBe(
+      "codex-team/feature",
+    );
+    expect(normalizeWorktreeBranchPrefix(" ")).toBe(DEFAULT_WORKTREE_BRANCH_PREFIX);
+  });
+
+  it("uses the configured prefix for temporary and generated branches", () => {
+    expect(buildTemporaryWorktreeBranchName(() => "DEADBEEF", "codex/feature")).toBe(
+      "codex/feature/deadbeef",
+    );
+    expect(extractTemporaryWorktreeBranchPrefix("codex/feature/deadbeef")).toBe("codex/feature");
+    expect(buildGeneratedWorktreeBranchName("codex/feature/add-search", "codex/feature")).toBe(
+      "codex/feature/add-search",
+    );
+    expect(buildGeneratedWorktreeBranchName("Fix Search", "codex/feature")).toBe(
+      "codex/feature/fix-search",
+    );
   });
 });
 
