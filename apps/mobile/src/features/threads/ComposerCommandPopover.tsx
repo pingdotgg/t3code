@@ -2,11 +2,25 @@ import { isLiquidGlassSupported, LiquidGlassView } from "@callstack/liquid-glass
 import type { ComposerTriggerKind } from "@t3tools/shared/composerTrigger";
 import type { ServerProviderSkill, ServerProviderSlashCommand } from "@t3tools/contracts";
 import { SymbolView } from "expo-symbols";
-import { memo } from "react";
-import { Pressable, ScrollView, useColorScheme, View, type ViewStyle } from "react-native";
+import { memo, useState } from "react";
+import {
+  Modal,
+  Pressable,
+  ScrollView,
+  useColorScheme,
+  useWindowDimensions,
+  View,
+  type LayoutChangeEvent,
+  type ViewStyle,
+} from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
+import {
+  placeComposerCommandPopover,
+  type ComposerAnchorRect,
+} from "./composerCommandPopoverLayout";
 export type ComposerCommandItem =
   | {
       readonly id: string;
@@ -43,6 +57,7 @@ interface ComposerCommandPopoverProps {
   readonly triggerKind: ComposerTriggerKind | null;
   readonly isLoading: boolean;
   readonly onSelect: (item: ComposerCommandItem) => void;
+  readonly anchorRect: ComposerAnchorRect | null;
 }
 
 function PopoverSurface(props: {
@@ -182,42 +197,86 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
   props: ComposerCommandPopoverProps,
 ) {
   const isDarkMode = useColorScheme() === "dark";
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const [surfaceSize, setSurfaceSize] = useState({ width: 0, height: 0 });
   const label = groupLabel(props.triggerKind);
 
+  const onSurfaceLayout = (event: LayoutChangeEvent) => {
+    const { width, height } = event.nativeEvent.layout;
+    setSurfaceSize((previous) =>
+      previous.width === width && previous.height === height ? previous : { width, height },
+    );
+  };
+  const placement =
+    props.anchorRect && surfaceSize.width > 0 && surfaceSize.height > 0
+      ? placeComposerCommandPopover({
+          anchor: props.anchorRect,
+          menuWidth: props.anchorRect.width,
+          menuHeight: surfaceSize.height,
+          windowWidth,
+          windowHeight,
+          topInset: insets.top,
+          bottomInset: insets.bottom,
+        })
+      : null;
+
   return (
-    <PopoverSurface isDarkMode={isDarkMode}>
-      {label ? (
-        <View style={{ paddingHorizontal: 14, paddingTop: 10, paddingBottom: 4 }}>
-          <Text
-            className="text-3xs font-t3-bold text-foreground-muted"
-            style={{ letterSpacing: 0.8, textTransform: "uppercase" }}
-          >
-            {label}
-          </Text>
-        </View>
-      ) : null}
-      {props.items.length > 0 ? (
-        <ScrollView
-          style={{ maxHeight: 180 }}
-          keyboardShouldPersistTaps="always"
-          showsVerticalScrollIndicator={false}
+    <Modal
+      transparent
+      visible={props.anchorRect !== null}
+      animationType="none"
+      statusBarTranslucent
+      onRequestClose={() => undefined}
+    >
+      <View style={{ flex: 1 }} pointerEvents="box-none">
+        <View
+          onLayout={onSurfaceLayout}
+          style={[
+            {
+              position: "absolute",
+              left: placement?.left ?? 0,
+              top: placement?.top ?? 0,
+              width: placement?.width ?? props.anchorRect?.width ?? 0,
+            },
+          ]}
         >
-          {props.items.map((item, index) => (
-            <CommandRow
-              key={item.id}
-              item={item}
-              onPress={() => props.onSelect(item)}
-              isLast={index === props.items.length - 1}
-            />
-          ))}
-        </ScrollView>
-      ) : (
-        <View style={{ paddingHorizontal: 14, paddingVertical: 10 }}>
-          <Text className="text-xs text-foreground-tertiary">
-            {emptyText(props.triggerKind, props.isLoading)}
-          </Text>
+          <PopoverSurface isDarkMode={isDarkMode}>
+            {label ? (
+              <View style={{ paddingHorizontal: 14, paddingTop: 10, paddingBottom: 4 }}>
+                <Text
+                  className="text-3xs font-t3-bold text-foreground-muted"
+                  style={{ letterSpacing: 0.8, textTransform: "uppercase" }}
+                >
+                  {label}
+                </Text>
+              </View>
+            ) : null}
+            {props.items.length > 0 ? (
+              <ScrollView
+                style={{ maxHeight: 180 }}
+                keyboardShouldPersistTaps="always"
+                showsVerticalScrollIndicator={false}
+              >
+                {props.items.map((item, index) => (
+                  <CommandRow
+                    key={item.id}
+                    item={item}
+                    onPress={() => props.onSelect(item)}
+                    isLast={index === props.items.length - 1}
+                  />
+                ))}
+              </ScrollView>
+            ) : (
+              <View style={{ paddingHorizontal: 14, paddingVertical: 10 }}>
+                <Text className="text-xs text-foreground-tertiary">
+                  {emptyText(props.triggerKind, props.isLoading)}
+                </Text>
+              </View>
+            )}
+          </PopoverSurface>
         </View>
-      )}
-    </PopoverSurface>
+      </View>
+    </Modal>
   );
 });
