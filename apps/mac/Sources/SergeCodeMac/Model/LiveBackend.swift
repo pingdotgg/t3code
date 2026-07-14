@@ -2791,6 +2791,7 @@ public actor LiveBackend: BackendService {
 
     private func providerKind(fromDriver driver: String) -> ProviderKind? {
         let lowered = driver.lowercased()
+        if lowered.contains("claudex") { return .claudex }
         if lowered.contains("synthero") { return .claudeSynthero }
         if lowered.contains("claude") { return .claude }
         if lowered.contains("codex") { return .codex }
@@ -2801,9 +2802,6 @@ public actor LiveBackend: BackendService {
         return nil
     }
 
-    /// Claudex deliberately reuses the Claude Agent driver and is distinguished
-    /// by provider-instance identity. Keeping this rule at the native mapping
-    /// boundary avoids duplicating the Claude protocol/runtime on the server.
     private func providerKind(for provider: ServerProvider) -> ProviderKind? {
         let instanceId = provider.instanceId.lowercased()
         let displayName = provider.displayName?.lowercased() ?? ""

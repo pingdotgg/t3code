@@ -1,4 +1,4 @@
-import { ClaudeSettings, ProviderInstanceId } from "@t3tools/contracts";
+import { ClaudeSettings, type ModelCapabilities, ProviderInstanceId } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -6,7 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { createModelSelection } from "@t3tools/shared/model";
+import { createModelCapabilities, createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
@@ -78,6 +78,13 @@ function withFakeClaudeEnv<A, E, R>(
     stdinMustContain?: string;
     homeMustBe?: string;
     claudeConfig?: Partial<ClaudeSettings>;
+    textGenerationOptions?: {
+      readonly getModelCapabilities?: (model: string | undefined) => ModelCapabilities | undefined;
+      readonly normalizeEffort?: (
+        effort: string | null | undefined,
+        model: string | null | undefined,
+      ) => string | undefined;
+    };
   },
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
 ) {
@@ -184,7 +191,11 @@ function withFakeClaudeEnv<A, E, R>(
     );
 
     const config = decodeClaudeSettings(input.claudeConfig ?? {});
-    const textGeneration = yield* makeClaudeTextGeneration(config);
+    const textGeneration = yield* makeClaudeTextGeneration(
+      config,
+      undefined,
+      input.textGenerationOptions,
+    );
     return yield* effectFn(textGeneration);
   }).pipe(Effect.scoped);
 }
@@ -251,6 +262,59 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
           });
 
           expect(generated.title).toBe("Improve orchestration flow");
+        }),
+    ),
+  );
+
+  it.effect("forwards adapter-specific ultracode as xhigh plus settings", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            title: "Use ultracode",
+            body: "Body",
+          },
+        }),
+        argsMustContain: '--model claudex-luna --effort xhigh --settings {"ultracode":true}',
+        textGenerationOptions: {
+          getModelCapabilities: () =>
+            createModelCapabilities({
+              optionDescriptors: [
+                {
+                  id: "effort",
+                  label: "Reasoning",
+                  type: "select",
+                  options: [
+                    { id: "low", label: "Low" },
+                    { id: "medium", label: "Medium" },
+                    { id: "high", label: "High" },
+                    { id: "xhigh", label: "Extra High" },
+                    { id: "max", label: "Max" },
+                    { id: "ultracode", label: "Ultracode", isDefault: true },
+                  ],
+                },
+              ],
+            }),
+          normalizeEffort: (effort) => (effort === "ultracode" ? "xhigh" : (effort ?? undefined)),
+        },
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generatePrContent({
+            cwd: process.cwd(),
+            baseBranch: "main",
+            headBranch: "feature/claudex-ultracode",
+            commitSummary: "Use ultracode",
+            diffSummary: "1 file changed",
+            diffPatch: "diff --git a/README.md b/README.md",
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("claudex"),
+              "claudex-luna",
+              [{ id: "effort", value: "ultracode" }],
+            ),
+          });
+
+          expect(generated.title).toBe("Use ultracode");
         }),
     ),
   );
