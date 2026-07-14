@@ -120,6 +120,9 @@ struct SubagentInnerThreadView: View {
         .onChange(of: task.taskId) { _, _ in
             isFollowingTail = true
         }
+        .onChange(of: task.state) { _, _ in
+            model.clearSubagentStopError(taskId: task.taskId)
+        }
     }
 
     // MARK: - Header

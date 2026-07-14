@@ -26,6 +26,14 @@ private func shortModelName(_ model: String) -> String {
 enum SubagentTaskPresentation {
     static let silentThreshold: TimeInterval = 3 * 60
 
+    static func hasExpandableContent(for task: SubagentTaskItem, stopError: String?) -> Bool {
+        !task.progressLog.isEmpty
+            || task.error != nil
+            || stopError != nil
+            || task.lastToolName != nil
+            || task.usageSummary != nil
+    }
+
     /// A quiet task is still running. Long gaps are common while a command
     /// sub-agent is waiting on a process, tool, or model response, so silence
     /// is not enough evidence to call the task stalled.

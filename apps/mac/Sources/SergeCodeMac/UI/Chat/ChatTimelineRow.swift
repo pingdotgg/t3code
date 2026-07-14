@@ -678,11 +678,7 @@ private struct SubagentTaskRow: View {
     @UIState private var showStopTurnConfirm = false
 
     private var hasExpandableContent: Bool {
-        !task.progressLog.isEmpty
-            || task.error != nil
-            || stopError != nil
-            || task.lastToolName != nil
-            || task.usageSummary != nil
+        SubagentTaskPresentation.hasExpandableContent(for: task, stopError: stopError)
     }
 
     var body: some View {
@@ -702,69 +698,72 @@ private struct SubagentTaskRow: View {
     @ViewBuilder
     private func rowChrome(now currentNow: Date) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Button {
-                guard hasExpandableContent else { return }
-                withAnimation(Motion.feedback) { isExpanded.toggle() }
-            } label: {
-                HStack(alignment: .top, spacing: 9) {
-                    statusIcon()
-                        .frame(width: TranscriptMetrics.iconColumn, height: 16)
-                        .padding(.top, 1)
+            HStack(alignment: .top, spacing: 9) {
+                Button {
+                    guard hasExpandableContent else { return }
+                    withAnimation(Motion.feedback) { isExpanded.toggle() }
+                } label: {
+                    HStack(alignment: .top, spacing: 9) {
+                        statusIcon()
+                            .frame(width: TranscriptMetrics.iconColumn, height: 16)
+                            .padding(.top, 1)
 
-                    VStack(alignment: .leading, spacing: 5) {
-                        HStack(spacing: 7) {
-                            Image(systemName: "person.2")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .frame(width: TranscriptMetrics.iconColumn)
-                            Text(title)
-                                .font(.callout.weight(.medium))
-                                .lineLimit(2)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Spacer(minLength: 8)
-                            if isHovering {
-                                openInnerThreadButton
-                            }
-                            if task.state == .running || task.state == .paused, isHovering {
-                                stopAgentButton
-                            }
-                            durationLabel
-                            if hasExpandableContent {
-                                Image(systemName: "chevron.right")
-                                    .font(.caption2)
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack(spacing: 7) {
+                                Image(systemName: "person.2")
+                                    .font(.caption)
                                     .foregroundStyle(.secondary)
-                                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                                    .frame(width: TranscriptMetrics.iconColumn)
+                                Text(title)
+                                    .font(.callout.weight(.medium))
+                                    .lineLimit(2)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Spacer(minLength: 8)
+                                durationLabel
+                                if hasExpandableContent {
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                                }
                             }
-                        }
 
-                        SubagentTaskIdentityBadge(
-                            task: task, modelDisplayNames: modelDisplayNames)
+                            SubagentTaskIdentityBadge(
+                                task: task, modelDisplayNames: modelDisplayNames)
 
-                        SubagentTaskHealthTags(
-                            task: task, now: currentNow)
+                            SubagentTaskHealthTags(
+                                task: task, now: currentNow)
 
-                        if let subtitle = SubagentTaskPresentation.subtitle(for: task) {
-                            Text(subtitle)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
+                            if let subtitle = SubagentTaskPresentation.subtitle(for: task) {
+                                Text(subtitle)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
 
-                        // Always visible — stop failures must not require expand.
-                        if let stopError = SubagentTaskPresentation.nonEmpty(stopError) {
-                            Text(stopError)
-                                .font(.caption)
-                                .foregroundStyle(.red)
-                                .textSelection(.enabled)
-                                .fixedSize(horizontal: false, vertical: true)
+                            // Always visible — stop failures must not require expand.
+                            if let stopError = SubagentTaskPresentation.nonEmpty(stopError) {
+                                Text(stopError)
+                                    .font(.caption)
+                                    .foregroundStyle(.red)
+                                    .textSelection(.enabled)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                     }
+                    .contentShape(Rectangle())
                 }
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .disabled(!hasExpandableContent)
+
+                if isHovering {
+                    openInnerThreadButton
+                }
+                if task.state == .running || task.state == .paused, isHovering {
+                    stopAgentButton
+                }
             }
-            .buttonStyle(.plain)
-            .disabled(!hasExpandableContent)
 
             if isExpanded && hasExpandableContent {
                 expandedBody
