@@ -475,8 +475,22 @@ export const buildCopilotClientOptions = Effect.fn("buildCopilotClientOptions")(
 }): Effect.fn.Return<CopilotClientOptions, CopilotCliPathResolutionError> {
   const cliUrl = trimOrUndefined(input.settings.serverUrl);
   if (cliUrl) {
+    const connection = yield* Effect.try({
+      try: () => {
+        if (!URL.canParse(cliUrl)) {
+          throw new TypeError("Invalid Copilot server URL.");
+        }
+        return RuntimeConnection.forUri(cliUrl);
+      },
+      catch: (cause) =>
+        copilotClientConfigurationError({
+          settings: input.settings,
+          detail: "The configured Copilot server URL is invalid.",
+          cause,
+        }),
+    });
     return {
-      connection: RuntimeConnection.forUri(cliUrl),
+      connection,
       ...(input.logLevel ? { logLevel: input.logLevel } : {}),
       ...(input.onListModels ? { onListModels: input.onListModels } : {}),
     };

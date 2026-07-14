@@ -124,10 +124,10 @@ describe("buildCopilotClientOptions", () => {
     NodeAssert.equal(env.PATH, "/custom/bin:/bin");
   });
 
-  it.effect("returns typed failures for invalid Copilot client configuration", () =>
+  it.effect("returns typed failures for invalid Copilot server URLs", () =>
     Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        createCopilotClient({
+        buildCopilotClientOptions({
           settings: {
             enabled: true,
             binaryPath: "",
@@ -149,12 +149,12 @@ describe("buildCopilotClientOptions", () => {
           readonly message?: string;
         };
         NodeAssert.equal(error._tag, "CopilotCliPathResolutionError");
-        NodeAssert.equal(error.detail, "Failed to construct Copilot client.");
+        NodeAssert.equal(error.detail, "The configured Copilot server URL is invalid.");
         NodeAssert.equal(error.serverUrl, "http://[::1");
         NodeAssert.ok(error.cause instanceof Error);
         NodeAssert.equal(
           error.message,
-          "Copilot CLI path resolution failed (serverUrl=http://[::1): Failed to construct Copilot client.",
+          "Copilot CLI path resolution failed (serverUrl=http://[::1): The configured Copilot server URL is invalid.",
         );
       }
     }),

@@ -5,6 +5,7 @@ import {
   deriveProviderInstanceEntries,
   isProviderInstancePickerReady,
   isProviderInstancePickerVisible,
+  resolveComposerProviderInstance,
   resolveSelectableProviderInstance,
   resolveProviderDriverKindForInstanceSelection,
 } from "./providerInstances";
@@ -194,6 +195,50 @@ describe("resolveSelectableProviderInstance", () => {
     expect(resolveSelectableProviderInstance(entries, disabled)).toBeUndefined();
     expect(resolveSelectableProviderInstance(entries, unavailable)).toBeUndefined();
     expect(resolveSelectableProviderInstance(entries, unknown)).toBeUndefined();
+  });
+});
+
+describe("resolveComposerProviderInstance", () => {
+  it("falls back from an unavailable draft selection to an available provider", () => {
+    const unavailable = ProviderInstanceId.make("copilot");
+    const fallback = ProviderInstanceId.make("codex");
+    const entries = deriveProviderInstanceEntries([
+      provider({
+        provider: ProviderDriverKind.make("copilot"),
+        instanceId: unavailable,
+        availability: "unavailable",
+      }),
+      provider({ provider: ProviderDriverKind.make("codex"), instanceId: fallback }),
+    ]);
+
+    expect(
+      resolveComposerProviderInstance({
+        entries,
+        candidates: [unavailable],
+        selectedProvider: ProviderDriverKind.make("copilot"),
+      }),
+    ).toBe(fallback);
+  });
+
+  it("returns no selection instead of routing a locked thread through an unavailable instance", () => {
+    const unavailable = ProviderInstanceId.make("copilot");
+    const entries = deriveProviderInstanceEntries([
+      provider({
+        provider: ProviderDriverKind.make("copilot"),
+        instanceId: unavailable,
+        availability: "unavailable",
+      }),
+      provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex" }),
+    ]);
+
+    expect(
+      resolveComposerProviderInstance({
+        entries,
+        candidates: [unavailable],
+        selectedProvider: ProviderDriverKind.make("copilot"),
+        lockedProvider: ProviderDriverKind.make("copilot"),
+      }),
+    ).toBeUndefined();
   });
 });
 

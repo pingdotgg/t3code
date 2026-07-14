@@ -273,6 +273,40 @@ export function resolveSelectableProviderInstance(
   return entries.find((entry) => entry.enabled && entry.isAvailable)?.instanceId;
 }
 
+/** Resolve the composer target without crossing a thread's provider or continuation lock. */
+export function resolveComposerProviderInstance(input: {
+  entries: ReadonlyArray<ProviderInstanceEntry>;
+  candidates: ReadonlyArray<string | null | undefined>;
+  selectedProvider: ProviderDriverKind;
+  lockedProvider?: ProviderDriverKind | null | undefined;
+  lockedContinuationGroupKey?: string | null | undefined;
+}): ProviderInstanceId | undefined {
+  const isSelectable = (entry: ProviderInstanceEntry): boolean =>
+    entry.enabled &&
+    entry.isAvailable &&
+    (!input.lockedProvider || entry.driverKind === input.lockedProvider) &&
+    (!input.lockedContinuationGroupKey ||
+      entry.continuationGroupKey === input.lockedContinuationGroupKey);
+
+  for (const candidate of input.candidates) {
+    if (!candidate) {
+      continue;
+    }
+    const match = input.entries.find(
+      (entry) => entry.instanceId === candidate && isSelectable(entry),
+    );
+    if (match) {
+      return match.instanceId;
+    }
+  }
+
+  return (
+    input.entries.find(
+      (entry) => isSelectable(entry) && entry.driverKind === input.selectedProvider,
+    )?.instanceId ?? input.entries.find(isSelectable)?.instanceId
+  );
+}
+
 /**
  * Resolve an open model-selection routing key back to a driver kind.
  * Custom instance ids such as `claude_openrouter` are not themselves
