@@ -13,13 +13,15 @@ import {
 import { createModelCapabilities } from "@t3tools/shared/model";
 
 import {
-  CLAUDEX_MODELS,
-  getClaudexModelCapabilities,
   makeClaudexContinuationGroupKey,
-  normalizeClaudexEffort,
   normalizeClaudexModelSelection,
   normalizeClaudexProviderSnapshot,
 } from "./ClaudexDriver.ts";
+import {
+  CLAUDEX_MODELS,
+  getClaudexModelCapabilities,
+  normalizeClaudexEffort,
+} from "../claudexModels.ts";
 import { makeClaudeContinuationGroupKey } from "./ClaudeHome.ts";
 import {
   getClaudeModelCapabilities,
@@ -120,6 +122,7 @@ describe("ClaudexDriver", () => {
           { id: "high", label: "High" },
           { id: "xhigh", label: "Extra High" },
           { id: "max", label: "Max" },
+          { id: "ultracode", label: "Ultracode" },
         ],
       });
       expect(descriptors[0]).not.toHaveProperty("promptInjectedValues");
@@ -166,17 +169,23 @@ describe("ClaudexDriver", () => {
     expect(resolveClaudeEffort(getClaudexModelCapabilities("claudex-sol")!, undefined)).toBe(
       "high",
     );
+    expect(resolveClaudeEffort(getClaudexModelCapabilities("claudex-sol")!, "ultracode")).toBe(
+      "ultracode",
+    );
   });
 
   it("normalizes only the effort values supported by Claudex", () => {
     for (const effort of ["low", "medium", "high", "xhigh", "max"]) {
       expect(normalizeClaudexEffort(effort)).toBe(effort);
     }
-    for (const effort of [undefined, "ultrathink", "ultracode", "garbage"]) {
+    expect(normalizeClaudexEffort("ultracode")).toBe("xhigh");
+    for (const effort of [undefined, "ultrathink", "garbage"]) {
       expect(normalizeClaudexEffort(effort)).toBeUndefined();
     }
-    expect(normalizeClaudeCliEffort("xhigh", "claudex-luna")).toBe("max");
-    expect(getClaudeModelCapabilities("claudex-luna").optionDescriptors ?? []).toEqual([]);
+    expect(normalizeClaudeCliEffort("xhigh", "claudex-luna")).toBe("xhigh");
+    expect(getClaudeModelCapabilities("claudex-luna")).toBe(
+      getClaudexModelCapabilities("claudex-luna"),
+    );
   });
 });
 

@@ -1,8 +1,11 @@
 import { type ChatGptBrowserSettings, type ServerProviderModel } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
+import { ProviderValidationError } from "../Errors.ts";
 import {
   buildServerProvider,
   nonEmptyTrimmed,
@@ -28,6 +31,11 @@ const CHATGPT_BROWSER_MODELS: ReadonlyArray<ServerProviderModel> = [
     capabilities: CHATGPT_BROWSER_MODEL_CAPABILITIES,
   },
 ];
+
+const BrowserVersionResponse = Schema.Struct({
+  Browser: Schema.optional(Schema.String),
+  browser: Schema.optional(Schema.String),
+});
 
 function cdpVersionUrl(endpoint: string): string | undefined {
   const trimmed = endpoint.trim();
@@ -85,8 +93,11 @@ export const makePendingChatGptBrowserProvider = (
   });
 
 export const checkChatGptBrowserProviderStatus = Effect.fn("checkChatGptBrowserProviderStatus")(
-  function* (settings: ChatGptBrowserSettings): Effect.fn.Return<ServerProviderDraft> {
+  function* (
+    settings: ChatGptBrowserSettings,
+  ): Effect.fn.Return<ServerProviderDraft, never, HttpClient.HttpClient> {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
+    const httpClient = yield* HttpClient.HttpClient;
 
     if (!settings.enabled) {
       return buildServerProvider({
@@ -139,16 +150,25 @@ export const checkChatGptBrowserProviderStatus = Effect.fn("checkChatGptBrowserP
       });
     }
 
-    const result = yield* Effect.tryPromise({
-      try: async () => {
-        const response = await fetch(versionUrl, { signal: AbortSignal.timeout(2_500) });
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status} ${response.statusText}`.trim());
-        }
-        return (await response.json()) as { Browser?: string; browser?: string };
-      },
-      catch: (cause) => cause,
-    }).pipe(Effect.result);
+    const result = yield* httpClient
+      .execute(HttpClientRequest.get(versionUrl).pipe(HttpClientRequest.acceptJson))
+      .pipe(
+        Effect.flatMap(
+          HttpClientResponse.matchStatus({
+            "2xx": (response) =>
+              HttpClientResponse.schemaBodyJson(BrowserVersionResponse)(response),
+            orElse: (response) =>
+              Effect.fail(
+                new ProviderValidationError({
+                  operation: "chatgpt.browser.versionProbe",
+                  issue: `HTTP ${response.status}`,
+                }),
+              ),
+          }),
+        ),
+        Effect.timeout("2500 millis"),
+        Effect.result,
+      );
 
     if (result._tag === "Failure") {
       return buildServerProvider({

@@ -11,6 +11,7 @@ import {
   TurnId,
   type ProviderSendTurnInput,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -341,17 +342,19 @@ export const makeChatGptBrowserAdapter = Effect.fn("makeChatGptBrowserAdapter")(
     }));
 
   const emitAssistantStarted = (threadId: ThreadId, turnId: TurnId, itemId: RuntimeItemId) =>
-    Effect.gen(function* () {
-      yield* offerRuntimeEvent({
-        ...(yield* eventBase(threadId, { turnId, itemId })),
-        type: "item.started",
-        payload: {
-          itemType: "assistant_message",
-          status: "inProgress",
-          title: "ChatGPT response",
-        },
-      });
-    });
+    eventBase(threadId, { turnId, itemId }).pipe(
+      Effect.flatMap((base) =>
+        offerRuntimeEvent({
+          ...base,
+          type: "item.started",
+          payload: {
+            itemType: "assistant_message",
+            status: "inProgress",
+            title: "ChatGPT response",
+          },
+        }),
+      ),
+    );
 
   const emitAssistantCompleted = (input: {
     readonly threadId: ThreadId;
@@ -362,19 +365,21 @@ export const makeChatGptBrowserAdapter = Effect.fn("makeChatGptBrowserAdapter")(
     readonly detail?: string;
     readonly text?: string;
   }) =>
-    Effect.gen(function* () {
-      yield* offerRuntimeEvent({
-        ...(yield* eventBase(input.threadId, { turnId: input.turnId, itemId: input.itemId })),
-        type: "item.completed",
-        payload: {
-          itemType: "assistant_message",
-          status: input.status,
-          title: input.title,
-          ...(input.detail ? { detail: input.detail } : {}),
-          ...(input.text !== undefined ? { data: { text: input.text } } : {}),
-        },
-      });
-    });
+    eventBase(input.threadId, { turnId: input.turnId, itemId: input.itemId }).pipe(
+      Effect.flatMap((base) =>
+        offerRuntimeEvent({
+          ...base,
+          type: "item.completed",
+          payload: {
+            itemType: "assistant_message",
+            status: input.status,
+            title: input.title,
+            ...(input.detail ? { detail: input.detail } : {}),
+            ...(input.text !== undefined ? { data: { text: input.text } } : {}),
+          },
+        }),
+      ),
+    );
 
   const deleteSessionIfCurrent = (threadId: ThreadId, session: ChatGptSessionContext): void => {
     if (sessions.get(threadId) === session) {
@@ -436,10 +441,10 @@ export const makeChatGptBrowserAdapter = Effect.fn("makeChatGptBrowserAdapter")(
 
       let previousText = "";
       let completedText = "";
-      let lastChangedAt = Date.now();
-      const startedAt = Date.now();
+      let lastChangedAt = yield* Clock.currentTimeMillis;
+      const startedAt = lastChangedAt;
 
-      while (Date.now() - startedAt < TURN_TIMEOUT_MS) {
+      while ((yield* Clock.currentTimeMillis) - startedAt < TURN_TIMEOUT_MS) {
         const text = yield* Effect.tryPromise({
           try: () => latestAssistantText(session.page),
           catch: (cause) =>
@@ -454,7 +459,7 @@ export const makeChatGptBrowserAdapter = Effect.fn("makeChatGptBrowserAdapter")(
           const delta = text.slice(previousText.length);
           previousText = text;
           completedText = text;
-          lastChangedAt = Date.now();
+          lastChangedAt = yield* Clock.currentTimeMillis;
           yield* offerRuntimeEvent({
             ...(yield* eventBase(session.threadId, { turnId, itemId: activeAssistantItemId })),
             type: "content.delta",
@@ -472,7 +477,7 @@ export const makeChatGptBrowserAdapter = Effect.fn("makeChatGptBrowserAdapter")(
           yield* emitAssistantStarted(session.threadId, turnId, activeAssistantItemId);
           previousText = text;
           completedText = text;
-          lastChangedAt = Date.now();
+          lastChangedAt = yield* Clock.currentTimeMillis;
           yield* offerRuntimeEvent({
             ...(yield* eventBase(session.threadId, { turnId, itemId: activeAssistantItemId })),
             type: "content.delta",
@@ -486,7 +491,7 @@ export const makeChatGptBrowserAdapter = Effect.fn("makeChatGptBrowserAdapter")(
         if (
           !generating &&
           completedText.trim().length > 0 &&
-          Date.now() - lastChangedAt >= RESPONSE_IDLE_MS
+          (yield* Clock.currentTimeMillis) - lastChangedAt >= RESPONSE_IDLE_MS
         ) {
           break;
         }

@@ -1441,6 +1441,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               );
 
               assert.deepStrictEqual(providers.map((provider) => provider.instanceId).toSorted(), [
+                "chatgpt",
                 "claude-synthero",
                 "claudeAgent",
                 "claudex",

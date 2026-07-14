@@ -38,6 +38,7 @@ import {
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
+import { getClaudexModelCapabilities, withClaudexModelCapabilities } from "../claudexModels.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -357,6 +358,7 @@ export function getClaudeModelCapabilities(model: string | null | undefined): Mo
   const slug = model?.trim();
   return (
     BUILT_IN_MODELS.find((candidate) => candidate.slug === slug)?.capabilities ??
+    getClaudexModelCapabilities(slug) ??
     DEFAULT_CLAUDE_MODEL_CAPABILITIES
   );
 }
@@ -398,7 +400,8 @@ export function normalizeClaudeCliEffort(
     effort === "xhigh" &&
     model !== "claude-fable-5" &&
     model !== "claude-opus-4-8" &&
-    model !== "claude-sonnet-5"
+    model !== "claude-sonnet-5" &&
+    !getClaudexModelCapabilities(model ?? undefined)
   ) {
     return "max";
   }
@@ -720,11 +723,13 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 > {
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
-  const allModels = providerModelsFromSettings(
-    BUILT_IN_MODELS,
-    identity.provider,
-    claudeSettings.customModels,
-    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+  const allModels = withClaudexModelCapabilities(
+    providerModelsFromSettings(
+      BUILT_IN_MODELS,
+      identity.provider,
+      claudeSettings.customModels,
+      DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+    ),
   );
 
   if (!claudeSettings.enabled) {
@@ -815,11 +820,13 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
-  const models = providerModelsFromSettings(
-    getBuiltInClaudeModelsForVersion(parsedVersion),
-    identity.provider,
-    claudeSettings.customModels,
-    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+  const models = withClaudexModelCapabilities(
+    providerModelsFromSettings(
+      getBuiltInClaudeModelsForVersion(parsedVersion),
+      identity.provider,
+      claudeSettings.customModels,
+      DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+    ),
   );
   const versionUpgradeMessage = supportsClaudeFable5(parsedVersion)
     ? undefined
@@ -894,11 +901,13 @@ export const makePendingClaudeProvider = (
 ): Effect.Effect<ServerProviderDraft> =>
   Effect.gen(function* () {
     const checkedAt = yield* nowIso;
-    const models = providerModelsFromSettings(
-      BUILT_IN_MODELS,
-      identity.provider,
-      claudeSettings.customModels,
-      DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+    const models = withClaudexModelCapabilities(
+      providerModelsFromSettings(
+        BUILT_IN_MODELS,
+        identity.provider,
+        claudeSettings.customModels,
+        DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+      ),
     );
 
     if (!claudeSettings.enabled) {

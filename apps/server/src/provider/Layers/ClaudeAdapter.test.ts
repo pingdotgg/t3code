@@ -161,6 +161,7 @@ function makeHarness(config?: {
   readonly baseDir?: string;
   readonly claudeConfig?: Partial<ClaudeSettings>;
   readonly instanceId?: ProviderInstanceId;
+  readonly driverKind?: ProviderDriverKind;
   readonly getModelCapabilities?: ClaudeAdapterLiveOptions["getModelCapabilities"];
   readonly normalizeEffort?: ClaudeAdapterLiveOptions["normalizeEffort"];
 }) {
@@ -174,6 +175,7 @@ function makeHarness(config?: {
 
   const adapterOptions: ClaudeAdapterLiveOptions = {
     ...(config?.instanceId ? { instanceId: config.instanceId } : {}),
+    ...(config?.driverKind ? { driverKind: config.driverKind } : {}),
     ...(config?.getModelCapabilities ? { getModelCapabilities: config.getModelCapabilities } : {}),
     ...(config?.normalizeEffort ? { normalizeEffort: config.normalizeEffort } : {}),
     createQuery: (input) => {
@@ -500,6 +502,52 @@ describe("ClaudeAdapterLive", () => {
 
       const createInput = harness.getLastCreateQueryInput();
       assert.equal(createInput?.options.effort, "xhigh");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("forwards adapter-specific ultracode as xhigh plus settings", () => {
+    const capabilities = createModelCapabilities({
+      optionDescriptors: [
+        {
+          id: "effort",
+          label: "Reasoning",
+          type: "select",
+          options: [
+            { id: "low", label: "Low" },
+            { id: "medium", label: "Medium" },
+            { id: "high", label: "High" },
+            { id: "xhigh", label: "Extra High" },
+            { id: "max", label: "Max" },
+            { id: "ultracode", label: "Ultracode", isDefault: true },
+          ],
+        },
+      ],
+    });
+    const harness = makeHarness({
+      instanceId: ProviderInstanceId.make("claudex"),
+      driverKind: ProviderDriverKind.make("claudex"),
+      getModelCapabilities: () => capabilities,
+      normalizeEffort: (effort) => (effort === "ultracode" ? "xhigh" : (effort ?? undefined)),
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudex"),
+        modelSelection: createModelSelection(ProviderInstanceId.make("claudex"), "claudex-luna", [
+          { id: "effort", value: "ultracode" },
+        ]),
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.effort, "xhigh");
+      assert.deepEqual(createInput?.options.settings, {
+        ultracode: true,
+      });
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

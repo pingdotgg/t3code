@@ -10,15 +10,10 @@ import {
   ClaudexSettings,
   type ClaudexSettings as ClaudexSettingsType,
   type ClaudeSettings,
-  DEFAULT_MODEL_BY_PROVIDER,
-  MODEL_SLUG_ALIASES_BY_PROVIDER,
-  type ModelCapabilities,
   type ModelSelection,
   ProviderDriverKind,
   type ServerProvider,
-  type ServerProviderModel,
 } from "@t3tools/contracts";
-import { createModelCapabilities } from "@t3tools/shared/model";
 import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -47,7 +42,14 @@ import {
   type ProviderInstance,
 } from "../ProviderDriver.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
-import { buildSelectOptionDescriptor, type ServerProviderDraft } from "../providerSnapshot.ts";
+import type { ServerProviderDraft } from "../providerSnapshot.ts";
+import {
+  CLAUDEX_DEFAULT_MODEL,
+  CLAUDEX_MODELS,
+  CLAUDEX_MODEL_SLUGS,
+  getClaudexModelCapabilities,
+  normalizeClaudexEffort,
+} from "../claudexModels.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makeManualOnlyProviderMaintenanceCapabilities,
@@ -64,65 +66,6 @@ import { resolveClaudeHomePath } from "./ClaudeHome.ts";
 const DRIVER_KIND = ProviderDriverKind.make("claudex");
 const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
 const decodeClaudexSettings = Schema.decodeSync(ClaudexSettings);
-const CLAUDEX_DEFAULT_MODEL = DEFAULT_MODEL_BY_PROVIDER[DRIVER_KIND] ?? "claudex-luna";
-const CLAUDEX_MODEL_SLUGS = new Set(
-  Object.values(MODEL_SLUG_ALIASES_BY_PROVIDER[DRIVER_KIND] ?? {}),
-);
-const CLAUDEX_EFFORT_VALUES = ["low", "medium", "high", "xhigh", "max"] as const;
-
-function createClaudexCapabilities(
-  defaultEffort: (typeof CLAUDEX_EFFORT_VALUES)[number],
-): ModelCapabilities {
-  return createModelCapabilities({
-    optionDescriptors: [
-      buildSelectOptionDescriptor({
-        id: "effort",
-        label: "Reasoning",
-        options: [
-          { value: "low", label: "Low" },
-          { value: "medium", label: "Medium" },
-          { value: "high", label: "High" },
-          { value: "xhigh", label: "Extra High" },
-          { value: "max", label: "Max" },
-        ].map((option) => ({
-          ...option,
-          ...(option.value === defaultEffort ? { isDefault: true } : {}),
-        })),
-      }),
-    ],
-  });
-}
-
-export const CLAUDEX_MODELS: ReadonlyArray<ServerProviderModel> = [
-  {
-    slug: "claudex-luna",
-    name: "Claudex Luna",
-    isCustom: false,
-    capabilities: createClaudexCapabilities("max"),
-  },
-  {
-    slug: "claudex-sol",
-    name: "Claudex Sol",
-    isCustom: false,
-    capabilities: createClaudexCapabilities("high"),
-  },
-];
-
-export function getClaudexModelCapabilities(
-  model: string | undefined,
-): ModelCapabilities | undefined {
-  const capabilities = CLAUDEX_MODELS.find((candidate) => candidate.slug === model)?.capabilities;
-  return capabilities ? (capabilities as ModelCapabilities) : undefined;
-}
-
-export function normalizeClaudexEffort(
-  effort: string | null | undefined,
-  _model?: string | null | undefined,
-): string | undefined {
-  return effort && CLAUDEX_EFFORT_VALUES.includes(effort as (typeof CLAUDEX_EFFORT_VALUES)[number])
-    ? effort
-    : undefined;
-}
 
 export function normalizeClaudexModelSelection(
   modelSelection: ModelSelection | undefined,
