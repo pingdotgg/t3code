@@ -65,11 +65,11 @@ struct SidebarView: View {
                                 Button("Move Up", systemImage: "arrow.up") {
                                     model.moveThread(thread, direction: .up)
                                 }
-                                .disabled(threadsForProject.first?.id == thread.id)
+                                .disabled(!model.canMoveThread(thread, direction: .up))
                                 Button("Move Down", systemImage: "arrow.down") {
                                     model.moveThread(thread, direction: .down)
                                 }
-                                .disabled(threadsForProject.last?.id == thread.id)
+                                .disabled(!model.canMoveThread(thread, direction: .down))
                             }
                     }
                     .onMove { offsets, destination in
@@ -261,13 +261,13 @@ struct SidebarView: View {
                                 }
                                 .disabled(
                                     session.model.connection != .ready
-                                        || threadsForProject.first?.id == thread.id)
+                                        || !session.model.canMoveThread(thread, direction: .up))
                                 Button("Move Down", systemImage: "arrow.down") {
                                     session.model.moveThread(thread, direction: .down)
                                 }
                                 .disabled(
                                     session.model.connection != .ready
-                                        || threadsForProject.last?.id == thread.id)
+                                        || !session.model.canMoveThread(thread, direction: .down))
                                 Divider()
                                 Button("Archive") {
                                     Task { await session.model.archiveThread(thread) }

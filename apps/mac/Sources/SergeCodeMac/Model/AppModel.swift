@@ -248,13 +248,54 @@ public final class AppModel {
         return Self.manuallyOrdered(threads, order: manualThreadOrder[projectID] ?? [])
     }
 
+    /// Returns the insertion bounds for moving rows without crossing the pin boundary.
+    /// The input is expected to use `pinnedFirst` ordering, as rendered by the sidebar.
+    static func reorderDestinationBounds(
+        _ threads: [ChatThread], fromOffsets: IndexSet, pinnedIDs: Set<String>
+    ) -> ClosedRange<Int>? {
+        guard let firstOffset = fromOffsets.first,
+            fromOffsets.allSatisfy({ $0 >= 0 && $0 < threads.count })
+        else { return nil }
+
+        let isPinned = pinnedIDs.contains(threads[firstOffset].id)
+        guard fromOffsets.allSatisfy({ pinnedIDs.contains(threads[$0].id) == isPinned }) else {
+            return nil
+        }
+
+        let groupOffsets = threads.indices.filter {
+            pinnedIDs.contains(threads[$0].id) == isPinned
+        }
+        guard let groupStart = groupOffsets.first, let groupEnd = groupOffsets.last else {
+            return nil
+        }
+        return groupStart...(groupEnd + 1)
+    }
+
+    public func canReorderThreads(
+        _ threads: [ChatThread], fromOffsets: IndexSet, toOffset: Int
+    ) -> Bool {
+        Self.reorderDestinationBounds(
+            threads, fromOffsets: fromOffsets, pinnedIDs: pinnedThreadIDs)?.contains(toOffset)
+            == true
+    }
+
     public func reorderThreads(
         _ threads: [ChatThread], fromOffsets: IndexSet, toOffset: Int, projectID: String
     ) {
+        guard canReorderThreads(threads, fromOffsets: fromOffsets, toOffset: toOffset) else { return }
         var reordered = threads
         reordered.move(fromOffsets: fromOffsets, toOffset: toOffset)
         manualThreadOrder[projectID] = reordered.map(\.id)
         persistManualThreadOrder()
+    }
+
+    public func canMoveThread(_ thread: ChatThread, direction: SidebarMoveDirection) -> Bool {
+        let visible = Self.pinnedFirst(
+            orderedThreads(for: thread.projectID), pinnedIDs: pinnedThreadIDs)
+        guard let index = visible.firstIndex(where: { $0.id == thread.id }) else { return false }
+        let destination = direction == .up ? index - 1 : index + 2
+        return canReorderThreads(
+            visible, fromOffsets: IndexSet(integer: index), toOffset: destination)
     }
 
     public func moveThread(_ thread: ChatThread, direction: SidebarMoveDirection) {
@@ -262,7 +303,6 @@ public final class AppModel {
             orderedThreads(for: thread.projectID), pinnedIDs: pinnedThreadIDs)
         guard let index = visible.firstIndex(where: { $0.id == thread.id }) else { return }
         let destination = direction == .up ? index - 1 : index + 2
-        guard destination >= 0, destination <= visible.count else { return }
         reorderThreads(
             visible, fromOffsets: IndexSet(integer: index), toOffset: destination,
             projectID: thread.projectID)
