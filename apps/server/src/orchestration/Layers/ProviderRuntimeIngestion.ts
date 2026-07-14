@@ -322,26 +322,33 @@ function orchestrationSessionStatusFromRuntimeState(
   }
 }
 
-function parseWaitingState(detail: unknown): {
-  readonly reason: "scheduled-wakeup" | "dependency";
-  readonly target:
-    | { readonly kind: "time"; readonly at: string }
-    | { readonly kind: "event"; readonly event: string };
-  readonly outcome?: "missed" | "cancelled";
-} | undefined {
+function parseWaitingState(detail: unknown):
+  | {
+      readonly reason: "scheduled-wakeup" | "dependency";
+      readonly target:
+        | { readonly kind: "time"; readonly at: string }
+        | { readonly kind: "event"; readonly event: string };
+      readonly outcome?: "missed" | "cancelled";
+    }
+  | undefined {
   if (detail === null || typeof detail !== "object") return undefined;
   const value = detail as Record<string, unknown>;
   const reason = value.reason === "dependency" ? "dependency" : "scheduled-wakeup";
-  const outcome = value.outcome === "cancelled" || value.status === "cancelled"
-    ? "cancelled"
-    : value.outcome === "missed" || value.status === "missed"
-      ? "missed"
-      : undefined;
+  const outcome =
+    value.outcome === "cancelled" || value.status === "cancelled"
+      ? "cancelled"
+      : value.outcome === "missed" || value.status === "missed"
+        ? "missed"
+        : undefined;
   if (typeof value.at === "string" && Number.isFinite(Date.parse(value.at))) {
     return { reason, target: { kind: "time", at: value.at }, ...(outcome ? { outcome } : {}) };
   }
   if (typeof value.event === "string" && value.event.trim().length > 0) {
-    return { reason, target: { kind: "event", event: value.event.trim() }, ...(outcome ? { outcome } : {}) };
+    return {
+      reason,
+      target: { kind: "event", event: value.event.trim() },
+      ...(outcome ? { outcome } : {}),
+    };
   }
   return undefined;
 }

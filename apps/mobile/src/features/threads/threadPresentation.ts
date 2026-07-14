@@ -44,7 +44,9 @@ function isLatestTurnSettled(
   return session.status !== "running";
 }
 
-function waitingLabel(waiting: NonNullable<NonNullable<EnvironmentThreadShell["session"]>["waiting"]>): string {
+function waitingLabel(
+  waiting: NonNullable<NonNullable<EnvironmentThreadShell["session"]>["waiting"]>,
+): string {
   if (waiting.target.kind === "event") return `Waiting for ${waiting.target.event}`;
   const remainingMs = Date.parse(waiting.target.at) - Date.now();
   if (remainingMs <= 0) return "Wakeup overdue";
