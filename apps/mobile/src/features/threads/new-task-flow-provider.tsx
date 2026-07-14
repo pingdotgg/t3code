@@ -348,7 +348,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const workspaceMode = selectedProjectDraft.workspaceSelection?.mode ?? "local";
   const selectedBranchName = selectedProjectDraft.workspaceSelection?.branch ?? null;
   const selectedWorktreePath = selectedProjectDraft.workspaceSelection?.worktreePath ?? null;
-  const startFromOrigin = selectedProjectDraft.workspaceSelection?.startFromOrigin ?? false;
+  const startFromOrigin =
+    selectedProjectDraft.workspaceSelection?.startFromOrigin ??
+    selectedEnvironmentServerConfig?.settings.newWorktreesStartFromOrigin ??
+    true;
   const runtimeMode = selectedProjectDraft.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const interactionMode = selectedProjectDraft.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE;
 
@@ -598,8 +601,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       return;
     }
     const preferredBranch =
-      availableBranches.find((branch) => branch.current) ??
       availableBranches.find((branch) => branch.isDefault) ??
+      availableBranches.find((branch) => branch.current) ??
       null;
     if (preferredBranch) {
       selectBranch(preferredBranch);
