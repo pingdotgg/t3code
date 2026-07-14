@@ -3,7 +3,7 @@
 // ARCHITECTURE.md "Sidecar contract").
 //
 // Flow (mirrors `packages/client-runtime/src/authorization/remote.ts` and
-// `apps/desktop/src/backend/DesktopLocalEnvironmentAuth.ts`):
+// the backend's local-environment authentication policy):
 //   1. POST /oauth/token  — RFC 8693 token-exchange grant, trading the
 //      sidecar's one-shot `desktopBootstrapToken` for a bearer access token
 //      (`AuthAccessTokenResult`, `packages/contracts/src/environmentHttp.ts:187-194`).

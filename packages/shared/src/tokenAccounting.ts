@@ -155,18 +155,23 @@ export function computeUsageCost(input: {
     input.usage.uncachedInputTokens,
     pricing.uncachedInputPerMillionUsd ?? pricing.inputPerMillionUsd,
   );
-  const hasCompleteSpecificCachePricing =
-    input.usage.cachedInputTokens !== undefined &&
+  const hasCacheCreationCost =
     input.usage.cacheCreationInputTokens !== undefined &&
+    pricing.cacheCreationInputPerMillionUsd !== undefined;
+  const hasCacheReadCost =
     input.usage.cacheReadInputTokens !== undefined &&
-    input.usage.cacheCreationInputTokens + input.usage.cacheReadInputTokens ===
-      input.usage.cachedInputTokens &&
-    pricing.cacheCreationInputPerMillionUsd !== undefined &&
     pricing.cacheReadInputPerMillionUsd !== undefined;
-  if (!hasCompleteSpecificCachePricing && pricing.cachedInputPerMillionUsd !== undefined) {
-    push("cached_input", input.usage.cachedInputTokens, pricing.cachedInputPerMillionUsd);
+  const granularCacheTokens =
+    (hasCacheCreationCost ? (input.usage.cacheCreationInputTokens ?? 0) : 0) +
+    (hasCacheReadCost ? (input.usage.cacheReadInputTokens ?? 0) : 0);
+  const aggregateCachedInputTokens =
+    input.usage.cachedInputTokens !== undefined
+      ? Math.max(0, input.usage.cachedInputTokens - granularCacheTokens)
+      : undefined;
+  if (aggregateCachedInputTokens === undefined || aggregateCachedInputTokens > 0) {
+    push("cached_input", aggregateCachedInputTokens, pricing.cachedInputPerMillionUsd);
   }
-  if (hasCompleteSpecificCachePricing || pricing.cachedInputPerMillionUsd === undefined) {
+  if (hasCacheCreationCost || hasCacheReadCost) {
     push(
       "cache_creation_input",
       input.usage.cacheCreationInputTokens,

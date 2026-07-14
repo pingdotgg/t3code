@@ -17,7 +17,7 @@ SergeCode (github.com/SergeSerb2/SergeCode) is a **permanent hard fork** of `pin
 
 ## Project Snapshot
 
-SergeCode is a minimal web GUI for using coding agents like Codex and Claude. It is an independent hard fork of T3 Code that evolves on its own.
+SergeCode is a native Apple client for coding agents such as Codex and Claude. It is an independent hard fork of T3 Code that evolves on its own.
 
 This repository is a VERY EARLY WIP. Proposing sweeping changes that improve long-term maintainability is encouraged.
 
@@ -35,11 +35,12 @@ Long term maintainability is a core priority. If you add new functionality, firs
 
 ## Package Roles
 
-- `apps/server`: Node.js WebSocket server. Wraps Codex app-server (JSON-RPC over stdio), serves the React web app, and manages provider sessions.
-- `apps/web`: React/Vite UI. Owns session UX, conversation/event rendering, and client-side state. Connects to the server via WebSocket.
+- `apps/mac`: Native SwiftUI macOS app. Supervises the local server sidecar and owns the desktop UI.
+- `apps/mobile`: Expo/React Native iPhone companion. Connects to a SergeCode backend over LAN or relay.
+- `apps/server`: Node.js HTTP/WebSocket backend. Wraps provider runtimes and manages sessions, persistence, git, and orchestration.
 - `packages/contracts`: Shared effect/Schema schemas and TypeScript contracts for provider events, WebSocket protocol, and model/session types. Keep this package schema-only — no runtime logic.
 - `packages/shared`: Shared runtime utilities consumed by both server and client applications. Uses explicit subpath exports (e.g. `@t3tools/shared/git`) — no barrel index.
-- `packages/client-runtime`: Shared runtime package for sharing client code across web and mobile.
+- `packages/client-runtime`: Shared TypeScript client runtime used by the mobile app and relay-facing code.
 
 ## Reference Repos
 

@@ -27,7 +27,10 @@ import {
   type ProjectionThreadMessage,
   ProjectionThreadMessageRepository,
 } from "../../persistence/Services/ProjectionThreadMessages.ts";
-import { ProjectionTurnUsageRepository } from "../../persistence/Services/ProjectionTurnUsage.ts";
+import {
+  ProjectionTurnUsageRepository,
+  type ProjectionTurnUsage,
+} from "../../persistence/Services/ProjectionTurnUsage.ts";
 import {
   type ProjectionThreadProposedPlan,
   ProjectionThreadProposedPlanRepository,
@@ -75,6 +78,8 @@ export const ORCHESTRATION_PROJECTOR_NAMES = {
 
 type ProjectorName =
   (typeof ORCHESTRATION_PROJECTOR_NAMES)[keyof typeof ORCHESTRATION_PROJECTOR_NAMES];
+
+const decodeThreadTokenUsageSnapshot = Schema.decodeUnknownOption(ThreadTokenUsageSnapshot);
 
 /**
  * Turn state to settle still-running turns with when their session leaves the
@@ -1349,14 +1354,20 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           if (activity.kind !== "context-window.updated" || activity.turnId === null) {
             return;
           }
-          const payload = activity.payload;
-          if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+          const decodedUsage = decodeThreadTokenUsageSnapshot(activity.payload);
+          if (Option.isNone(decodedUsage)) {
+            yield* Effect.logWarning(
+              "Invalid thread usage snapshot payload; skipping projection",
+            ).pipe(
+              Effect.annotateLogs({
+                threadId: event.payload.threadId,
+                turnId: activity.turnId,
+                activityId: activity.id,
+              }),
+            );
             return;
           }
-          const usage = Schema.decodeUnknownOption(ThreadTokenUsageSnapshot)(payload);
-          if (Option.isNone(usage)) {
-            return;
-          }
+          const usage: ProjectionTurnUsage["usage"] = decodedUsage.value;
           const [thread, session] = yield* Effect.all([
             projectionThreadRepository.getById({ threadId: event.payload.threadId }),
             projectionThreadSessionRepository.getByThreadId({ threadId: event.payload.threadId }),
@@ -1369,7 +1380,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ),
             providerInstanceId: Option.isSome(session) ? session.value.providerInstanceId : null,
             model: Option.isSome(thread) ? thread.value.modelSelection.model : null,
-            usage: usage.value,
+            usage,
             updatedAt: activity.createdAt,
           });
           return;

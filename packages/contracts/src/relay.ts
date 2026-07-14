@@ -621,10 +621,9 @@ export const RelayDpopTokenExchangeGrantType =
   "urn:ietf:params:oauth:grant-type:token-exchange" as const;
 export const RelayJwtSubjectTokenType = "urn:ietf:params:oauth:token-type:jwt" as const;
 export const RelayAccessTokenType = "urn:ietf:params:oauth:token-type:access_token" as const;
-export const RelayPublicClientId = Schema.Literals(["t3-mobile", "t3-web"]);
-export type RelayPublicClientId = typeof RelayPublicClientId.Type;
 export const RelayMobileClientId = "t3-mobile" as const;
-export const RelayWebClientId = "t3-web" as const;
+export const RelayPublicClientId = Schema.Literal(RelayMobileClientId);
+export type RelayPublicClientId = typeof RelayPublicClientId.Type;
 
 export const RelayDpopAccessTokenRequest = Schema.Struct({
   grant_type: Schema.Literal(RelayDpopTokenExchangeGrantType),

@@ -5,7 +5,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { useThemeColor } from "../lib/useThemeColor";
 import { useAssetUrl } from "../state/assets";
 
-/* ─── Favicon cache (matches web pattern) ────────────────────────────── */
+/* ─── Favicon cache ──────────────────────────────────────────────────── */
 const loadedFaviconUrls = new Set<string>();
 
 /* ─── Component ──────────────────────────────────────────────────────── */
@@ -55,7 +55,7 @@ function ProjectFaviconImage(props: {
         justifyContent: "center",
       }}
     >
-      {/* Folder icon fallback (matches web's FolderIcon) */}
+      {/* Folder icon fallback */}
       {!showImage ? (
         <SymbolView
           name="folder.fill"

@@ -112,4 +112,42 @@ describe("tokenAccounting", () => {
     ]);
     approx(result?.totalCostUsd ?? 0, 0.016875);
   });
+
+  it("prices the ungranular cached remainder when only one granular cache rate is available", () => {
+    const result = computeUsageCost({
+      provider: "claudeAgent",
+      model: "claude-example",
+      usage: {
+        usedTokens: 5500,
+        uncachedInputTokens: 1000,
+        cachedInputTokens: 4000,
+        cacheCreationInputTokens: 1500,
+        cacheReadInputTokens: 2500,
+        outputTokens: 500,
+      },
+      pricingCatalog: {
+        entries: [
+          {
+            provider: "claudeAgent",
+            model: "claude-example",
+            uncachedInputPerMillionUsd: 3,
+            cachedInputPerMillionUsd: 0.75,
+            cacheCreationInputPerMillionUsd: 3.75,
+            outputPerMillionUsd: 15,
+          },
+        ],
+      },
+    });
+
+    expect(result?.components.map((component) => component.category)).toEqual([
+      "uncached_input",
+      "cached_input",
+      "cache_creation_input",
+      "output",
+    ]);
+    expect(result?.components.find((component) => component.category === "cached_input")).toEqual(
+      expect.objectContaining({ tokens: 2500 }),
+    );
+    approx(result?.totalCostUsd ?? 0, 0.018);
+  });
 });

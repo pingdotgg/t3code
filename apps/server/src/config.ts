@@ -19,9 +19,6 @@ export const DEFAULT_PORT = 3773;
 export const RuntimeMode = Schema.Literals(["web", "desktop"]);
 export type RuntimeMode = typeof RuntimeMode.Type;
 
-export const StartupPresentation = Schema.Literals(["browser", "headless"]);
-export type StartupPresentation = typeof StartupPresentation.Type;
-
 /**
  * ServerDerivedPaths - Derived paths from the base directory.
  */
@@ -66,10 +63,6 @@ export class ServerConfig extends Context.Service<
     readonly host: string | undefined;
     readonly cwd: string;
     readonly baseDir: string;
-    readonly staticDir: string | undefined;
-    readonly devUrl: URL | undefined;
-    readonly noBrowser: boolean;
-    readonly startupPresentation: StartupPresentation;
     readonly desktopBootstrapToken: string | undefined;
     readonly autoBootstrapProjectFromCwd: boolean;
     readonly logWebSocketEvents: boolean;
@@ -90,10 +83,9 @@ export const layer = (config: ServerConfig["Service"]) => Layer.succeed(ServerCo
 
 export const deriveServerPaths = Effect.fn(function* (
   baseDir: ServerConfig["Service"]["baseDir"],
-  devUrl: ServerConfig["Service"]["devUrl"],
 ): Effect.fn.Return<ServerDerivedPaths, never, Path.Path> {
   const { join } = yield* Path.Path;
-  const stateDir = join(baseDir, devUrl !== undefined ? "dev" : "userdata");
+  const stateDir = join(baseDir, "userdata");
   const dbPath = join(stateDir, "state.sqlite");
   const attachmentsDir = join(stateDir, "attachments");
   const logsDir = join(stateDir, "logs");
@@ -146,13 +138,12 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
   cwd: string,
   baseDirOrPrefix: string | { readonly prefix: string },
 ) {
-  const devUrl = undefined;
   const fs = yield* FileSystem.FileSystem;
   const baseDir =
     typeof baseDirOrPrefix === "string"
       ? baseDirOrPrefix
       : yield* fs.makeTempDirectoryScoped({ prefix: baseDirOrPrefix.prefix });
-  const derivedPaths = yield* deriveServerPaths(baseDir, devUrl);
+  const derivedPaths = yield* deriveServerPaths(baseDir);
   yield* ensureServerDirectories(derivedPaths);
 
   return ServerConfig.of({
@@ -177,33 +168,8 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
     port: 0,
     host: undefined,
     desktopBootstrapToken: undefined,
-    staticDir: undefined,
-    devUrl,
-    noBrowser: false,
-    startupPresentation: "browser",
   });
 });
 
 export const layerTest = (cwd: string, baseDirOrPrefix: string | { readonly prefix: string }) =>
   Layer.effect(ServerConfig, makeTest(cwd, baseDirOrPrefix));
-
-export const resolveStaticDir = Effect.fn(function* () {
-  const { join, resolve } = yield* Path.Path;
-  const { exists } = yield* FileSystem.FileSystem;
-  const bundledClient = resolve(join(import.meta.dirname, "client"));
-  const bundledStat = yield* exists(join(bundledClient, "index.html")).pipe(
-    Effect.orElseSucceed(() => false),
-  );
-  if (bundledStat) {
-    return bundledClient;
-  }
-
-  const monorepoClient = resolve(join(import.meta.dirname, "../../web/dist"));
-  const monorepoStat = yield* exists(join(monorepoClient, "index.html")).pipe(
-    Effect.orElseSucceed(() => false),
-  );
-  if (monorepoStat) {
-    return monorepoClient;
-  }
-  return undefined;
-});

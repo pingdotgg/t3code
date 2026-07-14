@@ -8,7 +8,7 @@ const MANAGED_RELAY_TOKEN_CACHE_VERSION = 1;
 
 const ManagedRelayAccessTokenCacheEntrySchema = Schema.Struct({
   accountId: Schema.String,
-  clientId: Schema.Literals(["t3-mobile", "t3-web"]),
+  clientId: Schema.Literal("t3-mobile"),
   relayUrl: Schema.String,
   thumbprint: Schema.String,
   scopes: Schema.Array(

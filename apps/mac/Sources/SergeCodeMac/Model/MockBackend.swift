@@ -1198,7 +1198,7 @@ private actor MockState {
         var approvalsByID: [String: ApprovalRequest] = [:]
 
         let projectA = Project(id: "project-1", name: "SergeCode", path: "/Users/serge/Documents/Dev/SergeCode")
-        let projectB = Project(id: "project-2", name: "marketing-site", path: "/Users/serge/Documents/Dev/marketing-site")
+        let projectB = Project(id: "project-2", name: "ios-companion", path: "/Users/serge/Documents/Dev/ios-companion")
         projectsByID[projectA.id] = projectA
         projectsByID[projectB.id] = projectB
 
@@ -1576,7 +1576,7 @@ private actor MockState {
                 output: """
                 Error: Cannot find module '@t3tools/contracts'
                 Require stack:
-                - /workspace/apps/web/src/index.ts
+                - /workspace/apps/mac/Sources/SergeCodeMac/SergeCodeApp.swift
                 npm ERR! code 1
                 npm ERR! Exit status 1
                 """,
