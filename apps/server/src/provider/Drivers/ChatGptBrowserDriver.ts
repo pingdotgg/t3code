@@ -17,6 +17,7 @@ import {
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { HttpClient } from "effect/unstable/http";
 
 import type { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
@@ -44,7 +45,7 @@ const DRIVER_KIND = ProviderDriverKind.make("chatgpt");
 const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
 const decodeChatGptBrowserSettings = Schema.decodeSync(ChatGptBrowserSettings);
 
-export type ChatGptBrowserDriverEnv = ServerSettingsService;
+export type ChatGptBrowserDriverEnv = HttpClient.HttpClient | ServerSettingsService;
 
 const maintenanceCapabilities = makeManualOnlyProviderMaintenanceCapabilities({
   provider: DRIVER_KIND,
@@ -108,6 +109,7 @@ export const ChatGptBrowserDriver: ProviderDriver<ChatGptBrowserSettings, ChatGp
         });
         const effectiveConfig = { ...config, enabled } satisfies ChatGptBrowserSettings;
 
+        const httpClient = yield* HttpClient.HttpClient;
         const adapter = yield* makeChatGptBrowserAdapter(effectiveConfig, { instanceId });
         const snapshotSettings = makeProviderSnapshotSettingsSource(
           effectiveConfig,
@@ -123,6 +125,7 @@ export const ChatGptBrowserDriver: ProviderDriver<ChatGptBrowserSettings, ChatGp
           initialSnapshot: (settings) =>
             makePendingChatGptBrowserProvider(settings.provider).pipe(Effect.map(stampIdentity)),
           checkProvider: checkChatGptBrowserProviderStatus(effectiveConfig).pipe(
+            Effect.provideService(HttpClient.HttpClient, httpClient),
             Effect.map(stampIdentity),
           ),
           refreshInterval: SNAPSHOT_REFRESH_INTERVAL,
