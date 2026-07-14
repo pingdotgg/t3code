@@ -48,6 +48,7 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { enforceSubAgentStandardMode } from "../../../orchestration/subAgentModelPolicy.ts";
 import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
 import { ProviderService } from "../../../provider/Services/ProviderService.ts";
 import { readTurnStallThresholdMs } from "../../../provider/turnReliabilityConfig.ts";
@@ -57,8 +58,6 @@ const WAIT_POLL_INTERVAL_MILLIS = 500;
 const DEFAULT_WAIT_TIMEOUT_SECONDS = 60;
 const DEFAULT_TITLE_MAX_LENGTH = 60;
 const CODEX_DRIVER_KIND = ProviderDriverKind.make("codex");
-const CODEX_FAST_SERVICE_TIER_ID = "priority";
-const CODEX_LEGACY_FAST_SERVICE_TIER_ID = "fast";
 const CODEX_STANDARD_SERVICE_TIER_ID = "default";
 const PARENT_ACTIVITY_TEXT_MAX_LENGTH = 2_000;
 
@@ -152,40 +151,29 @@ const resolveSpawnTitle = (input: SubAgentSpawnInput, name?: string): string => 
 };
 
 /**
- * Codex sub-agents use the fast service tier unless the caller explicitly
- * opts out. Prefer the current catalog's `priority` id, while retaining the
- * legacy `fast` id for older Codex catalogs.
+ * Sub-agents are standard-only. Explicitly persist the provider's standard
+ * controls so neither provider defaults nor a parent thread's fast selection
+ * can leak into a child.
  */
-const resolveSpawnModelSelection = (
-  target: ServerProvider,
-  model: string,
-  fastMode: boolean | undefined,
-) => {
+const resolveSpawnModelSelection = (target: ServerProvider, model: string) => {
   const base = { instanceId: target.instanceId, model };
-  if (target.driver !== CODEX_DRIVER_KIND) return base;
+  const descriptors = target.models.find((candidate) => candidate.slug === model)?.capabilities
+    ?.optionDescriptors;
+  const options = [
+    ...(target.driver === CODEX_DRIVER_KIND
+      ? [{ id: "serviceTier", value: CODEX_STANDARD_SERVICE_TIER_ID } as const]
+      : []),
+    ...(descriptors?.some(
+      (descriptor) => descriptor.id === "fastMode" && descriptor.type === "boolean",
+    )
+      ? [{ id: "fastMode", value: false } as const]
+      : []),
+  ];
 
-  const serviceTierDescriptor = target.models
-    .find((candidate) => candidate.slug === model)
-    ?.capabilities?.optionDescriptors?.find(
-      (descriptor) => descriptor.id === "serviceTier" && descriptor.type === "select",
-    );
-  const availableTiers =
-    serviceTierDescriptor?.type === "select"
-      ? new Set(serviceTierDescriptor.options.map((option) => option.id))
-      : undefined;
-  const serviceTier =
-    fastMode === false
-      ? CODEX_STANDARD_SERVICE_TIER_ID
-      : availableTiers?.has(CODEX_FAST_SERVICE_TIER_ID)
-        ? CODEX_FAST_SERVICE_TIER_ID
-        : availableTiers?.has(CODEX_LEGACY_FAST_SERVICE_TIER_ID)
-          ? CODEX_LEGACY_FAST_SERVICE_TIER_ID
-          : CODEX_FAST_SERVICE_TIER_ID;
-
-  return {
+  return enforceSubAgentStandardMode({
     ...base,
-    options: [{ id: "serviceTier", value: serviceTier }],
-  };
+    ...(options.length > 0 ? { options } : {}),
+  });
 };
 
 const finalAssistantText = (thread: OrchestrationThread): string | null => {
@@ -621,7 +609,7 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
       const activityTaskId = RuntimeTaskId.make(`agent:${threadUuid}`);
       const name = resolveSpawnName(input);
       const title = resolveSpawnTitle(input, name);
-      const modelSelection = resolveSpawnModelSelection(target, model, input.fastMode);
+      const modelSelection = resolveSpawnModelSelection(target, model);
       const parentTurnId = yield* readParentTurnId(scope.threadId);
 
       yield* engine

@@ -247,7 +247,7 @@ it.effect("spawns a sub-agent thread next to the caller's thread on another prov
       expect(create.modelSelection).toEqual({
         instanceId: "codex",
         model: "default-model",
-        options: [{ id: "serviceTier", value: "priority" }],
+        options: [{ id: "serviceTier", value: "default" }],
       });
     }
     expect(turnStart?.type).toBe("thread.turn.start");
@@ -271,23 +271,37 @@ it.effect("spawns a sub-agent thread next to the caller's thread on another prov
   }),
 );
 
-it.effect("lets callers opt Codex sub-agents out of fast mode", () =>
+it.effect("forces fast-capable Claude-backed sub-agents into standard mode", () =>
   Effect.gen(function* () {
-    const [coordinator, harness] = yield* makeCoordinator();
+    const [coordinator, harness] = yield* makeCoordinator({
+      providers: [
+        makeProvider("claudex", "claudeAgent", {
+          models: [
+            {
+              slug: "claudex-sol",
+              name: "Claudex Sol",
+              isCustom: true,
+              capabilities: {
+                optionDescriptors: [{ id: "fastMode", label: "Fast Mode", type: "boolean" }],
+              },
+            },
+          ],
+        }),
+      ],
+    });
 
     yield* coordinator.spawn(makeScope(), {
-      providerInstanceId: ProviderInstanceId.make("codex"),
-      prompt: "Use the standard service tier.",
-      fastMode: false,
+      providerInstanceId: ProviderInstanceId.make("claudex"),
+      prompt: "Stay on the standard service tier.",
     });
 
     const create = harness.dispatched.find((command) => command.type === "thread.create");
     expect(create).toMatchObject({
       type: "thread.create",
       modelSelection: {
-        instanceId: "codex",
-        model: "default-model",
-        options: [{ id: "serviceTier", value: "default" }],
+        instanceId: "claudex",
+        model: "claudex-sol",
+        options: [{ id: "fastMode", value: false }],
       },
     });
   }),

@@ -31,7 +31,7 @@ export const AgentListTool = Tool.make("agent_list", {
 
 export const AgentSpawnTool = Tool.make("agent_spawn", {
   description:
-    'Spawn a sub-agent: start a new thread on any configured provider instance (including a different agent than yourself — e.g. delegate from Claude to Codex or vice versa) and send it an initial prompt. Codex targets use fast mode by default; pass fastMode: false to use the standard service tier. Spawned threads are titled with the "Agent: <name/title/prompt>" convention for easy identification in the UI and agent_list. The sub-agent works in this thread\'s project and worktree. Returns immediately with the new threadId; use agent_wait to collect the result and agent_send for follow-up prompts. Use agent_list first to pick a spawnable providerInstanceId.',
+    'Spawn a sub-agent: start a new thread on any configured provider instance (including a different agent than yourself — e.g. delegate from Claude to Codex or vice versa) and send it an initial prompt. Sub-agents always use standard mode; fast/priority mode cannot be requested for child threads. Spawned threads are titled with the "Agent: <name/title/prompt>" convention for easy identification in the UI and agent_list. The sub-agent works in this thread\'s project and worktree. Returns immediately with the new threadId; use agent_wait to collect the result and agent_send for follow-up prompts. Use agent_list first to pick a spawnable providerInstanceId.',
   parameters: SubAgentSpawnInput,
   success: SubAgentSpawnResult,
   failure: SubAgentError,
