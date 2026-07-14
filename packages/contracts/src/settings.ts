@@ -528,14 +528,16 @@ export const ObservabilitySettings = Schema.Struct({
 });
 export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
+const NonNegativeModelPrice = Schema.Number.check(Schema.isGreaterThanOrEqualTo(0));
+
 export const ModelPricingOverride = Schema.Struct({
-  inputPerMillionUsd: Schema.optional(Schema.Number),
-  uncachedInputPerMillionUsd: Schema.optional(Schema.Number),
-  cachedInputPerMillionUsd: Schema.optional(Schema.Number),
-  cacheCreationInputPerMillionUsd: Schema.optional(Schema.Number),
-  cacheReadInputPerMillionUsd: Schema.optional(Schema.Number),
-  outputPerMillionUsd: Schema.optional(Schema.Number),
-  reasoningOutputPerMillionUsd: Schema.optional(Schema.Number),
+  inputPerMillionUsd: Schema.optional(NonNegativeModelPrice),
+  uncachedInputPerMillionUsd: Schema.optional(NonNegativeModelPrice),
+  cachedInputPerMillionUsd: Schema.optional(NonNegativeModelPrice),
+  cacheCreationInputPerMillionUsd: Schema.optional(NonNegativeModelPrice),
+  cacheReadInputPerMillionUsd: Schema.optional(NonNegativeModelPrice),
+  outputPerMillionUsd: Schema.optional(NonNegativeModelPrice),
+  reasoningOutputPerMillionUsd: Schema.optional(NonNegativeModelPrice),
 });
 export type ModelPricingOverride = typeof ModelPricingOverride.Type;
 

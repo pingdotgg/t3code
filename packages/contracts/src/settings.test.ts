@@ -122,6 +122,30 @@ describe("ServerSettings token efficiency defaults", () => {
       patch.tokenEfficiency?.customModelPricing?.["codex/gpt-example"]?.cachedInputPerMillionUsd,
     ).toBe(0.5);
   });
+
+  it("rejects negative custom model pricing overrides", () => {
+    const negativePricing = {
+      inputPerMillionUsd: -1,
+      uncachedInputPerMillionUsd: -1,
+      cachedInputPerMillionUsd: -1,
+      cacheCreationInputPerMillionUsd: -1,
+      cacheReadInputPerMillionUsd: -1,
+      outputPerMillionUsd: -1,
+      reasoningOutputPerMillionUsd: -1,
+    };
+
+    for (const [field, value] of Object.entries(negativePricing)) {
+      expect(() =>
+        decodeServerSettingsPatch({
+          tokenEfficiency: {
+            customModelPricing: {
+              "codex/gpt-negative": { [field]: value },
+            },
+          },
+        }),
+      ).toThrow();
+    }
+  });
 });
 
 describe("ServerSettings worktree defaults", () => {
