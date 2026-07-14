@@ -207,6 +207,21 @@ struct SidebarView: View {
                     RemoteProjectSubheaderRow(
                         project: project,
                         isReady: session.model.connection == .ready,
+                        configuredProviderKinds: session.model.configuredProviderKinds,
+                        canCreateThread: { session.model.canCreateThread(with: $0) },
+                        onNewSession: { provider in
+                            Task {
+                                guard session.model.connection == .ready else { return }
+                                if let thread = await session.model.createSceneThread(
+                                    projectID: project.id,
+                                    provider: provider,
+                                    scenery: scenery,
+                                    passport: passport)
+                                {
+                                    multi.select(threadID: thread.id, on: session.id)
+                                }
+                            }
+                        },
                         onRename: {
                             renameText = project.name
                             renameTarget = ProjectActionTarget(
@@ -261,6 +276,9 @@ struct SidebarView: View {
 private struct RemoteProjectSubheaderRow: View {
     let project: Project
     let isReady: Bool
+    let configuredProviderKinds: [ProviderKind]
+    let canCreateThread: (ProviderKind) -> Bool
+    let onNewSession: (ProviderKind) -> Void
     let onRename: () -> Void
     let onDelete: () -> Void
 
@@ -270,12 +288,43 @@ private struct RemoteProjectSubheaderRow: View {
                 .font(.caption2.smallCaps().weight(.semibold))
                 .foregroundStyle(.secondary)
             Spacer(minLength: 0)
+            Menu {
+                if configuredProviderKinds.isEmpty {
+                    Text("No providers found")
+                }
+                ForEach(configuredProviderKinds) { provider in
+                    Button(provider.displayName) { onNewSession(provider) }
+                        .disabled(!canCreateThread(provider))
+                }
+            } label: {
+                Image(systemName: "plus")
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.primary)
+                    .frame(width: 20, height: 20)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .disabled(!isReady)
+            .accessibilityLabel("New session in \(project.name) on the remote Mac")
+            .help("New session in \(project.name) on the remote Mac")
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.leading, 8)
         .padding(.top, 6)
         .padding(.bottom, 1)
         .listRowSeparator(.hidden)
         .contextMenu {
+            Menu("New Session") {
+                if configuredProviderKinds.isEmpty {
+                    Text("No providers found")
+                }
+                ForEach(configuredProviderKinds) { provider in
+                    Button(provider.displayName) { onNewSession(provider) }
+                        .disabled(!canCreateThread(provider))
+                }
+            }
+            .disabled(!isReady)
             Button("Rename…") { onRename() }
                 .disabled(!isReady)
             Divider()
