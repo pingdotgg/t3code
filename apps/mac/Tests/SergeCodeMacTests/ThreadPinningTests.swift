@@ -20,6 +20,20 @@ struct ThreadPinningTests {
         #expect(ordered.map(\.id) == ["pinned-later", "pinned-earlier", "newest"])
     }
 
+    @Test("manual order keeps saved rows stable and puts new rows first")
+    func manualOrderMergesNewRows() {
+        let threads = [
+            makeThread(id: "newest", at: 3),
+            makeThread(id: "saved-first", at: 2),
+            makeThread(id: "saved-second", at: 1),
+        ]
+
+        let ordered = AppModel.manuallyOrdered(
+            threads, order: ["saved-second", "saved-first"])
+
+        #expect(ordered.map(\.id) == ["newest", "saved-second", "saved-first"])
+    }
+
     private func makeThread(id: String, at timestamp: TimeInterval) -> ChatThread {
         ChatThread(
             id: id,
