@@ -50,6 +50,7 @@
     "@noble/hashes": "catalog:",
     "@pierre/diffs": "catalog:",
     "@react-native-menu/menu": "^2.0.0",
+    "@react-navigation/core": "catalog:",
     "@react-navigation/elements": "2.9.26",
     "@react-navigation/native": "7.3.4",
     "@react-navigation/native-stack": "7.17.6",

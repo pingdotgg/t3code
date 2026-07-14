@@ -10,6 +10,7 @@ import {
   createNativeStackScreen,
   type NativeStackNavigationOptions,
 } from "@react-navigation/native-stack";
+import type { PrivateValueStore } from "@react-navigation/core";
 import { DynamicColorIOS, Platform, Pressable, ScrollView, StyleSheet } from "react-native";
 import { useResolveClassNames } from "uniwind";
 
@@ -452,12 +453,15 @@ export const RootStack = createNativeStackNavigator({
     }),
   },
 });
-type RootStackType = typeof RootStack;
+type RootStackParamList =
+  typeof RootStack extends PrivateValueStore<infer Value> ? Value[0] : never;
 
 const navigationPathConfig = {
   screens: createPathConfigForStaticNavigation(RootStack) ?? {},
 };
 
-declare module "@react-navigation/native" {
-  interface RootNavigator extends RootStackType {}
+declare global {
+  namespace ReactNavigation {
+    interface RootParamList extends RootStackParamList {}
+  }
 }

@@ -7,7 +7,7 @@
     "dev": "vp dev",
     "build": "vp build",
     "preview": "vp preview",
-    "typecheck": "tsgo --noEmit",
+    "typecheck": "tsc --noEmit",
     "test": "vp test run --passWithNoTests",
     "test:browser": "vp test run --config vitest.browser.config.ts",
     "test:browser:install": "playwright install --with-deps chromium"

@@ -19,7 +19,7 @@
     "build": "node scripts/cli.ts build",
     "build:bundle": "vp pack",
     "start": "node dist/bin.mjs",
-    "typecheck": "tsgo --noEmit",
+    "typecheck": "tsc --noEmit",
     "test": "vp test run",
     "test:process-reaper": "vp test run src/server.test.ts src/provider/Layers/ClaudeAdapter.test.ts src/provider/Layers/ProviderSessionDirectory.test.ts src/provider/Layers/ProviderSessionReaper.test.ts src/provider/Layers/CodexAdapter.test.ts"
   },

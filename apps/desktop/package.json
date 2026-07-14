@@ -10,7 +10,7 @@
     "dev:electron": "node scripts/dev-electron.mjs",
     "build": "vp pack",
     "start": "node scripts/start-electron.mjs",
-    "typecheck": "tsgo --noEmit",
+    "typecheck": "tsc --noEmit",
     "test": "vp test run --passWithNoTests",
     "smoke-test": "node scripts/smoke-test.mjs"
   },
