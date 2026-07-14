@@ -11,6 +11,12 @@ export type ComposerPopoverPlacement = {
   readonly width: number;
 };
 
+export function isComposerCommandPopoverPlacementReady(
+  placement: ComposerPopoverPlacement | null,
+): placement is ComposerPopoverPlacement {
+  return placement !== null;
+}
+
 /**
  * Positions the menu in window coordinates. The composer remains in the
  * normal layout; only the menu's independent overlay position changes.

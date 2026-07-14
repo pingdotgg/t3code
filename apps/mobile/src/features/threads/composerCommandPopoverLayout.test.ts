@@ -1,5 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
-import { placeComposerCommandPopover } from "./composerCommandPopoverLayout";
+import {
+  isComposerCommandPopoverPlacementReady,
+  placeComposerCommandPopover,
+} from "./composerCommandPopoverLayout";
 
 describe("placeComposerCommandPopover", () => {
   const base = {
@@ -36,5 +39,15 @@ describe("placeComposerCommandPopover", () => {
         rightInset: 44,
       }),
     ).toEqual({ left: 44, top: 412, width: 756 });
+  });
+});
+
+describe("isComposerCommandPopoverPlacementReady", () => {
+  it("keeps the surface hidden and inert before measurement", () => {
+    expect(isComposerCommandPopoverPlacementReady(null)).toBe(false);
+  });
+
+  it("allows the measured surface to render", () => {
+    expect(isComposerCommandPopoverPlacementReady({ left: 16, top: 412, width: 358 })).toBe(true);
   });
 });

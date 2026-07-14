@@ -18,6 +18,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text } from "../../components/AppText";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
 import {
+  isComposerCommandPopoverPlacementReady,
   placeComposerCommandPopover,
   type ComposerAnchorRect,
 } from "./composerCommandPopoverLayout";
@@ -222,6 +223,7 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
           bottomInset: insets.bottom,
         })
       : null;
+  const isPlacementReady = isComposerCommandPopoverPlacementReady(placement);
 
   return (
     <Modal
@@ -234,14 +236,14 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
       <View style={{ flex: 1 }} pointerEvents="box-none">
         <View
           onLayout={onSurfaceLayout}
-          pointerEvents={placement ? "auto" : "none"}
+          pointerEvents={isPlacementReady ? "auto" : "none"}
           style={[
             {
               position: "absolute",
               left: placement?.left ?? 0,
               top: placement?.top ?? 0,
               width: placement?.width ?? props.anchorRect?.width ?? 0,
-              opacity: placement ? 1 : 0,
+              opacity: isPlacementReady ? 1 : 0,
             },
           ]}
         >
