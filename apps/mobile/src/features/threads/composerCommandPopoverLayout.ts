@@ -21,18 +21,22 @@ export function placeComposerCommandPopover(input: {
   readonly menuHeight: number;
   readonly windowWidth: number;
   readonly windowHeight: number;
+  readonly leftInset?: number;
+  readonly rightInset?: number;
   readonly topInset?: number;
   readonly bottomInset?: number;
   readonly gap?: number;
 }): ComposerPopoverPlacement {
   const gap = input.gap ?? 8;
+  const leftInset = input.leftInset ?? 0;
+  const rightInset = input.rightInset ?? 0;
   const topInset = input.topInset ?? 0;
   const bottomInset = input.bottomInset ?? 0;
+  const usableLeft = Math.min(input.windowWidth, Math.max(0, leftInset));
+  const usableRight = Math.max(usableLeft, input.windowWidth - Math.max(0, rightInset));
+  const width = Math.min(input.menuWidth, usableRight - usableLeft);
   const availableBottom = Math.max(topInset, input.windowHeight - bottomInset);
-  const left = Math.min(
-    Math.max(0, input.anchor.x),
-    Math.max(0, input.windowWidth - input.menuWidth),
-  );
+  const left = Math.min(Math.max(usableLeft, input.anchor.x), usableRight - width);
   const above = input.anchor.y - input.menuHeight - gap;
   const below = input.anchor.y + input.anchor.height + gap;
   const top =
@@ -45,5 +49,5 @@ export function placeComposerCommandPopover(input: {
             Math.max(topInset, availableBottom - input.menuHeight),
           );
 
-  return { left, top, width: Math.min(input.menuWidth, input.windowWidth) };
+  return { left, top, width };
 }

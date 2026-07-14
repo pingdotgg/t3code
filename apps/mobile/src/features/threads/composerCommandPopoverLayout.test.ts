@@ -24,4 +24,17 @@ describe("placeComposerCommandPopover", () => {
       }),
     ).toEqual({ left: 32, top: 148, width: 358 });
   });
+
+  it("keeps the menu within horizontal safe-area insets in landscape", () => {
+    expect(
+      placeComposerCommandPopover({
+        ...base,
+        anchor: { ...base.anchor, x: 10 },
+        menuWidth: 800,
+        windowWidth: 844,
+        leftInset: 44,
+        rightInset: 44,
+      }),
+    ).toEqual({ left: 44, top: 412, width: 756 });
+  });
 });

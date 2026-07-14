@@ -216,6 +216,8 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
           menuHeight: surfaceSize.height,
           windowWidth,
           windowHeight,
+          leftInset: insets.left,
+          rightInset: insets.right,
           topInset: insets.top,
           bottomInset: insets.bottom,
         })
@@ -232,12 +234,14 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
       <View style={{ flex: 1 }} pointerEvents="box-none">
         <View
           onLayout={onSurfaceLayout}
+          pointerEvents={placement ? "auto" : "none"}
           style={[
             {
               position: "absolute",
               left: placement?.left ?? 0,
               top: placement?.top ?? 0,
               width: placement?.width ?? props.anchorRect?.width ?? 0,
+              opacity: placement ? 1 : 0,
             },
           ]}
         >
