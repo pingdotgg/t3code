@@ -57,7 +57,7 @@ function normalizeLogin(login: string): string {
 
 function isReviewBot(login: string): boolean {
   const normalized = normalizeLogin(login);
-  return REVIEW_BOT_LOGINS.has(normalized) || login.trim().toLowerCase().endsWith("[bot]");
+  return REVIEW_BOT_LOGINS.has(normalized);
 }
 
 function hasInProgressMarker(comments: ReadonlyArray<ReviewBotComment>): boolean {

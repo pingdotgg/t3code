@@ -69,6 +69,16 @@ describe("deriveReviewLifecycle", () => {
     ).toBe("review-complete");
   });
 
+  it("ignores in-progress wording from an unrelated bot", () => {
+    expect(
+      deriveReviewLifecycle({
+        unresolvedReviewThreadCount: 0,
+        hasSubmittedReview: true,
+        comments: [{ login: "dependabot[bot]", body: "review in progress" }],
+      }),
+    ).toBe("review-complete");
+  });
+
   it("reports actionable-comments while threads are unresolved", () => {
     expect(
       deriveReviewLifecycle({
