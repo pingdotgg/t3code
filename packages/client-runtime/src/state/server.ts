@@ -190,5 +190,21 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:signal-process",
       tag: WS_METHODS.serverSignalProcess,
     }),
+    extensionsDiscover: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:extensions:discover",
+      tag: WS_METHODS.extensionsDiscover,
+    }),
+    extensionsInstall: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:extensions:install",
+      tag: WS_METHODS.extensionsInstall,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    extensionsUninstall: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:extensions:uninstall",
+      tag: WS_METHODS.extensionsUninstall,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
   };
 }

@@ -5,6 +5,12 @@ import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 import { IsoDateTime, NonNegativeInt, ThreadId } from "./baseSchemas.ts";
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import {
+  ExtensionDiscoveryResult,
+  ExtensionInstallInput,
+  ExtensionOperationError,
+  ExtensionUninstallInput,
+} from "./extensions.ts";
+import {
   AuthAccessStreamError,
   AuthAccessStreamEvent,
   EnvironmentAuthorizationError,
@@ -221,6 +227,9 @@ export const WS_METHODS = {
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
   serverGetProcessResourceHistory: "server.getProcessResourceHistory",
   serverSignalProcess: "server.signalProcess",
+  extensionsDiscover: "extensions.discover",
+  extensionsInstall: "extensions.install",
+  extensionsUninstall: "extensions.uninstall",
 
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -370,6 +379,24 @@ export const WsServerSignalProcessRpc = Rpc.make(WS_METHODS.serverSignalProcess,
   payload: ServerSignalProcessInput,
   success: ServerSignalProcessResult,
   error: EnvironmentAuthorizationError,
+});
+
+export const WsExtensionsDiscoverRpc = Rpc.make(WS_METHODS.extensionsDiscover, {
+  payload: Schema.Struct({}),
+  success: ExtensionDiscoveryResult,
+  error: Schema.Union([ExtensionOperationError, EnvironmentAuthorizationError]),
+});
+
+export const WsExtensionsInstallRpc = Rpc.make(WS_METHODS.extensionsInstall, {
+  payload: ExtensionInstallInput,
+  success: ExtensionDiscoveryResult,
+  error: Schema.Union([ExtensionOperationError, EnvironmentAuthorizationError]),
+});
+
+export const WsExtensionsUninstallRpc = Rpc.make(WS_METHODS.extensionsUninstall, {
+  payload: ExtensionUninstallInput,
+  success: ExtensionDiscoveryResult,
+  error: Schema.Union([ExtensionOperationError, EnvironmentAuthorizationError]),
 });
 
 export const WsCloudGetRelayClientStatusRpc = Rpc.make(WS_METHODS.cloudGetRelayClientStatus, {
@@ -760,6 +787,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetProcessDiagnosticsRpc,
   WsServerGetProcessResourceHistoryRpc,
   WsServerSignalProcessRpc,
+  WsExtensionsDiscoverRpc,
+  WsExtensionsInstallRpc,
+  WsExtensionsUninstallRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
   WsSourceControlLookupRepositoryRpc,

@@ -76,6 +76,9 @@ function createBrowserLocalApi(): LocalApi {
       getProcessDiagnostics: () => Promise.reject(unavailableLocalBackendError()),
       getProcessResourceHistory: () => Promise.reject(unavailableLocalBackendError()),
       signalProcess: () => Promise.reject(unavailableLocalBackendError()),
+      extensionsDiscover: () => Promise.reject(unavailableLocalBackendError()),
+      extensionsInstall: () => Promise.reject(unavailableLocalBackendError()),
+      extensionsUninstall: () => Promise.reject(unavailableLocalBackendError()),
     },
   };
 }

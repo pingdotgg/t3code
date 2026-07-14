@@ -33,6 +33,11 @@ import type {
 } from "./project.ts";
 import type { ProviderInstanceId } from "./providerInstance.ts";
 import type {
+  ExtensionDiscoveryResult,
+  ExtensionInstallInput,
+  ExtensionUninstallInput,
+} from "./extensions.ts";
+import type {
   ServerConfig,
   ServerProcessDiagnosticsResult,
   ServerProcessResourceHistoryInput,
@@ -1120,6 +1125,9 @@ export interface LocalApi {
       input: ServerProcessResourceHistoryInput,
     ) => Promise<ServerProcessResourceHistoryResult>;
     signalProcess: (input: ServerSignalProcessInput) => Promise<ServerSignalProcessResult>;
+    extensionsDiscover: () => Promise<ExtensionDiscoveryResult>;
+    extensionsInstall: (input: ExtensionInstallInput) => Promise<ExtensionDiscoveryResult>;
+    extensionsUninstall: (input: ExtensionUninstallInput) => Promise<ExtensionDiscoveryResult>;
   };
 }
 

@@ -18,4 +18,21 @@ describe("mergeProviderInstanceEnvironment", () => {
       PATH: "/bin",
     });
   });
+
+  it("applies global variables before provider-scoped overrides", () => {
+    expect(
+      mergeProviderInstanceEnvironment(
+        [{ name: "SHARED_KEY", value: "provider", sensitive: true }],
+        { PATH: "/bin" },
+        [
+          { name: "SHARED_KEY", value: "global", sensitive: true },
+          { name: "GLOBAL_ONLY", value: "1", sensitive: false },
+        ],
+      ),
+    ).toMatchObject({
+      PATH: "/bin",
+      SHARED_KEY: "provider",
+      GLOBAL_ONLY: "1",
+    });
+  });
 });

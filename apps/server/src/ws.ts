@@ -3,8 +3,10 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -82,6 +84,7 @@ import { providerSessionConfirmsActiveTurn } from "./provider/sessionLiveness.ts
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import * as ExtensionMarketplace from "./extensions/ExtensionMarketplace.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -302,6 +305,9 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverGetProcessDiagnostics, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetProcessResourceHistory, AuthOrchestrationReadScope],
   [WS_METHODS.serverSignalProcess, AuthOrchestrationOperateScope],
+  [WS_METHODS.extensionsDiscover, AuthOrchestrationReadScope],
+  [WS_METHODS.extensionsInstall, AuthOrchestrationOperateScope],
+  [WS_METHODS.extensionsUninstall, AuthOrchestrationOperateScope],
   [WS_METHODS.cloudGetRelayClientStatus, AuthRelayWriteScope],
   [WS_METHODS.cloudInstallRelayClient, AuthRelayWriteScope],
   [WS_METHODS.sourceControlLookupRepository, AuthOrchestrationReadScope],
@@ -494,6 +500,14 @@ const makeWsRpcLayer = (
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const fileSystemForExtensions = yield* FileSystem.FileSystem;
+      const pathForExtensions = yield* Path.Path;
+      const extensionMarketplace = ExtensionMarketplace.make({
+        serverSettings,
+        serverConfig: config,
+        fileSystem: fileSystemForExtensions,
+        path: pathForExtensions,
+      });
       const textGeneration = yield* TextGeneration.TextGeneration;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
@@ -1349,6 +1363,18 @@ const makeWsRpcLayer = (
         [WS_METHODS.serverSignalProcess]: (input) =>
           observeRpcEffect(WS_METHODS.serverSignalProcess, processDiagnostics.signal(input), {
             "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.extensionsDiscover]: (_input) =>
+          observeRpcEffect(WS_METHODS.extensionsDiscover, extensionMarketplace.discover, {
+            "rpc.aggregate": "extensions",
+          }),
+        [WS_METHODS.extensionsInstall]: (input) =>
+          observeRpcEffect(WS_METHODS.extensionsInstall, extensionMarketplace.install(input), {
+            "rpc.aggregate": "extensions",
+          }),
+        [WS_METHODS.extensionsUninstall]: (input) =>
+          observeRpcEffect(WS_METHODS.extensionsUninstall, extensionMarketplace.uninstall(input), {
+            "rpc.aggregate": "extensions",
           }),
         [WS_METHODS.cloudGetRelayClientStatus]: (_input) =>
           observeRpcEffect(WS_METHODS.cloudGetRelayClientStatus, relayClient.resolve, {

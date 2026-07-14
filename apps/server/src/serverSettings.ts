@@ -79,6 +79,10 @@ function providerEnvironmentSecretName(input: {
   return `provider-env-${Buffer.from(input.instanceId, "utf8").toString("base64url")}-${Buffer.from(input.name, "utf8").toString("base64url")}`;
 }
 
+function globalEnvironmentSecretName(name: string): string {
+  return `global-env-${Buffer.from(name, "utf8").toString("base64url")}`;
+}
+
 function redactProviderEnvironmentVariable(
   variable: ProviderInstanceEnvironmentVariable,
 ): ProviderInstanceEnvironmentVariable {
@@ -94,6 +98,7 @@ function redactProviderEnvironmentVariable(
 }
 
 export function redactServerSettingsForClient(settings: ServerSettings): ServerSettings {
+  const globalEnvironment = settings.globalEnvironment.map(redactProviderEnvironmentVariable);
   const providerInstances = Object.fromEntries(
     Object.entries(settings.providerInstances).map(([instanceId, instance]) => [
       instanceId,
@@ -105,7 +110,7 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
         : instance,
     ]),
   );
-  return { ...settings, providerInstances };
+  return { ...settings, globalEnvironment, providerInstances };
 }
 
 export class ServerSettingsService extends Context.Service<
@@ -319,10 +324,33 @@ const make = Effect.gen(function* () {
 
   const getSettingsFromCache = Cache.get(settingsCache, cacheKey);
 
-  const materializeProviderEnvironmentSecrets = (
+  const materializeEnvironmentSecrets = (
     settings: ServerSettings,
   ): Effect.Effect<ServerSettings, ServerSettingsError> =>
     Effect.gen(function* () {
+      const globalEnvironment: ProviderInstanceEnvironmentVariable[] = [];
+      for (const variable of settings.globalEnvironment) {
+        if (!variable.sensitive || !variable.valueRedacted) {
+          globalEnvironment.push(variable);
+          continue;
+        }
+        const secret = yield* secretStore.get(globalEnvironmentSecretName(variable.name)).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ServerSettingsError({
+                settingsPath,
+                operation: "read-secret",
+                environmentVariable: variable.name,
+                cause,
+              }),
+          ),
+        );
+        globalEnvironment.push({
+          ...variable,
+          value: Option.isSome(secret) ? textDecoder.decode(secret.value) : "",
+        });
+      }
+
       const providerInstances: Record<string, ProviderInstanceConfig> = {
         ...settings.providerInstances,
       };
@@ -360,11 +388,12 @@ const make = Effect.gen(function* () {
       }
       return {
         ...settings,
+        globalEnvironment,
         providerInstances: providerInstances as ServerSettings["providerInstances"],
       };
     });
 
-  const persistProviderEnvironmentSecrets = (
+  const persistEnvironmentSecrets = (
     current: ServerSettings,
     next: ServerSettings,
   ): Effect.Effect<ServerSettings, ServerSettingsError> =>
@@ -372,6 +401,79 @@ const make = Effect.gen(function* () {
       const providerInstances: Record<string, ProviderInstanceConfig> = {
         ...next.providerInstances,
       };
+
+      const globalEnvironment: ProviderInstanceEnvironmentVariable[] = [];
+      const nextGlobalSecretKeys = new Set<string>();
+      for (const variable of next.globalEnvironment) {
+        const secretName = globalEnvironmentSecretName(variable.name);
+        if (!variable.sensitive) {
+          yield* secretStore.remove(secretName).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServerSettingsError({
+                  settingsPath,
+                  operation: "remove-secret",
+                  environmentVariable: variable.name,
+                  cause,
+                }),
+            ),
+          );
+          globalEnvironment.push(redactProviderEnvironmentVariable(variable));
+          continue;
+        }
+
+        nextGlobalSecretKeys.add(secretName);
+        if (!variable.valueRedacted) {
+          if (variable.value.length > 0) {
+            yield* secretStore.set(secretName, textEncoder.encode(variable.value)).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ServerSettingsError({
+                    settingsPath,
+                    operation: "write-secret",
+                    environmentVariable: variable.name,
+                    cause,
+                  }),
+              ),
+            );
+            globalEnvironment.push({ ...variable, value: "", valueRedacted: true });
+          } else {
+            yield* secretStore.remove(secretName).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ServerSettingsError({
+                    settingsPath,
+                    operation: "remove-secret",
+                    environmentVariable: variable.name,
+                    cause,
+                  }),
+              ),
+            );
+            const { valueRedacted: _omit, ...rest } = variable;
+            globalEnvironment.push(rest);
+          }
+          continue;
+        }
+
+        globalEnvironment.push(redactProviderEnvironmentVariable(variable));
+      }
+
+      for (const variable of current.globalEnvironment) {
+        if (!variable.sensitive) continue;
+        const secretName = globalEnvironmentSecretName(variable.name);
+        if (nextGlobalSecretKeys.has(secretName)) continue;
+        yield* secretStore.remove(secretName).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ServerSettingsError({
+                settingsPath,
+                operation: "remove-stale-secret",
+                environmentVariable: variable.name,
+                cause,
+              }),
+          ),
+        );
+      }
 
       const nextSecretKeys = new Set<string>();
       for (const [instanceId, instance] of Object.entries(next.providerInstances)) {
@@ -461,6 +563,7 @@ const make = Effect.gen(function* () {
 
       return {
         ...next,
+        globalEnvironment,
         providerInstances: providerInstances as ServerSettings["providerInstances"],
       };
     });
@@ -561,14 +664,14 @@ const make = Effect.gen(function* () {
     start,
     ready: Deferred.await(startedDeferred),
     getSettings: getSettingsFromCache.pipe(
-      Effect.flatMap(materializeProviderEnvironmentSecrets),
+      Effect.flatMap(materializeEnvironmentSecrets),
       Effect.map(resolveTextGenerationProvider),
     ),
     updateSettings: (patch) =>
       writeSemaphore.withPermits(1)(
         Effect.gen(function* () {
           const current = yield* getSettingsFromCache;
-          const nextPersisted = yield* persistProviderEnvironmentSecrets(
+          const nextPersisted = yield* persistEnvironmentSecrets(
             current,
             applyServerSettingsPatch(current, patch),
           );
@@ -576,14 +679,14 @@ const make = Effect.gen(function* () {
           yield* writeSettingsAtomically(next);
           yield* Cache.set(settingsCache, cacheKey, next);
           yield* emitChange(next);
-          const materialized = yield* materializeProviderEnvironmentSecrets(next);
+          const materialized = yield* materializeEnvironmentSecrets(next);
           return resolveTextGenerationProvider(materialized);
         }),
       ),
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub).pipe(
         Stream.mapEffect((settings) =>
-          materializeProviderEnvironmentSecrets(settings).pipe(
+          materializeEnvironmentSecrets(settings).pipe(
             Effect.catch((error: ServerSettingsError) =>
               Effect.logWarning("failed to materialize provider environment secrets", {
                 operation: error.operation,

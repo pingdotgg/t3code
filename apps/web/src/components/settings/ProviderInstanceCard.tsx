@@ -153,9 +153,12 @@ function ProviderAuthEmail(props: {
   );
 }
 
-function ProviderEnvironmentSection(props: {
+export function ProviderEnvironmentSection(props: {
   readonly environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>;
   readonly onChange: (environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>) => void;
+  readonly title?: string;
+  readonly emptyDescription?: string;
+  readonly footer?: string;
 }) {
   const [rows, setRows] = useState<ReadonlyArray<EnvironmentDraftRow>>(() =>
     props.environment.map(makeEnvironmentDraftRow),
@@ -205,7 +208,9 @@ function ProviderEnvironmentSection(props: {
   return (
     <div className="grid gap-2">
       <div className="flex items-center justify-between gap-3">
-        <span className="text-xs font-medium text-foreground">Environment variables</span>
+        <span className="text-xs font-medium text-foreground">
+          {props.title ?? "Environment variables"}
+        </span>
         <Button
           type="button"
           size="sm"
@@ -229,7 +234,8 @@ function ProviderEnvironmentSection(props: {
       </div>
       {rows.length === 0 ? (
         <p className="text-xs text-muted-foreground">
-          Add variables to pass API keys, base URLs, or other per-instance CLI settings.
+          {props.emptyDescription ??
+            "Add variables to pass API keys, base URLs, or other per-instance CLI settings."}
         </p>
       ) : (
         <div className="overflow-hidden rounded-md border border-border/70">
@@ -312,7 +318,8 @@ function ProviderEnvironmentSection(props: {
         </div>
       )}
       <span className="text-xs text-muted-foreground">
-        Sensitive values are stored separately and are not returned to the app after saving.
+        {props.footer ??
+          "Sensitive values are stored separately and are not returned to the app after saving."}
       </span>
     </div>
   );
