@@ -206,6 +206,24 @@ function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings
 }
 
 function fallbackTextGenerationProvider(settings: ServerSettings): ServerSettings {
+  const fallbackInstanceEntry = Object.entries(settings.providerInstances).find(
+    ([, instance]) => instance.enabled ?? true,
+  );
+  if (fallbackInstanceEntry) {
+    const [instanceId, instance] = fallbackInstanceEntry;
+    const driver = instance.driver;
+    return {
+      ...settings,
+      textGenerationModelSelection: {
+        instanceId: ProviderInstanceId.make(instanceId),
+        model:
+          DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER[driver] ??
+          DEFAULT_MODEL_BY_PROVIDER[driver] ??
+          DEFAULT_GIT_TEXT_GENERATION_MODEL,
+      } satisfies ModelSelection,
+    };
+  }
+
   const fallbackEntry = Object.entries(settings.providers).find(([, provider]) => provider.enabled);
   const fallback = fallbackEntry ? ProviderDriverKind.make(fallbackEntry[0]) : undefined;
   if (!fallback) {

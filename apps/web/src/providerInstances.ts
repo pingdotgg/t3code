@@ -260,15 +260,12 @@ export function getProviderInstanceModels(
  * as a fallback so downstream code can still send a turn.
  */
 export function resolveSelectableProviderInstance(
-  providers: ReadonlyArray<ServerProvider>,
+  entries: ReadonlyArray<ProviderInstanceEntry>,
   instanceId: ProviderInstanceId | undefined,
 ): ProviderInstanceId | undefined {
   if (instanceId === undefined) {
-    return deriveProviderInstanceEntries(providers).find(
-      (entry) => entry.enabled && entry.isAvailable,
-    )?.instanceId;
+    return entries.find((entry) => entry.enabled && entry.isAvailable)?.instanceId;
   }
-  const entries = deriveProviderInstanceEntries(providers);
   const requested = entries.find((entry) => entry.instanceId === instanceId);
   if (requested && requested.enabled && requested.isAvailable) {
     return instanceId;
