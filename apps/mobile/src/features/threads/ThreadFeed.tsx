@@ -90,7 +90,7 @@ import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { ThreadWorkGroupToggle, ThreadWorkLog } from "./thread-work-log";
 import { SubagentTaskRow } from "./SubagentTaskRow";
 import { SessionExitRow } from "./SessionExitRow";
-import { useAssetUrl } from "../../state/assets";
+import { useAssetUrlState } from "../../state/assets";
 import { resolveWorkspaceRelativeFilePath } from "../files/filePath";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -144,16 +144,25 @@ function MessageAttachmentImage(props: {
 }) {
   const [loadState, setLoadState] = useState<"loading" | "loaded" | "error">("loading");
   const [retryCount, setRetryCount] = useState(0);
-  const uri = useAssetUrl(props.environmentId, {
+  const assetUrl = useAssetUrlState(props.environmentId, {
     _tag: "attachment",
     attachmentId: props.attachmentId,
   });
+  const uri = assetUrl.url;
   const accessibilityLabel = chatAttachmentAccessibilityLabel(props.name, props.sizeBytes);
 
   useEffect(() => {
+    if (assetUrl.isPending) {
+      setLoadState("loading");
+      return;
+    }
+    if (uri === null) {
+      setLoadState("error");
+      return;
+    }
     setLoadState("loading");
     setRetryCount(0);
-  }, [uri]);
+  }, [assetUrl.isPending, uri]);
 
   return (
     <View className={`${props.className} overflow-hidden`}>
@@ -201,6 +210,7 @@ function MessageAttachmentImage(props: {
             onPress={() => {
               setLoadState("loading");
               setRetryCount((count) => count + 1);
+              assetUrl.refresh();
             }}
           >
             <Text className="text-xs font-t3-bold text-foreground">Try again</Text>
