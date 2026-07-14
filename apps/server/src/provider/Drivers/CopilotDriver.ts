@@ -96,7 +96,7 @@ export const CopilotDriver: ProviderDriver<CopilotSettings, CopilotDriverEnv> = 
       });
       const maintenanceCapabilities = makeManualOnlyProviderMaintenanceCapabilities({
         provider: DRIVER_KIND,
-        packageName: "@github/copilot-sdk",
+        packageName: "@github/copilot",
       });
       yield* fileSystem.makeDirectory(baseDirectory, { recursive: true }).pipe(
         Effect.mapError(
