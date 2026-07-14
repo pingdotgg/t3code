@@ -115,6 +115,92 @@ struct ActivityRowTests {
                 itemType: "file_read", phase: .running, output: nil, outputIsError: false))
     }
 
+    @Test func skillPresentationDrivesTitleAndDetail() {
+        // The adapter types a Skill call as a generic dynamic tool; only the
+        // server-derived presentation knows it is a skill.
+        let row = ActivityRows.row(
+            for: activity(
+                kind: "tool.completed", summary: "Tool call",
+                payload: .object([
+                    "itemType": .string("dynamic_tool_call"),
+                    "status": .string("completed"),
+                    "presentation": .object([
+                        "surface": .string("skill"),
+                        "title": .string("Skill: cavecrew"),
+                        "subtitle": .string("review the diff"),
+                        "state": .string("succeeded"),
+                        "provenance": .object([
+                            "origin": .string("plugin"),
+                            "pluginName": .string("caveman"),
+                            "skillName": .string("cavecrew"),
+                        ]),
+                        "inputs": .array([]),
+                    ]),
+                ])))
+        #expect(
+            row == .tool(
+                id: "a1", title: "Skill: cavecrew", detail: "review the diff",
+                itemType: "dynamic_tool_call", phase: .succeeded, output: nil,
+                outputIsError: false))
+    }
+
+    @Test func presentationStateDrivesPhaseForFailedTools() {
+        let row = ActivityRows.row(
+            for: activity(
+                kind: "tool.completed", summary: "MCP tool call",
+                payload: .object([
+                    "itemType": .string("mcp_tool_call"),
+                    "presentation": .object([
+                        "surface": .string("mcp"),
+                        "title": .string("linear · create_issue"),
+                        "state": .string("failed"),
+                        "provenance": .object([
+                            "origin": .string("mcp"), "serverName": .string("linear"),
+                        ]),
+                        "inputs": .array([]),
+                    ]),
+                ])))
+        #expect(
+            row == .tool(
+                id: "a1", title: "linear · create_issue", detail: "", itemType: "mcp_tool_call",
+                phase: .failed, output: nil, outputIsError: false))
+    }
+
+    @Test func fileChangePrefersStructuredDetailOverPresentationSubtitle() {
+        // The structured `"<Tool>: {json}"` detail is what ToolDetailParsing
+        // turns into an inline diff; the presentation subtitle (a bare path)
+        // must not replace it.
+        let row = ActivityRows.row(
+            for: activity(
+                kind: "tool.completed", summary: "File change",
+                payload: .object([
+                    "itemType": .string("file_change"),
+                    "data": .object([
+                        "toolName": .string("Edit"),
+                        "input": .object([
+                            "file_path": .string("Sources/App/Main.swift"),
+                            "old_string": .string("a"),
+                            "new_string": .string("b"),
+                        ]),
+                    ]),
+                    "presentation": .object([
+                        "surface": .string("file_change"),
+                        "title": .string("Changed files"),
+                        "subtitle": .string("Sources/App/Main.swift"),
+                        "state": .string("succeeded"),
+                        "provenance": .object(["origin": .string("builtin")]),
+                        "inputs": .array([]),
+                    ]),
+                ])))
+        guard case .tool(_, let title, let detail, _, _, _, _) = row else {
+            Issue.record("expected a tool row")
+            return
+        }
+        #expect(title == "Changed files")
+        #expect(detail.hasPrefix("Edit: {"))
+        #expect(detail.contains("\"new_string\":\"b\""))
+    }
+
     @Test func toolLifecycleSharesRowIdViaToolCallId() {
         let updated = ActivityRows.row(
             for: activity(

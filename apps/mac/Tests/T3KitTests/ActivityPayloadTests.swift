@@ -270,6 +270,82 @@ struct ActivityPayloadTests {
         #expect(interactionObject["interactionMode"] as? String == "plan")
     }
 
+    @Test("tool.completed decodes the typed skill presentation")
+    func toolPresentationSkill() throws {
+        let activity = try activity(
+            kind: ActivityKind.toolCompleted,
+            payloadJSON: """
+                {
+                  "itemType": "dynamic_tool_call",
+                  "status": "completed",
+                  "presentation": {
+                    "surface": "skill",
+                    "title": "Skill: cavecrew",
+                    "subtitle": "review the diff",
+                    "state": "succeeded",
+                    "provenance": {
+                      "origin": "plugin",
+                      "toolName": "Skill",
+                      "pluginName": "caveman",
+                      "skillName": "cavecrew",
+                      "displayName": "cavecrew",
+                      "provider": "claudeAgent"
+                    },
+                    "inputs": [{ "label": "skill", "value": "caveman:cavecrew", "kind": "text" }],
+                    "result": { "text": "done", "paths": [] }
+                  }
+                }
+                """)
+        let payload = activity.decodePayload(ToolLifecycleActivityPayload.self)
+        let presentation = try #require(payload?.presentation)
+
+        #expect(presentation.surface == .skill)
+        #expect(presentation.title == "Skill: cavecrew")
+        #expect(presentation.state == .succeeded)
+        #expect(presentation.provenance.origin == .plugin)
+        #expect(presentation.provenance.pluginName == "caveman")
+        #expect(presentation.inputs.first?.value == "caveman:cavecrew")
+        #expect(presentation.result?.text == "done")
+    }
+
+    @Test("an unknown surface or origin degrades to generic rather than failing the decode")
+    func toolPresentationUnknownSurface() throws {
+        let activity = try activity(
+            kind: ActivityKind.toolCompleted,
+            payloadJSON: """
+                {
+                  "itemType": "dynamic_tool_call",
+                  "presentation": {
+                    "surface": "holodeck",
+                    "title": "AcmeDoThing",
+                    "state": "warping",
+                    "provenance": { "origin": "starfleet" },
+                    "inputs": []
+                  }
+                }
+                """)
+        let presentation = try #require(
+            activity.decodePayload(ToolLifecycleActivityPayload.self)?.presentation)
+
+        #expect(presentation.surface == .generic)
+        #expect(presentation.state == .running)
+        #expect(presentation.provenance.origin == .unknown)
+        #expect(presentation.title == "AcmeDoThing")
+    }
+
+    @Test("a tool payload without a presentation still decodes")
+    func toolPresentationAbsent() throws {
+        let activity = try activity(
+            kind: ActivityKind.toolCompleted,
+            payloadJSON: """
+                { "itemType": "command_execution", "status": "completed", "detail": "ls" }
+                """)
+        let payload = try #require(activity.decodePayload(ToolLifecycleActivityPayload.self))
+
+        #expect(payload.presentation == nil)
+        #expect(payload.detail == "ls")
+    }
+
     @Test("turn.start encodes sourceProposedPlan when present, omits when nil")
     func turnStartSourcePlan() throws {
         let command = ClientOrchestrationCommand.threadTurnStart(
