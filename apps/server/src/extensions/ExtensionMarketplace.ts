@@ -1,3 +1,5 @@
+import * as NodeOS from "node:os";
+
 import {
   type ExtensionCatalogItem,
   type ExtensionDiscoveryError,
@@ -37,6 +39,16 @@ interface GitHubTreeItem {
   readonly type: "blob" | "tree" | string;
 }
 
+interface TimedCacheEntry<A> {
+  readonly value: A;
+  readonly expiresAtMs: number;
+}
+
+const GitHubRepositoryResponse = Schema.Struct({
+  default_branch: Schema.String,
+});
+type GitHubRepositoryResponse = typeof GitHubRepositoryResponse.Type;
+
 const GitHubTreeResponse = Schema.Struct({
   tree: Schema.Array(
     Schema.Struct({
@@ -47,6 +59,7 @@ const GitHubTreeResponse = Schema.Struct({
 });
 type GitHubTreeResponse = typeof GitHubTreeResponse.Type;
 
+const decodeGitHubRepositoryResponse = Schema.decodeUnknownSync(GitHubRepositoryResponse);
 const decodeGitHubTreeResponse = Schema.decodeUnknownSync(GitHubTreeResponse);
 const isExtensionOperationError = Schema.is(ExtensionOperationError);
 
@@ -136,8 +149,11 @@ function providerHomePath(instance: ProviderInstanceConfig): string | null {
 }
 
 function normalizeHomePath(value: string): string {
-  return value.replace(/^~(?=\/|$)/u, process.env.HOME ?? "~");
+  return value.replace(/^~(?=\/|$)/u, NodeOS.homedir());
 }
+
+const GITHUB_FETCH_TIMEOUT_MS = 10_000;
+const GITHUB_MARKETPLACE_CACHE_TTL_MS = 60_000;
 
 function fetchText(url: string, operation: ExtensionOperationError["operation"]) {
   return Effect.tryPromise({
@@ -145,6 +161,7 @@ function fetchText(url: string, operation: ExtensionOperationError["operation"])
       // @effect-diagnostics-next-line globalFetchInEffect:off - GitHub marketplace discovery is a bounded optional integration; failures are wrapped in ExtensionOperationError.
       const response = await fetch(url, {
         headers: { Accept: "application/vnd.github+json, text/plain;q=0.9, */*;q=0.8" },
+        signal: AbortSignal.timeout(GITHUB_FETCH_TIMEOUT_MS),
       });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status} ${response.statusText}`);
@@ -160,9 +177,31 @@ function fetchText(url: string, operation: ExtensionOperationError["operation"])
   });
 }
 
-function fetchGitHubTree(repoRef: GitHubRepoRef, operation: ExtensionOperationError["operation"]) {
+function fetchGitHubRepositoryDefaultBranch(
+  repoRef: GitHubRepoRef,
+  operation: ExtensionOperationError["operation"],
+) {
+  return fetchText(`https://api.github.com/repos/${repoRef.owner}/${repoRef.repo}`, operation).pipe(
+    Effect.map((raw) => decodeGitHubRepositoryResponse(JSON.parse(raw)).default_branch),
+    Effect.mapError((cause) =>
+      isExtensionOperationError(cause)
+        ? cause
+        : new ExtensionOperationError({
+            operation,
+            message: `Failed to read GitHub repository metadata for ${repoRef.owner}/${repoRef.repo}.`,
+            cause,
+          }),
+    ),
+  );
+}
+
+function fetchGitHubTree(
+  repoRef: GitHubRepoRef,
+  branch: string,
+  operation: ExtensionOperationError["operation"],
+) {
   return fetchText(
-    `https://api.github.com/repos/${repoRef.owner}/${repoRef.repo}/git/trees/main?recursive=1`,
+    `https://api.github.com/repos/${repoRef.owner}/${repoRef.repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`,
     operation,
   ).pipe(
     Effect.map((raw) => decodeGitHubTreeResponse(JSON.parse(raw))),
@@ -203,6 +242,59 @@ export function make(input: {
   const globalSkillsRoot = path.join(extensionInstallRoot, "global", "skills");
   const providerSkillsRoot = (providerInstanceId: string) =>
     path.join(extensionInstallRoot, "providers", providerInstanceId, "skills");
+  const defaultBranchCache = new Map<string, TimedCacheEntry<string>>();
+  const treeCache = new Map<string, TimedCacheEntry<GitHubTreeResponse>>();
+  const textCache = new Map<string, TimedCacheEntry<string>>();
+
+  const repoCacheKey = (repoRef: GitHubRepoRef) => `${repoRef.owner}/${repoRef.repo}`;
+  const nowMs = Effect.fn("ExtensionMarketplace.nowMs")(function* () {
+    return yield* Effect.map(DateTime.now, DateTime.toEpochMillis);
+  });
+  const isFresh = (expiresAtMs: number | undefined, now: number): boolean =>
+    expiresAtMs !== undefined && expiresAtMs > now;
+  const cacheEntry = <A>(value: A, now: number): TimedCacheEntry<A> => ({
+    value,
+    expiresAtMs: now + GITHUB_MARKETPLACE_CACHE_TTL_MS,
+  });
+
+  const cachedDefaultBranch = Effect.fn("ExtensionMarketplace.cachedDefaultBranch")(function* (
+    repoRef: GitHubRepoRef,
+    operation: ExtensionOperationError["operation"],
+  ): Effect.fn.Return<string, ExtensionOperationError> {
+    const cacheKey = repoCacheKey(repoRef);
+    const now = yield* nowMs();
+    const cached = defaultBranchCache.get(cacheKey);
+    if (isFresh(cached?.expiresAtMs, now)) return cached!.value;
+    const branch = yield* fetchGitHubRepositoryDefaultBranch(repoRef, operation);
+    defaultBranchCache.set(cacheKey, cacheEntry(branch, now));
+    return branch;
+  });
+
+  const cachedGitHubTree = Effect.fn("ExtensionMarketplace.cachedGitHubTree")(function* (
+    repoRef: GitHubRepoRef,
+    branch: string,
+    operation: ExtensionOperationError["operation"],
+  ): Effect.fn.Return<GitHubTreeResponse, ExtensionOperationError> {
+    const cacheKey = `${repoCacheKey(repoRef)}#${branch}`;
+    const now = yield* nowMs();
+    const cached = treeCache.get(cacheKey);
+    if (isFresh(cached?.expiresAtMs, now)) return cached!.value;
+    const tree = yield* fetchGitHubTree(repoRef, branch, operation);
+    treeCache.set(cacheKey, cacheEntry(tree, now));
+    return tree;
+  });
+
+  const cachedText = Effect.fn("ExtensionMarketplace.cachedText")(function* (
+    url: string,
+    operation: ExtensionOperationError["operation"],
+  ): Effect.fn.Return<string, ExtensionOperationError> {
+    const now = yield* nowMs();
+    const cached = textCache.get(url);
+    if (isFresh(cached?.expiresAtMs, now)) return cached!.value;
+    const raw = yield* fetchText(url, operation);
+    textCache.set(url, cacheEntry(raw, now));
+    return raw;
+  });
 
   const discoverGitHubSkills = Effect.fn("ExtensionMarketplace.discoverGitHubSkills")(function* (
     settings: ExtensionSettings,
@@ -216,7 +308,8 @@ export function make(input: {
       });
     }
 
-    const tree = yield* fetchGitHubTree(repoRef, "discover");
+    const branch = yield* cachedDefaultBranch(repoRef, "discover");
+    const tree = yield* cachedGitHubTree(repoRef, branch, "discover");
     const skillFiles = tree.tree
       .filter(
         (entry): entry is GitHubTreeItem =>
@@ -224,34 +317,42 @@ export function make(input: {
       )
       .toSorted((left, right) => left.path.localeCompare(right.path));
 
-    const items: ExtensionCatalogItem[] = [];
-    for (const skillFile of skillFiles) {
-      const [, skillDirectory] = skillFile.path.split("/");
-      if (!skillDirectory) continue;
-      const raw = yield* fetchText(
-        `https://raw.githubusercontent.com/${repoRef.owner}/${repoRef.repo}/main/${skillFile.path}`,
-        "discover",
-      ).pipe(Effect.orElseSucceed(() => ""));
-      const frontmatter = parseSkillFrontmatter(raw);
-      const sourceUrl = normalizeRepoUrl(marketplace.sourceUrl);
-      const name = frontmatter.name?.trim() || skillDirectory;
-      const itemId = `${marketplace.id}:${slugify(name)}`;
-      const description = frontmatter.description?.trim();
-      items.push({
-        id: itemId,
-        marketplaceId: marketplace.id,
-        type: "skill",
-        name,
-        displayName: titleizeSkillName(name),
-        ...(description ? { description } : {}),
-        sourceUrl,
-        sourceSubpath: `skills/${skillDirectory}`,
-        compatibility: [...defaultCompatibilityForMarketplaceKind(marketplace.kind)],
-        tags: ["skill", repoRef.owner],
-        installedTargets: [...installedTargetsForItem(settings.installed, itemId)],
-      });
-    }
-    return items;
+    return yield* Effect.forEach(
+      skillFiles,
+      (skillFile) =>
+        Effect.gen(function* (): Effect.fn.Return<ExtensionCatalogItem, ExtensionOperationError> {
+          const [, skillDirectory] = skillFile.path.split("/");
+          if (!skillDirectory) {
+            return yield* new ExtensionOperationError({
+              operation: "discover",
+              message: `Skill path ${skillFile.path} is not a valid marketplace skill path.`,
+            });
+          }
+          const raw = yield* cachedText(
+            `https://raw.githubusercontent.com/${repoRef.owner}/${repoRef.repo}/${encodeURIComponent(branch)}/${skillFile.path}`,
+            "discover",
+          ).pipe(Effect.orElseSucceed(() => ""));
+          const frontmatter = parseSkillFrontmatter(raw);
+          const sourceUrl = normalizeRepoUrl(marketplace.sourceUrl);
+          const name = frontmatter.name?.trim() || skillDirectory;
+          const itemId = `${marketplace.id}:${slugify(name)}`;
+          const description = frontmatter.description?.trim();
+          return {
+            id: itemId,
+            marketplaceId: marketplace.id,
+            type: "skill",
+            name,
+            displayName: titleizeSkillName(name),
+            ...(description ? { description } : {}),
+            sourceUrl,
+            sourceSubpath: `skills/${skillDirectory}`,
+            compatibility: [...defaultCompatibilityForMarketplaceKind(marketplace.kind)],
+            tags: ["skill", repoRef.owner],
+            installedTargets: [...installedTargetsForItem(settings.installed, itemId)],
+          } satisfies ExtensionCatalogItem;
+        }),
+      { concurrency: 4 },
+    );
   });
 
   const discoverAll = Effect.fn("ExtensionMarketplace.discover")(function* (): Effect.fn.Return<
@@ -273,7 +374,14 @@ export function make(input: {
     const errors: ExtensionDiscoveryError[] = [];
 
     for (const marketplace of marketplaces) {
-      if (!marketplace.enabled || marketplace.kind !== "agent-skills-repo") continue;
+      if (!marketplace.enabled) continue;
+      if (marketplace.kind !== "agent-skills-repo") {
+        errors.push({
+          marketplaceId: marketplace.id,
+          message: `Marketplace kind ${marketplace.kind} is not supported yet.`,
+        });
+        continue;
+      }
       const result = yield* discoverGitHubSkills(settings.extensions, marketplace).pipe(
         Effect.result,
       );
@@ -295,23 +403,30 @@ export function make(input: {
   const installTargetRoot = Effect.fn("ExtensionMarketplace.installTargetRoot")(function* (
     input: ExtensionInstallInput,
     settings: ContractServerSettings,
+    operation: ExtensionOperationError["operation"],
   ): Effect.fn.Return<string, ExtensionOperationError> {
     if (input.scope === "global") return globalSkillsRoot;
     const providerInstanceId = input.providerInstanceId;
     if (!providerInstanceId) {
       return yield* new ExtensionOperationError({
-        operation: "install",
+        operation,
         message: "Provider-scoped installs require a provider instance.",
       });
     }
     const instance = settings.providerInstances[providerInstanceId];
-    if (instance && !isCodexLikeDriver(instance.driver)) {
+    if (!instance) {
       return yield* new ExtensionOperationError({
-        operation: "install",
+        operation,
+        message: `Provider ${providerInstanceId} is not configured.`,
+      });
+    }
+    if (!isCodexLikeDriver(instance.driver)) {
+      return yield* new ExtensionOperationError({
+        operation,
         message: `Provider ${providerInstanceId} does not expose a native skill install location yet.`,
       });
     }
-    const configuredHomePath = instance ? providerHomePath(instance) : null;
+    const configuredHomePath = providerHomePath(instance);
     return configuredHomePath
       ? path.join(normalizeHomePath(configuredHomePath), "skills")
       : providerSkillsRoot(providerInstanceId);
@@ -328,7 +443,8 @@ export function make(input: {
         message: `Extension ${item.name} does not have an installable GitHub skill source.`,
       });
     }
-    const tree = yield* fetchGitHubTree(repoRef, "install");
+    const branch = yield* cachedDefaultBranch(repoRef, "install");
+    const tree = yield* cachedGitHubTree(repoRef, branch, "install");
     const sourcePrefix = `${item.sourceSubpath}/`;
     const files = tree.tree.filter(
       (entry) => entry.type === "blob" && entry.path.startsWith(sourcePrefix),
@@ -358,8 +474,8 @@ export function make(input: {
             }),
         ),
       );
-      const contents = yield* fetchText(
-        `https://raw.githubusercontent.com/${repoRef.owner}/${repoRef.repo}/main/${file.path}`,
+      const contents = yield* cachedText(
+        `https://raw.githubusercontent.com/${repoRef.owner}/${repoRef.repo}/${encodeURIComponent(branch)}/${file.path}`,
         "install",
       );
       yield* writeFileStringAtomically({ filePath: destinationFile, contents }).pipe(
@@ -376,6 +492,36 @@ export function make(input: {
       );
     }
   });
+
+  const removeMaterializedSkill = Effect.fn("ExtensionMarketplace.removeMaterializedSkill")(
+    function* (
+      record: ExtensionInstalledRecord,
+      input: ExtensionUninstallInput,
+      settings: ContractServerSettings,
+    ): Effect.fn.Return<void, ExtensionOperationError> {
+      const targetRoot = yield* installTargetRoot(
+        {
+          marketplaceId: record.marketplaceId,
+          itemId: record.id,
+          scope: input.scope,
+          ...(input.providerInstanceId ? { providerInstanceId: input.providerInstanceId } : {}),
+        },
+        settings,
+        "uninstall",
+      );
+      const destination = path.join(targetRoot, slugify(record.name));
+      yield* fs.remove(destination, { recursive: true, force: true }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ExtensionOperationError({
+              operation: "uninstall",
+              message: `Failed to remove extension files for ${record.name}.`,
+              cause,
+            }),
+        ),
+      );
+    },
+  );
 
   const install = Effect.fn("ExtensionMarketplace.install")(function* (
     input: ExtensionInstallInput,
@@ -412,7 +558,7 @@ export function make(input: {
       input.scope === "provider"
         ? { scope: "provider", providerInstanceId: input.providerInstanceId! }
         : { scope: "global" };
-    const targetRoot = yield* installTargetRoot(input, settings);
+    const targetRoot = yield* installTargetRoot(input, settings, "install");
     yield* materializeSkill(item, targetRoot);
 
     const now = yield* Effect.map(DateTime.now, DateTime.formatIso);
@@ -480,6 +626,12 @@ export function make(input: {
       input.scope === "provider"
         ? { scope: "provider", providerInstanceId: input.providerInstanceId! }
         : { scope: "global" };
+    const recordToRemove = settings.extensions.installed.find(
+      (record) => record.id === input.itemId,
+    );
+    if (recordToRemove) {
+      yield* removeMaterializedSkill(recordToRemove, input, settings);
+    }
     const installed = settings.extensions.installed.flatMap((record) => {
       if (record.id !== input.itemId) return [record];
       const targets = record.targets.filter((candidate) => !targetEquals(candidate, target));

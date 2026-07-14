@@ -10,7 +10,7 @@ import {
   SparklesIcon,
   Trash2Icon,
 } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   type ExtensionCatalogItem,
   type ExtensionInstallScope,
@@ -19,6 +19,8 @@ import {
   type ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
+
+import * as Cause from "effect/Cause";
 
 import { cn } from "../../lib/utils";
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
@@ -44,6 +46,11 @@ const SCOPE_OPTIONS: ReadonlyArray<{ value: ExtensionInstallScope; label: string
 
 function targetKey(target: ExtensionInstallTarget): string {
   return target.scope === "global" ? "global" : `provider:${target.providerInstanceId ?? ""}`;
+}
+
+function commandErrorMessage(cause: Cause.Cause<unknown>, fallback: string): string {
+  const error = Cause.squash(cause);
+  return error instanceof Error && error.message.trim().length > 0 ? error.message : fallback;
 }
 
 function itemMatchesSearch(item: ExtensionCatalogItem, query: string): boolean {
@@ -186,7 +193,7 @@ function MarketplaceDiscoverySection() {
   const [selectedScope, setSelectedScope] = useState<ExtensionInstallScope>("global");
   const [selectedProviderInstanceId, setSelectedProviderInstanceId] =
     useState<ProviderInstanceId | null>(() => providers[0]?.instanceId ?? null);
-  const [busyItemId, setBusyItemId] = useState<string | null>(null);
+  const [busyItemIds, setBusyItemIds] = useState<ReadonlySet<string>>(() => new Set());
   const discovery = useEnvironmentQuery(
     environmentId === null
       ? null
@@ -202,12 +209,28 @@ function MarketplaceDiscoverySection() {
     () => (discovery.data?.items ?? []).filter((item) => itemMatchesSearch(item, query)),
     [discovery.data?.items, query],
   );
+  const markItemBusy = useCallback((itemId: string, busy: boolean) => {
+    setBusyItemIds((current) => {
+      const next = new Set(current);
+      if (busy) {
+        next.add(itemId);
+      } else {
+        next.delete(itemId);
+      }
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (selectedProviderInstanceId !== null || providers.length === 0) return;
+    setSelectedProviderInstanceId(providers[0]!.instanceId);
+  }, [providers, selectedProviderInstanceId]);
 
   const runInstall = useCallback(
     async (item: ExtensionCatalogItem) => {
       if (environmentId === null) return;
       if (selectedScope === "provider" && selectedProviderInstanceId === null) return;
-      setBusyItemId(item.id);
+      markItemBusy(item.id, true);
       const result = await installExtension({
         environmentId,
         input: {
@@ -219,7 +242,7 @@ function MarketplaceDiscoverySection() {
             : {}),
         },
       });
-      setBusyItemId(null);
+      markItemBusy(item.id, false);
       if (result._tag === "Success") {
         discovery.refresh();
         toastManager.add({
@@ -233,17 +256,27 @@ function MarketplaceDiscoverySection() {
         stackedThreadToast({
           type: "error",
           title: "Could not install extension",
-          description: "Review the marketplace source and provider compatibility, then try again.",
+          description: commandErrorMessage(
+            result.cause,
+            "Review the marketplace source and provider compatibility, then try again.",
+          ),
         }),
       );
     },
-    [discovery, environmentId, installExtension, selectedProviderInstanceId, selectedScope],
+    [
+      discovery,
+      environmentId,
+      installExtension,
+      markItemBusy,
+      selectedProviderInstanceId,
+      selectedScope,
+    ],
   );
 
   const runUninstall = useCallback(
     async (item: ExtensionCatalogItem, target: ExtensionInstallTarget) => {
       if (environmentId === null) return;
-      setBusyItemId(item.id);
+      markItemBusy(item.id, true);
       const result = await uninstallExtension({
         environmentId,
         input: {
@@ -254,7 +287,7 @@ function MarketplaceDiscoverySection() {
             : {}),
         },
       });
-      setBusyItemId(null);
+      markItemBusy(item.id, false);
       if (result._tag === "Success") {
         discovery.refresh();
         toastManager.add({
@@ -268,11 +301,14 @@ function MarketplaceDiscoverySection() {
         stackedThreadToast({
           type: "error",
           title: "Could not remove extension",
-          description: "The extension registry could not be updated.",
+          description: commandErrorMessage(
+            result.cause,
+            "The extension registry could not be updated.",
+          ),
         }),
       );
     },
-    [discovery, environmentId, uninstallExtension],
+    [discovery, environmentId, markItemBusy, uninstallExtension],
   );
 
   return (
@@ -378,7 +414,7 @@ function MarketplaceDiscoverySection() {
             item={item}
             selectedScope={selectedScope}
             selectedProviderInstanceId={selectedProviderInstanceId}
-            isBusy={busyItemId === item.id}
+            isBusy={busyItemIds.has(item.id)}
             onInstall={runInstall}
             onUninstall={runUninstall}
           />
@@ -443,7 +479,7 @@ export function ExtensionsSettingsPanel() {
       <SettingsSection title="Overview" icon={<PackageOpenIcon className="size-3.5" />}>
         <SettingsRow
           title="Native extensions and keys"
-          description="Discover Vercel skills, Codex-style plugin marketplaces, and manage global or provider-scoped installs from one place."
+          description="Discover Vercel skills and manage global or provider-scoped installs from one place."
           status="Provider-scoped native installs currently target Codex-compatible home layouts; other providers can still receive .env keys."
         />
       </SettingsSection>

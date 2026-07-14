@@ -27,14 +27,6 @@ export type ExtensionMarketplaceSource = typeof ExtensionMarketplaceSource.Type;
 
 export const DEFAULT_EXTENSION_MARKETPLACES: ReadonlyArray<ExtensionMarketplaceSource> = [
   {
-    id: "vercel-skills-cli",
-    name: "Vercel Skills CLI",
-    kind: "agent-skills-repo",
-    sourceUrl: "https://github.com/vercel-labs/skills",
-    enabled: true,
-    trusted: true,
-  },
-  {
     id: "vercel-agent-skills",
     name: "Vercel Agent Skills",
     kind: "agent-skills-repo",
