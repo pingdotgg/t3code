@@ -292,6 +292,78 @@ describe("buildThreadFeed", () => {
     expect(buildThreadFeed(thread)).toEqual([]);
   });
 
+  it("renders explicit command tasks as tool activity under their parent turn", () => {
+    const turnId = TurnId.make("turn-command-task");
+    const thread = makeThread({
+      id: ThreadId.make("thread-command-task"),
+      projectId: ProjectId.make("project-1"),
+      title: "Local command task",
+      activities: [
+        makeActivity({
+          id: EventId.make("command-started"),
+          kind: "task.started",
+          summary: "Task started",
+          createdAt: "2026-04-01T00:00:00.000Z",
+          turnId,
+          payload: {
+            taskId: "command-task-1",
+            entityType: "command",
+            description: "Run tests",
+          },
+        }),
+        makeActivity({
+          id: EventId.make("command-completed"),
+          kind: "task.completed",
+          summary: "Task completed",
+          createdAt: "2026-04-01T00:00:01.000Z",
+          turnId,
+          payload: {
+            taskId: "command-task-1",
+            status: "completed",
+            summary: "pnpm test",
+          },
+        }),
+      ],
+    });
+
+    const feed = buildThreadFeed(thread);
+    expect(feed.some((entry) => entry.type === "subagent-task")).toBe(false);
+    expect(feed).toMatchObject([
+      {
+        type: "activity-group",
+        turnId: "turn-command-task",
+        activities: [
+          { icon: "command", turnId: "turn-command-task" },
+          { icon: "command", turnId: "turn-command-task" },
+        ],
+      },
+    ]);
+  });
+
+  it("does not promote explicit command legacy task events to subagent rows", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-legacy-task"),
+      projectId: ProjectId.make("project-1"),
+      title: "Legacy task",
+      activities: [
+        makeActivity({
+          id: EventId.make("legacy-task"),
+          kind: "task.completed",
+          summary: "Task completed",
+          createdAt: "2026-04-01T00:00:00.000Z",
+          payload: {
+            taskId: "legacy-task-1",
+            itemType: "command_execution",
+            status: "completed",
+            summary: "Bash finished",
+          },
+        }),
+      ],
+    });
+
+    expect(buildThreadFeed(thread).some((entry) => entry.type === "subagent-task")).toBe(false);
+  });
+
   it("drops session exits whose stderr tail is empty after trimming", () => {
     const thread = makeThread({
       id: ThreadId.make("thread-quiet-exit"),
