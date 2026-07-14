@@ -557,6 +557,21 @@ export type TokenEfficiencySettings = typeof TokenEfficiencySettings.Type;
 export const DEFAULT_TOKEN_EFFICIENCY_SETTINGS: TokenEfficiencySettings = Schema.decodeSync(
   TokenEfficiencySettings,
 )({});
+const TokenEfficiencySettingsPatch = Schema.Struct({
+  showComposerHints: Schema.optionalKey(TokenEfficiencySettings.fields.showComposerHints),
+  showCostWarnings: Schema.optionalKey(TokenEfficiencySettings.fields.showCostWarnings),
+  efficiencyProfile: Schema.optionalKey(TokenEfficiencySettings.fields.efficiencyProfile),
+  perTurnEstimatedCostWarningUsd: Schema.optionalKey(
+    TokenEfficiencySettings.fields.perTurnEstimatedCostWarningUsd,
+  ),
+  dailyEstimatedCostWarningUsd: Schema.optionalKey(
+    TokenEfficiencySettings.fields.dailyEstimatedCostWarningUsd,
+  ),
+  monthlyEstimatedCostWarningUsd: Schema.optionalKey(
+    TokenEfficiencySettings.fields.monthlyEstimatedCostWarningUsd,
+  ),
+  customModelPricing: Schema.optionalKey(TokenEfficiencySettings.fields.customModelPricing),
+});
 
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 
@@ -745,19 +760,7 @@ export const ServerSettingsPatch = Schema.Struct({
       otlpMetricsUrl: Schema.optionalKey(TrimmedString),
     }),
   ),
-  tokenEfficiency: Schema.optionalKey(
-    Schema.Struct({
-      showComposerHints: Schema.optionalKey(Schema.Boolean),
-      showCostWarnings: Schema.optionalKey(Schema.Boolean),
-      efficiencyProfile: Schema.optionalKey(Schema.Literals(["manual", "balanced", "cost_saver"])),
-      perTurnEstimatedCostWarningUsd: Schema.optionalKey(Schema.NullOr(Schema.Number)),
-      dailyEstimatedCostWarningUsd: Schema.optionalKey(Schema.NullOr(Schema.Number)),
-      monthlyEstimatedCostWarningUsd: Schema.optionalKey(Schema.NullOr(Schema.Number)),
-      customModelPricing: Schema.optionalKey(
-        Schema.Record(TrimmedNonEmptyString, ModelPricingOverride),
-      ),
-    }),
-  ),
+  tokenEfficiency: Schema.optionalKey(TokenEfficiencySettingsPatch),
   providers: Schema.optionalKey(
     Schema.Struct({
       codex: Schema.optionalKey(CodexSettingsPatch),

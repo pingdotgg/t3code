@@ -1,8 +1,10 @@
 import {
   IsoDateTime,
-  NonNegativeInt,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderUsageBucket,
+  ProviderUsageSummary,
+  ProviderUsageSummaryInput,
   ThreadId,
   ThreadTokenUsageSnapshot,
   TurnId,
@@ -35,40 +37,14 @@ export const DeleteProjectionTurnUsageByThreadInput = Schema.Struct({
 export type DeleteProjectionTurnUsageByThreadInput =
   typeof DeleteProjectionTurnUsageByThreadInput.Type;
 
-export const ProjectionUsageSummaryInput = Schema.Struct({
-  since: IsoDateTime,
-  until: Schema.optional(IsoDateTime),
-  providerInstanceId: Schema.optional(ProviderInstanceId),
-  threadId: Schema.optional(ThreadId),
-});
-export type ProjectionUsageSummaryInput = typeof ProjectionUsageSummaryInput.Type;
+export const ProjectionUsageSummaryInput = ProviderUsageSummaryInput;
+export type ProjectionUsageSummaryInput = ProviderUsageSummaryInput;
 
-export const ProjectionUsageBucket = Schema.Struct({
-  id: Schema.String,
-  label: Schema.String,
-  turns: NonNegativeInt,
-  usage: ThreadTokenUsageSnapshot,
-  totalCostUsd: Schema.NullOr(Schema.Number),
-  costIsPartial: Schema.Boolean,
-});
-export type ProjectionUsageBucket = typeof ProjectionUsageBucket.Type;
+export const ProjectionUsageBucket = ProviderUsageBucket;
+export type ProjectionUsageBucket = ProviderUsageBucket;
 
-export const ProjectionUsageSummary = Schema.Struct({
-  totalTurns: NonNegativeInt,
-  totalInputTokens: NonNegativeInt,
-  totalUncachedInputTokens: NonNegativeInt,
-  totalCachedInputTokens: NonNegativeInt,
-  totalCacheCreationInputTokens: NonNegativeInt,
-  totalCacheReadInputTokens: NonNegativeInt,
-  totalOutputTokens: NonNegativeInt,
-  totalReasoningOutputTokens: NonNegativeInt,
-  totalProcessedTokens: NonNegativeInt,
-  totalCostUsd: Schema.NullOr(Schema.Number),
-  costIsPartial: Schema.Boolean,
-  byProvider: Schema.Array(ProjectionUsageBucket),
-  byModel: Schema.Array(ProjectionUsageBucket),
-});
-export type ProjectionUsageSummary = typeof ProjectionUsageSummary.Type;
+export const ProjectionUsageSummary = ProviderUsageSummary;
+export type ProjectionUsageSummary = ProviderUsageSummary;
 
 export interface ProjectionTurnUsageRepositoryShape {
   readonly upsert: (row: ProjectionTurnUsage) => Effect.Effect<void, ProjectionRepositoryError>;
