@@ -8,6 +8,11 @@ import Foundation
 enum SceneryPoolBuilder {
     static let maxPhotos = 24
     static let minNamedPhotos = 12
+    /// Cap on per-photo detail requests spent hydrating place names in one
+    /// build. A build already spends up to ~22 requests on searches and an
+    /// Unsplash demo key allows 50 per hour.
+    static let maxPlaceNameFetches = 24
+    private static let placeNameFetchConcurrency = 4
 
     struct BuildResult: Sendable {
         var photos: [SceneryPhoto]
@@ -24,9 +29,11 @@ enum SceneryPoolBuilder {
     /// `minNamedPhotos`: first cycle additional fetches back across the same
     /// named locations (round-robin, still location-named), then — only if
     /// still short — fall back to the general queries with the bare set
-    /// title. Top-up names use Unsplash location metadata or the bare set
-    /// title — never captions, never pool-index numbering (`"Iceland 5"`),
-    /// never curated-name round-robin.
+    /// title. Those title-named top-ups are then hydrated with the real place
+    /// name from each photo's Unsplash location metadata; only photos Unsplash
+    /// has no location for keep the set title. Names never come from captions,
+    /// from pool-index numbering (`"Iceland 5"`), or from curated-name
+    /// round-robin.
     nonisolated static func buildFromLocations(
         client: UnsplashClient,
         locations: [SceneryLocation],
@@ -135,8 +142,73 @@ enum SceneryPoolBuilder {
 
         guard !photos.isEmpty else { throw BuildError.noPhotosFound }
 
-        let sceneNames = SceneSetComposer.normalizeSceneNames(photos.map(\.name))
-        return BuildResult(photos: photos, sceneNames: sceneNames, photoTags: photoTags)
+        // General top-up photos were fetched by scenic query rather than by
+        // place, so they carry the bare set title. Unsplash exposes `location`
+        // only on the per-photo endpoint, so ask for it now: a thread named
+        // after the photo's real place beats another "Iceland".
+        let named = await hydratedNames(client: client, photos: photos, generic: fallbackName)
+
+        let sceneNames = SceneSetComposer.normalizeSceneNames(named.map(\.name))
+        return BuildResult(photos: named, sceneNames: sceneNames, photoTags: photoTags)
+    }
+
+    /// Replaces the `generic` placeholder name (the bare set title) with each
+    /// photo's real Unsplash place name where one exists. Photos already named
+    /// after a known `SceneryLocation` are left untouched and cost no request.
+    nonisolated static func hydratedNames(
+        client: UnsplashClient,
+        photos: [SceneryPhoto],
+        generic: String
+    ) async -> [SceneryPhoto] {
+        let genericIDs = photos.filter { $0.name == generic }.map(\.id)
+        guard !genericIDs.isEmpty else { return photos }
+        let names = await placeNames(client: client, photoIDs: genericIDs)
+        guard !names.isEmpty else { return photos }
+        return photos.map { photo in
+            guard photo.name == generic, let name = names[photo.id] else { return photo }
+            var renamed = photo
+            renamed.name = name
+            return renamed
+        }
+    }
+
+    /// Real place names for `photoIDs`, one Unsplash detail request each,
+    /// bounded by `maxPlaceNameFetches` and run a few at a time.
+    ///
+    /// Best-effort: an id whose request fails (rate limit, transport) or whose
+    /// photo carries no location metadata is simply absent from the result, and
+    /// the caller keeps whatever name it already had.
+    nonisolated static func placeNames(
+        client: UnsplashClient,
+        photoIDs: [String]
+    ) async -> [String: String] {
+        let ids = Array(photoIDs.prefix(maxPlaceNameFetches))
+        guard !ids.isEmpty else { return [:] }
+
+        return await withTaskGroup(of: (String, String?).self) { group in
+            var names: [String: String] = [:]
+            var next = 0
+
+            func addNextTask() {
+                guard next < ids.count else { return }
+                let id = ids[next]
+                next += 1
+                group.addTask {
+                    guard !Task.isCancelled else { return (id, nil) }
+                    let details = try? await client.photoDetails(id: id)
+                    return (id, details?.suggestedSceneName)
+                }
+            }
+
+            for _ in 0..<min(placeNameFetchConcurrency, ids.count) { addNextTask() }
+            while let (id, name) = await group.next() {
+                if let name, let normalized = SceneSetComposer.normalizeSceneNames([name]).first {
+                    names[id] = normalized
+                }
+                addNextTask()
+            }
+            return names
+        }
     }
 
     /// Cancellation-aware search: rethrows cancellation (either

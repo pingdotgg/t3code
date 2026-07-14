@@ -287,15 +287,19 @@ public final class SceneSetComposer {
         guard !unique.isEmpty else { throw SceneSetComposerError.noPhotosFound }
 
         // Caption-free naming priority:
-        // 1) Unsplash location metadata
+        // 1) Unsplash location metadata — needs a per-photo detail request, as
+        //    search results carry no `location` field at all
         // 2) AI-curated sceneNames (older servers without `locations`)
         // 3) bare set title — never pool-index labels like "Iceland 5"
+        let metadataNames = await SceneryPoolBuilder.placeNames(
+            client: client, photoIDs: unique.map(\.photo.id))
+        try Task.checkCancellation()
         let curated = Self.normalizeSceneNames(curatedNames)
         let fallbackName = Self.bareSetTitle(location)
         var curatedIndex = 0
         let photos: [SceneryPhoto] = unique.map { entry in
             let name: String
-            if let meta = entry.photo.suggestedSceneName {
+            if let meta = entry.photo.suggestedSceneName ?? metadataNames[entry.photo.id] {
                 name = meta
             } else if !curated.isEmpty {
                 name = curated[curatedIndex % curated.count]
