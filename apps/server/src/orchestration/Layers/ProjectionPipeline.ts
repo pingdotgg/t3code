@@ -1356,6 +1356,15 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           }
           const decodedUsage = decodeThreadTokenUsageSnapshot(activity.payload);
           if (Option.isNone(decodedUsage)) {
+            yield* Effect.logWarning(
+              "Invalid thread usage snapshot payload; skipping projection",
+            ).pipe(
+              Effect.annotateLogs({
+                threadId: event.payload.threadId,
+                turnId: activity.turnId,
+                activityId: activity.id,
+              }),
+            );
             return;
           }
           const usage: ProjectionTurnUsage["usage"] = decodedUsage.value;
