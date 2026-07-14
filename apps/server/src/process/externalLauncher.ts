@@ -264,24 +264,24 @@ const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors"
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
 ): Effect.fn.Return<ReadonlyArray<EditorId>, never, FileSystem.FileSystem | Path.Path> {
-  const available: EditorId[] = [];
+  const availability = yield* Effect.forEach(
+    EDITORS,
+    (editor) =>
+      Effect.gen(function* () {
+        if (editor.commands === null) {
+          const command = fileManagerCommandForPlatform(platform);
+          return (yield* isCommandAvailable(command, { env }))
+            ? Option.some(editor.id)
+            : Option.none();
+        }
 
-  for (const editor of EDITORS) {
-    if (editor.commands === null) {
-      const command = fileManagerCommandForPlatform(platform);
-      if (yield* isCommandAvailable(command, { env })) {
-        available.push(editor.id);
-      }
-      continue;
-    }
+        const command = yield* resolveAvailableCommand(editor.commands, env);
+        return Option.isSome(command) ? Option.some(editor.id) : Option.none();
+      }),
+    { concurrency: "unbounded" },
+  );
 
-    const command = yield* resolveAvailableCommand(editor.commands, env);
-    if (Option.isSome(command)) {
-      available.push(editor.id);
-    }
-  }
-
-  return available;
+  return availability.flatMap(Option.toArray);
 });
 
 const resolveBrowserLaunch = Effect.fn("externalLauncher.resolveBrowserLaunch")(function* (
@@ -442,9 +442,12 @@ export const make = Effect.gen(function* () {
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
     );
+  const availableEditors = yield* Effect.cached(
+    provideCommandResolutionServices(resolveAvailableEditors()).pipe(Effect.uninterruptible),
+  );
 
   return ExternalLauncher.of({
-    resolveAvailableEditors: () => provideCommandResolutionServices(resolveAvailableEditors()),
+    resolveAvailableEditors: () => availableEditors,
     launchBrowser: (target) =>
       launchBrowser(target).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),

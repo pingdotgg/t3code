@@ -155,6 +155,34 @@ it.effect("discovers editors through the service API", () =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect("caches editor discovery for subsequent server config requests", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-cache-" });
+    const editorPath = path.join(binDir, "code.CMD");
+    yield* fileSystem.writeFileString(editorPath, "@echo off\r\n");
+
+    const [first, second] = yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      const first = yield* launcher.resolveAvailableEditors();
+      yield* fileSystem.remove(editorPath);
+      const second = yield* launcher.resolveAvailableEditors();
+      return [first, second] as const;
+    }).pipe(
+      Effect.provide(
+        testLayer({
+          platform: "win32",
+          env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+        }),
+      ),
+    );
+
+    assert.equal(first.includes("vscode"), true);
+    assert.deepEqual(second, first);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("rejects unknown editors through the service API", () =>
   Effect.gen(function* () {
     const launcher = yield* ExternalLauncher.ExternalLauncher;
