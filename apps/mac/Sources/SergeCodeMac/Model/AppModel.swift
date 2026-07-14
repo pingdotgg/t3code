@@ -11,6 +11,9 @@ public final class AppModel {
     public private(set) var connection: ConnectionPhase = .launchingServer
     public private(set) var projects: [Project] = []
     public private(set) var threads: [ChatThread] = []
+    public private(set) var archivedThreads: [ChatThread] = []
+    public private(set) var archivedThreadsLoading = false
+    public private(set) var archivedThreadsError: String?
     /// Thread IDs pinned locally in the macOS client. Pinning is intentionally
     /// client-local: it is sidebar organization, not server thread metadata.
     public private(set) var pinnedThreadIDs: Set<String>
@@ -158,6 +161,7 @@ public final class AppModel {
     /// Monotonic settings-save counter: only the latest save's response may
     /// commit, so overlapping keystroke-driven saves can't land out of order.
     @ObservationIgnored private var settingsSaveToken = 0
+    @ObservationIgnored private var archivedThreadsRefreshToken = UUID()
     /// threadID → (messageID, index) of the actively streaming assistant
     /// message, so per-token appends skip the O(n) timeline scan. Entries
     /// are validated against the array before use — a stale index costs one
@@ -776,6 +780,7 @@ public final class AppModel {
             {
                 dequeueNextQueuedMessageIfNeeded(threadID: thread.id)
             }
+            await refreshArchivedThreads()
         } catch {
             lastError = String(describing: error)
         }
@@ -1658,14 +1663,28 @@ public final class AppModel {
         }
     }
 
-    public var archivedThreads: [ChatThread] {
-        threads.filter { $0.status == .archived }
+    public func refreshArchivedThreads() async {
+        let token = UUID()
+        archivedThreadsRefreshToken = token
+        archivedThreadsLoading = true
+        archivedThreadsError = nil
+        do {
+            let refreshed = try await backend.archivedThreads().sorted { $0.updatedAt > $1.updatedAt }
+            guard archivedThreadsRefreshToken == token else { return }
+            archivedThreads = refreshed
+            archivedThreadsLoading = false
+        } catch {
+            guard archivedThreadsRefreshToken == token else { return }
+            archivedThreadsLoading = false
+            archivedThreadsError = String(describing: error)
+        }
     }
 
     public func archiveThread(_ thread: ChatThread) async {
         do {
             try await backend.archiveThread(id: thread.id)
             await releaseTimeline(threadID: thread.id)
+            await refreshArchivedThreads()
         } catch {
             lastError = String(describing: error)
         }
@@ -1674,6 +1693,7 @@ public final class AppModel {
     public func unarchiveThread(_ thread: ChatThread) async {
         do {
             try await backend.unarchiveThread(id: thread.id)
+            await refreshArchivedThreads()
         } catch {
             lastError = String(describing: error)
         }
@@ -1683,6 +1703,7 @@ public final class AppModel {
         do {
             try await backend.deleteThread(id: thread.id)
             await releaseTimeline(threadID: thread.id)
+            await refreshArchivedThreads()
         } catch {
             lastError = String(describing: error)
         }

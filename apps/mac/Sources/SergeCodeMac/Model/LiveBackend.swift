@@ -1362,6 +1362,12 @@ public actor LiveBackend: BackendService {
         Array(threadsByID.values).sorted { $0.updatedAt > $1.updatedAt }
     }
 
+    public func archivedThreads() async throws -> [ChatThread] {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        let snapshot = try await client.getArchivedShellSnapshot()
+        return snapshot.threads.map(mapThread).sorted { $0.updatedAt > $1.updatedAt }
+    }
+
     public func timeline(threadID: String) async throws -> [TimelineItem] {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
         activeThreadIDs.insert(threadID)
