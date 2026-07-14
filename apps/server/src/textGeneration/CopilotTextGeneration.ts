@@ -1,4 +1,5 @@
 import type { CopilotClient, CopilotSession, SessionConfig } from "@github/copilot-sdk";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -20,7 +21,11 @@ import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import { ServerConfig } from "../config.ts";
-import { createCopilotClient, trimOrUndefined } from "../provider/copilotRuntime.ts";
+import {
+  createCopilotClient,
+  stopCopilotClient,
+  trimOrUndefined,
+} from "../provider/copilotRuntime.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
@@ -139,10 +144,7 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
       if (idleCloseFiber !== null) {
         yield* Fiber.interrupt(idleCloseFiber).pipe(Effect.ignore);
       }
-      yield* Effect.tryPromise({
-        try: () => state.client.stop(),
-        catch: () => undefined,
-      }).pipe(Effect.ignore);
+      yield* stopCopilotClient(state.client).pipe(Effect.ignore({ log: true }));
     });
 
   const cancelIdleCloseFiber = (state: SharedCopilotTextClientState) =>
@@ -235,12 +237,10 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
       }
 
       const startupDeferred = acquisition.deferred;
-
-      // Start the client. If any step fails we must fail and remove
-      // startupDeferred so pending waiters are unblocked rather than
-      // hanging forever.
+      let newClient: CopilotClient | undefined;
+      let installed = false;
       const client = yield* Effect.gen(function* () {
-        const newClient = yield* createCopilotClient({
+        const createdClient = yield* createCopilotClient({
           settings: input.settings,
           cwd: input.cwd,
           binaryPathBaseDirectory: serverConfig.cwd,
@@ -258,60 +258,59 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
               }),
           ),
         );
+        newClient = createdClient;
 
-        yield* Effect.uninterruptibleMask((restore) =>
+        yield* Effect.tryPromise({
+          try: () => createdClient.start(),
+          catch: (cause) =>
+            new TextGenerationError({
+              operation: input.operation,
+              detail: detailFromCause(cause, "Failed to start Copilot client."),
+              cause,
+            }),
+        }).pipe(Effect.interruptible);
+
+        yield* sharedClientMutex.withPermit(
           Effect.gen(function* () {
-            yield* restore(
-              Effect.tryPromise({
-                try: (signal) =>
-                  new Promise<void>((resolve, reject) => {
-                    const abort = () => {
-                      void newClient.stop().catch(() => undefined);
-                      reject(signal.reason ?? new Error("Copilot client startup interrupted."));
-                    };
-                    if (signal.aborted) {
-                      abort();
-                      return;
-                    }
-                    signal.addEventListener("abort", abort, { once: true });
-                    newClient
-                      .start()
-                      .then(resolve, reject)
-                      .finally(() => {
-                        signal.removeEventListener("abort", abort);
-                      });
-                  }),
-                catch: (cause) =>
-                  new TextGenerationError({
-                    operation: input.operation,
-                    detail: detailFromCause(cause, "Failed to start Copilot client."),
-                    cause,
-                  }),
-              }),
-            );
-
-            yield* sharedClientMutex.withPermit(
-              Effect.gen(function* () {
-                pendingClients.delete(clientKey);
-                sharedClients.set(clientKey, {
-                  client: newClient,
-                  activeRequests: 1,
-                  idleCloseFiber: null,
-                });
-                yield* Deferred.succeed(startupDeferred, newClient);
-              }),
-            );
+            pendingClients.delete(clientKey);
+            sharedClients.set(clientKey, {
+              client: createdClient,
+              activeRequests: 1,
+              idleCloseFiber: null,
+            });
+            installed = true;
+            yield* Deferred.succeed(startupDeferred, createdClient);
           }),
         );
 
-        return newClient;
+        return createdClient;
       }).pipe(
-        Effect.tapError((error) =>
-          Effect.gen(function* () {
-            pendingClients.delete(clientKey);
-            yield* Deferred.fail(startupDeferred, error);
-          }),
-        ),
+        Effect.onExit((exit) => {
+          if (Exit.isSuccess(exit)) {
+            return Effect.void;
+          }
+          const cause = Cause.squash(exit.cause);
+          const error = isTextGenerationError(cause)
+            ? cause
+            : new TextGenerationError({
+                operation: input.operation,
+                detail: detailFromCause(cause, "Copilot client startup was interrupted."),
+                cause,
+              });
+          return Effect.gen(function* () {
+            yield* sharedClientMutex.withPermit(
+              Effect.gen(function* () {
+                if (pendingClients.get(clientKey) === startupDeferred) {
+                  pendingClients.delete(clientKey);
+                }
+                yield* Deferred.fail(startupDeferred, error);
+              }),
+            );
+            if (newClient && !installed) {
+              yield* stopCopilotClient(newClient).pipe(Effect.ignore({ log: true }));
+            }
+          });
+        }),
       );
       return { clientKey, client };
     });
@@ -398,9 +397,7 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
                   streaming: false,
                   availableTools: [],
                   enableConfigDiscovery: false,
-                  onPermissionRequest: () => ({
-                    kind: "denied-no-approval-rule-and-could-not-request-from-user",
-                  }),
+                  infiniteSessions: { enabled: false },
                 }),
               catch: (cause) =>
                 new TextGenerationError({

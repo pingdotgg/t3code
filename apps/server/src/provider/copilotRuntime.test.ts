@@ -10,6 +10,8 @@ import type { CopilotClientOptions } from "@github/copilot-sdk";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   authSnapshotFromCopilotSdk,
@@ -20,6 +22,7 @@ import {
   modelsFromCopilotSdk,
   normalizeCopilotRuntimeEnvironment,
   resolveBundledCopilotCliPath,
+  stopCopilotClient,
 } from "./copilotRuntime.ts";
 
 function assertStdioConnection(connection: CopilotClientOptions["connection"]) {
@@ -29,7 +32,92 @@ function assertStdioConnection(connection: CopilotClientOptions["connection"]) {
 
 const POSIX_SHELL_FALLBACKS = ["/bin/bash", "/usr/bin/bash", "/bin/sh"] as const;
 
+describe("stopCopilotClient", () => {
+  it.effect("force stops and surfaces cleanup errors returned by the SDK", () =>
+    Effect.gen(function* () {
+      let forceStopCalls = 0;
+      const cleanupError = new Error("runtime shutdown timed out");
+
+      const error = yield* stopCopilotClient({
+        stop: async () => [cleanupError],
+        forceStop: async () => {
+          forceStopCalls += 1;
+        },
+      }).pipe(Effect.flip);
+
+      NodeAssert.equal(forceStopCalls, 1);
+      NodeAssert.deepStrictEqual(error.cleanupErrors, [cleanupError]);
+      NodeAssert.match(error.message, /runtime shutdown timed out/);
+    }),
+  );
+
+  it.effect("does not force stop after clean SDK shutdown", () =>
+    Effect.gen(function* () {
+      let forceStopCalls = 0;
+
+      yield* stopCopilotClient({
+        stop: async () => [],
+        forceStop: async () => {
+          forceStopCalls += 1;
+        },
+      });
+
+      NodeAssert.equal(forceStopCalls, 0);
+    }),
+  );
+
+  it.effect("force stops when graceful SDK shutdown does not settle", () =>
+    Effect.gen(function* () {
+      let forceStopCalls = 0;
+      const stopFiber = yield* stopCopilotClient({
+        stop: () => new Promise<Error[]>(() => undefined),
+        forceStop: async () => {
+          forceStopCalls += 1;
+        },
+      }).pipe(Effect.flip, Effect.forkChild);
+
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("5 seconds");
+      const error = yield* Fiber.join(stopFiber);
+
+      NodeAssert.equal(forceStopCalls, 1);
+      NodeAssert.match(error.message, /timed out after 5 seconds/);
+      NodeAssert.match(String(error.stopCause), /timed out after 5 seconds/);
+    }),
+  );
+});
+
 describe("buildCopilotClientOptions", () => {
+  it.effect("only passes URI-compatible options to remote Copilot runtimes", () =>
+    Effect.gen(function* () {
+      const onListModels = () => [];
+      const options = yield* buildCopilotClientOptions({
+        settings: {
+          enabled: true,
+          binaryPath: "/ignored/copilot",
+          serverUrl: "http://127.0.0.1:4321",
+          customModels: [],
+        },
+        cwd: "/ignored/project",
+        baseDirectory: "/ignored/home",
+        env: { COPILOT_CLI_PATH: "/ignored/copilot" },
+        platform: "darwin",
+        logLevel: "error",
+        onListModels,
+      });
+
+      NodeAssert.deepEqual(options, {
+        connection: {
+          kind: "uri",
+          url: "http://127.0.0.1:4321",
+          connectionToken: undefined,
+        },
+        logLevel: "error",
+        onListModels,
+      });
+    }),
+  );
+
   it("leaves POSIX PATH hydration to the shared server environment setup", () => {
     const env = normalizeCopilotRuntimeEnvironment({ PATH: "/custom/bin:/bin" }, "darwin");
 
@@ -274,7 +362,6 @@ describe("buildCopilotClientOptions", () => {
           NodeAssert.equal(options.workingDirectory, "/tmp/project");
           NodeAssert.equal(options.baseDirectory, "/tmp/t3-copilot-home");
           NodeAssert.equal(options.logLevel, "error");
-          NodeAssert.equal(options.mode, "copilot-cli");
           NodeAssert.equal(options.env?.COPILOT_CLI_PATH, undefined);
           NodeAssert.equal(options.env?.GITHUB_TOKEN, "github-token");
           NodeAssert.equal(options.env?.PATH, "/usr/bin");

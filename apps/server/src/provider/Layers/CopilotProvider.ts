@@ -10,6 +10,7 @@ import {
   createCopilotClient,
   formatCopilotProbeError,
   modelsFromCopilotSdk,
+  stopCopilotClient,
   toCopilotProbeError,
   versionFromCopilotStatus,
 } from "../copilotRuntime.ts";
@@ -149,10 +150,11 @@ export function checkCopilotProviderStatus(input: {
             });
           },
           catch: toCopilotProbeError,
-        })
-          .pipe(Effect.timeout(Duration.seconds(30)))
-          .pipe(Effect.catch((cause) => Effect.succeed(fallback(cause)))),
-      (client) => Effect.promise(() => client.stop()).pipe(Effect.ignore({ log: true })),
+        }).pipe(
+          Effect.timeout(Duration.seconds(30)),
+          Effect.catch((cause) => Effect.succeed(fallback(cause))),
+        ),
+      (client) => stopCopilotClient(client).pipe(Effect.ignore({ log: true })),
     ).pipe(Effect.catch((cause) => Effect.succeed(fallback(cause))));
   });
 }

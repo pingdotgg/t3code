@@ -13,6 +13,9 @@ const runtimeMock = vi.hoisted(() => {
   const state = {
     listModelsError: null as Error | null,
     createClientError: null as Error | null,
+    stopErrors: [] as Error[],
+    stopCalls: 0,
+    forceStopCalls: 0,
   };
 
   return {
@@ -20,6 +23,9 @@ const runtimeMock = vi.hoisted(() => {
     reset() {
       state.listModelsError = null;
       state.createClientError = null;
+      state.stopErrors = [];
+      state.stopCalls = 0;
+      state.forceStopCalls = 0;
     },
   };
 });
@@ -36,7 +42,13 @@ vi.mock("../copilotRuntime.ts", async () => {
       }
       return Effect.succeed({
         start: vi.fn(async () => undefined),
-        stop: vi.fn(async () => undefined),
+        stop: vi.fn(async () => {
+          runtimeMock.state.stopCalls += 1;
+          return runtimeMock.state.stopErrors;
+        }),
+        forceStop: vi.fn(async () => {
+          runtimeMock.state.forceStopCalls += 1;
+        }),
         getStatus: vi.fn(async () => ({
           version: "1.0.32",
           protocolVersion: 3,
@@ -122,6 +134,20 @@ describe("CopilotProvider status", () => {
 
       NodeAssert.equal(firstSnapshot.checkedAt, "2026-06-08T12:00:00.000Z");
       NodeAssert.equal(secondSnapshot.checkedAt, "2026-06-08T12:01:00.000Z");
+    }),
+  );
+
+  it.effect("force stops the probe client when graceful cleanup is incomplete", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.stopErrors = [new Error("probe runtime remained alive")];
+
+      yield* checkCopilotProviderStatus({
+        settings: defaultCopilotSettings,
+        cwd: process.cwd(),
+      });
+
+      NodeAssert.equal(runtimeMock.state.stopCalls, 1);
+      NodeAssert.equal(runtimeMock.state.forceStopCalls, 1);
     }),
   );
 });
