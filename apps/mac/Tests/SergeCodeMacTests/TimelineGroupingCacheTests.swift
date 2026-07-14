@@ -63,6 +63,69 @@ struct TimelineGroupingCacheTests {
         #expect(markdown == "new markdown")
     }
 
+    // The next two tests deliberately use their own thread key and assert on the
+    // returned rows rather than the cache's global counters, so they can run
+    // alongside the other suites that reset those counters.
+
+    @Test("content refresh reuses every row it did not have to change")
+    func contentRefreshReusesUntouchedRows() {
+        let date = Date(timeIntervalSince1970: 1)
+        func items(assistantMarkdown: String) -> [TimelineItem] {
+            [
+                .userMessage(id: "user-1", text: "hello", at: date),
+                .notice(id: "notice-1", text: "heads up", at: date),
+                .assistantMessage(
+                    id: "assistant-1", markdown: assistantMarkdown, isStreaming: true, at: date),
+            ]
+        }
+
+        let initial = grouped(
+            items(assistantMarkdown: "a"), threadID: "row-reuse-thread",
+            timelineVersion: 1, structureVersion: 1)
+        let refreshed = grouped(
+            items(assistantMarkdown: "ab"), threadID: "row-reuse-thread",
+            timelineVersion: 2, structureVersion: 1)
+
+        // Only the streaming assistant row changed. The rows above it must come
+        // back equal, which is what lets ChatTimelineRowView skip their bodies
+        // instead of re-rendering the whole transcript on every delta.
+        #expect(refreshed.count == initial.count)
+        #expect(refreshed[0] == initial[0])
+        #expect(refreshed[1] == initial[1])
+        #expect(refreshed[2] != initial[2])
+    }
+
+    @Test("content refresh rebuilds a tool group whose items changed")
+    func contentRefreshRebuildsChangedToolGroup() {
+        let date = Date(timeIntervalSince1970: 1)
+        func timeline(secondToolOutput: String?) -> [TimelineItem] {
+            [
+                tool(id: "tool-1", at: date),
+                .toolEvent(
+                    id: "tool-2", name: "Bash", detail: "pwd", kind: .command,
+                    status: .succeeded, at: date.addingTimeInterval(1),
+                    output: secondToolOutput, outputIsError: false),
+                .assistantMessage(id: "assistant-1", markdown: "done", isStreaming: true, at: date),
+            ]
+        }
+
+        let initial = grouped(
+            timeline(secondToolOutput: nil), threadID: "tool-group-refresh-thread",
+            timelineVersion: 1, structureVersion: 1)
+        let refreshed = grouped(
+            timeline(secondToolOutput: "/tmp"), threadID: "tool-group-refresh-thread",
+            timelineVersion: 2, structureVersion: 1)
+
+        guard case .toolGroup = initial[0], case .toolGroup = refreshed[0] else {
+            Issue.record("expected a tool group at index 0, got \(refreshed)")
+            return
+        }
+        // The group's tool gained output, so its row must be rebuilt; the
+        // untouched assistant row must not.
+        #expect(initial[0] != refreshed[0])
+        #expect(initial[1] == refreshed[1])
+    }
+
     @Test("tool group identity stays stable across content refresh")
     func toolGroupIdentityStaysStable() {
         TimelineDisplayCache.resetForTesting()
