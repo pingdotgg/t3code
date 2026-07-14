@@ -1,12 +1,13 @@
-import { NativeHeaderToolbar } from "../../native/StackHeader";
+import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { useNavigation } from "@react-navigation/native";
-import { SymbolView } from "expo-symbols";
+import { SymbolView } from "../../components/AppSymbol";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useState } from "react";
-import { ScrollView, View } from "react-native";
+import { Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
+import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { CloudEnvironmentRows } from "../connection/CloudEnvironmentRows";
 import { ConnectionEnvironmentRow } from "../connection/ConnectionEnvironmentRow";
@@ -39,22 +40,42 @@ export function SettingsEnvironmentsRouteScreen() {
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
-      <NativeHeaderToolbar placement="right">
-        <NativeHeaderToolbar.Button
-          icon="plus"
-          onPress={() => navigation.navigate("SettingsSheet", { screen: "SettingsEnvironmentNew" })}
-          separateBackground
-          tintColor={headerIconColor}
-        />
-      </NativeHeaderToolbar>
+      {Platform.OS === "android" ? (
+        <>
+          {/* Android renders its own in-screen header instead of the native bar. */}
+          <NativeStackScreenOptions options={{ headerShown: false }} />
+          <AndroidScreenHeader
+            title="Environments"
+            onBack={() => navigation.goBack()}
+            actions={[
+              {
+                accessibilityLabel: "Add environment",
+                icon: "plus",
+                onPress: () =>
+                  navigation.navigate("SettingsSheet", { screen: "SettingsEnvironmentNew" }),
+              },
+            ]}
+          />
+        </>
+      ) : (
+        <NativeHeaderToolbar placement="right">
+          <NativeHeaderToolbar.Button
+            icon="plus"
+            onPress={() =>
+              navigation.navigate("SettingsSheet", { screen: "SettingsEnvironmentNew" })
+            }
+            separateBackground
+            tintColor={headerIconColor}
+          />
+        </NativeHeaderToolbar>
+      )}
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
-        style={{ flex: 1 }}
+        className="flex-1"
+        contentContainerClassName="px-5 pt-4"
         contentContainerStyle={{
           paddingBottom: Math.max(insets.bottom, 18) + 18,
-          paddingHorizontal: 20,
-          paddingTop: 16,
         }}
       >
         {hasLocalEnvironments ? (
@@ -63,10 +84,7 @@ export function SettingsEnvironmentsRouteScreen() {
               <View
                 key={environment.environmentId}
                 collapsable={false}
-                style={{
-                  borderTopWidth: index === 0 ? 0 : 1,
-                }}
-                className={cn(index !== 0 && "border-border")}
+                className={cn(index !== 0 && "border-t border-border")}
               >
                 <ConnectionEnvironmentRow
                   environment={environment}

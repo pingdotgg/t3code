@@ -1,5 +1,5 @@
 import * as Haptics from "expo-haptics";
-import { SymbolView } from "expo-symbols";
+import { SymbolView } from "../../../../components/AppSymbol";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { View, type AccessibilityActionEvent } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
@@ -136,7 +136,7 @@ export function FontSizeSliderRow(props: {
   };
 
   return (
-    <View className="gap-1 p-4" style={{ opacity: disabled ? 0.45 : 1 }}>
+    <View className={disabled ? "gap-1 p-4 opacity-[0.45]" : "gap-1 p-4"}>
       <View className="flex-row items-center gap-4">
         <SymbolView
           name={props.icon}

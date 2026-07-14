@@ -1,13 +1,12 @@
 import { useWaitlist } from "@clerk/expo";
-import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Pressable, Text, TextInput, View } from "react-native";
 import { useState } from "react";
 
-import { useThemeColor } from "../../lib/useThemeColor";
+import { cn } from "../../lib/cn";
 import { CloudWaitlistJoinRejectedError, joinCloudWaitlist } from "./cloudWaitlistJoin";
 
 export function CloudWaitlistEnrollment(props: { readonly onSignIn: () => void }) {
   const { errors, fetchStatus, waitlist } = useWaitlist();
-  const colors = useCloudWaitlistColors();
   const [emailAddress, setEmailAddress] = useState("");
   const [requestError, setRequestError] = useState<string | null>(null);
   const isSubmitting = fetchStatus === "fetching";
@@ -34,7 +33,7 @@ export function CloudWaitlistEnrollment(props: { readonly onSignIn: () => void }
 
   if (waitlist.id) {
     return (
-      <View style={styles.content}>
+      <View className="gap-[18px]">
         <Text className="text-center font-t3-bold text-xl text-foreground">
           You are on the waitlist
         </Text>
@@ -47,19 +46,22 @@ export function CloudWaitlistEnrollment(props: { readonly onSignIn: () => void }
   }
 
   return (
-    <View style={styles.content}>
+    <View className="gap-[18px]">
       <Text className="font-sans text-base text-foreground-secondary">
         Enter your email and we will let you know when access is ready.
       </Text>
 
-      <View style={styles.field}>
+      <View className="gap-2">
         <Text className="font-t3-bold text-sm text-foreground-secondary">Email address</Text>
         <TextInput
           accessibilityLabel="Email address"
           autoCapitalize="none"
           autoComplete="email"
           autoCorrect={false}
-          className="font-sans text-lg text-foreground"
+          className={cn(
+            "min-h-[54px] rounded-2xl border border-input-border bg-input px-4 py-3.5 font-sans text-lg text-foreground border-continuous",
+            (fieldError || requestError) && "border-danger-foreground",
+          )}
           keyboardType="email-address"
           onChangeText={(value) => {
             setEmailAddress(value);
@@ -67,16 +69,8 @@ export function CloudWaitlistEnrollment(props: { readonly onSignIn: () => void }
           }}
           onSubmitEditing={() => void joinWaitlist()}
           placeholder="Enter your email address"
-          placeholderTextColor={colors.placeholder}
+          placeholderTextColorClassName="accent-placeholder"
           returnKeyType="join"
-          style={[
-            styles.input,
-            {
-              backgroundColor: colors.input,
-              borderColor:
-                fieldError || requestError ? colors.dangerForeground : colors.inputBorder,
-            },
-          ]}
           textContentType="emailAddress"
           value={emailAddress}
         />
@@ -99,15 +93,11 @@ export function CloudWaitlistEnrollment(props: { readonly onSignIn: () => void }
         }}
         disabled={isSubmitting || emailAddress.trim().length === 0}
         onPress={() => void joinWaitlist()}
-        style={[
-          styles.primaryButton,
-          {
-            backgroundColor: colors.primary,
-            opacity: isSubmitting || emailAddress.trim().length === 0 ? 0.45 : 1,
-          },
-        ]}
+        className="min-h-[54px] flex-row items-center justify-center gap-2 rounded-full bg-primary px-5 py-3 disabled:opacity-[0.45]"
       >
-        {isSubmitting ? <ActivityIndicator color={colors.primaryForeground} size="small" /> : null}
+        {isSubmitting ? (
+          <ActivityIndicator colorClassName="accent-primary-foreground" size="small" />
+        ) : null}
         <Text className="font-t3-bold text-base text-primary-foreground">
           {isSubmitting ? "Joining" : "Join the waitlist"}
         </Text>
@@ -120,7 +110,7 @@ export function CloudWaitlistEnrollment(props: { readonly onSignIn: () => void }
 
 function SignInAction(props: { readonly onPress: () => void }) {
   return (
-    <View style={styles.signInRow}>
+    <View className="flex-row items-center justify-center gap-1 pt-1">
       <Text className="font-sans text-base text-foreground-secondary">Already have access?</Text>
       <Pressable accessibilityRole="button" hitSlop={8} onPress={props.onPress}>
         <Text className="font-t3-bold text-base text-foreground">Sign in</Text>
@@ -128,48 +118,3 @@ function SignInAction(props: { readonly onPress: () => void }) {
     </View>
   );
 }
-
-function useCloudWaitlistColors() {
-  return {
-    dangerForeground: String(useThemeColor("--color-danger-foreground")),
-    input: String(useThemeColor("--color-input")),
-    inputBorder: String(useThemeColor("--color-input-border")),
-    placeholder: String(useThemeColor("--color-placeholder")),
-    primary: String(useThemeColor("--color-primary")),
-    primaryForeground: String(useThemeColor("--color-primary-foreground")),
-  };
-}
-
-const styles = StyleSheet.create({
-  content: {
-    gap: 18,
-  },
-  field: {
-    gap: 8,
-  },
-  input: {
-    borderCurve: "continuous",
-    borderRadius: 16,
-    borderWidth: 1,
-    minHeight: 54,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-  },
-  primaryButton: {
-    alignItems: "center",
-    borderRadius: 999,
-    flexDirection: "row",
-    gap: 8,
-    justifyContent: "center",
-    minHeight: 54,
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-  },
-  signInRow: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: 4,
-    justifyContent: "center",
-    paddingTop: 4,
-  },
-});

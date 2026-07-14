@@ -19,6 +19,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject
 import {
   ActivityIndicator,
   Image,
+  Platform,
   Pressable,
   useColorScheme,
   View,
@@ -113,12 +114,18 @@ export interface ThreadComposerProps {
 /**
  * The pill / card container — renders as LiquidGlassView on supported
  * iOS 26+ devices (progressive blur, native morph), opaque View otherwise.
+ * Exported so NewTaskDraftScreen can render the same composer chrome.
  */
 // One timing for every piece of the expanded↔compact morph so the surface,
 // toolbar, and siblings move together instead of popping between layouts.
-const COMPOSER_LAYOUT_TRANSITION = LinearTransition.duration(220);
+// Android gets NO layout transition: the composer rides the keyboard via
+// KeyboardStickyView (frame-synced to the IME), and a time-based morph
+// running alongside that translate reads as jitter. Snapping the layout and
+// letting the keyboard-synced slide be the only motion looks native there.
+const COMPOSER_LAYOUT_TRANSITION =
+  Platform.OS === "android" ? undefined : LinearTransition.duration(220);
 
-function ComposerSurface(props: {
+export function ComposerSurface(props: {
   readonly children: ReactNode;
   readonly style: ViewStyle;
   readonly isDarkMode: boolean;
@@ -688,9 +695,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
 
   return (
     <Animated.View
+      className="px-4"
       layout={COMPOSER_LAYOUT_TRANSITION}
       style={{
-        paddingHorizontal: 16,
         paddingTop: isExpanded ? 8 : 6,
         paddingBottom: (props.bottomInset ?? 0) + (isExpanded ? 8 : 6),
         experimental_backgroundImage: isDarkMode
@@ -699,21 +706,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       }}
     >
       <Animated.View
-        className="w-full"
+        className="relative w-full self-center"
         layout={COMPOSER_LAYOUT_TRANSITION}
-        style={{ alignSelf: "center", maxWidth: props.contentMaxWidth, position: "relative" }}
+        style={{ maxWidth: props.contentMaxWidth }}
       >
         {composerTrigger && composerMenuItems.length > 0 ? (
-          <View
-            style={{
-              position: "absolute",
-              bottom: "100%",
-              left: 0,
-              right: 0,
-              marginBottom: 8,
-              zIndex: 10,
-            }}
-          >
+          <View className="absolute inset-x-0 bottom-full z-10 mb-2">
             <ComposerCommandPopover
               items={composerMenuItems}
               triggerKind={composerTrigger.kind}
@@ -754,9 +752,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           {/* Attachment strip — inside the card, above the text input */}
           {isExpanded ? (
             <Animated.View
+              className={props.draftAttachments.length > 0 ? "pb-2.5" : undefined}
               entering={FadeIn.duration(160)}
               exiting={FadeOut.duration(120)}
-              style={{ paddingBottom: props.draftAttachments.length > 0 ? 10 : 0 }}
             >
               <ComposerAttachmentStrip
                 attachments={props.draftAttachments}
@@ -766,7 +764,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
             </Animated.View>
           ) : null}
 
-          <View style={isExpanded ? undefined : { flex: 1, minWidth: 0 }}>
+          <View className={isExpanded ? undefined : "min-w-0 flex-1"}>
             <ComposerEditor
               ref={inputRef}
               multiline
@@ -781,7 +779,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               onBlur={handleBlur}
               onSubmit={handleSend}
               scrollEnabled={isExpanded}
-              contentInsetVertical={isExpanded ? 0 : 6}
+              // Android: collapsed single line centers natively (gravity) in
+              // a pill-height box matching the send button; iOS keeps insets.
+              singleLineCentered={!isExpanded}
+              contentInsetVertical={isExpanded || Platform.OS === "android" ? 0 : 6}
               style={
                 isExpanded
                   ? {
@@ -797,37 +798,22 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               textStyle={{
                 ...bodyText,
                 color: foregroundColor,
-                fontFamily: "DMSans_400Regular",
               }}
             />
           </View>
           {!isExpanded && props.draftAttachments.length > 0 ? (
-            <View style={{ flexDirection: "row", gap: 4, paddingLeft: 4 }}>
+            <View className="flex-row gap-1 pl-1">
               {props.draftAttachments.slice(0, 3).map((image) => (
                 <Pressable key={image.id} onPress={() => onPressImage(image.previewUri)}>
                   <Image
                     source={{ uri: image.previewUri }}
-                    className="bg-subtle"
-                    style={{
-                      width: 30,
-                      height: 30,
-                      borderRadius: 8,
-                    }}
+                    className="size-[30px] rounded-lg bg-subtle"
                     resizeMode="cover"
                   />
                 </Pressable>
               ))}
               {props.draftAttachments.length > 3 ? (
-                <View
-                  className="bg-subtle-strong"
-                  style={{
-                    width: 30,
-                    height: 30,
-                    borderRadius: 8,
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
+                <View className="size-[30px] items-center justify-center rounded-lg bg-subtle-strong">
                   <Text className="text-foreground-muted text-2xs font-t3-bold">
                     +{props.draftAttachments.length - 3}
                   </Text>
@@ -851,8 +837,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           ) : null}
         </ComposerSurface>
 
-        {/* Toolbar row — matches draft page layout (expanded only) */}
         {isExpanded ? (
+          // Toolbar row — matches draft page layout (expanded only)
           <Animated.View entering={FadeIn.duration(160)} exiting={FadeOut.duration(120)}>
             <ComposerToolbarRow paddingBottom={8} paddingHorizontal={0} paddingTop={8}>
               <ComposerToolbarScroller
@@ -860,6 +846,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 fadeTransparent={toolbarFadeTransparent}
               >
                 <ComposerToolbarButton
+                  accessibilityLabel="Add attachment"
                   icon="plus"
                   onPress={() => void props.onPickDraftImages()}
                   showChevron={false}
@@ -888,6 +875,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 </ControlPillMenu>
                 {showStopAction ? (
                   <ComposerToolbarButton
+                    accessibilityLabel="Stop"
                     icon="stop.fill"
                     variant="danger"
                     onPress={props.onStopThread}
@@ -910,7 +898,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         {/* Queue count */}
         {props.queueCount > 0 ? (
           <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(120)}>
-            <Text className="text-xs text-foreground-muted" style={{ paddingTop: 8 }}>
+            <Text className="pt-2 text-xs text-foreground-muted">
               {props.queueCount} queued message{props.queueCount === 1 ? "" : "s"} will send
               automatically.
             </Text>

@@ -4,9 +4,11 @@ import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useCallback, useMemo } from "react";
-import { View } from "react-native";
+import { Platform, View } from "react-native";
+
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { AndroidSheetHeader } from "../../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../../components/AppText";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
@@ -101,13 +103,14 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
-      <View style={{ minHeight: 16, paddingTop: 8 }} />
+      {Platform.OS === "android" ? (
+        <AndroidSheetHeader title="Confirm action" onBack={() => navigation.goBack()} />
+      ) : (
+        <View className="min-h-4 pt-2" />
+      )}
 
       <View className="items-center gap-1 px-5 pb-3 pt-4">
-        <Text
-          className="text-xs font-t3-bold uppercase text-foreground-muted"
-          style={{ letterSpacing: 1 }}
-        >
+        <Text className="text-xs font-t3-bold tracking-[1px] uppercase text-foreground-muted">
           Confirm
         </Text>
         <Text className="text-center text-3xl font-t3-bold">
@@ -118,10 +121,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
         </Text>
       </View>
 
-      <View
-        className="gap-3 px-5"
-        style={{ paddingBottom: Math.max(insets.bottom, 18) + 8, paddingTop: 8 }}
-      >
+      <View className="gap-3 px-5 pt-2" style={{ paddingBottom: Math.max(insets.bottom, 18) + 8 }}>
         <SheetActionButton
           icon="arrow.right.circle"
           label={copy?.continueLabel ?? "Continue"}

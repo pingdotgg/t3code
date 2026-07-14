@@ -1,5 +1,5 @@
 import type { ProjectEntry } from "@t3tools/contracts";
-import { SymbolView } from "expo-symbols";
+import { SymbolView } from "../../components/AppSymbol";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -246,7 +246,7 @@ export function FileTreeBrowser(props: {
   // flex-1 Views is ignored, which is why the tree rendered under the header with no blur.
   return (
     <FlatList
-      style={{ flex: 1 }}
+      className="flex-1"
       data={visibleNodes}
       keyExtractor={(item) => item.node.path}
       contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}

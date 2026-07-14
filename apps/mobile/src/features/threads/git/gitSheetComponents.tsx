@@ -1,8 +1,9 @@
-import { SymbolView } from "expo-symbols";
+import { SymbolView } from "../../../components/AppSymbol";
 import type { ComponentProps } from "react";
 import { Pressable, View } from "react-native";
 import { useThemeColor } from "../../../lib/useThemeColor";
 import { AppText as Text } from "../../../components/AppText";
+import { cn } from "../../../lib/cn";
 
 /* ─── Shared sheet components ──────────────────────────────────────── */
 
@@ -13,51 +14,36 @@ export function SheetActionButton(props: {
   readonly tone?: "primary" | "secondary" | "danger";
   readonly onPress: () => void;
 }) {
-  const primaryBg = useThemeColor("--color-primary");
   const primaryFg = useThemeColor("--color-primary-foreground");
-  const dangerBg = useThemeColor("--color-danger");
-  const dangerBorder = useThemeColor("--color-danger-border");
   const dangerFg = useThemeColor("--color-danger-foreground");
-  const secondaryBg = useThemeColor("--color-secondary");
-  const secondaryBorder = useThemeColor("--color-secondary-border");
   const secondaryFg = useThemeColor("--color-secondary-foreground");
 
   const tone = props.tone ?? "secondary";
-  const colors =
-    tone === "primary"
-      ? {
-          backgroundColor: primaryBg,
-          borderColor: "transparent",
-          textColor: primaryFg,
-        }
-      : tone === "danger"
-        ? {
-            backgroundColor: dangerBg,
-            borderColor: dangerBorder,
-            textColor: dangerFg,
-          }
-        : {
-            backgroundColor: secondaryBg,
-            borderColor: secondaryBorder,
-            textColor: secondaryFg,
-          };
+  const textColor = tone === "primary" ? primaryFg : tone === "danger" ? dangerFg : secondaryFg;
 
   return (
     <Pressable
-      className="min-h-[48px] flex-1 flex-row items-center justify-center gap-2 rounded-[18px] px-4 py-3"
+      className={cn(
+        "min-h-[48px] flex-1 flex-row items-center justify-center gap-2 rounded-[18px] px-4 py-3 disabled:opacity-[0.45]",
+        tone === "primary"
+          ? "bg-primary"
+          : tone === "danger"
+            ? "border border-danger-border bg-danger"
+            : "border border-secondary-border bg-secondary",
+      )}
       disabled={props.disabled}
-      style={{
-        backgroundColor: colors.backgroundColor,
-        borderWidth: tone === "primary" ? 0 : 1,
-        borderColor: colors.borderColor,
-        opacity: props.disabled ? 0.45 : 1,
-      }}
       onPress={props.onPress}
     >
-      <SymbolView name={props.icon} size={16} tintColor={colors.textColor} type="monochrome" />
+      <SymbolView name={props.icon} size={16} tintColor={textColor} type="monochrome" />
       <Text
-        className="text-xs font-t3-bold uppercase"
-        style={{ color: colors.textColor, letterSpacing: 0.9 }}
+        className={cn(
+          "text-xs font-t3-bold tracking-[0.9px] uppercase",
+          tone === "primary"
+            ? "text-primary-foreground"
+            : tone === "danger"
+              ? "text-danger-foreground"
+              : "text-secondary-foreground",
+        )}
       >
         {props.label}
       </Text>
@@ -68,10 +54,7 @@ export function SheetActionButton(props: {
 export function MetaCard(props: { readonly label: string; readonly value: string }) {
   return (
     <View className="rounded-[18px] border border-border bg-card px-4 py-3">
-      <Text
-        className="text-foreground-muted text-2xs font-t3-bold uppercase"
-        style={{ letterSpacing: 0.9 }}
-      >
+      <Text className="text-foreground-muted text-2xs font-t3-bold tracking-[0.9px] uppercase">
         {props.label}
       </Text>
       <Text selectable className="text-foreground text-sm font-medium" numberOfLines={1}>
@@ -93,9 +76,8 @@ export function SheetListRow(props: {
 
   return (
     <Pressable
-      className="flex-row items-center gap-3 px-1 py-3"
+      className="flex-row items-center gap-3 px-1 py-3 disabled:opacity-[0.45]"
       disabled={props.disabled}
-      style={{ opacity: props.disabled ? 0.45 : 1 }}
       onPress={props.onPress}
     >
       <View className="bg-subtle h-9 w-9 items-center justify-center rounded-full">

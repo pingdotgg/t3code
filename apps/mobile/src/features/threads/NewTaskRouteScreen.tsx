@@ -1,12 +1,14 @@
-import { NativeHeaderToolbar } from "../../native/StackHeader";
+import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { useNavigation } from "@react-navigation/native";
-import { SymbolView } from "expo-symbols";
+import { SymbolView } from "../../components/AppSymbol";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { useMemo } from "react";
-import { ActivityIndicator, Pressable, ScrollView, View } from "react-native";
+import { ActivityIndicator, Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
+import { cn } from "../../lib/cn";
 
+import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { useProjects, useThreadShells } from "../../state/entities";
@@ -79,7 +81,6 @@ export function NewTaskRouteScreen() {
   const insets = useSafeAreaInsets();
   const chevronColor = useThemeColor("--color-chevron");
   const accentColor = useThemeColor("--color-icon-muted");
-  const borderSubtleColor = useThemeColor("--color-border-subtle");
   const repositoryGroups = useMemo(
     () => groupProjectsByRepository({ projects, threads }),
     [projects, threads],
@@ -111,26 +112,44 @@ export function NewTaskRouteScreen() {
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
-      <NativeHeaderToolbar placement="right">
-        {layout.usesSplitView ? (
+      {Platform.OS === "android" ? (
+        <>
+          {/* Android renders its own in-screen header instead of the native bar. */}
+          <NativeStackScreenOptions options={{ headerShown: false }} />
+          <AndroidScreenHeader
+            title="Choose project"
+            onBack={layout.usesSplitView ? () => navigation.goBack() : undefined}
+            actions={[
+              {
+                accessibilityLabel: "Add project",
+                icon: "plus",
+                onPress: () => navigation.navigate("NewTaskSheet", { screen: "AddProject" }),
+              },
+            ]}
+          />
+        </>
+      ) : (
+        <NativeHeaderToolbar placement="right">
+          {layout.usesSplitView ? (
+            <NativeHeaderToolbar.Button
+              accessibilityLabel="Close new task"
+              icon="xmark"
+              onPress={() => navigation.goBack()}
+              separateBackground
+            />
+          ) : null}
           <NativeHeaderToolbar.Button
-            accessibilityLabel="Close new task"
-            icon="xmark"
-            onPress={() => navigation.goBack()}
+            icon="plus"
+            onPress={() => navigation.navigate("NewTaskSheet", { screen: "AddProject" })}
             separateBackground
           />
-        ) : null}
-        <NativeHeaderToolbar.Button
-          icon="plus"
-          onPress={() => navigation.navigate("NewTaskSheet", { screen: "AddProject" })}
-          separateBackground
-        />
-      </NativeHeaderToolbar>
+        </NativeHeaderToolbar>
+      )}
 
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
-        style={{ flex: 1 }}
+        className="flex-1"
         contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
         contentContainerStyle={{
           paddingHorizontal: 20,
@@ -175,7 +194,6 @@ export function NewTaskRouteScreen() {
               return (
                 <Pressable
                   key={item.key}
-                  className="bg-card"
                   onPress={() =>
                     navigation.navigate("NewTaskSheet", {
                       screen: "NewTaskDraft",
@@ -186,16 +204,12 @@ export function NewTaskRouteScreen() {
                       },
                     })
                   }
-                  style={{
-                    paddingHorizontal: 16,
-                    paddingVertical: 14,
-                    borderTopWidth: isFirst ? 0 : 1,
-                    borderTopColor: borderSubtleColor,
-                    borderTopLeftRadius: isFirst ? 24 : 0,
-                    borderTopRightRadius: isFirst ? 24 : 0,
-                    borderBottomLeftRadius: isLast ? 24 : 0,
-                    borderBottomRightRadius: isLast ? 24 : 0,
-                  }}
+                  className={cn(
+                    "bg-card px-4 py-3.5",
+                    !isFirst && "border-t border-border-subtle",
+                    isFirst && "rounded-t-[24px]",
+                    isLast && "rounded-b-[24px]",
+                  )}
                 >
                   <View className="flex-row items-center justify-between gap-3">
                     <View className="h-7 w-7 items-center justify-center">

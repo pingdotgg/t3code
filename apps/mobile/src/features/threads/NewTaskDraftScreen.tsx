@@ -1,10 +1,11 @@
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation } from "@react-navigation/native";
-import { useCallback, useEffect, useMemo, useRef } from "react";
-import { Alert, InteractionManager, View, useColorScheme } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Alert, InteractionManager, Platform, View, useColorScheme } from "react-native";
 import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
+import { useFontFamily } from "../../lib/useFontFamily";
 
 import { EnvironmentId } from "@t3tools/contracts";
 import {
@@ -19,9 +20,11 @@ import {
   ComposerToolbarScroller,
   ComposerToolbarTrigger,
 } from "../../components/ComposerToolbarTrigger";
+import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
-import { ControlPillMenu } from "../../components/ControlPill";
+import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
 import { ProviderIcon } from "../../components/ProviderIcon";
+import { ComposerSurface } from "./ThreadComposer";
 
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { convertPastedImagesToAttachments, pickComposerImages } from "../../lib/composerImages";
@@ -78,6 +81,7 @@ export function NewTaskDraftScreen(props: {
     )?.connectionState === "connected";
   const promptInputRef = useRef<ComposerEditorHandle>(null);
   const loadedBranchesProjectKeyRef = useRef<string | null>(null);
+  const [isComposerFocused, setIsComposerFocused] = useState(false);
   const appliedInitialProjectKeyRef = useRef<string | null>(null);
   useEffect(() => {
     return () => {
@@ -112,7 +116,9 @@ export function NewTaskDraftScreen(props: {
     };
   }, [props.pendingTaskId, cancelEditingPendingTask]);
 
-  const borderColor = useThemeColor("--color-border");
+  const foregroundColor = useThemeColor("--color-foreground");
+  const regularFontFamily = useFontFamily("regular");
+  const bodyText = useScaledTextRole("body");
   const headlineText = useScaledTextRole("headline");
   const sheetFadeOpaque = colorScheme === "dark" ? "rgba(14,14,14,0.98)" : "rgba(242,242,247,0.98)";
   const sheetFadeTransparent = colorScheme === "dark" ? "rgba(14,14,14,0)" : "rgba(242,242,247,0)";
@@ -193,7 +199,9 @@ export function NewTaskDraftScreen(props: {
   }, [flow.loadBranches, selectedProject]);
 
   useEffect(() => {
-    if (!selectedProject) {
+    // Android starts with the collapsed composer pill (like an open thread)
+    // and only expands/focuses when tapped.
+    if (!selectedProject || Platform.OS === "android") {
       return;
     }
 
@@ -591,7 +599,198 @@ export function NewTaskDraftScreen(props: {
   if (!selectedProject) {
     return (
       <View className="flex-1 bg-sheet">
-        <NativeStackScreenOptions options={{ title: "Loading task" }} />
+        {Platform.OS === "android" ? (
+          <>
+            <NativeStackScreenOptions options={{ headerShown: false }} />
+            <AndroidScreenHeader title="New Thread" onBack={() => navigation.goBack()} />
+          </>
+        ) : (
+          <NativeStackScreenOptions options={{ title: "Loading task" }} />
+        )}
+      </View>
+    );
+  }
+
+  const isAndroid = Platform.OS === "android";
+  const isDarkMode = colorScheme === "dark";
+  // Android expansion follows native editor focus so relayout cannot race
+  // the touch gesture that opens the keyboard.
+  const isExpanded = !isAndroid || isComposerFocused;
+  const canStart =
+    Boolean(flow.selectedProject) &&
+    Boolean(flow.selectedModel) &&
+    flow.prompt.trim().length > 0 &&
+    !flow.submitting &&
+    !(flow.workspaceMode === "worktree" && !flow.selectedBranchName);
+  const promptEditor = (
+    <ComposerEditor
+      ref={promptInputRef}
+      autoFocus={!isAndroid}
+      multiline
+      scrollEnabled={isExpanded}
+      value={flow.prompt}
+      skills={flow.selectedProviderSkills}
+      onChangeText={flow.setPrompt}
+      onFocus={() => setIsComposerFocused(true)}
+      onBlur={() => setIsComposerFocused(false)}
+      onPasteImages={(uris) => void handleNativePasteImages(uris)}
+      placeholder={`Describe a coding task in ${selectedProject.title}`}
+      // Same collapsed centering as ThreadComposer: native vertical gravity
+      // in a pill-height box.
+      singleLineCentered={!isExpanded}
+      contentInsetVertical={isAndroid ? 0 : undefined}
+      style={
+        isAndroid
+          ? isExpanded
+            ? { minHeight: 80, maxHeight: 160, paddingHorizontal: 4, paddingVertical: 4 }
+            : { height: 36 }
+          : { flex: 1, minHeight: 0 }
+      }
+      textStyle={
+        isAndroid
+          ? { ...bodyText, color: foregroundColor, fontFamily: regularFontFamily }
+          : headlineText
+      }
+    />
+  );
+
+  const toolbarPills = (
+    <>
+      <ComposerToolbarButton
+        icon="plus"
+        onPress={() => void handlePickImages()}
+        showChevron={false}
+      />
+      <ControlPillMenu
+        actions={modelMenuActions}
+        onPressAction={({ nativeEvent }) => handleModelMenuAction(nativeEvent.event)}
+      >
+        <ComposerToolbarTrigger
+          accessibilityLabel="Model"
+          iconNode={<ProviderIcon provider={flow.selectedModelOption?.providerDriver} size={16} />}
+          label={flow.selectedModelOption?.label ?? "Model"}
+        />
+      </ControlPillMenu>
+      <ControlPillMenu
+        actions={optionsMenuActions}
+        onPressAction={({ nativeEvent }) => handleOptionsMenuAction(nativeEvent.event)}
+      >
+        <ComposerToolbarTrigger
+          accessibilityLabel="Configuration"
+          icon="slider.horizontal.3"
+          label={configurationLabel}
+        />
+      </ControlPillMenu>
+      <ControlPillMenu
+        actions={environmentMenuActions}
+        onPressAction={({ nativeEvent }) => handleEnvironmentMenuAction(nativeEvent.event)}
+      >
+        <ComposerToolbarTrigger
+          accessibilityLabel="Environment"
+          icon="desktopcomputer"
+          label={selectedEnvironmentLabel}
+        />
+      </ControlPillMenu>
+      <ControlPillMenu
+        actions={workspaceMenuActions}
+        onPressAction={({ nativeEvent }) => handleWorkspaceMenuAction(nativeEvent.event)}
+      >
+        <ComposerToolbarTrigger
+          accessibilityLabel="Workspace"
+          icon="point.topleft.down.curvedto.point.bottomright.up"
+          label={workspaceLabel}
+        />
+      </ControlPillMenu>
+    </>
+  );
+
+  const startButton = (
+    <ComposerToolbarButton
+      accessibilityLabel={
+        flow.submitting ? "Starting task" : environmentConnected ? "Start task" : "Queue task"
+      }
+      icon={environmentConnected ? "arrow.up" : "tray.and.arrow.up"}
+      onPress={() => void handleStart()}
+      variant="primary"
+      showChevron={false}
+      disabled={!canStart}
+    />
+  );
+
+  if (isAndroid) {
+    // The draft is a thread that doesn't exist yet, so it mirrors the thread
+    // page: in-screen header, empty feed canvas above, and the same floating
+    // composer chrome as ThreadComposer (collapsed pill → expanded card).
+    return (
+      <View className="flex-1 bg-screen">
+        <NativeStackScreenOptions options={{ headerShown: false }} />
+        <AndroidScreenHeader title="New Thread" onBack={() => navigation.goBack()} />
+
+        <KeyboardAvoidingView automaticOffset behavior="padding" className="flex-1">
+          <View className="flex-1" />
+
+          <View
+            className="px-4 pt-2"
+            style={{
+              paddingBottom: controlsBottomPadding,
+              experimental_backgroundImage: isDarkMode
+                ? "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.85) 40%, rgba(0,0,0,0.95) 100%)"
+                : "linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,0.85) 40%, rgba(255,255,255,0.95) 100%)",
+            }}
+          >
+            <ComposerSurface
+              isDarkMode={isDarkMode}
+              style={
+                isExpanded
+                  ? {
+                      borderRadius: 20,
+                      overflow: "hidden",
+                      paddingHorizontal: 14,
+                      paddingVertical: 12,
+                    }
+                  : {
+                      borderRadius: 999,
+                      overflow: "hidden",
+                      flexDirection: "row",
+                      alignItems: "center",
+                      paddingLeft: 18,
+                      paddingRight: 5,
+                      paddingVertical: 5,
+                    }
+              }
+            >
+              {isExpanded && flow.attachments.length > 0 ? (
+                <View className="pb-2.5">
+                  <ComposerAttachmentStrip
+                    attachments={flow.attachments}
+                    onRemove={flow.removeAttachment}
+                  />
+                </View>
+              ) : null}
+              <View className={isExpanded ? undefined : "min-w-0 flex-1"}>{promptEditor}</View>
+              {!isExpanded ? (
+                <ControlPill
+                  icon="arrow.up"
+                  variant="primary"
+                  disabled={!canStart}
+                  onPress={() => void handleStart()}
+                />
+              ) : null}
+            </ComposerSurface>
+
+            {isExpanded ? (
+              <ComposerToolbarRow paddingBottom={8} paddingHorizontal={0} paddingTop={8}>
+                <ComposerToolbarScroller
+                  fadeOpaque={isDarkMode ? "rgba(0,0,0,0.95)" : "rgba(255,255,255,0.95)"}
+                  fadeTransparent={isDarkMode ? "rgba(0,0,0,0)" : "rgba(255,255,255,0)"}
+                >
+                  {toolbarPills}
+                </ComposerToolbarScroller>
+                {startButton}
+              </ComposerToolbarRow>
+            ) : null}
+          </View>
+        </KeyboardAvoidingView>
       </View>
     );
   }
@@ -600,32 +799,12 @@ export function NewTaskDraftScreen(props: {
     <View className="flex-1 bg-sheet">
       <NativeStackScreenOptions options={{ title: selectedProject.title }} />
 
-      <KeyboardAvoidingView automaticOffset behavior="padding" style={{ flex: 1 }}>
-        <View style={{ flex: 1, minHeight: 0, paddingHorizontal: 20, paddingTop: 8 }}>
-          <ComposerEditor
-            ref={promptInputRef}
-            autoFocus
-            multiline
-            scrollEnabled
-            value={flow.prompt}
-            skills={flow.selectedProviderSkills}
-            onChangeText={flow.setPrompt}
-            onPasteImages={(uris) => void handleNativePasteImages(uris)}
-            placeholder={`Describe a coding task in ${selectedProject.title}`}
-            style={{ flex: 1, minHeight: 0 }}
-            textStyle={headlineText}
-          />
-        </View>
+      <KeyboardAvoidingView automaticOffset behavior="padding" className="flex-1">
+        <View className="min-h-0 flex-1 px-5 pt-2">{promptEditor}</View>
 
-        <View
-          style={{
-            borderTopWidth: 1,
-            borderTopColor: borderColor,
-            paddingBottom: controlsBottomPadding,
-          }}
-        >
+        <View className="border-t border-border" style={{ paddingBottom: controlsBottomPadding }}>
           {flow.attachments.length > 0 ? (
-            <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
+            <View className="px-4 pt-3">
               <ComposerAttachmentStrip
                 attachments={flow.attachments}
                 onRemove={flow.removeAttachment}
@@ -639,74 +818,9 @@ export function NewTaskDraftScreen(props: {
               fadeOpaque={sheetFadeOpaque}
               fadeTransparent={sheetFadeTransparent}
             >
-              <ComposerToolbarButton
-                icon="plus"
-                onPress={() => void handlePickImages()}
-                showChevron={false}
-              />
-              <ControlPillMenu
-                actions={modelMenuActions}
-                onPressAction={({ nativeEvent }) => handleModelMenuAction(nativeEvent.event)}
-              >
-                <ComposerToolbarTrigger
-                  accessibilityLabel="Model"
-                  iconNode={
-                    <ProviderIcon provider={flow.selectedModelOption?.providerDriver} size={16} />
-                  }
-                  label={flow.selectedModelOption?.label ?? "Model"}
-                />
-              </ControlPillMenu>
-              <ControlPillMenu
-                actions={optionsMenuActions}
-                onPressAction={({ nativeEvent }) => handleOptionsMenuAction(nativeEvent.event)}
-              >
-                <ComposerToolbarTrigger
-                  accessibilityLabel="Configuration"
-                  icon="slider.horizontal.3"
-                  label={configurationLabel}
-                />
-              </ControlPillMenu>
-              <ControlPillMenu
-                actions={environmentMenuActions}
-                onPressAction={({ nativeEvent }) => handleEnvironmentMenuAction(nativeEvent.event)}
-              >
-                <ComposerToolbarTrigger
-                  accessibilityLabel="Environment"
-                  icon="desktopcomputer"
-                  label={selectedEnvironmentLabel}
-                />
-              </ControlPillMenu>
-              <ControlPillMenu
-                actions={workspaceMenuActions}
-                onPressAction={({ nativeEvent }) => handleWorkspaceMenuAction(nativeEvent.event)}
-              >
-                <ComposerToolbarTrigger
-                  accessibilityLabel="Workspace"
-                  icon="point.topleft.down.curvedto.point.bottomright.up"
-                  label={workspaceLabel}
-                />
-              </ControlPillMenu>
+              {toolbarPills}
             </ComposerToolbarScroller>
-            <ComposerToolbarButton
-              accessibilityLabel={
-                flow.submitting
-                  ? "Starting task"
-                  : environmentConnected
-                    ? "Start task"
-                    : "Queue task"
-              }
-              icon={environmentConnected ? "arrow.up" : "tray.and.arrow.up"}
-              onPress={() => void handleStart()}
-              variant="primary"
-              showChevron={false}
-              disabled={
-                !flow.selectedProject ||
-                !flow.selectedModel ||
-                flow.prompt.trim().length === 0 ||
-                flow.submitting ||
-                (flow.workspaceMode === "worktree" && !flow.selectedBranchName)
-              }
-            />
+            {startButton}
           </ComposerToolbarRow>
         </View>
       </KeyboardAvoidingView>

@@ -21,12 +21,13 @@ import {
   loadAgentAwarenessRegistrationRecord,
   loadOrCreateAgentAwarenessDeviceId,
   saveAgentAwarenessRegistrationRecord,
-} from "../../lib/storage";
+} from "../../persistence/imperative";
 import { makeRelayDeviceRegistrationRequest, resolveApsEnvironment } from "./registrationPayload";
 import {
   AgentAwarenessOperationError,
   __resetAgentAwarenessRemoteRegistrationForTest,
   getAgentAwarenessRegistrationStatus,
+  mergeAgentAwarenessRegistrationPreferences,
   refreshActiveLiveActivityRemoteRegistration,
   refreshAgentAwarenessRegistration,
   normalizeAgentAwarenessRelayBaseUrl,
@@ -142,7 +143,7 @@ vi.mock("../../lib/runtime", () => ({
   },
 }));
 
-vi.mock("../../lib/storage", () => ({
+vi.mock("../../persistence/imperative", () => ({
   loadAgentAwarenessDeviceId: vi.fn(() => Promise.resolve("device-1")),
   loadOrCreateAgentAwarenessDeviceId: vi.fn(() => Promise.resolve("device-1")),
   loadPreferences: vi.fn(() => Promise.resolve({ liveActivitiesEnabled: false })),
@@ -286,6 +287,26 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     expect(resolveApsEnvironment(undefined)).toBe("production");
   });
 
+  it("disables push features in Personal Team relay registrations", () => {
+    Constants.expoConfig!.extra = { iosPersonalTeamBuild: true };
+
+    expect(
+      makeRelayDeviceRegistrationRequest({
+        deviceId: "device-1",
+        label: "Julius's iPhone",
+        iosMajorVersion: 18,
+        appVersion: "1.0.0",
+        pushToken: "apns-token",
+        pushToStartToken: "push-to-start-token",
+        notificationsEnabled: true,
+        preferences: {},
+      }).preferences,
+    ).toMatchObject({
+      liveActivitiesEnabled: false,
+      notificationsEnabled: false,
+    });
+  });
+
   it("marks notification delivery disabled when APNs permission is unavailable", () => {
     expect(
       makeRelayDeviceRegistrationRequest({
@@ -322,6 +343,15 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       "https://relay.example.test",
     );
     expect(normalizeAgentAwarenessRelayBaseUrl("   ")).toBeNull();
+  });
+
+  it("overrides persisted preferences for an in-flight registration", () => {
+    expect(
+      mergeAgentAwarenessRegistrationPreferences(
+        { liveActivitiesEnabled: false, baseFontSize: 18 },
+        { liveActivitiesEnabled: true },
+      ),
+    ).toEqual({ liveActivitiesEnabled: true, baseFontSize: 18 });
   });
 
   it.effect("registers at most one listener while a Live Activity push token is pending", () => {
