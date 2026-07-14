@@ -2458,7 +2458,10 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
             return;
           }
           if (shouldCompleteOnIdleSignal(context, turnId)) {
-            if (context.turnEndFallbackTimers.has(turnId)) {
+            if (
+              context.turnEndFallbackTimers.has(turnId) ||
+              context.turnIdsWithSuccessfulToolCompletion.has(turnId)
+            ) {
               // Copilot may emit an idle pulse between SDK loops; debounce
               // completion so the next assistant.turn_start can cancel it.
               scheduleTurnEndFallback(context, turnId, event, IDLE_TURN_COMPLETION_DEBOUNCE_MS);
@@ -2576,8 +2579,9 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       }
       case "assistant.turn_start": {
         await completePendingActiveTurnEnd(context);
-        if (context.activeTurnId) {
+        if (event.agentId === undefined && context.activeTurnId) {
           cancelTurnEndFallback(context, context.activeTurnId);
+          context.turnIdsWithSuccessfulToolCompletion.delete(context.activeTurnId);
         }
         const turnId = resolveTurnIdForSdkTurn(context, event.data.turnId, {
           timestamp: event.timestamp,
@@ -2870,7 +2874,6 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           context.turnEndEventsByTurnId.set(turnId, event);
         } else if (event.agentId === undefined && !continuesWithSubagent) {
           context.turnIdsWithSuccessfulToolCompletion.add(turnId);
-          scheduleTurnEndFallback(context, turnId, event);
         }
         if (isTaskCompleteTool(toolMeta?.toolName)) {
           if (event.agentId === undefined && event.data.success && detail) {
