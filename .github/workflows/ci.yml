@@ -22,23 +22,14 @@ jobs:
           cache: true
           run-install: true
 
-      - name: Ensure Electron runtime is installed
-        run: vp run --filter @t3tools/desktop ensure:electron
-
       - name: Check
         run: vp check
 
       - name: Typecheck
         run: vpr typecheck
 
-      - name: Build desktop pipeline
-        run: vp run build:desktop
-
-      - name: Verify preload bundle output
-        run: |
-          test -f apps/desktop/dist-electron/preload.cjs
-          grep -nE "desktopBridge|getLocalEnvironmentBootstrap|PICK_FOLDER_CHANNEL|wsUrl" apps/desktop/dist-electron/preload.cjs
-          grep -n "__clerk_internal_electron_passkeys" apps/desktop/dist-electron/preload.cjs
+      - name: Build backend
+        run: vp run build:server
 
   test:
     name: Test
@@ -55,11 +46,19 @@ jobs:
           cache: true
           run-install: true
 
-      - name: Ensure Electron runtime is installed
-        run: vp run --filter @t3tools/desktop ensure:electron
-
       - name: Test
         run: vp run test
+
+  mac_native_tests:
+    name: Native macOS Tests
+    runs-on: blacksmith-12vcpu-macos-26
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Test native macOS app
+        run: swift test --package-path apps/mac
 
   mobile_native_static_analysis:
     name: Mobile Native Static Analysis
@@ -81,21 +80,3 @@ jobs:
 
       - name: Lint mobile native sources
         run: vp run lint:mobile
-
-  release_smoke:
-    name: Release Smoke
-    runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 10
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
-        with:
-          node-version-file: package.json
-          cache: true
-          run-install: true
-
-      - name: Exercise release-only workflow steps
-        run: node scripts/release-smoke.ts

@@ -9,7 +9,6 @@
 // Writes (paths relative to this script's directory):
 //   ../assets/icon.png                     1024x1024, full bleed
 //   ../assets/splash-icon.png              1024x1024, full bleed
-//   ../assets/favicon.png                  180x180, full bleed
 //   ../assets/android-icon-foreground.png  432x432, inset to the central 66%
 //   ../assets/android-icon-background.png  432x432, inset to the central 66%
 //   ../assets/android-icon-monochrome.png  432x432, inset to the central 66%
@@ -232,8 +231,6 @@ let assetsDir = scriptDir.deletingLastPathComponent().appendingPathComponent("as
 
 renderFullBleed(pixels: 1024, variant: variant, to: assetsDir.appendingPathComponent("icon.png"))
 renderFullBleed(pixels: 1024, variant: variant, to: assetsDir.appendingPathComponent("splash-icon.png"))
-renderFullBleed(pixels: 180, variant: variant, to: assetsDir.appendingPathComponent("favicon.png"))
-
 for name in [
     "android-icon-foreground.png",
     "android-icon-background.png",

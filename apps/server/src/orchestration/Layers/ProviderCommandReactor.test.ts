@@ -70,8 +70,8 @@ const asApprovalRequestId = (value: string): ApprovalRequestId => ApprovalReques
 const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
 
-const deriveServerPathsSync = (baseDir: string, devUrl: URL | undefined) =>
-  Effect.runSync(deriveServerPaths(baseDir, devUrl).pipe(Effect.provide(NodeServices.layer)));
+const deriveServerPathsSync = (baseDir: string) =>
+  Effect.runSync(deriveServerPaths(baseDir).pipe(Effect.provide(NodeServices.layer)));
 
 async function waitFor(
   predicate: () => boolean | Promise<boolean>,
@@ -155,7 +155,7 @@ describe("ProviderCommandReactor", () => {
     const baseDir =
       input?.baseDir ?? NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-reactor-"));
     createdBaseDirs.add(baseDir);
-    const { stateDir } = deriveServerPathsSync(baseDir, undefined);
+    const { stateDir } = deriveServerPathsSync(baseDir);
     createdStateDirs.add(stateDir);
     const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
     let nextSessionIndex = 1;

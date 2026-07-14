@@ -34,15 +34,6 @@ export const baseDirFlag = Flag.string("base-dir").pipe(
   Flag.withDescription("Base directory path (equivalent to T3CODE_HOME)."),
   Flag.optional,
 );
-export const devUrlFlag = Flag.string("dev-url").pipe(
-  Flag.withSchema(Schema.URLFromString),
-  Flag.withDescription("Dev web URL to proxy/redirect to (equivalent to VITE_DEV_SERVER_URL)."),
-  Flag.optional,
-);
-export const noBrowserFlag = Flag.boolean("no-browser").pipe(
-  Flag.withDescription("Disable automatic browser opening."),
-  Flag.optional,
-);
 export const bootstrapFdFlag = Flag.integer("bootstrap-fd").pipe(
   Flag.withSchema(Schema.Int),
   Flag.withDescription("Read one-time bootstrap secrets from the given file descriptor."),
@@ -103,11 +94,6 @@ const EnvServerConfig = Config.all({
   port: Config.port("T3CODE_PORT").pipe(Config.option, Config.map(Option.getOrUndefined)),
   host: Config.string("T3CODE_HOST").pipe(Config.option, Config.map(Option.getOrUndefined)),
   t3Home: Config.string("T3CODE_HOME").pipe(Config.option, Config.map(Option.getOrUndefined)),
-  devUrl: Config.url("VITE_DEV_SERVER_URL").pipe(Config.option, Config.map(Option.getOrUndefined)),
-  noBrowser: Config.boolean("T3CODE_NO_BROWSER").pipe(
-    Config.option,
-    Config.map(Option.getOrUndefined),
-  ),
   bootstrapFd: Config.int("T3CODE_BOOTSTRAP_FD").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -136,8 +122,6 @@ export interface CliServerFlags {
   readonly host: Option.Option<string>;
   readonly baseDir: Option.Option<string>;
   readonly cwd: Option.Option<string>;
-  readonly devUrl: Option.Option<URL>;
-  readonly noBrowser: Option.Option<boolean>;
   readonly bootstrapFd: Option.Option<number>;
   readonly autoBootstrapProjectFromCwd: Option.Option<boolean>;
   readonly logWebSocketEvents: Option.Option<boolean>;
@@ -147,12 +131,10 @@ export interface CliServerFlags {
 
 export interface CliAuthLocationFlags {
   readonly baseDir: Option.Option<string>;
-  readonly devUrl?: Option.Option<URL>;
 }
 
 export const sharedServerLocationFlags = {
   baseDir: baseDirFlag,
-  devUrl: devUrlFlag,
 } as const;
 
 export const projectLocationFlags = {
@@ -170,8 +152,6 @@ export const sharedServerCommandFlags = {
     ),
     Argument.optional,
   ),
-  devUrl: devUrlFlag,
-  noBrowser: noBrowserFlag,
   bootstrapFd: bootstrapFdFlag,
   autoBootstrapProjectFromCwd: autoBootstrapProjectFromCwdFlag,
   logWebSocketEvents: logWebSocketEventsFlag,
@@ -200,7 +180,6 @@ export const resolveServerConfig = (
   flags: CliServerFlags,
   cliLogLevel: Option.Option<LogLevel.LogLevel>,
   options?: {
-    readonly startupPresentation?: ServerConfig.StartupPresentation;
     readonly forceAutoBootstrapProjectFromCwd?: boolean;
   },
 ) =>
@@ -215,8 +194,6 @@ export const resolveServerConfig = (
       host: flags.host ?? Option.none(),
       baseDir: flags.baseDir ?? Option.none(),
       cwd: flags.cwd ?? Option.none(),
-      devUrl: flags.devUrl ?? Option.none(),
-      noBrowser: flags.noBrowser ?? Option.none(),
       bootstrapFd: flags.bootstrapFd ?? Option.none(),
       autoBootstrapProjectFromCwd: flags.autoBootstrapProjectFromCwd ?? Option.none(),
       logWebSocketEvents: flags.logWebSocketEvents ?? Option.none(),
@@ -255,10 +232,6 @@ export const resolveServerConfig = (
         },
       },
     );
-    const devUrl = Option.getOrElse(
-      resolveOptionPrecedence(normalizedFlags.devUrl, Option.fromUndefinedOr(env.devUrl)),
-      () => undefined,
-    );
     const baseDir = yield* resolveBaseDir(
       Option.getOrUndefined(
         resolveOptionPrecedence(
@@ -271,29 +244,17 @@ export const resolveServerConfig = (
     const rawCwd = Option.getOrElse(normalizedFlags.cwd, () => process.cwd());
     const cwd = path.resolve(yield* expandHomePath(rawCwd.trim()));
     yield* fs.makeDirectory(cwd, { recursive: true });
-    const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, devUrl);
+    const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir);
     yield* ServerConfig.ensureServerDirectories(derivedPaths);
     const persistedObservabilitySettings = yield* loadPersistedObservabilitySettings(
       derivedPaths.settingsPath,
     );
     const serverTracePath = env.traceFile ?? derivedPaths.serverTracePath;
     yield* fs.makeDirectory(path.dirname(serverTracePath), { recursive: true });
-    const startupPresentation = options?.startupPresentation ?? "browser";
-    const isHeadlessStartup = startupPresentation === "headless";
-    const noBrowser = Option.getOrElse(
-      resolveOptionPrecedence(
-        isHeadlessStartup ? Option.some(true) : Option.none(),
-        normalizedFlags.noBrowser,
-        Option.fromUndefinedOr(env.noBrowser),
-        Option.fromUndefinedOr(bootstrap?.noBrowser),
-      ),
-      () => mode === "desktop",
-    );
     const desktopBootstrapToken = bootstrap?.desktopBootstrapToken;
     const autoBootstrapProjectFromCwd = Option.getOrElse(
       resolveOptionPrecedence(
         Option.fromUndefinedOr(options?.forceAutoBootstrapProjectFromCwd),
-        isHeadlessStartup ? Option.some(false) : Option.none(),
         normalizedFlags.autoBootstrapProjectFromCwd,
         Option.fromUndefinedOr(env.autoBootstrapProjectFromCwd),
       ),
@@ -304,7 +265,7 @@ export const resolveServerConfig = (
         normalizedFlags.logWebSocketEvents,
         Option.fromUndefinedOr(env.logWebSocketEvents),
       ),
-      () => Boolean(devUrl),
+      () => false,
     );
     const tailscaleServeEnabled = Option.getOrElse(
       resolveOptionPrecedence(
@@ -322,7 +283,6 @@ export const resolveServerConfig = (
       ),
       () => 443,
     );
-    const staticDir = devUrl ? undefined : yield* ServerConfig.resolveStaticDir();
     const host = Option.getOrElse(
       resolveOptionPrecedence(
         normalizedFlags.host,
@@ -357,10 +317,6 @@ export const resolveServerConfig = (
       ...derivedPaths,
       serverTracePath,
       host,
-      staticDir,
-      devUrl,
-      noBrowser,
-      startupPresentation,
       desktopBootstrapToken,
       autoBootstrapProjectFromCwd,
       logWebSocketEvents,
@@ -382,8 +338,6 @@ export const resolveCliAuthConfig = (
       host: Option.none(),
       baseDir: flags.baseDir,
       cwd: Option.none(),
-      devUrl: flags.devUrl ?? Option.none(),
-      noBrowser: Option.none(),
       bootstrapFd: Option.none(),
       autoBootstrapProjectFromCwd: Option.none(),
       logWebSocketEvents: Option.none(),

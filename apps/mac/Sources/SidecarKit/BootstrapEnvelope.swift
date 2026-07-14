@@ -14,13 +14,7 @@ import Foundation
 public struct BootstrapEnvelope: Codable, Sendable, Equatable {
     /// Always "desktop" — the only literal the TS schema accepts.
     public var mode: String
-    public var noBrowser: Bool
     public var port: Int
-    /// Omitted when the backend runs under a different filesystem root than
-    /// the caller's own base dir (mirrors the WSL case in the TS reference,
-    /// where t3Home is deliberately left out so the Linux side doesn't
-    /// inherit a Windows-mapped path). SidecarKit always runs in-process on
-    /// the same machine, so callers normally pass this.
     public var t3Home: String?
     public var host: String
     public var desktopBootstrapToken: String
@@ -34,14 +28,12 @@ public struct BootstrapEnvelope: Codable, Sendable, Equatable {
         t3Home: String? = nil,
         host: String,
         desktopBootstrapToken: String,
-        noBrowser: Bool = true,
         tailscaleServeEnabled: Bool = false,
         tailscaleServePort: Int = 443,
         otlpTracesUrl: String? = nil,
         otlpMetricsUrl: String? = nil
     ) {
         self.mode = "desktop"
-        self.noBrowser = noBrowser
         self.port = port
         self.t3Home = t3Home
         self.host = host

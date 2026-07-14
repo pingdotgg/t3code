@@ -67,7 +67,7 @@ const makeScope = (threadId: ThreadId = parentThreadId): McpInvocationScope => (
   threadId,
   providerSessionId: "provider-session-1",
   providerInstanceId: ProviderInstanceId.make("claude"),
-  capabilities: new Set(["preview", "agents"]),
+  capabilities: new Set(["agents"]),
   issuedAt: 0,
   expiresAt: Number.MAX_SAFE_INTEGER,
 });

@@ -74,20 +74,21 @@ describe("mobile file tree helpers", () => {
         kind: "file",
         path: ".repos/alchemy-effect/examples/aws-lambda/src/JobNotifications.ts",
       },
-      { kind: "directory", path: "apps/web/src/components/chat" },
-      { kind: "file", path: "apps/web/src/components/chat/ChatHeader.test.ts" },
-      { kind: "file", path: "apps/web/src/components/chat/ChatHeader.tsx" },
-      { kind: "file", path: "apps/web/src/components/chat/Composer.tsx" },
+      { kind: "directory", path: "apps/mac/Sources/SergeCodeMac/UI/Chat" },
+      { kind: "file", path: "apps/mac/Sources/SergeCodeMac/UI/Chat/ChatHeaderTests.swift" },
+      { kind: "file", path: "apps/mac/Sources/SergeCodeMac/UI/Chat/ChatHeader.swift" },
+      { kind: "file", path: "apps/mac/Sources/SergeCodeMac/UI/Chat/Composer.swift" },
     ]);
 
     const expectedPaths = [
       "apps",
-      "apps/web",
-      "apps/web/src",
-      "apps/web/src/components",
-      "apps/web/src/components/chat",
-      "apps/web/src/components/chat/ChatHeader.test.ts",
-      "apps/web/src/components/chat/ChatHeader.tsx",
+      "apps/mac",
+      "apps/mac/Sources",
+      "apps/mac/Sources/SergeCodeMac",
+      "apps/mac/Sources/SergeCodeMac/UI",
+      "apps/mac/Sources/SergeCodeMac/UI/Chat",
+      "apps/mac/Sources/SergeCodeMac/UI/Chat/ChatHeader.swift",
+      "apps/mac/Sources/SergeCodeMac/UI/Chat/ChatHeaderTests.swift",
     ];
 
     for (const searchQuery of ["chat hea", "cht hdr"]) {

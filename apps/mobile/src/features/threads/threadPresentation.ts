@@ -46,7 +46,6 @@ function isLatestTurnSettled(
 /**
  * Resolves the user-facing status of a thread, in priority order. Returns
  * `null` for quiescent threads so rows stay free of "Idle"-style noise.
- * Mirrors `resolveThreadStatusPill` in apps/web/src/components/Sidebar.logic.ts.
  */
 export function resolveThreadStatus(
   thread: EnvironmentThreadShell,

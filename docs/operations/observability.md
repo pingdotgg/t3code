@@ -73,7 +73,7 @@ node --run dev
 ```
 
 ```bash
-node --run dev:desktop
+vp run dev:server
 ```
 
 ### Option 2: Run With A Local LGTM Stack
@@ -128,7 +128,7 @@ node --run dev
 Monorepo desktop dev:
 
 ```bash
-node --run dev:desktop
+vp run dev:server
 ```
 
 Packaged desktop app:
