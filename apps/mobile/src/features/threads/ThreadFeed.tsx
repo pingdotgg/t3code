@@ -45,7 +45,6 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-import { TouchableOpacity } from "react-native-gesture-handler";
 import ImageViewing from "react-native-image-viewing";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { type SharedValue } from "react-native-reanimated";
@@ -95,6 +94,10 @@ import { useAssetUrl } from "../../state/assets";
 import { resolveWorkspaceRelativeFilePath } from "../files/filePath";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+import {
+  chatAttachmentAccessibilityLabel,
+  formatChatAttachmentSize,
+} from "./chatAttachmentPresentation";
 
 const MESSAGE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
   hour: "numeric",
@@ -134,26 +137,84 @@ export interface ThreadFeedProps {
 function MessageAttachmentImage(props: {
   readonly environmentId: EnvironmentId;
   readonly attachmentId: string;
+  readonly name: string;
+  readonly sizeBytes: number;
   readonly className: string;
   readonly onPressImage: (uri: string, headers?: Record<string, string>) => void;
 }) {
+  const [loadState, setLoadState] = useState<"loading" | "loaded" | "error">("loading");
+  const [retryCount, setRetryCount] = useState(0);
   const uri = useAssetUrl(props.environmentId, {
     _tag: "attachment",
     attachmentId: props.attachmentId,
   });
+  const accessibilityLabel = chatAttachmentAccessibilityLabel(props.name, props.sizeBytes);
 
-  if (uri === null) {
-    return (
-      <View className={`${props.className} items-center justify-center`}>
-        <ActivityIndicator />
-      </View>
-    );
-  }
+  useEffect(() => {
+    setLoadState("loading");
+    setRetryCount(0);
+  }, [uri]);
 
   return (
-    <TouchableOpacity activeOpacity={0.7} onPress={() => props.onPressImage(uri)}>
-      <Image source={{ uri }} className={props.className} resizeMode="cover" />
-    </TouchableOpacity>
+    <View className={`${props.className} overflow-hidden`}>
+      {uri !== null ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Open ${accessibilityLabel}`}
+          accessibilityState={{ disabled: loadState !== "loaded" }}
+          disabled={loadState !== "loaded"}
+          className="absolute inset-0"
+          onPress={() => props.onPressImage(uri)}
+        >
+          <Image
+            key={`${uri}:${retryCount}`}
+            accessible={false}
+            source={{ uri }}
+            className="h-full w-full"
+            resizeMode="cover"
+            onLoadStart={() => setLoadState("loading")}
+            onLoad={() => setLoadState("loaded")}
+            onError={() => setLoadState("error")}
+          />
+        </Pressable>
+      ) : null}
+
+      {loadState === "loading" ? (
+        <View className="absolute inset-0 items-center justify-center gap-2 bg-black/10 dark:bg-black/25">
+          <ActivityIndicator />
+          <Text className="text-xs text-foreground-muted">Loading image…</Text>
+        </View>
+      ) : null}
+
+      {loadState === "error" ? (
+        <View className="absolute inset-0 items-center justify-center gap-2 bg-card/95 px-4">
+          <Text className="text-center text-sm font-t3-bold text-foreground">
+            Image unavailable
+          </Text>
+          <Text className="text-center text-xs text-foreground-muted">
+            Couldn’t load {props.name}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Retry loading ${props.name}`}
+            className="rounded-full bg-subtle-strong px-3 py-1.5 active:opacity-70"
+            onPress={() => {
+              setLoadState("loading");
+              setRetryCount((count) => count + 1);
+            }}
+          >
+            <Text className="text-xs font-t3-bold text-foreground">Try again</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
+      <View className="absolute inset-x-0 bottom-0 flex-row items-center justify-between gap-2 bg-black/55 px-3 py-2">
+        <Text className="min-w-0 flex-1 text-xs font-t3-medium text-white" numberOfLines={1}>
+          {props.name}
+        </Text>
+        <Text className="text-xs text-white/80">{formatChatAttachmentSize(props.sizeBytes)}</Text>
+      </View>
+    </View>
   );
 }
 
@@ -794,6 +855,8 @@ function renderFeedEntry(
                   key={attachment.id}
                   environmentId={props.environmentId}
                   attachmentId={attachment.id}
+                  name={attachment.name}
+                  sizeBytes={attachment.sizeBytes}
                   className="aspect-[1.3] w-full rounded-[14px] bg-white/15"
                   onPressImage={props.onPressImage}
                 />
@@ -851,6 +914,8 @@ function renderFeedEntry(
               key={attachment.id}
               environmentId={props.environmentId}
               attachmentId={attachment.id}
+              name={attachment.name}
+              sizeBytes={attachment.sizeBytes}
               className="mt-1.5 aspect-[1.3] w-full rounded-[18px] bg-neutral-200 dark:bg-neutral-800"
               onPressImage={props.onPressImage}
             />
