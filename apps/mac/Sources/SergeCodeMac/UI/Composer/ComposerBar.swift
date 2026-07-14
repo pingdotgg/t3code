@@ -33,6 +33,7 @@ public struct ComposerBar: View {
     @UIState private var suggestionMenuDismissed = false
 
     @UIState private var attachmentEncodeTask: Task<Void, Never>?
+    @UIState private var defersSuggestionWork = false
 
     /// When set, the next send rewinds the origin thread to just before this
     /// message. Cleared on send, draft clear, or thread switch because edit
@@ -118,6 +119,7 @@ public struct ComposerBar: View {
     /// command matches", so the menu can show a "No matches" row instead of
     /// vanishing).
     private var slashMatches: [SlashCommandItem]? {
+        guard !defersSuggestionWork else { return nil }
         guard draft.hasPrefix("/"), !draft.contains("\n") else { return nil }
         let token = draft.dropFirst()
         guard !token.contains(" ") else { return nil }
@@ -378,6 +380,7 @@ public struct ComposerBar: View {
         .animation(Motion.reveal, value: model.lastError)
         .animation(Motion.feedback, value: isThreadRunning)
         .task {
+            defersSuggestionWork = ComposerPerformancePolicy.shouldDeferSuggestions(for: draft)
             model.dictation.insertHandler = { threadID, text in
                 appendDictated(text, to: threadID)
             }
@@ -413,11 +416,13 @@ public struct ComposerBar: View {
         // switches, so only staged edit context and transient UI state drop.
         .onChange(of: model.selectedThreadID) { _, _ in
             resetTransientState()
+            defersSuggestionWork = ComposerPerformancePolicy.shouldDeferSuggestions(for: draft)
             model.clearComposerPrefill()
         }
         // User wiped the draft: drop edit identity so a later unrelated
         // send is a normal append.
         .onChange(of: draft) { _, newValue in
+            defersSuggestionWork = ComposerPerformancePolicy.shouldDeferSuggestions(for: newValue)
             if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 editedMessageID = nil
                 editedMessageThreadID = nil
@@ -703,6 +708,12 @@ public struct ComposerBar: View {
     /// in one) and kicks a debounced workspace search.
     private func updateMentionSearch(for text: String) {
         mentionSearchTask?.cancel()
+        guard !ComposerPerformancePolicy.shouldDeferSuggestions(for: text) else {
+            mentionQuery = nil
+            mentionResults = []
+            mentionSearchInFlight = false
+            return
+        }
         guard let token = Self.trailingMentionToken(in: text) else {
             mentionQuery = nil
             mentionResults = []
@@ -836,29 +847,37 @@ public struct ComposerBar: View {
         attachmentEncodeTask?.cancel()
         attachmentError = nil
         attachmentEncodeTask = Task {
-            var items: [(name: String, mimeType: String, data: Data)] = []
             var loadError: String?
+            var encodedAttachments: [OutgoingAttachment] = []
+            let existingCount = model.composerDraft(for: threadID).attachments.count
             for (index, provider) in providers.enumerated() {
                 guard !Task.isCancelled else { return }
+                guard existingCount + encodedAttachments.count < Self.maxAttachments else {
+                    loadError = "At most \(Self.maxAttachments) attachments per message."
+                    break
+                }
                 let mimeType = Self.imageMIMEType(for: provider)
                 do {
                     let data = try await Self.loadImageData(from: provider)
                     let ext = UTType(mimeType: mimeType)?.preferredFilenameExtension ?? "png"
                     let name = provider.suggestedName.map { "\($0).\(ext)" }
                         ?? "Pasted image \(index + 1).\(ext)"
-                    items.append((name: name, mimeType: mimeType, data: data))
+                    let (encoded, encodeError) = await Self.encodeFromData(
+                        [(name: name, mimeType: mimeType, data: data)],
+                        existingCount: existingCount + encodedAttachments.count)
+                    if let encodeError {
+                        loadError = encodeError
+                    }
+                    encodedAttachments.append(contentsOf: encoded)
                 } catch {
                     loadError = "Could not read a pasted or dropped image."
                 }
             }
             guard !Task.isCancelled else { return }
-            let existingCount = model.composerDraft(for: threadID).attachments.count
-            let (encoded, encodeError) = await Self.encodeFromData(items, existingCount: existingCount)
-            guard !Task.isCancelled else { return }
-            attachmentError = encodeError ?? loadError
-            guard !encoded.isEmpty else { return }
+            attachmentError = loadError
+            guard !encodedAttachments.isEmpty else { return }
             let current = model.composerDraft(for: threadID).attachments
-            model.setComposerDraftAttachments(current + encoded, for: threadID)
+            model.setComposerDraftAttachments(current + encodedAttachments, for: threadID)
         }
     }
 
