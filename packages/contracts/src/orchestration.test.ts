@@ -18,8 +18,6 @@ import {
   OrchestrationSession,
   ProjectCreateCommand,
   ProviderInteractionMode,
-  isNonMutatingInteractionMode,
-  resolveEffectiveRuntimeMode,
   ThreadMetaUpdatedPayload,
   ThreadTurnStartCommand,
   ThreadCreatedPayload,
@@ -769,24 +767,6 @@ it.effect("decodes composer payload weight metadata", () =>
 
     assert.strictEqual(parsed.sources[0]?.kind, "terminal_context");
     assert.strictEqual(parsed.sources[0]?.trimAvailable, true);
-  }),
-);
-
-it.effect("advisor clamps the effective runtime mode to approval-required", () =>
-  Effect.gen(function* () {
-    yield* Effect.void;
-
-    for (const runtimeMode of ["approval-required", "auto-accept-edits", "full-access"] as const) {
-      assert.strictEqual(resolveEffectiveRuntimeMode(runtimeMode, "advisor"), "approval-required");
-      // Only advisor clamps; plan is a prompt-level mode and leaves permissions alone.
-      assert.strictEqual(resolveEffectiveRuntimeMode(runtimeMode, "plan"), runtimeMode);
-      assert.strictEqual(resolveEffectiveRuntimeMode(runtimeMode, "default"), runtimeMode);
-      assert.strictEqual(resolveEffectiveRuntimeMode(runtimeMode, undefined), runtimeMode);
-    }
-
-    assert.strictEqual(isNonMutatingInteractionMode("advisor"), true);
-    assert.strictEqual(isNonMutatingInteractionMode("plan"), false);
-    assert.strictEqual(isNonMutatingInteractionMode("default"), false);
   }),
 );
 

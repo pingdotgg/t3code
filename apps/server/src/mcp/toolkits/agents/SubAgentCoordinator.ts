@@ -25,7 +25,6 @@ import {
   type TurnId,
   type OrchestrationThread,
   type OrchestrationThreadActivity,
-  resolveEffectiveRuntimeMode,
   type RuntimeMode,
   type ServerProvider,
   type SubAgentListResult,
@@ -53,6 +52,7 @@ import { enforceSubAgentStandardMode } from "../../../orchestration/subAgentMode
 import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
 import { ProviderService } from "../../../provider/Services/ProviderService.ts";
 import { readTurnStallThresholdMs } from "../../../provider/turnReliabilityConfig.ts";
+import { resolveEffectiveRuntimeMode } from "../../../orchestration/InteractionModePermissions.ts";
 import type { McpInvocationScope } from "../../McpInvocationContext.ts";
 
 const WAIT_POLL_INTERVAL_MILLIS = 500;

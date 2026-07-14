@@ -10,7 +10,6 @@ import {
   type ProjectId,
   type OrchestrationSession,
   type OrchestrationThread,
-  resolveEffectiveRuntimeMode,
   ThreadId,
   type ProviderSession,
   type RuntimeMode,
@@ -47,6 +46,7 @@ import {
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
+import { resolveEffectiveRuntimeMode } from "../InteractionModePermissions.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
