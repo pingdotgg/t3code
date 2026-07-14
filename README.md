@@ -20,10 +20,10 @@ vp run build:server
 swift run --package-path apps/mac SergeCodeMac
 ```
 
-To assemble a local app bundle:
+To build both the backend sidecar and a local app bundle in one step:
 
 ```bash
-vp run package:mac
+vp run build:local
 open apps/mac/dist/SurgeCode.app
 ```
 

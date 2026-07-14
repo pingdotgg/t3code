@@ -8,8 +8,8 @@ vp run build:server
 # Run the native macOS app from SwiftPM
 swift run --package-path apps/mac SergeCodeMac
 
-# Or assemble a local .app bundle
-vp run package:mac
+# Or build the backend and assemble a local .app bundle in one step
+vp run build:local
 open apps/mac/dist/SurgeCode.app
 
 # Run a standalone backend for mobile pairing
