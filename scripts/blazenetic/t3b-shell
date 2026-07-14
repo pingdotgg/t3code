@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# t3b-shell — open an interactive shell rooted in the repository, with a short
+# status banner. Never mutates git state.
+set -Eeuo pipefail
+
+_self="$(readlink -f "${BASH_SOURCE[0]}")"
+# shellcheck source=lib/common.sh
+source "$(dirname "$_self")/lib/common.sh"
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: t3b-shell
+  Print a repo status banner and drop into an interactive shell in the repo.
+EOF
+}
+case "${1:-}" in -h|--help) usage; exit 0 ;; esac
+
+t3b::load_env
+repo="$(t3b::repo)"
+branch="$(t3b::branch "$repo")"
+
+t3b::heading "T3 Code — Blazenetic"
+t3b::status INFO "Repo:   $repo"
+t3b::status INFO "Branch: $branch"
+if ab="$(t3b::ahead_behind "$repo" "$(t3b::default_branch)" main 2>/dev/null)"; then
+  t3b::status INFO "$(t3b::default_branch) vs main: ahead ${ab% *}, behind ${ab#* }"
+fi
+if ab="$(t3b::ahead_behind "$repo" main upstream/main 2>/dev/null)"; then
+  t3b::status INFO "main vs upstream/main: ahead ${ab% *}, behind ${ab#* }"
+fi
+
+cd "$repo"
+# Launch the user's interactive shell rooted here. Not a login shell, to avoid
+# surprising re-exec loops; PATH is inherited from the caller.
+exec "${SHELL:-/bin/bash}" -i

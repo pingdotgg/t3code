@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# t3b-desktop — launch the Electron desktop app in development mode from the
+# live source tree (`vp run dev:desktop`).
+#
+# This is the primary answer to "ordinary edits without rebuilding/reinstalling
+# an AUR package": the desktop app runs straight from the working tree with the
+# dev server's hot reload.
+#
+# Wayland: launched natively. No ozone/X11 flags are forced. If you hit a
+# Wayland-specific rendering issue, see docs/blazenetic/TROUBLESHOOTING.md for
+# optional, opt-in overrides — they are intentionally NOT hard-coded here.
+#
+# Signal handling: the dev command is started in its own process group (bash
+# job control, `set -m`). On SIGINT/SIGTERM/SIGHUP we tear down the entire
+# subtree (t3b::kill_tree) so vite, electron, node and the dev server — which
+# detaches into its own session — are all stopped together, no orphans.
+# (SIGINT is trappable only when the wrapper runs in the foreground with a
+# controlling terminal, i.e. normal konsole use; a shell that starts it as a
+# background job inherits SIGINT ignored. SIGTERM/SIGHUP are always handled.)
+set -Eeuo pipefail
+
+_self="$(readlink -f "${BASH_SOURCE[0]}")"
+# shellcheck source=lib/common.sh
+source "$(dirname "$_self")/lib/common.sh"
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: t3b-desktop [-- <extra vp args>]
+  Launch the T3 Code Electron desktop app in development mode (`vp run
+  dev:desktop`) from the live working tree. Interrupting (Ctrl-C) shuts down the
+  whole dev process group cleanly. Extra args are passed through to vp.
+EOF
+}
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+esac
+
+t3b::load_env
+repo="$(t3b::repo)"
+t3b::ensure_vp
+t3b::require_deps "$repo" || t3b::die "Install dependencies before running dev."
+
+t3b::info "Repo:    $repo"
+t3b::info "Branch:  $(t3b::branch "$repo")"
+t3b::info "Session: $(t3b::session_type)"
+t3b::info "Running: vp run dev:desktop   (Ctrl-C to stop)"
+cd "$repo"
+
+# Enable job control so the background job gets its own process group
+# (PGID == job PID). This lets us signal the whole tree on interrupt.
+set -m
+vp run dev:desktop "$@" &
+child=$!
+set +m
+
+# shellcheck disable=SC2329  # invoked indirectly via the trap below
+terminate() {
+  trap - INT TERM HUP
+  t3b::info "Shutting down desktop dev process tree..."
+  t3b::kill_tree "$child"
+  wait "$child" 2>/dev/null || true
+}
+trap terminate INT TERM HUP
+
+# Wait for the dev command; propagate its exit status.
+status=0
+wait "$child" || status=$?
+trap - INT TERM HUP
+exit "$status"

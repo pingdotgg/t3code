@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# t3b-web — launch the browser (web) development mode from the live source tree.
+#
+# Runs `vp run dev:web`. The local dev-server URL is printed by vp's own output.
+set -Eeuo pipefail
+
+_self="$(readlink -f "${BASH_SOURCE[0]}")"
+# shellcheck source=lib/common.sh
+source "$(dirname "$_self")/lib/common.sh"
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: t3b-web [-- <extra vp args>]
+  Launch the web development server (`vp run dev:web`) from the live working
+  tree. The local URL appears in vp's output. Extra args are passed through.
+EOF
+}
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+esac
+
+t3b::load_env
+repo="$(t3b::repo)"
+t3b::ensure_vp
+t3b::require_deps "$repo" || t3b::die "Install dependencies before running dev."
+
+t3b::info "Repo:   $repo"
+t3b::info "Running: vp run dev:web  (watch vp output for the local URL)"
+cd "$repo"
+exec vp run dev:web "$@"

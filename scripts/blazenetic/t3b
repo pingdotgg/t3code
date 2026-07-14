@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# t3b — launch the full T3 Code development environment from the live source tree.
+#
+# Runs `vp run dev` in the repository. Ordinary source edits are picked up by the
+# dev server / hot reload — no AUR package rebuild or reinstall required.
+set -Eeuo pipefail
+
+_self="$(readlink -f "${BASH_SOURCE[0]}")"
+# shellcheck source=lib/common.sh
+source "$(dirname "$_self")/lib/common.sh"
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: t3b [-- <extra vp args>]
+  Launch the complete T3 Code development environment (`vp run dev`) from the
+  live working tree. Extra arguments after `--` are passed through to vp.
+EOF
+}
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+esac
+
+t3b::load_env
+repo="$(t3b::repo)"
+t3b::ensure_vp
+t3b::require_deps "$repo" || t3b::die "Install dependencies before running dev."
+
+t3b::info "Repo:   $repo"
+t3b::info "Branch: $(t3b::branch "$repo")"
+t3b::info "Running: vp run dev"
+cd "$repo"
+exec vp run dev "$@"
