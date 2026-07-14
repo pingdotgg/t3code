@@ -840,7 +840,10 @@ public actor LiveBackend: BackendService {
             checkpointRoutes[summary.checkpointRef] = (threadID, summary.checkpointTurnCount)
             let at = WireDate.parse(summary.completedAt) ?? Date()
             checkpoints.append(CheckpointMapping.checkpoint(from: summary, threadID: threadID, at: at))
-            maxTurn = max(maxTurn, summary.checkpointTurnCount)
+            maxTurn = CheckpointMapping.diffableTurnCount(
+                current: maxTurn,
+                checkpointTurnCount: summary.checkpointTurnCount,
+                status: summary.status)
         }
         checkpointsByThread[threadID] = checkpoints
         currentTurnCount[threadID] = maxTurn
@@ -1002,8 +1005,10 @@ public actor LiveBackend: BackendService {
                             isImplemented: plan.implementedAt != nil, createdAt: at))))
 
         case .threadTurnDiffCompleted(let payload):
-            currentTurnCount[threadID] = max(
-                currentTurnCount[threadID] ?? 0, payload.checkpointTurnCount)
+            currentTurnCount[threadID] = CheckpointMapping.diffableTurnCount(
+                current: currentTurnCount[threadID] ?? 0,
+                checkpointTurnCount: payload.checkpointTurnCount,
+                status: payload.status)
             checkpointRoutes[payload.checkpointRef] = (threadID, payload.checkpointTurnCount)
             // Dedup by checkpointRef: a checkpoint already present in the
             // snapshot can also arrive again on the unfiltered live tail.

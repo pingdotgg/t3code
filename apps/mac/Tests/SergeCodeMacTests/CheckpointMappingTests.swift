@@ -75,6 +75,22 @@ struct CheckpointMappingTests {
         #expect(checkpoint.files.isEmpty)
     }
 
+    @Test("only ready checkpoints advance the diffable turn cursor")
+    func advancesDiffableTurnCursorForReadyCheckpoints() {
+        #expect(
+            CheckpointMapping.diffableTurnCount(
+                current: 2, checkpointTurnCount: 3, status: .ready) == 3)
+        #expect(
+            CheckpointMapping.diffableTurnCount(
+                current: 2, checkpointTurnCount: 3, status: .missing) == 2)
+        #expect(
+            CheckpointMapping.diffableTurnCount(
+                current: 2, checkpointTurnCount: 3, status: .error) == 2)
+        #expect(
+            CheckpointMapping.diffableTurnCount(
+                current: 3, checkpointTurnCount: 2, status: .ready) == 3)
+    }
+
     // MARK: - toolCounts
 
     private func tool(

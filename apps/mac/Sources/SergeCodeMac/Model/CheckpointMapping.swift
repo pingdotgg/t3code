@@ -5,6 +5,16 @@ import T3Kit
 /// Kept free of actor state so unit tests can cover the field-preserving map
 /// without standing up LiveBackend.
 enum CheckpointMapping {
+    /// Advances the cursor used by diff RPCs only when the checkpoint has a
+    /// real git ref. Provider diff events briefly create `missing`
+    /// placeholders whose refs are bookkeeping identifiers, not revisions.
+    static func diffableTurnCount(
+        current: Int, checkpointTurnCount: Int, status: OrchestrationCheckpointStatus
+    ) -> Int {
+        guard status == .ready else { return current }
+        return max(current, checkpointTurnCount)
+    }
+
     static func checkpoint(
         from summary: OrchestrationCheckpointSummary, threadID: String, at: Date? = nil
     ) -> Checkpoint {
