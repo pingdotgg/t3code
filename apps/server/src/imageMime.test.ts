@@ -37,6 +37,27 @@ describe("imageMime", () => {
     expect(parseBase64DataUrl("data:image/png;base64,SGVs,bG8=")).toBeNull();
   });
 
+  it("rejects structurally malformed base64", () => {
+    // '=' before the trailing padding position
+    expect(parseBase64DataUrl("data:image/png;base64,AB=CD===")).toBeNull();
+    expect(parseBase64DataUrl("data:image/png;base64,SGV=bG8=")).toBeNull();
+    // more than two padding characters
+    expect(parseBase64DataUrl("data:image/png;base64,SGVsbG8=====AAA")).toBeNull();
+    // length not a multiple of 4
+    expect(parseBase64DataUrl("data:image/png;base64,SGVsbG8")).toBeNull();
+  });
+
+  it("accepts base64 with one or two trailing padding characters", () => {
+    expect(parseBase64DataUrl("data:image/png;base64,SGVsbA==")).toEqual({
+      mimeType: "image/png",
+      base64: "SGVsbA==",
+    });
+    expect(parseBase64DataUrl("data:image/png;base64,SGVsbG8h")).toEqual({
+      mimeType: "image/png",
+      base64: "SGVsbG8h",
+    });
+  });
+
   it("rejects empty and whitespace-only payloads", () => {
     expect(parseBase64DataUrl("data:image/png;base64,")).toBeNull();
     expect(parseBase64DataUrl("data:image/png;base64, \r\n")).toBeNull();

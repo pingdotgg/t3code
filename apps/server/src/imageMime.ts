@@ -98,7 +98,16 @@ export function parseBase64DataUrl(
     runs.push(payload.slice(runStart));
   }
   const base64 = runs.length === 1 ? runs[0]! : runs.join("");
-  if (base64.length === 0) return null;
+  if (base64.length === 0 || base64.length % 4 !== 0) return null;
+  const firstPad = base64.indexOf("=");
+  if (firstPad !== -1) {
+    // '=' is only valid as one or two trailing padding characters; Node's
+    // decoder would otherwise silently truncate at the first '='.
+    if (base64.length - firstPad > 2) return null;
+    for (let index = firstPad; index < base64.length; index += 1) {
+      if (base64.charCodeAt(index) !== 0x3d) return null;
+    }
+  }
 
   return { mimeType, base64 };
 }
