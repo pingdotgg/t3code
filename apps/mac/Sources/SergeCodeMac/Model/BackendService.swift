@@ -125,6 +125,8 @@ public protocol BackendService: Sendable {
     /// Start (or keep) a live VCS status subscription for a thread's
     /// workspace; status arrives via `.vcsStatusChanged` events.
     func watchVcsStatus(threadID: String) async throws
+    func pullRequestReview(threadID: String, reference: String) async throws
+        -> PullRequestReviewSnapshot
     func listBranches(threadID: String, query: String?) async throws -> [BranchRef]
     func switchBranch(threadID: String, name: String) async throws
     func createBranch(threadID: String, name: String) async throws

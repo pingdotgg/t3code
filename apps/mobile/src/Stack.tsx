@@ -22,6 +22,7 @@ import { AdaptiveWorkspaceLayout } from "./features/layout/AdaptiveWorkspaceLayo
 import { HardwareKeyboardCommandProvider } from "./features/keyboard/HardwareKeyboardCommandProvider";
 import { ReviewCommentComposerSheet } from "./features/review/ReviewCommentComposerSheet";
 import { ReviewSheet } from "./features/review/ReviewSheet";
+import { PullRequestReviewScreen } from "./features/review/PullRequestReviewScreen";
 import { ThreadTerminalRouteScreen } from "./features/terminal/ThreadTerminalRouteScreen";
 import { GitBranchesSheet } from "./features/threads/git/GitBranchesSheet";
 import { GitCommitSheet } from "./features/threads/git/GitCommitSheet";
@@ -339,6 +340,11 @@ export const RootStack = createNativeStackNavigator({
     ThreadReview: createNativeStackScreen({
       screen: ReviewSheet,
       linking: `${THREAD_LINKING_PREFIX}/review`,
+      options: SOLID_HEADER_OPTIONS,
+    }),
+    PullRequestReview: createNativeStackScreen({
+      screen: PullRequestReviewScreen,
+      linking: `${THREAD_LINKING_PREFIX}/pull-request-review`,
       options: SOLID_HEADER_OPTIONS,
     }),
     ThreadReviewComment: createNativeStackScreen({

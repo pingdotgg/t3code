@@ -290,6 +290,27 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
           disabled={busy || !isRepo}
           onPress={() => navigation.navigate("ThreadReview", { environmentId, threadId })}
         />
+        {gitStatus.data?.pr ? (
+          <>
+            <View className="ml-12 h-px" style={{ backgroundColor: borderColor }} />
+            <SheetListRow
+              icon="bubble.left.and.bubble.right"
+              title="PR comments"
+              subtitle={
+                gitStatus.data.pr.unresolvedReviewThreadCount === null
+                  ? `Review discussion on PR #${gitStatus.data.pr.number}`
+                  : `${gitStatus.data.pr.unresolvedReviewThreadCount} unresolved review ${gitStatus.data.pr.unresolvedReviewThreadCount === 1 ? "thread" : "threads"}`
+              }
+              disabled={busy}
+              onPress={() =>
+                navigation.navigate("PullRequestReview", {
+                  environmentId: String(environmentId),
+                  threadId: String(threadId),
+                })
+              }
+            />
+          </>
+        ) : null}
         <View className="ml-12 h-px" style={{ backgroundColor: borderColor }} />
         <SheetListRow
           icon="point.topleft.down.curvedto.point.bottomright.up"

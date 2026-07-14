@@ -949,6 +949,46 @@ public enum PullRequestReviewDecision: String, Sendable {
     case reviewRequired = "REVIEW_REQUIRED"
 }
 
+public struct PullRequestReviewAuthor: Hashable, Sendable {
+    public var login: String
+    public var avatarURL: String?
+    public var isBot: Bool
+}
+
+public struct PullRequestReviewComment: Identifiable, Hashable, Sendable {
+    public var id: String
+    public var author: PullRequestReviewAuthor
+    public var authorAssociation: String?
+    public var body: String
+    public var url: String
+    public var createdAt: Date
+    public var updatedAt: Date
+    /// Present for a review summary (for example COMMENTED or APPROVED), nil
+    /// for a conversation comment or inline reply.
+    public var reviewState: String?
+}
+
+public struct PullRequestReviewThread: Identifiable, Hashable, Sendable {
+    public var id: String
+    public var isResolved: Bool
+    public var isOutdated: Bool
+    public var path: String
+    public var line: Int?
+    public var originalLine: Int?
+    public var diffSide: String?
+    public var comments: [PullRequestReviewComment]
+}
+
+public struct PullRequestReviewSnapshot: Hashable, Sendable {
+    public var provider: String
+    public var number: Int
+    public var url: String
+    public var conversation: [PullRequestReviewComment]
+    public var threads: [PullRequestReviewThread]
+    public var unresolvedThreadCount: Int
+    public var truncated: Bool
+}
+
 /// Working-tree + branch + PR status for one project repo.
 public struct VcsStatus: Hashable, Sendable {
     public var isRepo: Bool

@@ -2088,6 +2088,46 @@ public actor LiveBackend: BackendService {
         vcsSubscriptions[threadID] = task
     }
 
+    public func pullRequestReview(threadID: String, reference: String) async throws
+        -> PullRequestReviewSnapshot
+    {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        let wire = try await client.getPullRequestReview(
+            cwd: try threadCwd(threadID), reference: reference)
+        func author(_ value: T3PullRequestReviewAuthor) -> PullRequestReviewAuthor {
+            PullRequestReviewAuthor(
+                login: value.login, avatarURL: value.avatarUrl, isBot: value.isBot)
+        }
+        func comment(_ value: T3PullRequestReviewComment) -> PullRequestReviewComment {
+            PullRequestReviewComment(
+                id: value.id, author: author(value.author),
+                authorAssociation: value.authorAssociation, body: value.body, url: value.url,
+                createdAt: WireDate.parse(value.createdAt) ?? .distantPast,
+                updatedAt: WireDate.parse(value.updatedAt) ?? .distantPast,
+                reviewState: nil)
+        }
+        let conversation = wire.comments.map(comment) + wire.reviews.map {
+            PullRequestReviewComment(
+                id: $0.id, author: author($0.author), authorAssociation: $0.authorAssociation,
+                body: $0.body, url: $0.url,
+                createdAt: WireDate.parse($0.createdAt) ?? .distantPast,
+                updatedAt: WireDate.parse($0.updatedAt) ?? .distantPast,
+                reviewState: $0.state)
+        }
+        return PullRequestReviewSnapshot(
+            provider: wire.provider, number: wire.number, url: wire.url,
+            conversation: conversation.sorted { $0.createdAt < $1.createdAt },
+            threads: wire.threads.map { thread in
+                PullRequestReviewThread(
+                    id: thread.id, isResolved: thread.isResolved,
+                    isOutdated: thread.isOutdated, path: thread.path, line: thread.line,
+                    originalLine: thread.originalLine, diffSide: thread.diffSide,
+                    comments: thread.comments.map(comment))
+            },
+            unresolvedThreadCount: wire.unresolvedThreadCount,
+            truncated: wire.truncated)
+    }
+
     private func clearVcsSubscription(threadID: String) {
         vcsSubscriptions[threadID] = nil
         vcsWatchedCwd[threadID] = nil

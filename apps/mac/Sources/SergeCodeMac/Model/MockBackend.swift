@@ -157,6 +157,35 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         await state.emitVcsStatus(threadID: threadID)
     }
 
+    public func pullRequestReview(threadID: String, reference: String) async throws
+        -> PullRequestReviewSnapshot
+    {
+        let bot = PullRequestReviewAuthor(
+            login: "coderabbitai[bot]", avatarURL: nil, isBot: true)
+        let now = Date()
+        let inline = PullRequestReviewComment(
+            id: "mock-inline-review", author: bot, authorAssociation: "CONTRIBUTOR",
+            body: "Guard this failure path so a reconnect cannot discard the pending review.",
+            url: "https://github.com/SergeSerb2/SergeCode/pull/1#discussion_r1",
+            createdAt: now, updatedAt: now, reviewState: nil)
+        let summary = PullRequestReviewComment(
+            id: "mock-review-summary", author: bot, authorAssociation: "CONTRIBUTOR",
+            body: "I found one actionable issue and left it inline.",
+            url: "https://github.com/SergeSerb2/SergeCode/pull/1#pullrequestreview-1",
+            createdAt: now, updatedAt: now, reviewState: "COMMENTED")
+        return PullRequestReviewSnapshot(
+            provider: "github", number: Int(reference) ?? 1,
+            url: "https://github.com/SergeSerb2/SergeCode/pull/1",
+            conversation: [summary],
+            threads: [
+                PullRequestReviewThread(
+                    id: "mock-thread", isResolved: false, isOutdated: false,
+                    path: "apps/mac/Sources/SergeCodeMac/Model/LiveBackend.swift",
+                    line: 2142, originalLine: 2140, diffSide: "RIGHT", comments: [inline])
+            ],
+            unresolvedThreadCount: 1, truncated: false)
+    }
+
     public func listBranches(threadID: String, query: String?) async throws -> [BranchRef] {
         [
             BranchRef(name: "main", isCurrent: false, isDefault: true, isRemote: false),

@@ -13,5 +13,10 @@ export function createReviewEnvironmentAtoms<R, E>(
       tag: WS_METHODS.reviewGetDiffPreview,
       staleTimeMs: 5_000,
     }),
+    pullRequest: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:review:pull-request",
+      tag: WS_METHODS.reviewGetPullRequest,
+      staleTimeMs: 15_000,
+    }),
   };
 }
