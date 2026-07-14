@@ -5,7 +5,6 @@ import {
   PlatformConnectionSource,
   PrimaryEnvironmentAuth,
   RelayDeviceIdentity,
-  SshEnvironmentGateway,
 } from "@t3tools/client-runtime/platform";
 import {
   ConnectionBlockedError,
@@ -136,26 +135,6 @@ const capabilitiesLayer = Layer.succeedContext(
       ClientPresentation.of({
         metadata: authClientMetadata(),
         scopes: AuthStandardClientScopes,
-      }),
-    ),
-    Context.add(
-      SshEnvironmentGateway,
-      SshEnvironmentGateway.of({
-        provision: () =>
-          Effect.fail(
-            new ConnectionBlockedError({
-              reason: "unsupported",
-              detail: "SSH environments are only available in the desktop app.",
-            }),
-          ),
-        prepare: () =>
-          Effect.fail(
-            new ConnectionBlockedError({
-              reason: "unsupported",
-              detail: "SSH environments are only available in the desktop app.",
-            }),
-          ),
-        disconnect: () => Effect.void,
       }),
     ),
   ),

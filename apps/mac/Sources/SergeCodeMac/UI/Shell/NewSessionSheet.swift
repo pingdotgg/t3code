@@ -120,7 +120,7 @@ struct NewSessionSheet: View {
                 }
             }
             .id(mode)
-            .transition(Motion.paneSwap)
+            .transition(Motion.paneChange)
 
             Picker("Provider", selection: $provider) {
                 if configuredProviderKinds.isEmpty {
@@ -181,8 +181,8 @@ struct NewSessionSheet: View {
         .padding(24)
         .frame(width: 420)
         .glassEffect(.regular, in: .rect(cornerRadius: 20))
-        .animation(Motion.settle, value: mode)
-        .animation(Motion.fade, value: errorMessage == nil)
+        .animation(Motion.structure, value: mode)
+        .animation(Motion.reveal, value: errorMessage == nil)
         .task {
             // Warm the settings so the folder picker can open at the
             // configured default projects directory.
@@ -361,6 +361,7 @@ final class NewSessionWindowController: NSObject, NSWindowDelegate {
                 multi: multi, scenery: scenery, passport: passport, isPresented: dismiss))
         hosting.sizingOptions = [.preferredContentSize]
         let panel = NSWindow(contentViewController: hosting)
+        DarkAppearanceConfigurator.applyAppearance(to: panel)
         panel.styleMask = [.titled, .closable, .fullSizeContentView]
         panel.titlebarAppearsTransparent = true
         panel.titleVisibility = .hidden

@@ -9,7 +9,7 @@ struct BootstrapEnvelopeTests {
     // as it would be serialized by the TS side's
     // `Schema.encodeEffect(Schema.fromJsonString(DesktopBackendBootstrap))`.
     static let fixtureJSON = """
-        {"mode":"desktop","noBrowser":true,"port":3773,"t3Home":"/Users/test/Library/Application Support/SergeCode","host":"127.0.0.1","desktopBootstrapToken":"abc123token","tailscaleServeEnabled":false,"tailscaleServePort":443}
+        {"mode":"desktop","port":3773,"t3Home":"/Users/test/Library/Application Support/SergeCode","host":"127.0.0.1","desktopBootstrapToken":"abc123token","tailscaleServeEnabled":false,"tailscaleServePort":443}
         """
 
     @Test("decodes the TS fixture field-for-field")
@@ -18,7 +18,6 @@ struct BootstrapEnvelopeTests {
             BootstrapEnvelope.self, from: Data(Self.fixtureJSON.utf8))
 
         #expect(envelope.mode == "desktop")
-        #expect(envelope.noBrowser == true)
         #expect(envelope.port == 3773)
         #expect(envelope.t3Home == "/Users/test/Library/Application Support/SergeCode")
         #expect(envelope.host == "127.0.0.1")
@@ -36,7 +35,6 @@ struct BootstrapEnvelopeTests {
             t3Home: "/tmp/base",
             host: "127.0.0.1",
             desktopBootstrapToken: "token-value",
-            noBrowser: true,
             tailscaleServeEnabled: true,
             tailscaleServePort: 8443,
             otlpTracesUrl: "http://localhost:4318/traces",

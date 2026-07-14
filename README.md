@@ -1,41 +1,50 @@
 # SergeCode
 
-SergeCode is a minimal web GUI for coding agents (currently Codex, Claude, Cursor, Grok, and OpenCode).
+SergeCode is a native macOS coding-agent client with an iPhone companion. The SwiftUI desktop app supervises a customized Node.js backend that manages Codex, Claude, Cursor, Grok, Fugu, and OpenCode sessions.
 
 > [!IMPORTANT]
-> SergeCode is a **permanent, independent hard fork** of [T3 Code](https://github.com/pingdotgg/t3code). It evolves separately and will never be merged back upstream. Do not open PRs or issues against the upstream repository — everything lives at [SergeSerb2/SergeCode](https://github.com/SergeSerb2/SergeCode).
+> SergeCode is a permanent, independent hard fork of [T3 Code](https://github.com/pingdotgg/t3code). It evolves separately and will never be merged back upstream. All issues, pull requests, and releases belong to [SergeSerb2/SergeCode](https://github.com/SergeSerb2/SergeCode).
 
 ## Prerequisites
 
-> [!WARNING]
-> Install and authenticate at least one provider before use:
->
-> - Codex: install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`
-> - Claude: install [Claude Code](https://claude.com/product/claude-code) and run `claude auth login`
-> - Cursor: install [Cursor CLI](https://cursor.com/cli) and run `cursor-agent login`
-> - OpenCode: install [OpenCode](https://opencode.ai) and run `opencode auth login`
+- macOS 26 or newer
+- Node.js 24
+- Vite+
+- at least one authenticated provider CLI
 
-## Running from source
+## Run from source
 
 ```bash
-pnpm install
-pnpm dev
+vp install
+vp run build:server
+swift run --package-path apps/mac SergeCodeMac
 ```
 
-See [package.json](./package.json) scripts for the full set of dev/build/start commands (`pnpm dev:server`, `pnpm dev:web`, `pnpm dev:desktop`, `pnpm build`, ...).
+To assemble a local app bundle:
 
-Note: the upstream distribution channels (`npx t3`, winget, Homebrew, AUR) ship upstream T3 Code, not SergeCode. Run SergeCode from source or from this repository's own releases.
+```bash
+vp run package:mac
+open apps/mac/dist/SurgeCode.app
+```
 
-## Some notes
+The iPhone companion lives in `apps/mobile`; see its README for Expo development and device-build instructions.
 
-This project is a personal fork and very much a WIP. Expect bugs.
+## Workspace
 
-There's no public docs site; check out the miscellaneous markdown files in [docs](./docs).
+- `apps/mac` — native SwiftUI macOS app and backend sidecar supervisor
+- `apps/mobile` — iPhone companion
+- `apps/server` — provider, orchestration, persistence, git, HTTP, and WebSocket backend
+- `packages/contracts` — shared wire contracts
+- `packages/client-runtime` — shared TypeScript client runtime used by mobile
+- `infra/relay` — optional remote connectivity infrastructure
 
-## Documentation
+See [the workspace reference](./docs/reference/workspace-layout.md) and [macOS architecture notes](./apps/mac/ARCHITECTURE.md) for more detail.
 
-- [Getting started](./docs/getting-started/quick-start.md)
-- [Architecture overview](./docs/architecture/overview.md)
-- [Provider guides](./docs/providers/codex.md)
-- [Operations](./docs/operations/ci.md)
-- [Reference](./docs/reference/encyclopedia.md)
+## Required checks
+
+```bash
+vp check
+vp run typecheck
+vp run lint:mobile
+swift test --package-path apps/mac
+```

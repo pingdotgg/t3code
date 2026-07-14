@@ -7,19 +7,11 @@ import SwiftUI
 struct AgentsToolbarPill: View {
     let count: Int
 
-    @UIState private var isPulsing = false
-
     var body: some View {
         HStack(spacing: 6) {
             Circle()
                 .fill(.green)
                 .frame(width: 6, height: 6)
-                .scaleEffect(isPulsing ? 1.25 : 1)
-                .animation(
-                    isPulsing
-                        ? Motion.ambient.repeatForever(autoreverses: true)
-                        : Motion.ambient,
-                    value: isPulsing)
             Text("\(count) agent\(count == 1 ? "" : "s")")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -29,12 +21,6 @@ struct AgentsToolbarPill: View {
         .padding(.horizontal, 4)
         .fixedSize()
         .animation(Motion.ambient, value: count)
-        .onAppear { updatePulse() }
-        .onChange(of: count) { _, _ in updatePulse() }
-    }
-
-    private func updatePulse() {
-        isPulsing = count > 0 && !Motion.reduceMotion
     }
 }
 
@@ -207,12 +193,9 @@ private struct AgentsPanelTaskRow: View {
 
     @ViewBuilder
     private func rowChrome(now: Date) -> some View {
-        let runningSilently = SubagentTaskPresentation.isRunningSilently(
-            task: entry.task, at: now)
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .top, spacing: 9) {
-                SubagentTaskStatusIcon(
-                    task: entry.task, runningSilently: runningSilently, isLive: entry.isLive)
+                SubagentTaskStatusIcon(task: entry.task)
                     .frame(width: 16, height: 16)
                     .padding(.top, 1)
 
@@ -317,9 +300,6 @@ private struct AgentsPanelSiblingRow: View {
         Button(action: onSelect) {
             HStack(alignment: .top, spacing: 9) {
                 Image(systemName: "circle.dotted")
-                    .symbolEffect(
-                        .pulse, isActive: thread.status == .running && !runningSilently
-                            && !Motion.reduceMotion)
                     .foregroundStyle(.secondary)
                     .frame(width: 16, height: 16)
                     .padding(.top, 1)

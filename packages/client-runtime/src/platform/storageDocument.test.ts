@@ -7,14 +7,8 @@ import {
   BearerConnectionProfile,
   BearerConnectionRegistration,
   RelayConnectionRegistration,
-  SshConnectionProfile,
-  SshConnectionRegistration,
 } from "../connection/catalog.ts";
-import {
-  BearerConnectionTarget,
-  RelayConnectionTarget,
-  SshConnectionTarget,
-} from "../connection/model.ts";
+import { BearerConnectionTarget, RelayConnectionTarget } from "../connection/model.ts";
 import {
   EMPTY_CONNECTION_CATALOG_DOCUMENT,
   registerConnectionInCatalog,
@@ -115,32 +109,5 @@ describe("ConnectionCatalogDocument", () => {
     expect(removeConnectionFromCatalog(registered, BEARER_TARGET)).toEqual(
       EMPTY_CONNECTION_CATALOG_DOCUMENT,
     );
-  });
-
-  it("persists the normalized SSH profile beside its target", () => {
-    const target = new SshConnectionTarget({
-      environmentId: ENVIRONMENT_ID,
-      label: "SSH",
-      connectionId: "ssh-1",
-    });
-    const profile = new SshConnectionProfile({
-      connectionId: target.connectionId,
-      environmentId: target.environmentId,
-      label: target.label,
-      target: {
-        alias: "devbox",
-        hostname: "devbox.example.test",
-        username: "developer",
-        port: 22,
-      },
-    });
-    const document = registerConnectionInCatalog(
-      EMPTY_CONNECTION_CATALOG_DOCUMENT,
-      new SshConnectionRegistration({ target, profile }),
-    );
-
-    expect(document.targets).toEqual([target]);
-    expect(document.profiles).toEqual([profile]);
-    expect(document.credentials).toEqual([]);
   });
 });

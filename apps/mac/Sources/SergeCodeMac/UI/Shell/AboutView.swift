@@ -14,6 +14,7 @@ final class AboutWindowController {
         if window == nil {
             let hosting = NSHostingController(rootView: AboutView())
             let panel = NSWindow(contentViewController: hosting)
+            DarkAppearanceConfigurator.applyAppearance(to: panel)
             panel.styleMask = [.titled, .closable, .fullSizeContentView]
             panel.titlebarAppearsTransparent = true
             panel.titleVisibility = .hidden

@@ -10,7 +10,6 @@ import * as OtlpTracer from "effect/unstable/observability/OtlpTracer";
 
 import * as ServerConfig from "../../config.ts";
 import { ServerLoggerLive } from "../../serverLogger.ts";
-import * as BrowserTraceCollector from "../BrowserTraceCollector.ts";
 
 const otlpSerializationLayer = OtlpSerialization.layerJson;
 
@@ -56,10 +55,7 @@ export const ObservabilityLive = Layer.unwrap(
           ...(delegate ? { delegate } : {}),
         });
 
-        return Layer.mergeAll(
-          Layer.succeed(Tracer.Tracer, tracer),
-          BrowserTraceCollector.layer(sink),
-        );
+        return Layer.succeed(Tracer.Tracer, tracer);
       }),
     ).pipe(Layer.provideMerge(otlpSerializationLayer));
 

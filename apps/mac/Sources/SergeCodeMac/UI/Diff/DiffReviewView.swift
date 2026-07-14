@@ -118,7 +118,7 @@ public struct DiffReviewView: View {
         }
         .focusable()
         .onKeyPress(.escape) {
-            withAnimation(Motion.settle) {
+            withAnimation(Motion.structure) {
                 model.closeReview(threadID: threadID)
             }
             return .handled
@@ -144,7 +144,7 @@ public struct DiffReviewView: View {
     private var header: some View {
         HStack(spacing: 10) {
             Button {
-                withAnimation(Motion.settle) {
+                withAnimation(Motion.structure) {
                     model.closeReview(threadID: threadID)
                 }
             } label: {
@@ -388,7 +388,7 @@ public struct DiffReviewView: View {
         }
         .background(.background)
         .id(selectedFileKey)
-        .transition(Motion.paneSwap)
+        .transition(Motion.paneChange)
     }
 
     private var sideBySideScroll: some View {
@@ -409,7 +409,7 @@ public struct DiffReviewView: View {
         }
         .background(.background)
         .id("sbs-\(selectedFileKey.path ?? "")-\(selectedFileKey.contentHash ?? 0)")
-        .transition(Motion.paneSwap)
+        .transition(Motion.paneChange)
     }
 
     private func hunkHeader(_ header: String, zoom: Double) -> some View {

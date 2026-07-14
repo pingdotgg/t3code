@@ -21,6 +21,13 @@ struct TransparentWindowConfigurator: NSViewRepresentable {
 
     static func applyTransparency(to window: NSWindow?) {
         guard let window else { return }
+        // Keep main-window semantic colors aligned with SurgeCode's dark UI,
+        // independently of macOS's system appearance.
+        if let darkAppearance = NSAppearance(named: .darkAqua),
+            window.appearance?.name != darkAppearance.name
+        {
+            window.appearance = darkAppearance
+        }
         // Only main document-style windows — leave Settings / panels alone.
         guard window.styleMask.contains(.titled),
             window.styleMask.contains(.resizable)
@@ -46,6 +53,28 @@ struct TransparentWindowConfigurator: NSViewRepresentable {
     static func isConfigured(_ window: NSWindow) -> Bool {
         !window.isOpaque
             && window.backgroundColor == .clear
+    }
+}
+
+/// Pins a SwiftUI-hosted NSWindow to SurgeCode's dark visual language without
+/// changing macOS's system-wide appearance. Re-applies after AppKit attaches
+/// or reparents the hosting view.
+struct DarkAppearanceConfigurator: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = WindowProbeView()
+        view.onWindowChange = Self.applyAppearance
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        Self.applyAppearance(to: nsView.window)
+    }
+
+    static func applyAppearance(to window: NSWindow?) {
+        guard let window, let darkAppearance = NSAppearance(named: .darkAqua) else { return }
+        if window.appearance?.name != darkAppearance.name {
+            window.appearance = darkAppearance
+        }
     }
 }
 

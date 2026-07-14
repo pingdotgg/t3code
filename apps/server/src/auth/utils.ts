@@ -86,7 +86,6 @@ function inferBrowser(userAgent: string | undefined): string | undefined {
   if (/edg\//.test(normalized)) return "Edge";
   if (/opr\//.test(normalized)) return "Opera";
   if (/firefox\//.test(normalized)) return "Firefox";
-  if (/electron\//.test(normalized)) return "Electron";
   if (/chrome\//.test(normalized) || /crios\//.test(normalized)) return "Chrome";
   if (/safari\//.test(normalized) && !/chrome\//.test(normalized)) return "Safari";
   return undefined;
@@ -99,7 +98,7 @@ function inferOs(userAgent: string | undefined): string | undefined {
   const normalized = userAgent.toLowerCase();
   if (/iphone|ipad|ipod/.test(normalized)) return "iOS";
   if (/android/.test(normalized)) return "Android";
-  if (/mac os x|macintosh/.test(normalized)) return "macOS";
+  if (/mac os x|macintosh|darwin/.test(normalized)) return "macOS";
   if (/windows nt/.test(normalized)) return "Windows";
   if (/linux/.test(normalized)) return "Linux";
   return undefined;

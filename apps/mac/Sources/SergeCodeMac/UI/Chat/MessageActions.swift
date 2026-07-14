@@ -84,13 +84,14 @@ struct CopyActionButton: View {
         ) {
             guard !didCopy else { return }
             Pasteboard.copy(text)
-            withAnimation(Motion.snap) { didCopy = true }
+            withAnimation(Motion.feedback) { didCopy = true }
             Task {
                 try? await Task.sleep(for: .seconds(1.5))
-                withAnimation(Motion.fade) { didCopy = false }
+                withAnimation(Motion.reveal) { didCopy = false }
             }
         }
-        .contentTransition(.symbolEffect(.replace))
+        .contentTransition(
+            Motion.reduceMotion ? .identity : .symbolEffect(.replace))
     }
 }
 

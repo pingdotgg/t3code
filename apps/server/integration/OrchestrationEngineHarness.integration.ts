@@ -249,7 +249,7 @@ export const makeOrchestrationIntegrationHarness = (
       prefix: "t3-orchestration-integration-",
     });
     const workspaceDir = path.join(rootDir, "workspace");
-    const { stateDir, dbPath } = yield* deriveServerPaths(rootDir, undefined).pipe(
+    const { stateDir, dbPath } = yield* deriveServerPaths(rootDir).pipe(
       Effect.provideService(Path.Path, path),
     );
     yield* fileSystem.makeDirectory(workspaceDir, { recursive: true });

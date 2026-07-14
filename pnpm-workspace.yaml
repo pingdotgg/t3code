@@ -5,28 +5,9 @@ packages:
   - packages/*
   - scripts
 
-# Install both Windows and Linux native binaries so the WSL (Linux) backend
-# can load platform-gated optional deps (e.g. @yuuang/ffi-rs-linux-x64-gnu)
-# out of the same node_modules the Windows desktop uses.
-supportedArchitectures:
-  os:
-    - current
-    - linux
-  cpu:
-    - current
-    - x64
-  libc:
-    - current
-    - glibc
-
 catalog:
   "@clerk/backend": 3.8.4
-  "@clerk/clerk-js": 6.22.0
-  "@clerk/electron": 0.0.5
-  "@clerk/electron-passkeys": 0.0.3
   "@clerk/expo": 3.6.2
-  "@clerk/react": 6.11.1
-  "@clerk/shared": 4.22.0
   "@effect/atom-react": 4.0.0-beta.78
   "@effect/openapi-generator": 4.0.0-beta.78
   "@effect/platform-bun": 4.0.0-beta.78
@@ -48,11 +29,7 @@ catalog:
   vite-plus: 0.2.2
   yaml: ^2.9.0
 
-ignoredBuiltDependencies:
-  - msw
-
 onlyBuiltDependencies:
-  - electron
   - esbuild
   - msgpackr-extract
   - node-pty
@@ -60,18 +37,7 @@ onlyBuiltDependencies:
 
 overrides:
   "@clerk/backend": "catalog:"
-  "@clerk/clerk-js": "catalog:"
-  "@clerk/clerk-js>@base-org/account": "-"
-  "@clerk/clerk-js>@coinbase/wallet-sdk": "-"
-  "@clerk/clerk-js>@solana/wallet-adapter-base": "-"
-  "@clerk/clerk-js>@solana/wallet-adapter-react": "-"
-  "@clerk/clerk-js>@solana/wallet-standard": "-"
-  "@clerk/clerk-js>@wallet-standard/core": "-"
-  "@clerk/electron": "catalog:"
-  "@clerk/electron-passkeys": "catalog:"
   "@clerk/expo": "catalog:"
-  "@clerk/react": "catalog:"
-  "@clerk/shared": "catalog:"
   "@effect/atom-react": "catalog:"
   "@effect/platform-bun": "catalog:"
   "@effect/platform-node": "catalog:"

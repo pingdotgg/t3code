@@ -67,10 +67,9 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
         subject: "desktop-bootstrap",
         scopes: ["orchestration:read", "access:write"],
         client: {
-          label: "Desktop app",
+          label: "SergeCode Mac",
           deviceType: "desktop",
           os: "macOS",
-          browser: "Electron",
           ipAddress: "127.0.0.1",
         },
       });
@@ -79,8 +78,8 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       expect(verified.method).toBe("browser-session-cookie");
       expect(verified.subject).toBe("desktop-bootstrap");
       expect(verified.scopes).toEqual(["orchestration:read", "access:write"]);
-      expect(verified.client.label).toBe("Desktop app");
-      expect(verified.client.browser).toBe("Electron");
+      expect(verified.client.label).toBe("SergeCode Mac");
+      expect(verified.client.browser).toBeUndefined();
       expect(verified.expiresAt?.toString()).toBe(issued.expiresAt.toString());
     }).pipe(Effect.provide(makeSessionStoreLayer())),
   );
@@ -219,10 +218,9 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
         subject: "desktop-bootstrap",
         scopes: ["orchestration:read", "access:write"],
         client: {
-          label: "Desktop app",
+          label: "SergeCode Mac",
           deviceType: "desktop",
           os: "macOS",
-          browser: "Electron",
         },
       });
       const client = yield* sessions.issue({

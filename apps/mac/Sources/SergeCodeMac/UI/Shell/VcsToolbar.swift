@@ -70,7 +70,7 @@ struct VcsToolbar: View {
                     }
                     .buttonStyle(VcsMergePillButtonStyle())
                     .disabled(isRunningAction)
-                    .animation(Motion.fade, value: runningAction)
+                    .animation(Motion.reveal, value: runningAction)
                     .help("Merge the open pull request")
                 }
                 actionMenu(status)
@@ -80,12 +80,12 @@ struct VcsToolbar: View {
 
             if let outcome = model.lastGitActionOutcome(for: threadID) {
                 outcomeBanner(outcome)
-                    .transition(Motion.bannerDrop)
+                    .transition(Motion.banner)
             }
 
             Divider()
         }
-        .animation(Motion.enter, value: model.lastGitActionOutcome(for: threadID))
+        .animation(Motion.reveal, value: model.lastGitActionOutcome(for: threadID))
         .animation(Motion.ambient, value: status)
         .alert("New branch", isPresented: $showNewBranchPrompt) {
             TextField("Branch name", text: $newBranchName)
@@ -194,7 +194,7 @@ struct VcsToolbar: View {
         .menuStyle(.borderlessButton)
         .fixedSize()
         .disabled(isRunningAction)
-        .animation(Motion.fade, value: runningAction)
+        .animation(Motion.reveal, value: runningAction)
     }
 
     private var commitSheetBinding: Binding<Bool> {
