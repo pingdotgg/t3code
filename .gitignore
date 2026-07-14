@@ -32,3 +32,6 @@ node_modules/
 *.log
 .env*
 !.env.example
+# Firebase Android push credentials pulled from EAS; never commit them.
+google-services*.json
+.eas/

@@ -69,6 +69,24 @@ jobs:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: eas env:pull preview --non-interactive
 
+      # The Android fingerprint must include google-services.json: computing it
+      # without the file while the EAS build worker injects it would produce a
+      # runtime-version mismatch, and a build without it ships an APK whose
+      # push notifications (T3 Connect) silently never work.
+      - name: Require Android push credentials
+        if: steps.expo-token.outputs.present == 'true'
+        working-directory: apps/mobile
+        run: |
+          file_path="$(grep -m1 '^T3CODE_ANDROID_GOOGLE_SERVICES_FILE=' .env.local | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//')"
+          if [ -z "$file_path" ]; then
+            echo "::error::T3CODE_ANDROID_GOOGLE_SERVICES_FILE is missing from the EAS preview environment. Upload the Firebase google-services.json for com.t3tools.t3code.preview as a file variable with sensitive visibility: eas env:create --environment preview --name T3CODE_ANDROID_GOOGLE_SERVICES_FILE --type file --visibility sensitive --value ./google-services.json"
+            exit 1
+          fi
+          if [ ! -f "$file_path" ]; then
+            echo "::error::T3CODE_ANDROID_GOOGLE_SERVICES_FILE points to '$file_path' but the file was not downloaded by 'eas env:pull preview'. Check that the variable has file type and sensitive (not secret) visibility so CI can read it."
+            exit 1
+          fi
+
       - name: Deploy with fingerprint check
         if: steps.expo-token.outputs.present == 'true'
         uses: expo/expo-github-action/continuous-deploy-fingerprint@main

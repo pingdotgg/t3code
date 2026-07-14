@@ -95,6 +95,33 @@ For preview or production EAS environments, set `T3CODE_CLERK_PUBLISHABLE_KEY`,
 `T3CODE_CLERK_JWT_TEMPLATE`, and `T3CODE_RELAY_URL`
 as EAS environment variables. Expo config maps the canonical values into the mobile build.
 
+### Android push notifications (T3 Connect)
+
+Android delivery goes app → Expo push token → T3 relay → Expo Push Service → FCM, so the APK
+must embed a Firebase `google-services.json` that registers the variant's Android package
+(for preview: `com.t3tools.t3code.preview`). Expo config wires it through
+`T3CODE_ANDROID_GOOGLE_SERVICES_FILE`:
+
+1. In the Firebase project backing the existing EAS Android credentials, add an Android app for
+   the package and download its `google-services.json`.
+2. Upload it to the EAS environment as a **file** variable with **sensitive** visibility (CI
+   pulls it with `eas env:pull` to compute the native fingerprint; secret files cannot be
+   pulled):
+
+   ```bash
+   eas env:create --environment preview --name T3CODE_ANDROID_GOOGLE_SERVICES_FILE \
+     --type file --visibility sensitive --value ./google-services.json
+   ```
+
+3. In EAS Credentials, assign the matching FCM V1 service-account key to the Android app so the
+   Expo Push Service can deliver through FCM.
+
+Android EAS preview builds fail fast when the variable is missing — an APK built without it
+installs fine but can never obtain a push token, which is why this is enforced. Development
+builds skip the check (no Firebase app is registered for `com.t3tools.t3code.dev`). Adding the
+file changes the native fingerprint, so shipping it requires a new native build, not an OTA
+update.
+
 Create a PR preview dev-client build manually:
 
 ```bash

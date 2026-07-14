@@ -1,5 +1,6 @@
 import type { ExpoConfig } from "expo/config";
 
+import { resolveAndroidGoogleServicesFile } from "../../scripts/lib/android-google-services.ts";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
 
 type AppVariant = "development" | "preview" | "production";
@@ -77,6 +78,16 @@ function resolveAppVariant(value: string | undefined): AppVariant {
 
 const variant = VARIANT_CONFIG[APP_VARIANT];
 
+// google-services.json wires FCM into the Android build; without it Expo
+// cannot mint an Android push token and T3 Connect notifications silently
+// break. The resolver fails Android EAS preview builds when the EAS file
+// variable is missing so that APK can never build again.
+const androidGoogleServicesFile = resolveAndroidGoogleServicesFile({
+  env: repoEnv,
+  appVariant: APP_VARIANT,
+  androidPackage: variant.androidPackage,
+});
+
 const dmSansFonts = {
   regular: "@expo-google-fonts/dm-sans/400Regular/DMSans_400Regular.ttf",
   medium: "@expo-google-fonts/dm-sans/500Medium/DMSans_500Medium.ttf",
@@ -153,6 +164,7 @@ const config: ExpoConfig = {
   android: {
     icon: "./assets/icon.png",
     package: variant.androidPackage,
+    ...(androidGoogleServicesFile ? { googleServicesFile: androidGoogleServicesFile } : {}),
     adaptiveIcon: {
       backgroundColor: "#E6F4FE",
       foregroundImage: "./assets/android-icon-foreground.png",
