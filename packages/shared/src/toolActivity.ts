@@ -65,9 +65,13 @@ export function deriveToolActivityPresentation(
         ...(presentation.subtitle ? { detail: presentation.subtitle } : {}),
       };
     case "file_search":
-    case "web_search":
       return {
         summary: "Searched files",
+        ...(presentation.subtitle ? { detail: presentation.subtitle } : {}),
+      };
+    case "web_search":
+      return {
+        summary: presentation.title,
         ...(presentation.subtitle ? { detail: presentation.subtitle } : {}),
       };
     default:
