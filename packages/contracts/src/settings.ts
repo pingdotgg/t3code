@@ -9,7 +9,12 @@ import {
 } from "./customInstructions.ts";
 import { DEFAULT_GIT_TEXT_GENERATION_MODEL, ProviderOptionSelections } from "./model.ts";
 import { ModelSelection } from "./orchestration.ts";
-import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.ts";
+import {
+  ProviderInstanceConfig,
+  ProviderInstanceEnvironment,
+  ProviderInstanceId,
+} from "./providerInstance.ts";
+import { DEFAULT_EXTENSION_SETTINGS, ExtensionSettings } from "./extensions.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -523,14 +528,16 @@ export const ObservabilitySettings = Schema.Struct({
 });
 export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
+const NonNegativeModelPrice = Schema.Number.check(Schema.isGreaterThanOrEqualTo(0));
+
 export const ModelPricingOverride = Schema.Struct({
-  inputPerMillionUsd: Schema.optional(Schema.Number),
-  uncachedInputPerMillionUsd: Schema.optional(Schema.Number),
-  cachedInputPerMillionUsd: Schema.optional(Schema.Number),
-  cacheCreationInputPerMillionUsd: Schema.optional(Schema.Number),
-  cacheReadInputPerMillionUsd: Schema.optional(Schema.Number),
-  outputPerMillionUsd: Schema.optional(Schema.Number),
-  reasoningOutputPerMillionUsd: Schema.optional(Schema.Number),
+  inputPerMillionUsd: Schema.optional(NonNegativeModelPrice),
+  uncachedInputPerMillionUsd: Schema.optional(NonNegativeModelPrice),
+  cachedInputPerMillionUsd: Schema.optional(NonNegativeModelPrice),
+  cacheCreationInputPerMillionUsd: Schema.optional(NonNegativeModelPrice),
+  cacheReadInputPerMillionUsd: Schema.optional(NonNegativeModelPrice),
+  outputPerMillionUsd: Schema.optional(NonNegativeModelPrice),
+  reasoningOutputPerMillionUsd: Schema.optional(NonNegativeModelPrice),
 });
 export type ModelPricingOverride = typeof ModelPricingOverride.Type;
 
@@ -623,11 +630,17 @@ export const ServerSettings = Schema.Struct({
   providerInstances: Schema.Record(ProviderInstanceId, ProviderInstanceConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  globalEnvironment: ProviderInstanceEnvironment.pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   customInstructions: CustomInstructionsConfig.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_CUSTOM_INSTRUCTIONS_CONFIG)),
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   tokenEfficiency: TokenEfficiencySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  extensions: ExtensionSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_EXTENSION_SETTINGS)),
+  ),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -761,6 +774,7 @@ export const ServerSettingsPatch = Schema.Struct({
     }),
   ),
   tokenEfficiency: Schema.optionalKey(TokenEfficiencySettingsPatch),
+  extensions: Schema.optionalKey(ExtensionSettings),
   providers: Schema.optionalKey(
     Schema.Struct({
       codex: Schema.optionalKey(CodexSettingsPatch),
@@ -778,6 +792,7 @@ export const ServerSettingsPatch = Schema.Struct({
   // patches risk leaving driver-specific config in a half-merged state.
   // The web UI sends a fully-formed map every time it edits this field.
   providerInstances: Schema.optionalKey(Schema.Record(ProviderInstanceId, ProviderInstanceConfig)),
+  globalEnvironment: Schema.optionalKey(ProviderInstanceEnvironment),
   // Whole-object replacement for custom instructions. The web UI sends the
   // full global/project bundle every time it edits this field.
   customInstructions: Schema.optionalKey(CustomInstructionsConfig),

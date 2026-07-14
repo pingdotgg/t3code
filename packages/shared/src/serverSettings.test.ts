@@ -234,6 +234,35 @@ describe("serverSettings helpers", () => {
     ).toEqual(replacement);
   });
 
+  it("replaces extension settings as a whole config", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      extensions: {
+        ...DEFAULT_SERVER_SETTINGS.extensions,
+        installed: [
+          {
+            id: "old",
+            marketplaceId: "vercel",
+            type: "skill" as const,
+            name: "old",
+            sourceUrl: "https://github.com/vercel-labs/skills",
+            compatibility: [],
+            targets: [{ scope: "global" as const }],
+            installedAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+      },
+    };
+    const replacement = {
+      ...DEFAULT_SERVER_SETTINGS.extensions,
+      installed: [],
+    };
+
+    expect(applyServerSettingsPatch(current, { extensions: replacement }).extensions).toEqual(
+      replacement,
+    );
+  });
+
   it("leaves customInstructions unchanged when the patch omits it", () => {
     const customInstructions = decodeCustomInstructions({
       global: {

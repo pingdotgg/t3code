@@ -83,6 +83,9 @@ export function applyServerSettingsPatch(
     ...(patch.providerInstances !== undefined
       ? { providerInstances: patch.providerInstances }
       : {}),
+    ...(patch.globalEnvironment !== undefined
+      ? { globalEnvironment: patch.globalEnvironment }
+      : {}),
     ...(patch.customInstructions !== undefined
       ? { customInstructions: patch.customInstructions }
       : {}),
@@ -94,6 +97,7 @@ export function applyServerSettingsPatch(
           },
         }
       : {}),
+    ...(patch.extensions !== undefined ? { extensions: patch.extensions } : {}),
     ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
   };
   if (!selectionPatch) {
