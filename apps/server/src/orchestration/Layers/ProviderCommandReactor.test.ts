@@ -1190,6 +1190,113 @@ describe("ProviderCommandReactor", () => {
     ).toBeUndefined();
   });
 
+  it("switches to another driver after a usage limit without resuming the exhausted session", async () => {
+    const harness = await createHarness();
+
+    await dispatchUserTurn(harness, {
+      commandId: "cmd-turn-start-cross-driver-1",
+      messageId: "user-message-cross-driver-1",
+      text: "first",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await settleLatestTurnAsError(harness, {
+      turnId: asTurnId("turn-cross-driver-error"),
+      requestedAt: "2026-01-01T01:00:00.000Z",
+      completedAt: "2026-01-01T01:10:00.000Z",
+    });
+    await appendUsageLimitActivity(harness, {
+      commandId: "cmd-cross-driver-usage-limit",
+      activityId: "activity-cross-driver-usage-limit",
+      turnId: null,
+      createdAt: "2026-01-01T01:05:00.000Z",
+    });
+
+    await dispatchUserTurn(harness, {
+      commandId: "cmd-turn-start-cross-driver-2",
+      messageId: "user-message-cross-driver-2",
+      text: "second",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("claude"),
+        model: "claude-sonnet-4-5",
+      },
+      createdAt: "2026-01-01T01:20:00.000Z",
+    });
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+
+    expect(harness.startSession).toHaveBeenCalledTimes(2);
+    const restart = harness.startSession.mock.calls[1]?.[1] as {
+      readonly providerInstanceId?: ProviderInstanceId;
+      readonly provider?: string;
+      readonly resumeCursor?: unknown;
+    };
+    expect(restart).toMatchObject({
+      providerInstanceId: ProviderInstanceId.make("claude"),
+      provider: "claudeAgent",
+    });
+    // The exhausted provider's cursor cannot resume a claude session.
+    expect(restart?.resumeCursor).toBeUndefined();
+    expect(harness.sendTurn.mock.calls[1]?.[0]).toMatchObject({
+      threadId: ThreadId.make("thread-1"),
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("claude"),
+        model: "claude-sonnet-4-5",
+      },
+    });
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(
+      thread?.activities.find((activity) => activity.kind === "provider.turn.start.failed"),
+    ).toBeUndefined();
+  });
+
+  it("rejects a cross-driver switch when no usage limit stopped the latest turn", async () => {
+    const harness = await createHarness();
+
+    await dispatchUserTurn(harness, {
+      commandId: "cmd-turn-start-cross-driver-blocked-1",
+      messageId: "user-message-cross-driver-blocked-1",
+      text: "first",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    await dispatchUserTurn(harness, {
+      commandId: "cmd-turn-start-cross-driver-blocked-2",
+      messageId: "user-message-cross-driver-blocked-2",
+      text: "second",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("claude"),
+        model: "claude-sonnet-4-5",
+      },
+      createdAt: "2026-01-01T00:30:00.000Z",
+    });
+
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      return (
+        thread?.activities.some((activity) => activity.kind === "provider.turn.start.failed") ??
+        false
+      );
+    });
+
+    expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+    expect(harness.startSession).toHaveBeenCalledTimes(1);
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(
+      thread?.activities.find((activity) => activity.kind === "provider.turn.start.failed"),
+    ).toMatchObject({
+      payload: {
+        detail: expect.stringContaining("is bound to driver 'codex' and cannot switch"),
+      },
+    });
+  });
+
   it("starts a first turn on the requested provider instance even when it differs from the thread model", async () => {
     const harness = await createHarness({
       threadModelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
