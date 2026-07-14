@@ -6351,6 +6351,155 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     }),
   );
 
+  it.effect("does not complete a successful tool turn when the assistant loop continues", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-successful-tool-continuation");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "continue after a successful tool",
+        attachments: [],
+      });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* waitForSdkEventQueue();
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      NodeAssert.ok(config?.onEvent);
+      const emit = (event: SessionEvent) => config.onEvent?.(event);
+      const timestamp = yield* nowIso;
+
+      emit({
+        id: "evt-copilot-tool-loop-start",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_start",
+        data: {
+          turnId: "sdk-turn-tool-loop",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-tool-loop-tool-start",
+        timestamp,
+        parentId: null,
+        type: "tool.execution_start",
+        data: {
+          toolCallId: "tool-loop-success",
+          toolName: "shell",
+          turnId: "sdk-turn-tool-loop",
+          arguments: {
+            command: "true",
+          },
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-tool-loop-tool-complete",
+        timestamp,
+        parentId: null,
+        type: "tool.execution_complete",
+        data: {
+          toolCallId: "tool-loop-success",
+          turnId: "sdk-turn-tool-loop",
+          success: true,
+          result: {
+            content: "Command completed",
+          },
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-tool-loop-transient-idle",
+        timestamp,
+        parentId: null,
+        type: "session.idle",
+        data: {
+          aborted: false,
+        },
+      } as SessionEvent);
+      yield* waitForSdkEventQueue();
+
+      emit({
+        id: "evt-copilot-tool-loop-continuation-start",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_start",
+        data: {
+          turnId: "sdk-turn-tool-loop-continuation",
+        },
+      } as SessionEvent);
+      yield* waitForSdkEventQueue();
+      yield* TestClock.adjust("300 millis");
+
+      emit({
+        id: "evt-copilot-tool-loop-stale-idle",
+        timestamp,
+        parentId: null,
+        type: "session.idle",
+        data: {
+          aborted: false,
+        },
+      } as SessionEvent);
+      yield* waitForSdkEventQueue();
+
+      NodeAssert.equal(
+        runtimeEvents.some(
+          (event) =>
+            event.type === "turn.completed" && String(event.turnId) === String(turn.turnId),
+        ),
+        false,
+      );
+
+      emit({
+        id: "evt-copilot-tool-loop-continuation-end",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_end",
+        data: {
+          turnId: "sdk-turn-tool-loop-continuation",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-tool-loop-final-idle",
+        timestamp,
+        parentId: null,
+        type: "session.idle",
+        data: {
+          aborted: false,
+        },
+      } as SessionEvent);
+      for (
+        let attempt = 0;
+        attempt < 20 &&
+        !runtimeEvents.some(
+          (event) =>
+            event.type === "turn.completed" && String(event.turnId) === String(turn.turnId),
+        );
+        attempt += 1
+      ) {
+        yield* waitForSdkEventQueue();
+      }
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+
+      const completions = runtimeEvents.filter(
+        (event) => event.type === "turn.completed" && String(event.turnId) === String(turn.turnId),
+      );
+      NodeAssert.equal(completions.length, 1);
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("does not let stale sdk turn_start steal the next queued turn id", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
