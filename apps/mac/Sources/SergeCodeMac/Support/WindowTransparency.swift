@@ -89,21 +89,23 @@ private final class WindowProbeView: NSView {
     }
 }
 
-/// Behind-window visual effect + solidifying scrim driven by scenery
-/// translucency. At `1.0` the scrim is fully opaque (historical solid look);
-/// at `0.5` only the blurred desktop glass remains under the faded photo.
+/// Behind-window visual effect plus the window plate (`GlassLayering`).
+///
+/// The plate is the window-wide layer, so it sits *under* the scenery
+/// wallpaper as well as under the chrome columns: any alpha it spends is alpha
+/// the desktop can never reach, no matter how translucent the scene is. It is
+/// therefore held at zero through the glass band and only ramps in above
+/// `GlassLayering.plateStart`, landing fully opaque at `1.0` (the historical
+/// solid window). Below that, chrome sits directly on the blurred desktop and
+/// the scene carries the app's coverage.
 struct WindowGlassBackground: View {
-    /// Scenery photo / glass solidity in `0.5...1.0`.
+    /// Scenery photo / glass solidity in `ScenerySettingsFile.translucencyRange`.
     var translucency: Double
 
     var body: some View {
-        let t = ScenerySettingsFile.clampTranslucency(translucency)
-        // Remap [0.5, 1.0] → [0, 1]: full solid at max, pure glass at floor.
-        let solidifying = (t - ScenerySettingsFile.translucencyRange.lowerBound)
-            / (ScenerySettingsFile.translucencyRange.upperBound
-                - ScenerySettingsFile.translucencyRange.lowerBound)
+        let plate = GlassLayering.windowPlate(translucency: translucency)
 
-        if solidifying >= 0.999 {
+        if plate >= 0.999 {
             Rectangle()
                 .fill(Color(nsColor: .windowBackgroundColor))
                 .ignoresSafeArea()
@@ -113,12 +115,11 @@ struct WindowGlassBackground: View {
                     material: .underWindowBackground,
                     state: .active)
 
-                // Solid plate on top of the effect. Opacity tracks translucency so
-                // 100% matches the previous fully solid window; lower values let
-                // the behind-window blur (desktop) show through.
-                Rectangle()
-                    .fill(Color(nsColor: .windowBackgroundColor))
-                    .opacity(solidifying)
+                if plate > 0 {
+                    Rectangle()
+                        .fill(Color(nsColor: .windowBackgroundColor))
+                        .opacity(plate)
+                }
             }
             .ignoresSafeArea()
         }
