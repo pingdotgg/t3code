@@ -465,9 +465,13 @@ public final class SceneryStore {
             resolved?.sceneNames
             ?? ScenerySet.makeBuiltinDolomites().sceneNames
         // Ignore polluted sceneNames entries that are themselves pool-index
-        // labels of the set title, so an exact match on "Iceland 5" cannot win.
+        // labels of the set title, or the bare set title itself, so generic
+        // names like "Iceland" or "Iceland 5" cannot win over specific place names.
+        let setTitleKey = Self.sceneNameComparisonKey(setTitle)
         let authenticBases = sceneNames.filter { candidate in
-            setTitle.isEmpty || !Self.isPoolNumberedSceneName(candidate, base: setTitle)
+            guard !setTitle.isEmpty else { return true }
+            let candidateKey = Self.sceneNameComparisonKey(candidate)
+            return candidateKey != setTitleKey && !Self.isPoolNumberedSceneName(candidate, base: setTitle)
         }
         for base in authenticBases.sorted(by: { $0.count > $1.count }) {
             if name == base || Self.isLegacyNumberedSceneTitle(name, base: base) {
