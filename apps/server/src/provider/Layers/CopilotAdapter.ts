@@ -222,6 +222,7 @@ interface CopilotSessionContext {
   readonly emittedTurnDiffByTurnId: Map<TurnId, string>;
   readonly copilotTasks: Map<string, CopilotTaskState>;
   readonly turnIdsWithAssistantText: Set<TurnId>;
+  readonly turnIdsWithRootAssistantTextSinceToolStart: Set<TurnId>;
   readonly startedItemIds: Set<string>;
   readonly completedAssistantItemIds: Set<string>;
   readonly turnEndEventsByTurnId: Map<TurnId, SessionEvent>;
@@ -1562,6 +1563,12 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     }
   }
 
+  const markTurnContinuingWithTool = (context: CopilotSessionContext, turnId: TurnId): void => {
+    cancelTurnEndFallback(context, turnId);
+    context.turnEndEventsByTurnId.delete(turnId);
+    context.turnIdsWithRootAssistantTextSinceToolStart.delete(turnId);
+  };
+
   const completeAssistantTextItem = async (input: {
     readonly context: CopilotSessionContext;
     readonly turnId: TurnId;
@@ -1637,6 +1644,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     context.turnEndEventsByTurnId.delete(turnId);
     context.pendingTaskCompletionTextByTurnId.delete(turnId);
     context.turnIdsWithAssistantText.delete(turnId);
+    context.turnIdsWithRootAssistantTextSinceToolStart.delete(turnId);
     context.turnStartPayloadByTurnId.delete(turnId);
     clearSdkTurnMappingsForTurn(context, turnId);
     if (context.activeTurnId === turnId) {
@@ -1676,7 +1684,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
 
   const hasTurnCompletionSignal = (context: CopilotSessionContext, turnId: TurnId): boolean =>
     context.turnEndEventsByTurnId.has(turnId) ||
-    context.turnIdsWithAssistantText.has(turnId) ||
+    context.turnIdsWithRootAssistantTextSinceToolStart.has(turnId) ||
     context.pendingTaskCompletionTextByTurnId.has(turnId);
 
   const shouldCompleteOnAssistantTurnEnd = (
@@ -1684,7 +1692,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     turnId: TurnId,
   ): boolean =>
     context.activeTurnId === turnId &&
-    (context.turnIdsWithAssistantText.has(turnId) ||
+    (context.turnIdsWithRootAssistantTextSinceToolStart.has(turnId) ||
       context.pendingTaskCompletionTextByTurnId.has(turnId));
 
   const shouldCompleteOnIdleSignal = (context: CopilotSessionContext, turnId: TurnId): boolean =>
@@ -1803,6 +1811,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     readonly turnId: TurnId;
     readonly itemId: string;
     readonly nextText: string;
+    readonly marksTurnCompletion?: boolean | undefined;
     readonly raw?: SessionEvent | undefined;
   }) => {
     if (!input.context.startedItemIds.has(input.itemId)) {
@@ -1833,6 +1842,9 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       return;
     }
     input.context.turnIdsWithAssistantText.add(input.turnId);
+    if (input.marksTurnCompletion !== false) {
+      input.context.turnIdsWithRootAssistantTextSinceToolStart.add(input.turnId);
+    }
     await emitAsync({
       ...createBaseEvent({
         threadId: input.context.threadId,
@@ -2622,6 +2634,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           turnId,
           itemId,
           nextText: (context.emittedTextByItemId.get(itemId) ?? "") + event.data.deltaContent,
+          marksTurnCompletion: event.agentId === undefined,
           raw: event,
         });
         return;
@@ -2644,6 +2657,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           turnId,
           itemId,
           nextText: event.data.content,
+          marksTurnCompletion: event.agentId === undefined,
           raw: event,
         });
         await completeAssistantTextItem({
@@ -2662,12 +2676,15 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         if (!turnId) {
           return;
         }
-        context.turnEndEventsByTurnId.set(turnId, event);
-        const shouldComplete = shouldCompleteOnAssistantTurnEnd(context, turnId);
         if (context.activeSdkTurnKey === sdkTurnKey) {
           context.activeSdkTurnId = undefined;
           context.activeSdkTurnKey = undefined;
         }
+        if (event.agentId !== undefined) {
+          return;
+        }
+        context.turnEndEventsByTurnId.set(turnId, event);
+        const shouldComplete = shouldCompleteOnAssistantTurnEnd(context, turnId);
         if (shouldComplete) {
           scheduleTurnEndFallback(context, turnId, event);
         }
@@ -2720,6 +2737,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         if (!turnId) {
           return;
         }
+        markTurnContinuingWithTool(context, turnId);
         const todoPlan =
           isTodoTool(event.data.toolName) && isStringRecord(event.data.arguments)
             ? extractPlanStepsFromTodoInput(event.data.arguments)
@@ -2839,8 +2857,11 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           trimOrUndefined(event.data.result?.content) ??
           trimOrUndefined(event.data.error?.message);
         const detail = normalizedToolCompletionDetail(toolMeta, rawDetail);
+        if (event.agentId === undefined && !event.data.success) {
+          context.turnEndEventsByTurnId.set(turnId, event);
+        }
         if (isTaskCompleteTool(toolMeta?.toolName)) {
-          if (event.data.success && detail) {
+          if (event.agentId === undefined && event.data.success && detail) {
             context.pendingTaskCompletionTextByTurnId.set(turnId, detail);
           }
           return;
@@ -2887,6 +2908,13 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           ...(detail ? { detail } : {}),
         };
         appendTurnItem(context, turnId, toolItem);
+        return;
+      }
+      case "subagent.started": {
+        const turnId = context.turnIdByProviderItemId.get(event.data.toolCallId);
+        if (turnId) {
+          markTurnContinuingWithTool(context, turnId);
+        }
         return;
       }
       case "mcp.oauth_required": {
@@ -3300,6 +3328,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         emittedTurnDiffByTurnId: new Map(),
         copilotTasks: new Map(),
         turnIdsWithAssistantText: new Set(),
+        turnIdsWithRootAssistantTextSinceToolStart: new Set(),
         startedItemIds: new Set(),
         completedAssistantItemIds: new Set(),
         turnEndEventsByTurnId: new Map(),

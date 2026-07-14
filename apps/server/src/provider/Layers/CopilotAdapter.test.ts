@@ -5609,6 +5609,238 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     }),
   );
 
+  it.effect("keeps a Copilot turn running while a subagent executes", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-subagent-running-lifecycle");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "delegate this work to a subagent",
+        attachments: [],
+      });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* waitForSdkEventQueue();
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      NodeAssert.ok(config?.onEvent);
+      const emit = (event: SessionEvent) => config.onEvent?.(event);
+      const timestamp = yield* nowIso;
+
+      emit({
+        id: "evt-copilot-subagent-root-start",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_start",
+        data: {
+          turnId: "sdk-turn-subagent-root",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-subagent-root-message",
+        timestamp,
+        parentId: null,
+        type: "assistant.message",
+        data: {
+          messageId: "message-subagent-root",
+          content: "I am delegating this work.",
+          turnId: "sdk-turn-subagent-root",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-subagent-root-end",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_end",
+        data: {
+          turnId: "sdk-turn-subagent-root",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-subagent-tool-start",
+        timestamp,
+        parentId: null,
+        type: "tool.execution_start",
+        data: {
+          toolCallId: "tool-subagent",
+          toolName: "Task",
+          turnId: "sdk-turn-subagent-root",
+          arguments: {
+            description: "Investigate the delegated work",
+          },
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-subagent-started",
+        timestamp,
+        parentId: null,
+        type: "subagent.started",
+        agentId: "subagent-1",
+        data: {
+          agentDescription: "Investigates delegated work",
+          agentDisplayName: "Research agent",
+          agentName: "research",
+          toolCallId: "tool-subagent",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-subagent-turn-start",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_start",
+        agentId: "subagent-1",
+        data: {
+          turnId: "sdk-turn-subagent",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-subagent-message",
+        timestamp,
+        parentId: null,
+        type: "assistant.message",
+        agentId: "subagent-1",
+        data: {
+          messageId: "message-subagent",
+          content: "The delegated investigation is still running.",
+          parentToolCallId: "tool-subagent",
+          turnId: "sdk-turn-subagent",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-subagent-turn-end",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_end",
+        agentId: "subagent-1",
+        data: {
+          turnId: "sdk-turn-subagent",
+        },
+      } as SessionEvent);
+
+      yield* TestClock.adjust("25 millis");
+      yield* waitForSdkEventQueue();
+      NodeAssert.equal(
+        runtimeEvents.some((event) => event.type === "turn.completed"),
+        false,
+      );
+
+      emit({
+        id: "evt-copilot-subagent-completed",
+        timestamp,
+        parentId: null,
+        type: "subagent.completed",
+        agentId: "subagent-1",
+        data: {
+          agentDisplayName: "Research agent",
+          agentName: "research",
+          toolCallId: "tool-subagent",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-subagent-tool-complete",
+        timestamp,
+        parentId: null,
+        type: "tool.execution_complete",
+        data: {
+          toolCallId: "tool-subagent",
+          turnId: "sdk-turn-subagent-root",
+          success: true,
+          result: {
+            content: "Delegated investigation completed.",
+          },
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-subagent-intermediate-idle",
+        timestamp,
+        parentId: null,
+        type: "session.idle",
+        data: {
+          aborted: false,
+        },
+      } as SessionEvent);
+
+      yield* TestClock.adjust("300 millis");
+      yield* waitForSdkEventQueue();
+      NodeAssert.equal(
+        runtimeEvents.some((event) => event.type === "turn.completed"),
+        false,
+      );
+
+      emit({
+        id: "evt-copilot-subagent-final-start",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_start",
+        data: {
+          turnId: "sdk-turn-subagent-final",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-subagent-final-message",
+        timestamp,
+        parentId: null,
+        type: "assistant.message",
+        data: {
+          messageId: "message-subagent-final",
+          content: "The delegated work is complete.",
+          turnId: "sdk-turn-subagent-final",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-subagent-final-end",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_end",
+        data: {
+          turnId: "sdk-turn-subagent-final",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-subagent-final-idle",
+        timestamp,
+        parentId: null,
+        type: "session.idle",
+        data: {
+          aborted: false,
+        },
+      } as SessionEvent);
+
+      yield* TestClock.adjust("300 millis");
+      for (
+        let attempt = 0;
+        attempt < 20 &&
+        !runtimeEvents.some(
+          (event) =>
+            event.type === "turn.completed" && String(event.turnId) === String(turn.turnId),
+        );
+        attempt += 1
+      ) {
+        yield* waitForSdkEventQueue();
+      }
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+
+      const completions = runtimeEvents.filter(
+        (event) => event.type === "turn.completed" && String(event.turnId) === String(turn.turnId),
+      );
+      NodeAssert.equal(completions.length, 1);
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("ignores unmapped sdk turn starts without synthesizing a turn id", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
@@ -6301,7 +6533,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     }),
   );
 
-  it.effect("maps the next turn correctly after first completion clears stale sdk turn state", () =>
+  it.effect("maps the next turn after a failed tool completes the first turn on idle", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
       const threadId = asThreadId("copilot-idle-only-next-turn-mapping");
@@ -6340,12 +6572,51 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         },
       } as SessionEvent);
       emit({
+        id: "evt-copilot-idle-only-first-message",
+        timestamp,
+        parentId: null,
+        type: "assistant.message",
+        data: {
+          messageId: "message-idle-only-first",
+          content: "I will try a tool.",
+          turnId: "sdk-turn-idle-only-first",
+        },
+      } as SessionEvent);
+      emit({
         id: "evt-copilot-idle-only-first-end",
         timestamp,
         parentId: null,
         type: "assistant.turn_end",
         data: {
           turnId: "sdk-turn-idle-only-first",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-idle-only-failed-tool-start",
+        timestamp,
+        parentId: null,
+        type: "tool.execution_start",
+        data: {
+          toolCallId: "tool-idle-only-failure",
+          toolName: "shell",
+          turnId: "sdk-turn-idle-only-first",
+          arguments: {
+            command: "false",
+          },
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-idle-only-failed-tool-complete",
+        timestamp,
+        parentId: null,
+        type: "tool.execution_complete",
+        data: {
+          toolCallId: "tool-idle-only-failure",
+          turnId: "sdk-turn-idle-only-first",
+          success: false,
+          error: {
+            message: "Command failed",
+          },
         },
       } as SessionEvent);
       emit({
