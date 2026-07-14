@@ -54,6 +54,7 @@ describe("appQueries", () => {
           threadId,
           fromTurnCount: 3,
           toTurnCount: 4,
+          scope: "snapshot",
           ignoreWhitespace: false,
         },
       },

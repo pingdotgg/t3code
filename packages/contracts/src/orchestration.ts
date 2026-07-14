@@ -327,8 +327,10 @@ export const OrchestrationCheckpointSummary = Schema.Struct({
   checkpointRef: CheckpointRef,
   status: OrchestrationCheckpointStatus,
   files: OrchestrationCheckpointFiles,
-  agentTouchedPaths: Schema.optionalKey(OrchestrationAgentTouchedPaths),
-  turnFiles: Schema.optionalKey(OrchestrationCheckpointFiles),
+  agentTouchedPaths: OrchestrationAgentTouchedPaths.pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  turnFiles: OrchestrationCheckpointFiles.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   assistantMessageId: Schema.NullOr(MessageId),
   completedAt: IsoDateTime,
 });
@@ -871,8 +873,10 @@ const ThreadTurnDiffCompleteCommand = Schema.Struct({
   checkpointRef: CheckpointRef,
   status: OrchestrationCheckpointStatus,
   files: OrchestrationCheckpointFiles,
-  agentTouchedPaths: Schema.optionalKey(OrchestrationAgentTouchedPaths),
-  turnFiles: Schema.optionalKey(OrchestrationCheckpointFiles),
+  agentTouchedPaths: OrchestrationAgentTouchedPaths.pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  turnFiles: OrchestrationCheckpointFiles.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   assistantMessageId: Schema.optional(MessageId),
   checkpointTurnCount: NonNegativeInt,
   createdAt: IsoDateTime,
@@ -1157,8 +1161,10 @@ export const ThreadTurnDiffCompletedPayload = Schema.Struct({
   checkpointRef: CheckpointRef,
   status: OrchestrationCheckpointStatus,
   files: OrchestrationCheckpointFiles,
-  agentTouchedPaths: Schema.optionalKey(OrchestrationAgentTouchedPaths),
-  turnFiles: Schema.optionalKey(OrchestrationCheckpointFiles),
+  agentTouchedPaths: OrchestrationAgentTouchedPaths.pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  turnFiles: OrchestrationCheckpointFiles.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   assistantMessageId: Schema.NullOr(MessageId),
   completedAt: IsoDateTime,
 });
@@ -1536,8 +1542,10 @@ const ProjectionCheckpointRow = Schema.Struct({
   checkpointRef: CheckpointRef,
   status: OrchestrationCheckpointStatus,
   files: OrchestrationCheckpointFiles,
-  agentTouchedPaths: Schema.optionalKey(OrchestrationAgentTouchedPaths),
-  turnFiles: Schema.optionalKey(OrchestrationCheckpointFiles),
+  agentTouchedPaths: OrchestrationAgentTouchedPaths.pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  turnFiles: OrchestrationCheckpointFiles.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   assistantMessageId: Schema.NullOr(MessageId),
   completedAt: IsoDateTime,
 });

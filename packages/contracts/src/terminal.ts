@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const DEFAULT_TERMINAL_ID = "default";
@@ -11,6 +11,9 @@ const TerminalRowsSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).ch
   Schema.isLessThanOrEqualTo(500),
 );
 const TerminalIdSchema = TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(128));
+const TerminalIdWithDefaultSchema = TerminalIdSchema.pipe(
+  Schema.withDecodingDefault(Effect.succeed(DEFAULT_TERMINAL_ID)),
+);
 const TerminalEnvKeySchema = Schema.String.check(
   Schema.isPattern(/^[A-Za-z_][A-Za-z0-9_]*$/),
 ).check(Schema.isMaxLength(128));
@@ -24,10 +27,10 @@ export const TerminalThreadInput = Schema.Struct({
 });
 export type TerminalThreadInput = typeof TerminalThreadInput.Type;
 
-/** Terminal ids are client-selected and sent explicitly so clients can resume stable sessions. */
+/** Terminal ids default for compatibility while clients can select stable sessions explicitly. */
 const TerminalSessionInput = Schema.Struct({
   ...TerminalThreadInput.fields,
-  terminalId: TerminalIdSchema,
+  terminalId: TerminalIdWithDefaultSchema,
 });
 export type TerminalSessionInput = Schema.Codec.Encoded<typeof TerminalSessionInput>;
 

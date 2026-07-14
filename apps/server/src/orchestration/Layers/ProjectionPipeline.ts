@@ -574,7 +574,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             title: event.payload.title,
             modelSelection: event.payload.modelSelection,
             runtimeMode: event.payload.runtimeMode,
-            pendingRuntimeMode: event.payload.pendingRuntimeMode,
+            pendingRuntimeMode: event.payload.pendingRuntimeMode ?? null,
             interactionMode: event.payload.interactionMode,
             branch: event.payload.branch,
             worktreePath: event.payload.worktreePath,

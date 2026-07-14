@@ -31,8 +31,8 @@ export default mergeConfig(
       },
     },
     test: {
-      // The server suite exercises sqlite, git, temp worktrees, and orchestration
-      // runtimes heavily. Running files in parallel introduces load-sensitive flakes.
+      // Keep ad-hoc runs serial. The package test script parallelizes isolation-safe files
+      // while running the load-sensitive server socket seam separately.
       fileParallelism: false,
       // Server integration tests exercise sqlite, git, and orchestration together.
       // Under package-wide parallel runs they regularly exceed the default 15s budget.

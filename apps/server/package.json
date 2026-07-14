@@ -20,8 +20,10 @@
     "build:bundle": "vp pack",
     "start": "node dist/bin.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "vp test run",
-    "test:process-reaper": "vp test run src/server.test.ts src/provider/Layers/ClaudeAdapter.test.ts src/provider/Layers/ProviderSessionDirectory.test.ts src/provider/Layers/ProviderSessionReaper.test.ts src/provider/Layers/CodexAdapter.test.ts"
+    "test": "pnpm run test:parallel && pnpm run test:serial",
+    "test:parallel": "vp test run --fileParallelism --maxWorkers=3 --exclude src/server.test.ts",
+    "test:process-reaper": "vp test run src/server.test.ts src/provider/Layers/ClaudeAdapter.test.ts src/provider/Layers/ProviderSessionDirectory.test.ts src/provider/Layers/ProviderSessionReaper.test.ts src/provider/Layers/CodexAdapter.test.ts",
+    "test:serial": "vp test run src/server.test.ts --no-file-parallelism"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.111",

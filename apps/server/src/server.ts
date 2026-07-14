@@ -261,9 +261,8 @@ export const CloudHttpRuntimeLayerLive = Layer.mergeAll(
   ManagedEndpointRuntime.layer.pipe(Layer.provide(CloudBaseLayerLive)),
 ) as unknown as Layer.Layer<CloudHttpRuntimeServices>;
 
-const CloudRuntimeServicesLayerLive = Layer.mergeAll(
-  CloudHttpRuntimeLayerLive,
-  AgentAwarenessRelayLayerLive,
+const CloudRuntimeServicesLayerLive = AgentAwarenessRelayLayerLive.pipe(
+  Layer.provideMerge(CloudHttpRuntimeLayerLive),
 );
 
 export const CloudRuntimeLayerLive = Layer.effectDiscard(

@@ -27,6 +27,8 @@ function makeCheckpoint(
     files: [],
     assistantMessageId: MessageId.make(`msg-${input.checkpointTurnCount}`),
     ...input,
+    agentTouchedPaths: input.agentTouchedPaths ?? [],
+    turnFiles: input.turnFiles ?? [],
   };
 }
 

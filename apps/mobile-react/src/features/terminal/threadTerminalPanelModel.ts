@@ -1,9 +1,9 @@
-import type { EnvironmentId, TerminalAttachInput } from "@t3tools/contracts";
+import type { EnvironmentId, TerminalAttachInputDecoded } from "@t3tools/contracts";
 
 export interface ThreadTerminalSubscriptionIdentity {
   readonly environmentId: EnvironmentId;
-  readonly threadId: TerminalAttachInput["threadId"];
-  readonly terminalId: TerminalAttachInput["terminalId"];
+  readonly threadId: TerminalAttachInputDecoded["threadId"];
+  readonly terminalId: TerminalAttachInputDecoded["terminalId"];
   readonly cwd: string;
   readonly worktreePath: string | null;
 }
@@ -28,7 +28,7 @@ export function threadTerminalSubscriptionKey(
 export function buildThreadTerminalAttachInput(
   identity: ThreadTerminalSubscriptionIdentity,
   gridSize: TerminalGridSize,
-): TerminalAttachInput {
+): TerminalAttachInputDecoded {
   return {
     threadId: identity.threadId,
     terminalId: identity.terminalId,

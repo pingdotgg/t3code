@@ -3,6 +3,7 @@ import { assert, it } from "@effect/vitest";
 import { ConfigProvider, Effect, Option } from "effect";
 
 import {
+  canReuseInstalledElectronDistribution,
   resolveBuildOptions,
   resolveDesktopAppId,
   resolveDesktopArtifactName,
@@ -57,11 +58,19 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       perMachine: false,
       differentialPackage: true,
     });
+
     assert.deepStrictEqual(resolveWindowsNsisConfig(false), {
       oneClick: true,
       perMachine: false,
       differentialPackage: false,
     });
+  });
+
+  it("reuses installed Electron only for same-platform same-architecture builds", () => {
+    assert.equal(canReuseInstalledElectronDistribution("mac", "arm64", "darwin", "arm64"), true);
+    assert.equal(canReuseInstalledElectronDistribution("mac", "x64", "darwin", "arm64"), false);
+    assert.equal(canReuseInstalledElectronDistribution("win", "x64", "win32", "x64"), true);
+    assert.equal(canReuseInstalledElectronDistribution("linux", "x64", "darwin", "arm64"), false);
   });
 
   it("uses separate bundle identity and artifact names for dev builds", () => {

@@ -664,6 +664,17 @@ export function resolveWindowsNsisConfig(hasPublishConfig: boolean): Record<stri
   };
 }
 
+export function canReuseInstalledElectronDistribution(
+  platform: typeof BuildPlatform.Type,
+  arch: typeof BuildArch.Type,
+  hostPlatform: NodeJS.Platform = process.platform,
+  hostArch: NodeJS.Architecture = process.arch,
+): boolean {
+  const hostBuildPlatform =
+    hostPlatform === "darwin" ? "mac" : hostPlatform === "win32" ? "win" : hostPlatform;
+  return platform === hostBuildPlatform && arch === hostArch;
+}
+
 const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
   target: string,
@@ -672,6 +683,7 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   signed: boolean,
   mockUpdates: boolean,
   mockUpdateServerPort: number | undefined,
+  electronDist: string | undefined,
 ) {
   const buildConfig: Record<string, unknown> = {
     appId: resolveDesktopAppId(flavor),
@@ -682,6 +694,9 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     },
     electronFuses: resolveElectronFuses(platform),
   };
+  if (electronDist) {
+    buildConfig.electronDist = electronDist;
+  }
   const updateChannel = resolveDesktopUpdateChannel(version);
   const publishConfig = resolveGitHubPublishConfig(updateChannel);
   if (publishConfig) {
@@ -945,6 +960,20 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       options.signed,
       options.mockUpdates,
       options.mockUpdateServerPort,
+      yield* Effect.gen(function* () {
+        if (!canReuseInstalledElectronDistribution(options.platform, options.arch)) {
+          return undefined;
+        }
+        const electronDist = path.join(
+          repoRoot,
+          "apps",
+          "desktop",
+          "node_modules",
+          "electron",
+          "dist",
+        );
+        return (yield* fs.exists(electronDist)) ? electronDist : undefined;
+      }),
     ),
     dependencies: {
       ...resolvedServerDependencies,

@@ -520,6 +520,7 @@ describe("checkCursorProviderStatus", () => {
       "default",
       "composer-2",
       "gpt-5.4",
+      "gpt-5.4-mini",
       "claude-opus-4-6",
     ]);
     await expect(runNode(waitForFileContent(requestLogPath))).resolves.toContain("initialize");
@@ -543,6 +544,7 @@ describe("discoverCursorModelsViaAcp", () => {
       "default",
       "composer-2",
       "gpt-5.4",
+      "gpt-5.4-mini",
       "claude-opus-4-6",
     ]);
   });
@@ -599,6 +601,7 @@ describe("discoverCursorModelCapabilitiesViaAcp", () => {
       "default",
       "composer-2",
       "gpt-5.4",
+      "gpt-5.4-mini",
       "claude-opus-4-6",
     ]);
 

@@ -51,6 +51,7 @@ function makeSecretStorage(available: boolean): DesktopSecretStorage {
 const clientSettings: ClientSettings = {
   autoOpenPlanSidebar: false,
   chatFontSize: 14,
+  statusLineFontSize: 14,
   codeFontSize: 12,
   inputFontSize: 14,
   sidebarFontSize: 12,

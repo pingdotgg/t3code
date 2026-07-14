@@ -343,6 +343,14 @@ function createTextGeneration(overrides: Partial<FakeGitTextGeneration> = {}): T
   };
 }
 
+function redirectRemoteTransport(
+  cwd: string,
+  remoteUrl: string,
+  localPath: string,
+): Effect.Effect<void, GitCommandError, GitCore> {
+  return runGit(cwd, ["config", `url.${localPath}.insteadOf`, remoteUrl]);
+}
+
 function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
   service: GitHubCliShape;
   ghCalls: string[];
@@ -1068,6 +1076,11 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           "git@github.com:pingdotgg/codething-mvp.git",
         ]);
         yield* runGit(repoDir, ["config", "remote.my-org/upstream.pushurl", upstreamDir]);
+        yield* redirectRemoteTransport(
+          repoDir,
+          "git@github.com:pingdotgg/codething-mvp.git",
+          upstreamDir,
+        );
         yield* runGit(repoDir, ["checkout", "main"]);
         yield* runGit(repoDir, ["branch", "-D", "effect-atom"]);
         yield* runGit(repoDir, ["checkout", "--track", "my-org/upstream/effect-atom"]);
@@ -1837,6 +1850,11 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           "git@github.com:pingdotgg/codething-mvp.git",
         ]);
         yield* runGit(repoDir, ["config", "remote.my-org/upstream.pushurl", upstreamDir]);
+        yield* redirectRemoteTransport(
+          repoDir,
+          "git@github.com:pingdotgg/codething-mvp.git",
+          upstreamDir,
+        );
         yield* runGit(repoDir, ["checkout", "main"]);
         yield* runGit(repoDir, ["branch", "-D", "effect-atom"]);
         yield* runGit(repoDir, ["checkout", "--track", "my-org/upstream/effect-atom"]);

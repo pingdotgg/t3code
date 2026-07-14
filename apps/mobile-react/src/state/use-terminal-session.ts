@@ -5,7 +5,7 @@ import {
   type KnownTerminalSession,
   type TerminalSessionState,
 } from "@t3tools/client-runtime/state/terminal";
-import { ThreadId, type EnvironmentId, type TerminalAttachInput } from "@t3tools/contracts";
+import { ThreadId, type EnvironmentId, type TerminalAttachInputDecoded } from "@t3tools/contracts";
 import { useMemo } from "react";
 
 import { useEnvironmentQuery } from "./query";
@@ -13,7 +13,7 @@ import { terminalEnvironment } from "./terminal";
 
 export function useAttachedTerminalSession(input: {
   readonly environmentId: EnvironmentId | null;
-  readonly terminal: TerminalAttachInput | null;
+  readonly terminal: TerminalAttachInputDecoded | null;
 }): TerminalSessionState {
   const attach = useEnvironmentQuery(
     input.environmentId !== null && input.terminal !== null
