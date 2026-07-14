@@ -2579,16 +2579,17 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       }
       case "assistant.turn_start": {
         await completePendingActiveTurnEnd(context);
-        if (event.agentId === undefined && context.activeTurnId) {
-          cancelTurnEndFallback(context, context.activeTurnId);
-          context.turnIdsWithSuccessfulToolCompletion.delete(context.activeTurnId);
-        }
+        const activeTurnIdBeforeSdkTurn = context.activeTurnId;
         const turnId = resolveTurnIdForSdkTurn(context, event.data.turnId, {
           timestamp: event.timestamp,
           agentId: event.agentId,
         });
         if (!turnId) {
           return;
+        }
+        if (event.agentId === undefined && turnId === activeTurnIdBeforeSdkTurn) {
+          cancelTurnEndFallback(context, turnId);
+          context.turnIdsWithSuccessfulToolCompletion.delete(turnId);
         }
         updateProviderSession(context, {
           status: "running",
