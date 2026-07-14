@@ -2,10 +2,11 @@ import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useAuth } from "@clerk/expo";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { useCallback, useEffect, useState } from "react";
-import { Pressable, RefreshControl, ScrollView, View } from "react-native";
+import { Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { reportAtomCommandResult, settlePromise } from "@t3tools/client-runtime/state/runtime";
+import { AndroidSheetHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { CloudEnvironmentRows } from "../connection/CloudEnvironmentRows";
@@ -81,9 +82,16 @@ function ConfiguredConnectOnboardingRouteScreen() {
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
-      <NativeHeaderToolbar placement="right">
-        <NativeHeaderToolbar.Button icon="xmark" onPress={handleClose} separateBackground />
-      </NativeHeaderToolbar>
+      {Platform.OS === "android" ? (
+        <AndroidSheetHeader
+          title="Set up T3 Connect"
+          actions={[{ accessibilityLabel: "Close", icon: "xmark", onPress: handleClose }]}
+        />
+      ) : (
+        <NativeHeaderToolbar placement="right">
+          <NativeHeaderToolbar.Button icon="xmark" onPress={handleClose} separateBackground />
+        </NativeHeaderToolbar>
+      )}
       <ScrollView
         alwaysBounceVertical
         contentInsetAdjustmentBehavior="automatic"
