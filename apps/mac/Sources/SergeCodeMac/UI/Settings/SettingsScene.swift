@@ -530,7 +530,7 @@ private extension ProviderKind {
         case .codex: "codex"
         case .cursor: "cursor-agent"
         case .grok: "grok"
-        case .fugu: "codex"
+        case .fugu: "codex-fugu"
         case .opencode: "opencode"
         }
     }
