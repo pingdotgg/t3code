@@ -3,6 +3,7 @@ import { Image } from "expo-image";
 import { useState } from "react";
 import { View } from "react-native";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { isProjectFaviconFallbackUrl } from "@t3tools/shared/projectFavicon";
 import { useThemeColor } from "../lib/useThemeColor";
 import { useAssetUrl } from "../state/assets";
 
@@ -24,11 +25,12 @@ export function ProjectFavicon(props: {
       ? null
       : { _tag: "project-favicon", cwd: props.workspaceRoot },
   );
+  const renderableFaviconUrl = isProjectFaviconFallbackUrl(faviconUrl) ? null : faviconUrl;
 
   return (
     <ProjectFaviconImage
       key={faviconUrl}
-      faviconUrl={faviconUrl}
+      faviconUrl={renderableFaviconUrl}
       open={props.open}
       projectTitle={props.projectTitle}
       size={size}
