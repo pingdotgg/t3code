@@ -234,6 +234,11 @@ final class FixedSceneryBackend: BackendService, @unchecked Sendable {
     func renameProject(id: String, name: String) async throws {}
     func deleteProject(id: String) async throws {}
     func watchVcsStatus(threadID: String) async throws {}
+    func pullRequestReview(threadID: String, reference: String) async throws
+        -> PullRequestReviewSnapshot
+    {
+        fatalError("unused")
+    }
     func listBranches(threadID: String, query: String?) async throws -> [BranchRef] { [] }
     func switchBranch(threadID: String, name: String) async throws {}
     func createBranch(threadID: String, name: String) async throws {}
