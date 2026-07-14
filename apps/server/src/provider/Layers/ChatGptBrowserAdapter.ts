@@ -102,6 +102,19 @@ function nonEmpty(value: string | undefined | null): string | undefined {
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
 }
 
+function isChatGptHostname(hostname: string): boolean {
+  const normalized = hostname.toLowerCase();
+  return normalized === "chatgpt.com" || normalized.endsWith(".chatgpt.com");
+}
+
+function isChatGptPageUrl(value: string): boolean {
+  try {
+    return isChatGptHostname(new URL(value).hostname);
+  } catch {
+    return false;
+  }
+}
+
 function readResumeUrl(resumeCursor: unknown): string | undefined {
   if (typeof resumeCursor === "string") return nonEmpty(resumeCursor);
   if (!resumeCursor || typeof resumeCursor !== "object" || Array.isArray(resumeCursor)) {
@@ -257,13 +270,7 @@ async function resolvePage(settings: ChatGptBrowserSettings, browser: BrowserHan
   if (resumeMatch) return resumeMatch;
 
   if (!settings.newConversationPerThread) {
-    const existingChatGpt = pages.find((page) => {
-      try {
-        return new URL(page.url()).hostname.endsWith("chatgpt.com");
-      } catch {
-        return page.url().includes("chatgpt.com");
-      }
-    });
+    const existingChatGpt = pages.find((page) => isChatGptPageUrl(page.url()));
     if (existingChatGpt) return existingChatGpt;
   }
 
@@ -278,8 +285,7 @@ async function cleanupBrowser(browser: BrowserHandle): Promise<void> {
     return;
   }
 
-  // Do not close a CDP-connected browser: it may be the user's always-open
-  // ChatGPT window. The Node process dropping its websocket is enough cleanup.
+  await browser.browser.close().catch(() => undefined);
 }
 
 function unsupported(operation: string) {
@@ -334,6 +340,48 @@ export const makeChatGptBrowserAdapter = Effect.fn("makeChatGptBrowserAdapter")(
       ...(input?.itemId ? { itemId: input.itemId } : {}),
     }));
 
+  const emitAssistantStarted = (threadId: ThreadId, turnId: TurnId, itemId: RuntimeItemId) =>
+    Effect.gen(function* () {
+      yield* offerRuntimeEvent({
+        ...(yield* eventBase(threadId, { turnId, itemId })),
+        type: "item.started",
+        payload: {
+          itemType: "assistant_message",
+          status: "inProgress",
+          title: "ChatGPT response",
+        },
+      });
+    });
+
+  const emitAssistantCompleted = (input: {
+    readonly threadId: ThreadId;
+    readonly turnId: TurnId;
+    readonly itemId: RuntimeItemId;
+    readonly status: "completed" | "failed";
+    readonly title: string;
+    readonly detail?: string;
+    readonly text?: string;
+  }) =>
+    Effect.gen(function* () {
+      yield* offerRuntimeEvent({
+        ...(yield* eventBase(input.threadId, { turnId: input.turnId, itemId: input.itemId })),
+        type: "item.completed",
+        payload: {
+          itemType: "assistant_message",
+          status: input.status,
+          title: input.title,
+          ...(input.detail ? { detail: input.detail } : {}),
+          ...(input.text !== undefined ? { data: { text: input.text } } : {}),
+        },
+      });
+    });
+
+  const deleteSessionIfCurrent = (threadId: ThreadId, session: ChatGptSessionContext): void => {
+    if (sessions.get(threadId) === session) {
+      sessions.delete(threadId);
+    }
+  };
+
   const requireSession = (threadId: ThreadId) => {
     const session = sessions.get(threadId);
     if (!session || session.stopped) {
@@ -353,8 +401,9 @@ export const makeChatGptBrowserAdapter = Effect.fn("makeChatGptBrowserAdapter")(
     turnId: TurnId,
     assistantItemId: RuntimeItemId,
     userItemId: RuntimeItemId,
-  ): Effect.Effect<void> =>
-    Effect.gen(function* () {
+  ): Effect.Effect<void> => {
+    let activeAssistantItemId = assistantItemId;
+    return Effect.gen(function* () {
       const prompt = `${input.input ?? ""}${attachmentNote(input)}`;
       yield* offerRuntimeEvent({
         ...(yield* eventBase(session.threadId, { turnId })),
@@ -372,15 +421,7 @@ export const makeChatGptBrowserAdapter = Effect.fn("makeChatGptBrowserAdapter")(
           data: { text: prompt },
         },
       });
-      yield* offerRuntimeEvent({
-        ...(yield* eventBase(session.threadId, { turnId, itemId: assistantItemId })),
-        type: "item.started",
-        payload: {
-          itemType: "assistant_message",
-          status: "inProgress",
-          title: "ChatGPT response",
-        },
-      });
+      yield* emitAssistantStarted(session.threadId, turnId, assistantItemId);
 
       yield* Effect.tryPromise({
         try: () => submitPrompt(session.page, prompt),
@@ -415,16 +456,25 @@ export const makeChatGptBrowserAdapter = Effect.fn("makeChatGptBrowserAdapter")(
           completedText = text;
           lastChangedAt = Date.now();
           yield* offerRuntimeEvent({
-            ...(yield* eventBase(session.threadId, { turnId, itemId: assistantItemId })),
+            ...(yield* eventBase(session.threadId, { turnId, itemId: activeAssistantItemId })),
             type: "content.delta",
             payload: { streamKind: "assistant_text", delta },
           });
         } else if (text !== previousText) {
+          yield* emitAssistantCompleted({
+            threadId: session.threadId,
+            turnId,
+            itemId: activeAssistantItemId,
+            status: "completed",
+            title: "ChatGPT response rerendered",
+          });
+          activeAssistantItemId = nextRuntimeItemId("chatgpt-assistant");
+          yield* emitAssistantStarted(session.threadId, turnId, activeAssistantItemId);
           previousText = text;
           completedText = text;
           lastChangedAt = Date.now();
           yield* offerRuntimeEvent({
-            ...(yield* eventBase(session.threadId, { turnId, itemId: assistantItemId })),
+            ...(yield* eventBase(session.threadId, { turnId, itemId: activeAssistantItemId })),
             type: "content.delta",
             payload: { streamKind: "assistant_text", delta: text },
           });
@@ -463,15 +513,13 @@ export const makeChatGptBrowserAdapter = Effect.fn("makeChatGptBrowserAdapter")(
       };
       session.activeTurnId = undefined;
 
-      yield* offerRuntimeEvent({
-        ...(yield* eventBase(session.threadId, { turnId, itemId: assistantItemId })),
-        type: "item.completed",
-        payload: {
-          itemType: "assistant_message",
-          status: "completed",
-          title: "ChatGPT response",
-          data: { text: completedText },
-        },
+      yield* emitAssistantCompleted({
+        threadId: session.threadId,
+        turnId,
+        itemId: activeAssistantItemId,
+        status: "completed",
+        title: "ChatGPT response",
+        text: completedText,
       });
       yield* offerRuntimeEvent({
         ...(yield* eventBase(session.threadId, { turnId })),
@@ -489,15 +537,13 @@ export const makeChatGptBrowserAdapter = Effect.fn("makeChatGptBrowserAdapter")(
             updatedAt: yield* nowIso(),
           };
           session.activeTurnId = undefined;
-          yield* offerRuntimeEvent({
-            ...(yield* eventBase(session.threadId, { turnId, itemId: assistantItemId })),
-            type: "item.completed",
-            payload: {
-              itemType: "assistant_message",
-              status: "failed",
-              title: "ChatGPT response failed",
-              detail: error.message,
-            },
+          yield* emitAssistantCompleted({
+            threadId: session.threadId,
+            turnId,
+            itemId: activeAssistantItemId,
+            status: "failed",
+            title: "ChatGPT response failed",
+            detail: error.message,
           });
           yield* offerRuntimeEvent({
             ...(yield* eventBase(session.threadId, { turnId })),
@@ -507,6 +553,7 @@ export const makeChatGptBrowserAdapter = Effect.fn("makeChatGptBrowserAdapter")(
         }),
       ),
     );
+  };
 
   yield* Effect.addFinalizer(() =>
     Effect.forEach(
@@ -656,7 +703,7 @@ export const makeChatGptBrowserAdapter = Effect.fn("makeChatGptBrowserAdapter")(
           yield* Fiber.interrupt(session.activeTurnFiber).pipe(Effect.ignore);
         }
         yield* Effect.promise(() => cleanupBrowser(session.browser));
-        sessions.delete(threadId);
+        deleteSessionIfCurrent(threadId, session);
         yield* offerRuntimeEvent({
           ...(yield* eventBase(threadId)),
           type: "session.exited",
@@ -694,7 +741,7 @@ export const makeChatGptBrowserAdapter = Effect.fn("makeChatGptBrowserAdapter")(
             yield* Fiber.interrupt(session.activeTurnFiber).pipe(Effect.ignore);
           }
           yield* Effect.promise(() => cleanupBrowser(session.browser));
-          sessions.delete(threadId);
+          deleteSessionIfCurrent(threadId, session);
         }),
       ).pipe(Effect.asVoid),
     get streamEvents() {

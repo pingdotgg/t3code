@@ -75,7 +75,7 @@ export const makePendingChatGptBrowserProvider = (
       probe: {
         installed: settings.enabled,
         version: null,
-        status: settings.enabled ? "warning" : "warning",
+        status: "warning",
         auth: { status: "unknown" },
         message: settings.enabled
           ? "ChatGPT browser connector status has not been checked in this session yet."
