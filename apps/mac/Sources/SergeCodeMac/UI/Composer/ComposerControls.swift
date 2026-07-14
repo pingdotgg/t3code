@@ -184,7 +184,9 @@ private struct ServiceTierMenu: View {
     @UIState private var isHovering = false
 
     var body: some View {
-        if let option = currentModelOption, !option.serviceTierChoices.isEmpty {
+        if !isSubagentThread, let option = currentModelOption,
+            !option.serviceTierChoices.isEmpty
+        {
             Menu {
                 ForEach(option.serviceTierChoices) { choice in
                     Button {
@@ -215,6 +217,11 @@ private struct ServiceTierMenu: View {
         model.models.first {
             $0.instanceID == thread.modelInstanceID && $0.modelID == thread.modelID
         }
+    }
+
+    private var isSubagentThread: Bool {
+        thread.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            .range(of: #"^Agent:\s*"#, options: [.regularExpression, .caseInsensitive]) != nil
     }
 
     private func effectiveTier(of option: ModelOption) -> String? {

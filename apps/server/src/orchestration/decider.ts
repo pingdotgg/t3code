@@ -20,6 +20,11 @@ import {
   requireThreadNotArchived,
 } from "./commandInvariants.ts";
 import { projectEvent } from "./projector.ts";
+import {
+  enforceSubAgentStandardMode,
+  isSubAgentThreadTitle,
+  withSubAgentThreadTitle,
+} from "./subAgentModelPolicy.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -222,6 +227,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      const modelSelection = isSubAgentThreadTitle(command.title)
+        ? enforceSubAgentStandardMode(command.modelSelection)
+        : command.modelSelection;
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -234,7 +242,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           projectId: command.projectId,
           title: command.title,
-          modelSelection: command.modelSelection,
+          modelSelection,
           runtimeMode: command.runtimeMode,
           interactionMode: command.interactionMode,
           branch: command.branch,
@@ -313,11 +321,22 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.meta.update": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      const isSubAgent =
+        isSubAgentThreadTitle(thread.title) ||
+        (command.title !== undefined && isSubAgentThreadTitle(command.title));
+      const modelSelection =
+        command.modelSelection !== undefined && isSubAgent
+          ? enforceSubAgentStandardMode(command.modelSelection)
+          : command.modelSelection;
+      const title =
+        command.title !== undefined && isSubAgent
+          ? withSubAgentThreadTitle(command.title)
+          : command.title;
       const occurredAt = yield* nowIso;
       return {
         ...(yield* withEventBase({
@@ -329,10 +348,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "thread.meta-updated",
         payload: {
           threadId: command.threadId,
-          ...(command.title !== undefined ? { title: command.title } : {}),
-          ...(command.modelSelection !== undefined
-            ? { modelSelection: command.modelSelection }
-            : {}),
+          ...(title !== undefined ? { title } : {}),
+          ...(modelSelection !== undefined ? { modelSelection } : {}),
           ...(command.branch !== undefined ? { branch: command.branch } : {}),
           ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
           updatedAt: occurredAt,
@@ -449,7 +466,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           messageId: command.message.messageId,
           ...(command.modelSelection !== undefined
-            ? { modelSelection: command.modelSelection }
+            ? {
+                modelSelection: isSubAgentThreadTitle(targetThread.title)
+                  ? enforceSubAgentStandardMode(command.modelSelection)
+                  : command.modelSelection,
+              }
             : {}),
           ...(command.titleSeed !== undefined ? { titleSeed: command.titleSeed } : {}),
           runtimeMode: targetThread.runtimeMode,
