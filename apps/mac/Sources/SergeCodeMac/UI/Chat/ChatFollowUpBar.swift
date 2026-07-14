@@ -4,10 +4,14 @@ import SwiftUI
 /// Contextual next-step strip between the timeline and the composer. Shows
 /// at most one suggestion:
 /// - the branch's PR merged → offer to archive the finished chat;
-/// - the branch has an open PR → offer to fix actionable review comments,
-///   or plain link to the PR when there is nothing to fix;
+/// - the branch has an open PR whose review is mid-cycle → report where the
+///   review stands (bot reviewing, our fix turn running), offer to fix the
+///   actionable comments when there are any, and plain link to the PR when the
+///   review is settled with nothing left to fix;
 /// - the agent finished a turn with shippable work and no PR yet → offer to
 ///   have it open one.
+///
+/// Which of the review phases we are in is `ReviewLifecycle`'s call.
 struct ChatFollowUpBar: View {
     let model: AppModel
 
@@ -25,20 +29,6 @@ struct ChatFollowUpBar: View {
         - Follow the repository's PR template and contribution guidelines if present.
         """
 
-    /// The turn the agent is asked to run when the user clicks "Fix Reviews".
-    /// Plain user-message text, so it works identically across providers.
-    private static let fixReviewCommentsPrompt = """
-        Please fix the actionable review comments on this pull request.
-
-        Guidelines:
-        - Use the gh CLI to fetch PR comments and review threads, including human reviewers and bot reviewers such as CodeRabbit.
-        - Start with gh pr view --comments, then use gh api graphql to inspect review threads and their resolved/outdated state.
-        - Ignore comments that are resolved, outdated, purely informational, or nitpick-level unless they block correctness.
-        - Implement the fixes, run the relevant checks, commit, and push to the PR branch.
-        - Reply to each addressed comment with what changed, and resolve the corresponding review threads with gh api graphql where possible.
-        - Summarize any comments you intentionally skipped and why.
-        """
-
     var body: some View {
         Group {
             if let thread = model.selectedThread, thread.status != .archived {
@@ -46,19 +36,37 @@ struct ChatFollowUpBar: View {
                 if let vcs, vcs.prState == .merged {
                     archiveSuggestion(thread: thread, vcs: vcs)
                         .transition(Motion.banner)
-                } else if let vcs, shouldOfferReviewFixes(thread: thread, vcs: vcs) {
-                    fixReviewCommentsSuggestion
-                        .transition(Motion.banner)
-                } else if let vcs, vcs.prState == .open, let url = pullRequestURL(vcs) {
-                    openPullRequestChip(vcs: vcs, url: url)
-                        .transition(Motion.banner)
-                } else if let vcs, shouldOfferPR(thread: thread, vcs: vcs) {
-                    createPRSuggestion
-                        .transition(Motion.banner)
+                } else if let vcs {
+                    reviewFollowUp(thread: thread, vcs: vcs)
                 }
             }
         }
         .animation(Motion.structure, value: model.selectedVcsStatus())
+    }
+
+    @ViewBuilder
+    private func reviewFollowUp(thread: ChatThread, vcs: VcsStatus) -> some View {
+        switch ReviewLifecycle.followUp(
+            threadStatus: thread.status, vcs: vcs, timeline: model.selectedTimeline())
+        {
+        case .fixReviews(let unresolvedCount):
+            fixReviewCommentsSuggestion(unresolvedCount: unresolvedCount)
+                .transition(Motion.banner)
+        case .reviewInProgress:
+            reviewProgressStrip(text: "Review in progress", vcs: vcs)
+                .transition(Motion.banner)
+        case .fixesInProgress:
+            reviewProgressStrip(text: "Fixing review comments", vcs: vcs)
+                .transition(Motion.banner)
+        case .none:
+            if vcs.prState == .open, let url = pullRequestURL(vcs) {
+                openPullRequestChip(vcs: vcs, url: url)
+                    .transition(Motion.banner)
+            } else if shouldOfferPR(thread: thread, vcs: vcs) {
+                createPRSuggestion
+                    .transition(Motion.banner)
+            }
+        }
     }
 
     // MARK: - PR open → link
@@ -148,7 +156,7 @@ struct ChatFollowUpBar: View {
         let hasShippableWork = vcs.changedFileCount > 0 || vcs.aheadCount > 0
             || (vcs.aheadOfDefaultCount ?? 0) > 0
         guard hasShippableWork else { return false }
-        return hasCompletedAssistantMessage
+        return model.selectedTimeline().hasCompletedAssistantMessage
     }
 
     private var createPRSuggestion: some View {
@@ -167,17 +175,17 @@ struct ChatFollowUpBar: View {
 
     // MARK: - PR open → fix review comments
 
-    private func shouldOfferReviewFixes(thread: ChatThread, vcs: VcsStatus) -> Bool {
-        guard thread.status == .idle, vcs.prNumber != nil, vcs.prState == .open
-        else { return false }
-        return hasCompletedAssistantMessage
-    }
-
-    private var fixReviewCommentsSuggestion: some View {
-        HStack {
-            Spacer()
+    private func fixReviewCommentsSuggestion(unresolvedCount: Int?) -> some View {
+        HStack(spacing: 8) {
+            if let unresolvedCount {
+                Text(unresolvedCount == 1 ? "1 unresolved comment" : "\(unresolvedCount) unresolved comments")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
             Button {
-                Task { await model.send(text: Self.fixReviewCommentsPrompt) }
+                Task { await model.send(text: ReviewLifecycle.fixReviewCommentsPrompt) }
             } label: {
                 Label("Fix Reviews", systemImage: "text.bubble")
             }
@@ -187,11 +195,26 @@ struct ChatFollowUpBar: View {
         .padding(.vertical, 8)
     }
 
-    private var hasCompletedAssistantMessage: Bool {
-        return model.selectedTimeline().contains {
-            if case .assistantMessage(_, _, let isStreaming, _) = $0 { return !isStreaming }
-            return false
+    // MARK: - Review mid-cycle → wait it out
+
+    /// Read-only progress strip for the phases where there is nothing to click:
+    /// the bot is reviewing, or the fix turn we asked for is running.
+    private func reviewProgressStrip(text: String, vcs: VcsStatus) -> some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
+            Text(text)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            if let url = pullRequestURL(vcs), let number = vcs.prNumber {
+                Link("PR #\(number)", destination: url)
+                    .font(.callout)
+            }
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
     }
 }
 

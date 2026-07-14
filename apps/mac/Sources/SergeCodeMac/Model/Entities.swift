@@ -414,6 +414,16 @@ public enum TimelineItem: Identifiable, Sendable {
 }
 
 extension Array where Element == TimelineItem {
+    /// True once the agent has finished at least one answer here. A chat that
+    /// has never answered is not a chat with work to follow up on, so the
+    /// follow-up suggestions stay quiet until it has.
+    public var hasCompletedAssistantMessage: Bool {
+        contains {
+            if case .assistantMessage(_, _, let isStreaming, _) = $0 { return !isStreaming }
+            return false
+        }
+    }
+
     /// Coalescing append: an item whose id already exists replaces that row
     /// in place (tool lifecycle updates, streaming reasoning text) instead of
     /// stacking a duplicate. A tool row without a correlation id still folds
@@ -949,6 +959,18 @@ public enum PullRequestReviewDecision: String, Sendable {
     case reviewRequired = "REVIEW_REQUIRED"
 }
 
+/// Where the PR sits in its review lifecycle, from the wire's
+/// `VcsStatusChangeRequest.reviewLifecycle`. Nil means unknown — a review bot
+/// may simply not have touched this PR — and is never "complete".
+public enum PullRequestReviewLifecycle: String, Sendable {
+    /// A review bot says it is looking at the current changes right now.
+    case reviewInProgress = "review-in-progress"
+    /// A review landed and unresolved comments remain.
+    case actionableComments = "actionable-comments"
+    /// A review landed and nothing is left to fix.
+    case reviewComplete = "review-complete"
+}
+
 public struct PullRequestReviewAuthor: Hashable, Sendable {
     public var login: String
     public var avatarURL: String?
@@ -1014,6 +1036,8 @@ public struct VcsStatus: Hashable, Sendable {
     public var reviewDecision: PullRequestReviewDecision?
     /// Unresolved review thread count; nil when unknown / fetch failed.
     public var unresolvedReviewThreadCount: Int?
+    /// Review lifecycle phase; nil when unknown / non-GitHub / fetch failed.
+    public var reviewLifecycle: PullRequestReviewLifecycle?
 
     public init(
         isRepo: Bool, branch: String?, isDefaultBranch: Bool, changedFileCount: Int,
@@ -1022,7 +1046,8 @@ public struct VcsStatus: Hashable, Sendable {
         prNumber: Int? = nil, prTitle: String? = nil, prURL: String? = nil,
         prState: PullRequestState? = nil,
         reviewDecision: PullRequestReviewDecision? = nil,
-        unresolvedReviewThreadCount: Int? = nil
+        unresolvedReviewThreadCount: Int? = nil,
+        reviewLifecycle: PullRequestReviewLifecycle? = nil
     ) {
         self.isRepo = isRepo
         self.branch = branch
@@ -1041,6 +1066,7 @@ public struct VcsStatus: Hashable, Sendable {
         self.prState = prState
         self.reviewDecision = reviewDecision
         self.unresolvedReviewThreadCount = unresolvedReviewThreadCount
+        self.reviewLifecycle = reviewLifecycle
     }
 }
 
