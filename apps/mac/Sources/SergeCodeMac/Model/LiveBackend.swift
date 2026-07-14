@@ -119,6 +119,14 @@ public actor LiveBackend: BackendService {
     /// (reasoning effort) can round-trip instanceId/model/other options
     /// without re-fetching the shell.
     private var modelSelectionsByThread: [String: ModelSelection] = [:]
+    /// Model selection a meta update armed but no turn has requested yet.
+    /// Updating thread meta only re-binds the thread's stored selection: a
+    /// provider session already bound to the thread keeps serving the old
+    /// model until a turn carries the new one, so the server never restarts or
+    /// re-targets it. Arming the selection here and attaching it to the next
+    /// turn is what makes a mid-thread switch — including the usage-limit
+    /// "Switch model" escape hatch — actually take effect.
+    private var pendingModelSelectionByThread: [String: ModelSelection] = [:]
     /// Placeholder title a thread was created under by *this* client (scene
     /// name or "New … thread"). Sent as `titleSeed` on sends so first-turn
     /// title generation may replace it — never set for threads created
@@ -1427,6 +1435,7 @@ public actor LiveBackend: BackendService {
         // Shell/thread projection caches.
         threadsByID[threadID] = nil
         modelSelectionsByThread[threadID] = nil
+        pendingModelSelectionByThread[threadID] = nil
         titleSeedsByThread[threadID] = nil
         threadEnvByThread[threadID] = nil
         threadShellsByID[threadID] = nil
@@ -1560,6 +1569,7 @@ public actor LiveBackend: BackendService {
         let bootstrap = await worktreeBootstrapIfNeeded(threadID: threadID)
         _ = try await client.startTurn(
             threadId: threadID, text: text, attachments: uploads,
+            modelSelection: pendingModelSelectionByThread[threadID],
             // Marks the creation placeholder title as replaceable so the
             // server's first-turn generation can retitle the thread with an
             // AI description. Only set for threads this client created: the
@@ -1569,6 +1579,9 @@ public actor LiveBackend: BackendService {
             runtimeMode: thread.map { Self.wireRuntimeMode($0.runtimeMode) } ?? .wireDefault,
             interactionMode: thread.map { Self.wireInteractionMode($0.interactionMode) } ?? .wireDefault,
             bootstrap: bootstrap)
+        // Cleared only once the turn is accepted: a send that throws must not
+        // drop the armed switch, or the retry would run on the old model.
+        pendingModelSelectionByThread[threadID] = nil
         // Mark the turn locally right away: the shell upsert carrying
         // latestTurn/worktreePath can lag, and a quick second send must not
         // bootstrap a second worktree in the meantime.
@@ -1706,9 +1719,11 @@ public actor LiveBackend: BackendService {
         // plan mode is what produced the plan being implemented.
         _ = try await client.startTurn(
             threadId: threadID, text: "Implement the proposed plan.",
+            modelSelection: pendingModelSelectionByThread[threadID],
             runtimeMode: thread.map { Self.wireRuntimeMode($0.runtimeMode) } ?? .wireDefault,
             interactionMode: .default,
             sourceProposedPlan: SourceProposedPlanReference(threadId: threadID, planId: planID))
+        pendingModelSelectionByThread[threadID] = nil
     }
 
     public func cancelTurn(threadID: String) async throws {
@@ -1788,7 +1803,7 @@ public actor LiveBackend: BackendService {
         // carried-over value could be invalid for the new model.
         let selection = ModelSelection(instanceId: model.instanceID, model: model.modelID)
         _ = try await client.updateThreadMeta(threadId: threadID, modelSelection: selection)
-        modelSelectionsByThread[threadID] = selection
+        armThreadModelSelection(selection, threadID: threadID)
         rememberModelSelection(selection, for: model.provider)
         updateCachedThread(threadID) {
             $0.modelInstanceID = model.instanceID
@@ -1797,6 +1812,16 @@ public actor LiveBackend: BackendService {
             $0.reasoningEffort = nil
             $0.serviceTier = nil
         }
+    }
+
+    /// Record a selection this client just wrote to thread meta, and arm it for
+    /// the thread's next turn so an already-bound provider session is restarted
+    /// or re-targeted onto it. Shell-driven updates deliberately bypass this:
+    /// they echo what the server already knows, and re-requesting it would
+    /// restart the session for nothing.
+    private func armThreadModelSelection(_ selection: ModelSelection, threadID: String) {
+        modelSelectionsByThread[threadID] = selection
+        pendingModelSelectionByThread[threadID] = selection
     }
 
     /// Effort-style select descriptors go by different ids per driver
@@ -1857,7 +1882,7 @@ public actor LiveBackend: BackendService {
         }
         let updated = Self.modelSelection(selection, settingEffort: value, descriptorID: descriptor.id)
         _ = try await client.updateThreadMeta(threadId: threadID, modelSelection: updated)
-        modelSelectionsByThread[threadID] = updated
+        armThreadModelSelection(updated, threadID: threadID)
         if let instance = providersByInstanceId[selection.instanceId],
             let provider = providerKind(for: instance)
         {
@@ -1881,7 +1906,7 @@ public actor LiveBackend: BackendService {
         let updated = Self.modelSelection(
             selection, settingServiceTier: value, descriptorID: descriptor.id)
         _ = try await client.updateThreadMeta(threadId: threadID, modelSelection: updated)
-        modelSelectionsByThread[threadID] = updated
+        armThreadModelSelection(updated, threadID: threadID)
         if let instance = providersByInstanceId[selection.instanceId],
             let provider = providerKind(for: instance)
         {
