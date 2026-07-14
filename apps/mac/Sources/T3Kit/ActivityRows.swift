@@ -107,10 +107,25 @@ public enum ActivityRows {
         }
     }
 
+    /// Identity family the server resolved for this tool call
+    /// (`payload.data.tool.family`): "mcp", "skill", "computer_use". Nil for
+    /// plain built-in tools, and for activities persisted before the server
+    /// started stamping identities.
+    public static func toolFamily(in payload: JSONValue) -> String? {
+        nonEmpty(toolIdentity(in: payload)?["family"]?.stringValue)
+    }
+
+    private static func toolIdentity(in payload: JSONValue) -> [String: JSONValue]? {
+        payload.objectValue?["data"]?.objectValue?["tool"]?.objectValue
+    }
+
     private static func toolRow(for activity: OrchestrationThreadActivity) -> T3ActivityRow {
         let payload = activity.decodePayload(ToolLifecycleActivityPayload.self)
+        // A named tool ("Cloudflare · Docs") beats the generic lifecycle
+        // summary the provider stamped on the activity ("MCP tool call").
         let title =
-            nonEmpty(normalizeToolTitle(activity.summary))
+            nonEmpty(toolIdentity(in: activity.payload)?["displayName"]?.stringValue)
+            ?? nonEmpty(normalizeToolTitle(activity.summary))
             ?? humanizedItemType(payload?.itemType) ?? "Tool"
         var detail =
             detailFromData(activity.payload, itemType: payload?.itemType)

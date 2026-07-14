@@ -892,6 +892,8 @@ extension ToolEventKind {
         case .fileRead: "eye"
         case .webSearch: "globe"
         case .mcpCall: "wrench.adjustable"
+        case .skill: "wand.and.stars"
+        case .computerUse: "desktopcomputer"
         case .subagent: "person.2"
         case .imageView: "photo"
         case .other: "hammer"
@@ -908,7 +910,7 @@ extension ToolEventKind {
         case .mcpCall: "mcp_tool_call"
         case .subagent: "collab_agent_tool_call"
         case .imageView: "image_view"
-        case .other: nil
+        case .skill, .computerUse, .other: nil
         }
     }
 }

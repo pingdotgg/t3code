@@ -1087,6 +1087,116 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("names MCP, skill and computer-use calls instead of labelling them generically", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "turn.completed",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "look things up",
+        attachments: [],
+      });
+
+      harness.query.emit(
+        taskToolStartMessage({
+          sessionId: "sdk-session-1",
+          uuid: "stream-mcp",
+          index: 0,
+          toolUseId: "tool-mcp",
+          toolName: "mcp__cloudflare__docs",
+          toolInput: { query: "workers kv" },
+        }),
+      );
+      harness.query.emit(
+        taskToolStartMessage({
+          sessionId: "sdk-session-1",
+          uuid: "stream-skill",
+          index: 1,
+          toolUseId: "tool-skill",
+          toolName: "Skill",
+          toolInput: { skill: "deep-research" },
+        }),
+      );
+      harness.query.emit(
+        taskToolStartMessage({
+          sessionId: "sdk-session-1",
+          uuid: "stream-computer",
+          index: 2,
+          toolUseId: "tool-computer",
+          toolName: "computer",
+          toolInput: { action: "screenshot" },
+        }),
+      );
+      // An MCP tool whose name merely contains "agent" is still an MCP call,
+      // not a subagent spawn.
+      harness.query.emit(
+        taskToolStartMessage({
+          sessionId: "sdk-session-1",
+          uuid: "stream-mcp-agent",
+          index: 3,
+          toolUseId: "tool-mcp-agent",
+          toolName: "mcp__linear__agent_session_create",
+          toolInput: {},
+        }),
+      );
+
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        session_id: "sdk-session-1",
+        uuid: "result-1",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const started = runtimeEvents.filter((event) => event.type === "item.started");
+      const startedByItemId = new Map(
+        started.map((event) => [String(event.itemId), event] as const),
+      );
+
+      const mcp = startedByItemId.get("tool-mcp");
+      assert.equal(mcp?.type, "item.started");
+      if (mcp?.type === "item.started") {
+        assert.equal(mcp.payload.itemType, "mcp_tool_call");
+        assert.equal(mcp.payload.title, "Cloudflare · Docs");
+        assert.equal(mcp.payload.detail, "query=workers kv");
+      }
+
+      const skill = startedByItemId.get("tool-skill");
+      if (skill?.type === "item.started") {
+        assert.equal(skill.payload.itemType, "dynamic_tool_call");
+        assert.equal(skill.payload.title, "Skill · deep-research");
+      }
+
+      const computer = startedByItemId.get("tool-computer");
+      if (computer?.type === "item.started") {
+        assert.equal(computer.payload.title, "Computer use · Screenshot");
+      }
+
+      const mcpAgent = startedByItemId.get("tool-mcp-agent");
+      if (mcpAgent?.type === "item.started") {
+        assert.equal(mcpAgent.payload.itemType, "mcp_tool_call");
+        assert.equal(mcpAgent.payload.title, "Linear · Agent session create");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("steers a running turn instead of opening a new one on mid-turn sendTurn", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

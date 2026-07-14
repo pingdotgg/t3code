@@ -175,6 +175,78 @@ describe("buildThreadFeed", () => {
     ]);
   });
 
+  it("renders skills, MCP and computer-use calls under their own name and icon", () => {
+    const turnId = TurnId.make("turn-native-tools");
+    const thread = makeThread({
+      id: ThreadId.make("thread-native-tools"),
+      projectId: ProjectId.make("project-1"),
+      title: "Native tool rows",
+      activities: [
+        makeActivity({
+          id: EventId.make("skill-completed"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Tool call",
+          createdAt: "2026-04-01T00:00:01.000Z",
+          turnId,
+          payload: {
+            itemType: "dynamic_tool_call",
+            status: "completed",
+            data: {
+              tool: {
+                family: "skill",
+                toolName: "Skill",
+                displayName: "Skill · deep-research",
+                action: "deep-research",
+              },
+              toolName: "Skill",
+              input: { skill: "deep-research" },
+            },
+          },
+        }),
+        makeActivity({
+          id: EventId.make("mcp-completed"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "MCP tool call",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          turnId,
+          payload: {
+            itemType: "mcp_tool_call",
+            status: "completed",
+            data: { toolName: "mcp__cloudflare__docs", input: { query: "workers kv" } },
+          },
+        }),
+        makeActivity({
+          id: EventId.make("computer-completed"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Tool call",
+          createdAt: "2026-04-01T00:00:03.000Z",
+          turnId,
+          payload: {
+            itemType: "dynamic_tool_call",
+            status: "completed",
+            data: { toolName: "computer", input: { action: "screenshot" } },
+          },
+        }),
+      ],
+    });
+
+    const group = buildThreadFeed(thread)[0];
+    expect(group).toMatchObject({ type: "activity-group" });
+    if (!group || group.type !== "activity-group") {
+      return;
+    }
+    expect(
+      group.activities.map((activity) => ({ summary: activity.summary, icon: activity.icon })),
+    ).toEqual([
+      { summary: "Skill · deep-research", icon: "skill" },
+      { summary: "Cloudflare · Docs", icon: "wrench" },
+      { summary: "Computer use · Screenshot", icon: "computer" },
+    ]);
+  });
+
   it("keeps MCP inputs available to expanded mobile work rows", () => {
     const turnId = TurnId.make("turn-mcp");
     const thread = makeThread({

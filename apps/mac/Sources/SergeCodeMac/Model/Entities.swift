@@ -227,9 +227,27 @@ public enum ToolEventStatus: String, Sendable {
 /// (ProviderRuntimeIngestion.ts); drives the row icon and how the detail
 /// body renders (command line vs file diff vs plain text).
 public enum ToolEventKind: String, Sendable {
-    case command, fileChange, fileRead, webSearch, mcpCall, subagent, imageView, other
+    case command, fileChange, fileRead, webSearch, mcpCall, skill, computerUse, subagent,
+        imageView, other
 
-    public init(itemType: String?) {
+    /// `family` is the tool's identity family (`payload.data.tool.family`,
+    /// stamped by the server for every provider). It wins over `itemType`:
+    /// skills and computer-use calls arrive as generic tool item types, so
+    /// item type alone cannot tell them apart from any other dynamic call.
+    public init(itemType: String?, family: String? = nil) {
+        switch family {
+        case "skill":
+            self = .skill
+            return
+        case "computer_use":
+            self = .computerUse
+            return
+        case "mcp":
+            self = .mcpCall
+            return
+        default:
+            break
+        }
         switch itemType {
         case "command_execution": self = .command
         case "file_change": self = .fileChange
