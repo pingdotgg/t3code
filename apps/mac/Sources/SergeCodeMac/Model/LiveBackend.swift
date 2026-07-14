@@ -2539,6 +2539,7 @@ public actor LiveBackend: BackendService {
         switch mode {
         case .default: .normal
         case .plan: .plan
+        case .advisor: .advisor
         }
     }
 
@@ -2546,6 +2547,7 @@ public actor LiveBackend: BackendService {
         switch mode {
         case .normal: .default
         case .plan: .plan
+        case .advisor: .advisor
         }
     }
 

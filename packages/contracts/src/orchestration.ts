@@ -123,9 +123,40 @@ export const RuntimeMode = Schema.Literals([
 ]);
 export type RuntimeMode = typeof RuntimeMode.Type;
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
-export const ProviderInteractionMode = Schema.Literals(["default", "plan"]);
+export const ProviderInteractionMode = Schema.Literals(["default", "plan", "advisor"]);
 export type ProviderInteractionMode = typeof ProviderInteractionMode.Type;
 export const DEFAULT_PROVIDER_INTERACTION_MODE: ProviderInteractionMode = "default";
+
+/**
+ * Advisor is a consultative, non-mutating interaction mode: the agent reads,
+ * explains, reviews and recommends, but never writes to the workspace and
+ * never emits a proposed plan (that is `plan` mode's job).
+ *
+ * Advisor is enforced rather than merely prompted. Providers steer on the
+ * interaction mode where they can, but the guarantee comes from
+ * {@link resolveEffectiveRuntimeMode}, which clamps the permission axis so a
+ * provider that has never heard of Advisor still cannot mutate unattended.
+ */
+export const isNonMutatingInteractionMode = (mode: ProviderInteractionMode): boolean =>
+  mode === "advisor";
+
+/**
+ * The runtime mode a provider session is actually started with, given the
+ * thread's requested runtime mode and its interaction mode.
+ *
+ * Advisor downgrades any mode to `approval-required`, which every driver
+ * already maps onto its strictest policy (Codex/Fugu: a real `read-only` OS
+ * sandbox; Claude: the `canUseTool` gate; OpenCode: ask-everything; ACP
+ * drivers: per-tool permission requests). Nothing can be mutated without the
+ * user seeing an approval first.
+ */
+export const resolveEffectiveRuntimeMode = (
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode | undefined,
+): RuntimeMode =>
+  interactionMode !== undefined && isNonMutatingInteractionMode(interactionMode)
+    ? "approval-required"
+    : runtimeMode;
 export const ProviderRequestKind = Schema.Literals(["command", "file-read", "file-change"]);
 export type ProviderRequestKind = typeof ProviderRequestKind.Type;
 export const AssistantDeliveryMode = Schema.Literals(["buffered", "streaming"]);

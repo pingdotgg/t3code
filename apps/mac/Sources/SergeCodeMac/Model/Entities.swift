@@ -66,17 +66,39 @@ public enum ThreadRuntimeMode: String, CaseIterable, Sendable, Identifiable {
     }
 }
 
-/// UI mirror of the wire `ProviderInteractionMode` (plan-first vs direct).
+/// UI mirror of the wire `ProviderInteractionMode` (how the agent engages with
+/// the request: do it, plan it, or advise on it).
 public enum ThreadInteractionMode: String, CaseIterable, Sendable, Identifiable {
-    case normal, plan
+    case normal, plan, advisor
     public var id: String { rawValue }
 
     public var displayName: String {
         switch self {
         case .normal: "Default"
         case .plan: "Plan"
+        case .advisor: "Advisor"
         }
     }
+
+    public var symbolName: String {
+        switch self {
+        case .normal: "text.bubble"
+        case .plan: "list.clipboard"
+        case .advisor: "lightbulb.max"
+        }
+    }
+
+    public var helpText: String {
+        switch self {
+        case .normal: "The agent does the work."
+        case .plan: "The agent proposes a plan instead of editing."
+        case .advisor: "The agent answers and recommends. It cannot edit the workspace."
+        }
+    }
+
+    /// Advisor never mutates the workspace, whatever the thread's runtime mode
+    /// says. The server enforces this; the UI must not imply otherwise.
+    public var isNonMutating: Bool { self == .advisor }
 }
 
 /// One selectable reasoning-effort level of a model (from the wire's
@@ -175,6 +197,13 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
 
     /// True when the server has reported this thread's active turn as stalled.
     public var isStalled: Bool { health?.stalled ?? false }
+
+    /// The runtime mode actually in force for the next turn. Advisor clamps the
+    /// permission axis server-side (`resolveEffectiveRuntimeMode` in contracts),
+    /// so the composer must not claim full access while advisor is on.
+    public var effectiveRuntimeMode: ThreadRuntimeMode {
+        interactionMode.isNonMutating ? .approvalRequired : runtimeMode
+    }
 
     public init(
         id: String, projectID: String, title: String, provider: ProviderKind,

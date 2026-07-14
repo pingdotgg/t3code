@@ -9,6 +9,7 @@ import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
 
 import {
+  CODEX_ADVISOR_MODE_DEVELOPER_INSTRUCTIONS,
   CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
   CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
 } from "../CodexDeveloperInstructions.ts";
@@ -125,6 +126,49 @@ describe("buildTurnStartParams", () => {
       },
     });
   });
+
+  it.effect(
+    "sends advisor turns on the plan wire mode with advisor instructions and a read-only sandbox",
+    () =>
+      Effect.gen(function* () {
+        const params = yield* buildTurnStartParams({
+          threadId: "provider-thread-1",
+          // The reactor clamps advisor threads to approval-required before the
+          // session starts, so this is the mode advisor turns actually run under.
+          runtimeMode: "approval-required",
+          prompt: "Why does the reactor restart sessions?",
+          model: "gpt-5.3-codex",
+          effort: "medium",
+          interactionMode: "advisor",
+        });
+
+        NodeAssert.deepStrictEqual(params, {
+          threadId: "provider-thread-1",
+          approvalPolicy: "untrusted",
+          sandboxPolicy: {
+            type: "readOnly",
+          },
+          input: [
+            {
+              type: "text",
+              text: "Why does the reactor restart sessions?",
+            },
+          ],
+          model: "gpt-5.3-codex",
+          effort: "medium",
+          collaborationMode: {
+            // Codex accepts only "plan" | "default"; advisor borrows "plan" and
+            // is distinguished purely by its developer instructions.
+            mode: "plan",
+            settings: {
+              model: "gpt-5.3-codex",
+              reasoning_effort: "medium",
+              developer_instructions: CODEX_ADVISOR_MODE_DEVELOPER_INSTRUCTIONS,
+            },
+          },
+        });
+      }),
+  );
 
   it("includes default collaboration mode and image attachments", () => {
     const params = Effect.runSync(
