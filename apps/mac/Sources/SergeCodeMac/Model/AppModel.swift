@@ -1598,6 +1598,12 @@ public final class AppModel {
         try? await backend.watchVcsStatus(threadID: threadID)
     }
 
+    public func pullRequestReview(threadID: String, reference: String) async throws
+        -> PullRequestReviewSnapshot
+    {
+        try await backend.pullRequestReview(threadID: threadID, reference: reference)
+    }
+
     public func listBranches(query: String?) async -> [BranchRef] {
         guard let threadID = selectedThreadID else { return [] }
         do {

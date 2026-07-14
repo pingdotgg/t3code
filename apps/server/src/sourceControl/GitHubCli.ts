@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 
 import {
   TrimmedNonEmptyString,
+  type PullRequestReviewResult,
   type SourceControlRepositoryVisibility,
   type VcsError,
 } from "@t3tools/contracts";
@@ -16,6 +17,7 @@ import {
   decodeGitHubPullRequestJson,
   decodeGitHubPullRequestListJson,
 } from "./gitHubPullRequests.ts";
+import { decodeGitHubPullRequestReviewJson } from "./gitHubPullRequestReview.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -135,6 +137,19 @@ export class GitHubRepositoryDecodeError extends Schema.TaggedErrorClass<GitHubR
   }
 }
 
+export class GitHubPullRequestReviewDecodeError extends Schema.TaggedErrorClass<GitHubPullRequestReviewDecodeError>()(
+  "GitHubPullRequestReviewDecodeError",
+  gitHubCliDecodeFields,
+) {
+  get detail(): string {
+    return "GitHub CLI returned invalid pull request review JSON.";
+  }
+
+  override get message(): string {
+    return `GitHub CLI failed in getPullRequestReview: ${this.detail}`;
+  }
+}
+
 export const GitHubCliError = Schema.Union([
   GitHubCliUnavailableError,
   GitHubCliAuthenticationError,
@@ -144,6 +159,7 @@ export const GitHubCliError = Schema.Union([
   GitHubChangeRequestListDecodeError,
   GitHubPullRequestDecodeError,
   GitHubRepositoryDecodeError,
+  GitHubPullRequestReviewDecodeError,
 ]);
 export type GitHubCliError = typeof GitHubCliError.Type;
 
@@ -256,6 +272,11 @@ export class GitHubCli extends Context.Service<
       readonly cwd: string;
       readonly reference: string;
     }) => Effect.Effect<GitHubPullRequestReviewStatus, GitHubCliError>;
+
+    readonly getPullRequestReview: (input: {
+      readonly cwd: string;
+      readonly reference: string;
+    }) => Effect.Effect<PullRequestReviewResult, GitHubCliError>;
 
     readonly mergePullRequest: (input: {
       readonly cwd: string;
@@ -596,6 +617,73 @@ export const make = Effect.gen(function* () {
         );
 
         return { reviewDecision, unresolvedReviewThreadCount };
+      }),
+    getPullRequestReview: (input) =>
+      Effect.gen(function* () {
+        const prNumber = parsePullRequestNumber(input.reference);
+        if (prNumber === null) {
+          return yield* new GitHubPullRequestNotFoundError({
+            command: "gh",
+            cwd: input.cwd,
+            cause: new Error("Pull request reference does not contain a number."),
+          });
+        }
+
+        const repositoryResult = yield* execute({
+          cwd: input.cwd,
+          args: ["repo", "view", "--json", "nameWithOwner"],
+        });
+        const nameWithOwner = yield* decodeRawGitHubNameWithOwner(
+          repositoryResult.stdout.trim() || "{}",
+        ).pipe(
+          Effect.map((raw) => raw.nameWithOwner),
+          Effect.mapError(
+            (cause) => new GitHubRepositoryDecodeError({ command: "gh", cwd: input.cwd, cause }),
+          ),
+        );
+        const [owner, name] = nameWithOwner.split("/", 2);
+        if (!owner || !name) {
+          return yield* new GitHubRepositoryDecodeError({
+            command: "gh",
+            cwd: input.cwd,
+            cause: new Error("Repository nameWithOwner is malformed."),
+          });
+        }
+
+        const graphqlQuery =
+          "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { number url comments(first: 100) { nodes { id author { __typename login avatarUrl } authorAssociation body url createdAt updatedAt } pageInfo { hasNextPage } } reviews(first: 100) { nodes { id author { __typename login avatarUrl } authorAssociation body url createdAt updatedAt state } pageInfo { hasNextPage } } reviewThreads(first: 100) { nodes { id isResolved isOutdated path line originalLine diffSide comments(first: 100) { nodes { id author { __typename login avatarUrl } authorAssociation body url createdAt updatedAt } pageInfo { hasNextPage } } } pageInfo { hasNextPage } } } } }";
+
+        const result = yield* execute({
+          cwd: input.cwd,
+          args: [
+            "api",
+            "graphql",
+            "-f",
+            `query=${graphqlQuery}`,
+            "-F",
+            `owner=${owner}`,
+            "-F",
+            `name=${name}`,
+            "-F",
+            `number=${prNumber}`,
+          ],
+        });
+
+        return yield* Effect.sync(() =>
+          decodeGitHubPullRequestReviewJson(result.stdout.trim() || "{}"),
+        ).pipe(
+          Effect.flatMap((decoded) =>
+            Result.isSuccess(decoded)
+              ? Effect.succeed(decoded.success)
+              : Effect.fail(
+                  new GitHubPullRequestReviewDecodeError({
+                    command: "gh",
+                    cwd: input.cwd,
+                    cause: decoded.failure,
+                  }),
+                ),
+          ),
+        );
       }),
     mergePullRequest: (input) =>
       execute({

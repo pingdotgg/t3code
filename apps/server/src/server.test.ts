@@ -100,6 +100,7 @@ import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
+import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as CloudManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts";
@@ -370,6 +371,9 @@ const buildAppUnderTest = (options?: {
     const gitManagerLayer = Layer.mock(GitManager.GitManager)({
       ...options?.layers?.gitManager,
     });
+    const sourceControlProviderRegistryLayer = Layer.mock(
+      SourceControlProviderRegistry.SourceControlProviderRegistry,
+    )({});
     const workspaceEntriesLayer = WorkspaceEntries.layer.pipe(
       Layer.provide(WorkspacePaths.layer),
       Layer.provideMerge(vcsDriverRegistryLayer),
@@ -398,6 +402,7 @@ const buildAppUnderTest = (options?: {
       : ReviewService.layer.pipe(
           Layer.provideMerge(gitVcsDriverLayer),
           Layer.provide(vcsDriverRegistryLayer),
+          Layer.provide(sourceControlProviderRegistryLayer),
         );
     const vcsStatusBroadcasterLayer = options?.layers?.vcsStatusBroadcaster
       ? Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({

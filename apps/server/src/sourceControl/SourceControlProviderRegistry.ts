@@ -156,6 +156,7 @@ function bindProviderContext(
   if (context === null) {
     return provider;
   }
+  const getChangeRequestReview = provider.getChangeRequestReview;
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: provider.kind,
@@ -169,6 +170,15 @@ function bindProviderContext(
         ...input,
         context: input.context ?? context,
       }),
+    ...(getChangeRequestReview
+      ? {
+          getChangeRequestReview: (input) =>
+            getChangeRequestReview({
+              ...input,
+              context: input.context ?? context,
+            }),
+        }
+      : {}),
     createChangeRequest: (input) =>
       provider.createChangeRequest({
         ...input,

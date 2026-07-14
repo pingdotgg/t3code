@@ -20,6 +20,7 @@ struct VcsToolbar: View {
     @UIState private var pendingAction: GitAction?
     @UIState private var commitMessage = ""
     @UIState private var runningAction: GitAction?
+    @UIState private var pullRequestReviewReference: String?
 
     private var isRunningAction: Bool { runningAction != nil }
 
@@ -50,6 +51,22 @@ struct VcsToolbar: View {
                     .buttonStyle(.plain)
                     .foregroundStyle(isMerged ? AnyShapeStyle(.purple) : AnyShapeStyle(.tint))
                     .help(status.prTitle ?? "Open pull request")
+                }
+                if let prNumber = status.prNumber {
+                    Button {
+                        pullRequestReviewReference = String(prNumber)
+                    } label: {
+                        Label(
+                            status.unresolvedReviewThreadCount.map { "Comments · \($0)" }
+                                ?? "Comments",
+                            systemImage: "bubble.left.and.bubble.right")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(
+                        (status.unresolvedReviewThreadCount ?? 0) > 0
+                            ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                    .help("View comments and review threads on PR #\(prNumber)")
                 }
                 if MergeReadiness.isReady(for: status) {
                     Button {
@@ -99,6 +116,15 @@ struct VcsToolbar: View {
         }
         .sheet(isPresented: commitSheetBinding) {
             commitMessageSheet
+        }
+        .sheet(
+            isPresented: Binding(
+                get: { pullRequestReviewReference != nil },
+                set: { if !$0 { pullRequestReviewReference = nil } })
+        ) {
+            if let reference = pullRequestReviewReference {
+                PullRequestReviewView(model: model, threadID: threadID, reference: reference)
+            }
         }
     }
 

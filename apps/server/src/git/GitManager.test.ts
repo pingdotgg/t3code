@@ -710,6 +710,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
                 : scenario.unresolvedReviewThreadCount,
           })),
         ),
+      getPullRequestReview: () => Effect.die("getPullRequestReview not used by GitManager tests"),
       mergePullRequest: (input) =>
         execute({
           cwd: input.cwd,
