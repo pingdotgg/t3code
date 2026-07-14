@@ -325,18 +325,22 @@ export const make = Effect.gen(function* () {
         "relay.delivery.provider": "expo",
       });
 
+      const statusResult =
+        status === null ? null : yield* sendMessage({ target: input.target, message: status });
+      const alertResult =
+        alert === null ? null : yield* sendMessage({ target: input.target, message: alert });
       const results: Array<RelayDeliveryResult> = [];
-      for (const message of [status, alert]) {
-        if (message === null) continue;
-        results.push(yield* sendMessage({ target: input.target, message }));
-      }
+      if (statusResult !== null) results.push(statusResult);
+      if (alertResult !== null) results.push(alertResult);
 
-      // The baseline is the alert-transition reference: it advances on any
+      // The baseline is the alert-transition reference: it advances on an
       // accepted delivery, and silently on drift when no status channel would
-      // repaint it. Failed sends leave it alone so the transition retries on
-      // the next publish.
+      // repaint it. A failed alert must keep the old baseline even when the
+      // quiet status went through — advancing it would consume the transition
+      // and the missed ring would never retry on the next publish.
       const delivered = results.some((result) => result.ok);
-      if (delivered || baselineRefresh) {
+      const alertSatisfied = alert === null || alertResult?.ok === true;
+      if ((delivered && alertSatisfied) || baselineRefresh) {
         const now = yield* DateTime.now;
         yield* liveActivities.markDelivery({
           userId: input.target.user_id,

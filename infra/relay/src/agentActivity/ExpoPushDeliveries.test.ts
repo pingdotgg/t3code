@@ -1,10 +1,17 @@
 import type { RelayAgentActivityAggregateState } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 
-import type * as LiveActivities from "./LiveActivities.ts";
+import * as DeliveryAttempts from "./DeliveryAttempts.ts";
+import * as Devices from "./Devices.ts";
+import * as ExpoPush from "./ExpoPushClient.ts";
+import * as LiveActivities from "./LiveActivities.ts";
 import {
   ANDROID_ACTIVITY_CHANNEL_ID,
   ANDROID_ALERTS_CHANNEL_ID,
+  ExpoPushDeliveries,
+  layer as expoPushDeliveriesLayer,
   messagesForAndroidTarget,
 } from "./ExpoPushDeliveries.ts";
 
@@ -82,6 +89,59 @@ function withBaseline(
     last_live_activity_delivery_at: "2026-07-13T00:00:00.000Z",
     ...overrides,
   });
+}
+
+function testDeliveriesLayer(input: {
+  readonly sendTicket: (message: ExpoPush.ExpoPushMessage) => ExpoPush.ExpoPushTicket;
+  readonly markDeliveryCalls: Array<{ aggregate: RelayAgentActivityAggregateState | null }>;
+}) {
+  return expoPushDeliveriesLayer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.succeed(
+          ExpoPush.ExpoPushClient,
+          ExpoPush.ExpoPushClient.of({
+            send: (message) => Effect.succeed(input.sendTicket(message)),
+            getReceipts: () => Effect.succeed({}),
+          }),
+        ),
+        Layer.succeed(
+          DeliveryAttempts.DeliveryAttempts,
+          DeliveryAttempts.DeliveryAttempts.of({
+            record: () => Effect.void,
+            claimSourceJob: () => Effect.succeed("claimed" as const),
+            completeSourceJob: () => Effect.void,
+            listPendingExpoReceipts: () => Effect.succeed([]),
+            completeExpoReceipt: () => Effect.void,
+          }),
+        ),
+        Layer.succeed(
+          Devices.Devices,
+          Devices.Devices.of({
+            register: () => Effect.void,
+            unregister: () => Effect.void,
+            listForUser: () => Effect.succeed([]),
+            invalidateExpoPushToken: () => Effect.void,
+            invalidateExpoPushTokenSuffix: () => Effect.void,
+          }),
+        ),
+        Layer.succeed(
+          LiveActivities.LiveActivities,
+          LiveActivities.LiveActivities.of({
+            register: () => Effect.void,
+            listTargets: () => Effect.succeed([]),
+            markDelivery: (call) => {
+              input.markDeliveryCalls.push({ aggregate: call.aggregate });
+              return Effect.void;
+            },
+            markStartQueued: () => Effect.void,
+            clearStartQueued: () => Effect.void,
+            invalidateDeliveryToken: () => Effect.void,
+          }),
+        ),
+      ),
+    ),
+  );
 }
 
 describe("messagesForAndroidTarget", () => {
@@ -274,6 +334,73 @@ describe("messagesForAndroidTarget", () => {
       nowMs: NOW_MS,
     });
     expect(dueAgain.status).not.toBeNull();
+  });
+
+  it.effect("keeps the transition baseline when the alert send fails", () => {
+    const markDeliveryCalls: Array<{ aggregate: RelayAgentActivityAggregateState | null }> = [];
+    const okTicket = {
+      ok: true,
+      id: "ticket-1",
+      status: "ok",
+      reason: null,
+      errorCode: null,
+    } satisfies ExpoPush.ExpoPushTicket;
+    const failedTicket = { ...okTicket, ok: false, id: null, status: "error" };
+
+    return Effect.gen(function* () {
+      const deliveries = yield* ExpoPushDeliveries;
+      const results = yield* deliveries.sendForTarget({
+        target: withBaseline(aggregate("running")),
+        aggregate: aggregate("waiting_for_approval"),
+        nowMs: NOW_MS,
+      });
+
+      // The quiet status delivered, but the ring did not: advancing the
+      // baseline here would consume the transition and the alert would never
+      // retry on the next publish.
+      expect(results.map((result) => result.ok)).toEqual([true, false]);
+      expect(markDeliveryCalls).toHaveLength(0);
+    }).pipe(
+      Effect.provide(
+        testDeliveriesLayer({
+          sendTicket: (message) =>
+            message.channelId === ANDROID_ALERTS_CHANNEL_ID ? failedTicket : okTicket,
+          markDeliveryCalls,
+        }),
+      ),
+    );
+  });
+
+  it.effect("advances the baseline once when both messages deliver", () => {
+    const markDeliveryCalls: Array<{ aggregate: RelayAgentActivityAggregateState | null }> = [];
+    const okTicket = {
+      ok: true,
+      id: "ticket-1",
+      status: "ok",
+      reason: null,
+      errorCode: null,
+    } satisfies ExpoPush.ExpoPushTicket;
+
+    return Effect.gen(function* () {
+      const deliveries = yield* ExpoPushDeliveries;
+      const next = aggregate("waiting_for_approval");
+      const results = yield* deliveries.sendForTarget({
+        target: withBaseline(aggregate("running")),
+        aggregate: next,
+        nowMs: NOW_MS,
+      });
+
+      expect(results.map((result) => result.ok)).toEqual([true, true]);
+      expect(markDeliveryCalls).toHaveLength(1);
+      expect(markDeliveryCalls[0]?.aggregate).toEqual(next);
+    }).pipe(
+      Effect.provide(
+        testDeliveriesLayer({
+          sendTicket: () => okTicket,
+          markDeliveryCalls,
+        }),
+      ),
+    );
   });
 
   it("sends nothing for devices without an Expo token or for iOS rows", () => {
