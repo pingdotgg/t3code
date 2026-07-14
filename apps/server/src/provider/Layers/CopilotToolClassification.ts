@@ -107,10 +107,6 @@ export function classifyCopilotToolItemType(input: {
     return "mcp_tool_call";
   }
   if (
-    normalized === "task" ||
-    normalized === "agent" ||
-    normalized.includes("subagent") ||
-    normalized.includes("sub-agent") ||
     normalized.includes("agent") ||
     normalized.includes("delegate") ||
     normalized.includes("task")
