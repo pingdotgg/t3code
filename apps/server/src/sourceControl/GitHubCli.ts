@@ -211,6 +211,7 @@ export type GitHubPullRequestReviewDecision = "APPROVED" | "CHANGES_REQUESTED" |
 export interface GitHubPullRequestReviewStatus {
   readonly reviewDecision: GitHubPullRequestReviewDecision | null;
   readonly unresolvedReviewThreadCount: number | null;
+  readonly actionableReviewItemCount?: number | null;
 }
 
 export interface GitHubRepositoryCloneUrls {
@@ -333,14 +334,21 @@ function parsePullRequestNumber(reference: string): number | null {
   return null;
 }
 
-function countUnresolvedReviewThreads(raw: string): number | null {
+function countReviewThreads(raw: string): {
+  unresolvedReviewThreadCount: number;
+  actionableReviewItemCount: number;
+} | null {
   try {
     const parsed = JSON.parse(raw) as {
       data?: {
         repository?: {
           pullRequest?: {
             reviewThreads?: {
-              nodes?: ReadonlyArray<{ isResolved?: boolean }> | null;
+              nodes?: ReadonlyArray<{
+                isResolved?: boolean;
+                isOutdated?: boolean;
+                comments?: { nodes?: ReadonlyArray<{ body?: string | null }> | null } | null;
+              }> | null;
               pageInfo?: {
                 hasNextPage?: boolean;
               } | null;
@@ -351,9 +359,18 @@ function countUnresolvedReviewThreads(raw: string): number | null {
     };
     const reviewThreads = parsed.data?.repository?.pullRequest?.reviewThreads;
     const nodes = reviewThreads?.nodes;
-    if (!Array.isArray(nodes)) return null;
-    if (reviewThreads?.pageInfo?.hasNextPage === true) return null;
-    return nodes.filter((thread) => thread?.isResolved !== true).length;
+    if (!Array.isArray(nodes) || reviewThreads?.pageInfo?.hasNextPage === true) return null;
+    const unresolved = nodes.filter(
+      (thread) => thread?.isResolved !== true && thread?.isOutdated !== true,
+    );
+    return {
+      unresolvedReviewThreadCount: unresolved.length,
+      actionableReviewItemCount: unresolved.filter((thread) =>
+        thread.comments?.nodes?.some(
+          (comment: { readonly body?: string | null }) => comment?.body?.trim().length,
+        ),
+      ).length,
+    };
   } catch {
     return null;
   }
@@ -571,7 +588,11 @@ export const make = Effect.gen(function* () {
 
         const prNumber = parsePullRequestNumber(input.reference);
         if (prNumber === null) {
-          return { reviewDecision, unresolvedReviewThreadCount: null };
+          return {
+            reviewDecision,
+            unresolvedReviewThreadCount: null,
+            actionableReviewItemCount: null,
+          };
         }
 
         const nameWithOwner = yield* execute({
@@ -586,18 +607,26 @@ export const make = Effect.gen(function* () {
           Effect.orElseSucceed(() => null),
         );
         if (!nameWithOwner) {
-          return { reviewDecision, unresolvedReviewThreadCount: null };
+          return {
+            reviewDecision,
+            unresolvedReviewThreadCount: null,
+            actionableReviewItemCount: null,
+          };
         }
 
         const [owner, name] = nameWithOwner.split("/", 2);
         if (!owner || !name) {
-          return { reviewDecision, unresolvedReviewThreadCount: null };
+          return {
+            reviewDecision,
+            unresolvedReviewThreadCount: null,
+            actionableReviewItemCount: null,
+          };
         }
 
         const graphqlQuery =
-          "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewThreads(first: 100) { nodes { isResolved } pageInfo { hasNextPage } } } } }";
+          "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewThreads(first: 100) { nodes { isResolved isOutdated comments(first: 1) { nodes { body } } } pageInfo { hasNextPage } } } } }";
 
-        const unresolvedReviewThreadCount = yield* execute({
+        const reviewStatus = yield* execute({
           cwd: input.cwd,
           args: [
             "api",
@@ -612,11 +641,15 @@ export const make = Effect.gen(function* () {
             `number=${prNumber}`,
           ],
         }).pipe(
-          Effect.map((result) => countUnresolvedReviewThreads(result.stdout.trim() || "{}")),
+          Effect.map((result) => countReviewThreads(result.stdout.trim() || "{}")),
           Effect.orElseSucceed(() => null),
         );
 
-        return { reviewDecision, unresolvedReviewThreadCount };
+        return {
+          reviewDecision,
+          unresolvedReviewThreadCount: reviewStatus?.unresolvedReviewThreadCount ?? null,
+          actionableReviewItemCount: reviewStatus?.actionableReviewItemCount ?? null,
+        };
       }),
     getPullRequestReview: (input) =>
       Effect.gen(function* () {

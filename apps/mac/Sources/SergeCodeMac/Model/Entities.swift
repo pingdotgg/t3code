@@ -1014,6 +1014,8 @@ public struct VcsStatus: Hashable, Sendable {
     public var reviewDecision: PullRequestReviewDecision?
     /// Unresolved review thread count; nil when unknown / fetch failed.
     public var unresolvedReviewThreadCount: Int?
+    /// Unresolved, non-outdated inline review threads with non-empty comments.
+    public var actionableReviewItemCount: Int?
 
     public init(
         isRepo: Bool, branch: String?, isDefaultBranch: Bool, changedFileCount: Int,
@@ -1022,7 +1024,8 @@ public struct VcsStatus: Hashable, Sendable {
         prNumber: Int? = nil, prTitle: String? = nil, prURL: String? = nil,
         prState: PullRequestState? = nil,
         reviewDecision: PullRequestReviewDecision? = nil,
-        unresolvedReviewThreadCount: Int? = nil
+        unresolvedReviewThreadCount: Int? = nil,
+        actionableReviewItemCount: Int? = nil
     ) {
         self.isRepo = isRepo
         self.branch = branch
@@ -1041,6 +1044,7 @@ public struct VcsStatus: Hashable, Sendable {
         self.prState = prState
         self.reviewDecision = reviewDecision
         self.unresolvedReviewThreadCount = unresolvedReviewThreadCount
+        self.actionableReviewItemCount = actionableReviewItemCount
     }
 }
 

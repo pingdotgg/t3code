@@ -168,7 +168,8 @@ struct ChatFollowUpBar: View {
     // MARK: - PR open → fix review comments
 
     private func shouldOfferReviewFixes(thread: ChatThread, vcs: VcsStatus) -> Bool {
-        guard thread.status == .idle, vcs.prNumber != nil, vcs.prState == .open
+        guard thread.status == .idle, vcs.prNumber != nil, vcs.prState == .open,
+            vcs.actionableReviewItemCount ?? 0 > 0
         else { return false }
         return hasCompletedAssistantMessage
     }

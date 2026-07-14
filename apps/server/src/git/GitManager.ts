@@ -465,6 +465,7 @@ function toStatusPr(
   review?: {
     reviewDecision: GitPullRequestReviewDecision | null;
     unresolvedReviewThreadCount: number | null;
+    actionableReviewItemCount?: number | null;
   },
 ): {
   number: number;
@@ -475,6 +476,7 @@ function toStatusPr(
   state: "open" | "closed" | "merged";
   reviewDecision: GitPullRequestReviewDecision | null;
   unresolvedReviewThreadCount: number | null;
+  actionableReviewItemCount?: number | null;
 } {
   return {
     number: pr.number,
@@ -485,6 +487,9 @@ function toStatusPr(
     state: pr.state,
     reviewDecision: review?.reviewDecision ?? null,
     unresolvedReviewThreadCount: review?.unresolvedReviewThreadCount ?? null,
+    ...(review && "actionableReviewItemCount" in review
+      ? { actionableReviewItemCount: review.actionableReviewItemCount ?? null }
+      : {}),
   };
 }
 
@@ -1032,6 +1037,9 @@ export const make = Effect.gen(function* () {
         Effect.map((status) => ({
           reviewDecision: status.reviewDecision,
           unresolvedReviewThreadCount: status.unresolvedReviewThreadCount,
+          ...("actionableReviewItemCount" in status
+            ? { actionableReviewItemCount: status.actionableReviewItemCount }
+            : {}),
         })),
         Effect.orElseSucceed(() => ({
           reviewDecision: null,

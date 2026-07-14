@@ -50,6 +50,7 @@ interface FakeGhScenario {
   };
   reviewDecision?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
   unresolvedReviewThreadCount?: number | null;
+  actionableReviewItemCount?: number | null;
   mergeShouldFail?: boolean;
   mergeErrorDetail?: string;
   repositoryCloneUrls?: Record<string, { url: string; sshUrl: string }>;
@@ -503,11 +504,20 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
 
     if (args[0] === "api" && args[1] === "graphql") {
       const unresolved = scenario.unresolvedReviewThreadCount ?? null;
+      const actionable = scenario.actionableReviewItemCount ?? 0;
       const nodes =
         unresolved === null
           ? null
-          : Array.from({ length: Math.max(unresolved, 0) }, () => ({ isResolved: false })).concat(
-              unresolved === 0 ? [{ isResolved: true }] : [],
+          : Array.from({ length: Math.max(unresolved, 0) }, (_, index) => ({
+              isResolved: false,
+              isOutdated: false,
+              comments: {
+                nodes: index < actionable ? [{ body: "Actionable review comment" }] : [],
+              },
+            })).concat(
+              unresolved === 0
+                ? [{ isResolved: true, isOutdated: false, comments: { nodes: [] } }]
+                : [],
             );
       return Effect.succeed(
         fakeGhOutput(
@@ -517,6 +527,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
                 pullRequest: {
                   reviewThreads: {
                     nodes: nodes ?? [],
+                    pageInfo: { hasNextPage: false },
                   },
                 },
               },
@@ -708,6 +719,9 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
               scenario.unresolvedReviewThreadCount === undefined
                 ? null
                 : scenario.unresolvedReviewThreadCount,
+            ...(scenario.actionableReviewItemCount === undefined
+              ? {}
+              : { actionableReviewItemCount: scenario.actionableReviewItemCount }),
           })),
         ),
       getPullRequestReview: () => Effect.die("getPullRequestReview not used by GitManager tests"),
@@ -1501,6 +1515,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           ],
           reviewDecision: "APPROVED",
           unresolvedReviewThreadCount: 0,
+          actionableReviewItemCount: 0,
         },
       });
 
@@ -1514,6 +1529,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         state: "open",
         reviewDecision: "APPROVED",
         unresolvedReviewThreadCount: 0,
+        actionableReviewItemCount: 0,
       });
       expect(ghCalls.some((call) => call.includes("reviewDecision"))).toBe(true);
       expect(ghCalls.some((call) => call.startsWith("api graphql"))).toBe(true);
@@ -1548,6 +1564,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(status).toEqual({
         reviewDecision: "APPROVED",
         unresolvedReviewThreadCount: null,
+        actionableReviewItemCount: null,
       });
       expect(ghCalls[2]?.join(" ")).toContain("pageInfo { hasNextPage }");
     }),
