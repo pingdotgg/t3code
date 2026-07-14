@@ -149,7 +149,19 @@ export type CodexSessionRuntimeError =
   | CodexSessionRuntimePendingApprovalNotFoundError
   | CodexSessionRuntimePendingUserInputNotFoundError
   | CodexSessionRuntimeInvalidUserInputAnswersError
-  | CodexSessionRuntimeThreadIdMissingError;
+  | CodexSessionRuntimeThreadIdMissingError
+  | CodexSessionRuntimeActiveTurnMissingError;
+
+export class CodexSessionRuntimeActiveTurnMissingError extends Schema.TaggedErrorClass<CodexSessionRuntimeActiveTurnMissingError>()(
+  "CodexSessionRuntimeActiveTurnMissingError",
+  {
+    threadId: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Cannot interrupt Codex thread ${this.threadId} because no active turn is tracked.`;
+  }
+}
 
 export class CodexSessionRuntimePendingApprovalNotFoundError extends Schema.TaggedErrorClass<CodexSessionRuntimePendingApprovalNotFoundError>()(
   "CodexSessionRuntimePendingApprovalNotFoundError",
@@ -1301,7 +1313,9 @@ export const makeCodexSessionRuntime = (
           const session = yield* Ref.get(sessionRef);
           const effectiveTurnId = turnId ?? session.activeTurnId;
           if (!effectiveTurnId) {
-            return;
+            return yield* new CodexSessionRuntimeActiveTurnMissingError({
+              threadId: options.threadId,
+            });
           }
           yield* client.request("turn/interrupt", {
             threadId: providerThreadId,

@@ -206,6 +206,7 @@ describe("ProviderSessionReaper", () => {
   it("reaps stale persisted sessions without active turns", async () => {
     const threadId = ThreadId.make("thread-reaper-stale");
     const now = new Date().toISOString();
+    const staleSessionSeenAt = new Date(Date.now() - 2_000).toISOString();
     const harness = await createHarness({
       readModel: makeReadModel([
         {
@@ -232,7 +233,7 @@ describe("ProviderSessionReaper", () => {
         adapterKey: "claudeAgent",
         runtimeMode: "full-access",
         status: "running",
-        lastSeenAt: "2026-04-14T00:00:00.000Z",
+        lastSeenAt: staleSessionSeenAt,
         resumeCursor: {
           opaque: "resume-stale",
         },
@@ -280,7 +281,7 @@ describe("ProviderSessionReaper", () => {
         adapterKey: "claudeAgent",
         runtimeMode: "full-access",
         status: "running",
-        lastSeenAt: "2026-04-14T00:00:00.000Z",
+        lastSeenAt: now,
         resumeCursor: {
           opaque: "resume-active-turn",
         },
@@ -464,7 +465,7 @@ describe("ProviderSessionReaper", () => {
         adapterKey: "claudeAgent",
         runtimeMode: "full-access",
         status: "running",
-        lastSeenAt: "2026-04-14T00:00:00.000Z",
+        lastSeenAt: now,
         resumeCursor: {
           opaque: "resume-live-active-turn",
         },
@@ -641,7 +642,7 @@ describe("ProviderSessionReaper", () => {
         adapterKey: "claudeAgent",
         runtimeMode: "full-access",
         status: "running",
-        lastSeenAt: "2026-04-14T00:00:00.000Z",
+        lastSeenAt: now,
         resumeCursor: {
           opaque: "resume-list-failure-active-turn",
         },

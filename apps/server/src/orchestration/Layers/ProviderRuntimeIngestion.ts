@@ -1157,10 +1157,15 @@ const make = Effect.gen(function* () {
       const now = event.createdAt;
       const eventTurnId = toTurnId(event.turnId);
       const activeTurnId = thread.session?.activeTurnId ?? null;
+      const lifecycleTurnId =
+        event.type === "turn.completed" && eventTurnId === undefined && activeTurnId !== null
+          ? activeTurnId
+          : eventTurnId;
 
       const conflictsWithActiveTurn =
-        activeTurnId !== null && eventTurnId !== undefined && !sameId(activeTurnId, eventTurnId);
-      const missingTurnForActiveTurn = activeTurnId !== null && eventTurnId === undefined;
+        activeTurnId !== null &&
+        lifecycleTurnId !== undefined &&
+        !sameId(activeTurnId, lifecycleTurnId);
 
       const shouldApplyThreadLifecycle = (() => {
         if (!STRICT_PROVIDER_LIFECYCLE_GUARD) {
@@ -1175,12 +1180,12 @@ const make = Effect.gen(function* () {
           case "turn.started":
             return !conflictsWithActiveTurn;
           case "turn.completed":
-            if (conflictsWithActiveTurn || missingTurnForActiveTurn) {
+            if (conflictsWithActiveTurn) {
               return false;
             }
             // Only the active turn may close the lifecycle state.
-            if (activeTurnId !== null && eventTurnId !== undefined) {
-              return sameId(activeTurnId, eventTurnId);
+            if (activeTurnId !== null && lifecycleTurnId !== undefined) {
+              return sameId(activeTurnId, lifecycleTurnId);
             }
             // If no active turn is tracked, accept completion scoped to this thread.
             return true;
@@ -1208,7 +1213,7 @@ const make = Effect.gen(function* () {
 
           const nextActiveTurnId =
             event.type === "turn.started"
-              ? (eventTurnId ?? null)
+              ? (lifecycleTurnId ?? null)
               : event.type === "turn.completed" || event.type === "session.exited"
                 ? null
                 : activeTurnId;
