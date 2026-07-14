@@ -148,7 +148,15 @@ function collectPaths(value: unknown, paths: string[], seen: Set<string>, depth:
   if (!record) {
     return;
   }
-  for (const key of ["path", "filePath", "file_path", "relativePath", "filename", "newPath", "oldPath"]) {
+  for (const key of [
+    "path",
+    "filePath",
+    "file_path",
+    "relativePath",
+    "filename",
+    "newPath",
+    "oldPath",
+  ]) {
     const candidate = maybePathLike(asTrimmedString(record[key]));
     if (!candidate || seen.has(candidate)) {
       continue;
@@ -398,7 +406,9 @@ function splitPluginScopedName(name: string | undefined): {
   return { origin: "plugin", pluginName, skillName };
 }
 
-function toolInputOf(data: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+function toolInputOf(
+  data: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
   return (
     asRecord(data?.input) ??
     asRecord(data?.rawInput) ??
@@ -457,7 +467,10 @@ export function classifyToolSurface(input: {
   return "generic";
 }
 
-function truncate(value: string, max: number): { readonly value: string; readonly truncated: boolean } {
+function truncate(
+  value: string,
+  max: number,
+): { readonly value: string; readonly truncated: boolean } {
   if (value.length <= max) {
     return { value, truncated: false };
   }
@@ -763,8 +776,7 @@ function subtitleFor(input: {
       return firstString(toolInput, ["args", "arguments", "input", "prompt"]);
     case "subagent":
       return (
-        input.provenance.subagentType ??
-        firstString(toolInput, ["description", "prompt", "task"])
+        input.provenance.subagentType ?? firstString(toolInput, ["description", "prompt", "task"])
       );
     case "mcp":
     case "plugin":
@@ -837,10 +849,7 @@ export function deriveToolPresentation(input: ToolPresentationInput): ToolPresen
     ...(title ? { title } : {}),
     ...(data ? { data } : {}),
   });
-  const state = resolveState(
-    asTrimmedString(input.status),
-    input.fallbackState ?? "running",
-  );
+  const state = resolveState(asTrimmedString(input.status), input.fallbackState ?? "running");
   const provenance = identity.provenance;
 
   const resolvedTitle = titleFor(surface, provenance, title ?? "Tool");

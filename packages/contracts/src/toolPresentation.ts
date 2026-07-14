@@ -119,9 +119,7 @@ export const ToolResultPreview = Schema.Struct({
   /** Failure message when the tool errored. */
   error: Schema.optional(TrimmedNonEmptyString),
   /** Files the tool touched, for file surfaces. */
-  paths: Schema.Array(TrimmedNonEmptyString).pipe(
-    Schema.withDecodingDefault(Effect.succeed([])),
-  ),
+  paths: Schema.Array(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 export type ToolResultPreview = typeof ToolResultPreview.Type;
 

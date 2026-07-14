@@ -29,17 +29,17 @@ describe("parseToolIdentity", () => {
   });
 
   it("resolves a skill invocation from the Skill tool input", () => {
-    expect(
-      parseToolIdentity({ toolName: "Skill", toolInput: { skill: "deep-research" } }),
-    ).toEqual({
-      surface: "skill",
-      provenance: {
-        origin: "skill",
-        toolName: "Skill",
-        skillName: "deep-research",
-        displayName: "deep-research",
+    expect(parseToolIdentity({ toolName: "Skill", toolInput: { skill: "deep-research" } })).toEqual(
+      {
+        surface: "skill",
+        provenance: {
+          origin: "skill",
+          toolName: "Skill",
+          skillName: "deep-research",
+          displayName: "deep-research",
+        },
       },
-    });
+    );
   });
 
   it("attributes a plugin-scoped skill to its plugin", () => {
@@ -59,7 +59,9 @@ describe("parseToolIdentity", () => {
 
   it("reads Codex's typed MCP item instead of the tool name", () => {
     expect(
-      parseToolIdentity({ data: { item: { type: "mcpToolCall", server: "linear", tool: "search" } } }),
+      parseToolIdentity({
+        data: { item: { type: "mcpToolCall", server: "linear", tool: "search" } },
+      }),
     ).toEqual({
       surface: "mcp",
       provenance: {

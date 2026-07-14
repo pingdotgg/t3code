@@ -1,5 +1,9 @@
 import type { ToolLifecycleItemType } from "@t3tools/contracts";
-import { asTrimmedString, deriveToolPresentation, stripTrailingExitCode } from "./toolPresentation.ts";
+import {
+  asTrimmedString,
+  deriveToolPresentation,
+  stripTrailingExitCode,
+} from "./toolPresentation.ts";
 
 /**
  * Flat `{ summary, detail }` view of a tool invocation, used by the ACP
