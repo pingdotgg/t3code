@@ -3,7 +3,8 @@
 - `vp install` — installs JavaScript and native-module dependencies.
 - `vp run build:server` — bundles the Node backend used by the native macOS sidecar.
 - `vp run build:mac` — builds the native macOS Swift package.
-- `vp run package:mac` — assembles `apps/mac/dist/SurgeCode.app`.
+- `vp run build:local` — builds the backend sidecar and assembles `apps/mac/dist/SurgeCode.app`.
+- `vp run package:mac` — assembles `apps/mac/dist/SurgeCode.app` using an already-built backend.
 - `vp run dev:server` — runs the standalone backend in headless pairing mode with file watching.
 - `vp run test:mac` — runs the Swift test suites.
 - `vp run test` — runs all TypeScript package test scripts.

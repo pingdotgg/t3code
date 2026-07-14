@@ -10,6 +10,7 @@
     "build": "vp run --filter t3 build",
     "build:server": "vp run --filter t3 build",
     "build:mac": "swift build --package-path apps/mac",
+    "build:local": "scripts/build-local.sh",
     "package:mac": "apps/mac/scripts/make-app.sh",
     "typecheck": "vp run -r --concurrency-limit 2 typecheck",
     "tc": "vp run -r --concurrency-limit 2 typecheck",
