@@ -601,6 +601,8 @@ private struct SidebarStatusDot: View {
             return "Idle"
         case .running:
             return "Running"
+        case .waiting:
+            return "Waiting"
         case .waitingApproval:
             return "Needs approval"
         case .error:
@@ -617,6 +619,7 @@ private struct SidebarStatusDot: View {
         switch thread.status {
         case .idle: return .secondary
         case .running: return .green
+        case .waiting: return .blue
         case .waitingApproval: return .yellow
         case .backgroundWork: return .green
         case .error: return .red
