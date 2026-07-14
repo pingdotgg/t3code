@@ -135,6 +135,7 @@ const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");
 const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
 const FUGU_DRIVER_KIND = ProviderDriverKind.make("fugu");
 const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
+const CHATGPT_DRIVER_KIND = ProviderDriverKind.make("chatgpt");
 
 export const DEFAULT_MODEL = "gpt-5.4";
 export const DEFAULT_GIT_TEXT_GENERATION_MODEL = "gpt-5.4-mini";
@@ -148,6 +149,7 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
   [GROK_DRIVER_KIND]: "grok-4.5",
   [FUGU_DRIVER_KIND]: "fugu",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+  [CHATGPT_DRIVER_KIND]: "chatgpt",
 };
 
 /** Per-provider text generation model defaults. */
@@ -160,6 +162,7 @@ export const DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   [CURSOR_DRIVER_KIND]: "composer-2",
   [FUGU_DRIVER_KIND]: "fugu",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+  [CHATGPT_DRIVER_KIND]: "chatgpt",
 };
 
 export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
@@ -230,6 +233,7 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
     "fugu-ultra-latest": "fugu-ultra",
   },
   [OPENCODE_DRIVER_KIND]: {},
+  [CHATGPT_DRIVER_KIND]: {},
 };
 
 // ── Provider display names ────────────────────────────────────────────
@@ -242,4 +246,5 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [GROK_DRIVER_KIND]: "Grok",
   [FUGU_DRIVER_KIND]: "Fugu",
   [OPENCODE_DRIVER_KIND]: "OpenCode",
+  [CHATGPT_DRIVER_KIND]: "ChatGPT",
 };

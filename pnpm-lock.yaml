@@ -471,6 +471,9 @@ importers:
       node-pty:
         specifier: ^1.1.0
         version: 1.1.0
+      playwright-core:
+        specifier: 1.60.0
+        version: 1.60.0
     devDependencies:
       '@effect/vitest':
         specifier: 4.0.0-beta.78

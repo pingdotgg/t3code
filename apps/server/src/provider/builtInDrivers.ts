@@ -20,6 +20,10 @@
  *
  * @module provider/builtInDrivers
  */
+import {
+  ChatGptBrowserDriver,
+  type ChatGptBrowserDriverEnv,
+} from "./Drivers/ChatGptBrowserDriver.ts";
 import { ClaudeDriver, type ClaudeDriverEnv } from "./Drivers/ClaudeDriver.ts";
 import {
   ClaudeSyntheroDriver,
@@ -46,7 +50,8 @@ export type BuiltInDriversEnv =
   | CursorDriverEnv
   | FuguDriverEnv
   | GrokDriverEnv
-  | OpenCodeDriverEnv;
+  | OpenCodeDriverEnv
+  | ChatGptBrowserDriverEnv;
 
 /**
  * Ordered list of built-in drivers. Order matters only for tie-breaking in
@@ -62,4 +67,5 @@ export const BUILT_IN_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv
   GrokDriver,
   FuguDriver,
   OpenCodeDriver,
+  ChatGptBrowserDriver,
 ];

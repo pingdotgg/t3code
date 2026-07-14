@@ -1,4 +1,5 @@
 import {
+  ChatGptBrowserSettings,
   ClaudeSyntheroSettings,
   ClaudeSettings,
   CodexSettings,
@@ -73,6 +74,13 @@ export const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = 
     label: "OpenCode",
     icon: OpenCodeIcon,
     settingsSchema: OpenCodeSettings,
+  },
+  {
+    value: ProviderDriverKind.make("chatgpt"),
+    label: "ChatGPT",
+    icon: OpenAI,
+    badgeLabel: "Browser",
+    settingsSchema: ChatGptBrowserSettings,
   },
 ];
 
