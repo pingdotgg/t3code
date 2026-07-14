@@ -26,8 +26,26 @@ public final class AppModel {
     /// Cross-thread task projection. The task rows survive timeline eviction;
     /// only the live flag changes when a thread leaves the subscription LRU.
     let subagentTaskAggregator = SubagentTaskAggregator()
-    /// Outcome of the most recent git action, shown as a transient banner.
-    public var lastGitActionOutcome: GitActionOutcome?
+    /// Outcome of the most recent git action per thread, shown as a transient
+    /// banner. Per-thread so a push/PR result from thread A never bleeds into
+    /// thread B after a switch.
+    public private(set) var lastGitActionOutcomeByThread: [String: GitActionOutcome] = [:]
+
+    /// The most recent git-action outcome for `threadID`, if any.
+    public func lastGitActionOutcome(for threadID: String) -> GitActionOutcome? {
+        lastGitActionOutcomeByThread[threadID]
+    }
+
+    /// Compatibility accessor for the currently selected thread. The UI call
+    /// sites (VcsToolbar) still read/clear this flat name; a later batch
+    /// rewires them to the per-thread accessor above.
+    public var lastGitActionOutcome: GitActionOutcome? {
+        get { selectedThreadID.flatMap { lastGitActionOutcomeByThread[$0] } }
+        set {
+            guard let threadID = selectedThreadID else { return }
+            lastGitActionOutcomeByThread[threadID] = newValue
+        }
+    }
 
     /// Selected thread. Updates the recent-selection LRU and prunes excess
     /// timeline subscriptions (selected + 3 most recently selected others).
@@ -127,6 +145,19 @@ public final class AppModel {
     /// threadID → latest review-diff load; older in-flight loads must not
     /// commit results (see loadReviewDiff).
     @ObservationIgnored private var reviewDiffLoadTokens: [String: UUID] = [:]
+    /// threadID → latest diff/checkpoint refresh token. `.diffInvalidated` can
+    /// fire rapidly (checkpoint completed, then reverted); only the newest
+    /// refresh per thread may write its result, so out-of-order responses can't
+    /// leave stale diff/checkpoint state.
+    @ObservationIgnored private var refreshDiffTokens: [String: UUID] = [:]
+    @ObservationIgnored private var refreshCheckpointsTokens: [String: UUID] = [:]
+    /// Detached per-thread timeline-eviction tasks, kept so they can be
+    /// cancelled at shutdown (they call into the backend and must not run
+    /// against a just-stopped one, e.g. during remote-device removal).
+    @ObservationIgnored private var pruneTimelineTasks: [String: Task<Void, Never>] = [:]
+    /// Monotonic settings-save counter: only the latest save's response may
+    /// commit, so overlapping keystroke-driven saves can't land out of order.
+    @ObservationIgnored private var settingsSaveToken = 0
     /// threadID → (messageID, index) of the actively streaming assistant
     /// message, so per-token appends skip the O(n) timeline scan. Entries
     /// are validated against the array before use — a stale index costs one
@@ -287,6 +318,10 @@ public final class AppModel {
     func prepareForTermination() {
         eventTask?.cancel()
         eventTask = nil
+        // Detached timeline-eviction closes call into the backend; cancel them
+        // so none runs against a backend that's about to (or did) stop.
+        for task in pruneTimelineTasks.values { task.cancel() }
+        pruneTimelineTasks.removeAll()
     }
 
     /// Shutdown needs the backend after MainActor-owned tasks have stopped.
@@ -464,7 +499,7 @@ public final class AppModel {
             case .timelineReset(let threadID, let items):
                 // A snapshot can truncate or replace an in-flight message;
                 // the old settled prefix is no longer valid for this thread.
-                StreamingMarkdownCache.evict(threadID: threadID)
+                StreamingMarkdownCache.evict(threadID: scopedThreadKey(threadID))
                 let filtered = items.filter { !isDismissedUsageLimit($0) }
                 touched[threadID] = filtered
                 indexByThread[threadID] = nil
@@ -567,8 +602,18 @@ public final class AppModel {
             queuedRetryTokensByThread[id] = nil
             projectPathByThreadKey[scopedThreadKey(id)] = nil
             if composerPrefill?.threadID == id { composerPrefill = nil }
+            // Per-thread intake bookkeeping the old handler missed: stale
+            // load tokens, the streaming-index cursor, git outcome, and any
+            // interaction routes pointing at this id.
+            reviewDiffLoadTokens[id] = nil
+            refreshDiffTokens[id] = nil
+            refreshCheckpointsTokens[id] = nil
+            streamingIndex[id] = nil
+            lastGitActionOutcomeByThread[id] = nil
+            interactionThreadByID = interactionThreadByID.filter { $0.value != id }
+            pruneTimelineTasks.removeValue(forKey: id)?.cancel()
             TimelineDisplayCache.evict(threadID: scopedThreadKey(id))
-            StreamingMarkdownCache.evict(threadID: id)
+            StreamingMarkdownCache.evict(threadID: scopedThreadKey(id))
             if selectedThreadID == id { selectedThreadID = nil }
         case .approvalRequested, .userInputRequested:
             break
@@ -794,17 +839,27 @@ public final class AppModel {
     }
 
     public func refreshDiff(threadID: String) async {
+        let token = UUID()
+        refreshDiffTokens[threadID] = token
         do {
-            state(creating: threadID).diff = try await backend.diff(threadID: threadID)
+            let files = try await backend.diff(threadID: threadID)
+            guard refreshDiffTokens[threadID] == token else { return }
+            state(creating: threadID).diff = files
         } catch {
+            guard refreshDiffTokens[threadID] == token else { return }
             lastError = String(describing: error)
         }
     }
 
     public func refreshCheckpoints(threadID: String) async {
+        let token = UUID()
+        refreshCheckpointsTokens[threadID] = token
         do {
-            state(creating: threadID).checkpoints = try await backend.checkpoints(threadID: threadID)
+            let checkpoints = try await backend.checkpoints(threadID: threadID)
+            guard refreshCheckpointsTokens[threadID] == token else { return }
+            state(creating: threadID).checkpoints = checkpoints
         } catch {
+            guard refreshCheckpointsTokens[threadID] == token else { return }
             lastError = String(describing: error)
         }
     }
@@ -1464,9 +1519,18 @@ public final class AppModel {
     }
 
     public func saveSettings(_ new: AppSettings) async {
+        // The settings UI can fire one unawaited save per keystroke; whichever
+        // RESPONSE lands last would otherwise win regardless of order. Gate the
+        // `settings =` assignment on a monotonic token so only the latest
+        // in-flight save commits, independent of caller debouncing.
+        settingsSaveToken += 1
+        let token = settingsSaveToken
         do {
-            settings = try await backend.updateSettings(new)
+            let updated = try await backend.updateSettings(new)
+            guard token == settingsSaveToken else { return }
+            settings = updated
         } catch {
+            guard token == settingsSaveToken else { return }
             lastError = String(describing: error)
         }
     }
@@ -1574,15 +1638,16 @@ public final class AppModel {
     public func runGitAction(_ action: GitAction, commitMessage: String?) async {
         guard let threadID = selectedThreadID else { return }
         do {
-            lastGitActionOutcome = try await backend.runGitAction(
+            let outcome = try await backend.runGitAction(
                 threadID: threadID, action: action, commitMessage: commitMessage)
+            lastGitActionOutcomeByThread[threadID] = outcome
             // Merge (and other actions that change remote PR state) need a
             // fresh VCS snapshot so dedicated buttons disappear promptly.
-            if action == .mergePR, lastGitActionOutcome?.success == true {
+            if action == .mergePR, outcome.success {
                 try? await backend.watchVcsStatus(threadID: threadID)
             }
         } catch {
-            lastGitActionOutcome = GitActionOutcome(
+            lastGitActionOutcomeByThread[threadID] = GitActionOutcome(
                 success: false, title: "Git action failed", detail: String(describing: error))
         }
     }
@@ -1640,7 +1705,7 @@ public final class AppModel {
         // Stale-while-revalidate: keep the TimelineDisplayCache entry so a
         // re-select renders the retained snapshot instantly; only streaming
         // parse sessions are dropped.
-        StreamingMarkdownCache.evict(threadID: threadID)
+        StreamingMarkdownCache.evict(threadID: scopedThreadKey(threadID))
     }
 
     private func pruneTimelineSubscriptions() {
@@ -1654,20 +1719,28 @@ public final class AppModel {
             guard threadID != selectedThreadID else { continue }
             // Detached close can race a re-select of this thread. Re-check
             // eviction under MainActor before clearing state / closing so a
-            // rescued thread keeps its timeline and subscription.
-            Task {
-                guard threadID != self.selectedThreadID
-                    && !self.recentlySelected.contains(threadID)
-                else { return }
-                self.subagentTaskAggregator.setLive(false, for: threadID)
-                if let state = self.threadStates[threadID] {
-                    self.trimRetainedTimelineIfNeeded(state)
-                    state.hasLoadedTimeline = false
+            // rescued thread keeps its timeline and subscription. Stored and
+            // cancellable so shutdown never lets one call a stopped backend.
+            pruneTimelineTasks[threadID]?.cancel()
+            pruneTimelineTasks[threadID] = Task { [weak self] in
+                guard let self else { return }
+                if !Task.isCancelled,
+                    threadID != self.selectedThreadID,
+                    !self.recentlySelected.contains(threadID)
+                {
+                    self.subagentTaskAggregator.setLive(false, for: threadID)
+                    if let state = self.threadStates[threadID] {
+                        self.trimRetainedTimelineIfNeeded(state)
+                        state.hasLoadedTimeline = false
+                    }
+                    // Stale-while-revalidate: keep the display cache (see
+                    // releaseTimeline); only streaming parse sessions drop.
+                    StreamingMarkdownCache.evict(threadID: self.scopedThreadKey(threadID))
+                    if !Task.isCancelled {
+                        await self.backend.closeTimeline(threadID: threadID)
+                    }
                 }
-                // Stale-while-revalidate: keep the display cache (see
-                // releaseTimeline); only streaming parse sessions drop.
-                StreamingMarkdownCache.evict(threadID: threadID)
-                await self.backend.closeTimeline(threadID: threadID)
+                self.pruneTimelineTasks[threadID] = nil
             }
         }
     }

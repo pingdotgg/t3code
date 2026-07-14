@@ -5,13 +5,23 @@ import SwiftUI
 /// `ApprovalCard`.
 public struct UserInputCard: View {
     let request: UserInputRequest
+    /// Whether this is the most-recent pending user-input request in the
+    /// thread's timeline; gates `submitShortcut` (see ApprovalCard.swift for
+    /// why Command-Shift-Return was chosen over the composer's own
+    /// Command-Return send shortcut).
+    let isActive: Bool
     let onSubmit: ([String: [String]]) -> Void
 
     @UIState private var selections: [String: Set<String>] = [:]
     @UIState private var freeform: [String: String] = [:]
 
-    public init(request: UserInputRequest, onSubmit: @escaping ([String: [String]]) -> Void) {
+    private static let submitShortcut = KeyboardShortcut(.return, modifiers: [.command, .shift])
+
+    public init(
+        request: UserInputRequest, isActive: Bool, onSubmit: @escaping ([String: [String]]) -> Void
+    ) {
         self.request = request
+        self.isActive = isActive
         self.onSubmit = onSubmit
     }
 
@@ -32,6 +42,8 @@ public struct UserInputCard: View {
                 .buttonStyle(.glass)
                 .tint(.accentColor)
                 .disabled(!isComplete)
+                .keyboardShortcut(isActive ? Self.submitShortcut : nil)
+                .help(isActive ? "Submit (⌘⇧⏎)" : "Submit")
             }
         }
         .padding(14)
@@ -71,7 +83,7 @@ public struct UserInputCard: View {
     private func optionRow(_ option: UserInputOption, question: UserInputQuestionItem) -> some View {
         let isSelected = selections[question.id]?.contains(option.label) ?? false
         return Button {
-            withAnimation(Motion.snap) { toggle(option.label, question: question) }
+            withAnimation(Motion.feedback) { toggle(option.label, question: question) }
         } label: {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Image(
@@ -79,7 +91,8 @@ public struct UserInputCard: View {
                         ? (question.multiSelect ? "checkmark.square.fill" : "largecircle.fill.circle")
                         : (question.multiSelect ? "square" : "circle"))
                 .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
-                .contentTransition(.symbolEffect(.replace))
+                .contentTransition(
+                    Motion.reduceMotion ? .identity : .symbolEffect(.replace))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(option.label)
                         .font(.callout)

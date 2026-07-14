@@ -79,7 +79,7 @@ describe("review comment serialization", () => {
     expect(segments[2]).toEqual(expect.objectContaining({ kind: "text", text: "\nAfter" }));
   });
 
-  it("parses source-language review comments created by the web file viewer", () => {
+  it("parses source-language review comments created by another client", () => {
     const [segment] = parseReviewCommentMessageSegments(
       [
         '<review_comment sectionId="file:docs/plan.md" sectionTitle="File comment" filePath="docs/plan.md" startIndex="0" endIndex="1" rangeLabel="L1 to L2">',

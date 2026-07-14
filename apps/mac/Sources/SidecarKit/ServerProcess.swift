@@ -12,8 +12,7 @@ public enum SidecarState: Sendable, Equatable {
     case stopped
 }
 
-/// Supervises exactly one t3 server child process, porting
-/// `apps/desktop/src/backend/DesktopBackendManager.ts`'s lifecycle: spawn,
+/// Supervises exactly one SergeCode server child process: spawn,
 /// bootstrap delivery over stdin, readiness polling, crash-restart with
 /// exponential backoff, and graceful shutdown.
 ///
@@ -160,8 +159,7 @@ public actor ServerProcess {
             port: config.port,
             t3Home: config.baseDir,
             host: config.host,
-            desktopBootstrapToken: bootstrapToken,
-            noBrowser: config.noBrowser
+            desktopBootstrapToken: bootstrapToken
         )
 
         let bootstrapLine: String
@@ -189,7 +187,6 @@ public actor ServerProcess {
             "--port", String(config.port),
             "--host", config.host,
             "--base-dir", config.baseDir,
-            "--no-browser",
         ]
 
         let stdinPipe = Pipe()
@@ -257,6 +254,10 @@ public actor ServerProcess {
             guard runID == currentRunID else { return }
             if await probeReady(url: url) {
                 guard runID == currentRunID else { return }
+                guard let process,
+                    process.processIdentifier == pid,
+                    process.isRunning
+                else { return }
                 restartAttempt = 0
                 emit(.ready(pid: pid))
                 return

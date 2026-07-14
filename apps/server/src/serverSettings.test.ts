@@ -46,6 +46,34 @@ const makeFailingSecretStoreLayer = (cause: ServerSecretStore.SecretStoreError) 
   );
 
 it.layer(NodeServices.layer)("server settings", (it) => {
+  it.effect("redacts and materializes global environment secrets", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+
+      const redacted = yield* serverSettings.updateSettings({
+        globalEnvironment: [
+          { name: "OPENAI_API_KEY", value: "sk-test", sensitive: true },
+          { name: "PUBLIC_FLAG", value: "1", sensitive: false },
+        ],
+      });
+
+      assert.deepEqual(redacted.globalEnvironment, [
+        { name: "OPENAI_API_KEY", value: "", sensitive: true, valueRedacted: true },
+        { name: "PUBLIC_FLAG", value: "1", sensitive: false },
+      ]);
+
+      const materialized = yield* serverSettings.getSettings;
+      assert.deepEqual(materialized.globalEnvironment, [
+        { name: "OPENAI_API_KEY", value: "sk-test", sensitive: true, valueRedacted: true },
+        { name: "PUBLIC_FLAG", value: "1", sensitive: false },
+      ]);
+      assert.deepEqual(
+        ServerSettingsModule.redactServerSettingsForClient(materialized).globalEnvironment,
+        redacted.globalEnvironment,
+      );
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("preserves context when reading a provider environment secret fails", () => {
     const platformCause = PlatformError.systemError({
       _tag: "PermissionDenied",

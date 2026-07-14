@@ -48,6 +48,7 @@ import {
   TurnId,
   type UserInputQuestion,
 } from "@t3tools/contracts";
+import { computeUsageCost } from "@t3tools/shared/tokenAccounting";
 import {
   applyClaudePromptEffortPrefix,
   getModelSelectionBooleanOptionValue,
@@ -432,12 +433,24 @@ function finitePositiveInteger(value: unknown): number | undefined {
     : undefined;
 }
 
+function claudeUsageUncachedInputTokens(usage: Record<string, unknown>): number {
+  return finiteNonNegativeInteger(usage.input_tokens) ?? 0;
+}
+
+function claudeUsageCacheCreationInputTokens(usage: Record<string, unknown>): number {
+  return finiteNonNegativeInteger(usage.cache_creation_input_tokens) ?? 0;
+}
+
+function claudeUsageCacheReadInputTokens(usage: Record<string, unknown>): number {
+  return finiteNonNegativeInteger(usage.cache_read_input_tokens) ?? 0;
+}
+
+function claudeUsageCachedInputTokens(usage: Record<string, unknown>): number {
+  return claudeUsageCacheCreationInputTokens(usage) + claudeUsageCacheReadInputTokens(usage);
+}
+
 function claudeUsageInputTokens(usage: Record<string, unknown>): number {
-  return (
-    (finiteNonNegativeInteger(usage.input_tokens) ?? 0) +
-    (finiteNonNegativeInteger(usage.cache_creation_input_tokens) ?? 0) +
-    (finiteNonNegativeInteger(usage.cache_read_input_tokens) ?? 0)
-  );
+  return claudeUsageUncachedInputTokens(usage) + claudeUsageCachedInputTokens(usage);
 }
 
 function claudeUsageOutputTokens(usage: Record<string, unknown>): number {
@@ -472,6 +485,10 @@ function claudeTotalProcessedTokens(value: unknown): number | undefined {
 function makeClaudeTokenUsageSnapshot(input: {
   readonly activeTokens: number;
   readonly inputTokens?: number;
+  readonly uncachedInputTokens?: number;
+  readonly cachedInputTokens?: number;
+  readonly cacheCreationInputTokens?: number;
+  readonly cacheReadInputTokens?: number;
   readonly outputTokens?: number;
   readonly contextWindow?: number;
   readonly totalProcessedTokens?: number;
@@ -490,6 +507,10 @@ function makeClaudeTokenUsageSnapshot(input: {
     (maxTokens !== undefined ? Math.min(activeTokens, maxTokens) : activeTokens);
   const totalProcessedTokens = finiteNonNegativeInteger(input.totalProcessedTokens);
   const inputTokens = finiteNonNegativeInteger(input.inputTokens);
+  const uncachedInputTokens = finiteNonNegativeInteger(input.uncachedInputTokens);
+  const cachedInputTokens = finiteNonNegativeInteger(input.cachedInputTokens);
+  const cacheCreationInputTokens = finiteNonNegativeInteger(input.cacheCreationInputTokens);
+  const cacheReadInputTokens = finiteNonNegativeInteger(input.cacheReadInputTokens);
   const outputTokens = finiteNonNegativeInteger(input.outputTokens);
 
   return {
@@ -499,11 +520,24 @@ function makeClaudeTokenUsageSnapshot(input: {
       ? { totalProcessedTokens }
       : {}),
     ...(inputTokens !== undefined && inputTokens > 0 ? { inputTokens } : {}),
+    ...(uncachedInputTokens !== undefined && uncachedInputTokens > 0
+      ? { uncachedInputTokens, lastUncachedInputTokens: uncachedInputTokens }
+      : {}),
+    ...(cachedInputTokens !== undefined && cachedInputTokens > 0
+      ? { cachedInputTokens, lastCachedInputTokens: cachedInputTokens }
+      : {}),
+    ...(cacheCreationInputTokens !== undefined && cacheCreationInputTokens > 0
+      ? { cacheCreationInputTokens, lastCacheCreationInputTokens: cacheCreationInputTokens }
+      : {}),
+    ...(cacheReadInputTokens !== undefined && cacheReadInputTokens > 0
+      ? { cacheReadInputTokens, lastCacheReadInputTokens: cacheReadInputTokens }
+      : {}),
     ...(outputTokens !== undefined && outputTokens > 0 ? { outputTokens } : {}),
     ...(maxTokens !== undefined ? { maxTokens } : {}),
     ...(input.compactsAutomatically !== undefined
       ? { compactsAutomatically: input.compactsAutomatically }
       : {}),
+    accountingStatus: "provider-reported",
   };
 }
 
@@ -518,7 +552,11 @@ function normalizeClaudeActiveTokenUsage(
 
   const usage = value as Record<string, unknown>;
   const activeUsage = lastClaudeUsageIteration(usage) ?? usage;
-  const inputTokens = claudeUsageInputTokens(activeUsage);
+  const uncachedInputTokens = claudeUsageUncachedInputTokens(activeUsage);
+  const cacheCreationInputTokens = claudeUsageCacheCreationInputTokens(activeUsage);
+  const cacheReadInputTokens = claudeUsageCacheReadInputTokens(activeUsage);
+  const cachedInputTokens = cacheCreationInputTokens + cacheReadInputTokens;
+  const inputTokens = uncachedInputTokens + cachedInputTokens;
   const outputTokens = claudeUsageOutputTokens(activeUsage);
   const activeTokens = claudeTotalProcessedTokens(activeUsage) ?? inputTokens + outputTokens;
   if (activeTokens <= 0) {
@@ -528,6 +566,10 @@ function normalizeClaudeActiveTokenUsage(
   return makeClaudeTokenUsageSnapshot({
     activeTokens,
     inputTokens,
+    uncachedInputTokens,
+    cachedInputTokens,
+    cacheCreationInputTokens,
+    cacheReadInputTokens,
     outputTokens,
     ...(contextWindow !== undefined ? { contextWindow } : {}),
     ...(totalProcessedTokens !== undefined ? { totalProcessedTokens } : {}),
@@ -2607,9 +2649,32 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           }
         : undefined);
 
+    const providerReportedTotalCostUsd =
+      typeof result?.total_cost_usd === "number" && Number.isFinite(result.total_cost_usd)
+        ? result.total_cost_usd
+        : undefined;
+    const costModel = context.currentApiModelId ?? context.session.model;
+    const usageSnapshotWithCost = usageSnapshot
+      ? {
+          ...usageSnapshot,
+          ...(providerReportedTotalCostUsd !== undefined
+            ? {
+                cost: computeUsageCost({
+                  provider: "claudeAgent",
+                  ...(costModel !== undefined ? { model: costModel } : {}),
+                  usage: usageSnapshot,
+                  providerReportedTotalCostUsd,
+                  pricingCatalog: { entries: [] },
+                }),
+                accountingStatus: "exact" as const,
+              }
+            : {}),
+        }
+      : undefined;
+
     const turnState = context.turnState;
     if (!turnState) {
-      yield* emitThreadTokenUsage(context, usageSnapshot, {
+      yield* emitThreadTokenUsage(context, usageSnapshotWithCost, {
         rawMethod: "claude/result",
         rawPayload: result ?? { status },
       });
@@ -2683,7 +2748,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       items: [...turnState.items],
     });
 
-    yield* emitThreadTokenUsage(context, usageSnapshot, {
+    yield* emitThreadTokenUsage(context, usageSnapshotWithCost, {
       rawMethod: "claude/result",
       rawPayload: result ?? { status },
     });

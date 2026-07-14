@@ -3,6 +3,8 @@ import {
   type ChatAttachment,
   type OrchestrationEvent,
   type OrchestrationSessionStatus,
+  ProviderDriverKind,
+  ThreadTokenUsageSnapshot,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -10,6 +12,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
@@ -24,6 +27,10 @@ import {
   type ProjectionThreadMessage,
   ProjectionThreadMessageRepository,
 } from "../../persistence/Services/ProjectionThreadMessages.ts";
+import {
+  ProjectionTurnUsageRepository,
+  type ProjectionTurnUsage,
+} from "../../persistence/Services/ProjectionTurnUsage.ts";
 import {
   type ProjectionThreadProposedPlan,
   ProjectionThreadProposedPlanRepository,
@@ -42,6 +49,7 @@ import { ProjectionThreadMessageRepositoryLive } from "../../persistence/Layers/
 import { ProjectionThreadProposedPlanRepositoryLive } from "../../persistence/Layers/ProjectionThreadProposedPlans.ts";
 import { ProjectionThreadSessionRepositoryLive } from "../../persistence/Layers/ProjectionThreadSessions.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
+import { ProjectionTurnUsageRepositoryLive } from "../../persistence/Layers/ProjectionTurnUsage.ts";
 import { ProjectionThreadRepositoryLive } from "../../persistence/Layers/ProjectionThreads.ts";
 import { ServerConfig } from "../../config.ts";
 import {
@@ -63,12 +71,15 @@ export const ORCHESTRATION_PROJECTOR_NAMES = {
   threadActivities: "projection.thread-activities",
   threadSessions: "projection.thread-sessions",
   threadTurns: "projection.thread-turns",
+  threadUsage: "projection.thread-usage",
   checkpoints: "projection.checkpoints",
   pendingApprovals: "projection.pending-approvals",
 } as const;
 
 type ProjectorName =
   (typeof ORCHESTRATION_PROJECTOR_NAMES)[keyof typeof ORCHESTRATION_PROJECTOR_NAMES];
+
+const decodeThreadTokenUsageSnapshot = Schema.decodeUnknownOption(ThreadTokenUsageSnapshot);
 
 /**
  * Turn state to settle still-running turns with when their session leaves the
@@ -477,6 +488,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const projectionThreadMessageRepository = yield* ProjectionThreadMessageRepository;
     const projectionThreadProposedPlanRepository = yield* ProjectionThreadProposedPlanRepository;
     const projectionThreadActivityRepository = yield* ProjectionThreadActivityRepository;
+    const projectionTurnUsageRepository = yield* ProjectionTurnUsageRepository;
     const projectionThreadSessionRepository = yield* ProjectionThreadSessionRepository;
     const projectionTurnRepository = yield* ProjectionTurnRepository;
     const projectionPendingApprovalRepository = yield* ProjectionPendingApprovalRepository;
@@ -1333,6 +1345,56 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       }
     });
 
+    const applyThreadUsageProjection: ProjectorDefinition["apply"] = Effect.fn(
+      "applyThreadUsageProjection",
+    )(function* (event, _attachmentSideEffects) {
+      switch (event.type) {
+        case "thread.activity-appended": {
+          const activity = event.payload.activity;
+          if (activity.kind !== "context-window.updated" || activity.turnId === null) {
+            return;
+          }
+          const decodedUsage = decodeThreadTokenUsageSnapshot(activity.payload);
+          if (Option.isNone(decodedUsage)) {
+            yield* Effect.logWarning(
+              "Invalid thread usage snapshot payload; skipping projection",
+            ).pipe(
+              Effect.annotateLogs({
+                threadId: event.payload.threadId,
+                turnId: activity.turnId,
+                activityId: activity.id,
+              }),
+            );
+            return;
+          }
+          const usage: ProjectionTurnUsage["usage"] = decodedUsage.value;
+          const [thread, session] = yield* Effect.all([
+            projectionThreadRepository.getById({ threadId: event.payload.threadId }),
+            projectionThreadSessionRepository.getByThreadId({ threadId: event.payload.threadId }),
+          ]);
+          yield* projectionTurnUsageRepository.upsert({
+            threadId: event.payload.threadId,
+            turnId: activity.turnId,
+            provider: ProviderDriverKind.make(
+              Option.isSome(session) ? (session.value.providerName ?? "codex") : "codex",
+            ),
+            providerInstanceId: Option.isSome(session) ? session.value.providerInstanceId : null,
+            model: Option.isSome(thread) ? thread.value.modelSelection.model : null,
+            usage,
+            updatedAt: activity.createdAt,
+          });
+          return;
+        }
+        case "thread.deleted":
+          yield* projectionTurnUsageRepository.deleteByThreadId({
+            threadId: event.payload.threadId,
+          });
+          return;
+        default:
+          return;
+      }
+    });
+
     const applyCheckpointsProjection: ProjectorDefinition["apply"] = () => Effect.void;
 
     const applyPendingApprovalsProjection: ProjectorDefinition["apply"] = Effect.fn(
@@ -1496,6 +1558,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         name: ORCHESTRATION_PROJECTOR_NAMES.threads,
         apply: applyThreadsProjection,
       },
+      {
+        name: ORCHESTRATION_PROJECTOR_NAMES.threadUsage,
+        apply: applyThreadUsageProjection,
+      },
     ];
 
     const runProjectorForEvent = Effect.fn("runProjectorForEvent")(function* (
@@ -1597,6 +1663,7 @@ export const OrchestrationProjectionPipelineLive = Layer.effect(
   Layer.provideMerge(ProjectionThreadActivityRepositoryLive),
   Layer.provideMerge(ProjectionThreadSessionRepositoryLive),
   Layer.provideMerge(ProjectionTurnRepositoryLive),
+  Layer.provideMerge(ProjectionTurnUsageRepositoryLive),
   Layer.provideMerge(ProjectionPendingApprovalRepositoryLive),
   Layer.provideMerge(ProjectionStateRepositoryLive),
 );

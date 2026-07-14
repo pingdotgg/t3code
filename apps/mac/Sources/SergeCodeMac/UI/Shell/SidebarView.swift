@@ -18,13 +18,18 @@ struct SidebarView: View {
         let project: Project
     }
 
+    private struct ThreadActionTarget {
+        let model: AppModel
+        let thread: ChatThread
+    }
+
     @UIState private var renameTarget: ProjectActionTarget?
     @UIState private var renameText = ""
     @UIState private var deleteTarget: ProjectActionTarget?
+    @UIState private var deleteThreadTarget: ThreadActionTarget?
     @UIState private var forgetTarget: RemoteDeviceSession?
 
     var body: some View {
-        let threadIDs = model.threads.map(\.id)
         List(selection: Binding(
             get: { multi.selection },
             set: { multi.selection = $0 }
@@ -53,7 +58,8 @@ struct SidebarView: View {
                                     Task { await model.archiveThread(thread) }
                                 }
                                 Button("Delete", systemImage: "trash", role: .destructive) {
-                                    Task { await model.deleteThread(thread) }
+                                    deleteThreadTarget = ThreadActionTarget(
+                                        model: model, thread: thread)
                                 }
                             }
                     }
@@ -98,10 +104,8 @@ struct SidebarView: View {
         .navigationTitle("SurgeCode")
         // New/archived/deleted threads and project changes slide the list
         // smoothly rather than snapping the rows into new positions.
-        .animation(Motion.settle, value: threadIDs)
-        .animation(Motion.settle, value: model.pinnedThreadIDs)
-        .animation(Motion.settle, value: model.projects)
-        .animation(Motion.settle, value: multi.remoteSessions.map(\.id))
+        // Session selection, refreshes, and pin reordering are frequent. Rows
+        // own any insertion/removal transition; the complete list stays still.
         .alert(
             "Rename Project",
             isPresented: Binding(
@@ -138,6 +142,25 @@ struct SidebarView: View {
                 Text(
                     "“\(target.project.name)” and ^[\(count) session](inflect: true) will be removed. Files on disk are not touched."
                 )
+            }
+        }
+        .alert(
+            "Delete Session?",
+            isPresented: Binding(
+                get: { deleteThreadTarget != nil },
+                set: { if !$0 { deleteThreadTarget = nil } }
+            )
+        ) {
+            Button("Delete", role: .destructive) {
+                if let target = deleteThreadTarget {
+                    deleteThreadTarget = nil
+                    Task { await target.model.deleteThread(target.thread) }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            if let target = deleteThreadTarget {
+                Text("“\(target.thread.title)” will be permanently deleted. This can't be undone.")
             }
         }
         .alert(
@@ -211,7 +234,8 @@ struct SidebarView: View {
                                 }
                                 .disabled(session.model.connection != .ready)
                                 Button("Delete", role: .destructive) {
-                                    Task { await session.model.deleteThread(thread) }
+                                    deleteThreadTarget = ThreadActionTarget(
+                                        model: session.model, thread: thread)
                                 }
                                 .disabled(session.model.connection != .ready)
                             }
@@ -286,15 +310,12 @@ private struct DeviceSectionHeader: View {
 private struct DeviceStatusDot: View {
     let phase: ConnectionPhase
 
-    @UIState private var isPulseExpanded = false
-
     var body: some View {
         ZStack {
             if phase.isSettling {
                 Circle()
                     .stroke(Color.secondary, lineWidth: 1.2)
-                    .opacity(pulseOpacity)
-                    .scaleEffect(pulseScale)
+                    .opacity(0.35)
             }
             Circle()
                 .fill(statusTint)
@@ -304,36 +325,12 @@ private struct DeviceStatusDot: View {
         .frame(width: 11, height: 11)
         .accessibilityLabel(phase.accessibilityLabel)
         .animation(Motion.ambient, value: phase)
-        .onAppear { updatePulse(for: phase) }
-        .onChange(of: phase) { _, newPhase in
-            updatePulse(for: newPhase)
-        }
-    }
-
-    private var pulseOpacity: Double {
-        Motion.reduceMotion ? 0.35 : (isPulseExpanded ? 0.1 : 0.45)
-    }
-
-    private var pulseScale: CGFloat {
-        Motion.reduceMotion ? 1.45 : (isPulseExpanded ? 1.85 : 1.0)
     }
 
     private var statusTint: Color {
         phase.statusColor
     }
 
-    private func updatePulse(for phase: ConnectionPhase) {
-        guard phase.isSettling, !Motion.reduceMotion else {
-            withAnimation(Motion.ambient) {
-                isPulseExpanded = false
-            }
-            return
-        }
-        isPulseExpanded = false
-        withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) {
-            isPulseExpanded = true
-        }
-    }
 }
 
 /// Project section header: name, a plus menu that starts a new session with
@@ -492,8 +489,6 @@ private struct SidebarThreadRow: View {
 private struct SidebarStatusDot: View {
     let thread: ChatThread
 
-    @UIState private var isBackgroundPulseExpanded = false
-
     var body: some View {
         Group {
             if thread.status == .backgroundWork {
@@ -508,10 +503,6 @@ private struct SidebarStatusDot: View {
         .accessibilityLabel(accessibilityLabel)
         .animation(Motion.ambient, value: thread.status)
         .animation(Motion.ambient, value: thread.backgroundAgentCount)
-        .onAppear { updatePulse(for: thread.status) }
-        .onChange(of: thread.status) { _, status in
-            updatePulse(for: status)
-        }
     }
 
     private var dot: some View {
@@ -525,8 +516,7 @@ private struct SidebarStatusDot: View {
         ZStack {
             Circle()
                 .stroke(Color.green, lineWidth: 1.2)
-                .opacity(backgroundPulseOpacity)
-                .scaleEffect(backgroundPulseScale)
+                .opacity(0.45)
             dot
         }
     }
@@ -544,27 +534,6 @@ private struct SidebarStatusDot: View {
                     .frame(minWidth: 12, minHeight: 12)
                     .background(.background, in: Capsule())
             }
-        }
-    }
-
-    private var backgroundPulseOpacity: Double {
-        Motion.reduceMotion ? 0.35 : (isBackgroundPulseExpanded ? 0.1 : 0.45)
-    }
-
-    private var backgroundPulseScale: CGFloat {
-        Motion.reduceMotion ? 1.45 : (isBackgroundPulseExpanded ? 1.85 : 1.0)
-    }
-
-    private func updatePulse(for status: ThreadStatus) {
-        guard status == .backgroundWork, !Motion.reduceMotion else {
-            withAnimation(Motion.ambient) {
-                isBackgroundPulseExpanded = false
-            }
-            return
-        }
-        isBackgroundPulseExpanded = false
-        withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) {
-            isBackgroundPulseExpanded = true
         }
     }
 

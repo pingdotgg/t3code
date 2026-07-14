@@ -1,8 +1,8 @@
 # SurgeCode for macOS — Architecture
 
-Native macOS client for the t3 server. SwiftUI with Liquid Glass (macOS 26+),
-no Electron, no web view. The existing Node server (`apps/server`, npm package
-`t3`) is kept unchanged and runs as a supervised child process.
+Native macOS client for the SergeCode server. SwiftUI with Liquid Glass
+(macOS 26+), with the Node server (`apps/server`, npm package `t3`) running as
+a supervised child process.
 
 ```
 ┌───────────────────────────────────────────────┐
@@ -30,14 +30,13 @@ no Electron, no web view. The existing Node server (`apps/server`, npm package
 ## Why this shape
 
 - The server is the product's brain (orchestration engine, provider drivers,
-  SQLite persistence). The Electron app already runs it as a supervised child
-  (`apps/desktop/src/backend/DesktopBackendManager.ts`); we reuse that exact
-  contract from Swift instead of porting Effect-TS to Swift.
+  SQLite persistence). Swift supervises it as a child instead of porting the
+  Effect-based backend to Swift.
 - `apps/mobile` proves a non-browser client works: it speaks the same
   `WS_METHODS` effect-rpc contract via `packages/client-runtime`. T3Kit is the
   Swift equivalent of `client-runtime`'s Primary connection path.
 
-## Sidecar contract (from apps/desktop + apps/server)
+## Sidecar contract
 
 - Spawn: `node <server>/dist/bin.mjs --mode desktop --bootstrap-fd 0`,
   loopback host. Write ONE line of JSON (schema
@@ -58,8 +57,7 @@ no Electron, no web view. The existing Node server (`apps/server`, npm package
 - Shutdown: SIGTERM, 2s grace, then SIGKILL. Restart on crash with
   exponential backoff (500ms → 10s).
 - Data dir: pass explicit `--base-dir` under
-  `~/Library/Application Support/SergeCode/` so we never collide with an
-  Electron install's state.
+  `~/Library/Application Support/SergeCode/`.
 - PATH repair is the server's job (`os-jank.ts fixPath()`); the app just
   spawns node. Dev builds locate node via `/usr/bin/env node` (engines:
   ^22.16 || ^23.11 || >=24.10); bundling a Node runtime into the .app is a
@@ -96,8 +94,7 @@ Package.swift change to coordinate), browser preview/automation, PR review
 dialogs, Clerk/T3 Connect cloud auth + relay (t3-service exclusive,
 permanently out for the fork; local-network iPhone pairing is in — see
 "Sidecar contract"), SSH/tailscale remotes,
-keybindings editor, auto-update (Sparkle later), Windows/Linux (Electron
-app remains for those).
+keybindings editor, auto-update (Sparkle later), and Windows/Linux clients.
 
 ## Liquid Glass usage
 

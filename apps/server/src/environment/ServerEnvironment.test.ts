@@ -17,7 +17,7 @@ const makeServerEnvironmentLayer = (baseDir: string) =>
   ServerEnvironment.layer.pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)));
 
 const makeServerConfig = Effect.fn(function* (baseDir: string) {
-  const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, undefined);
+  const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir);
 
   return {
     ...derivedPaths,
@@ -41,10 +41,6 @@ const makeServerConfig = Effect.fn(function* (baseDir: string) {
     port: 0,
     host: undefined,
     desktopBootstrapToken: undefined,
-    staticDir: undefined,
-    devUrl: undefined,
-    noBrowser: false,
-    startupPresentation: "browser",
   } satisfies ServerConfig.ServerConfig["Service"];
 });
 

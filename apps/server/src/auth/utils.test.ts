@@ -3,12 +3,11 @@ import { describe, expect, it } from "vite-plus/test";
 import { deriveAuthClientMetadata } from "./utils.ts";
 
 describe("deriveAuthClientMetadata", () => {
-  it("labels Electron user agents as Electron instead of Chrome", () => {
+  it("derives native macOS transport metadata", () => {
     const metadata = deriveAuthClientMetadata({
       request: {
         headers: {
-          "user-agent":
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) t3code/0.0.15 Chrome/136.0.7103.93 Electron/36.3.2 Safari/537.36",
+          "user-agent": "SergeCode/1 CFNetwork/1498.700.2 Darwin/23.6.0",
         },
         source: {
           remoteAddress: "::ffff:127.0.0.1",
@@ -17,7 +16,6 @@ describe("deriveAuthClientMetadata", () => {
     });
 
     expect(metadata).toMatchObject({
-      browser: "Electron",
       deviceType: "desktop",
       ipAddress: "127.0.0.1",
       os: "macOS",
@@ -28,27 +26,25 @@ describe("deriveAuthClientMetadata", () => {
     const metadata = deriveAuthClientMetadata({
       request: {
         headers: {
-          "user-agent":
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/136.0.7103.93 Electron/36.3.2 Safari/537.36",
+          "user-agent": "SergeCode/1 CFNetwork/1498.700.2 Darwin/23.6.0",
         },
         source: {
           remoteAddress: "::ffff:192.168.213.72",
         },
       } as never,
       presented: {
-        label: "T3 Code Mobile",
+        label: "SergeCode Mobile",
         deviceType: "mobile",
         os: "iOS",
       },
     });
 
     expect(metadata).toMatchObject({
-      label: "T3 Code Mobile",
-      browser: "Electron",
+      label: "SergeCode Mobile",
       deviceType: "mobile",
       ipAddress: "192.168.213.72",
       os: "iOS",
     });
-    expect(metadata.userAgent).toContain("Electron/36.3.2");
+    expect(metadata.userAgent).toContain("SergeCode/1");
   });
 });

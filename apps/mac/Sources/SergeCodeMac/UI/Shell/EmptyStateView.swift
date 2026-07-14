@@ -47,7 +47,7 @@ struct EmptyStateView: View {
             // Hero card settles into place on arrival instead of popping.
             .scaleEffect(hasAppeared ? 1.0 : 0.96)
             .opacity(hasAppeared ? 1.0 : 0.0)
-            .animation(Motion.enter, value: hasAppeared)
+            .animation(Motion.delight, value: hasAppeared)
             .onAppear { hasAppeared = true }
         }
         .overlay(alignment: .bottomTrailing) {

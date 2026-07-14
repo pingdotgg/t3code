@@ -76,7 +76,7 @@ struct ChatTimelineScrollView: View {
                 // per-token streaming updates never re-trigger layout
                 // animation.
                 .animation(
-                    pendingInitialScrollThreadID == model.selectedThreadID ? nil : Motion.enter,
+                    pendingInitialScrollThreadID == model.selectedThreadID ? nil : Motion.reveal,
                     value: items.count)
             }
             .defaultScrollAnchor(.bottom)
@@ -124,7 +124,7 @@ struct ChatTimelineScrollView: View {
                 lastItemCount = newCount
                 guard pendingInitialScrollThreadID != model.selectedThreadID else { return }
                 guard isPinnedToBottom, appendedRow else { return }
-                withAnimation(Motion.settle) {
+                withAnimation(Motion.structure) {
                     proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
                 }
             }

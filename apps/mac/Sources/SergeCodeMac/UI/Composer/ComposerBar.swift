@@ -20,6 +20,19 @@ public struct ComposerBar: View {
     @UIState private var mentionResults: [WorkspaceEntry] = []
     @UIState private var mentionQuery: String?
     @UIState private var mentionSearchTask: Task<Void, Never>?
+    /// True while a mention search is in flight — lets the empty state
+    /// distinguish "still searching" from "genuinely no matches".
+    @UIState private var mentionSearchInFlight = false
+
+    /// Keyboard-navigable index into whichever suggestion list is showing
+    /// (slash commands or mentions). Reset whenever the list's contents change.
+    @UIState private var highlightedSuggestionIndex = 0
+    /// Set by Escape; suppresses the slash-command menu until the draft
+    /// changes again (slash matches are derived from the draft text, so
+    /// there's no independent "hide" state to clear otherwise).
+    @UIState private var suggestionMenuDismissed = false
+
+    @UIState private var attachmentEncodeTask: Task<Void, Never>?
 
     /// When set, the next send rewinds the origin thread to just before this
     /// message. Cleared on send, draft clear, or thread switch because edit
@@ -30,8 +43,10 @@ public struct ComposerBar: View {
     @UIState private var showDictationDownloadPrompt = false
     @FocusState private var editorFocused: Bool
 
-    private static let maxAttachments = 8
-    private static let maxAttachmentBytes = 10 * 1024 * 1024
+    // `nonisolated` so the background encode helpers (which run off the main
+    // actor) can read these caps without hopping back to MainActor.
+    nonisolated private static let maxAttachments = 8
+    nonisolated private static let maxAttachmentBytes = 10 * 1024 * 1024
 
     public init(model: AppModel, accent: Color) {
         self.model = model
@@ -98,7 +113,10 @@ public struct ComposerBar: View {
     }
 
     /// Provider slash commands + mode built-ins, filtered by the `/token`
-    /// the draft currently starts with (nil when the draft isn't one).
+    /// the draft currently starts with (nil when the draft isn't one — this
+    /// is distinct from an empty array, which means "in slash context but no
+    /// command matches", so the menu can show a "No matches" row instead of
+    /// vanishing).
     private var slashMatches: [SlashCommandItem]? {
         guard draft.hasPrefix("/"), !draft.contains("\n") else { return nil }
         let token = draft.dropFirst()
@@ -112,28 +130,41 @@ public struct ComposerBar: View {
             SlashCommandItem(name: $0.name, detail: $0.detail, builtIn: nil)
         }
         let all = builtIns + provider
-        let matches = query.isEmpty ? all : all.filter { $0.name.lowercased().hasPrefix(query) }
-        return matches.isEmpty ? nil : matches
+        return query.isEmpty ? all : all.filter { $0.name.lowercased().hasPrefix(query) }
+    }
+
+    /// Unified rows for whichever suggestion menu is active (slash commands
+    /// take priority over mentions, mirroring how they're mutually exclusive
+    /// draft states). `nil` means no menu should show at all; an empty array
+    /// means the menu is showing but has no matches. Each row's `action`
+    /// already knows how to apply itself, so keyboard accept (Enter) doesn't
+    /// need to re-derive slash-vs-mention branching.
+    private var activeSuggestionRows: [SuggestionRow]? {
+        guard !suggestionMenuDismissed else { return nil }
+        if let matches = slashMatches {
+            return matches.prefix(8).map { item in
+                SuggestionRow(
+                    id: "slash-\(item.name)", icon: "slash.circle",
+                    title: "/\(item.name)", subtitle: item.detail
+                ) { applySlashCommand(item) }
+            }
+        }
+        if let query = mentionQuery, !mentionResults.isEmpty || !mentionSearchInFlight {
+            return mentionResults.prefix(8).map { entry in
+                SuggestionRow(
+                    id: entry.id, icon: entry.isDirectory ? "folder" : "doc.text",
+                    title: entry.path, subtitle: nil
+                ) { insertMention(entry, replacing: query) }
+            }
+        }
+        return nil
     }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if let matches = slashMatches {
-                SuggestionList(items: matches.map { item in
-                    SuggestionRow(
-                        id: "slash-\(item.name)", icon: "slash.circle",
-                        title: "/\(item.name)", subtitle: item.detail
-                    ) { applySlashCommand(item) }
-                })
-                .transition(Motion.pop(from: .bottomLeading))
-            } else if let query = mentionQuery, !mentionResults.isEmpty {
-                SuggestionList(items: mentionResults.map { entry in
-                    SuggestionRow(
-                        id: entry.id, icon: entry.isDirectory ? "folder" : "doc.text",
-                        title: entry.path, subtitle: nil
-                    ) { insertMention(entry, replacing: query) }
-                })
-                .transition(Motion.pop(from: .bottomLeading))
+            if let rows = activeSuggestionRows {
+                SuggestionList(items: rows, highlightedIndex: highlightedSuggestionIndex)
+                    .transition(Motion.pop(from: .bottomLeading))
             }
 
             if !model.selectedQueuedMessages.isEmpty {
@@ -143,7 +174,7 @@ public struct ComposerBar: View {
                     onSendNow: sendQueuedMessageNow,
                     onRemove: removeQueuedMessage
                 )
-                .transition(Motion.bannerDrop)
+                .transition(Motion.banner)
             }
 
             if let thread = model.selectedThread {
@@ -173,6 +204,26 @@ public struct ComposerBar: View {
                     .transition(Motion.rise)
             }
 
+            if let lastError = model.lastError {
+                HStack(alignment: .top, spacing: 6) {
+                    Text(lastError)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                    Spacer(minLength: 8)
+                    Button {
+                        model.lastError = nil
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Dismiss error")
+                }
+                .padding(.horizontal, 4)
+                .transition(Motion.rise)
+            }
+
             GlassEffectContainer {
                 HStack(alignment: .bottom, spacing: 10) {
                     Button {
@@ -187,11 +238,15 @@ public struct ComposerBar: View {
                     .buttonBorderShape(.circle)
                     .disabled(attachments.count >= Self.maxAttachments)
                     .help("Attach images")
+                    .accessibilityLabel("Attach images")
 
                     TextEditor(text: draftBinding)
                         .font(.body)
                         .focused($editorFocused)
                         .scrollContentBackground(.hidden)
+                        // Keep editor transparent so composer remains one
+                        // continuous Liquid Glass surface; draft field does
+                        // not create a second light plate inside outer glass.
                         .frame(minHeight: 22, maxHeight: 120)
                         .fixedSize(horizontal: false, vertical: true)
                         .overlay(alignment: .topLeading) {
@@ -210,11 +265,20 @@ public struct ComposerBar: View {
                         }
                         .padding(.vertical, 4)
                         .onChange(of: draft) { _, newValue in
+                            // A fresh keystroke always reopens whatever menu
+                            // the new text implies, and starts highlighting
+                            // from the top again.
+                            suggestionMenuDismissed = false
+                            highlightedSuggestionIndex = 0
                             updateMentionSearch(for: newValue)
                         }
-                        // Enter sends (or accepts the top suggestion while a
-                        // list is open); Option+Enter queues while a turn is
-                        // running; Shift+Enter falls through to insert a newline.
+                        .onChange(of: mentionResults.map(\.id)) { _, _ in
+                            highlightedSuggestionIndex = 0
+                        }
+                        // Enter sends (or accepts the highlighted suggestion
+                        // while a list is open); Option+Enter queues while a
+                        // turn is running; Shift+Enter falls through to
+                        // insert a newline.
                         .onKeyPress(keys: [.return]) { press in
                             // Caps Lock and keypad Enter report as modifiers
                             // but don't change intent — plain Enter still sends.
@@ -227,17 +291,36 @@ public struct ComposerBar: View {
                                 return .ignored
                             }
                             guard semantic.isEmpty else { return .ignored }
-                            if let first = slashMatches?.first {
-                                applySlashCommand(first)
-                                return .handled
-                            }
-                            if let query = mentionQuery, let first = mentionResults.first {
-                                insertMention(first, replacing: query)
+                            if let rows = activeSuggestionRows, !rows.isEmpty {
+                                let index = min(highlightedSuggestionIndex, rows.count - 1)
+                                rows[index].action()
                                 return .handled
                             }
                             // Swallow Enter when there's nothing to send so an
                             // empty draft doesn't collect stray newlines.
                             if canSend { send() }
+                            return .handled
+                        }
+                        // Arrow keys move the highlight within an open
+                        // suggestion menu; otherwise they're left alone so
+                        // the editor's normal caret movement still works.
+                        .onKeyPress(keys: [.upArrow, .downArrow]) { press in
+                            guard let rows = activeSuggestionRows, !rows.isEmpty else {
+                                return .ignored
+                            }
+                            if press.key == .downArrow {
+                                highlightedSuggestionIndex = (highlightedSuggestionIndex + 1) % rows.count
+                            } else {
+                                highlightedSuggestionIndex =
+                                    (highlightedSuggestionIndex - 1 + rows.count) % rows.count
+                            }
+                            return .handled
+                        }
+                        // Escape dismisses whichever suggestion menu is open
+                        // without touching the draft text.
+                        .onKeyPress(keys: [.escape]) { _ in
+                            guard slashMatches != nil || mentionQuery != nil else { return .ignored }
+                            dismissSuggestions()
                             return .handled
                         }
 
@@ -254,6 +337,7 @@ public struct ComposerBar: View {
                         .buttonBorderShape(.circle)
                         .keyboardShortcut(.return, modifiers: .option)
                         .help("Queue for next turn (Option-Return)")
+                        .accessibilityLabel("Queue for next turn")
                         .transition(Motion.materialize)
                     }
 
@@ -273,6 +357,7 @@ public struct ComposerBar: View {
                         .tint(.red)
                         .keyboardShortcut(".", modifiers: .command)
                         .help("Stop the current turn")
+                        .accessibilityLabel("Stop the current turn")
                         .transition(Motion.materialize)
                     }
 
@@ -283,21 +368,22 @@ public struct ComposerBar: View {
             }
             .glassEffect(.regular, in: .rect(cornerRadius: 25))
         }
-        // One animation domain for the whole composer: draft edits drive the
-        // editor's height growth and suggestion filtering; the other keys
-        // cover async arrivals (mention results, staged files, errors).
-        .animation(Motion.settle, value: draft)
-        .animation(Motion.enter, value: mentionResults.map(\.id))
-        .animation(Motion.enter, value: attachments.map(\.id))
-        .animation(Motion.enter, value: model.selectedQueuedMessages.map(\.id))
-        .animation(Motion.enter, value: attachmentError)
-        .animation(Motion.enter, value: model.dictation.lastError)
-        .animation(Motion.snap, value: isThreadRunning)
+        // Typing and suggestion filtering are deliberately unanimated. Async
+        // arrivals reveal independently without moving the entire composer on
+        // every keystroke.
+        .animation(Motion.reveal, value: attachments.map(\.id))
+        .animation(Motion.reveal, value: model.selectedQueuedMessages.map(\.id))
+        .animation(Motion.reveal, value: attachmentError)
+        .animation(Motion.reveal, value: model.dictation.lastError)
+        .animation(Motion.reveal, value: model.lastError)
+        .animation(Motion.feedback, value: isThreadRunning)
         .task {
-            model.dictation.insertHandler = { text in
-                appendDictated(text)
+            model.dictation.insertHandler = { threadID, text in
+                appendDictated(text, to: threadID)
             }
         }
+        .onPasteCommand(of: [.image], perform: handlePasteProviders)
+        .onDrop(of: [.image], isTargeted: nil, perform: handleDropProviders)
         .alert("Download dictation model?", isPresented: $showDictationDownloadPrompt) {
             Button("Download") { model.dictation.downloadModel() }
             Button("Cancel", role: .cancel) {}
@@ -355,9 +441,10 @@ public struct ComposerBar: View {
             .disabled(!showsStop && !canSend)
             .keyboardShortcut(.return, modifiers: .command)
             .help(sendHelp)
-            .animation(Motion.snap, value: canSend)
-            .animation(Motion.snap, value: showsStop)
-            .animation(Motion.snap, value: isThreadRunning)
+            .accessibilityLabel(sendHelp)
+            // `canSend` follows typing and must update immediately.
+            .animation(Motion.feedback, value: showsStop)
+            .animation(Motion.feedback, value: isThreadRunning)
     }
 
     @ViewBuilder
@@ -382,7 +469,8 @@ public struct ComposerBar: View {
             }
         } label: {
             Image(systemName: sendIconName)
-                .contentTransition(.symbolEffect(.replace))
+                .contentTransition(
+                    Motion.reduceMotion ? .identity : .symbolEffect(.replace))
                 .alpineIconLabel()
         }
         .buttonBorderShape(.circle)
@@ -402,7 +490,7 @@ public struct ComposerBar: View {
         Button {
             switch (dictation.state, dictation.modelStatus) {
             case (.recording, _), (.idle, .ready):
-                dictation.toggleRecording()
+                dictation.toggleRecording(threadID: model.selectedThreadID)
             case (.idle, .notDownloaded):
                 showDictationDownloadPrompt = true
             default:
@@ -420,7 +508,8 @@ public struct ComposerBar: View {
                         .controlSize(.small)
                 default:
                     dictationMicIcon
-                        .contentTransition(.symbolEffect(.replace))
+                        .contentTransition(
+                            Motion.reduceMotion ? .identity : .symbolEffect(.replace))
                         .symbolEffect(.pulse, isActive: isRecording && !Motion.reduceMotion)
                 }
             }
@@ -433,7 +522,8 @@ public struct ComposerBar: View {
             dictation.state == .processing || dictation.modelStatus.isDownloading
         )
         .help(dictationHelp)
-        .animation(Motion.snap, value: isRecording)
+        .accessibilityLabel(dictationHelp)
+        .animation(Motion.feedback, value: isRecording)
     }
 
     @ViewBuilder
@@ -469,14 +559,20 @@ public struct ComposerBar: View {
         NSWorkspace.shared.open(url)
     }
 
-    private func appendDictated(_ text: String) {
-        if draft.isEmpty {
-            draft = text
-        } else if draft.hasSuffix(" ") || draft.hasSuffix("\n") {
-            draft += text
+    /// Appends a finished dictation transcript to `threadID`'s draft — the
+    /// thread selected when recording *started*, which may not be the
+    /// currently selected thread anymore (see `DictationController`).
+    private func appendDictated(_ text: String, to threadID: String) {
+        let current = model.composerDraft(for: threadID).text
+        let updated: String
+        if current.isEmpty {
+            updated = text
+        } else if current.hasSuffix(" ") || current.hasSuffix("\n") {
+            updated = current + text
         } else {
-            draft += " " + text
+            updated = current + " " + text
         }
+        model.setComposerDraftText(updated, for: threadID)
     }
 
     // MARK: - Sending
@@ -489,13 +585,18 @@ public struct ComposerBar: View {
         let replacingThreadID = editedMessageThreadID
         model.clearComposerDraft(for: threadID)
         resetTransientState()
+        // Mouse-driven sends (clicking the send button) leave the editor
+        // unfocused otherwise, breaking the type-send-type flow.
+        editorFocused = true
         Task {
             let sent = await model.send(
                 threadID: threadID, text: outgoingText,
                 attachments: submittedDraft.attachments,
                 replacingMessageID: replacingID,
                 replacingMessageThreadID: replacingThreadID)
-            if !sent {
+            if sent {
+                model.lastError = nil
+            } else {
                 model.restoreComposerDraft(submittedDraft, for: threadID)
             }
         }
@@ -520,6 +621,9 @@ public struct ComposerBar: View {
         attachmentError = nil
         mentionQuery = nil
         mentionResults = []
+        mentionSearchInFlight = false
+        suggestionMenuDismissed = false
+        highlightedSuggestionIndex = 0
         // Queued messages are not yet on the server timeline — no revert.
         editedMessageID = nil
         editedMessageThreadID = nil
@@ -547,12 +651,31 @@ public struct ComposerBar: View {
         mentionSearchTask = nil
         mentionQuery = nil
         mentionResults = []
+        mentionSearchInFlight = false
         showFileImporter = false
         fileImporterThreadID = nil
+        attachmentEncodeTask?.cancel()
+        attachmentEncodeTask = nil
         attachmentError = nil
         showDictationDownloadPrompt = false
         editedMessageID = nil
         editedMessageThreadID = nil
+        suggestionMenuDismissed = false
+        highlightedSuggestionIndex = 0
+    }
+
+    /// Escape: hide whichever suggestion menu is open. Mentions have real
+    /// state to clear; slash matches are derived from the draft text, so
+    /// they're hidden via `suggestionMenuDismissed` until the next keystroke.
+    private func dismissSuggestions() {
+        if mentionQuery != nil {
+            mentionSearchTask?.cancel()
+            mentionSearchTask = nil
+            mentionQuery = nil
+            mentionResults = []
+            mentionSearchInFlight = false
+        }
+        suggestionMenuDismissed = true
     }
 
     // MARK: - Slash commands
@@ -569,6 +692,9 @@ public struct ComposerBar: View {
             // Provider command: round-trips as plain message text.
             draft = "/\(item.name) "
         }
+        // A slash pick is mouse-driven (or Enter, which already keeps focus)
+        // — restore it either way so typing continues without a re-click.
+        editorFocused = true
     }
 
     // MARK: - @-mentions
@@ -580,15 +706,18 @@ public struct ComposerBar: View {
         guard let token = Self.trailingMentionToken(in: text) else {
             mentionQuery = nil
             mentionResults = []
+            mentionSearchInFlight = false
             return
         }
         mentionQuery = token
+        mentionSearchInFlight = true
         mentionSearchTask = Task {
             try? await Task.sleep(nanoseconds: 150_000_000)
             guard !Task.isCancelled else { return }
             let results = await model.searchWorkspace(query: String(token.dropFirst()))
             guard !Task.isCancelled else { return }
             mentionResults = results
+            mentionSearchInFlight = false
         }
     }
 
@@ -614,37 +743,169 @@ public struct ComposerBar: View {
 
     // MARK: - Attachments
 
+    /// Reads and base64-encodes files picked from the file importer. The
+    /// actual work runs off the main actor (see `encodeFromFiles`) since
+    /// `Data(contentsOf:)` + base64 on up to 8×10 MB files is slow enough to
+    /// stall the UI if it ran here directly. A new call supersedes any
+    /// in-flight one — its result is discarded once cancelled.
     private func attach(urls: [URL], to threadID: String) {
+        attachmentEncodeTask?.cancel()
         attachmentError = nil
-        var stagedAttachments = model.composerDraft(for: threadID).attachments
+        attachmentEncodeTask = Task {
+            let existingCount = model.composerDraft(for: threadID).attachments.count
+            let (encoded, error) = await Self.encodeFromFiles(urls: urls, existingCount: existingCount)
+            guard !Task.isCancelled else { return }
+            if let error { attachmentError = error }
+            guard !encoded.isEmpty else { return }
+            let current = model.composerDraft(for: threadID).attachments
+            model.setComposerDraftAttachments(current + encoded, for: threadID)
+        }
+    }
+
+    /// Off-main-actor file read + base64 encode. `nonisolated` so calling it
+    /// via `await` from the (actor-inferred) view hops off the main actor;
+    /// only `Sendable` state (URLs, the two size/count constants) crosses in.
+    nonisolated private static func encodeFromFiles(
+        urls: [URL], existingCount: Int
+    ) async -> (attachments: [OutgoingAttachment], error: String?) {
+        var staged: [OutgoingAttachment] = []
+        var error: String?
+        var count = existingCount
         for url in urls {
-            guard stagedAttachments.count < Self.maxAttachments else {
-                attachmentError = "At most \(Self.maxAttachments) attachments per message."
+            guard count < maxAttachments else {
+                error = "At most \(maxAttachments) attachments per message."
                 break
             }
             let scoped = url.startAccessingSecurityScopedResource()
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
             guard let data = try? Data(contentsOf: url) else {
-                attachmentError = "Could not read \(url.lastPathComponent)."
+                error = "Could not read \(url.lastPathComponent)."
                 continue
             }
-            guard data.count <= Self.maxAttachmentBytes else {
-                attachmentError = "\(url.lastPathComponent) is over the 10 MB attachment limit."
+            guard data.count <= maxAttachmentBytes else {
+                error = "\(url.lastPathComponent) is over the 10 MB attachment limit."
                 continue
             }
             let mimeType =
                 UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "image/png"
             guard mimeType.hasPrefix("image/") else {
-                attachmentError = "\(url.lastPathComponent) is not an image."
+                error = "\(url.lastPathComponent) is not an image."
                 continue
             }
-            stagedAttachments.append(
+            staged.append(
                 OutgoingAttachment(
                     id: UUID().uuidString, name: url.lastPathComponent, mimeType: mimeType,
                     sizeBytes: data.count,
                     dataURL: "data:\(mimeType);base64,\(data.base64EncodedString())"))
+            count += 1
         }
-        model.setComposerDraftAttachments(stagedAttachments, for: threadID)
+        return (staged, error)
+    }
+
+    /// Off-main-actor encode for already-in-memory image bytes (paste/drop),
+    /// reusing the same size/count caps as file attachments.
+    nonisolated private static func encodeFromData(
+        _ items: [(name: String, mimeType: String, data: Data)], existingCount: Int
+    ) async -> (attachments: [OutgoingAttachment], error: String?) {
+        var staged: [OutgoingAttachment] = []
+        var error: String?
+        var count = existingCount
+        for item in items {
+            guard count < maxAttachments else {
+                error = "At most \(maxAttachments) attachments per message."
+                break
+            }
+            guard item.data.count <= maxAttachmentBytes else {
+                error = "\(item.name) is over the 10 MB attachment limit."
+                continue
+            }
+            staged.append(
+                OutgoingAttachment(
+                    id: UUID().uuidString, name: item.name, mimeType: item.mimeType,
+                    sizeBytes: item.data.count,
+                    dataURL: "data:\(item.mimeType);base64,\(item.data.base64EncodedString())"))
+            count += 1
+        }
+        return (staged, error)
+    }
+
+    /// Shared handler for pasted/dropped image providers: loads each
+    /// provider's image bytes, then routes through the same encode + cap
+    /// pipeline as file attachments.
+    private func attachFromProviders(_ providers: [NSItemProvider], to threadID: String) {
+        attachmentEncodeTask?.cancel()
+        attachmentError = nil
+        attachmentEncodeTask = Task {
+            var items: [(name: String, mimeType: String, data: Data)] = []
+            var loadError: String?
+            for (index, provider) in providers.enumerated() {
+                guard !Task.isCancelled else { return }
+                let mimeType = Self.imageMIMEType(for: provider)
+                do {
+                    let data = try await Self.loadImageData(from: provider)
+                    let ext = UTType(mimeType: mimeType)?.preferredFilenameExtension ?? "png"
+                    let name = provider.suggestedName.map { "\($0).\(ext)" }
+                        ?? "Pasted image \(index + 1).\(ext)"
+                    items.append((name: name, mimeType: mimeType, data: data))
+                } catch {
+                    loadError = "Could not read a pasted or dropped image."
+                }
+            }
+            guard !Task.isCancelled else { return }
+            let existingCount = model.composerDraft(for: threadID).attachments.count
+            let (encoded, encodeError) = await Self.encodeFromData(items, existingCount: existingCount)
+            guard !Task.isCancelled else { return }
+            attachmentError = encodeError ?? loadError
+            guard !encoded.isEmpty else { return }
+            let current = model.composerDraft(for: threadID).attachments
+            model.setComposerDraftAttachments(current + encoded, for: threadID)
+        }
+    }
+
+    /// This SDK only exposes `NSItemProvider`'s completion-handler
+    /// `loadDataRepresentation(for:completionHandler:)` (the `async throws`
+    /// overload isn't present), so bridge it manually. Deliberately *not*
+    /// `nonisolated`: `NSItemProvider` isn't `Sendable`, and the actual load
+    /// happens off-thread inside the framework regardless — this call just
+    /// awaits the bridge, it doesn't block the main actor.
+    private static func loadImageData(from provider: NSItemProvider) async throws -> Data {
+        try await withCheckedThrowingContinuation { continuation in
+            _ = provider.loadDataRepresentation(for: .image) { data, error in
+                if let data {
+                    continuation.resume(returning: data)
+                } else {
+                    continuation.resume(throwing: error ?? CocoaError(.fileReadUnknown))
+                }
+            }
+        }
+    }
+
+    private static func imageMIMEType(for provider: NSItemProvider) -> String {
+        for identifier in provider.registeredTypeIdentifiers {
+            if let type = UTType(identifier), type.conforms(to: .image), let mime = type.preferredMIMEType {
+                return mime
+            }
+        }
+        return "image/png"
+    }
+
+    private func handlePasteProviders(_ providers: [NSItemProvider]) {
+        guard let threadID = model.selectedThreadID else { return }
+        let imageProviders = providers.filter {
+            $0.hasItemConformingToTypeIdentifier(UTType.image.identifier)
+        }
+        guard !imageProviders.isEmpty, attachments.count < Self.maxAttachments else { return }
+        attachFromProviders(imageProviders, to: threadID)
+    }
+
+    private func handleDropProviders(_ providers: [NSItemProvider]) -> Bool {
+        guard let threadID = model.selectedThreadID else { return false }
+        let imageProviders = providers.filter {
+            $0.hasItemConformingToTypeIdentifier(UTType.image.identifier)
+        }
+        guard !imageProviders.isEmpty, attachments.count < Self.maxAttachments else { return false }
+        attachFromProviders(imageProviders, to: threadID)
+        return true
     }
 }
 
@@ -669,33 +930,51 @@ private struct SuggestionRow: Identifiable {
 }
 
 /// Shared popover-style list for slash-command and mention suggestions.
+/// `highlightedIndex` tracks arrow-key navigation; an empty `items` renders a
+/// "No matches" placeholder instead of vanishing (mirrors
+/// `ModelPickerPopover`'s empty state).
 private struct SuggestionList: View {
     let items: [SuggestionRow]
+    let highlightedIndex: Int
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(items.prefix(8)) { item in
-                Button(action: item.action) {
-                    HStack(spacing: 8) {
-                        Image(systemName: item.icon)
-                            .foregroundStyle(.secondary)
-                            .frame(width: 16)
-                        Text(item.title)
-                            .font(.callout)
-                            .lineLimit(1)
-                        if let subtitle = item.subtitle, !subtitle.isEmpty {
-                            Text(subtitle)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                        Spacer(minLength: 0)
-                    }
-                    .contentShape(Rectangle())
+            if items.isEmpty {
+                Text("No matches")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
                     .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
+                    .padding(.vertical, 8)
+            } else {
+                ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                    Button(action: item.action) {
+                        HStack(spacing: 8) {
+                            Image(systemName: item.icon)
+                                .foregroundStyle(.secondary)
+                                .frame(width: 16)
+                            Text(item.title)
+                                .font(.callout)
+                                .lineLimit(1)
+                            if let subtitle = item.subtitle, !subtitle.isEmpty {
+                                Text(subtitle)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .contentShape(Rectangle())
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background {
+                            if index == highlightedIndex {
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(.fill.secondary)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
         }
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
@@ -745,11 +1024,20 @@ private struct QueuedMessageRow: View {
     let onSendNow: () -> Void
     let onRemove: () -> Void
 
+    // Mirrors AppModel's private `maxQueuedSendAttempts` (3) — that constant
+    // isn't reachable from here, so the threshold is duplicated. Queued
+    // sends stop auto-retrying once `sendAttempts` reaches it.
+    private static let maxSendAttempts = 3
+
+    private var failedToSend: Bool {
+        message.sendAttempts >= Self.maxSendAttempts
+    }
+
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: "clock")
+            Image(systemName: failedToSend ? "exclamationmark.triangle.fill" : "clock")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(failedToSend ? .red : .secondary)
                 .frame(width: 16)
 
             Button(action: onEdit) {
@@ -758,6 +1046,11 @@ private struct QueuedMessageRow: View {
                         .font(.callout)
                         .lineLimit(1)
                         .truncationMode(.tail)
+                    if failedToSend {
+                        Text("Failed to send")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.red)
+                    }
                     if !message.attachments.isEmpty {
                         Label("\(message.attachments.count)", systemImage: "photo")
                             .font(.caption2)
@@ -769,12 +1062,16 @@ private struct QueuedMessageRow: View {
             }
             .buttonStyle(.plain)
             .help("Edit queued message")
+            .accessibilityLabel("Edit queued message")
 
+            // Send-now doubles as the retry affordance once auto-retries are
+            // exhausted — the message stays queued either way.
             Button(action: onSendNow) {
                 Image(systemName: "arrow.up.right.circle.fill")
             }
             .buttonStyle(.plain)
-            .help("Send now - steers the running agent")
+            .help(failedToSend ? "Retry send" : "Send now - steers the running agent")
+            .accessibilityLabel(failedToSend ? "Retry send" : "Send now")
 
             Button(action: onRemove) {
                 Image(systemName: "xmark.circle.fill")
@@ -782,10 +1079,20 @@ private struct QueuedMessageRow: View {
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
             .help("Remove queued message")
+            .accessibilityLabel("Remove queued message")
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        .background(Color(nsColor: .textBackgroundColor).opacity(0.9), in: RoundedRectangle(cornerRadius: 8))
+        .background(
+            failedToSend
+                ? AnyShapeStyle(Color.red.opacity(0.12))
+                : AnyShapeStyle(Color.black.opacity(0.22)),
+            in: RoundedRectangle(cornerRadius: 8)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(failedToSend ? Color.red.opacity(0.4) : Color.clear, lineWidth: 1)
+        )
         .transition(Motion.rise)
     }
 
@@ -824,6 +1131,8 @@ private struct AttachmentChipsRow: View {
                                 .foregroundStyle(.secondary)
                         }
                         .buttonStyle(.plain)
+                        .help("Remove attachment")
+                        .accessibilityLabel("Remove \(attachment.name)")
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)

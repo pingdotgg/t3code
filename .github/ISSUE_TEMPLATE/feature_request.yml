@@ -27,10 +27,10 @@ body:
       label: Area
       description: Which part of the project would this change affect?
       options:
-        - apps/web
+        - apps/mac
+        - apps/mobile
         - apps/server
-        - apps/desktop
-        - packages/contracts or packages/shared
+        - Shared packages or relay
         - Build, CI, or release tooling
         - Docs
         - Not sure
@@ -42,7 +42,7 @@ body:
     attributes:
       label: Problem or use case
       description: What are you trying to do? What is hard, slow, or impossible today?
-      placeholder: I want to reconnect to an existing provider session after a browser refresh without losing the current thread state.
+      placeholder: I want to reconnect to an existing provider session after a network interruption without losing the current thread state.
     validations:
       required: true
 

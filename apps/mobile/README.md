@@ -16,7 +16,7 @@ This app has three variants:
 
 Run commands from `apps/mobile`.
 
-T3 Connect is optional and disabled in a fresh clone. Public configuration belongs in the
+Cloud access is optional and disabled in a fresh clone. Public configuration belongs in the
 repository-root `.env` or `.env.local`, not an `apps/mobile/.env` file. See
 [`../../.env.example`](../../.env.example).
 
@@ -51,8 +51,8 @@ EXPO_PUBLIC_REVIEW_HIGHLIGHTER_ENGINE=javascript vp run ios:dev
 Inspect the resolved Expo config for a variant:
 
 ```bash
-vp run config:dev
-vp run config:preview
+vp run '@t3tools/mobile#config:dev'
+vp run '@t3tools/mobile#config:preview'
 ```
 
 Run static checks for mobile native code:
@@ -65,9 +65,9 @@ The native lint task runs SwiftLint for Swift plus ktlint and detekt for Kotlin.
 
 ## Installing on a device with a free Apple ID
 
-Local device installs without T3 Tools team membership: sign in to Xcode with
-your Apple ID (Personal Team), find your team ID in Xcode → Settings →
-Accounts, then build with personal signing (device UDID from
+For local device installs with a free Apple ID, sign in to Xcode with your
+Apple ID (Personal Team), find your team ID in Xcode → Settings → Accounts,
+then build with personal signing (device UDID from
 `xcrun devicectl list devices`):
 
 ```bash
@@ -94,8 +94,8 @@ This signs with your Personal Team, derives a per-team bundle id
 the widgets extension, app groups, push, Sign in with Apple, and associated
 domains. Signatures expire after 7 days — rebuild to refresh. Trust the
 developer profile on the phone (Settings → General → VPN & Device Management)
-on first launch. The mode refuses to run for EAS builds or any
-`APP_VARIANT` other than `development`.
+on first launch. The mode refuses to run for any `APP_VARIANT` other than
+`development`.
 
 ## Alpine scenery (Unsplash)
 
@@ -106,7 +106,7 @@ washes — nothing breaks.
 
 - Local builds: set `EXPO_PUBLIC_UNSPLASH_ACCESS_KEY` in the repository-root
   `.env.local` (never commit it; see `../../.env.example`).
-- EAS builds: `eas env:create --scope project --name EXPO_PUBLIC_UNSPLASH_ACCESS_KEY`
+- Local release builds: provide the same variable through the build environment.
   per environment.
 
 The key is embedded in the JS bundle (standard for `EXPO_PUBLIC_*` values), so
@@ -124,41 +124,7 @@ t3 serve --host "$(tailscale ip -4)"   # or: t3 serve --tailscale-serve
 
 The server prints a pairing URL and QR code. In the app: **Connections → New →
 scan the QR** (or paste the pairing URL). The phone exchanges the one-time
-token for a scoped bearer credential and connects over `wss://…/ws`. See
-[`docs/user/remote-access.md`](../../docs/user/remote-access.md). Adding
+token for a scoped bearer credential and connects over `wss://…/ws`. See the
+[quick-start guide](../../docs/getting-started/quick-start.md). Adding
 _projects_ remotely is not supported yet — create them on the host with
 `t3 project`; thread creation and management work from the phone.
-
-## EAS Builds
-
-CI uses Expo fingerprinting with the `preview:dev` profile to reuse an existing compatible build when possible, or start a new internal EAS build when native runtime inputs change. Production and default local builds continue to use the `appVersion` runtime policy.
-
-For preview or production EAS environments, set `T3CODE_CLERK_PUBLISHABLE_KEY`,
-`T3CODE_CLERK_JWT_TEMPLATE`, and `T3CODE_RELAY_URL`
-as EAS environment variables. Expo config maps the canonical values into the mobile build.
-
-Create a PR preview dev-client build manually:
-
-```bash
-vp run eas:ios:preview:dev
-```
-
-Create a cloud dev-client build:
-
-```bash
-vp run eas:ios:dev
-```
-
-Create a persistent preview build:
-
-```bash
-vp run eas:ios:preview
-```
-
-Android equivalents:
-
-```bash
-vp run eas:android:dev
-vp run eas:android:preview:dev
-vp run eas:android:preview
-```

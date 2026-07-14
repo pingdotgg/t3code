@@ -87,6 +87,67 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   });
 });
 
+describe("ServerSettings token efficiency defaults", () => {
+  it("defaults to assistive/manual token efficiency settings", () => {
+    const decoded = decodeServerSettings({});
+    expect(decoded.tokenEfficiency).toEqual({
+      showComposerHints: true,
+      showCostWarnings: true,
+      efficiencyProfile: "manual",
+      perTurnEstimatedCostWarningUsd: null,
+      dailyEstimatedCostWarningUsd: null,
+      monthlyEstimatedCostWarningUsd: null,
+      customModelPricing: {},
+    });
+  });
+
+  it("accepts token efficiency patches with custom model pricing", () => {
+    const patch = decodeServerSettingsPatch({
+      tokenEfficiency: {
+        efficiencyProfile: "cost_saver",
+        perTurnEstimatedCostWarningUsd: 1.25,
+        customModelPricing: {
+          "codex/gpt-example": {
+            uncachedInputPerMillionUsd: 2,
+            cachedInputPerMillionUsd: 0.5,
+            outputPerMillionUsd: 8,
+          },
+        },
+      },
+    });
+
+    expect(patch.tokenEfficiency?.efficiencyProfile).toBe("cost_saver");
+    expect(patch.tokenEfficiency?.perTurnEstimatedCostWarningUsd).toBe(1.25);
+    expect(
+      patch.tokenEfficiency?.customModelPricing?.["codex/gpt-example"]?.cachedInputPerMillionUsd,
+    ).toBe(0.5);
+  });
+
+  it("rejects negative custom model pricing overrides", () => {
+    const negativePricing = {
+      inputPerMillionUsd: -1,
+      uncachedInputPerMillionUsd: -1,
+      cachedInputPerMillionUsd: -1,
+      cacheCreationInputPerMillionUsd: -1,
+      cacheReadInputPerMillionUsd: -1,
+      outputPerMillionUsd: -1,
+      reasoningOutputPerMillionUsd: -1,
+    };
+
+    for (const [field, value] of Object.entries(negativePricing)) {
+      expect(() =>
+        decodeServerSettingsPatch({
+          tokenEfficiency: {
+            customModelPricing: {
+              "codex/gpt-negative": { [field]: value },
+            },
+          },
+        }),
+      ).toThrow();
+    }
+  });
+});
+
 describe("ServerSettings worktree defaults", () => {
   it("defaults start-from-origin off for legacy configs", () => {
     expect(decodeServerSettings({}).newWorktreesStartFromOrigin).toBe(false);
@@ -210,5 +271,22 @@ describe("Claude Synthero settings", () => {
 
     expect(patch.providers?.["claude-synthero"]?.baseURL).toBe("https://api.synterolink.com");
     expect(patch.providers?.["claude-synthero"]?.authToken).toBe("sk-test");
+  });
+});
+
+describe("ServerSettings token efficiency encoding", () => {
+  it("encodes custom model pricing maps as provided", () => {
+    const current = decodeServerSettings({
+      tokenEfficiency: {
+        customModelPricing: {
+          "codex/new": { outputPerMillionUsd: 2 },
+        },
+      },
+    });
+    const encoded = encodeServerSettings(current);
+
+    expect(encoded.tokenEfficiency?.customModelPricing).toEqual({
+      "codex/new": { outputPerMillionUsd: 2 },
+    });
   });
 });

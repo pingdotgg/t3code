@@ -100,7 +100,19 @@ export const deriveProviderInstanceConfigMap = (
     };
   }
 
-  return merged as ProviderInstanceConfigMap;
+  if (settings.globalEnvironment.length === 0) {
+    return merged as ProviderInstanceConfigMap;
+  }
+
+  return Object.fromEntries(
+    Object.entries(merged).map(([instanceId, instance]) => [
+      instanceId,
+      {
+        ...instance,
+        environment: [...settings.globalEnvironment, ...(instance.environment ?? [])],
+      } satisfies ProviderInstanceConfig,
+    ]),
+  ) as ProviderInstanceConfigMap;
 };
 
 /**

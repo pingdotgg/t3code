@@ -522,7 +522,7 @@ public struct OrchestrationThread: Codable, Sendable {
         projectId = try c.decode(String.self, forKey: .projectId)
         title = try c.decode(String.self, forKey: .title)
         modelSelection = try c.decode(ModelSelection.self, forKey: .modelSelection)
-        runtimeMode = try c.decode(RuntimeMode.self, forKey: .runtimeMode)
+        runtimeMode = try c.decode(RuntimeMode.self, forKey: .runtimeMode, default: .wireDefault)
         interactionMode = try c.decode(
             ProviderInteractionMode.self, forKey: .interactionMode, default: .wireDefault)
         branch = try c.decode(String?.self, forKey: .branch, default: nil)
@@ -606,7 +606,7 @@ public struct OrchestrationThreadShell: Codable, Sendable {
         projectId = try c.decode(String.self, forKey: .projectId)
         title = try c.decode(String.self, forKey: .title)
         modelSelection = try c.decode(ModelSelection.self, forKey: .modelSelection)
-        runtimeMode = try c.decode(RuntimeMode.self, forKey: .runtimeMode)
+        runtimeMode = try c.decode(RuntimeMode.self, forKey: .runtimeMode, default: .wireDefault)
         interactionMode = try c.decode(
             ProviderInteractionMode.self, forKey: .interactionMode, default: .wireDefault)
         branch = try c.decode(String?.self, forKey: .branch, default: nil)
@@ -856,7 +856,7 @@ public struct ThreadCreateCommand: Codable, Sendable {
         projectId = try c.decode(String.self, forKey: .projectId)
         title = try c.decode(String.self, forKey: .title)
         modelSelection = try c.decode(ModelSelection.self, forKey: .modelSelection)
-        runtimeMode = try c.decode(RuntimeMode.self, forKey: .runtimeMode)
+        runtimeMode = try c.decode(RuntimeMode.self, forKey: .runtimeMode, default: .wireDefault)
         interactionMode = try c.decode(
             ProviderInteractionMode.self, forKey: .interactionMode, default: .wireDefault)
         branch = try c.decodeIfPresent(String.self, forKey: .branch)

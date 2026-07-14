@@ -21,7 +21,6 @@ import {
   type OrchestrationCommand,
   type OrchestrationEvent,
   ORCHESTRATION_WS_METHODS,
-  type PreviewEvent,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -47,10 +46,8 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -63,7 +60,6 @@ import {
   HttpRouter,
   HttpServer,
 } from "effect/unstable/http";
-import { OtlpSerialization, OtlpTracer } from "effect/unstable/observability";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
 import * as Socket from "effect/unstable/socket/Socket";
 import { vi } from "vite-plus/test";
@@ -89,9 +85,6 @@ import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
-import * as PreviewManager from "./preview/Manager.ts";
-import * as PortScanner from "./preview/PortScanner.ts";
-import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
@@ -203,116 +196,11 @@ const makeDefaultOrchestrationThreadShell = (
   };
 };
 
-const browserOtlpTracingLayer = Layer.mergeAll(
-  FetchHttpClient.layer,
-  OtlpSerialization.layerJson,
-  Layer.succeed(HttpClient.TracerDisabledWhen, () => true),
-);
-
 const makeAuthTestLayer = () =>
   EnvironmentAuth.layer.pipe(
     Layer.provide(SqlitePersistenceMemory),
     Layer.provide(ServerSecretStore.layer),
   );
-
-const makeBrowserOtlpPayload = (spanName: string) =>
-  Effect.gen(function* () {
-    const collector = yield* Effect.acquireRelease(
-      Effect.promise(async () => {
-        const NodeHttp = await import("node:http");
-
-        return await new Promise<{
-          readonly close: () => Promise<void>;
-          readonly firstRequest: Promise<{
-            readonly body: string;
-            readonly contentType: string | null;
-          }>;
-          readonly url: string;
-        }>((resolve, reject) => {
-          let resolveFirstRequest:
-            | ((request: { readonly body: string; readonly contentType: string | null }) => void)
-            | undefined;
-          const firstRequest = new Promise<{
-            readonly body: string;
-            readonly contentType: string | null;
-          }>((resolveRequest) => {
-            resolveFirstRequest = resolveRequest;
-          });
-
-          const server = NodeHttp.createServer((request, response) => {
-            const chunks: Buffer[] = [];
-            request.on("data", (chunk) => {
-              chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-            });
-            request.on("end", () => {
-              resolveFirstRequest?.({
-                body: Buffer.concat(chunks).toString("utf8"),
-                contentType: request.headers["content-type"] ?? null,
-              });
-              resolveFirstRequest = undefined;
-              response.statusCode = 204;
-              response.end();
-            });
-          });
-
-          server.on("error", reject);
-          server.listen(0, "127.0.0.1", () => {
-            const address = server.address();
-            if (!address || typeof address === "string") {
-              reject(new Error("Expected TCP collector address"));
-              return;
-            }
-
-            resolve({
-              url: `http://127.0.0.1:${address.port}/v1/traces`,
-              firstRequest,
-              close: () =>
-                new Promise<void>((resolveClose, rejectClose) => {
-                  server.close((error) => {
-                    if (error) {
-                      rejectClose(error);
-                      return;
-                    }
-                    resolveClose();
-                  });
-                }),
-            });
-          });
-        });
-      }),
-      ({ close }) => Effect.promise(close),
-    );
-
-    const runtime = ManagedRuntime.make(
-      OtlpTracer.layer({
-        url: collector.url,
-        exportInterval: "10 millis",
-        resource: {
-          serviceName: "t3-web",
-          attributes: {
-            "service.runtime": "t3-web",
-            "service.mode": "browser",
-            "service.version": "test",
-          },
-        },
-      }).pipe(Layer.provide(browserOtlpTracingLayer)),
-    );
-
-    try {
-      yield* Effect.promise(() => runtime.runPromise(Effect.void.pipe(Effect.withSpan(spanName))));
-    } finally {
-      yield* Effect.promise(() => runtime.dispose());
-    }
-
-    const request = yield* Effect.raceFirst(
-      Effect.promise(() => collector.firstRequest).pipe(Effect.orDie),
-      Effect.sleep(Duration.seconds(1)).pipe(
-        Effect.andThen(Effect.die(new Error("Timed out waiting for OTLP trace export"))),
-      ),
-    );
-    // @effect-diagnostics-next-line preferSchemaOverJson:off
-    return JSON.parse(request.body) as OtlpTracer.TraceData;
-  });
 
 const buildAppUnderTest = (options?: {
   config?: Partial<ServerConfig.ServerConfig["Service"]>;
@@ -338,7 +226,6 @@ const buildAppUnderTest = (options?: {
     orchestrationEngine?: Partial<OrchestrationEngine.OrchestrationEngineService["Service"]>;
     projectionSnapshotQuery?: Partial<ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"]>;
     checkpointDiffQuery?: Partial<CheckpointDiffQuery.CheckpointDiffQuery["Service"]>;
-    browserTraceCollector?: Partial<BrowserTraceCollector.BrowserTraceCollector["Service"]>;
     serverLifecycleEvents?: Partial<ServerLifecycleEvents.ServerLifecycleEvents["Service"]>;
     serverRuntimeStartup?: Partial<ServerRuntimeStartup.ServerRuntimeStartup["Service"]>;
     serverEnvironment?: Partial<ServerEnvironment.ServerEnvironment["Service"]>;
@@ -356,8 +243,7 @@ const buildAppUnderTest = (options?: {
     const fileSystem = yield* FileSystem.FileSystem;
     const tempBaseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-router-test-" });
     const baseDir = options?.config?.baseDir ?? tempBaseDir;
-    const devUrl = options?.config?.devUrl;
-    const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, devUrl);
+    const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir);
     const config: ServerConfig.ServerConfig["Service"] = {
       logLevel: "Info",
       traceMinLevel: "Info",
@@ -375,10 +261,6 @@ const buildAppUnderTest = (options?: {
       cwd: process.cwd(),
       baseDir,
       ...derivedPaths,
-      staticDir: undefined,
-      devUrl,
-      noBrowser: true,
-      startupPresentation: "browser",
       desktopBootstrapToken: defaultDesktopBootstrapToken,
       autoBootstrapProjectFromCwd: false,
       logWebSocketEvents: false,
@@ -701,30 +583,6 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provide(
-        Layer.mergeAll(
-          Layer.mock(PreviewManager.PreviewManager)({
-            open: () => Effect.die("PreviewManager not stubbed in this test"),
-            navigate: () => Effect.die("PreviewManager not stubbed in this test"),
-            resize: () => Effect.die("PreviewManager not stubbed in this test"),
-            reportStatus: () => Effect.void,
-            refresh: () => Effect.void,
-            close: () => Effect.void,
-            list: () => Effect.succeed({ sessions: [] }),
-            events: Stream.empty,
-            subscribeEvents: Effect.flatMap(PubSub.unbounded<PreviewEvent>(), (pubsub) =>
-              PubSub.subscribe(pubsub),
-            ),
-          }),
-          Layer.mock(PortScanner.PortDiscovery)({
-            scan: () => Effect.succeed([]),
-            subscribe: () => Effect.void,
-            retain: Effect.void,
-            registerTerminalProcesses: () => Effect.void,
-            unregisterTerminal: () => Effect.void,
-          }),
-        ),
-      ),
-      Layer.provide(
         Layer.mock(OrchestrationEngine.OrchestrationEngineService)({
           readEvents: () => Stream.empty,
           dispatch: () => Effect.succeed({ sequence: 0 }),
@@ -784,12 +642,6 @@ const buildAppUnderTest = (options?: {
     );
 
     const appLayer = servedRoutesLayer.pipe(
-      Layer.provide(
-        Layer.mock(BrowserTraceCollector.BrowserTraceCollector)({
-          record: () => Effect.void,
-          ...options?.layers?.browserTraceCollector,
-        }),
-      ),
       Layer.provide(
         Layer.mock(ServerLifecycleEvents.ServerLifecycleEvents)({
           publish: (event) => Effect.succeed({ ...(event as any), sequence: 1 }),
@@ -1285,36 +1137,6 @@ const getWsServerUrl = (
   });
 
 it.layer(NodeServices.layer)("server router seam", (it) => {
-  it.effect("serves static index content for GET / when staticDir is configured", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const staticDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-router-static-" });
-      const indexPath = path.join(staticDir, "index.html");
-      yield* fileSystem.writeFileString(indexPath, "<html>router-static-ok</html>");
-
-      yield* buildAppUnderTest({ config: { staticDir } });
-
-      const response = yield* HttpClient.get("/");
-      assert.equal(response.status, 200);
-      assert.include(yield* response.text, "router-static-ok");
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
-  it.effect("redirects to dev URL when configured", () =>
-    Effect.gen(function* () {
-      yield* buildAppUnderTest({
-        config: { devUrl: new URL("http://127.0.0.1:5173") },
-      });
-
-      const url = yield* getHttpServerUrl("/foo/bar?token=test-token");
-      const response = yield* fetchEffect(url, { redirect: "manual" });
-
-      assert.equal(response.status, 302);
-      assert.equal(response.headers.location, "http://127.0.0.1:5173/foo/bar?token=test-token");
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
   it.effect("serves the public environment descriptor without requiring auth", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
@@ -3264,56 +3086,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("allows credentialed cloud link proof preflights from the configured dev UI", () =>
-    Effect.gen(function* () {
-      yield* buildAppUnderTest({
-        config: { devUrl: new URL(crossOriginClientOrigin) },
-      });
-
-      const linkProofUrl = yield* getHttpServerUrl("/api/connect/link-proof");
-      const response = yield* fetchEffect(linkProofUrl, {
-        method: "OPTIONS",
-        headers: {
-          origin: crossOriginClientOrigin,
-          "access-control-request-method": "POST",
-          "access-control-request-headers": "content-type",
-        },
-      });
-
-      assert.equal(response.status, 204);
-      assertBrowserApiCorsPreflightHeaders(response.headers, {
-        origin: crossOriginClientOrigin,
-        credentials: true,
-      });
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
-  for (const desktopOrigin of ["t3code://app", "t3code-dev://app"]) {
-    it.effect(`allows credentialed preflights from ${desktopOrigin} in development`, () =>
-      Effect.gen(function* () {
-        yield* buildAppUnderTest({
-          config: { devUrl: new URL(crossOriginClientOrigin) },
-        });
-
-        const sessionUrl = yield* getHttpServerUrl("/api/auth/session");
-        const response = yield* fetchEffect(sessionUrl, {
-          method: "OPTIONS",
-          headers: {
-            origin: desktopOrigin,
-            "access-control-request-method": "GET",
-            "access-control-request-headers": "content-type",
-          },
-        });
-
-        assert.equal(response.status, 204);
-        assertBrowserApiCorsPreflightHeaders(response.headers, {
-          origin: desktopOrigin,
-          credentials: true,
-        });
-      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-    );
-  }
-
   it.effect("includes CORS headers on remote websocket-ticket auth failures", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
@@ -3820,295 +3592,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("proxies browser OTLP trace exports through the server", () =>
-    Effect.gen(function* () {
-      const upstreamRequests: Array<{
-        readonly body: string;
-        readonly contentType: string | null;
-      }> = [];
-      const localTraceRecords: Array<unknown> = [];
-      const payload = {
-        resourceSpans: [
-          {
-            resource: {
-              attributes: [
-                {
-                  key: "service.name",
-                  value: { stringValue: "t3-web" },
-                },
-              ],
-            },
-            scopeSpans: [
-              {
-                scope: {
-                  name: "effect",
-                  version: "4.0.0-beta.43",
-                },
-                spans: [
-                  {
-                    traceId: "11111111111111111111111111111111",
-                    spanId: "2222222222222222",
-                    parentSpanId: "3333333333333333",
-                    name: "RpcClient.server.getSettings",
-                    kind: 3,
-                    startTimeUnixNano: "1000000",
-                    endTimeUnixNano: "2000000",
-                    attributes: [
-                      {
-                        key: "rpc.method",
-                        value: { stringValue: "server.getSettings" },
-                      },
-                    ],
-                    events: [
-                      {
-                        name: "http.request",
-                        timeUnixNano: "1500000",
-                        attributes: [
-                          {
-                            key: "http.status_code",
-                            value: { intValue: "200" },
-                          },
-                        ],
-                      },
-                    ],
-                    links: [],
-                    status: {
-                      code: "STATUS_CODE_OK",
-                    },
-                    flags: 1,
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-      };
-
-      const collector = yield* Effect.acquireRelease(
-        Effect.promise(async () => {
-          const NodeHttp = await import("node:http");
-
-          return await new Promise<{
-            readonly close: () => Promise<void>;
-            readonly url: string;
-          }>((resolve, reject) => {
-            const server = NodeHttp.createServer((request, response) => {
-              const chunks: Buffer[] = [];
-              request.on("data", (chunk) => {
-                chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-              });
-              request.on("end", () => {
-                upstreamRequests.push({
-                  body: Buffer.concat(chunks).toString("utf8"),
-                  contentType: request.headers["content-type"] ?? null,
-                });
-                response.statusCode = 204;
-                response.end();
-              });
-            });
-
-            server.on("error", reject);
-            server.listen(0, "127.0.0.1", () => {
-              const address = server.address();
-              if (!address || typeof address === "string") {
-                reject(new Error("Expected TCP collector address"));
-                return;
-              }
-
-              resolve({
-                url: `http://127.0.0.1:${address.port}/v1/traces`,
-                close: () =>
-                  new Promise<void>((resolveClose, rejectClose) => {
-                    server.close((error) => {
-                      if (error) {
-                        rejectClose(error);
-                        return;
-                      }
-                      resolveClose();
-                    });
-                  }),
-              });
-            });
-          });
-        }),
-        ({ close }) => Effect.promise(close),
-      );
-
-      yield* buildAppUnderTest({
-        config: {
-          otlpTracesUrl: collector.url,
-        },
-        layers: {
-          browserTraceCollector: {
-            record: (records) =>
-              Effect.sync(() => {
-                localTraceRecords.push(...records);
-              }),
-          },
-        },
-      });
-
-      const response = yield* HttpClient.post("/api/observability/v1/traces", {
-        headers: {
-          cookie: yield* getAuthenticatedSessionCookieHeader(),
-          "content-type": "application/json",
-          origin: "http://localhost:5733",
-        },
-        // @effect-diagnostics-next-line preferSchemaOverJson:off
-        body: HttpBody.text(JSON.stringify(payload), "application/json"),
-      });
-
-      assert.equal(response.status, 204);
-      assert.equal(response.headers["access-control-allow-origin"], "*");
-      assert.deepEqual(localTraceRecords, [
-        {
-          type: "otlp-span",
-          name: "RpcClient.server.getSettings",
-          traceId: "11111111111111111111111111111111",
-          spanId: "2222222222222222",
-          parentSpanId: "3333333333333333",
-          sampled: true,
-          kind: "client",
-          startTimeUnixNano: "1000000",
-          endTimeUnixNano: "2000000",
-          durationMs: 1,
-          attributes: {
-            "rpc.method": "server.getSettings",
-          },
-          resourceAttributes: {
-            "service.name": "t3-web",
-          },
-          scope: {
-            name: "effect",
-            version: "4.0.0-beta.43",
-            attributes: {},
-          },
-          events: [
-            {
-              name: "http.request",
-              timeUnixNano: "1500000",
-              attributes: {
-                "http.status_code": "200",
-              },
-            },
-          ],
-          links: [],
-          status: {
-            code: "STATUS_CODE_OK",
-          },
-        },
-      ]);
-      assert.deepEqual(upstreamRequests, [
-        {
-          body: jsonRequestBody(payload),
-          contentType: "application/json",
-        },
-      ]);
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
-  it.effect("responds to browser OTLP trace preflight requests with CORS headers", () =>
-    Effect.gen(function* () {
-      yield* buildAppUnderTest();
-
-      const response = yield* HttpClient.options("/api/observability/v1/traces", {
-        headers: {
-          origin: "http://localhost:5733",
-          "access-control-request-method": "POST",
-          "access-control-request-headers": "content-type",
-        },
-      });
-
-      assert.equal(response.status, 204);
-      assert.equal(response.headers["access-control-allow-origin"], "*");
-      assert.deepEqual(splitHeaderTokens(response.headers["access-control-allow-methods"]), [
-        "GET",
-        "OPTIONS",
-        "POST",
-      ]);
-      assert.deepEqual(splitHeaderTokens(response.headers["access-control-allow-headers"]), [
-        "authorization",
-        "b3",
-        "content-type",
-        "dpop",
-        "traceparent",
-      ]);
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
-  it.effect(
-    "stores browser OTLP trace exports locally when no upstream collector is configured",
-    () =>
-      Effect.gen(function* () {
-        const localTraceRecords: Array<unknown> = [];
-        const payload = yield* makeBrowserOtlpPayload("client.test");
-        const resourceSpan = payload.resourceSpans[0];
-        const scopeSpan = resourceSpan?.scopeSpans[0];
-        const span = scopeSpan?.spans[0];
-
-        assert.notEqual(resourceSpan, undefined);
-        assert.notEqual(scopeSpan, undefined);
-        assert.notEqual(span, undefined);
-        if (!resourceSpan || !scopeSpan || !span) {
-          return;
-        }
-
-        yield* buildAppUnderTest({
-          layers: {
-            browserTraceCollector: {
-              record: (records) =>
-                Effect.sync(() => {
-                  localTraceRecords.push(...records);
-                }),
-            },
-          },
-        });
-
-        const response = yield* HttpClient.post("/api/observability/v1/traces", {
-          headers: {
-            cookie: yield* getAuthenticatedSessionCookieHeader(),
-            "content-type": "application/json",
-          },
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
-          body: HttpBody.text(JSON.stringify(payload), "application/json"),
-        });
-
-        assert.equal(response.status, 204);
-        assert.equal(localTraceRecords.length, 1);
-        const record = localTraceRecords[0] as {
-          readonly type: string;
-          readonly name: string;
-          readonly traceId: string;
-          readonly spanId: string;
-          readonly kind: string;
-          readonly attributes: Readonly<Record<string, unknown>>;
-          readonly events: ReadonlyArray<unknown>;
-          readonly links: ReadonlyArray<unknown>;
-          readonly scope: {
-            readonly name?: string;
-            readonly attributes: Readonly<Record<string, unknown>>;
-          };
-          readonly resourceAttributes: Readonly<Record<string, unknown>>;
-          readonly status?: {
-            readonly code?: string;
-          };
-        };
-
-        assert.equal(record.type, "otlp-span");
-        assert.equal(record.name, span.name);
-        assert.equal(record.traceId, span.traceId);
-        assert.equal(record.spanId, span.spanId);
-        assert.equal(record.kind, "internal");
-        assert.deepEqual(record.attributes, {});
-        assert.deepEqual(record.events, []);
-        assert.deepEqual(record.links, []);
-        assert.equal(record.scope.name, scopeSpan.scope.name);
-        assert.deepEqual(record.scope.attributes, {});
-        assert.equal(record.resourceAttributes["service.name"], "t3-web");
-        assert.equal(record.status?.code, String(span.status.code));
-      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
   it.effect("routes websocket rpc server.upsertKeybinding", () =>
     Effect.gen(function* () {
       const rule: KeybindingRule = {
@@ -4179,46 +3662,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.deepEqual(response.issues, []);
       assert.deepEqual(response.keybindings, [resolved]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
-  it.effect("shares one preview automation broker across websocket sessions", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        yield* buildAppUnderTest();
-
-        const wsUrl = yield* getWsServerUrl("/ws");
-        const firstConnected = yield* Deferred.make<string>();
-        const firstClosed = yield* Deferred.make<void>();
-        const host = {
-          clientId: "shared-preview-host",
-          environmentId: testEnvironmentDescriptor.environmentId,
-        } as const;
-
-        yield* withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.previewAutomationConnect](host).pipe(
-            Stream.tap((event) =>
-              event.type === "connected"
-                ? Deferred.succeed(firstConnected, event.connectionId)
-                : Effect.void,
-            ),
-            Stream.runDrain,
-            Effect.ensuring(Deferred.succeed(firstClosed, undefined)),
-          ),
-        ).pipe(Effect.forkScoped);
-
-        const firstConnectionId = yield* Deferred.await(firstConnected);
-        const replacementEvent = yield* withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.previewAutomationConnect](host).pipe(Stream.runHead),
-        ).pipe(Effect.map(Option.getOrThrow));
-        const firstStreamClosed = yield* Deferred.await(firstClosed).pipe(
-          Effect.timeoutOption("2 seconds"),
-        );
-
-        assert.equal(replacementEvent.type, "connected");
-        assert.notEqual(replacementEvent.connectionId, firstConnectionId);
-        assert.isTrue(Option.isSome(firstStreamClosed));
-      }),
-    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("rejects websocket rpc handshake when session authentication is missing", () =>

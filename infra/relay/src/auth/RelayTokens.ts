@@ -4,7 +4,6 @@ import {
   RelayEnvironmentStatusScope,
   RelayMobileClientId,
   RelayMobileRegistrationScope,
-  RelayWebClientId,
   type RelayPublicClientId,
   type RelayEnvironmentLinkChallengeRequest,
 } from "@t3tools/contracts/relay";
@@ -49,7 +48,7 @@ const RelayDpopAccessTokenClaims = Schema.Struct({
   jti: Schema.String,
   iat: Schema.Int,
   exp: Schema.Int,
-  client_id: Schema.Literals([RelayMobileClientId, RelayWebClientId]),
+  client_id: Schema.Literal(RelayMobileClientId),
   scope: Schema.String,
   cnf: Schema.Struct({ jkt: Schema.String }),
 });
@@ -69,7 +68,6 @@ const allowedScopesByClientId: Record<
     RelayEnvironmentStatusScope,
     RelayMobileRegistrationScope,
   ]),
-  [RelayWebClientId]: new Set([RelayEnvironmentConnectScope, RelayEnvironmentStatusScope]),
 };
 
 function resolveDpopAccessTokenScopes(input: {

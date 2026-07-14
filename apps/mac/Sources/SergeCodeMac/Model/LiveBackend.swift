@@ -506,6 +506,13 @@ public actor LiveBackend: BackendService {
         for id in activeThreadIDs {
             startThreadSubscription(id, client: client)
         }
+        // Re-establish VCS watches too: the old socket's VCS task cleared its
+        // watched cwd on drop, and there is no other loop that revives it, so
+        // without this the git panel goes stale for every watched thread until
+        // the UI happens to re-call watchVcsStatus.
+        for id in watchedVcsThreadIDs {
+            try? await watchVcsStatus(threadID: id)
+        }
 
         do {
             try await withThrowingTaskGroup(of: Void.self) { group in
@@ -567,14 +574,10 @@ public actor LiveBackend: BackendService {
                 uniquingKeysWith: { _, new in new })
             emit(.projectsChanged(currentProjectList()))
             let snapshotThreadIDs = Set(snapshot.threads.map(\.id))
-            for id in threadsByID.keys where !snapshotThreadIDs.contains(id) {
-                threadsByID[id] = nil
-                titleSeedsByThread[id] = nil
-                threadEnvByThread[id] = nil
-                threadShellsByID[id] = nil
-                subagentTasksByThread[id] = nil
-                threadHealthByThread[id] = nil
-                clearRunningLivenessState(threadID: id)
+            // Materialize before mutating: forgetThread mutates threadsByID.
+            let removedThreadIDs = threadsByID.keys.filter { !snapshotThreadIDs.contains($0) }
+            for id in removedThreadIDs {
+                forgetThread(threadID: id)
                 emitOrdered(threadID: id, event: .threadRemoved(id: id))
             }
             for shell in snapshot.threads {
@@ -606,14 +609,7 @@ public actor LiveBackend: BackendService {
                 emitOrdered(threadID: thread.id, event: .threadUpserted(thread))
                 reconcileRunningLiveness(for: shell)
             case .threadRemoved(_, let threadID):
-                threadsByID[threadID] = nil
-                modelSelectionsByThread[threadID] = nil
-                titleSeedsByThread[threadID] = nil
-                threadEnvByThread[threadID] = nil
-                threadShellsByID[threadID] = nil
-                subagentTasksByThread[threadID] = nil
-                threadHealthByThread[threadID] = nil
-                clearRunningLivenessState(threadID: threadID)
+                forgetThread(threadID: threadID)
                 emitOrdered(threadID: threadID, event: .threadRemoved(id: threadID))
             }
         }
@@ -1376,6 +1372,13 @@ public actor LiveBackend: BackendService {
     }
 
     public func closeTimeline(threadID: String) async {
+        dropLiveTimelineState(threadID: threadID)
+    }
+
+    /// Consolidated teardown for a thread's *live* timeline + VCS watch,
+    /// keeping the thread itself in the sidebar projection. Used by the LRU
+    /// eviction path (closeTimeline) and reused by `forgetThread`.
+    private func dropLiveTimelineState(threadID: String) {
         // Cancel live timeline fan-in; shell status for this thread stays live.
         threadSubscriptions[threadID]?.cancel()
         threadSubscriptions[threadID] = nil
@@ -1402,6 +1405,39 @@ public actor LiveBackend: BackendService {
         clearVcsSubscription(threadID: threadID)
         vcsLocal[threadID] = nil
         vcsRemote[threadID] = nil
+    }
+
+    /// Full teardown for a thread that no longer exists server-side (removed
+    /// via the shell `.threadRemoved` event, snapshot reconcile, or an explicit
+    /// delete). Superset of `dropLiveTimelineState`: also drops the shell/thread
+    /// projection, route maps, checkpoint caches, and the VCS-watch intent so a
+    /// dead id is never blindly re-subscribed on the next reconnect.
+    private func forgetThread(threadID: String) {
+        dropLiveTimelineState(threadID: threadID)
+
+        // Forget the watch intent (dropLiveTimelineState only tears down the
+        // live task) so runSubscriptions doesn't re-watch a dead id.
+        watchedVcsThreadIDs.remove(threadID)
+
+        // Shell/thread projection caches.
+        threadsByID[threadID] = nil
+        modelSelectionsByThread[threadID] = nil
+        titleSeedsByThread[threadID] = nil
+        threadEnvByThread[threadID] = nil
+        threadShellsByID[threadID] = nil
+        subagentTasksByThread[threadID] = nil
+        threadHealthByThread[threadID] = nil
+        clearRunningLivenessState(threadID: threadID)
+
+        // Checkpoint list + diff turn cursor.
+        checkpointsByThread[threadID] = nil
+        currentTurnCount[threadID] = nil
+
+        // Route maps: drop every entry that dispatches to this thread so
+        // stale ids can't be resolved after the thread is gone.
+        approvalRoutes = approvalRoutes.filter { $0.value.threadID != threadID }
+        userInputRoutes = userInputRoutes.filter { $0.value.threadID != threadID }
+        checkpointRoutes = checkpointRoutes.filter { $0.value.threadID != threadID }
     }
 
     public func providers() async throws -> [ProviderInstance] {
@@ -1500,12 +1536,8 @@ public actor LiveBackend: BackendService {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
         _ = try await client.deleteThread(threadId: id)
         // The shell subscription emits thread-removed; drop local caches now
-        // so a re-created id never sees stale dedup state.
-        threadsByID[id] = nil
-        titleSeedsByThread[id] = nil
-        threadEnvByThread[id] = nil
-        modelSelectionsByThread[id] = nil
-        await closeTimeline(threadID: id)
+        // so a re-created id never sees stale dedup/route/subscription state.
+        forgetThread(threadID: id)
     }
 
     public func sendMessage(
@@ -1689,10 +1721,18 @@ public actor LiveBackend: BackendService {
         guard let route = approvalRoutes[id] else {
             throw LiveBackendError.unresolvedApproval(id)
         }
-        let decision = OrchestrationMapping.approvalDecision(approve: approve)
-        _ = try await client.respondToApproval(
-            threadId: route.threadID, requestId: route.requestId, decision: decision)
+        // Remove the route BEFORE awaiting: actor reentrancy means a second
+        // concurrent call would otherwise pass the guard above and fire a
+        // duplicate response. Restore it if the RPC throws so a retry works.
         approvalRoutes[id] = nil
+        let decision = OrchestrationMapping.approvalDecision(approve: approve)
+        do {
+            _ = try await client.respondToApproval(
+                threadId: route.threadID, requestId: route.requestId, decision: decision)
+        } catch {
+            approvalRoutes[id] = route
+            throw error
+        }
         emitOrdered(threadID: route.threadID, event: .approvalResolved(id: id))
     }
 
@@ -1711,9 +1751,16 @@ public actor LiveBackend: BackendService {
                 ? .array(values.map { .string($0) })
                 : .string(values[0])
         }
-        _ = try await client.respondToUserInput(
-            threadId: route.threadID, requestId: route.requestId, answers: wireAnswers)
+        // Remove the route BEFORE awaiting (actor reentrancy double-fire guard);
+        // restore on failure so a retry can still resolve it.
         userInputRoutes[id] = nil
+        do {
+            _ = try await client.respondToUserInput(
+                threadId: route.threadID, requestId: route.requestId, answers: wireAnswers)
+        } catch {
+            userInputRoutes[id] = route
+            throw error
+        }
         emitOrdered(threadID: route.threadID, event: .userInputResolved(id: id))
     }
 
@@ -1991,12 +2038,10 @@ public actor LiveBackend: BackendService {
         // deleteThread).
         projectsByID[id] = nil
         emit(.projectsChanged(currentProjectList()))
-        for (threadID, thread) in threadsByID where thread.projectID == id {
-            threadsByID[threadID] = nil
-            modelSelectionsByThread[threadID] = nil
-            titleSeedsByThread[threadID] = nil
-            threadEnvByThread[threadID] = nil
-            await closeTimeline(threadID: threadID)
+        // Materialize before mutating: forgetThread mutates threadsByID.
+        let removedThreadIDs = threadsByID.values.filter { $0.projectID == id }.map(\.id)
+        for threadID in removedThreadIDs {
+            forgetThread(threadID: threadID)
             emitOrdered(threadID: threadID, event: .threadRemoved(id: threadID))
         }
     }
@@ -2007,6 +2052,11 @@ public actor LiveBackend: BackendService {
     /// after reconnects (watchVcsStatus is called again by the UI) and torn
     /// down/restarted when the thread's worktree appears.
     private var vcsSubscriptions: [String: Task<Void, Never>] = [:]
+    /// Threads the UI has asked to watch for VCS status — the persistent
+    /// intent registry (mirrors `activeThreadIDs` for thread timelines).
+    /// `runSubscriptions` re-`watchVcsStatus`es every entry on the fresh
+    /// client so a socket drop doesn't silently freeze the git panel.
+    private var watchedVcsThreadIDs: Set<String> = []
     /// The cwd each live subscription is watching — compared against the
     /// thread's current cwd to notice a worktree switching underneath it.
     private var vcsWatchedCwd: [String: String] = [:]
@@ -2016,6 +2066,9 @@ public actor LiveBackend: BackendService {
 
     public func watchVcsStatus(threadID: String) async throws {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
+        // Record the watch intent up front so a reconnect re-establishes it
+        // even if the cwd isn't resolvable yet (turnless thread pre-worktree).
+        watchedVcsThreadIDs.insert(threadID)
         guard let cwd = try? threadCwd(threadID) else { return }
         guard vcsSubscriptions[threadID] == nil else { return }
         vcsWatchedCwd[threadID] = cwd
@@ -2921,7 +2974,9 @@ enum UnifiedDiffParser {
         var files: [DiffFile] = []
 
         var path: String?
+        var oldPath: String?
         var status: DiffFileStatus = .modified
+        var isBinary = false
         var hunks: [DiffHunk] = []
         var hunkHeader: String?
         var lines: [DiffLine] = []
@@ -2938,10 +2993,15 @@ enum UnifiedDiffParser {
         func flushFile() {
             flushHunk()
             if let path {
-                files.append(DiffFile(path: path, status: status, hunks: hunks))
+                files.append(
+                    DiffFile(
+                        path: path, oldPath: oldPath, status: status, isBinary: isBinary,
+                        hunks: hunks))
             }
             path = nil
+            oldPath = nil
             status = .modified
+            isBinary = false
             hunks = []
         }
 
@@ -2955,8 +3015,18 @@ enum UnifiedDiffParser {
                 status = .added
             } else if line.hasPrefix("deleted file") {
                 status = .deleted
+            } else if line.hasPrefix("rename from ") {
+                status = .renamed
+                oldPath = String(line.dropFirst("rename from ".count))
+            } else if line.hasPrefix("copy from ") {
+                status = .renamed
+                oldPath = String(line.dropFirst("copy from ".count))
             } else if line.hasPrefix("rename ") || line.hasPrefix("copy ") {
                 status = .renamed
+            } else if line.hasPrefix("Binary files ") {
+                // A binary change carries no textual hunks; flag it so the UI
+                // can show a distinct state instead of an empty text diff.
+                isBinary = true
             } else if line.hasPrefix("--- ") {
                 // A bare unified diff with no `diff --git` header: treat a `---`
                 // that arrives while we already have a file as a new file start.
@@ -2975,14 +3045,14 @@ enum UnifiedDiffParser {
                 case "+":
                     lines.append(
                         DiffLine(
-                            kind: .addition, text: String(line.dropFirst()), oldNumber: nil,
-                            newNumber: newLine))
+                            kind: .addition, text: stripTrailingCR(String(line.dropFirst())),
+                            oldNumber: nil, newNumber: newLine))
                     newLine += 1
                 case "-":
                     lines.append(
                         DiffLine(
-                            kind: .deletion, text: String(line.dropFirst()), oldNumber: oldLine,
-                            newNumber: nil))
+                            kind: .deletion, text: stripTrailingCR(String(line.dropFirst())),
+                            oldNumber: oldLine, newNumber: nil))
                     oldLine += 1
                 case "\\":
                     break  // "\ No newline at end of file"
@@ -2990,7 +3060,8 @@ enum UnifiedDiffParser {
                     let text = line.hasPrefix(" ") ? String(line.dropFirst()) : line
                     lines.append(
                         DiffLine(
-                            kind: .context, text: text, oldNumber: oldLine, newNumber: newLine))
+                            kind: .context, text: stripTrailingCR(text), oldNumber: oldLine,
+                            newNumber: newLine))
                     oldLine += 1
                     newLine += 1
                 }
@@ -2998,6 +3069,13 @@ enum UnifiedDiffParser {
         }
         flushFile()
         return files
+    }
+
+    /// Strips a single trailing carriage return so a CRLF-terminated source
+    /// line renders without a dangling `\r` (mirrors the `\ No newline`
+    /// special-case: line-ending noise never reaches the rendered text).
+    private static func stripTrailingCR(_ text: String) -> String {
+        text.hasSuffix("\r") ? String(text.dropLast()) : text
     }
 
     /// `diff --git a/foo b/foo` -> `foo` (prefers the `b/` side).

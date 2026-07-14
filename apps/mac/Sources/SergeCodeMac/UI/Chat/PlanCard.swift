@@ -6,20 +6,32 @@ import SwiftUI
 public struct PlanCard: View {
     let plan: ProposedPlan
     let model: AppModel
+    /// Whether this is the most-recent pending plan in the thread's
+    /// timeline; gates `implementShortcut` (see ApprovalCard.swift for why
+    /// Command-Shift-Return was chosen over the composer's own
+    /// Command-Return send shortcut). An already-implemented plan never
+    /// shows the button this attaches to, so this only matters when a
+    /// newer, still-pending plan has superseded an older implemented one.
+    let isActive: Bool
     let onImplement: () -> Void
 
     @UIState private var isExpanded = true
 
-    public init(plan: ProposedPlan, model: AppModel, onImplement: @escaping () -> Void) {
+    private static let implementShortcut = KeyboardShortcut(.return, modifiers: [.command, .shift])
+
+    public init(
+        plan: ProposedPlan, model: AppModel, isActive: Bool, onImplement: @escaping () -> Void
+    ) {
         self.plan = plan
         self.model = model
+        self.isActive = isActive
         self.onImplement = onImplement
     }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Button {
-                withAnimation(Motion.snap) { isExpanded.toggle() }
+                withAnimation(Motion.feedback) { isExpanded.toggle() }
             } label: {
                 HStack(spacing: 8) {
                     Label("Proposed plan", systemImage: "list.clipboard")
@@ -62,6 +74,8 @@ public struct PlanCard: View {
                         }
                         .buttonStyle(.glass)
                         .tint(.accentColor)
+                        .keyboardShortcut(isActive ? Self.implementShortcut : nil)
+                        .help(isActive ? "Implement plan (⌘⇧⏎)" : "Implement plan")
                     }
                     .transition(Motion.unfold)
                 }
@@ -71,6 +85,6 @@ public struct PlanCard: View {
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
         // Implemented state arrives from the model, not a tap, so the badge
         // swap and button removal animate off this value change.
-        .animation(Motion.settle, value: plan.isImplemented)
+        .animation(Motion.structure, value: plan.isImplemented)
     }
 }

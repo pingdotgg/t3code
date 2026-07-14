@@ -9,7 +9,12 @@ import {
 } from "./customInstructions.ts";
 import { DEFAULT_GIT_TEXT_GENERATION_MODEL, ProviderOptionSelections } from "./model.ts";
 import { ModelSelection } from "./orchestration.ts";
-import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.ts";
+import {
+  ProviderInstanceConfig,
+  ProviderInstanceEnvironment,
+  ProviderInstanceId,
+} from "./providerInstance.ts";
+import { DEFAULT_EXTENSION_SETTINGS, ExtensionSettings } from "./extensions.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -613,6 +618,58 @@ export const ObservabilitySettings = Schema.Struct({
 });
 export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
+const NonNegativeModelPrice = Schema.Number.check(Schema.isGreaterThanOrEqualTo(0));
+
+export const ModelPricingOverride = Schema.Struct({
+  inputPerMillionUsd: Schema.optional(NonNegativeModelPrice),
+  uncachedInputPerMillionUsd: Schema.optional(NonNegativeModelPrice),
+  cachedInputPerMillionUsd: Schema.optional(NonNegativeModelPrice),
+  cacheCreationInputPerMillionUsd: Schema.optional(NonNegativeModelPrice),
+  cacheReadInputPerMillionUsd: Schema.optional(NonNegativeModelPrice),
+  outputPerMillionUsd: Schema.optional(NonNegativeModelPrice),
+  reasoningOutputPerMillionUsd: Schema.optional(NonNegativeModelPrice),
+});
+export type ModelPricingOverride = typeof ModelPricingOverride.Type;
+
+export const TokenEfficiencySettings = Schema.Struct({
+  showComposerHints: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  showCostWarnings: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  efficiencyProfile: Schema.Literals(["manual", "balanced", "cost_saver"]).pipe(
+    Schema.withDecodingDefault(Effect.succeed("manual" as const)),
+  ),
+  perTurnEstimatedCostWarningUsd: Schema.NullOr(Schema.Number).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  dailyEstimatedCostWarningUsd: Schema.NullOr(Schema.Number).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  monthlyEstimatedCostWarningUsd: Schema.NullOr(Schema.Number).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  customModelPricing: Schema.Record(TrimmedNonEmptyString, ModelPricingOverride).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+});
+export type TokenEfficiencySettings = typeof TokenEfficiencySettings.Type;
+export const DEFAULT_TOKEN_EFFICIENCY_SETTINGS: TokenEfficiencySettings = Schema.decodeSync(
+  TokenEfficiencySettings,
+)({});
+const TokenEfficiencySettingsPatch = Schema.Struct({
+  showComposerHints: Schema.optionalKey(TokenEfficiencySettings.fields.showComposerHints),
+  showCostWarnings: Schema.optionalKey(TokenEfficiencySettings.fields.showCostWarnings),
+  efficiencyProfile: Schema.optionalKey(TokenEfficiencySettings.fields.efficiencyProfile),
+  perTurnEstimatedCostWarningUsd: Schema.optionalKey(
+    TokenEfficiencySettings.fields.perTurnEstimatedCostWarningUsd,
+  ),
+  dailyEstimatedCostWarningUsd: Schema.optionalKey(
+    TokenEfficiencySettings.fields.dailyEstimatedCostWarningUsd,
+  ),
+  monthlyEstimatedCostWarningUsd: Schema.optionalKey(
+    TokenEfficiencySettings.fields.monthlyEstimatedCostWarningUsd,
+  ),
+  customModelPricing: Schema.optionalKey(TokenEfficiencySettings.fields.customModelPricing),
+});
+
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 
 export const ServerSettings = Schema.Struct({
@@ -664,10 +721,17 @@ export const ServerSettings = Schema.Struct({
   providerInstances: Schema.Record(ProviderInstanceId, ProviderInstanceConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  globalEnvironment: ProviderInstanceEnvironment.pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   customInstructions: CustomInstructionsConfig.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_CUSTOM_INSTRUCTIONS_CONFIG)),
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  tokenEfficiency: TokenEfficiencySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  extensions: ExtensionSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_EXTENSION_SETTINGS)),
+  ),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -811,6 +875,8 @@ export const ServerSettingsPatch = Schema.Struct({
       otlpMetricsUrl: Schema.optionalKey(TrimmedString),
     }),
   ),
+  tokenEfficiency: Schema.optionalKey(TokenEfficiencySettingsPatch),
+  extensions: Schema.optionalKey(ExtensionSettings),
   providers: Schema.optionalKey(
     Schema.Struct({
       codex: Schema.optionalKey(CodexSettingsPatch),
@@ -829,6 +895,7 @@ export const ServerSettingsPatch = Schema.Struct({
   // patches risk leaving driver-specific config in a half-merged state.
   // The web UI sends a fully-formed map every time it edits this field.
   providerInstances: Schema.optionalKey(Schema.Record(ProviderInstanceId, ProviderInstanceConfig)),
+  globalEnvironment: Schema.optionalKey(ProviderInstanceEnvironment),
   // Whole-object replacement for custom instructions. The web UI sends the
   // full global/project bundle every time it edits this field.
   customInstructions: Schema.optionalKey(CustomInstructionsConfig),

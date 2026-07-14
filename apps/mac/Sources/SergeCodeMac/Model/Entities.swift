@@ -796,12 +796,22 @@ public enum DiffFileStatus: String, Sendable {
 public struct DiffFile: Identifiable, Sendable {
     public var id: String { path }
     public var path: String
+    /// The pre-rename path for a `renamed`/`copied` file, else nil.
+    public var oldPath: String?
     public var status: DiffFileStatus
+    /// Set when the file is a binary change (`Binary files … differ`), which
+    /// carries no textual hunks — distinguishes it from an empty text diff.
+    public var isBinary: Bool
     public var hunks: [DiffHunk]
 
-    public init(path: String, status: DiffFileStatus, hunks: [DiffHunk]) {
+    public init(
+        path: String, oldPath: String? = nil, status: DiffFileStatus,
+        isBinary: Bool = false, hunks: [DiffHunk]
+    ) {
         self.path = path
+        self.oldPath = oldPath
         self.status = status
+        self.isBinary = isBinary
         self.hunks = hunks
     }
 }

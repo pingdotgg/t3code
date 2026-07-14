@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  ComposerPayloadWeight,
   ModelSelection,
   OrchestrationCommand,
   OrchestrationEvent,
@@ -27,6 +28,7 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 const decodeTurnDiffInput = Schema.decodeUnknownEffect(OrchestrationGetTurnDiffInput);
 const decodeFullThreadDiffInput = Schema.decodeUnknownEffect(OrchestrationGetFullThreadDiffInput);
 const decodeThreadTurnDiff = Schema.decodeUnknownEffect(ThreadTurnDiff);
+const decodeComposerPayloadWeight = Schema.decodeUnknownEffect(ComposerPayloadWeight);
 const decodeProjectCreateCommand = Schema.decodeUnknownEffect(ProjectCreateCommand);
 const decodeProjectCreatedPayload = Schema.decodeUnknownEffect(ProjectCreatedPayload);
 const decodeProjectMetaUpdatedPayload = Schema.decodeUnknownEffect(ProjectMetaUpdatedPayload);
@@ -741,5 +743,27 @@ it.effect("ModelSelection rejects malformed instance ids", () =>
       }),
     );
     assert.strictEqual(result._tag, "Failure");
+  }),
+);
+
+it.effect("decodes composer payload weight metadata", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeComposerPayloadWeight({
+      estimatedTokens: 123,
+      estimatedChars: 456,
+      sources: [
+        {
+          id: "terminal-1",
+          label: "Terminal 1",
+          kind: "terminal_context",
+          estimatedTokens: 100,
+          estimatedChars: 320,
+          trimAvailable: true,
+        },
+      ],
+    });
+
+    assert.strictEqual(parsed.sources[0]?.kind, "terminal_context");
+    assert.strictEqual(parsed.sources[0]?.trimAvailable, true);
   }),
 );

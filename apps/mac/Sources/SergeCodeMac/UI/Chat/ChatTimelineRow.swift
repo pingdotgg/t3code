@@ -103,7 +103,6 @@ struct ChatTimelineRowView: View {
         case .subagentTask(let task):
             SubagentTaskRow(
                 task: task,
-                threadHealth: model.threads.first { $0.id == threadID }?.health,
                 modelDisplayNames: model.modelDisplayNames,
                 stopError: model.subagentStopErrors[task.taskId],
                 onStopAgent: {
@@ -117,18 +116,19 @@ struct ChatTimelineRowView: View {
                 }
             )
         case .approval(let request):
-            ApprovalCard(request: request) { approve in
+            ApprovalCard(request: request, isActive: isMostRecentApproval(request)) { approve in
                 Task { await model.respond(to: request, approve: approve) }
             }
         case .userInput(let request):
-            UserInputCard(request: request) { answers in
+            UserInputCard(request: request, isActive: isMostRecentUserInput(request)) { answers in
                 Task { await model.respond(to: request, answers: answers) }
             }
         case .usageLimit(let notice):
             UsageLimitCard(
                 notice: notice,
                 state: model.usageLimitActions[notice.id] ?? .idle,
-                switchModels: switchModels(for: notice)
+                switchModels: switchModels(for: notice),
+                isActive: isMostRecentUsageLimit(notice)
             ) {
                 model.waitForUsageLimitReset(notice)
             } onSwitch: { option in
@@ -137,7 +137,7 @@ struct ChatTimelineRowView: View {
                 model.dismissUsageLimit(notice)
             }
         case .plan(let plan):
-            PlanCard(plan: plan, model: model) {
+            PlanCard(plan: plan, model: model, isActive: isMostRecentPlan(plan)) {
                 Task { await model.implementPlan(plan) }
             }
         case .checkpoint(let checkpoint):
@@ -158,6 +158,60 @@ struct ChatTimelineRowView: View {
             currentInstanceID: thread?.modelInstanceID,
             currentModelID: thread?.modelID,
             exhaustedProvider: notice.provider)
+    }
+
+    // MARK: - Decision-card keyboard shortcut gating
+    //
+    // Approve/Deny/Submit/Implement/Wait/Dismiss gain keyboard shortcuts
+    // (ApprovalCard, UserInputCard, PlanCard, UsageLimitCard), but only the
+    // single most-recent actionable card across all kinds should own them — a
+    // scrollback full of historical cards must never let a keystroke
+    // resolve the wrong one. Approvals and user-input requests are removed
+    // from the timeline once resolved (AppModel.resolveInteraction), while
+    // usage-limit notices and already-implemented plans can remain alongside
+    // newer pending cards. Scan from the end and stop at the nearest card that
+    // still has an action, regardless of its kind.
+
+    private func isMostRecentDecisionCard(_ matches: (TimelineItem) -> Bool) -> Bool {
+        for item in (model.threadState(threadID)?.timeline ?? []).reversed() {
+            switch item {
+            case .approval(_), .userInput(_), .usageLimit(_):
+                return matches(item)
+            case .plan(let plan) where !plan.isImplemented:
+                return matches(item)
+            default:
+                continue
+            }
+        }
+        return false
+    }
+
+    private func isMostRecentApproval(_ request: ApprovalRequest) -> Bool {
+        isMostRecentDecisionCard { item in
+            guard case .approval(let candidate) = item else { return false }
+            return candidate.id == request.id
+        }
+    }
+
+    private func isMostRecentUserInput(_ request: UserInputRequest) -> Bool {
+        isMostRecentDecisionCard { item in
+            guard case .userInput(let candidate) = item else { return false }
+            return candidate.id == request.id
+        }
+    }
+
+    private func isMostRecentUsageLimit(_ notice: UsageLimitNotice) -> Bool {
+        isMostRecentDecisionCard { item in
+            guard case .usageLimit(let candidate) = item else { return false }
+            return candidate.id == notice.id
+        }
+    }
+
+    private func isMostRecentPlan(_ plan: ProposedPlan) -> Bool {
+        isMostRecentDecisionCard { item in
+            guard case .plan(let candidate) = item else { return false }
+            return candidate.id == plan.id
+        }
     }
 }
 
@@ -251,7 +305,7 @@ private struct UserMessageBubble: View {
             // Hover and context menu live on the bubble cluster, not the full
             // row — the spacer's empty area shouldn't reveal actions.
             .onHover { isHovering = $0 }
-            .animation(Motion.fade, value: isHovering)
+            .animation(Motion.feedback, value: isHovering)
         }
     }
 
@@ -284,13 +338,8 @@ private struct ToolGroupRow: View {
             Button {
                 // Settle, not snap: expanding can reveal dozens of rows, and
                 // the quick snap curve makes that layout shift feel violent.
-                // Deferred one runloop turn: rapid clicks mid-animation can
-                // land while the window is in a layout pass, and a state
-                // change that re-vends toolbar items during an in-layout
-                // render trips AppKit's layout-feedback-loop guard on
-                // macOS 26/27 (crash in _postWindowNeedsUpdateConstraints).
-                DispatchQueue.main.async {
-                    withAnimation(Motion.settle) { isExpanded.toggle() }
+                withDeferredAnimation(Motion.structure) {
+                    isExpanded.toggle()
                 }
             } label: {
                 HStack(spacing: 8) {
@@ -435,7 +484,7 @@ private struct ToolEventRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Button {
-                withAnimation(Motion.snap) { isExpanded.toggle() }
+                withAnimation(Motion.feedback) { isExpanded.toggle() }
             } label: {
                 HStack(spacing: 8) {
                     statusIcon
@@ -479,7 +528,7 @@ private struct ToolEventRow: View {
             }
         }
         .animation(Motion.ambient, value: displayState)
-        .animation(Motion.fade, value: isHovering)
+        .animation(Motion.feedback, value: isHovering)
         .onHover { isHovering = $0 }
     }
 
@@ -577,16 +626,13 @@ private struct ToolEventRow: View {
     @ViewBuilder
     private var statusIcon: some View {
         let icon = Image(systemName: iconName)
-            .symbolEffect(
-                .pulse,
-                isActive: displayState == .running && !Motion.reduceMotion)
             .foregroundStyle(iconTint)
             .contentTransition(
                 Motion.reduceMotion ? .identity : .symbolEffect(.replace))
         if Motion.reduceMotion {
             icon
         } else {
-            icon.symbolEffect(.bounce, value: displayState)
+            icon.symbolEffect(.bounce, value: displayState == .succeeded)
         }
     }
 
@@ -614,8 +660,6 @@ private struct SubagentTaskRow: View {
     private static let maxVisibleLogEntries = 30
 
     let task: SubagentTaskItem
-    /// Server liveness for the owning thread; wins over the client heuristic.
-    var threadHealth: ThreadHealth?
     let modelDisplayNames: [String: String]
     /// Transient stop-RPC failure (not part of the provider task payload).
     let stopError: String?
@@ -651,15 +695,13 @@ private struct SubagentTaskRow: View {
 
     @ViewBuilder
     private func rowChrome(now currentNow: Date) -> some View {
-        let stalled = SubagentTaskPresentation.isStalled(
-            task: task, at: currentNow, threadHealth: threadHealth)
         VStack(alignment: .leading, spacing: 4) {
             Button {
                 guard hasExpandableContent else { return }
-                withAnimation(Motion.snap) { isExpanded.toggle() }
+                withAnimation(Motion.feedback) { isExpanded.toggle() }
             } label: {
                 HStack(alignment: .top, spacing: 9) {
-                    statusIcon(stalled: stalled)
+                    statusIcon()
                         .frame(width: TranscriptMetrics.iconColumn, height: 16)
                         .padding(.top, 1)
 
@@ -690,7 +732,7 @@ private struct SubagentTaskRow: View {
                             task: task, modelDisplayNames: modelDisplayNames)
 
                         SubagentTaskHealthTags(
-                            task: task, now: currentNow, threadHealth: threadHealth)
+                            task: task, now: currentNow)
 
                         if let subtitle = SubagentTaskPresentation.subtitle(for: task) {
                             Text(subtitle)
@@ -721,9 +763,9 @@ private struct SubagentTaskRow: View {
             }
         }
         .transcriptCard(
-            fill: SubagentTaskPresentation.backgroundTint(for: task, stalled: stalled),
+            fill: SubagentTaskPresentation.backgroundTint(for: task, stalled: false),
             showRail: true,
-            railColor: SubagentTaskPresentation.railColor(for: task, stalled: stalled))
+            railColor: SubagentTaskPresentation.railColor(for: task, stalled: false))
         .animation(Motion.ambient, value: task.state)
         .onChange(of: task.state) { _, _ in
             onClearStopError()
@@ -837,8 +879,8 @@ private struct SubagentTaskRow: View {
     private var title: String { SubagentTaskPresentation.title(for: task) }
 
     @ViewBuilder
-    private func statusIcon(stalled: Bool) -> some View {
-        SubagentTaskStatusIcon(task: task, stalled: stalled)
+    private func statusIcon() -> some View {
+        SubagentTaskStatusIcon(task: task)
     }
 }
 
@@ -1139,11 +1181,9 @@ private struct ReasoningRow: View {
                 .italic()
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
-                .contentTransition(.opacity)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.leading, TranscriptMetrics.cardPadH)
-        .animation(Motion.ambient, value: text)
     }
 }
 
@@ -1172,11 +1212,8 @@ private struct SessionExitRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Button {
-                // Deferred one runloop turn — see ToolGroupRow: a state change
-                // that re-vends toolbar items mid-layout trips AppKit's
-                // layout-feedback guard on macOS 26/27.
-                DispatchQueue.main.async {
-                    withAnimation(Motion.settle) { isExpanded.toggle() }
+                withDeferredAnimation(Motion.structure) {
+                    isExpanded.toggle()
                 }
             } label: {
                 HStack(alignment: .top, spacing: 8) {

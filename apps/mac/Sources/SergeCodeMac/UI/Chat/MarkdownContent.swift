@@ -72,7 +72,31 @@ enum MarkdownBlockCache {
 
     private static let store = MarkdownBlockCacheStore()
 
-    static func document(for markdown: String) -> ParsedMarkdownDocument {
+    // A finished message's Markdown never changes again, but SwiftUI
+    // rebuilds every visible row's view value on each timeline mutation
+    // (see ChatTimelineRow.swift:377), which re-ran the full cmark parse
+    // above for every other message on screen each time any one message
+    // streamed a delta. This mirrors StreamingMarkdownCache's
+    // lastCount/lastDocument short-circuit, keyed per message instead of
+    // per streaming session, so a finished message's parse (and per-block
+    // cache traffic) runs once instead of once per sibling mutation. Bounded
+    // like a normal LRU since a long scrollback could otherwise accumulate
+    // one entry per message forever; `maxWholeDocumentEntries` comfortably
+    // covers the rows actually on screen at once.
+    private static var wholeDocumentByteCount: [String: Int] = [:]
+    private static var wholeDocumentCache: [String: ParsedMarkdownDocument] = [:]
+    private static var wholeDocumentOrder: [String] = []
+    private static let maxWholeDocumentEntries = 64
+
+    static func document(for markdown: String, messageID: String? = nil) -> ParsedMarkdownDocument {
+        let byteCount = markdown.utf8.count
+        if let messageID,
+            wholeDocumentByteCount[messageID] == byteCount,
+            let cached = wholeDocumentCache[messageID]
+        {
+            return cached
+        }
+
         let missesBefore = store.misses
         let document = PerfSignpost.interval("markdown.parse") {
             PerfMetrics.measure("markdown.parse") {
@@ -85,7 +109,26 @@ enum MarkdownBlockCache {
         if store.misses > missesBefore {
             PerfMetrics.count("markdown.bytesParsed", by: markdown.utf8.count)
         }
+
+        if let messageID {
+            recordWholeDocument(document, byteCount: byteCount, messageID: messageID)
+        }
         return document
+    }
+
+    private static func recordWholeDocument(
+        _ document: ParsedMarkdownDocument, byteCount: Int, messageID: String
+    ) {
+        if wholeDocumentByteCount[messageID] == nil {
+            if wholeDocumentOrder.count >= maxWholeDocumentEntries, let oldest = wholeDocumentOrder.first {
+                wholeDocumentOrder.removeFirst()
+                wholeDocumentByteCount[oldest] = nil
+                wholeDocumentCache[oldest] = nil
+            }
+            wholeDocumentOrder.append(messageID)
+        }
+        wholeDocumentByteCount[messageID] = byteCount
+        wholeDocumentCache[messageID] = document
     }
 
     static var statistics: Statistics {
@@ -94,6 +137,9 @@ enum MarkdownBlockCache {
 
     static func resetForTesting() {
         store.reset()
+        wholeDocumentByteCount.removeAll(keepingCapacity: true)
+        wholeDocumentCache.removeAll(keepingCapacity: true)
+        wholeDocumentOrder.removeAll(keepingCapacity: true)
     }
 }
 
@@ -675,14 +721,22 @@ struct AssistantMarkdownView: View {
         if isStreaming && style == .assistant && !messageID.isEmpty {
             // Incremental parse: settled prefix cached per (thread, message)
             // session; only the tail past the last safe boundary reparses.
+            // Scope the thread key (like TimelineDisplayCache) so local/remote
+            // ids can't alias across devices in MultiDeviceModel.
             let document = StreamingMarkdownCache.document(
-                threadID: threadID, messageID: messageID, markdown: markdown)
+                threadID: model.scopedThreadKey(threadID), messageID: messageID, markdown: markdown)
             self.renderedBlocks = Self.renderedBlocks(from: document)
         } else {
             if !messageID.isEmpty {
-                StreamingMarkdownCache.finish(threadID: threadID, messageID: messageID)
+                StreamingMarkdownCache.finish(
+                    threadID: model.scopedThreadKey(threadID), messageID: messageID)
             }
-            let document = MarkdownBlockCache.document(for: markdown)
+            // Keyed by messageID so a finished message's parse is memoized
+            // across the sibling-mutation rebuilds documented on the cache
+            // above; user bubbles and other callers with no messageID just
+            // skip that whole-document short-circuit.
+            let document = MarkdownBlockCache.document(
+                for: markdown, messageID: messageID.isEmpty ? nil : messageID)
             self.renderedBlocks = Self.renderedBlocks(from: document)
         }
     }
@@ -736,8 +790,8 @@ struct AssistantMarkdownView: View {
             }
         }
         .onHover { isHovering = $0 }
-        .animation(Motion.fade, value: isHovering)
-        .animation(Motion.fade, value: isStreaming)
+        .animation(Motion.feedback, value: isHovering)
+        .animation(Motion.reveal, value: isStreaming)
         .modifier(
             RemoteFileLinkHelpModifier(
                 message: model.capabilities.opensLocalEditor
@@ -1439,7 +1493,7 @@ private struct MarkdownCodeBlock: View {
                         systemImage: isWrapped ? "arrow.left.and.right" : "arrow.down.right.and.line.horizontal.and.line.vertical.and.arrow.down",
                         help: isWrapped ? "Disable word wrap" : "Enable word wrap"
                     ) {
-                        withAnimation(Motion.fade) { isWrapped.toggle() }
+                        withAnimation(Motion.feedback) { isWrapped.toggle() }
                     }
                     .transition(.opacity)
                 }
@@ -1460,8 +1514,8 @@ private struct MarkdownCodeBlock: View {
                 .padding(10)
         }
         .onHover { isHovering = $0 }
-        .animation(Motion.fade, value: isHovering)
-        .animation(Motion.fade, value: isWrapped)
+        .animation(Motion.feedback, value: isHovering)
+        .animation(Motion.feedback, value: isWrapped)
         .frame(maxWidth: .infinity, alignment: .leading)
         // Solid opaque fill — code blocks live inside long-form assistant
         // text, so no glass/material here per Liquid Glass content rules.
@@ -1480,7 +1534,7 @@ private struct MarkdownCodeBlock: View {
             // its hosting view is still laying out.
             try? await Task.sleep(for: .milliseconds(1))
             guard !Task.isCancelled else { return }
-            withAnimation(Motion.fade) {
+            withAnimation(Motion.feedback) {
                 displayedText = highlighted
             }
         }

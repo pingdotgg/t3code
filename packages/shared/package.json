@@ -159,14 +159,6 @@
       "types": "./src/relayTracing.ts",
       "import": "./src/relayTracing.ts"
     },
-    "./preview": {
-      "types": "./src/preview.ts",
-      "import": "./src/preview.ts"
-    },
-    "./previewViewport": {
-      "types": "./src/previewViewport.ts",
-      "import": "./src/previewViewport.ts"
-    },
     "./filePreview": {
       "types": "./src/filePreview.ts",
       "import": "./src/filePreview.ts"
@@ -186,6 +178,10 @@
     "./processStderrCapture": {
       "types": "./src/processStderrCapture.ts",
       "import": "./src/processStderrCapture.ts"
+    },
+    "./tokenAccounting": {
+      "types": "./src/tokenAccounting.ts",
+      "import": "./src/tokenAccounting.ts"
     }
   },
   "scripts": {

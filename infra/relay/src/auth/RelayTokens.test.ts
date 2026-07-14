@@ -105,29 +105,6 @@ describe("RelayTokens", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("issues tunnel-only DPoP access tokens to web public clients", () =>
-    Effect.gen(function* () {
-      const relayTokens = yield* RelayTokens.RelayTokens;
-      const token = yield* relayTokens.issueDpopAccessToken({
-        userId: "user_123",
-        proofKeyThumbprint: "web-proof-key-thumbprint",
-        jti: "web-access-token-1",
-        issuedAtEpochSeconds: 100,
-        expiresAtEpochSeconds: 200,
-        clientId: "t3-web",
-        scopes: ["environment:connect", "environment:status"],
-      });
-
-      expect(
-        yield* relayTokens.verifyDpopAccessToken({ token, nowEpochSeconds: 150 }),
-      ).toMatchObject({
-        client_id: "t3-web",
-        scope: ["environment:connect", "environment:status"],
-        cnf: { jkt: "web-proof-key-thumbprint" },
-      });
-    }).pipe(Effect.provide(layer)),
-  );
-
   it.effect("treats requested scope as an order-independent set", () =>
     Effect.gen(function* () {
       const relayTokens = yield* RelayTokens.RelayTokens;
@@ -155,29 +132,6 @@ describe("RelayTokens", () => {
           exp: 200,
           client_id: "t3-mobile",
           scope: "environment:admin",
-          cnf: { jkt: "proof-key-thumbprint" },
-        },
-      });
-
-      expect(yield* relayTokens.verifyDpopAccessToken({ token, nowEpochSeconds: 150 })).toBeNull();
-    }).pipe(Effect.provide(layer)),
-  );
-
-  it.effect("rejects mobile registration scope on a web public client token", () =>
-    Effect.gen(function* () {
-      const relayTokens = yield* RelayTokens.RelayTokens;
-      const token = yield* signRelayJwt({
-        privateKey: keyPair.privateKey,
-        typ: "t3-relay-dpop-access+jwt",
-        payload: {
-          iss: "https://relay.example.test",
-          aud: "https://relay.example.test",
-          sub: "user_123",
-          jti: "web-token-invalid-mobile-scope",
-          iat: 100,
-          exp: 200,
-          client_id: "t3-web",
-          scope: "environment:connect mobile:registration",
           cnf: { jkt: "proof-key-thumbprint" },
         },
       });

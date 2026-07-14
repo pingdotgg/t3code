@@ -2,7 +2,14 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
+import { IsoDateTime, NonNegativeInt, ThreadId } from "./baseSchemas.ts";
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
+import {
+  ExtensionDiscoveryResult,
+  ExtensionInstallInput,
+  ExtensionOperationError,
+  ExtensionUninstallInput,
+} from "./extensions.ts";
 import {
   AuthAccessStreamError,
   AuthAccessStreamEvent,
@@ -95,27 +102,6 @@ import {
   TerminalWriteInput,
 } from "./terminal.ts";
 import {
-  DiscoveredLocalServerList,
-  PreviewCloseInput,
-  PreviewError,
-  PreviewEvent,
-  PreviewListInput,
-  PreviewListResult,
-  PreviewNavigateInput,
-  PreviewOpenInput,
-  PreviewRefreshInput,
-  PreviewReportStatusInput,
-  PreviewResizeInput,
-  PreviewSessionSnapshot,
-} from "./preview.ts";
-import {
-  PreviewAutomationError,
-  PreviewAutomationHost,
-  PreviewAutomationHostFocus,
-  PreviewAutomationResponse,
-  PreviewAutomationStreamEvent,
-} from "./previewAutomation.ts";
-import {
   ServerConfigStreamEvent,
   ServerConfig,
   ServerProviderUpdateError,
@@ -136,6 +122,7 @@ import {
   GenerateScenerySetResult,
 } from "./server.ts";
 import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings.ts";
+import { ThreadTokenUsageSnapshot } from "./providerRuntime.ts";
 import {
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
@@ -192,18 +179,6 @@ export const WS_METHODS = {
   terminalRestart: "terminal.restart",
   terminalClose: "terminal.close",
 
-  // Preview methods
-  previewOpen: "preview.open",
-  previewNavigate: "preview.navigate",
-  previewResize: "preview.resize",
-  previewRefresh: "preview.refresh",
-  previewClose: "preview.close",
-  previewList: "preview.list",
-  previewReportStatus: "preview.reportStatus",
-  previewAutomationConnect: "previewAutomation.connect",
-  previewAutomationRespond: "previewAutomation.respond",
-  previewAutomationFocusHost: "previewAutomation.focusHost",
-
   // Server meta
   serverGetConfig: "server.getConfig",
   serverRefreshProviders: "server.refreshProviders",
@@ -212,12 +187,16 @@ export const WS_METHODS = {
   serverRemoveKeybinding: "server.removeKeybinding",
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
+  providerUsageSummary: "provider.usage.summary",
   serverGenerateScenerySet: "server.generateScenerySet",
   serverDiscoverSourceControl: "server.discoverSourceControl",
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
   serverGetProcessResourceHistory: "server.getProcessResourceHistory",
   serverSignalProcess: "server.signalProcess",
+  extensionsDiscover: "extensions.discover",
+  extensionsInstall: "extensions.install",
+  extensionsUninstall: "extensions.uninstall",
 
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -232,8 +211,6 @@ export const WS_METHODS = {
   subscribeVcsStatus: "subscribeVcsStatus",
   subscribeTerminalEvents: "subscribeTerminalEvents",
   subscribeTerminalMetadata: "subscribeTerminalMetadata",
-  subscribePreviewEvents: "subscribePreviewEvents",
-  subscribeDiscoveredLocalServers: "subscribeDiscoveredLocalServers",
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
@@ -289,6 +266,47 @@ export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSetting
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
 });
 
+export const ProviderUsageSummaryInput = Schema.Struct({
+  since: IsoDateTime,
+  until: Schema.optional(IsoDateTime),
+  providerInstanceId: Schema.optional(ProviderInstanceId),
+  threadId: Schema.optional(ThreadId),
+});
+export type ProviderUsageSummaryInput = typeof ProviderUsageSummaryInput.Type;
+
+export const ProviderUsageBucket = Schema.Struct({
+  id: Schema.String,
+  label: Schema.String,
+  turns: NonNegativeInt,
+  usage: ThreadTokenUsageSnapshot,
+  totalCostUsd: Schema.NullOr(Schema.Number),
+  costIsPartial: Schema.Boolean,
+});
+export type ProviderUsageBucket = typeof ProviderUsageBucket.Type;
+
+export const ProviderUsageSummary = Schema.Struct({
+  totalTurns: NonNegativeInt,
+  totalInputTokens: NonNegativeInt,
+  totalUncachedInputTokens: NonNegativeInt,
+  totalCachedInputTokens: NonNegativeInt,
+  totalCacheCreationInputTokens: NonNegativeInt,
+  totalCacheReadInputTokens: NonNegativeInt,
+  totalOutputTokens: NonNegativeInt,
+  totalReasoningOutputTokens: NonNegativeInt,
+  totalProcessedTokens: NonNegativeInt,
+  totalCostUsd: Schema.NullOr(Schema.Number),
+  costIsPartial: Schema.Boolean,
+  byProvider: Schema.Array(ProviderUsageBucket),
+  byModel: Schema.Array(ProviderUsageBucket),
+});
+export type ProviderUsageSummary = typeof ProviderUsageSummary.Type;
+
+export const WsProviderUsageSummaryRpc = Rpc.make(WS_METHODS.providerUsageSummary, {
+  payload: ProviderUsageSummaryInput,
+  success: ProviderUsageSummary,
+  error: Schema.Union([OrchestrationGetSnapshotError, EnvironmentAuthorizationError]),
+});
+
 export const WsServerGenerateScenerySetRpc = Rpc.make(WS_METHODS.serverGenerateScenerySet, {
   payload: GenerateScenerySetInput,
   success: GenerateScenerySetResult,
@@ -326,6 +344,24 @@ export const WsServerSignalProcessRpc = Rpc.make(WS_METHODS.serverSignalProcess,
   payload: ServerSignalProcessInput,
   success: ServerSignalProcessResult,
   error: EnvironmentAuthorizationError,
+});
+
+export const WsExtensionsDiscoverRpc = Rpc.make(WS_METHODS.extensionsDiscover, {
+  payload: Schema.Struct({}),
+  success: ExtensionDiscoveryResult,
+  error: Schema.Union([ExtensionOperationError, EnvironmentAuthorizationError]),
+});
+
+export const WsExtensionsInstallRpc = Rpc.make(WS_METHODS.extensionsInstall, {
+  payload: ExtensionInstallInput,
+  success: ExtensionDiscoveryResult,
+  error: Schema.Union([ExtensionOperationError, EnvironmentAuthorizationError]),
+});
+
+export const WsExtensionsUninstallRpc = Rpc.make(WS_METHODS.extensionsUninstall, {
+  payload: ExtensionUninstallInput,
+  success: ExtensionDiscoveryResult,
+  error: Schema.Union([ExtensionOperationError, EnvironmentAuthorizationError]),
 });
 
 export const WsCloudGetRelayClientStatusRpc = Rpc.make(WS_METHODS.cloudGetRelayClientStatus, {
@@ -528,79 +564,6 @@ export const WsTerminalCloseRpc = Rpc.make(WS_METHODS.terminalClose, {
   error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
 });
 
-export const WsPreviewOpenRpc = Rpc.make(WS_METHODS.previewOpen, {
-  payload: PreviewOpenInput,
-  success: PreviewSessionSnapshot,
-  error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
-});
-
-export const WsPreviewNavigateRpc = Rpc.make(WS_METHODS.previewNavigate, {
-  payload: PreviewNavigateInput,
-  success: PreviewSessionSnapshot,
-  error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
-});
-
-export const WsPreviewResizeRpc = Rpc.make(WS_METHODS.previewResize, {
-  payload: PreviewResizeInput,
-  success: PreviewSessionSnapshot,
-  error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
-});
-
-export const WsPreviewRefreshRpc = Rpc.make(WS_METHODS.previewRefresh, {
-  payload: PreviewRefreshInput,
-  error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
-});
-
-export const WsPreviewCloseRpc = Rpc.make(WS_METHODS.previewClose, {
-  payload: PreviewCloseInput,
-  error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
-});
-
-export const WsPreviewListRpc = Rpc.make(WS_METHODS.previewList, {
-  payload: PreviewListInput,
-  success: PreviewListResult,
-  error: EnvironmentAuthorizationError,
-});
-
-export const WsPreviewReportStatusRpc = Rpc.make(WS_METHODS.previewReportStatus, {
-  payload: PreviewReportStatusInput,
-  error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
-});
-
-export const WsPreviewAutomationConnectRpc = Rpc.make(WS_METHODS.previewAutomationConnect, {
-  payload: PreviewAutomationHost,
-  success: PreviewAutomationStreamEvent,
-  error: Schema.Union([PreviewAutomationError, EnvironmentAuthorizationError]),
-  stream: true,
-});
-
-export const WsPreviewAutomationRespondRpc = Rpc.make(WS_METHODS.previewAutomationRespond, {
-  payload: PreviewAutomationResponse,
-  error: Schema.Union([PreviewAutomationError, EnvironmentAuthorizationError]),
-});
-
-export const WsPreviewAutomationFocusHostRpc = Rpc.make(WS_METHODS.previewAutomationFocusHost, {
-  payload: PreviewAutomationHostFocus,
-  error: EnvironmentAuthorizationError,
-});
-
-export const WsSubscribePreviewEventsRpc = Rpc.make(WS_METHODS.subscribePreviewEvents, {
-  payload: Schema.Struct({}),
-  success: PreviewEvent,
-  error: EnvironmentAuthorizationError,
-  stream: true,
-});
-
-export const WsSubscribeDiscoveredLocalServersRpc = Rpc.make(
-  WS_METHODS.subscribeDiscoveredLocalServers,
-  {
-    payload: Schema.Struct({}),
-    success: DiscoveredLocalServerList,
-    error: EnvironmentAuthorizationError,
-    stream: true,
-  },
-);
-
 export const WsOrchestrationDispatchCommandRpc = Rpc.make(
   ORCHESTRATION_WS_METHODS.dispatchCommand,
   {
@@ -709,12 +672,16 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRemoveKeybindingRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
+  WsProviderUsageSummaryRpc,
   WsServerGenerateScenerySetRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,
   WsServerGetProcessResourceHistoryRpc,
   WsServerSignalProcessRpc,
+  WsExtensionsDiscoverRpc,
+  WsExtensionsInstallRpc,
+  WsExtensionsUninstallRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
   WsSourceControlLookupRepositoryRpc,
@@ -749,18 +716,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsTerminalCloseRpc,
   WsSubscribeTerminalEventsRpc,
   WsSubscribeTerminalMetadataRpc,
-  WsPreviewOpenRpc,
-  WsPreviewNavigateRpc,
-  WsPreviewResizeRpc,
-  WsPreviewRefreshRpc,
-  WsPreviewCloseRpc,
-  WsPreviewListRpc,
-  WsPreviewReportStatusRpc,
-  WsPreviewAutomationConnectRpc,
-  WsPreviewAutomationRespondRpc,
-  WsPreviewAutomationFocusHostRpc,
-  WsSubscribePreviewEventsRpc,
-  WsSubscribeDiscoveredLocalServersRpc,
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,

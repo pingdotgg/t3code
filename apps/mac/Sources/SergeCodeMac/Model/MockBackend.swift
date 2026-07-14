@@ -316,8 +316,20 @@ private actor MockState {
     private var approvalsByID: [String: ApprovalRequest] = [:]
     private var providerList: [ProviderInstance] = []
     private var backgroundAgentsByThread: [String: Int] = [:]
-    /// Task IDs stopped via `stopTask`; lifecycle demo must not revive them.
-    private var cancelledTaskIDs: Set<String> = []
+    /// Task IDs stopped via `stopTask`, grouped by thread so deletion can prune them.
+    private var cancelledTaskIDsByThread: [String: Set<String>] = [:]
+
+    private struct StreamingKey: Hashable {
+        let threadID: String
+        let messageID: String
+    }
+
+    /// Owned streaming tasks keyed by the thread and assistant message they serve.
+    private var streamingTasks: [StreamingKey: Task<Void, Never>] = [:]
+    /// Ordered active message IDs let overlapping sends settle only after the
+    /// final active turn completes.
+    private var inFlightMessageIDsByThread: [String: [String]] = [:]
+    private var currentTurnByThread: [String: String] = [:]
 
     private var started = false
     private var counter = 0
@@ -369,6 +381,7 @@ private actor MockState {
         lifecycleTask = nil
         connectionWobbleTask?.cancel()
         connectionWobbleTask = nil
+        cancelStreamingTasks()
         eventContinuation = nil
     }
 
@@ -409,6 +422,55 @@ private actor MockState {
 
     private func emit(_ event: BackendEvent) {
         eventContinuation?.yield(event)
+    }
+
+    private func cancelStreamingTasks(for threadID: String? = nil) {
+        let keys = streamingTasks.keys.filter { key in
+            threadID == nil || key.threadID == threadID
+        }
+        for key in keys {
+            streamingTasks[key]?.cancel()
+            streamingTasks[key] = nil
+        }
+
+        if let threadID {
+            inFlightMessageIDsByThread[threadID] = nil
+            currentTurnByThread[threadID] = nil
+        } else {
+            inFlightMessageIDsByThread.removeAll()
+            currentTurnByThread.removeAll()
+        }
+    }
+
+    private func finishStreamingTask(_ key: StreamingKey, completed: Bool) {
+        streamingTasks[key] = nil
+
+        let wasCurrent = currentTurnByThread[key.threadID] == key.messageID
+        var remaining = inFlightMessageIDsByThread[key.threadID] ?? []
+        remaining.removeAll { $0 == key.messageID }
+        if remaining.isEmpty {
+            inFlightMessageIDsByThread[key.threadID] = nil
+            if wasCurrent {
+                currentTurnByThread[key.threadID] = nil
+            }
+        } else {
+            inFlightMessageIDsByThread[key.threadID] = remaining
+            if wasCurrent {
+                currentTurnByThread[key.threadID] = remaining.last
+            }
+        }
+
+        guard completed, wasCurrent, remaining.isEmpty else { return }
+        guard var thread = threadsByID[key.threadID] else { return }
+        if thread.status != .archived && thread.status != .error
+            && thread.status != .waitingApproval
+        {
+            thread.status = idleStatus(for: key.threadID)
+        }
+        thread.backgroundAgentCount = backgroundAgentsByThread[key.threadID] ?? 0
+        thread.updatedAt = Date()
+        threadsByID[key.threadID] = thread
+        emit(.threadUpserted(thread))
     }
 
     // MARK: Reads
@@ -475,6 +537,7 @@ private actor MockState {
 
     func archiveThread(id: String) {
         guard var thread = threadsByID[id] else { return }
+        cancelStreamingTasks(for: id)
         thread.status = .archived
         thread.updatedAt = Date()
         threadsByID[id] = thread
@@ -492,6 +555,8 @@ private actor MockState {
 
     func deleteThread(id: String) {
         guard threadsByID.removeValue(forKey: id) != nil else { return }
+        cancelStreamingTasks(for: id)
+        cancelledTaskIDsByThread[id] = nil
         timelinesByThread[id] = nil
         backgroundAgentsByThread[id] = nil
         emit(.threadRemoved(id: id))
@@ -537,6 +602,7 @@ private actor MockState {
         emit(.threadUpserted(thread))
 
         let messageID = nextID("asst")
+        let key = StreamingKey(threadID: threadID, messageID: messageID)
         let reply = MockState.canned(for: text)
         let isPerfStream = text.trimmingCharacters(in: .whitespacesAndNewlines) == "/perf-stream"
         let chunks = isPerfStream
@@ -549,18 +615,37 @@ private actor MockState {
         timelinesByThread[threadID, default: []].append(placeholder)
         emit(.timelineAppended(threadID: threadID, item: placeholder))
 
-        for chunk in chunks {
-            try? await Task.sleep(nanoseconds: isPerfStream ? 2_000_000 : 80_000_000)
-            emit(.assistantDelta(threadID: threadID, messageID: messageID, delta: chunk))
+        inFlightMessageIDsByThread[threadID, default: []].append(messageID)
+        currentTurnByThread[threadID] = messageID
+        let task = Task {
+            await self.streamMessage(
+                key: key, chunks: chunks, reply: reply, isPerfStream: isPerfStream)
         }
-        emit(.assistantCompleted(threadID: threadID, messageID: messageID, markdown: reply))
+        streamingTasks[key] = task
+        await task.value
+    }
 
-        guard var finishedThread = threadsByID[threadID] else { return }
-        finishedThread.status = idleStatus(for: threadID)
-        finishedThread.backgroundAgentCount = backgroundAgentsByThread[threadID] ?? 0
-        finishedThread.updatedAt = Date()
-        threadsByID[threadID] = finishedThread
-        emit(.threadUpserted(finishedThread))
+    private func streamMessage(
+        key: StreamingKey, chunks: [String], reply: String, isPerfStream: Bool
+    ) async {
+        var completed = false
+        defer { finishStreamingTask(key, completed: completed) }
+
+        for chunk in chunks {
+            guard !Task.isCancelled else { return }
+            do {
+                try await Task.sleep(
+                    nanoseconds: isPerfStream ? 2_000_000 : 80_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            emit(.assistantDelta(threadID: key.threadID, messageID: key.messageID, delta: chunk))
+        }
+
+        guard !Task.isCancelled else { return }
+        emit(.assistantCompleted(threadID: key.threadID, messageID: key.messageID, markdown: reply))
+        completed = true
     }
 
     func cancelTurn(threadID: String) {
@@ -585,7 +670,7 @@ private actor MockState {
         let now = Date()
         for index in timeline.indices {
             if case .subagentTask(var task) = timeline[index], task.taskId == taskId {
-                cancelledTaskIDs.insert(taskId)
+                cancelledTaskIDsByThread[threadID, default: []].insert(taskId)
                 task.state = .stopped
                 task.lastActivityAt = now
                 task.duration = task.duration ?? now.timeIntervalSince(task.startedAt)
@@ -923,10 +1008,12 @@ private actor MockState {
             threadID: threadID, state: .running, progress: "Using Read...", duration: nil,
             activeCount: 1)
         try? await Task.sleep(nanoseconds: 1_800_000_000)
+        guard !Task.isCancelled, started else { return }
         updateSubagentDemo(
             threadID: threadID, state: .running, progress: "Using Grep...", duration: nil,
             activeCount: 1)
         try? await Task.sleep(nanoseconds: 6_000_000_000)
+        guard !Task.isCancelled, started else { return }
         updateSubagentDemo(
             threadID: threadID, state: .completed,
             progress: "Found the status projection and timeline mapping points.",
@@ -950,7 +1037,7 @@ private actor MockState {
         let demoTaskId = "mock-subagent-1"
         // Authoritative stop: cancelled tasks stay stopped even if the demo
         // lifecycle would otherwise revive them.
-        if cancelledTaskIDs.contains(demoTaskId) { return }
+        if cancelledTaskIDsByThread[threadID]?.contains(demoTaskId) == true { return }
         guard var thread = threadsByID[threadID] else { return }
         backgroundAgentsByThread[threadID] = activeCount > 0 ? activeCount : nil
         thread.backgroundAgentCount = activeCount
@@ -1111,7 +1198,7 @@ private actor MockState {
         var approvalsByID: [String: ApprovalRequest] = [:]
 
         let projectA = Project(id: "project-1", name: "SergeCode", path: "/Users/serge/Documents/Dev/SergeCode")
-        let projectB = Project(id: "project-2", name: "marketing-site", path: "/Users/serge/Documents/Dev/marketing-site")
+        let projectB = Project(id: "project-2", name: "ios-companion", path: "/Users/serge/Documents/Dev/ios-companion")
         projectsByID[projectA.id] = projectA
         projectsByID[projectB.id] = projectB
 
@@ -1489,7 +1576,7 @@ private actor MockState {
                 output: """
                 Error: Cannot find module '@t3tools/contracts'
                 Require stack:
-                - /workspace/apps/web/src/index.ts
+                - /workspace/apps/mac/Sources/SergeCodeMac/SergeCodeApp.swift
                 npm ERR! code 1
                 npm ERR! Exit status 1
                 """,

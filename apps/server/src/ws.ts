@@ -3,8 +3,10 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -23,7 +25,6 @@ import {
   type AuthEnvironmentScope,
   AuthSessionId,
   CommandId,
-  type DiscoveredLocalServerList,
   EventId,
   type OrchestrationCommand,
   type GitActionProgressEvent,
@@ -82,11 +83,9 @@ import { providerSessionConfirmsActiveTurn } from "./provider/sessionLiveness.ts
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import * as ExtensionMarketplace from "./extensions/ExtensionMarketplace.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
-import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
-import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
-import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
@@ -295,12 +294,16 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverRemoveKeybinding, AuthOrchestrationOperateScope],
   [WS_METHODS.serverGetSettings, AuthOrchestrationReadScope],
   [WS_METHODS.serverUpdateSettings, AuthOrchestrationOperateScope],
+  [WS_METHODS.providerUsageSummary, AuthOrchestrationReadScope],
   [WS_METHODS.serverGenerateScenerySet, AuthOrchestrationOperateScope],
   [WS_METHODS.serverDiscoverSourceControl, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetTraceDiagnostics, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetProcessDiagnostics, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetProcessResourceHistory, AuthOrchestrationReadScope],
   [WS_METHODS.serverSignalProcess, AuthOrchestrationOperateScope],
+  [WS_METHODS.extensionsDiscover, AuthOrchestrationReadScope],
+  [WS_METHODS.extensionsInstall, AuthOrchestrationOperateScope],
+  [WS_METHODS.extensionsUninstall, AuthOrchestrationOperateScope],
   [WS_METHODS.cloudGetRelayClientStatus, AuthRelayWriteScope],
   [WS_METHODS.cloudInstallRelayClient, AuthRelayWriteScope],
   [WS_METHODS.sourceControlLookupRepository, AuthOrchestrationReadScope],
@@ -335,18 +338,6 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.terminalClose, AuthTerminalOperateScope],
   [WS_METHODS.subscribeTerminalEvents, AuthTerminalOperateScope],
   [WS_METHODS.subscribeTerminalMetadata, AuthTerminalOperateScope],
-  [WS_METHODS.previewOpen, AuthOrchestrationOperateScope],
-  [WS_METHODS.previewNavigate, AuthOrchestrationOperateScope],
-  [WS_METHODS.previewResize, AuthOrchestrationOperateScope],
-  [WS_METHODS.previewRefresh, AuthOrchestrationOperateScope],
-  [WS_METHODS.previewClose, AuthOrchestrationOperateScope],
-  [WS_METHODS.previewList, AuthOrchestrationReadScope],
-  [WS_METHODS.previewReportStatus, AuthOrchestrationOperateScope],
-  [WS_METHODS.previewAutomationConnect, AuthOrchestrationOperateScope],
-  [WS_METHODS.previewAutomationRespond, AuthOrchestrationOperateScope],
-  [WS_METHODS.previewAutomationFocusHost, AuthOrchestrationOperateScope],
-  [WS_METHODS.subscribePreviewEvents, AuthOrchestrationReadScope],
-  [WS_METHODS.subscribeDiscoveredLocalServers, AuthOrchestrationReadScope],
   [WS_METHODS.subscribeServerConfig, AuthOrchestrationReadScope],
   [WS_METHODS.subscribeServerLifecycle, AuthOrchestrationReadScope],
   [WS_METHODS.subscribeAuthAccess, AuthAccessReadScope],
@@ -463,7 +454,6 @@ const toShellStreamEvent = (
 
 const makeWsRpcLayer = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
-  previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
   /**
    * Shared server-scoped shell live stream. One `streamDomainEvents` consumer
    * maps through `toShellStreamEvent` and republishes; each `subscribeShell`
@@ -485,14 +475,20 @@ const makeWsRpcLayer = (
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
       const terminalManager = yield* TerminalManager.TerminalManager;
-      const previewManager = yield* PreviewManager.PreviewManager;
-      const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
       const providerService = yield* ProviderService;
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const fileSystemForExtensions = yield* FileSystem.FileSystem;
+      const pathForExtensions = yield* Path.Path;
+      const extensionMarketplace = ExtensionMarketplace.make({
+        serverSettings,
+        serverConfig: config,
+        fileSystem: fileSystemForExtensions,
+        path: pathForExtensions,
+      });
       const textGeneration = yield* TextGeneration.TextGeneration;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
@@ -1276,6 +1272,28 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
+        [WS_METHODS.providerUsageSummary]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.providerUsageSummary,
+            projectionSnapshotQuery.getProviderUsageSummary === undefined
+              ? Effect.fail(
+                  new OrchestrationGetSnapshotError({
+                    message: "Provider usage summary query is unavailable",
+                  }),
+                )
+              : projectionSnapshotQuery.getProviderUsageSummary(input).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new OrchestrationGetSnapshotError({
+                        message: "Failed to load provider usage summary",
+                        cause,
+                      }),
+                  ),
+                ),
+            {
+              "rpc.aggregate": "provider",
+            },
+          ),
         [WS_METHODS.serverGenerateScenerySet]: ({ location }) =>
           observeRpcEffect(
             WS_METHODS.serverGenerateScenerySet,
@@ -1326,6 +1344,18 @@ const makeWsRpcLayer = (
         [WS_METHODS.serverSignalProcess]: (input) =>
           observeRpcEffect(WS_METHODS.serverSignalProcess, processDiagnostics.signal(input), {
             "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.extensionsDiscover]: (_input) =>
+          observeRpcEffect(WS_METHODS.extensionsDiscover, extensionMarketplace.discover, {
+            "rpc.aggregate": "extensions",
+          }),
+        [WS_METHODS.extensionsInstall]: (input) =>
+          observeRpcEffect(WS_METHODS.extensionsInstall, extensionMarketplace.install(input), {
+            "rpc.aggregate": "extensions",
+          }),
+        [WS_METHODS.extensionsUninstall]: (input) =>
+          observeRpcEffect(WS_METHODS.extensionsUninstall, extensionMarketplace.uninstall(input), {
+            "rpc.aggregate": "extensions",
           }),
         [WS_METHODS.cloudGetRelayClientStatus]: (_input) =>
           observeRpcEffect(WS_METHODS.cloudGetRelayClientStatus, relayClient.resolve, {
@@ -1680,78 +1710,6 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "terminal" },
           ),
-        [WS_METHODS.previewOpen]: (input) =>
-          observeRpcEffect(WS_METHODS.previewOpen, previewManager.open(input), {
-            "rpc.aggregate": "preview",
-          }),
-        [WS_METHODS.previewNavigate]: (input) =>
-          observeRpcEffect(WS_METHODS.previewNavigate, previewManager.navigate(input), {
-            "rpc.aggregate": "preview",
-          }),
-        [WS_METHODS.previewResize]: (input) =>
-          observeRpcEffect(WS_METHODS.previewResize, previewManager.resize(input), {
-            "rpc.aggregate": "preview",
-          }),
-        [WS_METHODS.previewRefresh]: (input) =>
-          observeRpcEffect(WS_METHODS.previewRefresh, previewManager.refresh(input), {
-            "rpc.aggregate": "preview",
-          }),
-        [WS_METHODS.previewClose]: (input) =>
-          observeRpcEffect(WS_METHODS.previewClose, previewManager.close(input), {
-            "rpc.aggregate": "preview",
-          }),
-        [WS_METHODS.previewList]: (input) =>
-          observeRpcEffect(WS_METHODS.previewList, previewManager.list(input), {
-            "rpc.aggregate": "preview",
-          }),
-        [WS_METHODS.previewReportStatus]: (input) =>
-          observeRpcEffect(WS_METHODS.previewReportStatus, previewManager.reportStatus(input), {
-            "rpc.aggregate": "preview",
-          }),
-        [WS_METHODS.previewAutomationConnect]: (input) =>
-          observeRpcStreamEffect(
-            WS_METHODS.previewAutomationConnect,
-            previewAutomationBroker.connect(input),
-            { "rpc.aggregate": "preview-automation" },
-          ),
-        [WS_METHODS.previewAutomationRespond]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.previewAutomationRespond,
-            previewAutomationBroker.respond(input),
-            { "rpc.aggregate": "preview-automation" },
-          ),
-        [WS_METHODS.previewAutomationFocusHost]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.previewAutomationFocusHost,
-            previewAutomationBroker.focusHost(input),
-            { "rpc.aggregate": "preview-automation" },
-          ),
-        [WS_METHODS.subscribePreviewEvents]: (_input) =>
-          observeRpcStream(WS_METHODS.subscribePreviewEvents, previewManager.events, {
-            "rpc.aggregate": "preview",
-          }),
-        [WS_METHODS.subscribeDiscoveredLocalServers]: (_input) =>
-          observeRpcStream(
-            WS_METHODS.subscribeDiscoveredLocalServers,
-            Stream.callback<DiscoveredLocalServerList>((queue) =>
-              Effect.gen(function* () {
-                yield* portDiscovery.retain;
-                const initial = yield* portDiscovery.scan();
-                const initialScannedAt = DateTime.formatIso(yield* DateTime.now);
-                yield* Queue.offer(queue, {
-                  servers: initial,
-                  scannedAt: initialScannedAt,
-                });
-                yield* portDiscovery.subscribe((servers) =>
-                  Effect.gen(function* () {
-                    const scannedAt = DateTime.formatIso(yield* DateTime.now);
-                    yield* Queue.offer(queue, { servers, scannedAt });
-                  }),
-                );
-              }),
-            ),
-            { "rpc.aggregate": "preview" },
-          ),
         [WS_METHODS.subscribeServerConfig]: (_input) =>
           observeRpcStreamEffect(
             WS_METHODS.subscribeServerConfig,
@@ -1856,7 +1814,6 @@ const makeWsRpcLayer = (
 
 export const websocketRpcRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
-    const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
     const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
     const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
 
@@ -1902,7 +1859,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           disableTracing: true,
         }).pipe(
           Effect.provide(
-            makeWsRpcLayer(session, previewAutomationBroker, shellLiveStream).pipe(
+            makeWsRpcLayer(session, shellLiveStream).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(

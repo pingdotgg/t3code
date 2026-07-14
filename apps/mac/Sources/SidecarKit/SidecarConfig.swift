@@ -87,7 +87,6 @@ public struct SidecarConfig: Sendable {
     public var host: String
     public var baseDir: String
     public var logDirectory: String
-    public var noBrowser: Bool
 
     /// - Parameters:
     ///   - nodePath: Absolute path to a `node` binary, typically from
@@ -98,7 +97,7 @@ public struct SidecarConfig: Sendable {
     ///     pass a fixed value to override.
     ///   - baseDir: Server state directory. Defaults to
     ///     `~/Library/Application Support/SergeCode`, distinct from any
-    ///     Electron install's state dir.
+    ///     other server installations' state directories.
     ///   - logDirectory: Where rotated stdout/stderr logs land. Defaults to
     ///     `<baseDir>/logs/sidecar`.
     public init(
@@ -107,8 +106,7 @@ public struct SidecarConfig: Sendable {
         port: Int? = nil,
         host: String = "127.0.0.1",
         baseDir: String? = nil,
-        logDirectory: String? = nil,
-        noBrowser: Bool = true
+        logDirectory: String? = nil
     ) throws {
         self.nodePath = nodePath
         self.entryPath = entryPath
@@ -118,12 +116,10 @@ public struct SidecarConfig: Sendable {
         self.baseDir = resolvedBaseDir
         self.logDirectory =
             logDirectory ?? (resolvedBaseDir as NSString).appendingPathComponent("logs/sidecar")
-        self.noBrowser = noBrowser
     }
 
-    /// `~/Library/Application Support/SergeCode` — kept distinct from any
-    /// Electron desktop install's `T3CODE_HOME` so the two never share a
-    /// SQLite file.
+    /// `~/Library/Application Support/SergeCode` — a dedicated native-app
+    /// state directory.
     public static func defaultBaseDir(fileManager: FileManager = .default) -> String {
         let appSupport =
             fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first

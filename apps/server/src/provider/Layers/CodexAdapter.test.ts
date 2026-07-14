@@ -546,6 +546,7 @@ const lifecycleLayer = it.layer(
       const codexConfig = decodeCodexSettings({});
       return yield* makeCodexAdapter(codexConfig, {
         makeRuntime: lifecycleRuntimeFactory.factory,
+        mapRawResponseItems: true,
       });
     }),
   ).pipe(
@@ -838,6 +839,149 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("maps raw response message completions to assistant text events", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const collectedFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(
+        Effect.forkChild,
+      );
+
+      yield* runtime.emit({
+        id: asEventId("evt-raw-response-message"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "rawResponseItem/completed",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        payload: {
+          threadId: "provider-thread-1",
+          turnId: "turn-1",
+          item: {
+            type: "message",
+            id: "raw-msg-1",
+            role: "assistant",
+            phase: "commentary",
+            content: [
+              { type: "output_text", text: "I'll inspect the code, " },
+              { type: "output_text", text: "then patch it." },
+            ],
+          },
+        },
+      } satisfies ProviderEvent);
+
+      const events = Array.from(yield* Fiber.join(collectedFiber));
+      const delta = events[0];
+      NodeAssert.equal(delta?.type, "content.delta");
+      if (delta?.type === "content.delta") {
+        NodeAssert.equal(delta.itemId, "raw-msg-1");
+        NodeAssert.equal(delta.turnId, "turn-1");
+        NodeAssert.equal(delta.payload.streamKind, "assistant_text");
+        NodeAssert.equal(delta.payload.delta, "I'll inspect the code, then patch it.");
+      }
+
+      const completed = events[1];
+      NodeAssert.equal(completed?.type, "item.completed");
+      if (completed?.type === "item.completed") {
+        NodeAssert.equal(completed.eventId, "evt-raw-response-message:completed");
+        NodeAssert.equal(completed.itemId, "raw-msg-1");
+        NodeAssert.equal(completed.payload.itemType, "assistant_message");
+        NodeAssert.equal(completed.payload.detail, "I'll inspect the code, then patch it.");
+      }
+    }),
+  );
+
+  it.effect("maps raw response tool calls to tool lifecycle events", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-raw-response-tool"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "rawResponseItem/completed",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        payload: {
+          threadId: "provider-thread-1",
+          turnId: "turn-1",
+          item: {
+            type: "function_call",
+            id: "fc_1",
+            call_id: "call_1",
+            name: "exec_command",
+            arguments: '{"cmd":"ls"}',
+          },
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+      NodeAssert.equal(firstEvent._tag, "Some");
+      const toolEvent = firstEvent._tag === "Some" ? firstEvent.value : undefined;
+      NodeAssert.equal(toolEvent?.type, "item.completed");
+      if (toolEvent?.type !== "item.completed") {
+        return;
+      }
+      // call_id is preferred over id so a tool call and its paired output share
+      // one lifecycle key.
+      NodeAssert.equal(toolEvent.itemId, "call_1");
+      NodeAssert.equal(toolEvent.payload.itemType, "dynamic_tool_call");
+      NodeAssert.equal(toolEvent.payload.title, "exec_command");
+      NodeAssert.equal(toolEvent.payload.detail, 'exec_command: {"cmd":"ls"}');
+    }),
+  );
+
+  it.effect("maps raw response reasoning completions to reasoning + item.completed", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const collectedFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(
+        Effect.forkChild,
+      );
+
+      yield* runtime.emit({
+        id: asEventId("evt-raw-response-reasoning"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "rawResponseItem/completed",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        payload: {
+          threadId: "provider-thread-1",
+          turnId: "turn-1",
+          item: {
+            type: "reasoning",
+            id: "reasoning-1",
+            summary: [
+              { type: "summary_text", text: "Plan the change, " },
+              { type: "summary_text", text: "then apply it." },
+            ],
+          },
+        },
+      } satisfies ProviderEvent);
+
+      const events = Array.from(yield* Fiber.join(collectedFiber));
+      const delta = events[0];
+      NodeAssert.equal(delta?.type, "content.delta");
+      if (delta?.type === "content.delta") {
+        NodeAssert.equal(delta.itemId, "reasoning-1");
+        NodeAssert.equal(delta.payload.streamKind, "reasoning_summary_text");
+        NodeAssert.equal(delta.payload.delta, "Plan the change, then apply it.");
+      }
+
+      const completed = events[1];
+      NodeAssert.equal(completed?.type, "item.completed");
+      if (completed?.type === "item.completed") {
+        NodeAssert.equal(completed.eventId, "evt-raw-response-reasoning:completed");
+        NodeAssert.equal(completed.itemId, "reasoning-1");
+        NodeAssert.equal(completed.payload.itemType, "reasoning");
+        NodeAssert.equal(completed.payload.detail, "Plan the change, then apply it.");
+      }
+    }),
+  );
+
   it.effect("maps session/exited payload stderrTail onto canonical session.exited", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();
@@ -1042,7 +1186,46 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         firstEvent.value.payload.message,
         "The filename or extension is too long. (os error 206)",
       );
+      NodeAssert.deepStrictEqual(firstEvent.value.payload.detail, {
+        surface: "process/stderr",
+      });
     }),
+  );
+
+  it.effect(
+    "forces detail.surface to process/stderr even when payload carries a conflicting surface",
+    () =>
+      Effect.gen(function* () {
+        const { adapter, runtime } = yield* startLifecycleRuntime();
+        const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+        yield* runtime.emit({
+          id: asEventId("evt-process-stderr-conflicting-surface"),
+          kind: "notification",
+          provider: ProviderDriverKind.make("codex"),
+          threadId: asThreadId("thread-1"),
+          createdAt: "2026-01-01T00:00:00.000Z",
+          method: "process/stderr",
+          turnId: asTurnId("turn-1"),
+          message: "warning line with conflicting payload surface",
+          payload: { surface: "something-else", extra: "keep-me" },
+        } satisfies ProviderEvent);
+
+        const firstEvent = yield* Fiber.join(firstEventFiber);
+
+        NodeAssert.equal(firstEvent._tag, "Some");
+        if (firstEvent._tag !== "Some") {
+          return;
+        }
+        NodeAssert.equal(firstEvent.value.type, "runtime.warning");
+        if (firstEvent.value.type !== "runtime.warning") {
+          return;
+        }
+        NodeAssert.deepStrictEqual(firstEvent.value.payload.detail, {
+          surface: "process/stderr",
+          extra: "keep-me",
+        });
+      }),
   );
 
   it.effect("maps realtime started notifications with upstream realtime session ids", () =>
@@ -1112,6 +1295,9 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         firstEvent.value.payload.message,
         "2026-03-31T18:14:06.833399Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: HTTP error: 503 Service Unavailable, url: wss://chatgpt.com/backend-api/codex/responses",
       );
+      NodeAssert.deepStrictEqual(firstEvent.value.payload.detail, {
+        surface: "process/stderr",
+      });
     }),
   );
 
@@ -1388,15 +1574,18 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         totalProcessedTokens: 11_839,
         maxTokens: 258_400,
         inputTokens: 120,
+        uncachedInputTokens: 120,
         cachedInputTokens: 0,
         outputTokens: 6,
         reasoningOutputTokens: 0,
         lastUsedTokens: 126,
         lastInputTokens: 120,
+        lastUncachedInputTokens: 120,
         lastCachedInputTokens: 0,
         lastOutputTokens: 6,
         lastReasoningOutputTokens: 0,
         compactsAutomatically: true,
+        accountingStatus: "provider-reported",
       });
     }),
   );

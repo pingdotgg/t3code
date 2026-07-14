@@ -161,7 +161,7 @@ public struct ChangesTimelineView: View {
     }
 
     private func openAllChanges() {
-        withAnimation(Motion.settle) {
+        withAnimation(Motion.structure) {
             model.openReview(threadID: threadID, scope: .allChanges)
         }
     }
@@ -316,7 +316,7 @@ public struct ChangesTimelineView: View {
             }
         } else if files.count > 6 && !expandedFileCheckpoints.contains(checkpoint.id) {
             Button {
-                withAnimation(Motion.snap) {
+                withAnimation(Motion.feedback) {
                     _ = expandedFileCheckpoints.insert(checkpoint.id)
                 }
             } label: {
@@ -340,7 +340,7 @@ public struct ChangesTimelineView: View {
                 }
                 if files.count > 6 {
                     Button {
-                        withAnimation(Motion.snap) {
+                        withAnimation(Motion.feedback) {
                             _ = expandedFileCheckpoints.remove(checkpoint.id)
                         }
                     } label: {
@@ -418,7 +418,7 @@ public struct ChangesTimelineView: View {
     private func openCheckpoint(
         _ checkpoint: Checkpoint, previousTurn: Int, focusPath: String?
     ) {
-        withAnimation(Motion.settle) {
+        withAnimation(Motion.structure) {
             model.openReview(
                 threadID: threadID,
                 scope: .checkpoint(

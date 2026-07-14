@@ -83,9 +83,21 @@ export function applyServerSettingsPatch(
     ...(patch.providerInstances !== undefined
       ? { providerInstances: patch.providerInstances }
       : {}),
+    ...(patch.globalEnvironment !== undefined
+      ? { globalEnvironment: patch.globalEnvironment }
+      : {}),
     ...(patch.customInstructions !== undefined
       ? { customInstructions: patch.customInstructions }
       : {}),
+    ...(patch.tokenEfficiency?.customModelPricing !== undefined
+      ? {
+          tokenEfficiency: {
+            ...next.tokenEfficiency,
+            customModelPricing: patch.tokenEfficiency.customModelPricing,
+          },
+        }
+      : {}),
+    ...(patch.extensions !== undefined ? { extensions: patch.extensions } : {}),
     ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
   };
   if (!selectionPatch) {

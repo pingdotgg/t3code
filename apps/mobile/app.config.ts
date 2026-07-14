@@ -10,10 +10,8 @@ Object.assign(process.env, repoEnv);
 const APP_VARIANT = resolveAppVariant(repoEnv.APP_VARIANT);
 
 // All variants use the plain SurgeCode ./assets/icon.png (see
-// scripts/generate-appicon.swift). assets/icon-composer-{dev,prod}.icon are
-// stale upstream Icon Composer bundles (still carrying the old T3 mark,
-// Assets/T3.svg) — no longer referenced from this config, left in place
-// rather than hand-authoring new .icon bundles.
+// scripts/generate-appicon.swift). The Icon Composer bundles are kept in sync
+// with the canonical mark for source parity but are not referenced by Expo.
 const VARIANT_CONFIG: Record<
   AppVariant,
   {
@@ -22,7 +20,6 @@ const VARIANT_CONFIG: Record<
     readonly iosIcon: string;
     readonly iosBundleIdentifier: string;
     readonly androidPackage: string;
-    readonly relyingParty?: string;
   }
 > = {
   development: {
@@ -31,7 +28,6 @@ const VARIANT_CONFIG: Record<
     iosIcon: "./assets/icon.png",
     iosBundleIdentifier: "com.sergeserb.sergecode.dev",
     androidPackage: "com.sergeserb.sergecode.dev",
-    relyingParty: "clerk.t3.codes",
   },
   preview: {
     appName: "SurgeCode Preview",
@@ -39,7 +35,6 @@ const VARIANT_CONFIG: Record<
     iosIcon: "./assets/icon.png",
     iosBundleIdentifier: "com.sergeserb.sergecode.preview",
     androidPackage: "com.sergeserb.sergecode.preview",
-    relyingParty: "clerk.t3.codes",
   },
   production: {
     appName: "SurgeCode",
@@ -47,7 +42,6 @@ const VARIANT_CONFIG: Record<
     iosIcon: "./assets/icon.png",
     iosBundleIdentifier: "com.sergeserb.sergecode",
     androidPackage: "com.sergeserb.sergecode",
-    relyingParty: "clerk.t3.codes",
   },
 };
 
@@ -64,18 +58,13 @@ function resolveAppVariant(value: string | undefined): AppVariant {
 
 const variant = VARIANT_CONFIG[APP_VARIANT];
 
-// Free-Apple-ID device builds: sign with the developer's Personal Team
-// instead of the pinned T3 Tools team. Personal teams cannot sign app
+// Free-Apple-ID device builds: sign with the developer's Personal Team.
+// Personal teams cannot sign app
 // groups, push, or associated domains, and cannot claim another team's
 // bundle identifier — so this drops the widgets extension and associated
 // domains and uses a team-derived bundle id. Local development installs
-// only; hosted (EAS) and non-development builds refuse the flag outright.
+// only; non-development builds refuse the flag outright.
 const personalSigning = process.env.SERGECODE_PERSONAL_SIGNING === "1";
-if (personalSigning && (process.env.EAS_BUILD === "true" || process.env.EAS_BUILD_PROFILE)) {
-  throw new Error(
-    "SERGECODE_PERSONAL_SIGNING is for local device installs and must never reach an EAS build.",
-  );
-}
 if (personalSigning && APP_VARIANT !== "development") {
   throw new Error(
     `SERGECODE_PERSONAL_SIGNING only supports APP_VARIANT=development (got "${APP_VARIANT}").`,
@@ -95,6 +84,11 @@ const iosBundleIdentifier = personalSigning
   ? (process.env.SERGECODE_PERSONAL_BUNDLE_ID ??
     `dev.${PERSONAL_TEAM_ID!.toLowerCase()}.sergecode.development`)
   : variant.iosBundleIdentifier;
+const appleTeamId = personalSigning ? PERSONAL_TEAM_ID : repoEnv.T3CODE_APPLE_TEAM_ID;
+const associatedDomains = repoEnv.T3CODE_CLERK_PASSKEY_RP_DOMAINS?.split(",")
+  .map((domain) => domain.trim())
+  .filter((domain) => domain !== "")
+  .flatMap((domain) => [`applinks:${domain}`, `webcredentials:${domain}`]);
 
 const config: ExpoConfig = {
   name: variant.appName,
@@ -102,40 +96,17 @@ const config: ExpoConfig = {
   platforms: ["ios", "android"],
   scheme: variant.scheme,
   version: "0.1.0",
-  runtimeVersion: {
-    policy: process.env.MOBILE_VERSION_POLICY ?? "appVersion",
-  },
   orientation: "portrait",
   icon: "./assets/icon.png",
   userInterfaceStyle: "automatic",
-  // Upstream EAS project leftovers (T3 Tools' expo.dev project). SergeCode
-  // does not run hosted EAS updates/builds; local personal-signed builds
-  // never contact this URL/project. Left in place rather than pointed at a
-  // new EAS project — do not create or contact one.
-  updates: {
-    enabled: true,
-    url: "https://u.expo.dev/d763fcb8-d37c-41ea-a773-b54a0ab4a454",
-    checkAutomatically: "ON_LOAD",
-    fallbackToCacheTimeout: 0,
-  },
   ios: {
     icon: variant.iosIcon,
     supportsTablet: true,
     bundleIdentifier: iosBundleIdentifier,
-    // Pin code signing to the T3 Tools team so non-interactive `expo run:ios`
-    // does not fall back to a personal team (which cannot sign app groups,
-    // Sign in with Apple, or push notification entitlements).
-    appleTeamId: personalSigning ? PERSONAL_TEAM_ID! : "ARK85ZXQ4Z",
-    // relyingParty (clerk.t3.codes) is an upstream T3 Tools leftover, unused
-    // by local personal-signed builds (which drop associatedDomains below).
-    ...(personalSigning
-      ? {}
-      : {
-          associatedDomains: [
-            `applinks:${variant.relyingParty}`,
-            `webcredentials:${variant.relyingParty}`,
-          ],
-        }),
+    ...(appleTeamId ? { appleTeamId } : {}),
+    ...(!personalSigning && associatedDomains && associatedDomains.length > 0
+      ? { associatedDomains }
+      : {}),
     infoPlist: {
       NSAppTransportSecurity: {
         NSAllowsArbitraryLoads: true,
@@ -155,9 +126,6 @@ const config: ExpoConfig = {
       monochromeImage: "./assets/android-icon-monochrome.png",
     },
     predictiveBackGestureEnabled: false,
-  },
-  web: {
-    favicon: "./assets/favicon.png",
   },
   plugins: [
     // Expo entitlement mods compose LIFO (each plugin wraps the previous),
@@ -239,7 +207,7 @@ const config: ExpoConfig = {
     },
     unsplash: {
       // Public read-only access key for Dolomites scenery. Delivered at
-      // build time (root .env.local locally, EAS env in CI) — never
+      // build time from the root .env.local — never
       // committed. Absent key = gradient washes everywhere.
       accessKey: repoEnv.EXPO_PUBLIC_UNSPLASH_ACCESS_KEY ?? null,
     },
@@ -248,14 +216,7 @@ const config: ExpoConfig = {
       tracesDataset: repoEnv.EXPO_PUBLIC_OTLP_TRACES_DATASET ?? null,
       tracesToken: repoEnv.EXPO_PUBLIC_OTLP_TRACES_TOKEN ?? null,
     },
-    // eas.projectId and owner (below) are the upstream T3 Tools EAS project
-    // — upstream leftovers unused by local personal-signed builds. Do not
-    // create or contact a SergeCode EAS project.
-    eas: {
-      projectId: "d763fcb8-d37c-41ea-a773-b54a0ab4a454",
-    },
   },
-  owner: "pingdotgg",
 };
 
 export default config;

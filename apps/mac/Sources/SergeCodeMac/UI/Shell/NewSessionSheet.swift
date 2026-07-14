@@ -120,7 +120,7 @@ struct NewSessionSheet: View {
                 }
             }
             .id(mode)
-            .transition(Motion.paneSwap)
+            .transition(Motion.paneChange)
 
             Picker("Provider", selection: $provider) {
                 if configuredProviderKinds.isEmpty {
@@ -168,19 +168,21 @@ struct NewSessionSheet: View {
                 Spacer()
                 Button("Cancel") { isPresented = false }
                     .buttonStyle(.glass)
+                    .keyboardShortcut(.cancelAction)
                 Button("Create") {
                     Task { await create() }
                 }
                 .buttonStyle(.glass)
                 .tint(.accentColor)
                 .disabled(isBusy || !canCreate)
+                .keyboardShortcut(.defaultAction)
             }
         }
         .padding(24)
         .frame(width: 420)
         .glassEffect(.regular, in: .rect(cornerRadius: 20))
-        .animation(Motion.settle, value: mode)
-        .animation(Motion.fade, value: errorMessage == nil)
+        .animation(Motion.structure, value: mode)
+        .animation(Motion.reveal, value: errorMessage == nil)
         .task {
             // Warm the settings so the folder picker can open at the
             // configured default projects directory.
@@ -329,5 +331,50 @@ struct NewSessionSheet: View {
                 model.lastError
                 ?? "Couldn't create a new \(provider.displayName) session. Check provider settings and try again."
         }
+    }
+}
+
+/// Presents `NewSessionSheet` in a standalone AppKit window so the ⌘N menu
+/// command (registered in a `CommandGroup`) can open it without reaching
+/// into `RootView`'s own `@UIState` sheet-presentation flag — a custom View
+/// with `@Environment(\.openWindow)` inside a `CommandGroup` crashes AppKit
+/// menu layout on this SDK (see `AboutWindowController`), and `RootView`'s
+/// sheet flag lives outside this batch's file scope.
+@MainActor
+final class NewSessionWindowController: NSObject, NSWindowDelegate {
+    static let shared = NewSessionWindowController()
+    private var window: NSWindow?
+
+    func show(multi: MultiDeviceModel, scenery: SceneryStore, passport: PassportStore) {
+        // Always mint a fresh sheet — reusing a cached window would leak the
+        // previous invocation's typed path/selected provider into this one.
+        window?.close()
+
+        let dismiss = Binding<Bool>(
+            get: { true },
+            set: { [weak self] isPresented in
+                guard !isPresented else { return }
+                self?.window?.close()
+            })
+        let hosting = NSHostingController(
+            rootView: NewSessionSheet(
+                multi: multi, scenery: scenery, passport: passport, isPresented: dismiss))
+        hosting.sizingOptions = [.preferredContentSize]
+        let panel = NSWindow(contentViewController: hosting)
+        DarkAppearanceConfigurator.applyAppearance(to: panel)
+        panel.styleMask = [.titled, .closable, .fullSizeContentView]
+        panel.titlebarAppearsTransparent = true
+        panel.titleVisibility = .hidden
+        panel.title = "New Session"
+        panel.isReleasedWhenClosed = false
+        panel.delegate = self
+        panel.center()
+        window = panel
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        window = nil
     }
 }

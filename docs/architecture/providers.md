@@ -1,6 +1,6 @@
 # Provider architecture
 
-The web app communicates with the server via WebSocket using a simple JSON-RPC-style protocol:
+The native clients communicate with the server over its HTTP and WebSocket protocols:
 
 - **Request/Response**: `{ id, method, params }` → `{ id, result }` or `{ id, error }`
 - **Push events**: typed envelopes with `channel`, `sequence` (monotonic per connection), and channel-specific `data`

@@ -25,7 +25,7 @@ describe("t3code/namespace-node-imports", () => {
   rule.valid(
     "does not apply to non-Node packages",
     `
-      import { BrowserWindow } from "electron";
+      import { Effect } from "effect";
     `,
   );
 

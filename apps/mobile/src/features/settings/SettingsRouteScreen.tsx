@@ -211,8 +211,8 @@ function ConfiguredSettingsRouteScreen() {
 
   const promptSignIn = useCallback(() => {
     Alert.alert(
-      "Request T3 Cloud access",
-      "Live Activity updates require approved T3 Cloud access so relay can deliver updates to this device.",
+      "Request cloud access",
+      "Live Activity updates require approved cloud access so relay can deliver updates to this device.",
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -372,7 +372,7 @@ function ConfiguredSettingsRouteScreen() {
           <SettingsSection title="Account">
             <SettingsRow
               icon="person.crop.circle"
-              label="T3 Account"
+              label="Account"
               value={accountLabel}
               onPress={openAccount}
             />

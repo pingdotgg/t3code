@@ -5,7 +5,6 @@ import {
   PlatformConnectionSource,
   PrimaryEnvironmentAuth,
   RelayDeviceIdentity,
-  SshEnvironmentGateway,
 } from "@t3tools/client-runtime/platform";
 import {
   ConnectionBlockedError,
@@ -92,7 +91,7 @@ const capabilitiesLayer = Layer.succeedContext(
         if (session === null) {
           return yield* new ConnectionBlockedError({
             reason: "authentication",
-            detail: "Sign in to T3 Cloud to connect this environment.",
+            detail: "Sign in to connect this environment.",
           });
         }
         const token = yield* session.readClerkToken().pipe(
@@ -107,7 +106,7 @@ const capabilitiesLayer = Layer.succeedContext(
         if (token === null) {
           return yield* new ConnectionBlockedError({
             reason: "authentication",
-            detail: "The T3 Cloud session is unavailable.",
+            detail: "The cloud session is unavailable.",
           });
         }
         return token;
@@ -136,26 +135,6 @@ const capabilitiesLayer = Layer.succeedContext(
       ClientPresentation.of({
         metadata: authClientMetadata(),
         scopes: AuthStandardClientScopes,
-      }),
-    ),
-    Context.add(
-      SshEnvironmentGateway,
-      SshEnvironmentGateway.of({
-        provision: () =>
-          Effect.fail(
-            new ConnectionBlockedError({
-              reason: "unsupported",
-              detail: "SSH environments are only available in the desktop app.",
-            }),
-          ),
-        prepare: () =>
-          Effect.fail(
-            new ConnectionBlockedError({
-              reason: "unsupported",
-              detail: "SSH environments are only available in the desktop app.",
-            }),
-          ),
-        disconnect: () => Effect.void,
       }),
     ),
   ),

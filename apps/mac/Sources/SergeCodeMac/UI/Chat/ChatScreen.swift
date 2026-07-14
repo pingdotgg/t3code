@@ -21,12 +21,12 @@ public struct ChatScreen: View {
                 let reviewing = model.threadState(thread.id)?.isReviewing == true
                 if reviewing {
                     DiffReviewView(model: model, threadID: thread.id)
-                        .transition(Motion.paneSwap)
+                        .transition(Motion.paneChange)
                 } else {
                     ChatHeaderView(
                         thread: thread, model: model, scenery: scenery, threadKey: threadKey)
                     Divider()
-                    VcsToolbar(model: model)
+                    VcsToolbar(model: model, threadID: thread.id).id(thread.id)
                     ChatTimelineScrollView(model: model, isPinnedToBottom: $isPinnedToBottom)
                     ChatFollowUpBar(model: model)
                     PlanProgressStrip(model: model)
@@ -43,22 +43,21 @@ public struct ChatScreen: View {
                         .padding(.horizontal, 16)
                         .padding(.top, 4)
                         .padding(.bottom, 14)
-                        .transition(Motion.paneSwap)
+                        .transition(Motion.paneChange)
                 }
             } else {
                 ChatEmptyStateView()
                     .transition(.opacity)
             }
         }
-        // Cross-fades the empty state ↔ thread swap; the wallpaper handles
-        // its own photo cross-fade in SceneryImageView.
-        .animation(Motion.settle, value: model.selectedThreadID)
+        // Thread selection is frequent and often keyboard-driven, so the new
+        // session renders immediately. Only occasional mode changes animate.
         .animation(
-            Motion.settle,
+            Motion.structure,
             value: model.selectedThreadID.flatMap { model.threadState($0)?.isReviewing } ?? false
         )
         // The VCS strip unfolds when repo status first arrives for a thread.
-        .animation(Motion.settle, value: model.selectedVcsStatus()?.isRepo ?? false)
+        .animation(Motion.structure, value: model.selectedVcsStatus()?.isRepo ?? false)
         .background {
             // The thread's scene as a full chat wallpaper; the wash inside
             // keeps timeline text readable (see SceneryChatBackground).

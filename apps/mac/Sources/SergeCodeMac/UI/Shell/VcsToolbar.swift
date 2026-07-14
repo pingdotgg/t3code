@@ -6,6 +6,13 @@ import SwiftUI
 /// stacked commit/push/PR action menu.
 struct VcsToolbar: View {
     let model: AppModel
+    /// The thread this toolbar instance is scoped to. The call site keys
+    /// this view's identity to the same id (`.id(thread.id)`) so switching
+    /// threads tears down and remounts a fresh instance — otherwise
+    /// `branches`/`runningAction`/`pendingAction`/`commitMessage` below would
+    /// survive the switch and briefly show thread A's in-flight git state
+    /// over thread B.
+    let threadID: String
 
     @UIState private var branches: [BranchRef] = []
     @UIState private var showNewBranchPrompt = false
@@ -63,7 +70,7 @@ struct VcsToolbar: View {
                     }
                     .buttonStyle(VcsMergePillButtonStyle())
                     .disabled(isRunningAction)
-                    .animation(Motion.fade, value: runningAction)
+                    .animation(Motion.reveal, value: runningAction)
                     .help("Merge the open pull request")
                 }
                 actionMenu(status)
@@ -71,14 +78,14 @@ struct VcsToolbar: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 6)
 
-            if let outcome = model.lastGitActionOutcome {
+            if let outcome = model.lastGitActionOutcome(for: threadID) {
                 outcomeBanner(outcome)
-                    .transition(Motion.bannerDrop)
+                    .transition(Motion.banner)
             }
 
             Divider()
         }
-        .animation(Motion.enter, value: model.lastGitActionOutcome)
+        .animation(Motion.reveal, value: model.lastGitActionOutcome(for: threadID))
         .animation(Motion.ambient, value: status)
         .alert("New branch", isPresented: $showNewBranchPrompt) {
             TextField("Branch name", text: $newBranchName)
@@ -120,8 +127,11 @@ struct VcsToolbar: View {
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
-        .onAppear {
-            Task { branches = await model.listBranches(query: nil) }
+        // Keyed to the thread (not a one-shot `.onAppear`) so the branch
+        // list refreshes for the repo this toolbar instance now belongs to,
+        // and cancels cleanly if the thread changes mid-fetch.
+        .task(id: threadID) {
+            branches = await model.listBranches(query: nil)
         }
     }
 
@@ -184,7 +194,7 @@ struct VcsToolbar: View {
         .menuStyle(.borderlessButton)
         .fixedSize()
         .disabled(isRunningAction)
-        .animation(Motion.fade, value: runningAction)
+        .animation(Motion.reveal, value: runningAction)
     }
 
     private var commitSheetBinding: Binding<Bool> {
@@ -259,6 +269,10 @@ struct VcsToolbar: View {
             }
             Spacer()
             Button {
+                // The flat compat setter clears whichever thread is
+                // currently selected — safe here because this toolbar only
+                // ever renders for the selected thread, so it's always
+                // `threadID` being cleared, matching the outcome read above.
                 model.lastGitActionOutcome = nil
             } label: {
                 Image(systemName: "xmark")

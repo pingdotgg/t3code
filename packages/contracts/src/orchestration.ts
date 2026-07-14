@@ -179,6 +179,33 @@ export const ChatAttachment = Schema.Union([ChatImageAttachment]);
 export type ChatAttachment = typeof ChatAttachment.Type;
 const UploadChatAttachment = Schema.Union([UploadChatImageAttachment]);
 export type UploadChatAttachment = typeof UploadChatAttachment.Type;
+export const ComposerPayloadSourceKind = Schema.Literals([
+  "prompt",
+  "terminal_context",
+  "element_context",
+  "preview_annotation",
+  "review_comment",
+  "image",
+  "generated_instruction",
+]);
+export type ComposerPayloadSourceKind = typeof ComposerPayloadSourceKind.Type;
+
+export const ComposerPayloadWeightSource = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  kind: ComposerPayloadSourceKind,
+  estimatedTokens: NonNegativeInt,
+  estimatedChars: NonNegativeInt,
+  trimAvailable: Schema.Boolean,
+});
+export type ComposerPayloadWeightSource = typeof ComposerPayloadWeightSource.Type;
+
+export const ComposerPayloadWeight = Schema.Struct({
+  estimatedTokens: NonNegativeInt,
+  estimatedChars: NonNegativeInt,
+  sources: Schema.Array(ComposerPayloadWeightSource),
+});
+export type ComposerPayloadWeight = typeof ComposerPayloadWeight.Type;
 
 export const ProjectScriptIcon = Schema.Literals([
   "play",
