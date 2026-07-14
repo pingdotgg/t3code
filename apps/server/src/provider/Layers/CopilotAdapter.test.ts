@@ -495,7 +495,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
               serverUrl: "http://127.0.0.1:43123/mcp/",
               reason: "initial",
             },
-            { sessionId: threadId },
+            { sessionId: runtimeMock.state.lastSession.sessionId },
           ),
         ),
       );
@@ -1364,6 +1364,14 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       // The second turn's SDK user event can arrive after that turn completed
       // and after a new app turn was queued. It must bind to the oldest local
       // turn missing a history boundary instead of hijacking the new queue.
+      config.onEvent?.({
+        id: "subagent-user-message",
+        timestamp,
+        parentId: null,
+        type: "user.message",
+        agentId: "subagent-history",
+        data: { content: "subagent prompt" },
+      } as SessionEvent);
       config.onEvent?.({
         id: "user-message-second",
         timestamp,
@@ -6188,7 +6196,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     }),
   );
 
-  it.effect("completes the active turn on session.idle", () =>
+  it.effect("waits for idle before completing a successful tool turn with a queued follow-up", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
       const threadId = asThreadId("copilot-session-idle-completion");
@@ -6237,6 +6245,49 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         },
       } as SessionEvent);
       emit({
+        id: "evt-copilot-successful-tool-start",
+        timestamp,
+        parentId: null,
+        type: "tool.execution_start",
+        data: {
+          toolCallId: "tool-successful-idle",
+          toolName: "shell",
+          turnId: "sdk-turn-transient-idle",
+          arguments: {
+            command: "true",
+          },
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-successful-tool-complete",
+        timestamp,
+        parentId: null,
+        type: "tool.execution_complete",
+        data: {
+          toolCallId: "tool-successful-idle",
+          turnId: "sdk-turn-transient-idle",
+          success: true,
+          result: {
+            content: "Command completed",
+          },
+        },
+      } as SessionEvent);
+      yield* waitForSdkEventQueue();
+
+      const queuedTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "queue this until the successful tool turn is idle",
+        attachments: [],
+      });
+      NodeAssert.equal(
+        runtimeEvents.some(
+          (event) =>
+            event.type === "turn.completed" && String(event.turnId) === String(turn.turnId),
+        ),
+        false,
+      );
+
+      emit({
         id: "evt-copilot-session-idle",
         timestamp,
         parentId: null,
@@ -6245,6 +6296,8 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           aborted: false,
         },
       } as SessionEvent);
+      yield* waitForSdkEventQueue();
+      yield* TestClock.adjust("300 millis");
 
       for (
         let attempt = 0;
@@ -6258,16 +6311,17 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         yield* waitForSdkEventQueue();
       }
 
-      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
-
       const completions = runtimeEvents.filter(
         (event) => event.type === "turn.completed" && String(event.turnId) === String(turn.turnId),
       );
       NodeAssert.equal(completions.length, 1);
-      const idleStateChanged = runtimeEvents.find(
-        (event) => event.type === "session.state.changed" && event.payload.state === "ready",
+      NodeAssert.equal(
+        runtimeEvents.some(
+          (event) =>
+            event.type === "turn.completed" && String(event.turnId) === String(queuedTurn.turnId),
+        ),
+        false,
       );
-      NodeAssert.ok(idleStateChanged);
 
       emit({
         id: "evt-copilot-session-idle-duplicate",
@@ -6278,21 +6332,20 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           aborted: false,
         },
       } as SessionEvent);
-      for (
-        let attempt = 0;
-        attempt < 20 &&
-        !runtimeEvents.some(
-          (event) => event.type === "session.state.changed" && event.payload.state === "ready",
-        );
-        attempt += 1
-      ) {
-        yield* waitForSdkEventQueue();
-      }
+      yield* waitForSdkEventQueue();
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
 
       const completionsAfterDuplicateIdle = runtimeEvents.filter(
         (event) => event.type === "turn.completed" && String(event.turnId) === String(turn.turnId),
       );
       NodeAssert.equal(completionsAfterDuplicateIdle.length, 1);
+      NodeAssert.equal(
+        runtimeEvents.some(
+          (event) =>
+            event.type === "turn.completed" && String(event.turnId) === String(queuedTurn.turnId),
+        ),
+        false,
+      );
 
       yield* adapter.stopSession(threadId);
     }),
