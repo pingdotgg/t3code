@@ -1176,17 +1176,20 @@ describe("ClaudeAdapterLive", () => {
       }
 
       const skill = startedByItemId.get("tool-skill");
+      assert.equal(skill?.type, "item.started");
       if (skill?.type === "item.started") {
         assert.equal(skill.payload.itemType, "dynamic_tool_call");
         assert.equal(skill.payload.title, "Skill · deep-research");
       }
 
       const computer = startedByItemId.get("tool-computer");
+      assert.equal(computer?.type, "item.started");
       if (computer?.type === "item.started") {
         assert.equal(computer.payload.title, "Computer use · Screenshot");
       }
 
       const mcpAgent = startedByItemId.get("tool-mcp-agent");
+      assert.equal(mcpAgent?.type, "item.started");
       if (mcpAgent?.type === "item.started") {
         assert.equal(mcpAgent.payload.itemType, "mcp_tool_call");
         assert.equal(mcpAgent.payload.title, "Linear · Agent session create");
