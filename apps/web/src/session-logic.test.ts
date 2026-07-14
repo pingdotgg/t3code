@@ -1,6 +1,7 @@
 import {
   EventId,
   MessageId,
+  ProviderDriverKind,
   ThreadId,
   TurnId,
   type OrchestrationThreadActivity,
@@ -691,6 +692,43 @@ describe("workEntryIndicatesToolFailure", () => {
 });
 
 describe("deriveWorkLogEntries", () => {
+  it("hides noisy resolved approval and plan update rows for Copilot only", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "approval-requested",
+        kind: "approval.requested",
+        summary: "Command approval requested",
+        tone: "approval",
+        payload: { requestId: "req-1", requestKind: "command" },
+      }),
+      makeActivity({
+        id: "approval-resolved",
+        kind: "approval.resolved",
+        summary: "Approval resolved",
+        tone: "approval",
+        payload: { requestId: "req-1", requestKind: "command" },
+      }),
+      makeActivity({
+        id: "plan-updated",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        payload: {
+          plan: [{ step: "Implement the change", status: "inProgress" }],
+        },
+      }),
+    ];
+
+    expect(
+      deriveWorkLogEntries(activities, ProviderDriverKind.make("copilot")).map((entry) => entry.id),
+    ).toEqual(["approval-requested"]);
+    expect(
+      deriveWorkLogEntries(activities, ProviderDriverKind.make("codex"))
+        .map((entry) => entry.id)
+        .toSorted(),
+    ).toEqual(["approval-requested", "approval-resolved", "plan-updated"]);
+  });
+
   it("omits tool started entries and keeps completed entries", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

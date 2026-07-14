@@ -627,10 +627,17 @@ export function hasActionableProposedPlan(
 
 export function deriveWorkLogEntries(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
+  provider?: ProviderDriverKind,
 ): WorkLogEntry[] {
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
   const entries: DerivedWorkLogEntry[] = [];
   for (const activity of ordered) {
+    if (
+      provider === "copilot" &&
+      (activity.kind === "approval.resolved" || activity.kind === "turn.plan.updated")
+    ) {
+      continue;
+    }
     if (activity.kind === "tool.started") continue;
     if (activity.kind === "task.started") continue;
     if (activity.kind === "context-window.updated") continue;

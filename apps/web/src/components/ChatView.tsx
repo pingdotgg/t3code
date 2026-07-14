@@ -1861,7 +1861,10 @@ function ChatViewContent(props: ChatViewProps) {
   const selectedProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
   const phase = derivePhase(activeThread?.session ?? null);
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
-  const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
+  const workLogEntries = useMemo(
+    () => deriveWorkLogEntries(threadActivities, selectedProvider),
+    [selectedProvider, threadActivities],
+  );
   const pendingApprovals = useMemo(
     () => derivePendingApprovals(threadActivities),
     [threadActivities],
