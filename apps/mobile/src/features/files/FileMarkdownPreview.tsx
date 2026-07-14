@@ -212,7 +212,18 @@ export function MarkdownPreviewBody(props: {
   ) : (
     <Markdown
       options={{ gfm: true }}
-      renderers={styles.renderers}
+      renderers={
+        props.onLinkPress
+          ? {
+              ...styles.renderers,
+              link: ({ href, children }) => (
+                <NativeText onPress={() => href && onLinkPress(href)} style={styles.styles.link}>
+                  {children}
+                </NativeText>
+              ),
+            }
+          : styles.renderers
+      }
       styles={styles.styles}
       theme={styles.theme}
     >

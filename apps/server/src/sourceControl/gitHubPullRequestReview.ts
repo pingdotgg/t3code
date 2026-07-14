@@ -158,7 +158,8 @@ export function decodeGitHubPullRequestReviewJson(
       )
       .map(normalizeReview),
     threads,
-    unresolvedThreadCount: threads.filter((thread) => !thread.isResolved).length,
+    unresolvedThreadCount: threads.filter((thread) => !thread.isResolved && !thread.isOutdated)
+      .length,
     truncated:
       pullRequest.comments.pageInfo.hasNextPage ||
       pullRequest.reviews.pageInfo.hasNextPage ||

@@ -20,7 +20,7 @@ struct VcsToolbar: View {
     @UIState private var pendingAction: GitAction?
     @UIState private var commitMessage = ""
     @UIState private var runningAction: GitAction?
-    @UIState private var showPullRequestReview = false
+    @UIState private var pullRequestReviewReference: String?
 
     private var isRunningAction: Bool { runningAction != nil }
 
@@ -54,7 +54,7 @@ struct VcsToolbar: View {
                 }
                 if let prNumber = status.prNumber {
                     Button {
-                        showPullRequestReview = true
+                        pullRequestReviewReference = String(prNumber)
                     } label: {
                         Label(
                             status.unresolvedReviewThreadCount.map { "Comments · \($0)" }
@@ -117,10 +117,13 @@ struct VcsToolbar: View {
         .sheet(isPresented: commitSheetBinding) {
             commitMessageSheet
         }
-        .sheet(isPresented: $showPullRequestReview) {
-            if let prNumber = status.prNumber {
-                PullRequestReviewView(
-                    model: model, threadID: threadID, reference: String(prNumber))
+        .sheet(
+            isPresented: Binding(
+                get: { pullRequestReviewReference != nil },
+                set: { if !$0 { pullRequestReviewReference = nil } })
+        ) {
+            if let reference = pullRequestReviewReference {
+                PullRequestReviewView(model: model, threadID: threadID, reference: reference)
             }
         }
     }
