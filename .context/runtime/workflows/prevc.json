@@ -1,7 +1,7 @@
 {
   "version": 2,
   "workflowType": "prevc",
-  "updatedAt": "2026-07-15T00:45:28.587Z",
+  "updatedAt": "2026-07-15T00:45:28.706Z",
   "status": {
     "project": {
       "name": "issue-780-native-desktop-notifications",
@@ -121,10 +121,20 @@
           "stepDescription": "Map shell, settings, IPC, window, and routing sources",
           "notes": "Mapped shell/projector, settings persistence, Electron window/IPC, and environment-thread routing.",
           "timestamp": "2026-07-15T00:45:28.587Z"
+        },
+        {
+          "phase": "P",
+          "action": "step_completed",
+          "plan": "issue-780-native-desktop-notifications",
+          "planPhase": "planning",
+          "stepIndex": 3,
+          "stepDescription": "Define implementation and validation gates",
+          "notes": "Canonical design, acceptance matrix, sensors, evidence, and PR boundaries recorded.",
+          "timestamp": "2026-07-15T00:45:28.706Z"
         }
       ],
-      "last_activity": "2026-07-15T00:45:28.587Z",
-      "resume_context": "Concluído: Map shell, settings, IPC, window, and routing sources"
+      "last_activity": "2026-07-15T00:45:28.706Z",
+      "resume_context": "Concluído: Define implementation and validation gates"
     }
   },
   "binding": {

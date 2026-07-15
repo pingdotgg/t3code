@@ -1,7 +1,7 @@
 {
   "planSlug": "issue-780-native-desktop-notifications",
   "linkedAt": "2026-07-15T00:43:17.078Z",
-  "progress": 18,
+  "progress": 27,
   "phases": {
     "planning": {
       "phaseId": "planning",
@@ -27,12 +27,22 @@
           ],
           "completedAt": "2026-07-15T00:45:28.583Z",
           "notes": "Mapped shell/projector, settings persistence, Electron window/IPC, and environment-thread routing."
+        },
+        {
+          "stepIndex": 3,
+          "description": "Define implementation and validation gates",
+          "status": "completed",
+          "deliverables": [
+            "Approved plan"
+          ],
+          "completedAt": "2026-07-15T00:45:28.704Z",
+          "notes": "Canonical design, acceptance matrix, sensors, evidence, and PR boundaries recorded."
         }
       ],
-      "completedAt": "2026-07-15T00:45:28.583Z",
-      "commitHash": "f3b0514721a199efe3a9607ad66b0c5e35b91382",
-      "commitShortHash": "f3b051472",
-      "committedAt": "2026-07-15T00:45:28.572Z",
+      "completedAt": "2026-07-15T00:45:28.704Z",
+      "commitHash": "e5b4f5fde75db53bc26aa4c03eefbce5ba2cd18e",
+      "commitShortHash": "e5b4f5fde",
+      "committedAt": "2026-07-15T00:45:28.694Z",
       "committedBy": "AI Context Agent"
     }
   },
@@ -86,5 +96,5 @@
       "decidedAt": "2026-07-15T00:45:28.412Z"
     }
   ],
-  "lastUpdated": "2026-07-15T00:45:28.583Z"
+  "lastUpdated": "2026-07-15T00:45:28.704Z"
 }
