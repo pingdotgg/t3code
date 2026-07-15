@@ -393,11 +393,33 @@ describe("stripUndeclaredSettings", () => {
     expect(result._tag).toBe("Unsupported");
   });
 
-  it("refuses allOf rather than passing the value through", () => {
+  // The test a reviewer asked for, against REAL derivation rather than a hand-built
+  // node — which is exactly why the first version of this fix was wrong.
+  it("still strips a nested field that carries an annotation", () => {
+    // `annotateKey` derives to `{type:"object", properties:{...}, allOf:[{description}]}`
+    // — an `allOf` on a node that also has its own properties. Refusing every `allOf`
+    // made this ordinary field decode, activate, and then reject every save forever.
+    const schema = Schema.Struct({
+      advanced: Schema.Struct({ retries: Schema.String }).pipe(
+        Schema.annotateKey({ description: "Advanced options" }),
+      ),
+    });
+    const result = stripUndeclaredSettings({ advanced: { retries: "3", injected: "no" } }, schema);
+    expect(result).toEqual({ _tag: "Stripped", value: { advanced: { retries: "3" } } });
+  });
+
+  it("refuses a genuine structural allOf rather than passing the value through", () => {
+    // The node carries its OWN properties as well as a structural allOf member.
+    // That combination matters: with an allOf-only node, merely ignoring the allOf
+    // would ALSO yield Unsupported (via "declares no properties"), so the test would
+    // pass for the wrong reason and could not tell "refused the intersection" from
+    // "ignored it". Here, ignoring the allOf would return Stripped and the test fails.
     const result = stripAgainstJsonSchemaDocument({
-      value: { retries: "1", injected: "no" },
+      value: { retries: "1", extra: "x" },
       schema: {
-        allOf: [{ type: "object", properties: { retries: { type: "string" } } }],
+        type: "object",
+        properties: { retries: { type: "string" } },
+        allOf: [{ type: "object", properties: { extra: { type: "string" } } }],
       },
     });
     expect(result._tag).toBe("Unsupported");
