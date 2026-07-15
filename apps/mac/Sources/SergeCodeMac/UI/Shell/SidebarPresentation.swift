@@ -242,7 +242,9 @@ enum SidebarProjection {
         guard !term.isEmpty else { return [] }
 
         return groups.flatMap { group in
-            let projectMatches = group.name.localizedCaseInsensitiveContains(term)
+            let projectMatches = group.members.contains {
+                $0.project.name.localizedCaseInsensitiveContains(term)
+            }
             return group.threads.filter { item in
                 projectMatches
                     || item.thread.title.localizedCaseInsensitiveContains(term)

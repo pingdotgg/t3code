@@ -86,6 +86,35 @@ struct ThreadPinningTests {
         #expect(model.manualThreadOrder[projectID] == [pinned.id, second.id, first.id])
     }
 
+    @Test("pin persistence is scoped to each device")
+    func pinPersistenceIsScopedToDevice() {
+        let suffix = UUID().uuidString
+        let firstDevice = DeviceID(rawValue: "first-\(suffix)")
+        let secondDevice = DeviceID(rawValue: "second-\(suffix)")
+        let firstKey = "SergeCode.pinnedThreadIDs.\(firstDevice.rawValue)"
+        let secondKey = "SergeCode.pinnedThreadIDs.\(secondDevice.rawValue)"
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: firstKey)
+        defaults.removeObject(forKey: secondKey)
+        defer {
+            defaults.removeObject(forKey: firstKey)
+            defaults.removeObject(forKey: secondKey)
+        }
+
+        let firstThread = makeThread(id: "first-thread-\(suffix)", at: 2)
+        let secondThread = makeThread(id: "second-thread-\(suffix)", at: 1)
+        let firstModel = AppModel(backend: MockBackend(), deviceID: firstDevice)
+        let secondModel = AppModel(backend: MockBackend(), deviceID: secondDevice)
+
+        firstModel.togglePinned(firstThread)
+        secondModel.togglePinned(secondThread)
+
+        let reloadedFirst = AppModel(backend: MockBackend(), deviceID: firstDevice)
+        let reloadedSecond = AppModel(backend: MockBackend(), deviceID: secondDevice)
+        #expect(reloadedFirst.pinnedThreadIDs == [firstThread.id])
+        #expect(reloadedSecond.pinnedThreadIDs == [secondThread.id])
+    }
+
     private func makeThread(
         id: String,
         projectID: String = "project",

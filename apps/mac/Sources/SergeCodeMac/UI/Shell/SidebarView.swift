@@ -46,7 +46,6 @@ struct SidebarView: View {
 
     private var projectGroups: [SidebarProjectGroup] {
         SidebarProjection.projectGroups(in: multi, scope: machineScope)
-            .filter { !$0.threads.isEmpty }
     }
 
     private var attentionThreads: [SidebarThreadItem] {
@@ -306,17 +305,19 @@ struct SidebarView: View {
                     deleteThreadTarget = ThreadActionTarget(model: model, thread: item.thread)
                 }
                 .disabled(!item.isSelectable)
-                Divider()
-                Button("Move Up", systemImage: "arrow.up") {
-                    model.moveThread(item.thread, direction: .up)
+                if case .project = context {
+                    Divider()
+                    Button("Move Up", systemImage: "arrow.up") {
+                        model.moveThread(item.thread, direction: .up)
+                    }
+                    .disabled(
+                        !item.isSelectable || !model.canMoveThread(item.thread, direction: .up))
+                    Button("Move Down", systemImage: "arrow.down") {
+                        model.moveThread(item.thread, direction: .down)
+                    }
+                    .disabled(
+                        !item.isSelectable || !model.canMoveThread(item.thread, direction: .down))
                 }
-                .disabled(
-                    !item.isSelectable || !model.canMoveThread(item.thread, direction: .up))
-                Button("Move Down", systemImage: "arrow.down") {
-                    model.moveThread(item.thread, direction: .down)
-                }
-                .disabled(
-                    !item.isSelectable || !model.canMoveThread(item.thread, direction: .down))
             }
     }
 

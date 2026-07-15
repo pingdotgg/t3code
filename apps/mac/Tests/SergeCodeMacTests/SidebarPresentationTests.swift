@@ -33,6 +33,33 @@ struct SidebarPresentationTests {
         #expect(groups[0].threads.map(\.id).map(\.deviceID) == [.local, remote.id])
     }
 
+    @Test("search matches every project name in a repository group")
+    func searchMatchesEveryGroupedProjectName() {
+        let repositoryKey = "github.com/sergeserb2/sergecode"
+        let local = makeModel(
+            projects: [
+                Project(
+                    id: "local-project", name: "SergeCode", path: "/local/SergeCode",
+                    repositoryKey: repositoryKey)
+            ],
+            threads: [makeThread(id: "local-thread", projectID: "local-project")])
+        let remote = makeRemote(
+            id: "studio",
+            name: "Studio Mac",
+            projects: [
+                Project(
+                    id: "remote-project", name: "Sidebar Prototype",
+                    path: "/remote/SergeCode", repositoryKey: repositoryKey)
+            ],
+            threads: [])
+        let groups = SidebarProjection.projectGroups(
+            in: MultiDeviceModel(local: local, remoteSessions: [remote]), scope: .all)
+
+        #expect(
+            SidebarProjection.searchResults(in: groups, query: "Sidebar Prototype")
+                .map(\.thread.id) == ["local-thread"])
+    }
+
     @Test("project name is a safe fallback across machines")
     func projectNameFallbackMergesProjects() {
         let local = makeModel(
