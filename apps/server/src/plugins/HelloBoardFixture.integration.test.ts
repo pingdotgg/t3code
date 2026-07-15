@@ -43,6 +43,7 @@ import * as PluginMigrator from "./PluginMigrator.ts";
 import * as PluginModuleLoaderLayer from "./PluginModuleLoader.ts";
 import * as PluginRpcDispatcherModule from "./PluginRpcDispatcher.ts";
 import * as PluginRuntimeRegistryLayer from "./PluginRuntimeRegistry.ts";
+import * as PluginSettingsStoreLayer from "./PluginSettingsStore.ts";
 import * as PluginToolCatalogLayer from "./PluginToolCatalog.ts";
 
 const pluginId = PluginId.make("hello-board");
@@ -252,6 +253,7 @@ const PluginHostLayerLive = PluginHostModule.layer.pipe(
   Layer.provideMerge(PluginMigrator.layer),
   Layer.provideMerge(PluginRuntimeRegistryLayerLive),
   Layer.provideMerge(PluginToolCatalogLayerLive),
+  Layer.provideMerge(PluginSettingsStoreLayer.layer),
   Layer.provideMerge(PluginHttpRegistryLayerLive),
   Layer.provideMerge(ServerLifecycleEvents.layer),
   Layer.provideMerge(PluginHostCapabilityDepsLayerLive),

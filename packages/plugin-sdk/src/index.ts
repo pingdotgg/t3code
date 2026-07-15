@@ -1203,9 +1203,43 @@ export interface BoardProposalGenerationResult {
   readonly rationale: string;
 }
 
-export interface PluginHostApi {
+/**
+ * Typed access to the plugin's own declarative settings.
+ *
+ * Deliberately distinct from the web read path: the browser gets the ENCODED
+ * draft (so the form can open and repair even data that will not decode), while
+ * plugin code gets decoded values or a typed failure. A plugin must never have
+ * to guess whether its config is valid.
+ */
+export interface SettingsCapability<S extends Schema.Struct<Schema.Struct.Fields>> {
+  /**
+   * Decoded settings. Fails with `PluginSettingsNotConfigured` when nothing is
+   * stored and the schema has required fields, and with
+   * `PluginSettingsInvalidStored` when stored values no longer match the schema
+   * (e.g. an upgrade changed it). Stored data is preserved in both cases so the
+   * settings form can repair it.
+   */
+  readonly get: Effect.Effect<S["Type"], PluginSettingsReadError>;
+  /** Emits the decoded settings on every successful write. */
+  readonly changes: Stream.Stream<S["Type"]>;
+}
+
+export interface PluginSettingsReadError {
+  readonly _tag: "PluginSettingsNotConfigured" | "PluginSettingsInvalidStored";
+  readonly pluginId: string;
+  readonly message: string;
+}
+
+export interface PluginHostApi<
+  S extends Schema.Struct<Schema.Struct.Fields> = Schema.Struct<Schema.Struct.Fields>,
+> {
   readonly hostApiVersion: string;
   readonly config: PluginHostConfig;
+  /**
+   * Available only when the plugin declares `settings` on its definition AND the
+   * `settings` capability in its manifest.
+   */
+  readonly settings: Effect.Effect<SettingsCapability<S>, PluginCapabilityUnavailable>;
   readonly agents: Effect.Effect<AgentsCapability, PluginCapabilityUnavailable>;
   readonly vcs: Effect.Effect<VcsCapability, PluginCapabilityUnavailable>;
   readonly terminals: Effect.Effect<TerminalsCapability, PluginCapabilityUnavailable>;
@@ -1365,11 +1399,53 @@ export interface PluginRegistration {
   readonly tools?: ReadonlyArray<PluginToolDescriptor> | undefined;
 }
 
-export interface PluginDefinition {
+/**
+ * Declarative settings for a plugin.
+ *
+ * `schema` must be a `Schema.Struct` whose fields the host settings form can
+ * render — string-ish controls and boolean switches only, plus anything marked
+ * `hidden`. The host rejects a schema outside that vocabulary at registration
+ * rather than rendering it wrong; see `findPluginSettingsSchemaViolations`.
+ *
+ * The decoder must be service-free: the host decodes stored values with no
+ * plugin-supplied context, so a schema requiring Effect services cannot be run.
+ */
+export interface PluginSettingsDescriptor<
+  S extends Schema.Struct<Schema.Struct.Fields> = Schema.Struct<Schema.Struct.Fields>,
+> {
+  /**
+   * Must be a service-free decoder (`DecodingServices = never`), like
+   * `PluginToolDescriptor.inputSchema`: the host decodes stored values with no
+   * plugin-supplied context, so a schema requiring Effect services could not be
+   * run at all. The `& Schema.Decoder<unknown, never>` intersection makes that a
+   * compile error in the plugin rather than a runtime failure in the host.
+   */
+  readonly schema: S & Schema.Decoder<unknown, never>;
+}
+
+export interface PluginDefinition<
+  S extends Schema.Struct<Schema.Struct.Fields> = Schema.Struct<Schema.Struct.Fields>,
+> {
+  /**
+   * Declared on the DEFINITION, not on the value returned by `register`.
+   *
+   * This is not a style choice. The host builds `hostApi`, passes it to
+   * `register`, and only then receives the `PluginRegistration`. A schema
+   * arriving in the registration therefore cannot bind the `hostApi.settings`
+   * handle that was already handed to the call producing it. Declaring settings
+   * on the definition lets the host validate the schema, decode stored values,
+   * and construct a typed handle BEFORE calling `register`.
+   *
+   * Requires a `server` manifest entry: the host skips plugins without one
+   * before loading any registration, so a web-only plugin has nothing to
+   * validate writes against. Declaring settings without a server entry is
+   * rejected at registration.
+   */
+  readonly settings?: PluginSettingsDescriptor<S>;
   readonly register:
-    | ((hostApi: PluginHostApi) => Effect.Effect<PluginRegistration, Error>)
-    | ((hostApi: PluginHostApi) => Promise<PluginRegistration>)
-    | ((hostApi: PluginHostApi) => PluginRegistration);
+    | ((hostApi: PluginHostApi<S>) => Effect.Effect<PluginRegistration, Error>)
+    | ((hostApi: PluginHostApi<S>) => Promise<PluginRegistration>)
+    | ((hostApi: PluginHostApi<S>) => PluginRegistration);
 }
 
 export function writeFileAtomic(

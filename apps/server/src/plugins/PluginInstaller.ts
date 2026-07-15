@@ -92,6 +92,8 @@ export const PLUGIN_CAPABILITY_DESCRIPTIONS = {
   textGeneration: "Request text generation",
   tools:
     "Add tools the AI agent can call in your threads. Installing this capability is a blanket grant: the agent may invoke every tool this plugin registers, and those tools may act through the plugin's other granted capabilities.",
+  settings:
+    "Read its own settings, which you configure on the plugin's settings page. This plugin cannot read any other plugin's settings.",
 } satisfies Record<PluginCapability, string>;
 
 const managementError = (code: PluginManagementError["code"], message: string, data?: unknown) =>

@@ -48,6 +48,7 @@ import * as PluginMigrator from "./PluginMigrator.ts";
 import * as PluginModuleLoaderLayer from "./PluginModuleLoader.ts";
 import { pluginDataDir, pluginVersionDir } from "./PluginPaths.ts";
 import * as PluginRuntimeRegistryLayer from "./PluginRuntimeRegistry.ts";
+import * as PluginSettingsStoreLayer from "./PluginSettingsStore.ts";
 import * as PluginToolCatalogLayer from "./PluginToolCatalog.ts";
 
 const encodeManifestJson = Schema.encodeEffect(Schema.fromJsonString(PluginManifest));
@@ -67,6 +68,7 @@ const testLayerBase = PluginHostModule.layer.pipe(
     Layer.mergeAll(
       PluginRuntimeRegistryLayerLive,
       PluginToolCatalogLayerLive,
+      PluginSettingsStoreLayer.layer,
       PluginHttpRegistry.layer,
     ),
   ),
