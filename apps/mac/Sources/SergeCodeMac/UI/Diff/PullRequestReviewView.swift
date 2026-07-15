@@ -108,19 +108,28 @@ struct PullRequestReviewView: View {
                     if !unresolvedThreads.isEmpty {
                         sectionHeader("Unresolved threads", count: unresolvedThreads.count)
                         ForEach(unresolvedThreads) { thread in
-                            PullRequestThreadCard(thread: thread)
+                            PullRequestThreadCard(
+                                thread: thread,
+                                model: model,
+                                threadID: threadID)
                         }
                     }
                     if !snapshot.conversation.isEmpty {
                         sectionHeader("Conversation & reviews", count: snapshot.conversation.count)
                         ForEach(snapshot.conversation) { comment in
-                            PullRequestCommentCard(comment: comment)
+                            PullRequestCommentCard(
+                                comment: comment,
+                                model: model,
+                                threadID: threadID)
                         }
                     }
                     if !otherThreads.isEmpty {
                         sectionHeader("Resolved & outdated", count: otherThreads.count)
                         ForEach(otherThreads) { thread in
-                            PullRequestThreadCard(thread: thread)
+                            PullRequestThreadCard(
+                                thread: thread,
+                                model: model,
+                                threadID: threadID)
                         }
                     }
                 }
@@ -158,6 +167,8 @@ struct PullRequestReviewView: View {
 
 private struct PullRequestThreadCard: View {
     let thread: PullRequestReviewThread
+    let model: AppModel
+    let threadID: String
 
     private var line: Int? { thread.line ?? thread.originalLine }
     private var status: String {
@@ -188,7 +199,7 @@ private struct PullRequestThreadCard: View {
             }
             ForEach(Array(thread.comments.enumerated()), id: \.element.id) { index, comment in
                 if index > 0 { Divider() }
-                PullRequestCommentBody(comment: comment)
+                PullRequestCommentBody(comment: comment, model: model, threadID: threadID)
             }
         }
         .padding(14)
@@ -198,9 +209,11 @@ private struct PullRequestThreadCard: View {
 
 private struct PullRequestCommentCard: View {
     let comment: PullRequestReviewComment
+    let model: AppModel
+    let threadID: String
 
     var body: some View {
-        PullRequestCommentBody(comment: comment)
+        PullRequestCommentBody(comment: comment, model: model, threadID: threadID)
             .padding(14)
             .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 14))
     }
@@ -208,10 +221,8 @@ private struct PullRequestCommentCard: View {
 
 private struct PullRequestCommentBody: View {
     let comment: PullRequestReviewComment
-
-    private var markdown: AttributedString {
-        (try? AttributedString(markdown: comment.body)) ?? AttributedString(comment.body)
-    }
+    let model: AppModel
+    let threadID: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
@@ -236,9 +247,13 @@ private struct PullRequestCommentBody: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Text(markdown)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            AssistantMarkdownView(
+                markdown: renderableGitHubCommentMarkdown(comment.body),
+                isStreaming: false,
+                threadID: threadID,
+                messageID:
+                    "github-comment-\(comment.id)-\(comment.updatedAt.timeIntervalSinceReferenceDate)",
+                model: model)
             if let url = URL(string: comment.url) {
                 Button {
                     NSWorkspace.shared.open(url)
