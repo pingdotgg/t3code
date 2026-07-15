@@ -2,9 +2,9 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-// Stable, opaque composer — the primary text-entry surface for the selected
+// Floating glass composer — the primary text-entry surface for the selected
 // thread. Model/runtime controls and the editor share one visual container so
-// the bottom of the window reads as one persistent control, not stacked glass.
+// the bottom of the window remains legible without covering the scenery.
 //
 // Adornments: image attachments (wire cap: 8 files / 10 MB each),
 // `@`-mention file search backed by projects.searchEntries, and a `/`
@@ -250,7 +250,7 @@ public struct ComposerBar: View {
                         .focused($editorFocused)
                         .scrollContentBackground(.hidden)
                         // Keep the editor transparent so the composer remains
-                        // one continuous work surface instead of gaining a
+                        // one continuous glass surface instead of gaining a
                         // second plate behind the draft.
                         .frame(minHeight: 22, maxHeight: 120)
                         .fixedSize(horizontal: false, vertical: true)
@@ -372,16 +372,8 @@ public struct ComposerBar: View {
             .padding(.vertical, 4)
         }
         .padding(12)
-        .background(
-            Color(nsColor: .textBackgroundColor),
-            in: RoundedRectangle(
-                cornerRadius: AlpineTheme.Corners.composer, style: .continuous)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: AlpineTheme.Corners.composer, style: .continuous)
-                .stroke(.separator.opacity(0.65), lineWidth: 1)
-        }
-        .shadow(color: .black.opacity(0.08), radius: 12, y: 4)
+        .glassEffect(.regular, in: .rect(cornerRadius: AlpineTheme.Corners.composer))
+        .shadow(color: .black.opacity(0.10), radius: 16, y: 6)
         // Typing and suggestion filtering are deliberately unanimated. Async
         // arrivals reveal independently without moving the entire composer on
         // every keystroke.

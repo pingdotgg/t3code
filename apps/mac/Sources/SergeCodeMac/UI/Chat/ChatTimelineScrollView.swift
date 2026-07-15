@@ -100,8 +100,9 @@ struct ChatTimelineScrollView: View {
                 .animation(revealAnimation, value: items.count)
             }
             .defaultScrollAnchor(.bottom)
-            // The transcript sits on ChatScreen's calm work surface; only the
-            // shallow task header retains the active scenery treatment.
+            // Transparent: the centered transcript reads off ChatScreen's
+            // full-bleed frosted scenery. SceneryChatBackground's adaptive
+            // wash carries long-form contrast without an opaque center pane.
             .onScrollPhaseChange { _, newPhase in
                 scrollPhase = newPhase
             }
