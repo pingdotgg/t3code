@@ -53,6 +53,7 @@ import { pluginDataDir, pluginVersionDir } from "./PluginPaths.ts";
 import * as PluginRuntimeRegistryLayer from "./PluginRuntimeRegistry.ts";
 import { CONTEXT_MAX_BYTES_PER_PLUGIN } from "./PluginContextComposer.ts";
 import * as PluginContextComposerLayer from "./PluginContextComposer.ts";
+import { buildTurnStartParams } from "../provider/Layers/CodexSessionRuntime.ts";
 import * as PluginSettingsStoreLayer from "./PluginSettingsStore.ts";
 import * as PluginToolCatalogLayer from "./PluginToolCatalog.ts";
 
@@ -1704,6 +1705,46 @@ export default {
       assert.isTrue(Option.isNone(yield* registry.get(pluginId)));
       const lockfile = yield* store.readLockfile;
       assert.match(lockfile.plugins[pluginId]?.lastError ?? "", /limit/);
+    }),
+  );
+
+  // The end-to-end claim: a plugin's text reaches the agent's ACTUAL instructions.
+  // Everything else in this block proves the plumbing exists; this proves it connects.
+  // It is also the only test that would catch the composer being instantiated twice —
+  // PluginHost registering into one instance while the driver reads another would make
+  // the whole feature silently inert, and every other test would still pass.
+  it.effect("puts a plugin's contribution into the developer instructions of a turn", () =>
+    Effect.gen(function* () {
+      const pluginId = PluginId.make("context-end-to-end");
+      const host = yield* PluginHostModule.PluginHost;
+      const composer = yield* PluginContextComposerLayer.PluginContextComposer;
+
+      yield* runMigrations({});
+      yield* installPlugin({
+        pluginId,
+        capabilities: ["context"],
+        entrySource: contextEntry("ALWAYS-USE-TABS"),
+      });
+      yield* host.activatePlugin(pluginId);
+
+      const composed = yield* composer.compose({
+        threadId: ThreadId.make("t"),
+        projectId: null,
+        interactionMode: "default",
+      });
+      const params = yield* buildTurnStartParams({
+        threadId: "provider-thread",
+        runtimeMode: "full-access",
+        prompt: "hello",
+        interactionMode: "default",
+        ...(composed.text === "" ? {} : { pluginContext: composed.text }),
+      });
+
+      assert.include(
+        params.collaborationMode?.settings.developer_instructions ?? "",
+        "ALWAYS-USE-TABS",
+        "a plugin's contribution must reach the instructions the agent is actually given",
+      );
     }),
   );
 

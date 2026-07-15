@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as PluginContextComposerLayer from "../src/plugins/PluginContextComposer.ts";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -381,6 +382,7 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(RepositoryIdentityResolver.layer),
       Layer.provideMerge(ServerSettingsService.layerTest()),
       Layer.provideMerge(ServerConfig.layerTest(workspaceDir, rootDir)),
+      Layer.provideMerge(PluginContextComposerLayer.layer),
       Layer.provideMerge(NodeServices.layer),
     );
 

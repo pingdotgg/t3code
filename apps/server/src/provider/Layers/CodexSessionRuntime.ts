@@ -25,6 +25,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as PluginContextComposer from "../../plugins/PluginContextComposer.ts";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -713,10 +714,16 @@ export const makeCodexSessionRuntime = (
 ): Effect.Effect<
   CodexSessionRuntimeShape,
   CodexErrors.CodexAppServerError,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
+  | ChildProcessSpawner.ChildProcessSpawner
+  | Crypto.Crypto
+  | Scope.Scope
+  | PluginContextComposer.PluginContextComposer
 > =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    // The ONLY route from a plugin to the agent's instructions. The runtime asks the
+    // composer; it never sees raw plugin text.
+    const contextComposer = yield* PluginContextComposer.PluginContextComposer;
     const runtimeScope = yield* Scope.Scope;
     const crypto = yield* Crypto.Crypto;
     const events = yield* Queue.unbounded<ProviderEvent>();
@@ -1293,9 +1300,18 @@ export const makeCodexSessionRuntime = (
           const normalizedModel = normalizeCodexModelSlug(
             input.model ?? (yield* Ref.get(sessionRef)).model,
           );
+          // Compose for THIS turn. The composer owns the budget, the timeouts and the
+          // failure isolation, so from here the worst a plugin can do is contribute
+          // nothing — it cannot fail or stall the user's turn.
+          const pluginContext = yield* contextComposer.compose({
+            threadId: options.threadId,
+            projectId: null,
+            interactionMode: input.interactionMode,
+          });
           const params = yield* buildTurnStartParams({
             threadId: providerThreadId,
             runtimeMode: options.runtimeMode,
+            ...(pluginContext.text === "" ? {} : { pluginContext: pluginContext.text }),
             ...(input.input ? { prompt: input.input } : {}),
             ...(input.attachments ? { attachments: input.attachments } : {}),
             ...(normalizedModel ? { model: normalizedModel } : {}),

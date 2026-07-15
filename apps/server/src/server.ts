@@ -46,7 +46,7 @@ import * as PluginMigrator from "./plugins/PluginMigrator.ts";
 import * as PluginModuleLoader from "./plugins/PluginModuleLoader.ts";
 import * as PluginRpcDispatcher from "./plugins/PluginRpcDispatcher.ts";
 import * as PluginRuntimeRegistry from "./plugins/PluginRuntimeRegistry.ts";
-import * as PluginContextComposer from "./plugins/PluginContextComposer.ts";
+import * as PluginContextComposerLayer from "./plugins/PluginContextComposer.ts";
 import * as PluginSettingsStore from "./plugins/PluginSettingsStore.ts";
 import * as PluginToolCatalog from "./plugins/PluginToolCatalog.ts";
 import { OutboundUrlLookupLive } from "./plugins/OutboundUrlValidator.ts";
@@ -343,7 +343,7 @@ const PluginHostLayerLive = PluginHost.layer.pipe(
   Layer.provideMerge(PluginRuntimeRegistryLayerLive),
   Layer.provideMerge(PluginToolCatalogLayerLive),
   Layer.provideMerge(PluginSettingsStore.layer),
-  Layer.provideMerge(PluginContextComposer.layer),
+  Layer.provideMerge(PluginContextComposerLayer.layer),
   Layer.provideMerge(PluginHttpRegistryLayerLive),
   Layer.provideMerge(PluginHostCapabilityDepsLayerLive),
 );
@@ -409,6 +409,10 @@ const RuntimeCoreDependenciesLive = RuntimeCoreBaseDependenciesLive.pipe(
   // `providerInstances` hydration merges `settings.providers.<kind>`
   // with explicit `providerInstances` entries on boot.
   Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+  // A driver that wants plugin instructions declares PluginContextComposer in its env
+  // (see CodexDriverEnv), so the registry stack satisfies it here. The requirement IS
+  // the point: plugin text reaches the agent only through the composer.
+  Layer.provideMerge(PluginContextComposerLayer.layer),
   // Shared native/canonical NDJSON writers used by both the per-instance
   // drivers (native stream, written from inside each `<X>Adapter`) and
   // `ProviderService` (canonical stream, written after event normalization).
