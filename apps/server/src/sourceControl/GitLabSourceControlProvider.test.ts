@@ -157,6 +157,40 @@ it.effect("lists GitLab MRs against the requested remote repository context", ()
   }),
 );
 
+it.effect("does not duplicate a self-hosted GitLab base path", () =>
+  Effect.gen(function* () {
+    let listInput: Parameters<GitLabCli.GitLabCli["Service"]["listMergeRequests"]>[0] | null = null;
+    const provider = yield* makeProvider({
+      listMergeRequests: (input) => {
+        listInput = input;
+        return Effect.succeed([]);
+      },
+    });
+
+    yield* provider.listChangeRequests({
+      cwd: "/repo",
+      context: {
+        provider: {
+          kind: "gitlab",
+          name: "GitLab Self-Hosted",
+          baseUrl: "https://gitlab.example.test/gitlab",
+        },
+        remoteName: "upstream",
+        remoteUrl: "https://gitlab.example.test/gitlab/group/repo.git",
+      },
+      headSelector: "feature/provider",
+      state: "open",
+    });
+
+    assert.deepStrictEqual(listInput, {
+      cwd: "/repo",
+      headSelector: "feature/provider",
+      repository: "https://gitlab.example.test/gitlab/group/repo",
+      state: "open",
+    });
+  }),
+);
+
 it.effect("uses GitLab Avatar API results for commit author avatars", () =>
   Effect.gen(function* () {
     let avatarInput: Parameters<GitLabCli.GitLabCli["Service"]["getCommitAvatarUrl"]>[0] | null =

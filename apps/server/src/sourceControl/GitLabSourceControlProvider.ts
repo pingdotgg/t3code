@@ -96,7 +96,12 @@ function repositoryFromContext(
   try {
     const baseUrl = new URL(context.provider.baseUrl);
     if (baseUrl.hostname.toLowerCase() === "gitlab.com") return repository;
-    baseUrl.pathname = `${baseUrl.pathname.replace(/\/+$/u, "")}/${repository}`;
+    const basePath = decodeURIComponent(baseUrl.pathname).replace(/^\/+|\/+$/gu, "");
+    const relativeRepository =
+      basePath && (repository === basePath || repository.startsWith(`${basePath}/`))
+        ? repository.slice(basePath.length).replace(/^\/+/u, "")
+        : repository;
+    baseUrl.pathname = [basePath, relativeRepository].filter(Boolean).join("/");
     baseUrl.search = "";
     baseUrl.hash = "";
     return baseUrl.toString();
