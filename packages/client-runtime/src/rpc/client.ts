@@ -7,6 +7,8 @@ import {
   type PluginInstallConfirmInput,
   type PluginId,
   type PluginSetEnabledInput,
+  type PluginSettingsGetInput,
+  type PluginSettingsSetInput,
   type PluginSourcesAddInput,
   type PluginSourcesRemoveInput,
   type PluginUninstallInput,
@@ -304,6 +306,18 @@ export const setPluginEnabled = Effect.fn("EnvironmentRpc.setPluginEnabled")(fun
   input: PluginSetEnabledInput,
 ) {
   return yield* request(PLUGINS_WS_METHODS.setEnabled, input);
+});
+
+export const getPluginSettings = Effect.fn("EnvironmentRpc.getPluginSettings")(function* (
+  input: PluginSettingsGetInput,
+) {
+  return yield* request(PLUGINS_WS_METHODS.settingsGet, input);
+});
+
+export const setPluginSettings = Effect.fn("EnvironmentRpc.setPluginSettings")(function* (
+  input: PluginSettingsSetInput,
+) {
+  return yield* request(PLUGINS_WS_METHODS.settingsSet, input);
 });
 
 export const uninstallPlugin = Effect.fn("EnvironmentRpc.uninstallPlugin")(function* (

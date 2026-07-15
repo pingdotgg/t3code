@@ -5,6 +5,8 @@ import {
   type PluginInstallBeginInput,
   type PluginInstallConfirmInput,
   type PluginSetEnabledInput,
+  type PluginSettingsGetInput,
+  type PluginSettingsSetInput,
   type PluginSourcesAddInput,
   type PluginSourcesRemoveInput,
   type PluginUninstallInput,
@@ -26,7 +28,9 @@ import {
   listPluginSources,
   listPlugins,
   removePluginSource,
+  getPluginSettings,
   setPluginEnabled,
+  setPluginSettings,
   subscribePlugin,
   uninstallPlugin,
 } from "@t3tools/client-runtime/rpc";
@@ -172,17 +176,18 @@ export function resolvePluginListWithCache<E>(
 const lastKnownPluginListByEnvironment = new Map<string, ReadonlyArray<PluginInfo>>();
 
 export const environmentPluginListAtom = Atom.family((environmentId: string) =>
-  Atom.make((get): ReadonlyArray<PluginInfo> =>
-    resolvePluginListWithCache(
-      environmentId,
-      get(
-        environmentPluginListResultAtom({
-          environmentId: environmentId as never,
-          input: {},
-        }),
+  Atom.make(
+    (get): ReadonlyArray<PluginInfo> =>
+      resolvePluginListWithCache(
+        environmentId,
+        get(
+          environmentPluginListResultAtom({
+            environmentId: environmentId as never,
+            input: {},
+          }),
+        ),
+        lastKnownPluginListByEnvironment,
       ),
-      lastKnownPluginListByEnvironment,
-    ),
   ).pipe(Atom.withLabel(`web-plugins:list:${environmentId}`)),
 );
 
@@ -294,6 +299,18 @@ export const setPluginEnabledCommand = createRuntimeCommand(connectionAtomRuntim
   label: "web-plugins:set-enabled",
   execute: (input: PluginSetEnabledInput, registry) =>
     runPrimaryPluginManagement(registry, setPluginEnabled(input)),
+});
+
+export const getPluginSettingsCommand = createRuntimeCommand(connectionAtomRuntime, {
+  label: "web-plugins:settings-get",
+  execute: (input: PluginSettingsGetInput, registry) =>
+    runPrimaryPluginManagement(registry, getPluginSettings(input)),
+});
+
+export const setPluginSettingsCommand = createRuntimeCommand(connectionAtomRuntime, {
+  label: "web-plugins:settings-set",
+  execute: (input: PluginSettingsSetInput, registry) =>
+    runPrimaryPluginManagement(registry, setPluginSettings(input)),
 });
 
 export const uninstallPluginCommand = createRuntimeCommand(connectionAtomRuntime, {
