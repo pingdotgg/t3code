@@ -22,6 +22,7 @@ import type {
   ProjectId,
   RuntimeMode,
   ServerProvider,
+  OrchestrationEvent,
   SourceControlProviderDiscoveryItem,
   SourceControlProviderInfo,
   TerminalAttachStreamEvent,
@@ -1230,6 +1231,26 @@ export interface PluginSettingsReadError {
   readonly message: string;
 }
 
+/**
+ * Read-only delivery of host domain events.
+ *
+ * `subscribe` runs FOREVER: it only returns if the host's event stream ends. Run it
+ * from a plugin `service`, which the host forks into the plugin's scope and tears
+ * down on disable/uninstall/crash — calling it inline in `register()` would never
+ * return and activation would time out.
+ *
+ * The host owns the two properties a plugin cannot be trusted with: a handler that
+ * fails or hangs never ends the subscription, and a subscriber that falls behind
+ * loses its OLDEST events rather than stalling the host's stream for everyone.
+ */
+export interface EventsCapability {
+  readonly subscribe: (subscription: {
+    /** Only these event types are delivered; filtering happens host-side. */
+    readonly types: ReadonlyArray<OrchestrationEvent["type"]>;
+    readonly handler: (event: OrchestrationEvent) => Effect.Effect<void, Error>;
+  }) => Effect.Effect<void, Error>;
+}
+
 export interface PluginHostApi<
   S extends Schema.Struct<Schema.Struct.Fields> = Schema.Struct<Schema.Struct.Fields>,
 > {
@@ -1241,6 +1262,7 @@ export interface PluginHostApi<
    */
   readonly settings: Effect.Effect<SettingsCapability<S>, PluginCapabilityUnavailable>;
   readonly agents: Effect.Effect<AgentsCapability, PluginCapabilityUnavailable>;
+  readonly events: Effect.Effect<EventsCapability, PluginCapabilityUnavailable>;
   readonly vcs: Effect.Effect<VcsCapability, PluginCapabilityUnavailable>;
   readonly terminals: Effect.Effect<TerminalsCapability, PluginCapabilityUnavailable>;
   readonly database: Effect.Effect<DatabaseCapability, PluginCapabilityUnavailable>;

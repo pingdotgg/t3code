@@ -94,6 +94,8 @@ export const PLUGIN_CAPABILITY_DESCRIPTIONS = {
     "Add tools the AI agent can call in your threads. Installing this capability is a blanket grant: the agent may invoke every tool this plugin registers, and those tools may act through the plugin's other granted capabilities.",
   settings:
     "Read its own settings, which you configure on the plugin's settings page. This plugin cannot read any other plugin's settings.",
+  events:
+    "Watch what happens in this workspace as it happens \u2014 projects and threads being created, renamed, and deleted, and turns running. This is read-only, but it is broad: the plugin observes this activity across every project, not only the one you are working in.",
 } satisfies Record<PluginCapability, string>;
 
 const managementError = (code: PluginManagementError["code"], message: string, data?: unknown) =>

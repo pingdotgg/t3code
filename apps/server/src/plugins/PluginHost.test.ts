@@ -275,6 +275,8 @@ const decodeNewCapabilityMarker = Schema.decodeEffect(
       filesystemUnavailable: Schema.Boolean,
       httpClientAvailable: Schema.Boolean,
       httpClientUnavailable: Schema.Boolean,
+      eventsAvailable: Schema.Boolean,
+      eventsUnavailable: Schema.Boolean,
     }),
   ),
 );
@@ -422,6 +424,8 @@ export default {
         filesystemUnavailable: yield* unavailable(hostApi.filesystem),
         httpClientAvailable: yield* available(hostApi.httpClient),
         httpClientUnavailable: yield* unavailable(hostApi.httpClient),
+        eventsAvailable: yield* available(hostApi.events),
+        eventsUnavailable: yield* unavailable(hostApi.events),
       };
       NodeFs.mkdirSync(hostApi.config.dataDir, { recursive: true });
       NodeFs.writeFileSync(hostApi.config.dataDir + "/new-capabilities.json", JSON.stringify(marker));
@@ -863,6 +867,8 @@ layer("PluginHost", (it) => {
             filesystemUnavailable: false,
             httpClientAvailable: false,
             httpClientUnavailable: true,
+            eventsAvailable: false,
+            eventsUnavailable: true,
           },
         },
         {
@@ -873,6 +879,8 @@ layer("PluginHost", (it) => {
             filesystemUnavailable: true,
             httpClientAvailable: true,
             httpClientUnavailable: false,
+            eventsAvailable: false,
+            eventsUnavailable: true,
           },
         },
         {
@@ -883,6 +891,23 @@ layer("PluginHost", (it) => {
             filesystemUnavailable: true,
             httpClientAvailable: false,
             httpClientUnavailable: true,
+            eventsAvailable: false,
+            eventsUnavailable: true,
+          },
+        },
+        {
+          // The event stream carries activity from EVERY project, so reaching it
+          // without the user having granted `events` is a privacy failure, not just
+          // a missing feature.
+          pluginId: PluginId.make("events-only"),
+          capabilities: ["events"] as const,
+          expected: {
+            filesystemAvailable: false,
+            filesystemUnavailable: true,
+            httpClientAvailable: false,
+            httpClientUnavailable: true,
+            eventsAvailable: true,
+            eventsUnavailable: false,
           },
         },
       ];

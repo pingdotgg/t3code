@@ -70,6 +70,7 @@ import {
 import { makeProjectionsReadCapability } from "./capabilities/ProjectionsReadCapability.ts";
 import { makeSecretsCapability } from "./capabilities/SecretsCapability.ts";
 import { makeSourceControlCapability } from "./capabilities/SourceControlCapability.ts";
+import { makeEventsCapability } from "./capabilities/EventsCapability.ts";
 import { makeTerminalsCapability } from "./capabilities/TerminalsCapability.ts";
 import { makeTextGenerationCapability } from "./capabilities/TextGenerationCapability.ts";
 import { makeVcsCapability } from "./capabilities/VcsCapability.ts";
@@ -529,6 +530,14 @@ const makeHostApi = (input: {
         fileSystem: input.deps.fileSystem,
         path: input.deps.path,
         worktreesDir: input.deps.config.worktreesDir,
+      }),
+    ),
+    events: available(
+      "events",
+      makeEventsCapability({
+        pluginId: input.pluginId,
+        logger: input.logger,
+        events: input.deps.orchestrationEngine.streamDomainEvents,
       }),
     ),
     terminals: available("terminals", terminalsBundle.capability),
