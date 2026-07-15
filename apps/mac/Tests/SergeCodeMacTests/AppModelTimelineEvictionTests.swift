@@ -130,17 +130,23 @@ struct AppModelTimelineEvictionTests {
         #expect(state.hasLoadedTimeline == false)
         #expect(state.timeline.count == 1)
 
+        // Counted as a delta, not an absolute: the cache is a process-wide
+        // static, and the `await` above lets the other suites that reset its
+        // counters interleave. Everything from here on is synchronous, so the
+        // delta is stable.
+        let fullPassesBefore = TimelineDisplayCache.fullPassCount
         _ = TimelineDisplayCache.grouped(
             items: state.timeline,
             threadID: retainedID,
             version: state.timelineVersion,
             structureVersion: state.structureVersion,
             threadIsSettled: false)
-        #expect(TimelineDisplayCache.fullPassCount == 1)
+        #expect(TimelineDisplayCache.fullPassCount == fullPassesBefore)
 
+        let resetsBefore = StreamingMarkdownCache.resetCount
         _ = StreamingMarkdownCache.document(
             threadID: retainedID, messageID: "streaming", markdown: "replacement")
-        #expect(StreamingMarkdownCache.resetCount == 0)
+        #expect(StreamingMarkdownCache.resetCount == resetsBefore)
     }
 
     @Test("eviction trims a 600-item timeline to its newest 500 items")

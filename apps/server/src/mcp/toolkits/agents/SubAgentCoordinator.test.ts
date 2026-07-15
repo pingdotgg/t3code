@@ -72,7 +72,10 @@ const makeScope = (threadId: ThreadId = parentThreadId): McpInvocationScope => (
   expiresAt: Number.MAX_SAFE_INTEGER,
 });
 
-const makeThreadShell = (threadId: ThreadId): OrchestrationThreadShell =>
+const makeThreadShell = (
+  threadId: ThreadId,
+  overrides?: Partial<OrchestrationThreadShell>,
+): OrchestrationThreadShell =>
   ({
     id: threadId,
     projectId,
@@ -91,6 +94,7 @@ const makeThreadShell = (threadId: ThreadId): OrchestrationThreadShell =>
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
+    ...overrides,
   }) as OrchestrationThreadShell;
 
 const makeThreadDetail = (
@@ -133,6 +137,7 @@ interface Harness {
 
 const makeCoordinator = (options?: {
   readonly providers?: ReadonlyArray<ServerProvider>;
+  readonly parentShell?: (threadId: ThreadId) => OrchestrationThreadShell;
 }): Effect.Effect<readonly [SubAgentCoordinator["Service"], Harness], never, never> => {
   const dispatched: Array<OrchestrationCommand> = [];
   let threadDetailLookup: (threadId: ThreadId) => Option.Option<OrchestrationThread> = () =>
@@ -165,7 +170,8 @@ const makeCoordinator = (options?: {
     getFirstActiveThreadIdByProjectId: unused,
     getThreadCheckpointContext: unused,
     getFullThreadDiffContext: unused,
-    getThreadShellById: (threadId) => Effect.succeed(Option.some(makeThreadShell(threadId))),
+    getThreadShellById: (threadId) =>
+      Effect.succeed(Option.some((options?.parentShell ?? makeThreadShell)(threadId))),
     getThreadDetailById: (threadId) => Effect.sync(() => threadDetailLookup(threadId)),
   });
 
@@ -271,6 +277,36 @@ it.effect("spawns a sub-agent thread next to the caller's thread on another prov
   }),
 );
 
+it.effect("does not let a sub-agent escape an advisor parent's read-only clamp", () =>
+  Effect.gen(function* () {
+    // An advisor thread stores the runtime mode the user picked (here
+    // full-access) and is clamped only at session start. Spawning a child must
+    // inherit the clamped mode, or delegation becomes a way to write from a
+    // thread the user believes is read-only.
+    const [coordinator, harness] = yield* makeCoordinator({
+      parentShell: (threadId) =>
+        makeThreadShell(threadId, { runtimeMode: "full-access", interactionMode: "advisor" }),
+    });
+
+    yield* coordinator.spawn(makeScope(), {
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      prompt: "Go rewrite the auth module.",
+    });
+
+    const create = harness.dispatched.find((command) => command.type === "thread.create");
+    expect(create?.type).toBe("thread.create");
+    if (create?.type === "thread.create") {
+      expect(create.runtimeMode).toBe("approval-required");
+    }
+
+    const turnStart = harness.dispatched.find((command) => command.type === "thread.turn.start");
+    expect(turnStart?.type).toBe("thread.turn.start");
+    if (turnStart?.type === "thread.turn.start") {
+      expect(turnStart.runtimeMode).toBe("approval-required");
+    }
+  }),
+);
+
 it.effect("forces fast-capable Claude-backed sub-agents into standard mode", () =>
   Effect.gen(function* () {
     const [coordinator, harness] = yield* makeCoordinator({
@@ -304,6 +340,57 @@ it.effect("forces fast-capable Claude-backed sub-agents into standard mode", () 
         options: [{ id: "fastMode", value: false }],
       },
     });
+  }),
+);
+
+it.effect("reports the sub-agent's resolved reasoning effort on the parent task row", () =>
+  Effect.gen(function* () {
+    const [coordinator, harness] = yield* makeCoordinator({
+      providers: [
+        makeProvider("claudex", "claudeAgent", {
+          models: [
+            {
+              slug: "claudex-luna",
+              name: "Claudex Luna",
+              isCustom: true,
+              capabilities: {
+                optionDescriptors: [
+                  {
+                    id: "effort",
+                    label: "Reasoning",
+                    type: "select",
+                    options: [
+                      { id: "low", label: "Low" },
+                      { id: "max", label: "Max", isDefault: true },
+                      { id: "ultrathink", label: "Ultrathink" },
+                    ],
+                    promptInjectedValues: ["ultrathink"],
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      ],
+    });
+
+    yield* coordinator.spawn(makeScope(), {
+      providerInstanceId: ProviderInstanceId.make("claudex"),
+      prompt: "Audit the reducer.",
+    });
+
+    const activity = harness.dispatched.find(
+      (command) => command.type === "thread.activity.append",
+    );
+    expect(activity?.type).toBe("thread.activity.append");
+    if (activity?.type === "thread.activity.append") {
+      // The child session resolves the same descriptor default, so the badge
+      // reports what the sub-agent actually runs at.
+      expect(activity.activity.payload).toMatchObject({
+        model: "claudex-luna",
+        effort: "max",
+      });
+    }
   }),
 );
 

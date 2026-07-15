@@ -33,6 +33,7 @@ import {
   ProviderInstanceId,
   type ModelSelection,
   ProviderItemId,
+  type ProviderInteractionMode,
   type ProviderRuntimeEvent,
   type ProviderRuntimeTurnStatus,
   type ProviderSendTurnInput,
@@ -198,6 +199,8 @@ interface ClaudeSessionContext {
   streamFiber: Fiber.Fiber<void, Error> | undefined;
   readonly startedAt: string;
   readonly basePermissionMode: PermissionMode | undefined;
+  /** Interaction mode of the most recently started turn, if the client sent one. */
+  activeInteractionMode: ProviderInteractionMode | undefined;
   currentApiModelId: string | undefined;
   resumeSessionId: string | undefined;
   /**
@@ -231,6 +234,13 @@ interface ClaudeSessionContext {
    * remains open (backgrounded subagents).
    */
   readonly taskModelByTaskId: Map<string, string>;
+  /**
+   * Reasoning effort the SDK query was started with, normalized to what the
+   * CLI actually applies. Subagent turns inherit it, so it is the effort a
+   * Task/Agent subagent runs at unless the Task tool input overrides it.
+   * Effort changes restart the session, so this stays true for the session.
+   */
+  readonly sessionEffort: string | undefined;
   /** task_id values that have started but not yet completed/stopped. */
   readonly openTaskIds: Set<string>;
   /**
@@ -808,6 +818,24 @@ function resolveSubagentTaskModel(
   }
   const input = context.taskToolInputsByUseId.get(toolUseId);
   return readOptionalTrimmedString(input?.model);
+}
+
+/**
+ * Resolve the reasoning effort a subagent task runs at. A Task tool input
+ * `effort` override wins when present; otherwise the subagent inherits the
+ * effort the SDK query was started with, which is what the CLI applies to
+ * subagent turns. An agent definition may override effort in its frontmatter
+ * and the SDK exposes no per-task effort on the wire, so that case still
+ * reports the session effort. Returns undefined when the session runs without
+ * an effort level (model without effort support, or `ultrathink`, which is a
+ * prompt prefix rather than an effort the subagent inherits).
+ */
+function resolveSubagentTaskEffort(
+  context: ClaudeSessionContext,
+  toolUseId: string | undefined,
+): string | undefined {
+  const input = toolUseId ? context.taskToolInputsByUseId.get(toolUseId) : undefined;
+  return readOptionalTrimmedString(input?.effort) ?? context.sessionEffort;
 }
 
 function findTaskIdForToolUseId(
@@ -2506,7 +2534,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   ) {
     const turnState = context.turnState;
     const planMarkdown = input.planMarkdown.trim();
-    if (!turnState || planMarkdown.length === 0) {
+    if (!turnState || context.activeInteractionMode === "advisor" || planMarkdown.length === 0) {
       return;
     }
 
@@ -3543,6 +3571,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           (message as { workflow_name?: unknown }).workflow_name,
         );
         const model = resolveSubagentTaskModel(context, toolUseId);
+        const effort = resolveSubagentTaskEffort(context, toolUseId);
         context.openTaskIds.add(message.task_id);
         rememberTaskToolUseId(context, message.task_id, toolUseId);
         if (model) {
@@ -3555,6 +3584,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             taskId: RuntimeTaskId.make(message.task_id),
             description: message.description,
             ...(model ? { model } : {}),
+            ...(effort ? { effort } : {}),
             ...(message.task_type ? { taskType: message.task_type } : {}),
             ...(subagentType ? { subagentType } : {}),
             ...(workflowName ? { workflowName } : {}),
@@ -4258,6 +4288,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         }
 
         if (toolName === "ExitPlanMode") {
+          // Advisor uses the SDK's plan permission mode to block writes, but it
+          // has no plan artifact: capturing one here would render a plan card
+          // the user never asked for. Deny and steer back to advising.
+          if (context.activeInteractionMode === "advisor") {
+            return {
+              behavior: "deny",
+              message:
+                "You are in Advisor mode, which has no plan artifact. Do not call ExitPlanMode. Answer the user's question directly in your reply instead.",
+            } satisfies PermissionResult;
+          }
+
           const planMarkdown = extractExitPlanModePlan(toolInput);
           if (planMarkdown) {
             yield* emitProposedPlanCompleted(context, {
@@ -4545,6 +4586,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         streamFiber: undefined,
         startedAt,
         basePermissionMode: permissionMode,
+        activeInteractionMode: undefined,
         currentApiModelId: apiModelId,
         resumeSessionId: sessionId,
         // Only when the SDK query was actually started with resume:.
@@ -4556,6 +4598,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         taskToolInputsByUseId: new Map(),
         taskToolUseIdByTaskId: new Map(),
         taskModelByTaskId: new Map(),
+        sessionEffort: effectiveEffort ?? undefined,
         openTaskIds: new Set(),
         syntheticallyStoppedTaskIds: new Set(),
         claudeTasks,
@@ -4680,10 +4723,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     // Apply interaction mode by switching the SDK's permission mode.
-    // "plan" maps directly to the SDK's "plan" permission mode;
-    // "default" restores the session's original permission mode.
+    // "plan" maps directly to the SDK's "plan" permission mode. "advisor" uses
+    // the same permission mode because it is the SDK's only write-blocking
+    // mode; the two are told apart by the interaction-mode checks, including
+    // the shared plan emitter. "default" restores the session's original mode.
     // When interactionMode is absent we leave the current mode unchanged.
-    if (input.interactionMode === "plan") {
+    if (input.interactionMode !== undefined) {
+      context.activeInteractionMode = input.interactionMode;
+    }
+    if (input.interactionMode === "plan" || input.interactionMode === "advisor") {
       yield* Effect.tryPromise({
         try: () => context.query.setPermissionMode("plan"),
         catch: (cause) => toRequestError(PROVIDER, input.threadId, "turn/setPermissionMode", cause),

@@ -37,6 +37,29 @@ struct SubagentTaskPresentationTests {
         #expect(!AgentsPanel.isSiblingAgentThread(thread(title: "Agent:\treviewer")))
     }
 
+    @Test("identity badge shows reasoning effort after the model name")
+    func identityBadgeShowsEffort() {
+        var task = runningTask(lastActivityAt: now)
+        task.subagentType = "Explore"
+        task.model = "claude-sonnet-5"
+        task.effort = "xhigh"
+
+        #expect(
+            SubagentTaskPresentation.identityBadge(
+                for: task, modelDisplayNames: ["claude-sonnet-5": "Sonnet 5"]
+            ) == "Explore · Sonnet 5 · Extra High")
+    }
+
+    @Test("identity badge hides effort until the model is known")
+    func identityBadgeHidesEffortWithoutModel() {
+        var task = runningTask(lastActivityAt: now)
+        task.subagentType = "Explore"
+        task.effort = "high"
+
+        #expect(
+            SubagentTaskPresentation.identityBadge(for: task, modelDisplayNames: [:]) == "Explore")
+    }
+
     private func runningTask(lastActivityAt: Date) -> SubagentTaskItem {
         SubagentTaskItem(
             taskId: "task-1",

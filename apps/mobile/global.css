@@ -71,9 +71,38 @@
       --color-glass-tint: rgba(255, 255, 255, 0.18);
 
       /* Scenery (photo wallpaper + chrome scrims, attribution pill) */
-      --color-scenery-scrim: rgba(255, 255, 255, 0.58);
+      --color-scenery-scrim: rgba(255, 255, 255, 0.62);
       --color-scenery-chrome-scrim: rgba(0, 0, 0, 0.34);
       --color-attribution-pill: rgba(0, 0, 0, 0.32);
+
+      /* Chat content on the wallpaper. Every value is pinned by
+         src/features/scenery/scenery-contrast.test.ts against the worst
+         backdrop the scrim can produce over a photo (AA for text, 3:1 for
+         icons) — do not soften one without rerunning that test. */
+      --color-scenery-foreground: #161a17;
+      --color-scenery-foreground-strong: #000000;
+      --color-scenery-foreground-muted: #2c332e;
+      --color-scenery-link: #0f3050;
+      --color-scenery-skill: #432d05;
+      --color-scenery-icon: #3f473f;
+
+      /* Plate: the scrim the work log / subagent rows stack on the wallpaper
+         so small, dense type keeps a muted tone and still clears AA. Rows may
+         stack a state tint and a pill fill on top of it; the test composites
+         those too, which is why these tones run darker than the plate alone
+         would need. */
+      --color-scenery-plate: rgba(255, 255, 255, 0.7);
+      --color-scenery-plate-foreground: #161a17;
+      --color-scenery-plate-foreground-muted: #4b524c;
+      --color-scenery-plate-icon: #545b55;
+      --color-scenery-plate-danger: #8c0f2b;
+      --color-scenery-plate-success: #14532d;
+      --color-scenery-plate-warning: #7c3d02;
+
+      /* Code plate: heavier, for monospace blocks and process output. */
+      --color-scenery-code: rgba(255, 255, 255, 0.72);
+      --color-scenery-code-foreground: #242925;
+      --color-scenery-code-muted: #545b55;
 
       /* StatusBar */
       --color-status-bar: #f2f4f0;
@@ -173,9 +202,29 @@
       --color-glass-tint: rgba(22, 26, 23, 0.24);
 
       /* Scenery (photo wallpaper + chrome scrims, attribution pill) */
-      --color-scenery-scrim: rgba(0, 0, 0, 0.5);
+      --color-scenery-scrim: rgba(0, 0, 0, 0.62);
       --color-scenery-chrome-scrim: rgba(0, 0, 0, 0.44);
       --color-attribution-pill: rgba(0, 0, 0, 0.32);
+
+      /* Chat content on the wallpaper — see the light block. */
+      --color-scenery-foreground: #f0f2ef;
+      --color-scenery-foreground-strong: #ffffff;
+      --color-scenery-foreground-muted: #dfe3de;
+      --color-scenery-link: #c8e6f5;
+      --color-scenery-skill: #f5dcbb;
+      --color-scenery-icon: #c9cfc9;
+
+      --color-scenery-plate: rgba(0, 0, 0, 0.6);
+      --color-scenery-plate-foreground: #f2f4f1;
+      --color-scenery-plate-foreground-muted: #b6bcb7;
+      --color-scenery-plate-icon: #a4aba5;
+      --color-scenery-plate-danger: #fda4af;
+      --color-scenery-plate-success: #a7f3d0;
+      --color-scenery-plate-warning: #fbbf24;
+
+      --color-scenery-code: rgba(0, 0, 0, 0.5);
+      --color-scenery-code-foreground: #e4e7e4;
+      --color-scenery-code-muted: #a4aba5;
 
       /* StatusBar */
       --color-status-bar: #0b0d0b;

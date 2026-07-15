@@ -10,6 +10,10 @@ import {
   isToolLifecycleItemType,
   ThreadId,
   type ThreadTokenUsageSnapshot,
+  type ToolExecutionState,
+  type ToolLifecycleItemType,
+  type ToolPresentation,
+  type ProviderDriverKind,
   TurnId,
   type OrchestrationCheckpointSummary,
   type OrchestrationProposedPlan,
@@ -27,6 +31,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { deriveToolIdentityFromData } from "@t3tools/shared/toolIdentity";
+import { deriveToolPresentation } from "@t3tools/shared/toolPresentation";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { isUsageLimitDetail } from "../../provider/UsageLimit.ts";
@@ -267,6 +272,34 @@ function toolActivityData(data: unknown): { data: unknown } | Record<string, nev
     return { data: enriched };
   }
   return data !== undefined ? { data } : {};
+}
+
+/**
+ * Normalizes a tool lifecycle item into the typed native presentation clients
+ * render (contracts `ToolPresentation`). Derived here, once, so skills,
+ * plugins, MCP tools, and unknown tools reach every client already typed
+ * instead of each app re-scraping the provider-specific `data` bag.
+ */
+function toolPresentationOf(
+  itemType: ToolLifecycleItemType,
+  payload: {
+    readonly status?: string | undefined;
+    readonly title?: string | undefined;
+    readonly detail?: string | undefined;
+    readonly data?: unknown;
+  },
+  provider: ProviderDriverKind,
+  fallbackState: ToolExecutionState,
+): ToolPresentation {
+  return deriveToolPresentation({
+    itemType,
+    provider,
+    fallbackState,
+    ...(payload.status !== undefined ? { status: payload.status } : {}),
+    ...(payload.title !== undefined ? { title: payload.title } : {}),
+    ...(payload.detail !== undefined ? { detail: payload.detail } : {}),
+    ...(payload.data !== undefined ? { data: payload.data } : {}),
+  });
 }
 
 function normalizeProposedPlanMarkdown(planMarkdown: string | undefined): string | undefined {
@@ -654,6 +687,7 @@ function runtimeEventToActivities(
           payload: {
             taskId: event.payload.taskId,
             ...(event.payload.model ? { model: event.payload.model } : {}),
+            ...(event.payload.effort ? { effort: event.payload.effort } : {}),
             ...(event.payload.taskType ? { taskType: event.payload.taskType } : {}),
             ...(event.payload.subagentType ? { subagentType: event.payload.subagentType } : {}),
             ...(event.payload.workflowName ? { workflowName: event.payload.workflowName } : {}),
@@ -823,6 +857,12 @@ function runtimeEventToActivities(
             ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
             ...toolActivityData(event.payload.data),
+            presentation: toolPresentationOf(
+              event.payload.itemType,
+              event.payload,
+              event.provider,
+              "running",
+            ),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -845,6 +885,12 @@ function runtimeEventToActivities(
             itemType: event.payload.itemType,
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
             ...toolActivityData(event.payload.data),
+            presentation: toolPresentationOf(
+              event.payload.itemType,
+              event.payload,
+              event.provider,
+              "succeeded",
+            ),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -869,6 +915,12 @@ function runtimeEventToActivities(
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
             // Identity only: the started row needs the icon/name, not the input.
             ...(startedToolIdentity ? { data: { tool: startedToolIdentity } } : {}),
+            presentation: toolPresentationOf(
+              event.payload.itemType,
+              event.payload,
+              event.provider,
+              "running",
+            ),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,

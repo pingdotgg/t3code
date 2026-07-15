@@ -7,7 +7,6 @@ import {
   LayoutAnimation,
   Pressable,
   ScrollView,
-  useColorScheme,
   View,
   type ColorValue,
 } from "react-native";
@@ -80,19 +79,13 @@ interface SubagentTaskColors {
   readonly rose: ColorValue;
 }
 
+/** Status tints, contrast-pinned against the scenery plate the row sits on. */
 function useSubagentTaskColors(): SubagentTaskColors {
-  const colorScheme = useColorScheme();
-  const isDark = colorScheme === "dark";
-  const muted = useThemeColor("--color-icon-subtle");
-  return useMemo(
-    () => ({
-      muted,
-      amber: isDark ? "#fbbf24" : "#d97706",
-      emerald: isDark ? "#34d399" : "#059669",
-      rose: isDark ? "#fb7185" : "#e11d48",
-    }),
-    [isDark, muted],
-  );
+  const muted = useThemeColor("--color-scenery-plate-icon");
+  const amber = useThemeColor("--color-scenery-plate-warning");
+  const emerald = useThemeColor("--color-scenery-plate-success");
+  const rose = useThemeColor("--color-scenery-plate-danger");
+  return useMemo(() => ({ muted, amber, emerald, rose }), [amber, emerald, muted, rose]);
 }
 
 function statusIconName(state: SubagentTaskState, stalled: boolean): SFSymbol {
@@ -158,7 +151,7 @@ const RunningDurationLabel = memo(function RunningDurationLabel(props: {
   const elapsedMs = Math.max(0, nowMs - Date.parse(props.startedAt));
   return (
     <Text
-      className="text-xs text-foreground-muted"
+      className="text-xs text-scenery-plate-foreground-muted"
       style={{ fontVariant: ["tabular-nums"] }}
       numberOfLines={1}
     >
@@ -202,238 +195,265 @@ export const SubagentTaskRow = memo(function SubagentTaskRow(props: {
   const startedAtMs = useMemo(() => Date.parse(task.startedAt), [task.startedAt]);
 
   return (
+    // The state tint is translucent, so on the chat wallpaper it would leave
+    // the row's text on the photo. The tint rides on a scenery plate, which
+    // bounds the backdrop the row's small type is read against.
     <View
       collapsable={false}
-      className={cn(
-        "mb-1.5 gap-1 rounded-2xl px-2.5 py-2",
-        rowBackgroundClassName(task.state, stalled),
-      )}
+      className="mb-1.5 rounded-2xl bg-scenery-plate"
       style={{ borderCurve: "continuous" }}
     >
-      <Pressable
-        accessibilityRole={canExpand ? "button" : undefined}
-        accessibilityLabel={
-          stalled
-            ? `${subagentTaskTitle(task)}, stalled — no recent activity`
-            : subagentTaskTitle(task)
-        }
-        accessibilityState={canExpand ? { expanded } : undefined}
-        disabled={!canExpand}
-        hitSlop={4}
-        onPress={() => {
-          if (!canExpand) return;
-          if (!reduceMotion) {
-            LayoutAnimation.configureNext(ROW_LAYOUT_ANIMATION);
-          }
-          void Haptics.selectionAsync();
-          setExpanded((value) => !value);
-        }}
+      <View
+        className={cn("gap-1 rounded-2xl px-2.5 py-2", rowBackgroundClassName(task.state, stalled))}
+        style={{ borderCurve: "continuous" }}
       >
-        <View className="flex-row items-start gap-2">
-          <View className="h-4 w-4 items-center justify-center pt-0.5">
-            <SymbolView
-              name={statusIconName(task.state, stalled)}
-              size={15}
-              tintColor={statusIconTintColor(task.state, stalled, colors)}
-              type="monochrome"
-              resizeMode="center"
-            />
-          </View>
+        <Pressable
+          accessibilityRole={canExpand ? "button" : undefined}
+          accessibilityLabel={
+            stalled
+              ? `${subagentTaskTitle(task)}, stalled — no recent activity`
+              : subagentTaskTitle(task)
+          }
+          accessibilityState={canExpand ? { expanded } : undefined}
+          disabled={!canExpand}
+          hitSlop={4}
+          onPress={() => {
+            if (!canExpand) return;
+            if (!reduceMotion) {
+              LayoutAnimation.configureNext(ROW_LAYOUT_ANIMATION);
+            }
+            void Haptics.selectionAsync();
+            setExpanded((value) => !value);
+          }}
+        >
+          <View className="flex-row items-start gap-2">
+            <View className="h-4 w-4 items-center justify-center pt-0.5">
+              <SymbolView
+                name={statusIconName(task.state, stalled)}
+                size={15}
+                tintColor={statusIconTintColor(task.state, stalled, colors)}
+                type="monochrome"
+                resizeMode="center"
+              />
+            </View>
 
-          <View className="min-w-0 flex-1 gap-1">
-            <View className="flex-row items-start gap-1.5">
-              <View className="h-[15px] w-3.5 items-center justify-center pt-0.5">
-                <SymbolView name="person.2" size={12} type="monochrome" tintColor={colors.muted} />
-              </View>
-              <Text
-                className="min-w-0 flex-1 font-t3-medium text-sm text-foreground"
-                numberOfLines={2}
-              >
-                {subagentTaskTitle(task)}
-              </Text>
-              {canStop ? (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Stop agent"
-                  hitSlop={8}
-                  onPress={() => {
-                    void Haptics.selectionAsync();
-                    props.onStopAgent();
-                  }}
-                  style={({ pressed }) => ({ opacity: pressed ? 0.5 : 1 })}
-                >
+            <View className="min-w-0 flex-1 gap-1">
+              <View className="flex-row items-start gap-1.5">
+                <View className="h-[15px] w-3.5 items-center justify-center pt-0.5">
                   <SymbolView
-                    name="stop.circle"
-                    size={15}
-                    type="monochrome"
-                    tintColor={colors.muted}
-                  />
-                </Pressable>
-              ) : null}
-              {isRunning ? (
-                <RunningDurationLabel startedAt={task.startedAt} />
-              ) : durationMs !== null ? (
-                <Text
-                  className="text-xs text-foreground-muted"
-                  style={{ fontVariant: ["tabular-nums"] }}
-                >
-                  {formatDuration(durationMs)}
-                </Text>
-              ) : null}
-              {canExpand ? (
-                <View className="h-[15px] w-3 items-center justify-center">
-                  <SymbolView
-                    name={expanded ? "chevron.down" : "chevron.right"}
-                    size={10}
+                    name="person.2"
+                    size={12}
                     type="monochrome"
                     tintColor={colors.muted}
                   />
                 </View>
-              ) : null}
-            </View>
-
-            {identityBadge ? (
-              <Text className="font-t3-medium text-2xs text-foreground-muted" numberOfLines={1}>
-                {identityBadge}
-              </Text>
-            ) : null}
-
-            <View className="flex-row flex-wrap items-center gap-1.5">
-              {task.state === "running" ? (
-                <>
-                  <Text
-                    className={cn(
-                      "text-3xs",
-                      stalled ? "text-amber-600 dark:text-amber-400" : "text-foreground-tertiary",
-                    )}
+                <Text
+                  className="min-w-0 flex-1 font-t3-medium text-sm text-scenery-plate-foreground"
+                  numberOfLines={2}
+                >
+                  {subagentTaskTitle(task)}
+                </Text>
+                {canStop ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Stop agent"
+                    hitSlop={8}
+                    onPress={() => {
+                      void Haptics.selectionAsync();
+                      props.onStopAgent();
+                    }}
+                    style={({ pressed }) => ({ opacity: pressed ? 0.5 : 1 })}
                   >
-                    {stalledForLabel ?? subagentTaskLastActivityLabel(task, nowMs)}
+                    <SymbolView
+                      name="stop.circle"
+                      size={15}
+                      type="monochrome"
+                      tintColor={colors.muted}
+                    />
+                  </Pressable>
+                ) : null}
+                {isRunning ? (
+                  <RunningDurationLabel startedAt={task.startedAt} />
+                ) : durationMs !== null ? (
+                  <Text
+                    className="text-xs text-scenery-plate-foreground-muted"
+                    style={{ fontVariant: ["tabular-nums"] }}
+                  >
+                    {formatDuration(durationMs)}
                   </Text>
-                  {stalled ? (
-                    <StatusPill
-                      size="compact"
-                      label="stalled"
-                      pillClassName="bg-amber-500/14"
-                      textClassName="text-amber-700 dark:text-amber-300"
+                ) : null}
+                {canExpand ? (
+                  <View className="h-[15px] w-3 items-center justify-center">
+                    <SymbolView
+                      name={expanded ? "chevron.down" : "chevron.right"}
+                      size={10}
+                      type="monochrome"
+                      tintColor={colors.muted}
                     />
-                  ) : null}
-                  {task.isBackgrounded ? (
-                    <StatusPill
-                      size="compact"
-                      label="background"
-                      pillClassName="bg-subtle-strong"
-                      textClassName="text-foreground-muted"
-                    />
-                  ) : null}
-                </>
-              ) : task.state === "paused" ? (
-                <>
-                  <StatusPill
-                    size="compact"
-                    label="paused"
-                    pillClassName="bg-subtle-strong"
-                    textClassName="text-foreground-muted"
-                  />
-                  {task.isBackgrounded ? (
-                    <StatusPill
-                      size="compact"
-                      label="background"
-                      pillClassName="bg-subtle-strong"
-                      textClassName="text-foreground-muted"
-                    />
-                  ) : null}
-                </>
-              ) : task.isBackgrounded ? (
-                <StatusPill
-                  size="compact"
-                  label="background"
-                  pillClassName="bg-subtle-strong"
-                  textClassName="text-foreground-muted"
-                />
-              ) : null}
-            </View>
+                  </View>
+                ) : null}
+              </View>
 
-            {subtitle ? (
-              <Text className="text-xs text-foreground-secondary" numberOfLines={2}>
-                {subtitle}
-              </Text>
-            ) : null}
-
-            {props.stopError ? (
-              <Text selectable className="text-xs text-rose-600 dark:text-rose-400">
-                {props.stopError}
-              </Text>
-            ) : null}
-          </View>
-        </View>
-      </Pressable>
-
-      {expanded && canExpand ? (
-        <View className="ml-[27px] gap-1.5 pt-0.5">
-          {task.lastToolName ? (
-            <View className="flex-row gap-1.5">
-              <Text className="font-t3-medium text-3xs text-foreground-tertiary">Last tool</Text>
-              <Text className="flex-1 text-xs text-foreground-secondary" numberOfLines={2}>
-                {task.lastToolName}
-              </Text>
-            </View>
-          ) : null}
-          {usageSummary ? (
-            <View className="flex-row gap-1.5">
-              <Text className="font-t3-medium text-3xs text-foreground-tertiary">Usage</Text>
-              <Text className="flex-1 text-xs text-foreground-secondary" numberOfLines={2}>
-                {usageSummary}
-              </Text>
-            </View>
-          ) : null}
-          {task.error ? (
-            <Text selectable className="text-xs text-rose-600 dark:text-rose-400">
-              {task.error}
-            </Text>
-          ) : null}
-          {visibleLog.length > 0 ? (
-            <View className="border-l border-neutral-300/60 pl-2.5 dark:border-white/[0.12]">
-              {hiddenLogCount > 0 ? (
-                <Text className="pb-0.5 text-3xs text-foreground-tertiary">
-                  … {hiddenLogCount} earlier update{hiddenLogCount === 1 ? "" : "s"}
+              {identityBadge ? (
+                <Text
+                  className="font-t3-medium text-2xs text-scenery-plate-foreground-muted"
+                  numberOfLines={1}
+                >
+                  {identityBadge}
                 </Text>
               ) : null}
-              <ScrollView
-                nestedScrollEnabled
-                directionalLockEnabled
-                showsVerticalScrollIndicator
-                style={{ maxHeight: 220 }}
-                contentContainerStyle={{ gap: 3 }}
-              >
-                {visibleLog.map((entry, index) => {
-                  const emphasize = isRunning && index === visibleLog.length - 1;
-                  return (
+
+              <View className="flex-row flex-wrap items-center gap-1.5">
+                {task.state === "running" ? (
+                  <>
                     <Text
-                      key={`${entry.at}:${entry.toolName ?? ""}:${entry.text}`}
-                      selectable
                       className={cn(
-                        "text-2xs leading-normal",
-                        emphasize ? "text-foreground" : "text-foreground-muted",
+                        "text-3xs",
+                        stalled
+                          ? "text-scenery-plate-warning"
+                          : "text-scenery-plate-foreground-muted",
                       )}
                     >
-                      <Text
-                        className="text-foreground-tertiary"
-                        style={{ fontFamily: "ui-monospace" }}
-                      >
-                        {formatOffset(startedAtMs, Date.parse(entry.at))}
-                      </Text>
-                      {entry.toolName ? (
-                        <Text className="font-t3-medium text-foreground-muted">{`  ${entry.toolName}`}</Text>
-                      ) : null}
-                      {`  ${entry.text}`}
+                      {stalledForLabel ?? subagentTaskLastActivityLabel(task, nowMs)}
                     </Text>
-                  );
-                })}
-              </ScrollView>
+                    {stalled ? (
+                      <StatusPill
+                        size="compact"
+                        label="stalled"
+                        pillClassName="bg-amber-500/14"
+                        textClassName="text-scenery-plate-warning"
+                      />
+                    ) : null}
+                    {task.isBackgrounded ? (
+                      <StatusPill
+                        size="compact"
+                        label="background"
+                        pillClassName="bg-subtle-strong"
+                        textClassName="text-scenery-plate-foreground-muted"
+                      />
+                    ) : null}
+                  </>
+                ) : task.state === "paused" ? (
+                  <>
+                    <StatusPill
+                      size="compact"
+                      label="paused"
+                      pillClassName="bg-subtle-strong"
+                      textClassName="text-scenery-plate-foreground-muted"
+                    />
+                    {task.isBackgrounded ? (
+                      <StatusPill
+                        size="compact"
+                        label="background"
+                        pillClassName="bg-subtle-strong"
+                        textClassName="text-scenery-plate-foreground-muted"
+                      />
+                    ) : null}
+                  </>
+                ) : task.isBackgrounded ? (
+                  <StatusPill
+                    size="compact"
+                    label="background"
+                    pillClassName="bg-subtle-strong"
+                    textClassName="text-scenery-plate-foreground-muted"
+                  />
+                ) : null}
+              </View>
+
+              {subtitle ? (
+                <Text className="text-xs text-scenery-plate-foreground-muted" numberOfLines={2}>
+                  {subtitle}
+                </Text>
+              ) : null}
+
+              {props.stopError ? (
+                <Text selectable className="text-xs text-scenery-plate-danger">
+                  {props.stopError}
+                </Text>
+              ) : null}
             </View>
-          ) : null}
-        </View>
-      ) : null}
+          </View>
+        </Pressable>
+
+        {expanded && canExpand ? (
+          <View className="ml-[27px] gap-1.5 pt-0.5">
+            {task.lastToolName ? (
+              <View className="flex-row gap-1.5">
+                <Text className="font-t3-medium text-3xs text-scenery-plate-foreground-muted">
+                  Last tool
+                </Text>
+                <Text
+                  className="flex-1 text-xs text-scenery-plate-foreground-muted"
+                  numberOfLines={2}
+                >
+                  {task.lastToolName}
+                </Text>
+              </View>
+            ) : null}
+            {usageSummary ? (
+              <View className="flex-row gap-1.5">
+                <Text className="font-t3-medium text-3xs text-scenery-plate-foreground-muted">
+                  Usage
+                </Text>
+                <Text
+                  className="flex-1 text-xs text-scenery-plate-foreground-muted"
+                  numberOfLines={2}
+                >
+                  {usageSummary}
+                </Text>
+              </View>
+            ) : null}
+            {task.error ? (
+              <Text selectable className="text-xs text-scenery-plate-danger">
+                {task.error}
+              </Text>
+            ) : null}
+            {visibleLog.length > 0 ? (
+              <View className="border-l border-neutral-300/60 pl-2.5 dark:border-white/[0.12]">
+                {hiddenLogCount > 0 ? (
+                  <Text className="pb-0.5 text-3xs text-scenery-plate-foreground-muted">
+                    … {hiddenLogCount} earlier update{hiddenLogCount === 1 ? "" : "s"}
+                  </Text>
+                ) : null}
+                <ScrollView
+                  nestedScrollEnabled
+                  directionalLockEnabled
+                  showsVerticalScrollIndicator
+                  style={{ maxHeight: 220 }}
+                  contentContainerStyle={{ gap: 3 }}
+                >
+                  {visibleLog.map((entry, index) => {
+                    const emphasize = isRunning && index === visibleLog.length - 1;
+                    return (
+                      <Text
+                        key={`${entry.at}:${entry.toolName ?? ""}:${entry.text}`}
+                        selectable
+                        className={cn(
+                          "text-2xs leading-normal",
+                          emphasize
+                            ? "text-scenery-plate-foreground"
+                            : "text-scenery-plate-foreground-muted",
+                        )}
+                      >
+                        <Text
+                          className="text-scenery-plate-foreground-muted"
+                          style={{ fontFamily: "ui-monospace" }}
+                        >
+                          {formatOffset(startedAtMs, Date.parse(entry.at))}
+                        </Text>
+                        {entry.toolName ? (
+                          <Text className="font-t3-medium text-scenery-plate-foreground-muted">{`  ${entry.toolName}`}</Text>
+                        ) : null}
+                        {`  ${entry.text}`}
+                      </Text>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            ) : null}
+          </View>
+        ) : null}
+      </View>
     </View>
   );
 });

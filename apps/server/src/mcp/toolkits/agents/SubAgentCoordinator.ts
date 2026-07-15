@@ -23,6 +23,7 @@ import {
   SubAgentError,
   ThreadId,
   type TurnId,
+  type ModelSelection,
   type OrchestrationThread,
   type OrchestrationThreadActivity,
   type RuntimeMode,
@@ -36,6 +37,7 @@ import {
   type SubAgentWaitInput,
   type SubAgentWaitResult,
 } from "@t3tools/contracts";
+import { getProviderOptionCurrentValue, getProviderOptionDescriptors } from "@t3tools/shared/model";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -52,6 +54,7 @@ import { enforceSubAgentStandardMode } from "../../../orchestration/subAgentMode
 import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
 import { ProviderService } from "../../../provider/Services/ProviderService.ts";
 import { readTurnStallThresholdMs } from "../../../provider/turnReliabilityConfig.ts";
+import { resolveEffectiveRuntimeMode } from "../../../orchestration/InteractionModePermissions.ts";
 import type { McpInvocationScope } from "../../McpInvocationContext.ts";
 
 const WAIT_POLL_INTERVAL_MILLIS = 500;
@@ -71,6 +74,8 @@ interface SubAgentRecord {
   readonly title: string;
   readonly providerInstanceId: SubAgentSpawnInput["providerInstanceId"];
   readonly model: string;
+  /** Reasoning effort the child's turns run at, when the provider has one. */
+  readonly effort?: string;
   /** Parent-log task row for the current child turn. */
   readonly activityTaskId: RuntimeTaskId;
   /** Parent turn that spawned/drove this child, if known. */
@@ -174,6 +179,39 @@ const resolveSpawnModelSelection = (target: ServerProvider, model: string) => {
     ...base,
     ...(options.length > 0 ? { options } : {}),
   });
+};
+
+/** Option ids providers use for reasoning effort (claude/claudex, codex, fugu). */
+const EFFORT_OPTION_IDS = new Set(["effort", "reasoningEffort", "reasoning"]);
+
+/**
+ * Reasoning effort the child's turns will run at. The child's provider resolves
+ * the same descriptor value from this selection when it starts the session, so
+ * this reports what the sub-agent actually runs at rather than a guess.
+ * Prompt-injected values (e.g. `ultrathink`) are not effort levels and are
+ * reported as absent.
+ */
+const resolveSpawnEffort = (
+  target: ServerProvider,
+  selection: ModelSelection,
+): string | undefined => {
+  const caps = target.models.find((candidate) => candidate.slug === selection.model)?.capabilities;
+  if (!caps) {
+    return undefined;
+  }
+  const descriptor = getProviderOptionDescriptors({
+    caps,
+    selections: selection.options,
+  }).find((candidate) => candidate.type === "select" && EFFORT_OPTION_IDS.has(candidate.id));
+  if (!descriptor || descriptor.type !== "select") {
+    return undefined;
+  }
+  const value = getProviderOptionCurrentValue(descriptor);
+  if (typeof value !== "string" || descriptor.promptInjectedValues?.includes(value)) {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 };
 
 const finalAssistantText = (thread: OrchestrationThread): string | null => {
@@ -370,6 +408,7 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
       readonly providerLabel: string;
       readonly title: string;
       readonly model: string;
+      readonly effort?: string | undefined;
       readonly parentTurnId: TurnId | null;
       readonly createdAt: string;
     }) {
@@ -386,6 +425,7 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
           taskType: "sub-agent",
           subagentType: input.providerLabel,
           model: input.model,
+          ...(input.effort ? { effort: input.effort } : {}),
           workflowName: "agent_spawn",
           toolUseId: input.childThreadId,
         },
@@ -610,7 +650,15 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
       const name = resolveSpawnName(input);
       const title = resolveSpawnTitle(input, name);
       const modelSelection = resolveSpawnModelSelection(target, model);
+      const effort = resolveSpawnEffort(target, modelSelection);
       const parentTurnId = yield* readParentTurnId(scope.threadId);
+      // A sub-agent must not be an escape hatch out of the parent's permissions:
+      // an advisor parent stores its unclamped runtime mode, so inherit the mode
+      // actually in force rather than the stored one.
+      const inheritedRuntimeMode = resolveEffectiveRuntimeMode(
+        parent.runtimeMode,
+        parent.interactionMode,
+      );
 
       yield* engine
         .dispatch({
@@ -620,7 +668,7 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
           projectId: parent.projectId,
           title,
           modelSelection,
-          runtimeMode: parent.runtimeMode,
+          runtimeMode: inheritedRuntimeMode,
           interactionMode: "default",
           branch: parent.branch,
           worktreePath: parent.worktreePath,
@@ -628,7 +676,11 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
         })
         .pipe(Effect.mapError(dispatchFailed("create sub-agent thread")));
 
-      const lastTurnRequestedAt = yield* startTurn(childThreadId, input.prompt, parent.runtimeMode);
+      const lastTurnRequestedAt = yield* startTurn(
+        childThreadId,
+        input.prompt,
+        inheritedRuntimeMode,
+      );
 
       yield* emitSpawnStartedActivity({
         scope,
@@ -637,6 +689,7 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
         providerLabel: target.displayName ?? target.driver,
         title,
         model,
+        ...(effort !== undefined ? { effort } : {}),
         parentTurnId,
         createdAt,
       }).pipe(Effect.catch(() => Effect.void));
@@ -651,6 +704,7 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
           title,
           providerInstanceId: target.instanceId,
           model,
+          ...(effort !== undefined ? { effort } : {}),
           activityTaskId,
           parentTurnId,
           status: "running",
@@ -696,6 +750,7 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
         providerLabel: record.providerInstanceId,
         title: record.title,
         model: record.model,
+        ...(record.effort !== undefined ? { effort: record.effort } : {}),
         parentTurnId,
         createdAt: lastTurnRequestedAt,
       }).pipe(Effect.catch(() => Effect.void));

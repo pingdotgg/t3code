@@ -852,11 +852,20 @@ public final class SceneryStore {
                 set.sceneNames.isEmpty
                 ? ScenerySet.makeBuiltinDolomites().sceneNames
                 : set.sceneNames
-            refreshed = unique.enumerated().map { index, entry in
+            let named = unique.enumerated().map { index, entry in
                 let photo = entry.photo
                 let base = sceneNames[index % sceneNames.count]
                 return SceneryPoolBuilder.sceneryPhoto(from: photo, name: base)
             }
+            // A custom set built before per-photo place names existed can have
+            // nothing but the set title in `sceneNames`, which would round-robin
+            // "Barbados" onto every photo. Give those their real place name.
+            // No-ops (and costs no request) for curated sets like the builtin
+            // Dolomites, whose names are already distinct from the set title.
+            refreshed = await SceneryPoolBuilder.hydratedNames(
+                client: client,
+                photos: named,
+                generic: SceneSetComposer.bareSetTitle(set.title))
             for entry in unique {
                 if let tags = entry.tags {
                     refreshedTags[entry.photo.id] = tags
@@ -881,6 +890,19 @@ public final class SceneryStore {
             }
         }
         pools[setId] = refreshed + kept
+        // Keep a custom set's manifest names in step with the pool it now holds,
+        // so a set whose sceneNames were nothing but the set title does not
+        // round-robin that title back on at the next refresh (and so
+        // `baseSceneName` still recognises the names it hands out).
+        let refreshedNames = SceneSetComposer.normalizeSceneNames(refreshed.map(\.name))
+        if set.origin == .custom, !refreshedNames.isEmpty, refreshedNames != set.sceneNames {
+            var updated = set
+            updated.sceneNames = refreshedNames
+            if let index = availableSets.firstIndex(where: { $0.id == setId }) {
+                availableSets[index] = updated
+            }
+            saveManifest(updated)
+        }
         photoTagsBySet[setId] = refreshedTags
         poolFetchedAt[setId] = Date()
         savePool(for: setId)

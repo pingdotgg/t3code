@@ -177,7 +177,7 @@ struct ScenerySettingsTab: View {
             Text("Window glass")
         } footer: {
             Text(
-                "How solid the scenery photo is over the blurred desktop. 100% matches the previous fully solid look; lower values let the window glass show through."
+                "How much of the window the app paints over the blurred desktop. 100% is a fully solid window; at 50% the scene is half transparent and the desktop reads through it."
             )
             .font(.caption)
             .foregroundStyle(.secondary)

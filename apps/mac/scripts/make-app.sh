@@ -16,6 +16,10 @@ fi
 SWIFT_FLAGS=()
 if [[ "$CONFIG" == "release" ]]; then
   SWIFT_FLAGS+=(-Xswiftc -cross-module-optimization)
+  # Skip dSYM generation: on some machines the post-link dsymutil step
+  # deadlocks inside CFBundleCreate (stuck in _CFIterateDirectory ->
+  # open$NOCANCEL with zero CPU progress), hanging the build forever.
+  SWIFT_FLAGS+=(-debug-info-format none)
 fi
 # ${arr[@]+...} guard: bash 3.2 (macOS default) treats expanding an empty
 # array as an unbound variable under `set -u`, which would break --debug.

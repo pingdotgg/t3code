@@ -30,6 +30,10 @@ public final class ThreadState {
     public internal(set) var checkpoints: [Checkpoint]?
     public internal(set) var composerDraft = ComposerDraft()
 
+    /// Main-area subagent mode: the task whose inner thread has been opened in
+    /// place of the chat transcript. Nil while the parent thread is shown.
+    public internal(set) var focusedSubagentTaskID: String?
+
     /// Main-area review mode: when true, chat is swapped for DiffReviewView.
     public internal(set) var isReviewing = false
     public internal(set) var reviewScope: ReviewScope?

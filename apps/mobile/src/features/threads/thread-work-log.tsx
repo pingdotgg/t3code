@@ -5,6 +5,15 @@ import { LayoutAnimation, Pressable, ScrollView, useColorScheme, View } from "re
 import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
 import type { ThreadFeedActivity } from "../../lib/threadActivity";
+import { useThemeColor } from "../../lib/useThemeColor";
+
+/**
+ * The log sits on the chat wallpaper, where its small type would otherwise be
+ * read against an arbitrary photo. Rows share a translucent plate
+ * (`bg-scenery-plate`) that bounds the backdrop, which is what lets the detail
+ * text keep a muted tone and still clear WCAG AA — see scenery-contrast.ts.
+ */
+const PLATE_CLASSNAME = "mb-1.5 rounded-2xl bg-scenery-plate px-2 py-1";
 
 const WORK_LOG_LAYOUT_ANIMATION = {
   duration: 180,
@@ -81,7 +90,8 @@ export function ThreadWorkLog(props: {
   readonly onToggleRow: (rowId: string) => void;
 }) {
   const colorScheme = useColorScheme();
-  const pressedBackground = colorScheme === "dark" ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.035)";
+  const pressedBackground = colorScheme === "dark" ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)";
+  const dangerColor = useThemeColor("--color-scenery-plate-danger");
   const rows = props.activities
     .filter((activity) => !(activity.toolLike && activity.status === "neutral"))
     .map((activity) => ({ ...activity, detail: compactActivityDetail(activity.detail) }));
@@ -93,9 +103,9 @@ export function ThreadWorkLog(props: {
   const onlyToolRows = rows.every((row) => row.toolLike);
 
   return (
-    <View className="-mx-1 mb-1 px-1 py-0">
+    <View className={PLATE_CLASSNAME} style={{ borderCurve: "continuous" }}>
       {!onlyToolRows ? (
-        <Text className="px-0.5 pb-0.5 font-t3-medium text-2xs text-foreground-muted">
+        <Text className="px-0.5 pb-0.5 font-t3-medium text-2xs text-scenery-plate-foreground-muted">
           work log
         </Text>
       ) : null}
@@ -137,28 +147,31 @@ export function ThreadWorkLog(props: {
                       name={workRowSymbolName(row.icon)}
                       size={13}
                       weight="medium"
-                      tintColor={iconIsDestructive ? "#e11d48" : props.iconSubtleColor}
+                      tintColor={iconIsDestructive ? dangerColor : props.iconSubtleColor}
                       type="monochrome"
                     />
                   </View>
 
-                  <Text className="min-w-0 flex-1 text-xs text-foreground" numberOfLines={1}>
+                  <Text
+                    className="min-w-0 flex-1 text-xs text-scenery-plate-foreground"
+                    numberOfLines={1}
+                  >
                     <Text
                       className={cn(
-                        "font-t3-medium text-foreground",
-                        iconIsDestructive && "text-rose-600 dark:text-rose-400",
+                        "font-t3-medium text-scenery-plate-foreground",
+                        iconIsDestructive && "text-scenery-plate-danger",
                       )}
                     >
                       {row.summary}
                     </Text>
                     {row.detail ? (
-                      <Text className="text-foreground-muted"> {row.detail}</Text>
+                      <Text className="text-scenery-plate-foreground-muted"> {row.detail}</Text>
                     ) : null}
                   </Text>
 
                   <View className="shrink-0 flex-row items-center gap-px">
                     {props.copiedRowId === row.id ? (
-                      <Text className="pr-1 font-t3-medium text-3xs text-emerald-600 dark:text-emerald-400">
+                      <Text className="pr-1 font-t3-medium text-3xs text-scenery-plate-success">
                         Copied
                       </Text>
                     ) : null}
@@ -183,7 +196,7 @@ export function ThreadWorkLog(props: {
                                 : "minus"
                           }
                           size={11}
-                          tintColor={row.status === "failure" ? "#e11d48" : props.iconSubtleColor}
+                          tintColor={row.status === "failure" ? dangerColor : props.iconSubtleColor}
                           type="monochrome"
                         />
                       ) : null}
@@ -193,7 +206,7 @@ export function ThreadWorkLog(props: {
               </Pressable>
 
               {expanded && row.fullDetail ? (
-                <View className="ml-7 mb-1 rounded-[10px] bg-white/75 px-3 py-2 dark:bg-black/40">
+                <View className="ml-7 mb-1 rounded-[10px] bg-scenery-code px-3 py-2">
                   <ScrollView
                     nestedScrollEnabled
                     directionalLockEnabled
@@ -202,7 +215,7 @@ export function ThreadWorkLog(props: {
                   >
                     <Text
                       selectable
-                      className="text-2xs leading-normal text-foreground"
+                      className="text-2xs leading-normal text-scenery-code-foreground"
                       style={{ fontFamily: "ui-monospace" }}
                     >
                       {row.fullDetail}
@@ -226,7 +239,7 @@ export function ThreadWorkGroupToggle(props: {
   readonly onToggle: () => void;
 }) {
   const colorScheme = useColorScheme();
-  const pressedBackground = colorScheme === "dark" ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.035)";
+  const pressedBackground = colorScheme === "dark" ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)";
   const noun = props.onlyToolActivities
     ? props.hiddenCount === 1
       ? "tool call"
@@ -240,7 +253,7 @@ export function ThreadWorkGroupToggle(props: {
     : "Show fewer log entries";
 
   return (
-    <View className="-mx-1 mb-1 px-1 py-0">
+    <View className={PLATE_CLASSNAME} style={{ borderCurve: "continuous" }}>
       <Pressable
         accessibilityRole="button"
         accessibilityState={{ expanded: props.expanded }}
@@ -263,7 +276,7 @@ export function ThreadWorkGroupToggle(props: {
             type="monochrome"
           />
         </View>
-        <Text className="font-t3-medium text-xs text-foreground">
+        <Text className="font-t3-medium text-xs text-scenery-plate-foreground">
           {props.expanded ? expandedLabel : `+${props.hiddenCount} previous ${noun}`}
         </Text>
       </Pressable>

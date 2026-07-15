@@ -104,6 +104,39 @@ groups, `.buttonStyle(.glass)`, scroll-edge effects on sidebar/timeline.
 Content layers (chat text, diffs) stay opaque for readability; glass is for
 chrome, never for long-form reading surfaces.
 
+### The layer stack over the desktop
+
+The window is non-opaque with a clear background (`TransparentWindowConfigurator`),
+so the WindowServer blurs the desktop behind it. Everything the app paints on
+top of that blur is described by `Theme/GlassLayering.swift`: the window plate,
+the scenery photo, and the legibility wash that keeps chat text readable.
+
+The rule that keeps it honest: **photo + wash cover exactly the scenery
+translucency the user picked**, so `1 - translucency` of the desktop reaches
+them. Two traps this encodes, both of which silently made the window opaque
+before:
+
+- The window plate is a _window-wide_ layer, so it also sits under the scenery.
+  Any alpha it spends is alpha the desktop can never reach — it stays at zero
+  through the glass band and only ramps in above `plateStart` to reach the
+  fully solid window at 100%.
+- SwiftUI's `.opacity` fades each leaf separately. Fading a stack of two opaque
+  layers (the gradient fallback and the photo) composites them _both_, so the
+  result covers far more than the requested alpha. `SceneryImageView` calls
+  `.compositingGroup()` to flatten first.
+
+`SERGECODE_UI_PROBE_SCENARIO=glass` (with `--mock`) measures the real composite:
+it captures the window in-process — no Screen Recording permission, which
+agents and CI don't have — and reports per-region coverage plus a composite
+over a synthetic desktop. Alpha in that capture _is_ the app's coverage,
+because the behind-window blur is composited outside the process.
+
+Known gap: SwiftUI's `.inspector` column paints its own opaque plate with no
+public API to clear it (`presentationBackground(.clear)` is a no-op there, and
+`ContainerBackgroundPlacement.navigation`/`.navigationSplitView` are unavailable
+on macOS), so the changes rail measures 1.0 coverage at every setting. Making
+it glass means replacing `.inspector` with a hand-rolled column.
+
 ## Build without Xcode
 
 Only Command Line Tools are required. `scripts/make-app.sh` runs

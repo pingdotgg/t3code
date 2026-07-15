@@ -843,7 +843,8 @@ private actor MockState {
         branch: String = "feat/native-mac-app",
         prState: PullRequestState? = nil,
         reviewDecision: PullRequestReviewDecision? = nil,
-        unresolvedReviewThreadCount: Int? = nil
+        unresolvedReviewThreadCount: Int? = nil,
+        reviewLifecycle: PullRequestReviewLifecycle? = nil
     ) {
         let hasOpenPR = prState == .open || prState == .merged
         emit(
@@ -861,7 +862,8 @@ private actor MockState {
                     prURL: hasOpenPR ? "https://github.com/SergeSerb2/SergeCode/pull/1" : nil,
                     prState: prState,
                     reviewDecision: reviewDecision,
-                    unresolvedReviewThreadCount: unresolvedReviewThreadCount)))
+                    unresolvedReviewThreadCount: unresolvedReviewThreadCount,
+                    reviewLifecycle: reviewLifecycle)))
     }
 
     func respondToUserInput(id: String, answers: [String: [String]]) {
@@ -1079,14 +1081,37 @@ private actor MockState {
         threadsByID[threadID] = thread
         emit(.threadUpserted(thread))
 
-        let item = TimelineItem.subagentTask(
-            SubagentTaskItem(
+        // Fold onto the seeded task the way the live projection does: progress
+        // accumulates, so the inner thread has a transcript to show. Replacing
+        // the item wholesale would erase every earlier update.
+        let now = Date()
+        var task =
+            existingSubagentTask(taskId: demoTaskId, threadID: threadID)
+            ?? SubagentTaskItem(
                 taskId: demoTaskId, taskType: "reviewer",
                 description: "Audit subagent timeline and status handling",
                 state: state, latestProgress: progress,
-                startedAt: Date().addingTimeInterval(-(duration ?? 2)), duration: duration))
+                startedAt: now.addingTimeInterval(-(duration ?? 2)), duration: duration)
+        task.state = state
+        task.latestProgress = progress
+        task.lastActivityAt = now
+        // Settle against the task's own start so the header duration agrees
+        // with the progress offsets the inner thread prints.
+        task.duration = duration == nil ? task.duration : now.timeIntervalSince(task.startedAt)
+        if task.progressLog.last?.text != progress {
+            task.progressLog.append(
+                SubagentTaskProgressEntry(at: now, toolName: nil, text: progress))
+        }
+        let item = TimelineItem.subagentTask(task)
         timelinesByThread[threadID, default: []].upsertTimelineItem(item)
         emit(.timelineAppended(threadID: threadID, item: item))
+    }
+
+    private func existingSubagentTask(taskId: String, threadID: String) -> SubagentTaskItem? {
+        for item in timelinesByThread[threadID] ?? [] {
+            if case .subagentTask(let task) = item, task.taskId == taskId { return task }
+        }
+        return nil
     }
 
     private func idleStatus(for threadID: String) -> ThreadStatus {
@@ -1454,8 +1479,44 @@ private actor MockState {
                 SubagentTaskItem(
                     taskId: "mock-subagent-1", taskType: "reviewer",
                     description: "Audit subagent timeline and status handling",
-                    state: .running, latestProgress: "Starting delegated review...",
-                    startedAt: now.addingTimeInterval(-460), duration: nil)),
+                    subagentType: "Explore", model: "claude-sonnet-5",
+                    state: .running, latestProgress: "Reading SubagentTaskAggregator...",
+                    lastToolName: "read_file",
+                    startedAt: now.addingTimeInterval(-460),
+                    lastActivityAt: now.addingTimeInterval(-20), duration: nil,
+                    progressLog: [
+                        SubagentTaskProgressEntry(
+                            at: now.addingTimeInterval(-455), toolName: nil,
+                            text: "Starting delegated review..."),
+                        SubagentTaskProgressEntry(
+                            at: now.addingTimeInterval(-300), toolName: "grep",
+                            text: "Collecting subagent task call sites"),
+                        SubagentTaskProgressEntry(
+                            at: now.addingTimeInterval(-20), toolName: "read_file",
+                            text: "Reading SubagentTaskAggregator..."),
+                    ])),
+            .subagentTask(
+                SubagentTaskItem(
+                    taskId: "mock-subagent-2", taskType: "general-purpose",
+                    description: "Summarize scroll-jump reports",
+                    subagentType: "Explore", model: "claude-haiku-4-5",
+                    state: .completed,
+                    latestProgress:
+                        "Three reports share one cause: the thread list re-sorts on every "
+                        + "threadUpserted event, so the scroll offset jumps mid-render.",
+                    lastToolName: "grep", usageSummary: "18420 tokens · 6 tools",
+                    startedAt: now.addingTimeInterval(-430),
+                    lastActivityAt: now.addingTimeInterval(-360), duration: 70,
+                    progressLog: [
+                        SubagentTaskProgressEntry(
+                            at: now.addingTimeInterval(-425), toolName: "grep",
+                            text: "Searching issue reports for scroll jumps"),
+                        SubagentTaskProgressEntry(
+                            at: now.addingTimeInterval(-360), toolName: nil,
+                            text:
+                                "Three reports share one cause: the thread list re-sorts on every "
+                                + "threadUpserted event, so the scroll offset jumps mid-render."),
+                    ])),
             .toolEvent(
                 id: "t1-tool1", name: "read_file",
                 detail: "Sources/SergeCodeMac/Views/SidebarView.swift", kind: .fileRead,

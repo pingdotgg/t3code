@@ -687,4 +687,83 @@ describe("buildThreadFeed", () => {
       expanded: true,
     });
   });
+
+  it("renders a skill call from its native presentation, not the provider title", () => {
+    const turnId = TurnId.make("turn-skill");
+    const thread = makeThread({
+      id: ThreadId.make("thread-skill"),
+      projectId: ProjectId.make("project-1"),
+      title: "Skill row",
+      activities: [
+        makeActivity({
+          id: EventId.make("skill-completed"),
+          kind: "tool.completed",
+          tone: "tool",
+          // The adapter types a Skill call as a generic dynamic tool and titles
+          // it "Tool call"; only the presentation knows it is a skill.
+          summary: "Tool call",
+          createdAt: "2026-04-01T00:00:00.000Z",
+          turnId,
+          payload: {
+            itemType: "dynamic_tool_call",
+            detail: 'Skill: {"skill":"caveman:cavecrew"}',
+            presentation: {
+              surface: "skill",
+              title: "Skill: cavecrew",
+              subtitle: "review the diff",
+              state: "succeeded",
+              provenance: { origin: "plugin", pluginName: "caveman", skillName: "cavecrew" },
+              inputs: [],
+            },
+          },
+        }),
+      ],
+    });
+
+    const group = buildThreadFeed(thread).find((entry) => entry.type === "activity-group");
+    const activity = group?.type === "activity-group" ? group.activities[0] : undefined;
+
+    expect(activity).toMatchObject({
+      summary: "Skill: cavecrew",
+      detail: "review the diff",
+      icon: "zap",
+      toolLike: true,
+      status: "success",
+    });
+  });
+
+  it("falls back to the legacy derivation when an unknown surface arrives", () => {
+    const turnId = TurnId.make("turn-unknown");
+    const thread = makeThread({
+      id: ThreadId.make("thread-unknown"),
+      projectId: ProjectId.make("project-1"),
+      title: "Unknown surface row",
+      activities: [
+        makeActivity({
+          id: EventId.make("unknown-completed"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Tool call",
+          createdAt: "2026-04-01T00:00:00.000Z",
+          turnId,
+          payload: {
+            itemType: "mcp_tool_call",
+            presentation: {
+              surface: "holodeck",
+              title: "AcmeDoThing",
+              state: "succeeded",
+              provenance: { origin: "unknown" },
+              inputs: [],
+            },
+          },
+        }),
+      ],
+    });
+
+    const group = buildThreadFeed(thread).find((entry) => entry.type === "activity-group");
+    const activity = group?.type === "activity-group" ? group.activities[0] : undefined;
+
+    // Unknown surface -> generic -> icon falls through to the itemType chain.
+    expect(activity).toMatchObject({ summary: "AcmeDoThing", icon: "wrench" });
+  });
 });

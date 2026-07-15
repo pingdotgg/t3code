@@ -124,7 +124,11 @@ public struct ComposerBar: View {
         let query = token.lowercased()
         let builtIns = [
             SlashCommandItem(name: "plan", detail: "Switch this thread to plan mode", builtIn: .plan),
-            SlashCommandItem(name: "default", detail: "Leave plan mode", builtIn: .normal),
+            SlashCommandItem(
+                name: "advisor",
+                detail: "Ask without editing — the agent advises, it cannot change the workspace",
+                builtIn: .advisor),
+            SlashCommandItem(name: "default", detail: "Back to doing the work", builtIn: .normal),
         ]
         let provider = model.selectedThreadSlashCommands.map {
             SlashCommandItem(name: $0.name, detail: $0.detail, builtIn: nil)
@@ -682,12 +686,9 @@ public struct ComposerBar: View {
 
     private func applySlashCommand(_ item: SlashCommandItem) {
         switch item.builtIn {
-        case .plan:
+        case .some(let mode):
             draft = ""
-            Task { await model.setInteractionMode(.plan) }
-        case .normal:
-            draft = ""
-            Task { await model.setInteractionMode(.normal) }
+            Task { await model.setInteractionMode(mode) }
         case nil:
             // Provider command: round-trips as plain message text.
             draft = "/\(item.name) "
@@ -911,14 +912,12 @@ public struct ComposerBar: View {
 
 // MARK: - Pieces
 
-private enum BuiltInSlashAction {
-    case plan, normal
-}
-
 private struct SlashCommandItem {
     var name: String
     var detail: String?
-    var builtIn: BuiltInSlashAction?
+    /// Non-nil for the built-in mode commands (`/plan`, `/advisor`, `/default`),
+    /// which switch the thread's interaction mode instead of being sent as text.
+    var builtIn: ThreadInteractionMode?
 }
 
 private struct SuggestionRow: Identifiable {
