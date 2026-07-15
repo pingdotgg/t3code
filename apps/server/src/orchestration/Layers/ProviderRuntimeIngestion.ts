@@ -22,6 +22,7 @@ import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import { PluginPolicyRegistry } from "../../plugins/PluginPolicyRegistry.ts";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
@@ -628,6 +629,9 @@ function runtimeEventToActivities(
 }
 
 const make = Effect.gen(function* () {
+  // Plugin policy hooks. Consulted at the single point every adapter's approval
+  // requests converge, so a new adapter cannot bypass them by not knowing they exist.
+  const policyRegistry = yield* PluginPolicyRegistry;
   const crypto = yield* Crypto.Crypto;
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
@@ -1650,6 +1654,68 @@ const make = Effect.gen(function* () {
               checkpointTurnCount: maxCheckpointTurnCount(checkpointContext.checkpoints) + 1,
               createdAt: now,
             });
+          }
+        }
+      }
+
+      // Plugin policy hooks see an approval request BEFORE the user is asked.
+      //
+      // Here, and only here: every adapter (Codex, Claude, OpenCode, ACP) emits
+      // `request.opened` independently, so hooking each one would mean four
+      // interception points today and a fifth adapter silently bypassing every policy
+      // hook tomorrow. This is where they converge.
+      //
+      // A deny is not "hide the prompt": the provider is BLOCKED waiting for an
+      // answer, so denying means actually declining it, and saying who did.
+      if (event.type === "request.opened" && event.requestId !== undefined) {
+        const requestKind = requestKindFromCanonicalRequestType(event.payload.requestType);
+        if (requestKind !== undefined) {
+          const outcome = yield* policyRegistry.evaluate({
+            threadId: thread.id,
+            kind: requestKind,
+            detail: event.payload.detail ?? "",
+            cwd: null,
+          });
+          if (outcome.decision === "deny") {
+            yield* orchestrationEngine.dispatch({
+              type: "thread.approval.respond",
+              commandId: yield* providerCommandId(event, "plugin-policy-decline"),
+              threadId: thread.id,
+              requestId: ApprovalRequestId.make(event.requestId),
+              decision: "decline",
+              createdAt: event.createdAt,
+            });
+            // Say WHO blocked it and WHY, in the plugin's own words. Without this the
+            // agent appears to refuse itself and the user has no way to learn that a
+            // plugin did it, let alone which one.
+            yield* orchestrationEngine.dispatch({
+              type: "thread.activity.append",
+              commandId: yield* providerCommandId(event, "plugin-policy-activity"),
+              threadId: thread.id,
+              activity: {
+                // The "approval requested" activity is skipped below, so this id
+                // cannot collide with it.
+                id: event.eventId,
+                createdAt: event.createdAt,
+                tone: "approval",
+                kind: "approval.declined",
+                summary: `Blocked by plugin ${outcome.deniedBy}`,
+                payload: {
+                  requestId: toApprovalRequestId(event.requestId),
+                  requestKind,
+                  requestType: event.payload.requestType,
+                  deniedBy: outcome.deniedBy,
+                  // The plugin's own words, truncated the same way every other
+                  // approval detail is.
+                  ...(outcome.reason ? { detail: truncateDetail(outcome.reason) } : {}),
+                },
+                turnId: toTurnId(event.turnId) ?? null,
+              },
+              createdAt: event.createdAt,
+            });
+            // The request is answered; surfacing an "approval requested" activity now
+            // would ask the user about something already decided.
+            return;
           }
         }
       }

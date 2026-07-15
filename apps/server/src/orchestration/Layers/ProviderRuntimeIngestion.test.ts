@@ -26,6 +26,7 @@ import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as PluginPolicyRegistryLayer from "../../plugins/PluginPolicyRegistry.ts";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
@@ -191,7 +192,12 @@ async function waitForThread(
 
 describe("ProviderRuntimeIngestion", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
-    OrchestrationEngineService | ProviderRuntimeIngestionService | ProjectionSnapshotQuery,
+    | OrchestrationEngineService
+    | ProviderRuntimeIngestionService
+    | ProjectionSnapshotQuery
+    // Exposed so a test can install a policy hook into the SAME registry the
+    // ingestion loop consults.
+    | PluginPolicyRegistryLayer.PluginPolicyRegistry,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -241,6 +247,7 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provideMerge(makeTestServerSettingsLayer(options?.serverSettings)),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
       Layer.provideMerge(NodeServices.layer),
+      Layer.provideMerge(PluginPolicyRegistryLayer.layer),
     );
     runtime = ManagedRuntime.make(layer);
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
@@ -309,11 +316,17 @@ describe("ProviderRuntimeIngestion", () => {
       updatedAt: createdAt,
     });
 
+    const policyRegistry = await runtime.runPromise(
+      Effect.service(PluginPolicyRegistryLayer.PluginPolicyRegistry),
+    );
     return {
       engine,
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       emit: provider.emit,
       setProviderSession: provider.setSession,
+      // Exposed so a test can install a policy hook against the SAME registry the
+      // ingestion loop consults.
+      policyRegistry,
       drain,
     };
   }
@@ -749,6 +762,76 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(message?.text).toBe("assistant-only final text");
     expect(message?.streaming).toBe(false);
+  });
+
+  // Slice 6, end to end: a plugin policy hook blocks a REAL approval request arriving
+  // from a provider. Everything else about policy hooks is unit-tested; this is the
+  // only test that proves the hook is actually consulted on the path that matters.
+  it("lets a plugin policy hook block an approval request before the user sees it", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.policyRegistry.put("plugin-guard", [
+        {
+          name: "no-rm",
+          onApprovalRequest: () =>
+            Effect.succeed({ decision: "deny" as const, reason: "rm is never allowed" }),
+        },
+      ]),
+    );
+
+    harness.emit({
+      type: "request.opened",
+      eventId: asEventId("evt-policy-denied"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-policy"),
+      requestId: ApprovalRequestId.make("req-policy-denied"),
+      payload: {
+        requestType: "command_execution_approval",
+        detail: "rm -rf /",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-policy-denied",
+      ),
+    );
+    const activity = thread.activities.find(
+      (entry: ProviderRuntimeTestActivity) => entry.id === "evt-policy-denied",
+    );
+
+    // NOT "approval.requested": the user must not be asked about something a plugin
+    // already refused on their behalf.
+    expect(activity?.kind).toBe("approval.declined");
+    // The user has to be able to see WHO blocked it and WHY, or the agent just
+    // appears to refuse itself for no reason.
+    expect(activity?.summary).toContain("plugin-guard");
+    const payload =
+      activity?.payload && typeof activity.payload === "object"
+        ? (activity.payload as Record<string, unknown>)
+        : undefined;
+    expect(payload?.detail).toBe("rm is never allowed");
+
+    // The part that actually matters, and which the activity assertions above do NOT
+    // cover: the provider is BLOCKED waiting for an answer. A deny that only hid the
+    // prompt would leave it waiting forever — the user's agent would simply hang, and
+    // every assertion above would still pass. (Probing found exactly that gap.)
+    const events = await Effect.runPromise(
+      Stream.runCollect(harness.engine.readEvents(0)).pipe(Effect.orDie),
+    );
+    const declined = events.find(
+      (event) =>
+        event.type === "thread.approval-response-requested" &&
+        event.payload.requestId === "req-policy-denied",
+    );
+    expect(declined).toBeDefined();
+    expect(
+      declined?.type === "thread.approval-response-requested" ? declined.payload.decision : null,
+    ).toBe("decline");
   });
 
   it("preserves completed tool metadata on projected tool activities", async () => {
