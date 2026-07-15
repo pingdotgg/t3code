@@ -9,6 +9,8 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import { SubAgentToolkitHandlersLive } from "./toolkits/agents/handlers.ts";
 import { SubAgentToolkit } from "./toolkits/agents/tools.ts";
+import { UnifiedSubAgentToolkit } from "../subagent/UnifiedSubAgentTool.ts";
+import { UnifiedSubAgentToolHandlerLive } from "../subagent/UnifiedSubAgentToolHandler.ts";
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
@@ -79,10 +81,17 @@ export const SubAgentToolkitRegistrationLive = McpServer.toolkit(SubAgentToolkit
   Layer.provide(SubAgentToolkitHandlersLive),
 );
 
+export const UnifiedSubAgentToolRegistrationLive = McpServer.toolkit(UnifiedSubAgentToolkit).pipe(
+  Layer.provide(UnifiedSubAgentToolHandlerLive),
+);
+
 const McpTransportLive = McpServer.layerHttp({
   name: "T3 Code",
   version: packageJson.version,
   path: "/mcp",
 }).pipe(Layer.provide(McpAuthMiddlewareLive));
 
-export const layer = SubAgentToolkitRegistrationLive.pipe(Layer.provideMerge(McpTransportLive));
+export const layer = Layer.mergeAll(
+  SubAgentToolkitRegistrationLive,
+  UnifiedSubAgentToolRegistrationLive,
+).pipe(Layer.provideMerge(McpTransportLive));
