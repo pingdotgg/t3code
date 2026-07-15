@@ -54,8 +54,9 @@ export const makeEventsCapability = (input: {
       // stream and stall orchestration for everyone. Neither is acceptable: the
       // host's liveness outranks one plugin's completeness, and a plugin that cannot
       // keep up is already broken. So the OLDEST events are dropped instead — and
-      // counted, because a silently lossy bus would have plugin authors reporting
-      // "the event never fired" with no way to tell truth from bug.
+      // counted (approximately; see below), because a silently lossy bus would have
+      // plugin authors reporting "the event never fired" with no way to tell truth
+      // from bug.
       const queue = yield* Queue.sliding<OrchestrationEvent, Cause.Done>(SUBSCRIBER_BUFFER);
       const dropped = yield* Ref.make(0);
 
@@ -66,6 +67,12 @@ export const makeEventsCapability = (input: {
             if (size >= SUBSCRIBER_BUFFER) {
               // Sliding discards silently, so the drop is counted here, before the
               // offer that causes it.
+              //
+              // BEST-EFFORT, and deliberately so: the size check and the offer are not
+              // atomic, so if the consumer drains between them nothing is actually
+              // discarded and this over-counts. It can only over-count (a single pump
+              // fiber offers), which is the safe direction for a "you are falling
+              // behind" warning. Do not read this as an exact loss count.
               const total = yield* Ref.updateAndGet(dropped, (count) => count + 1);
               if (total === 1 || total % 100 === 0) {
                 yield* input.logger.warn("plugin fell behind on events; dropping oldest", {

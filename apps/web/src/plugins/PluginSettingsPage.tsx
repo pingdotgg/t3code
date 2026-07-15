@@ -67,7 +67,8 @@ export async function performSettingsSave(input: {
     readonly expectedRevision: number;
   }) => Promise<AtomCommandResult<{ readonly revision: number }, unknown>>;
   readonly applyDraft: (draft: Draft) => void;
-  readonly reload: () => Promise<void>;
+  /** Returns the reload's own error, or null. See why this is not `void` below. */
+  readonly reload: () => Promise<string | null>;
 }): Promise<{ readonly error: string | null }> {
   const result = await input.save({
     pluginId: input.pluginId,
@@ -87,8 +88,13 @@ export async function performSettingsSave(input: {
   // level), so the stored values can legitimately differ from what was typed;
   // showing the edits would leave the form disagreeing with storage until the
   // next reload.
-  await input.reload();
-  return { error: null };
+  // PROPAGATE the reload's failure. Returning `{ error: null }` unconditionally meant
+  // the caller's `setError(outcome.error)` wiped the error the reload had just set:
+  // the save succeeded, the re-read failed, and the user saw a clean form showing
+  // client-side edits that no longer matched storage. Reporting success while lying
+  // about consistency is worse than reporting the failure.
+  const reloadError = await input.reload();
+  return { error: reloadError };
 }
 
 /**
@@ -111,12 +117,13 @@ export function PluginSettingsPage({ pluginId, settingsSchema }: PluginSettingsP
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (): Promise<string | null> => {
     setError(null);
     const result = await getSettings({ pluginId });
     if (result._tag !== "Success") {
-      setError("Could not load settings.");
-      return;
+      const message = "Could not load settings.";
+      setError(message);
+      return message;
     }
     // `declared: false` means the plugin declares no schema, or is not installed —
     // distinct from "declared but empty". It does NOT mean disabled: repair is
@@ -125,8 +132,9 @@ export function PluginSettingsPage({ pluginId, settingsSchema }: PluginSettingsP
     // re-enable a plugin that was already enabled.
     if (!result.value.declared) {
       setDraft(null);
-      setError("This plugin does not expose settings, or is not installed.");
-      return;
+      const message = "This plugin does not expose settings, or is not installed.";
+      setError(message);
+      return message;
     }
     setDraft({
       values: { ...result.value.values },
@@ -134,6 +142,7 @@ export function PluginSettingsPage({ pluginId, settingsSchema }: PluginSettingsP
       incompatible: result.value.incompatible,
     });
     setEdited({ ...result.value.values });
+    return null;
   }, [getSettings, pluginId]);
 
   useEffect(() => {

@@ -94,8 +94,14 @@ export const PLUGIN_CAPABILITY_DESCRIPTIONS = {
     "Add tools the AI agent can call in your threads. Installing this capability is a blanket grant: the agent may invoke every tool this plugin registers, and those tools may act through the plugin's other granted capabilities.",
   settings:
     "Read its own settings, which you configure on the plugin's settings page. This plugin cannot read any other plugin's settings.",
+  // Say what is ACTUALLY on the stream. The first version of this copy described
+  // "projects and threads being created, renamed, and deleted, and turns running",
+  // which reads as metadata — but `thread.message-sent` carries `text`, the full body
+  // of the message, and its attachments. Someone reading the metadata version would
+  // never guess they were granting access to the content of every conversation.
+  // Consent copy that misleads is worse than no copy at all.
   events:
-    "Watch what happens in this workspace as it happens \u2014 projects and threads being created, renamed, and deleted, and turns running. This is read-only, but it is broad: the plugin observes this activity across every project, not only the one you are working in.",
+    "Read everything that happens in this workspace as it happens, including the full text of every message you and the agent send, their attachments, and the activity of every turn \u2014 plus projects and threads being created, renamed, and deleted. This is read-only, but it is very broad: the plugin sees this across every project, not only the one you are working in. Grant it only to plugins you trust with the contents of your conversations.",
 } satisfies Record<PluginCapability, string>;
 
 const managementError = (code: PluginManagementError["code"], message: string, data?: unknown) =>
