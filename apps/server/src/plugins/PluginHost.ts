@@ -7,7 +7,10 @@ import {
   type PluginLockfilePlugin,
   type PluginState,
 } from "@t3tools/contracts/plugin";
-import { findPluginSettingsSchemaViolations } from "@t3tools/contracts/pluginSettings";
+import {
+  findPluginSettingsSchemaViolations,
+  fingerprintSettingsSchema,
+} from "@t3tools/contracts/pluginSettings";
 import type {
   PluginDefinition,
   PluginHostApi,
@@ -377,8 +380,31 @@ const makeHostApi = (input: {
     descriptor: PluginSettingsDescriptor,
   ): SettingsCapability<Schema.Struct<Schema.Struct.Fields>> => {
     const decode = Schema.decodeUnknownEffect(descriptor.schema);
+    const currentFingerprint = fingerprintSettingsSchema(
+      descriptor.schema as unknown as Parameters<typeof fingerprintSettingsSchema>[0],
+    );
     const read = Effect.gen(function* () {
       const draft = yield* input.deps.settingsStore.readDraft(input.pluginId);
+
+      // Reject drift EXPLICITLY rather than relying on decode to notice.
+      //
+      // Decode catches an incompatible shape in the common case, but not always: a
+      // schema change that only widens (adds an optional field, relaxes a filter)
+      // still decodes cleanly, so the plugin would silently run on values written
+      // for a shape it no longer declares. The fingerprint makes the mismatch the
+      // fact being checked instead of a side effect of decoding.
+      if (draft.schemaFingerprint !== null && draft.schemaFingerprint !== currentFingerprint) {
+        yield* Effect.logDebug("plugin settings schema drift", {
+          pluginId: input.pluginId,
+          revision: draft.revision,
+        });
+        return yield* Effect.fail({
+          _tag: "PluginSettingsInvalidStored" as const,
+          pluginId: input.pluginId,
+          message: `Plugin ${input.pluginId} stored settings were written for a different schema shape.`,
+        });
+      }
+
       return yield* decode(draft.values).pipe(
         Effect.mapError((cause) =>
           // Never surface the decode error's rendering: it embeds the offending
