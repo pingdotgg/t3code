@@ -35,7 +35,16 @@ export class PluginRuntimeRegistry extends Context.Service<
     readonly remove: (pluginId: PluginId) => Effect.Effect<void>;
     readonly list: Effect.Effect<ReadonlyArray<ActivePluginRuntime>>;
     readonly get: (pluginId: PluginId) => Effect.Effect<Option.Option<ActivePluginRuntime>>;
-    /** Process-lifetime stream of put/remove events for MCP toolkit subscription. */
+    /**
+     * Scoped PubSub subscription that is active as soon as this effect succeeds.
+     * Prefer this over `changes` when you must subscribe-before-snapshot.
+     */
+    readonly subscribeChanges: Effect.Effect<
+      PubSub.Subscription<PluginRuntimeChange>,
+      never,
+      Scope.Scope
+    >;
+    /** Process-lifetime stream of put/remove events (subscribes when the stream runs). */
     readonly changes: Stream.Stream<PluginRuntimeChange>;
   }
 >()("t3/plugins/PluginRuntimeRegistry") {}
@@ -70,6 +79,7 @@ export const make = Effect.fn("PluginRuntimeRegistry.make")(function* () {
       Ref.get(runtimes).pipe(
         Effect.map((current) => Option.fromUndefinedOr(current.get(pluginId))),
       ),
+    subscribeChanges: PubSub.subscribe(changesPubSub),
     changes: Stream.fromPubSub(changesPubSub),
   });
 });

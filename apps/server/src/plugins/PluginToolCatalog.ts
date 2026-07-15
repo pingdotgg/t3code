@@ -5,6 +5,7 @@ import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -142,6 +143,19 @@ export const make = Effect.fn("PluginToolCatalog.make")(function* () {
       );
 
       const state = yield* Ref.get(stateRef);
+      const declaredFinalNames = new Set(validated.map((tool) => tool.finalName));
+
+      // Reject descriptor-set removals: permanent MCP tools cannot be unregistered
+      // (no removeTool), so a shrink would leave stale list entries that fail calls.
+      for (const entry of state.permanent.values()) {
+        if (entry.pluginId === pluginId && !declaredFinalNames.has(entry.finalName)) {
+          return yield* new PluginToolCatalogError({
+            pluginId,
+            detail: `tool ${entry.localName} removed since last registration; restart required`,
+          });
+        }
+      }
+
       for (const tool of validated) {
         const existing = state.permanent.get(tool.finalName);
         if (existing && existing.pluginId !== pluginId) {
@@ -322,6 +336,8 @@ export const make = Effect.fn("PluginToolCatalog.make")(function* () {
 
           const logger = makePluginLogger(pluginId);
 
+          // Decode + handle + result validation share one per-invocation timeout
+          // (effectful decoders must not hold a concurrency slot forever).
           const invoke = Effect.gen(function* () {
             const decoded = yield* Schema.decodeUnknownEffect(descriptor.inputSchema)(payload).pipe(
               Effect.mapError(
@@ -343,13 +359,6 @@ export const make = Effect.fn("PluginToolCatalog.make")(function* () {
                     message: error instanceof Error ? error.message : String(error),
                   }),
               ),
-              Effect.timeoutOrElse({
-                duration: PLUGIN_TOOL_TIMEOUT,
-                orElse: () =>
-                  new PluginToolInvokeError({
-                    message: `Plugin ${pluginId} tool ${localName} timed out after ${Duration.toMillis(PLUGIN_TOOL_TIMEOUT)}ms.`,
-                  }),
-              }),
             );
 
             const validated = validatePluginToolResult(rawResult);
@@ -376,12 +385,26 @@ export const make = Effect.fn("PluginToolCatalog.make")(function* () {
             }
             return callResult;
           }).pipe(
+            Effect.timeoutOrElse({
+              duration: PLUGIN_TOOL_TIMEOUT,
+              orElse: () =>
+                new PluginToolInvokeError({
+                  message: `Plugin ${pluginId} tool ${localName} timed out after ${Duration.toMillis(PLUGIN_TOOL_TIMEOUT)}ms.`,
+                }),
+            }),
             Effect.catchCause((cause) =>
               mapHandlerCause(pluginId, localName, cause as Cause.Cause<Error>),
             ),
+            Effect.ensuring(releaseInFlight(finalName)),
           );
 
-          const result = yield* invoke.pipe(Effect.ensuring(releaseInFlight(finalName)));
+          // Own the invocation fiber with the plugin runtime scope so disable /
+          // Scope.close interrupts admitted handlers (they do not run on the
+          // MCP request fiber alone).
+          const fiber = yield* Effect.forkIn(invoke, runtime.scope);
+          const result = yield* Fiber.join(fiber).pipe(
+            Effect.onInterrupt(() => Fiber.interrupt(fiber).pipe(Effect.asVoid)),
+          );
 
           const finishedAt = yield* Effect.clockWith((clock) => clock.currentTimeMillis);
           yield* Effect.logInfo("plugin tool invocation", {

@@ -1,14 +1,22 @@
 import { assert, it } from "@effect/vitest";
 import { PluginId } from "@t3tools/contracts";
 import type { PluginToolDescriptor } from "@t3tools/plugin-sdk";
+import * as Cause from "effect/Cause";
+import * as Data from "effect/Data";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
+
+class TypedHandlerFailure extends Data.TaggedError("TypedHandlerFailure")<{
+  readonly message: string;
+}> {}
 
 import { PLUGIN_TOOL_MAX_CONCURRENT_PER_TOOL } from "../mcp/toolkits/plugins/pluginToolBounds.ts";
 import * as PluginRuntimeRegistry from "./PluginRuntimeRegistry.ts";
@@ -86,7 +94,7 @@ const withRuntime = <E, R>(
   });
 
 it.layer(TestLayer)("PluginToolCatalog", (it) => {
-  it.effect("lists tools as inactive until activate, then callable via trampoline", () =>
+  it.effect("keeps tools inactive until activate, then callable via trampoline", () =>
     Effect.gen(function* () {
       const pluginId = PluginId.make("tool-call");
       const finalName = "plugin_tool_call__echo";
@@ -335,4 +343,173 @@ it.layer(TestLayer)("PluginToolCatalog", (it) => {
       }
     }),
   );
+
+  it.effect("rejects descriptor-set removals as restart required", () =>
+    Effect.gen(function* () {
+      const pluginId = PluginId.make("tool-remove");
+      const catalog = yield* PluginToolCatalog.PluginToolCatalog;
+      const a = makeTool({ name: "alpha", description: "alpha tool description text" });
+      const b = makeTool({ name: "beta", description: "beta tool description text" });
+      yield* catalog.reserve(pluginId, [a, b], { hasToolsCapability: true });
+
+      const shrink = yield* Effect.exit(
+        catalog.reserve(pluginId, [a], { hasToolsCapability: true }),
+      );
+      assert.equal(shrink._tag, "Failure");
+      if (shrink._tag === "Failure") {
+        assert.match(String(shrink.cause), /removed since last registration; restart required/i);
+      }
+
+      const empty = yield* Effect.exit(catalog.reserve(pluginId, [], { hasToolsCapability: true }));
+      assert.equal(empty._tag, "Failure");
+      if (empty._tag === "Failure") {
+        assert.match(String(empty.cause), /restart required/i);
+      }
+    }),
+  );
+
+  it.effect("maps invalid arguments to isError decode failure", () => {
+    const pluginId = PluginId.make("tool-decode");
+    return withRuntime(
+      pluginId,
+      [makeTool()],
+      Effect.gen(function* () {
+        const catalog = yield* PluginToolCatalog.PluginToolCatalog;
+        const result = yield* catalog.makeTrampolineHandle(
+          pluginId,
+          "echo",
+        )({
+          // message must be a string
+          message: 123,
+        });
+        assert.equal(result.isError, true);
+        assert.match(textOf(result), /invalid arguments/i);
+      }),
+    );
+  });
+
+  it.effect("times out hanging effectful decode (not only the handler)", () => {
+    const pluginId = PluginId.make("tool-decode-hang");
+    const SlowMessage = Schema.String.pipe(
+      Schema.decodeTo(
+        Schema.String,
+        SchemaTransformation.transformOrFail({
+          decode: () => Effect.sleep("5 minutes").pipe(Effect.as("never")),
+          encode: (value) => Effect.succeed(value),
+        }),
+      ),
+    );
+    const SlowInput = Schema.Struct({ message: SlowMessage });
+    return withRuntime(
+      pluginId,
+      [makeTool({ inputSchema: SlowInput })],
+      Effect.gen(function* () {
+        const catalog = yield* PluginToolCatalog.PluginToolCatalog;
+        const fiber = yield* catalog
+          .makeTrampolineHandle(
+            pluginId,
+            "echo",
+          )({ message: "hang" })
+          .pipe(Effect.forkChild);
+        yield* TestClock.adjust("61 seconds");
+        const result = yield* Fiber.join(fiber);
+        assert.equal(result.isError, true);
+        assert.match(textOf(result), /timed out/i);
+      }),
+    );
+  });
+
+  it.effect("maps typed handler failures to isError with the failure message", () => {
+    const pluginId = PluginId.make("tool-fail");
+    return withRuntime(
+      pluginId,
+      [
+        makeTool({
+          handle: () => Effect.fail(new TypedHandlerFailure({ message: "typed-handler-boom" })),
+        }),
+      ],
+      Effect.gen(function* () {
+        const catalog = yield* PluginToolCatalog.PluginToolCatalog;
+        const result = yield* catalog.makeTrampolineHandle(pluginId, "echo")({ message: "x" });
+        assert.equal(result.isError, true);
+        assert.match(textOf(result), /typed-handler-boom/);
+      }),
+    );
+  });
+
+  it.effect("propagates external interruption from an admitted call", () => {
+    const pluginId = PluginId.make("tool-interrupt");
+    return withRuntime(
+      pluginId,
+      [
+        makeTool({
+          handle: () =>
+            Effect.sleep("5 minutes").pipe(
+              Effect.as({
+                content: [{ type: "text" as const, text: "late" }],
+              }),
+            ),
+        }),
+      ],
+      Effect.gen(function* () {
+        const catalog = yield* PluginToolCatalog.PluginToolCatalog;
+        const fiber = yield* catalog
+          .makeTrampolineHandle(
+            pluginId,
+            "echo",
+          )({ message: "hang" })
+          .pipe(Effect.forkChild);
+        // Let the invocation enter the handler (and runtime.scope ownership).
+        yield* TestClock.adjust("1 second");
+        yield* Fiber.interrupt(fiber);
+        const exit = yield* Fiber.await(fiber);
+        assert.equal(Exit.isFailure(exit), true);
+        if (Exit.isFailure(exit)) {
+          assert.equal(Cause.hasInterrupts(exit.cause), true);
+        }
+      }),
+    );
+  });
+
+  it.effect("scope close interrupts admitted handlers owned by the runtime scope", () => {
+    const pluginId = PluginId.make("tool-scope-int");
+    return withRuntime(
+      pluginId,
+      [
+        makeTool({
+          handle: () =>
+            Effect.sleep("5 minutes").pipe(
+              Effect.as({
+                content: [{ type: "text" as const, text: "late" }],
+              }),
+            ),
+        }),
+      ],
+      Effect.gen(function* () {
+        const catalog = yield* PluginToolCatalog.PluginToolCatalog;
+        const registry = yield* PluginRuntimeRegistry.PluginRuntimeRegistry;
+        const runtime = yield* registry.get(pluginId);
+        assert.equal(runtime._tag, "Some");
+        if (runtime._tag !== "Some") return;
+
+        const fiber = yield* catalog
+          .makeTrampolineHandle(
+            pluginId,
+            "echo",
+          )({ message: "hang" })
+          .pipe(Effect.forkChild);
+        yield* TestClock.adjust("1 second");
+
+        yield* catalog.deactivate(pluginId);
+        yield* registry.remove(pluginId);
+        yield* Scope.close(runtime.value.scope, Exit.void);
+
+        const exit = yield* Fiber.await(fiber);
+        assert.equal(Exit.isFailure(exit), true);
+        if (Exit.isFailure(exit)) {
+          assert.equal(Cause.hasInterrupts(exit.cause), true);
+        }
+      }),
+    );
+  });
 });
