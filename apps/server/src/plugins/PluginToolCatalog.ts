@@ -195,13 +195,36 @@ export const make = Effect.fn("PluginToolCatalog.make")(function* () {
     });
 
   const activate: PluginToolCatalog["Service"]["activate"] = (pluginId) =>
-    Ref.update(stateRef, (state) => {
-      for (const [finalName, entry] of state.permanent) {
-        if (entry.pluginId === pluginId) {
-          state.active.add(finalName);
-        }
+    Effect.gen(function* () {
+      // Refuse to open call/visibility gates unless the runtime is published.
+      // Closes the disable∩activation race: deactivate clears active, then a
+      // late registry.put subscriber would re-activate while disable waits on
+      // the activation lock — unless we require a live registry entry (which
+      // post-put cancel removes under that lock).
+      const runtime = yield* registry.get(pluginId);
+      if (Option.isNone(runtime)) {
+        return;
       }
-      return state;
+      yield* Ref.update(stateRef, (state) => {
+        for (const [finalName, entry] of state.permanent) {
+          if (entry.pluginId === pluginId) {
+            state.active.add(finalName);
+          }
+        }
+        return state;
+      });
+      // Roll back if remove interleaved between the check and the add.
+      const stillLive = yield* registry.get(pluginId);
+      if (Option.isNone(stillLive)) {
+        yield* Ref.update(stateRef, (state) => {
+          for (const [finalName, entry] of state.permanent) {
+            if (entry.pluginId === pluginId) {
+              state.active.delete(finalName);
+            }
+          }
+          return state;
+        });
+      }
     });
 
   const deactivate: PluginToolCatalog["Service"]["deactivate"] = (pluginId) =>

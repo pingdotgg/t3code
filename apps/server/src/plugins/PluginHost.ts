@@ -746,6 +746,24 @@ export const make = Effect.fn("PluginHost.make")(function* () {
           });
         }
         yield* registry.put(pluginId, { manifest, registration, readiness, scope });
+        // Re-check AFTER put. Disable can flip the lockfile and catalog.deactivate
+        // while we hold the activation lock (deactivate waits on this lock after its
+        // early deactivate). registry.put notifies PluginToolsRegistration, which
+        // may catalog.activate — reopening both gates — before disable acquires the
+        // lock. If lifecycle is no longer active, undo the put immediately under the
+        // lock so a late activate cannot leave tools callable.
+        const stateAfterPut = yield* store.readLockfile.pipe(
+          Effect.map((current) => getLockfilePlugin(current, pluginId)?.state),
+          Effect.orElseSucceed(() => undefined as PluginState | undefined),
+        );
+        if (stateAfterPut !== "active") {
+          yield* registry.remove(pluginId);
+          yield* toolCatalog.deactivate(pluginId);
+          return yield* new PluginActivationCanceled({
+            pluginId,
+            reason: `lifecycle state changed to ${stateAfterPut ?? "missing"} during activation`,
+          });
+        }
         for (const service of registration.services ?? []) {
           yield* startService({ pluginId, logger, service }).pipe(
             Effect.forkScoped,
