@@ -1386,6 +1386,49 @@ export interface PluginToolResult {
  * JS) so plugins can write `handle: (input) => ...` with schema-inferred types
  * without fighting contravariance on `PluginRegistration.tools`.
  */
+/** The agent action a policy hook is being asked about. */
+export interface PluginPolicyRequest {
+  readonly threadId: ThreadId;
+  readonly kind: "command" | "file-read" | "file-change";
+  /** The command line, or the path being read/changed. */
+  readonly detail: string;
+  readonly cwd: string | null;
+}
+
+/**
+ * A policy hook's answer.
+ *
+ * There is deliberately NO "allow". A hook can only make the system more restrictive
+ * than it already is — see PluginPolicyRegistry for why. `defer` means "I have no
+ * opinion; carry on as if I were not installed", which is also what the host uses
+ * when a hook fails or times out.
+ */
+export interface PluginPolicyDecision {
+  readonly decision: "deny" | "defer";
+  /** Shown to the user when denying. Say why, in your own words. */
+  readonly reason?: string | undefined;
+}
+
+/**
+ * Inspect an agent approval request before the user sees it.
+ *
+ * Runs on the path of a prompt the user is waiting for, so it is timed out hard (3s);
+ * a hook that misses that, fails, or crashes DEFERS, which is exactly the behaviour
+ * the host had before the plugin existed.
+ *
+ * A hook cannot approve anything. That is not an oversight — a hook that could
+ * auto-approve would let a buggy or hostile plugin green-light a destructive command
+ * the user never saw. The worst this can do is block work that should have been
+ * allowed: visible, and fixed by disabling the plugin.
+ */
+export interface PluginPolicyDescriptor {
+  /** Identifies the hook in logs and in the "blocked by" the user is shown. */
+  readonly name: string;
+  readonly onApprovalRequest: (
+    request: PluginPolicyRequest,
+  ) => Effect.Effect<PluginPolicyDecision, Error>;
+}
+
 /** What the host tells a context contributor about the turn it is contributing to. */
 export interface PluginContextInput {
   readonly threadId: ThreadId;
@@ -1457,6 +1500,8 @@ export interface PluginRegistration {
   readonly tools?: ReadonlyArray<PluginToolDescriptor> | undefined;
   /** Requires the `context` capability. See PluginContextDescriptor. */
   readonly context?: ReadonlyArray<PluginContextDescriptor> | undefined;
+  /** Requires the `policy` capability. See PluginPolicyDescriptor. */
+  readonly policy?: ReadonlyArray<PluginPolicyDescriptor> | undefined;
 }
 
 /**

@@ -72,6 +72,7 @@ import { makeSecretsCapability } from "./capabilities/SecretsCapability.ts";
 import { makeSourceControlCapability } from "./capabilities/SourceControlCapability.ts";
 import { makeEventsCapability } from "./capabilities/EventsCapability.ts";
 import { findContextDescriptorViolation, PluginContextComposer } from "./PluginContextComposer.ts";
+import { PluginPolicyRegistry } from "./PluginPolicyRegistry.ts";
 import { makeTerminalsCapability } from "./capabilities/TerminalsCapability.ts";
 import { makeTextGenerationCapability } from "./capabilities/TextGenerationCapability.ts";
 import { makeVcsCapability } from "./capabilities/VcsCapability.ts";
@@ -287,6 +288,16 @@ function validateRegistration(
         pluginId,
         detail:
           'plugin declares context contributions but does not include the "context" capability',
+      }),
+    );
+  }
+  // Policy hooks require the dedicated "policy" capability. A hook can only DENY, so
+  // this grants the ability to block the agent — never to approve for the user.
+  if ((registration.policy?.length ?? 0) > 0 && !capabilities.includes("policy")) {
+    return Effect.fail(
+      new PluginRegistrationError({
+        pluginId,
+        detail: 'plugin declares policy hooks but does not include the "policy" capability',
       }),
     );
   }
@@ -701,6 +712,7 @@ export const make = Effect.fn("PluginHost.make")(function* () {
   const settingsStore = yield* PluginSettingsStore;
   const httpRegistry = yield* PluginHttpRegistry;
   const contextComposer = yield* PluginContextComposer;
+  const policyRegistry = yield* PluginPolicyRegistry;
   const clock = yield* Clock.Clock;
   const sql = yield* SqlClient.SqlClient;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
@@ -987,6 +999,13 @@ export const make = Effect.fn("PluginHost.make")(function* () {
         if (manifest.capabilities.includes("http") && (registration.http?.length ?? 0) > 0) {
           yield* httpRegistry.put(pluginId, registration.http ?? []);
           yield* Scope.addFinalizer(scope, httpRegistry.remove(pluginId));
+        }
+        if ((registration.policy?.length ?? 0) > 0) {
+          // Removed on every exit path via the plugin scope. A disabled plugin that
+          // kept blocking the agent would be a disabled plugin that is still running
+          // — and the user would have no way to tell what was stopping their work.
+          yield* policyRegistry.put(pluginId, registration.policy ?? []);
+          yield* Scope.addFinalizer(scope, policyRegistry.remove(pluginId));
         }
         if ((registration.context?.length ?? 0) > 0) {
           // Removed on EVERY exit path via the plugin scope — disable, uninstall,

@@ -53,6 +53,7 @@ import { pluginDataDir, pluginVersionDir } from "./PluginPaths.ts";
 import * as PluginRuntimeRegistryLayer from "./PluginRuntimeRegistry.ts";
 import { CONTEXT_MAX_BYTES_PER_PLUGIN } from "./PluginContextComposer.ts";
 import * as PluginContextComposerLayer from "./PluginContextComposer.ts";
+import * as PluginPolicyRegistryLayer from "./PluginPolicyRegistry.ts";
 import { buildTurnStartParams } from "../provider/Layers/CodexSessionRuntime.ts";
 import * as PluginSettingsStoreLayer from "./PluginSettingsStore.ts";
 import * as PluginToolCatalogLayer from "./PluginToolCatalog.ts";
@@ -76,6 +77,7 @@ const testLayerBase = PluginHostModule.layer.pipe(
       PluginToolCatalogLayerLive,
       PluginSettingsStoreLayer.layer,
       PluginContextComposerLayer.layer,
+      PluginPolicyRegistryLayer.layer,
       PluginHttpRegistry.layer,
     ),
   ),
@@ -1783,6 +1785,119 @@ export default {
         interactionMode: "default",
       });
       assert.isFalse(composed.text.includes("Torn down."));
+    }),
+  );
+});
+
+layer("PluginHost policy hooks", (it) => {
+  const policyEntry = `
+import * as Effect from "effect/Effect";
+export default {
+  register() {
+    return {
+      policy: [
+        {
+          name: "no-rm",
+          onApprovalRequest: () => Effect.succeed({ decision: "deny", reason: "blocked by test" }),
+        },
+      ],
+    };
+  },
+};
+`;
+
+  it.effect("consults a plugin holding the policy capability", () =>
+    Effect.gen(function* () {
+      const pluginId = PluginId.make("policy-ok");
+      const host = yield* PluginHostModule.PluginHost;
+      const policy = yield* PluginPolicyRegistryLayer.PluginPolicyRegistry;
+
+      yield* runMigrations({});
+      yield* installPlugin({ pluginId, capabilities: ["policy"], entrySource: policyEntry });
+      yield* host.activatePlugin(pluginId);
+
+      const outcome = yield* policy.evaluate({
+        threadId: ThreadId.make("t"),
+        kind: "command",
+        detail: "rm -rf /",
+        cwd: null,
+      });
+      assert.strictEqual(outcome.decision, "deny");
+      assert.strictEqual(outcome.deniedBy, pluginId);
+    }),
+  );
+
+  // Blocking what the agent may do is a real grant, even though it can only tighten.
+  it.effect("refuses to activate a plugin declaring policy hooks without the capability", () =>
+    Effect.gen(function* () {
+      const pluginId = PluginId.make("policy-nocapability");
+      const host = yield* PluginHostModule.PluginHost;
+      const registry = yield* PluginRuntimeRegistryLayer.PluginRuntimeRegistry;
+      const store = yield* PluginLockfileStoreLayer.PluginLockfileStore;
+
+      yield* runMigrations({});
+      yield* installPlugin({ pluginId, capabilities: [], entrySource: policyEntry });
+      yield* host.activatePlugin(pluginId);
+
+      assert.isTrue(Option.isNone(yield* registry.get(pluginId)));
+      const lockfile = yield* store.readLockfile;
+      assert.match(lockfile.plugins[pluginId]?.lastError ?? "", /policy/);
+    }),
+  );
+});
+
+layer("PluginHost policy teardown", (it) => {
+  // A SEPARATE layer block, deliberately. `it.layer` shares ONE registry across a
+  // block, and evaluate() short-circuits on the FIRST deny — so a neighbouring
+  // test's denying plugin is always consulted first and this test can never observe
+  // its own plugin's removal. Asserting on the global decision made it fail;
+  // asserting on `deniedBy` made it VACUOUS (it passed with the finalizer deleted).
+  // Isolation is the only framing that is honest.
+  const policyEntry = `
+import * as Effect from "effect/Effect";
+export default {
+  register() {
+    return {
+      policy: [
+        {
+          name: "no-rm",
+          onApprovalRequest: () => Effect.succeed({ decision: "deny", reason: "blocked" }),
+        },
+      ],
+    };
+  },
+};
+`;
+
+  it.effect("stops consulting a plugin once it is disabled", () =>
+    Effect.gen(function* () {
+      const pluginId = PluginId.make("policy-teardown");
+      const host = yield* PluginHostModule.PluginHost;
+      const policy = yield* PluginPolicyRegistryLayer.PluginPolicyRegistry;
+
+      yield* runMigrations({});
+      yield* installPlugin({ pluginId, capabilities: ["policy"], entrySource: policyEntry });
+      yield* host.activatePlugin(pluginId);
+
+      const before = yield* policy.evaluate({
+        threadId: ThreadId.make("t"),
+        kind: "command",
+        detail: "rm -rf /",
+        cwd: null,
+      });
+      assert.strictEqual(before.decision, "deny", "precondition: it blocks");
+
+      yield* host.setPluginEnabled(pluginId, false, Effect.void);
+
+      // A disabled plugin that kept blocking the agent would be a disabled plugin
+      // still running, and the user would have no way to tell what stopped them.
+      const after = yield* policy.evaluate({
+        threadId: ThreadId.make("t"),
+        kind: "command",
+        detail: "rm -rf /",
+        cwd: null,
+      });
+      assert.strictEqual(after.decision, "defer");
     }),
   );
 });

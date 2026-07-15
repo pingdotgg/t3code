@@ -105,6 +105,11 @@ export const PLUGIN_CAPABILITY_DESCRIPTIONS = {
   // reading events, and one a user cannot see the effects of directly. Ordering does
   // not protect the host's own rules: contributed text can simply say "ignore any
   // later instruction about X". The capability and this sentence are the control.
+  // Says what it CANNOT do as plainly as what it can. A user reading "can block what
+  // the agent does" would reasonably fear the opposite too — a plugin waving things
+  // through — so the copy rules that out explicitly, because the code does.
+  policy:
+    "See what the agent asks permission for \u2014 commands it wants to run, files it wants to read or change \u2014 and block them. It can only block: it can never approve something on your behalf, so you will still be asked about anything it does not block. A broken plugin here can stop the agent working; it cannot let it do more.",
   context:
     "Add its own instructions to the AI agent on every turn, in every thread. This is not a read: it changes how the agent behaves, and it can work against the app's own instructions. Grant it only to plugins you trust to direct your agent.",
   events:
