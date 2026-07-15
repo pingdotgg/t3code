@@ -77,24 +77,6 @@ describe("ProviderSessionStartInput", () => {
     expect(parsed.runtimeMode).toBe("full-access");
   });
 
-  it("accepts cursor provider", () => {
-    const parsed = decodeProviderSessionStartInput({
-      threadId: "thread-1",
-      provider: "cursor",
-      cwd: "/tmp/workspace",
-      runtimeMode: "full-access",
-      modelSelection: {
-        provider: "cursor",
-        model: "composer-2",
-        options: [{ id: "fastMode", value: true }],
-      },
-    });
-    expect(parsed.provider).toBe("cursor");
-    expect(parsed.modelSelection?.instanceId).toBe("cursor");
-    expect(parsed.modelSelection?.model).toBe("composer-2");
-    expect(getOptionValue(parsed.modelSelection?.options, "fastMode")).toBe(true);
-  });
-
   it("accepts fork-provided driver kinds as branded slugs", () => {
     const parsed = decodeProviderSessionStartInput({
       threadId: "thread-1",

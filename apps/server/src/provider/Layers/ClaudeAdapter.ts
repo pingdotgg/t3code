@@ -192,6 +192,13 @@ interface ClaudeTaskState {
   readonly blockedBy: Set<string>;
 }
 
+interface BackgroundTaskOutputMonitor {
+  readonly outputFile: string;
+  readonly decoder: TextDecoder;
+  offset: bigint;
+  fiber: Fiber.Fiber<void, never> | undefined;
+}
+
 interface ClaudeSessionContext {
   session: ProviderSession;
   readonly promptQueue: Queue.Queue<PromptQueueItem>;
@@ -234,6 +241,10 @@ interface ClaudeSessionContext {
    * remains open (backgrounded subagents).
    */
   readonly taskModelByTaskId: Map<string, string>;
+  /** Claude Task tool_use id -> background Bash output file reported by the SDK. */
+  readonly backgroundTaskOutputByToolUseId: Map<string, string>;
+  /** Active incremental readers for background Bash output files, keyed by task_id. */
+  readonly backgroundTaskOutputMonitors: Map<string, BackgroundTaskOutputMonitor>;
   /**
    * Reasoning effort the SDK query was started with, normalized to what the
    * CLI actually applies. Subagent turns inherit it, so it is the effort a
@@ -279,6 +290,11 @@ interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
 
 /** How long to wait for the SDK's own terminal task event after stopTask. */
 const STOP_TASK_TERMINAL_GRACE = Duration.seconds(3);
+const BACKGROUND_TASK_OUTPUT_POLL_INTERVAL = Duration.millis(500);
+const BACKGROUND_TASK_OUTPUT_READ_SIZE = 64 * 1024;
+const BACKGROUND_TASK_OUTPUT_EVENT_SIZE = 8 * 1024;
+
+const SERGECODE_SUBAGENT_INSTRUCTIONS = `SergeCode provides native sub-thread tools through the t3-code MCP server: agent_list, agent_spawn, agent_send, and agent_wait. When the user asks you to delegate work, create a subagent, or run another configured provider/model (including Codex or Grok), use those MCP tools so the worker is created as a visible SergeCode sub-thread. Never launch a provider CLI through Bash/local_bash as a substitute for agent_spawn. Use agent_list to resolve the provider instance and model, agent_spawn to start it, and agent_wait to collect its result.`;
 
 export interface ClaudeAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
@@ -758,6 +774,7 @@ function forgetTaskToolInputForTask(
   context.taskModelByTaskId.delete(taskId);
   if (toolUseId) {
     context.taskToolInputsByUseId.delete(toolUseId);
+    context.backgroundTaskOutputByToolUseId.delete(toolUseId);
   }
 }
 
@@ -765,6 +782,7 @@ function clearTaskToolInputMemory(context: ClaudeSessionContext): void {
   context.taskToolInputsByUseId.clear();
   context.taskToolUseIdByTaskId.clear();
   context.taskModelByTaskId.clear();
+  context.backgroundTaskOutputByToolUseId.clear();
 }
 
 /**
@@ -775,18 +793,18 @@ function clearTaskToolInputMemory(context: ClaudeSessionContext): void {
  * never started a task are dropped so the maps cannot grow across turns.
  */
 function pruneTaskToolInputMemoryForClosedTasks(context: ClaudeSessionContext): void {
-  for (const taskId of [...context.taskToolUseIdByTaskId.keys()]) {
+  for (const taskId of context.taskToolUseIdByTaskId.keys()) {
     if (!context.openTaskIds.has(taskId)) {
       forgetTaskToolInputForTask(context, taskId);
     }
   }
-  for (const taskId of [...context.taskModelByTaskId.keys()]) {
+  for (const taskId of context.taskModelByTaskId.keys()) {
     if (!context.openTaskIds.has(taskId)) {
       context.taskModelByTaskId.delete(taskId);
     }
   }
   const liveToolUseIds = new Set(context.taskToolUseIdByTaskId.values());
-  for (const toolUseId of [...context.taskToolInputsByUseId.keys()]) {
+  for (const toolUseId of context.taskToolInputsByUseId.keys()) {
     if (!liveToolUseIds.has(toolUseId)) {
       context.taskToolInputsByUseId.delete(toolUseId);
     }
@@ -1853,6 +1871,17 @@ function toolResultStreamKind(itemType: CanonicalItemType): ClaudeToolResultStre
   }
 }
 
+function extractBackgroundTaskOutputFile(text: string): string | undefined {
+  const match = text.match(
+    /(?:output is being written to|output[_ ]file)\s*[:=]\s*[`"']?([^\r\n`"']+)/i,
+  );
+  const candidate = match?.[1]?.trim();
+  if (!candidate || candidate.length === 0) {
+    return undefined;
+  }
+  return candidate;
+}
+
 function toolResultBlocksFromUserMessage(message: SDKMessage): Array<{
   readonly toolUseId: string;
   readonly block: Record<string, unknown>;
@@ -2138,6 +2167,133 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
   const offerRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
     Queue.offer(runtimeEventQueue, event).pipe(Effect.asVoid);
+
+  const emitBackgroundTaskOutput = Effect.fn("ClaudeAdapter.emitBackgroundTaskOutput")(function* (
+    context: ClaudeSessionContext,
+    taskId: string,
+    output: string,
+  ) {
+    for (let index = 0; index < output.length; index += BACKGROUND_TASK_OUTPUT_EVENT_SIZE) {
+      const summary = output.slice(index, index + BACKGROUND_TASK_OUTPUT_EVENT_SIZE);
+      if (summary.trim().length === 0) continue;
+      const stamp = yield* makeEventStamp();
+      yield* offerRuntimeEvent({
+        type: "task.progress",
+        eventId: stamp.eventId,
+        provider: PROVIDER,
+        createdAt: stamp.createdAt,
+        threadId: context.session.threadId,
+        ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+        payload: {
+          taskId: RuntimeTaskId.make(taskId),
+          entityType: "command",
+          description: "Background command output",
+          summary,
+          lastToolName: "local_bash",
+          ...(context.taskToolUseIdByTaskId.get(taskId)
+            ? { toolUseId: context.taskToolUseIdByTaskId.get(taskId) }
+            : {}),
+        },
+        providerRefs: nativeProviderRefs(context),
+        raw: {
+          source: "claude.sdk.message",
+          method: "claude/background-task/output",
+          payload: { taskId },
+        },
+      });
+    }
+  });
+
+  const drainBackgroundTaskOutput = Effect.fn("ClaudeAdapter.drainBackgroundTaskOutput")(function* (
+    context: ClaudeSessionContext,
+    taskId: string,
+    monitor: BackgroundTaskOutputMonitor,
+  ) {
+    const info = yield* fileSystem.stat(monitor.outputFile);
+    while (monitor.offset < info.size) {
+      const remaining = info.size - monitor.offset;
+      const bytesToRead =
+        remaining > BigInt(BACKGROUND_TASK_OUTPUT_READ_SIZE)
+          ? BigInt(BACKGROUND_TASK_OUTPUT_READ_SIZE)
+          : remaining;
+      yield* fileSystem
+        .stream(monitor.outputFile, {
+          offset: monitor.offset,
+          bytesToRead,
+          chunkSize: BACKGROUND_TASK_OUTPUT_READ_SIZE,
+        })
+        .pipe(
+          Stream.runForEach((bytes) => {
+            monitor.offset += BigInt(bytes.byteLength);
+            return emitBackgroundTaskOutput(
+              context,
+              taskId,
+              monitor.decoder.decode(bytes, { stream: true }),
+            );
+          }),
+        );
+    }
+  });
+
+  const startBackgroundTaskOutputMonitor = Effect.fn(
+    "ClaudeAdapter.startBackgroundTaskOutputMonitor",
+  )(function* (context: ClaudeSessionContext, taskId: string, outputFile: string) {
+    if (context.backgroundTaskOutputMonitors.has(taskId)) return;
+
+    const monitor: BackgroundTaskOutputMonitor = {
+      outputFile,
+      decoder: new TextDecoder(),
+      offset: 0n,
+      fiber: undefined,
+    };
+    context.backgroundTaskOutputMonitors.set(taskId, monitor);
+    const loop = Effect.gen(function* () {
+      while (!context.stopped && context.openTaskIds.has(taskId)) {
+        yield* drainBackgroundTaskOutput(context, taskId, monitor).pipe(
+          Effect.catch(() => Effect.void),
+        );
+        yield* Effect.sleep(BACKGROUND_TASK_OUTPUT_POLL_INTERVAL);
+      }
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (context.backgroundTaskOutputMonitors.get(taskId) === monitor) {
+            context.backgroundTaskOutputMonitors.delete(taskId);
+          }
+        }),
+      ),
+      Effect.catchCause(() => Effect.void),
+    );
+    monitor.fiber = yield* Effect.forkChild(loop);
+  });
+
+  const stopBackgroundTaskOutputMonitor = Effect.fn(
+    "ClaudeAdapter.stopBackgroundTaskOutputMonitor",
+  )(function* (context: ClaudeSessionContext, taskId: string, outputFile?: string) {
+    let monitor = context.backgroundTaskOutputMonitors.get(taskId);
+    if (!monitor && outputFile) {
+      monitor = {
+        outputFile,
+        decoder: new TextDecoder(),
+        offset: 0n,
+        fiber: undefined,
+      };
+      context.backgroundTaskOutputMonitors.set(taskId, monitor);
+    }
+    if (!monitor) return;
+
+    yield* drainBackgroundTaskOutput(context, taskId, monitor).pipe(
+      Effect.catch(() => Effect.void),
+    );
+    const finalText = monitor.decoder.decode();
+    if (finalText.trim().length > 0) {
+      yield* emitBackgroundTaskOutput(context, taskId, finalText);
+    }
+    context.backgroundTaskOutputMonitors.delete(taskId);
+    if (monitor.fiber && monitor.fiber.pollUnsafe() === undefined) {
+      yield* Fiber.interrupt(monitor.fiber);
+    }
+  });
 
   const logNativeSdkMessage = Effect.fn("logNativeSdkMessage")(function* (
     context: ClaudeSessionContext,
@@ -3267,6 +3423,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         });
       }
 
+      if (tool.itemType === "command_execution") {
+        const outputFile = extractBackgroundTaskOutputFile(toolResult.text);
+        if (outputFile) {
+          context.backgroundTaskOutputByToolUseId.set(tool.itemId, outputFile);
+          const taskId = findTaskIdForToolUseId(context, tool.itemId);
+          if (taskId && context.openTaskIds.has(taskId)) {
+            yield* startBackgroundTaskOutputMonitor(context, taskId, outputFile);
+          }
+        }
+      }
+
       const completedStamp = yield* makeEventStamp();
       yield* offerRuntimeEvent({
         type: "item.completed",
@@ -3616,6 +3783,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             ...(toolUseId ? { toolUseId } : {}),
           },
         });
+        const outputFile = toolUseId
+          ? context.backgroundTaskOutputByToolUseId.get(toolUseId)
+          : undefined;
+        if (entityType === "command" && outputFile) {
+          yield* startBackgroundTaskOutputMonitor(context, message.task_id, outputFile);
+        }
         return;
       }
       case "task_progress": {
@@ -3679,6 +3852,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           readOptionalTrimmedString(patch.subagent_type),
         );
         if (isTerminalTaskUpdatedStatus(status)) {
+          yield* stopBackgroundTaskOutputMonitor(context, message.task_id);
           context.openTaskIds.delete(message.task_id);
           forgetTaskToolInputForTask(
             context,
@@ -3718,6 +3892,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           readOptionalTrimmedString((message as { task_type?: unknown }).task_type),
           readOptionalTrimmedString((message as { subagent_type?: unknown }).subagent_type),
         );
+        yield* stopBackgroundTaskOutputMonitor(context, message.task_id, outputFile);
         context.openTaskIds.delete(message.task_id);
         forgetTaskToolInputForTask(context, message.task_id, toolUseId);
         // Late native completion after synthetic stop: drop without re-emitting.
@@ -4007,6 +4182,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     if (context.stopped) return;
 
     context.stopped = true;
+    for (const taskId of context.backgroundTaskOutputMonitors.keys()) {
+      yield* stopBackgroundTaskOutputMonitor(context, taskId);
+    }
     clearTaskToolInputMemory(context);
     // Session is gone; drop synthetic-stop markers so they cannot leak.
     context.syntheticallyStoppedTaskIds.clear();
@@ -4524,7 +4702,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
         pathToClaudeCodeExecutable: claudeBinaryPath,
-        systemPrompt: { type: "preset", preset: "claude_code" },
+        systemPrompt: {
+          type: "preset",
+          preset: "claude_code",
+          append: SERGECODE_SUBAGENT_INSTRUCTIONS,
+        },
         settingSources: [...CLAUDE_SETTING_SOURCES],
         // `ultracode` is a Claude Code setting, not an API effort level. It is
         // normalized to `xhigh` above and paired with `settings.ultracode`.
@@ -4541,6 +4723,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(existingResumeSessionId ? { resume: existingResumeSessionId } : {}),
         ...(newSessionId ? { sessionId: newSessionId } : {}),
         includePartialMessages: true,
+        forwardSubagentText: true,
+        agentProgressSummaries: true,
         canUseTool,
         env: claudeEnvironment,
         ...(input.cwd ? { additionalDirectories: [input.cwd] } : {}),
@@ -4638,6 +4822,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         taskToolInputsByUseId: new Map(),
         taskToolUseIdByTaskId: new Map(),
         taskModelByTaskId: new Map(),
+        backgroundTaskOutputByToolUseId: new Map(),
+        backgroundTaskOutputMonitors: new Map(),
         sessionEffort: effectiveEffort ?? undefined,
         openTaskIds: new Set(),
         syntheticallyStoppedTaskIds: new Set(),

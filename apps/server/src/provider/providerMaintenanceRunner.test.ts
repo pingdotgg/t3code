@@ -30,10 +30,10 @@ import {
 const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
 
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
-const CURSOR_DRIVER = ProviderDriverKind.make("cursor");
+const GROK_DRIVER = ProviderDriverKind.make("grok");
 const OPENCODE_DRIVER = ProviderDriverKind.make("opencode");
 const CODEX_INSTANCE_ID = ProviderInstanceId.make("codex");
-const CURSOR_INSTANCE_ID = ProviderInstanceId.make("cursor");
+const GROK_INSTANCE_ID = ProviderInstanceId.make("grok");
 const OPENCODE_INSTANCE_ID = ProviderInstanceId.make("opencode");
 const encoder = new TextEncoder();
 
@@ -44,13 +44,13 @@ const encoder = new TextEncoder();
 const NonWindowsPlatform = Layer.succeed(HostProcessPlatform, "linux");
 
 function lifecycleFor(provider: ProviderDriverKind): ProviderMaintenanceCapabilities {
-  if (provider === CURSOR_DRIVER) {
+  if (provider === GROK_DRIVER) {
     return makeProviderMaintenanceCapabilities({
       provider,
       packageName: null,
-      updateExecutable: "agent",
+      updateExecutable: "grok",
       updateArgs: ["update"],
-      updateLockKey: "cursor-agent",
+      updateLockKey: "grok-cli",
     });
   }
   return makeProviderMaintenanceCapabilities({
@@ -79,10 +79,10 @@ const baseProvider: ServerProvider = {
   skills: [],
 };
 
-const baseCursorProvider: ServerProvider = {
+const baseGrokProvider: ServerProvider = {
   ...baseProvider,
-  instanceId: CURSOR_INSTANCE_ID,
-  driver: CURSOR_DRIVER,
+  instanceId: GROK_INSTANCE_ID,
+  driver: GROK_DRIVER,
 };
 
 const baseOpenCodeProvider: ServerProvider = {
@@ -220,13 +220,13 @@ describe("providerMaintenanceRunner", () => {
   it.effect("runs the allowlisted provider update command and records success", () => {
     const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
     return Effect.gen(function* () {
-      const { registry, updateStatesRef } = yield* makeRegistry(baseCursorProvider);
+      const { registry, updateStatesRef } = yield* makeRegistry(baseGrokProvider);
       const updater = yield* makeTestRunner(registry);
 
-      const result = yield* updater.updateProvider(CURSOR_DRIVER);
+      const result = yield* updater.updateProvider(GROK_DRIVER);
       assert.deepStrictEqual(calls, [
         {
-          command: "agent",
+          command: "grok",
           args: ["update"],
         },
       ]);

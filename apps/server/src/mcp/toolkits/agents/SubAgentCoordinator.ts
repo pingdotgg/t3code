@@ -2,7 +2,7 @@
  * SubAgentCoordinator - Cross-provider sub-agent orchestration for MCP tools.
  *
  * Backs the `agent_*` MCP toolkit: a running provider session (Claude,
- * Codex, Cursor, ...) can spawn a sibling thread on any configured provider
+ * Codex, Grok, ...) can spawn a sibling thread on any configured provider
  * instance, send follow-up prompts, and await turn completion. Spawned
  * threads flow through the regular orchestration engine, so they persist
  * and render in the UI like user-created threads.

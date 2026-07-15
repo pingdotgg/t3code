@@ -123,7 +123,7 @@ private struct RuntimePlanModeGroup: View {
 }
 
 /// Reasoning-effort picker for the thread's current model. Hidden when the
-/// model exposes no effort option descriptor (e.g. Cursor's composer).
+/// model exposes no effort option descriptor.
 private struct EffortMenu: View {
     let thread: ChatThread
     let model: AppModel

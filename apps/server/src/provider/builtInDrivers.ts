@@ -31,7 +31,6 @@ import {
 } from "./Drivers/ClaudeSyntheroDriver.ts";
 import { ClaudexDriver, type ClaudexDriverEnv } from "./Drivers/ClaudexDriver.ts";
 import { CodexDriver, type CodexDriverEnv } from "./Drivers/CodexDriver.ts";
-import { CursorDriver, type CursorDriverEnv } from "./Drivers/CursorDriver.ts";
 import { FuguDriver, type FuguDriverEnv } from "./Drivers/FuguDriver.ts";
 import { GrokDriver, type GrokDriverEnv } from "./Drivers/GrokDriver.ts";
 import { OpenCodeDriver, type OpenCodeDriverEnv } from "./Drivers/OpenCodeDriver.ts";
@@ -47,7 +46,6 @@ export type BuiltInDriversEnv =
   | ClaudeSyntheroDriverEnv
   | ClaudexDriverEnv
   | CodexDriverEnv
-  | CursorDriverEnv
   | FuguDriverEnv
   | GrokDriverEnv
   | OpenCodeDriverEnv
@@ -63,7 +61,6 @@ export const BUILT_IN_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv
   ClaudeDriver,
   ClaudeSyntheroDriver,
   ClaudexDriver,
-  CursorDriver,
   GrokDriver,
   FuguDriver,
   OpenCodeDriver,

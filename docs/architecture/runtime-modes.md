@@ -19,7 +19,7 @@ Defined in `packages/contracts/src/orchestration.ts`. Default is `full-access`.
 - **`approval-required`** — the strictest mode. Each driver maps it onto its own
   strongest policy: Codex/Fugu get a real `read-only` OS sandbox
   (`approvalPolicy: untrusted`), Claude falls back to the `canUseTool` gate,
-  OpenCode to an ask-everything ruleset, and the ACP drivers (Cursor, Grok) to
+  OpenCode to an ask-everything ruleset, and the Grok ACP driver to
   per-tool permission requests.
 - **`auto-accept-edits`** — Codex/Fugu run `workspace-write` (`danger-full-access`
   inside a git worktree, where `workspace-write` hangs); Claude runs `acceptEdits`.

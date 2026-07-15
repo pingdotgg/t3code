@@ -339,6 +339,39 @@ function flushRuntimeEvents(): Effect.Effect<void> {
 }
 
 describe("ClaudeAdapterLive", () => {
+  it.effect(
+    "steers delegation into SergeCode sub-threads and forwards native subagent progress",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+
+        const options = harness.getLastCreateQueryInput()?.options;
+        assert.equal(options?.forwardSubagentText, true);
+        assert.equal(options?.agentProgressSummaries, true);
+        const systemPrompt = options?.systemPrompt;
+        assert.equal(
+          systemPrompt && typeof systemPrompt === "object" && !Array.isArray(systemPrompt)
+            ? systemPrompt.type
+            : undefined,
+          "preset",
+        );
+        if (systemPrompt && typeof systemPrompt === "object" && !Array.isArray(systemPrompt)) {
+          assert.match(systemPrompt.append ?? "", /agent_spawn/);
+          assert.match(systemPrompt.append ?? "", /Never launch a provider CLI/);
+        }
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
   it.effect("returns validation error for non-claude provider on startSession", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
@@ -2389,6 +2422,93 @@ describe("ClaudeAdapterLive", () => {
         );
         assert.equal(progressEvent.payload.description, "Running background teammate");
       }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("streams background local_bash output from the SDK task output file", () => {
+    const harness = makeHarness();
+    const outputDirectory = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "claude-task-output-"),
+    );
+    const outputFile = NodePath.join(outputDirectory, "local-bash.output");
+    NodeFS.writeFileSync(outputFile, "grok worker: inspecting the repository\n", "utf8");
+
+    return Effect.gen(function* () {
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(outputDirectory, { recursive: true, force: true })),
+      );
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) =>
+          event.type === "task.progress" &&
+          event.payload.summary?.includes("grok worker: inspecting") === true,
+      ).pipe(Stream.runCollect, Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId: THREAD_ID, input: "delegate to Grok", attachments: [] });
+
+      harness.query.emit(
+        taskToolStartMessage({
+          sessionId: "sdk-session-local-bash",
+          uuid: "local-bash-tool-start",
+          index: 0,
+          toolUseId: "toolu-local-bash-1",
+          toolName: "Bash",
+          toolInput: { command: "grok --prompt 'inspect the repository'", run_in_background: true },
+        }),
+      );
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-local-bash-1",
+        tool_use_id: "toolu-local-bash-1",
+        description: "Run Grok in the background",
+        task_type: "local_bash",
+        session_id: "sdk-session-local-bash",
+        uuid: "local-bash-task-started",
+      } as unknown as SDKMessage);
+      harness.query.emit(
+        taskToolResultMessage({
+          sessionId: "sdk-session-local-bash",
+          uuid: "local-bash-tool-result",
+          toolUseId: "toolu-local-bash-1",
+          content: `Command running in background. Output is being written to: ${outputFile}`,
+        }),
+      );
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const progress = runtimeEvents.find(
+        (event) =>
+          event.type === "task.progress" &&
+          event.payload.summary?.includes("grok worker: inspecting") === true,
+      );
+      assert.equal(progress?.type, "task.progress");
+      if (progress?.type === "task.progress") {
+        assert.equal(progress.payload.taskId, "task-local-bash-1");
+        assert.equal(progress.payload.entityType, "command");
+        assert.equal(progress.payload.lastToolName, "local_bash");
+      }
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_notification",
+        task_id: "task-local-bash-1",
+        tool_use_id: "toolu-local-bash-1",
+        status: "completed",
+        output_file: outputFile,
+        summary: "Process exited with code 0.",
+        session_id: "sdk-session-local-bash",
+        uuid: "local-bash-task-completed",
+      } as unknown as SDKMessage);
+      yield* flushRuntimeEvents();
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

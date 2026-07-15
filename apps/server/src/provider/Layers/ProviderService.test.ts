@@ -69,7 +69,7 @@ const codexInstanceId = ProviderInstanceId.make("codex");
 const claudeAgentInstanceId = ProviderInstanceId.make("claudeAgent");
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
-const CURSOR_DRIVER = ProviderDriverKind.make("cursor");
+const GROK_DRIVER = ProviderDriverKind.make("grok");
 
 type LegacyProviderRuntimeEvent = {
   readonly type: string;
@@ -280,11 +280,11 @@ function makeProviderServiceLayer(options?: {
 }) {
   const codex = makeFakeCodexAdapter();
   const claude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
-  const cursor = makeFakeCodexAdapter(CURSOR_DRIVER);
+  const grok = makeFakeCodexAdapter(GROK_DRIVER);
   const registry = makeAdapterRegistryMock({
     [ProviderDriverKind.make("codex")]: codex.adapter,
     [ProviderDriverKind.make("claudeAgent")]: claude.adapter,
-    [ProviderDriverKind.make("cursor")]: cursor.adapter,
+    [ProviderDriverKind.make("grok")]: grok.adapter,
   });
 
   const providerAdapterLayer = Layer.succeed(
@@ -320,7 +320,7 @@ function makeProviderServiceLayer(options?: {
   return {
     codex,
     claude,
-    cursor,
+    grok,
     layer,
   };
 }
@@ -1808,7 +1808,7 @@ liveness.layer("ProviderServiceLive liveness", (it) => {
       const cases = [
         [liveness.codex, CODEX_DRIVER, codexInstanceId],
         [liveness.claude, CLAUDE_AGENT_DRIVER, claudeAgentInstanceId],
-        [liveness.cursor, CURSOR_DRIVER, ProviderInstanceId.make("cursor")],
+        [liveness.grok, GROK_DRIVER, ProviderInstanceId.make("grok")],
       ] as const;
 
       for (const [adapter, driver, instanceId] of cases) {
@@ -1838,7 +1838,7 @@ liveness.layer("ProviderServiceLive liveness", (it) => {
 
       assert.deepEqual(
         stalled.map((event) => event.provider).sort(),
-        [CLAUDE_AGENT_DRIVER, CODEX_DRIVER, CURSOR_DRIVER].sort(),
+        [CLAUDE_AGENT_DRIVER, CODEX_DRIVER, GROK_DRIVER].sort(),
       );
     }),
   );

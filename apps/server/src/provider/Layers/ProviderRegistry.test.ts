@@ -176,24 +176,6 @@ function recordingMockSpawnerLayer(
   return { layer, commands };
 }
 
-function mockCommandSpawnerLayer(
-  handler: (
-    command: string,
-    args: ReadonlyArray<string>,
-  ) => { stdout: string; stderr: string; code: number },
-) {
-  return Layer.succeed(
-    ChildProcessSpawner.ChildProcessSpawner,
-    ChildProcessSpawner.make((command) => {
-      const cmd = command as unknown as {
-        command: string;
-        args: ReadonlyArray<string>;
-      };
-      return Effect.succeed(mockHandle(handler(cmd.command, cmd.args)));
-    }),
-  );
-}
-
 function failingSpawnerLayer(description: string) {
   return Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
@@ -507,8 +489,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
 
       it("preserves previously discovered provider models when a refresh returns none", () => {
         const previousProvider = {
-          instanceId: ProviderInstanceId.make("cursor"),
-          driver: ProviderDriverKind.make("cursor"),
+          instanceId: ProviderInstanceId.make("grok"),
+          driver: ProviderDriverKind.make("grok"),
           status: "ready",
           enabled: true,
           installed: true,
@@ -547,8 +529,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
 
       it("fills missing capabilities from the previous provider snapshot", () => {
         const previousProvider = {
-          instanceId: ProviderInstanceId.make("cursor"),
-          driver: ProviderDriverKind.make("cursor"),
+          instanceId: ProviderInstanceId.make("grok"),
+          driver: ProviderDriverKind.make("grok"),
           status: "ready",
           enabled: true,
           installed: true,
@@ -671,8 +653,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
       it("persists merged provider snapshots for the providers that were refreshed", () => {
         const previousProviders = [
           {
-            instanceId: ProviderInstanceId.make("cursor"),
-            driver: ProviderDriverKind.make("cursor"),
+            instanceId: ProviderInstanceId.make("grok"),
+            driver: ProviderDriverKind.make("grok"),
             status: "ready",
             enabled: true,
             installed: true,
@@ -712,21 +694,21 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             skills: [],
           },
         ] as const satisfies ReadonlyArray<ServerProvider>;
-        const refreshedCursor = {
+        const refreshedGrok = {
           ...previousProviders[0],
           checkedAt: "2026-04-14T00:01:00.000Z",
           models: [],
         } satisfies ServerProvider;
 
-        const mergedProviders = mergeProviderSnapshots(previousProviders, [refreshedCursor]);
+        const mergedProviders = mergeProviderSnapshots(previousProviders, [refreshedGrok]);
         const persistedProviders = selectProvidersByKind(
           mergedProviders,
-          new Set([ProviderDriverKind.make("cursor")]),
+          new Set([ProviderDriverKind.make("grok")]),
         );
 
         assert.deepStrictEqual(persistedProviders, [
           {
-            ...refreshedCursor,
+            ...refreshedGrok,
             models: [...previousProviders[0].models],
           },
         ]);
@@ -734,11 +716,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
 
       it.effect("persists the merged snapshot when a live update has empty models", () =>
         Effect.gen(function* () {
-          const cursorDriver = ProviderDriverKind.make("cursor");
-          const cursorInstanceId = ProviderInstanceId.make("cursor");
+          const grokDriver = ProviderDriverKind.make("grok");
+          const grokInstanceId = ProviderInstanceId.make("grok");
           const initialProvider = {
-            instanceId: cursorInstanceId,
-            driver: cursorDriver,
+            instanceId: grokInstanceId,
+            driver: grokDriver,
             status: "ready",
             enabled: true,
             installed: true,
@@ -769,17 +751,17 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           } satisfies ServerProvider;
           const changes = yield* PubSub.unbounded<ServerProvider>();
           const instance = {
-            instanceId: cursorInstanceId,
-            driverKind: cursorDriver,
+            instanceId: grokInstanceId,
+            driverKind: grokDriver,
             continuationIdentity: {
-              driverKind: cursorDriver,
-              continuationKey: "cursor:instance:cursor",
+              driverKind: grokDriver,
+              continuationKey: "grok:instance:grok",
             },
             displayName: undefined,
             enabled: true,
             snapshot: {
               maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
-                provider: cursorDriver,
+                provider: grokDriver,
                 packageName: null,
               }),
               getSnapshot: Effect.succeed(initialProvider),
@@ -793,7 +775,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             ProviderInstanceRegistry.ProviderInstanceRegistry,
             {
               getInstance: (instanceId) =>
-                Effect.succeed(instanceId === cursorInstanceId ? instance : undefined),
+                Effect.succeed(instanceId === grokInstanceId ? instance : undefined),
               listInstances: Effect.succeed([instance]),
               listUnavailable: Effect.succeed([]),
               streamChanges: Stream.empty,
@@ -821,7 +803,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             const config = yield* ServerConfig.ServerConfig;
             const filePath = yield* resolveProviderStatusCachePath({
               cacheDir: config.providerStatusCacheDir,
-              instanceId: cursorInstanceId,
+              instanceId: grokInstanceId,
             });
 
             assert.deepStrictEqual((yield* registry.getProviders)[0]?.models, [
@@ -1049,7 +1031,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         }),
       );
 
-      // This test intentionally avoids `mockCommandSpawnerLayer` so the real
+      // This test intentionally avoids a mock spawner so the real
       // `probeCodexAppServerProvider` path runs — including the full
       // `codex app-server` RPC handshake via `CodexClient.layerChildProcess`.
       // We point `binaryPath` at a name that cannot exist on any machine so
@@ -1074,7 +1056,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                   // machine's PATH.
                   codex: { enabled: false },
                   claudeAgent: { enabled: false },
-                  cursor: { enabled: false },
                   grok: { enabled: false },
                   fugu: { enabled: false },
                   opencode: { enabled: false },
@@ -1188,7 +1169,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                   claudeAgent: { enabled: false },
                   "claude-synthero": { enabled: false },
                   claudex: { enabled: false },
-                  cursor: { enabled: false },
                   grok: { enabled: false },
                   fugu: { enabled: false },
                   opencode: { enabled: false },
@@ -1302,7 +1282,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 providers: {
                   codex: { enabled: false },
                   claudeAgent: { enabled: false },
-                  cursor: { enabled: false },
                   grok: { enabled: false },
                   fugu: { enabled: false },
                   opencode: { enabled: false },
@@ -1355,111 +1334,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             assert.match(ghost?.unavailableReason ?? "", /ghostDriver/);
           }).pipe(Effect.provide(runtimeServices));
         }),
-      );
-
-      it.effect(
-        "keeps cursor disabled and skips probing when the provider setting is disabled",
-        () =>
-          Effect.gen(function* () {
-            const serverSettings = yield* makeMutableServerSettingsService(
-              decodeServerSettings(
-                deepMerge(encodedDefaultServerSettings, {
-                  providers: {
-                    codex: {
-                      enabled: false,
-                    },
-                    cursor: {
-                      enabled: false,
-                    },
-                    grok: {
-                      enabled: false,
-                    },
-                    fugu: {
-                      enabled: false,
-                    },
-                  },
-                }),
-              ),
-            );
-            let cursorSpawned = false;
-            const scope = yield* Scope.make();
-            yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
-            const providerRegistryLayer = ProviderRegistryLive.pipe(
-              Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
-              Layer.provideMerge(
-                Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
-              ),
-              Layer.provideMerge(
-                ServerConfig.layerTest(process.cwd(), {
-                  prefix: "t3-provider-registry-",
-                }),
-              ),
-              Layer.provideMerge(TestHttpClientLive),
-              Layer.provideMerge(
-                Layer.succeed(
-                  ProviderEventLoggers.ProviderEventLoggers,
-                  ProviderEventLoggers.NoOpProviderEventLoggers,
-                ),
-              ),
-              Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
-              Layer.provideMerge(
-                mockCommandSpawnerLayer((command, args) => {
-                  if (command === "agent") {
-                    cursorSpawned = true;
-                  }
-                  const joined = args.join(" ");
-                  if (joined === "--version") {
-                    return {
-                      stdout: `${command} 1.0.0\n`,
-                      stderr: "",
-                      code: 0,
-                    };
-                  }
-                  if (joined === "auth status") {
-                    return {
-                      stdout: '{"authenticated":true}\n',
-                      stderr: "",
-                      code: 0,
-                    };
-                  }
-                  throw new Error(`Unexpected args: ${command} ${joined}`);
-                }),
-              ),
-            );
-            const runtimeServices = yield* Layer.build(
-              Layer.mergeAll(
-                Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
-                providerRegistryLayer,
-              ),
-            ).pipe(Scope.provide(scope));
-
-            yield* Effect.gen(function* () {
-              const registry = yield* ProviderRegistry.ProviderRegistry;
-              const providers = yield* registry.getProviders;
-              const cursorProvider = providers.find(
-                (provider) => provider.instanceId === ProviderInstanceId.make("cursor"),
-              );
-
-              assert.deepStrictEqual(providers.map((provider) => provider.instanceId).toSorted(), [
-                "chatgpt",
-                "claude-synthero",
-                "claudeAgent",
-                "claudex",
-                "codex",
-                "cursor",
-                "fugu",
-                "grok",
-                "opencode",
-              ]);
-              assert.strictEqual(cursorProvider?.enabled, false);
-              assert.strictEqual(cursorProvider?.status, "disabled");
-              assert.strictEqual(
-                cursorProvider?.message,
-                "Cursor is disabled in T3 Code settings.",
-              );
-              assert.strictEqual(cursorSpawned, false);
-            }).pipe(Effect.provide(runtimeServices));
-          }),
       );
 
       it.effect("skips codex probes entirely when the provider is disabled", () =>

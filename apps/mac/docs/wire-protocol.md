@@ -499,7 +499,7 @@ key may be absent on request but is always present on response:
 automaticGitFetchInterval:number(ms), defaultThreadEnvMode:"local"|"worktree",
 newWorktreesStartFromOrigin:bool, addProjectBaseDirectory:string,
 textGenerationModelSelection:ModelSelection,
-providers:{codex,claudeAgent,cursor,grok,opencode}, providerInstances:record,
+providers:{codex,claudeAgent,grok,opencode}, providerInstances:record,
 observability:{otlpTracesUrl,otlpMetricsUrl} }`. `ServerSettingsPatch`
 (`settings.ts:504`) is the same tree with **every field `optionalKey`** (send only
 what changes). `ServerProviderUpdateInput` (`server.ts:554`) =

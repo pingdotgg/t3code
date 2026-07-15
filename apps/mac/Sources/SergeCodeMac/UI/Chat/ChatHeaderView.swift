@@ -78,7 +78,6 @@ private struct ProviderBadge: View {
         case .claudex: "arrow.triangle.branch"
         case .claudeSynthero: "link"
         case .codex: "chevron.left.forwardslash.chevron.right"
-        case .cursor: "cursorarrow"
         case .grok: "bolt"
         case .fugu: "fish"
         case .opencode: "shippingbox"

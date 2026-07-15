@@ -19,7 +19,7 @@ struct UsageLimitModelOptionsTests {
             option("codex-current", provider: .codex),
             option("codex-next", provider: .codex),
             option("claude-first", provider: .claude),
-            option("cursor", provider: .cursor),
+            option("grok", provider: .grok),
             option("claude-second", provider: .claude),
             option("codex-last", provider: .codex),
         ]
@@ -31,7 +31,7 @@ struct UsageLimitModelOptionsTests {
             exhaustedProvider: .codex)
 
         #expect(result.map(\.modelID) == [
-            "claude-first", "cursor", "claude-second", "codex-next", "codex-last",
+            "claude-first", "grok", "claude-second", "codex-next", "codex-last",
         ])
     }
 
@@ -40,7 +40,7 @@ struct UsageLimitModelOptionsTests {
         let available = [
             option("claude", provider: .claude),
             option("codex-current", provider: .codex),
-            option("cursor", provider: .cursor),
+            option("grok", provider: .grok),
         ]
 
         let result = UsageLimitModelOptions.options(
@@ -49,6 +49,6 @@ struct UsageLimitModelOptionsTests {
             currentModelID: "codex-current",
             exhaustedProvider: nil)
 
-        #expect(result.map(\.modelID) == ["claude", "cursor"])
+        #expect(result.map(\.modelID) == ["claude", "grok"])
     }
 }

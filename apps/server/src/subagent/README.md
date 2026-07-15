@@ -101,7 +101,7 @@ Wait for completion:
 Current integration state:
 
 - MCP server: wired through `UnifiedSubAgentToolkit`
-- Claude, Codex, Grok, Cursor, Fugu provider adapters: not yet wired
+- Claude, Codex, Grok, and Fugu provider adapters: not yet wired
 
 To add UnifiedSubAgentTool to a provider adapter:
 
