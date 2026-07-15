@@ -704,21 +704,19 @@ export const make = Effect.fn("PluginHost.make")(function* () {
           Effect.timeout(registrationTimeout()),
         );
         yield* validateRegistration(pluginId, registration, manifest.capabilities);
-        // Reserve tool ownership/fingerprints BEFORE any irreversible MCP addTool
-        // (the MCP toolkit registers on registry.put). Reject capability/metadata
-        // issues here so activation fails closed.
-        if ((registration.tools?.length ?? 0) > 0) {
-          yield* toolCatalog
-            .reserve(pluginId, registration.tools, {
-              hasToolsCapability: manifest.capabilities.includes("tools"),
-            })
-            .pipe(
-              Effect.mapError(
-                (error: PluginToolCatalogError) =>
-                  new PluginRegistrationError({ pluginId, detail: error.detail }),
-              ),
-            );
-        }
+        // Always reserve (including empty tool sets) so descriptor-set removals
+        // are rejected as restart-required before registry.put. Ownership/
+        // fingerprint checks run before any irreversible MCP addTool.
+        yield* toolCatalog
+          .reserve(pluginId, registration.tools, {
+            hasToolsCapability: manifest.capabilities.includes("tools"),
+          })
+          .pipe(
+            Effect.mapError(
+              (error: PluginToolCatalogError) =>
+                new PluginRegistrationError({ pluginId, detail: error.detail }),
+            ),
+          );
         yield* migrator.run(pluginId, registration.migrations ?? []);
         if (registration.recover) {
           yield* registration.recover().pipe(Effect.timeout(registrationTimeout()));
@@ -899,28 +897,36 @@ export const make = Effect.fn("PluginHost.make")(function* () {
     // plugin can't interleave (the round-4/5 pre-put re-check + persisted-state
     // publish remain as defense-in-depth). Neither path calls the other while
     // holding the lock, so this cannot deadlock.
-    withPluginActivationLock(
-      pluginId,
-      Effect.gen(function* () {
-        const runtime = yield* registry.get(pluginId);
-        if (Option.isNone(runtime)) return;
-        // Clear runtime (+ tool bindings via registry.changes → catalog.deactivate)
-        // BEFORE scope closure so tools/list and tools/call fail closed while
-        // in-flight handlers are interrupted by the subsequent scope close.
-        yield* registry.remove(pluginId);
-        yield* toolCatalog.deactivate(pluginId);
-        yield* Scope.close(runtime.value.scope, Exit.void).pipe(Effect.ignore);
-        yield* httpRegistry.remove(pluginId).pipe(Effect.ignore);
-        // Announce the state that is actually persisted rather than a hardcoded
-        // "disabled": uninstall sets "pending-remove" then calls this, and
-        // publishing "disabled" would contradict the lockfile + list APIs.
-        const persistedState = yield* store.readLockfile.pipe(
-          Effect.map((lockfile) => getLockfilePlugin(lockfile, pluginId)?.state ?? "disabled"),
-          Effect.orElseSucceed(() => "disabled" as PluginState),
-        );
-        yield* publishPluginStateChanged(pluginId, persistedState);
-      }),
-    );
+    Effect.gen(function* () {
+      // Revoke call-time + visibility bindings BEFORE waiting on the activation
+      // lock. Disable persists enabled:false first; without this, fresh tools/call
+      // would still pass both gates while a concurrent activate holds the lock.
+      yield* toolCatalog.deactivate(pluginId);
+
+      yield* withPluginActivationLock(
+        pluginId,
+        Effect.gen(function* () {
+          const runtime = yield* registry.get(pluginId);
+          if (Option.isNone(runtime)) return;
+          // Drop the runtime so registry.get fails closed, then interrupt
+          // invocation fibers owned by the plugin scope (handlers forkIn that
+          // scope). Scope.close does not by itself stop work still running only
+          // on the MCP request fiber — ownership is required.
+          yield* registry.remove(pluginId);
+          yield* toolCatalog.deactivate(pluginId);
+          yield* Scope.close(runtime.value.scope, Exit.void).pipe(Effect.ignore);
+          yield* httpRegistry.remove(pluginId).pipe(Effect.ignore);
+          // Announce the state that is actually persisted rather than a hardcoded
+          // "disabled": uninstall sets "pending-remove" then calls this, and
+          // publishing "disabled" would contradict the lockfile + list APIs.
+          const persistedState = yield* store.readLockfile.pipe(
+            Effect.map((lockfile) => getLockfilePlugin(lockfile, pluginId)?.state ?? "disabled"),
+            Effect.orElseSucceed(() => "disabled" as PluginState),
+          );
+          yield* publishPluginStateChanged(pluginId, persistedState);
+        }),
+      );
+    });
 
   const reconcilePendingState = (pluginId: PluginId, entry: PluginLockfilePlugin) =>
     Effect.gen(function* () {

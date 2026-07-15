@@ -3,7 +3,7 @@ import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Stream from "effect/Stream";
+import * as PubSub from "effect/PubSub";
 import { McpSchema, McpServer } from "effect/unstable/ai";
 
 import { PluginRuntimeRegistry } from "../../../plugins/PluginRuntimeRegistry.ts";
@@ -43,8 +43,11 @@ const registerPendingTools = Effect.fn("PluginToolsRegistration.registerPending"
   const pending = yield* catalog.pendingMcpRegistration(pluginId);
   const existingNames = new Set(server.tools.map((entry) => entry.tool.name));
 
+  // Preflight the COMPLETE pending set before the first irreversible addTool.
+  // There is no removeTool — a partial add cannot be rolled back.
+  const claimed = new Set(existingNames);
   for (const entry of pending) {
-    if (CORE_MCP_TOOL_NAMES.has(entry.finalName) || existingNames.has(entry.finalName)) {
+    if (CORE_MCP_TOOL_NAMES.has(entry.finalName) || claimed.has(entry.finalName)) {
       yield* Effect.logError("Plugin tool final-name collides with existing MCP tool", {
         pluginId,
         finalName: entry.finalName,
@@ -54,7 +57,10 @@ const registerPendingTools = Effect.fn("PluginToolsRegistration.registerPending"
         detail: `Plugin tool ${entry.finalName} collides with an existing MCP tool; registration aborted`,
       });
     }
+    claimed.add(entry.finalName);
+  }
 
+  for (const entry of pending) {
     const annotations = Context.make(McpSchema.EnabledWhen, () =>
       catalog.isActive(entry.finalName),
     );
@@ -76,10 +82,11 @@ const registerPendingTools = Effect.fn("PluginToolsRegistration.registerPending"
       handle: catalog.makeTrampolineHandle(entry.pluginId, entry.localName),
     });
 
-    existingNames.add(entry.finalName);
     yield* catalog.markAddedToMcp(entry.finalName);
   }
 
+  // Only activate after a fully successful registration (or a no-op re-put).
+  // Do not activate when collision preflight failed — rejection must propagate.
   yield* catalog.activate(pluginId);
 });
 
@@ -109,27 +116,31 @@ const handleRuntimeChange = Effect.fn("PluginToolsRegistration.handleRuntimeChan
 });
 
 /**
- * Subscribes to PluginRuntimeRegistry.changes and registers plugin tools once
- * via McpServer.addTool with EnabledWhen. Does not depend on PluginHost.
+ * Subscribes to PluginRuntimeRegistry and registers plugin tools once via
+ * McpServer.addTool with EnabledWhen. Does not depend on PluginHost.
+ *
+ * Subscribe BEFORE snapshotting already-live plugins so a put/remove between
+ * list and stream start is not lost. handleRuntimeChange is idempotent:
+ * already-added tools are skipped (pending is empty), activate/deactivate are
+ * set operations.
  */
 export const registerPluginTools = Effect.fn("PluginToolsRegistration.register")(function* () {
   const registry = yield* PluginRuntimeRegistry;
-  const catalog = yield* PluginToolCatalog;
+
+  // Subscribe first (active before this effect continues). Forked Stream.fromPubSub
+  // alone is not enough — the fiber may not have attached yet when list runs.
+  const subscription = yield* registry.subscribeChanges;
 
   // Catch plugins that activated before this fiber subscribed.
   const alreadyLive = yield* registry.list;
   for (const runtime of alreadyLive) {
-    yield* handleRuntimeChange({ _tag: "put", pluginId: runtime.manifest.id }).pipe(Effect.ignore);
-  }
-  // Ensure activate is correct for already-live even if reserve was earlier.
-  for (const runtime of alreadyLive) {
-    yield* catalog.activate(runtime.manifest.id);
+    yield* handleRuntimeChange({ _tag: "put", pluginId: runtime.manifest.id });
   }
 
-  yield* registry.changes.pipe(
-    Stream.runForEach((change) => handleRuntimeChange(change)),
-    Effect.forkScoped,
-  );
+  // Drain subsequent puts/removes for the process lifetime.
+  yield* Effect.forever(
+    PubSub.take(subscription).pipe(Effect.flatMap((change) => handleRuntimeChange(change))),
+  ).pipe(Effect.forkScoped);
 });
 
 export const PluginToolsRegistrationLive = Layer.effectDiscard(registerPluginTools());

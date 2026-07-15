@@ -3,6 +3,7 @@ import { PluginId } from "@t3tools/contracts";
 import type { PluginToolDescriptor } from "@t3tools/plugin-sdk";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -16,21 +17,57 @@ import { CORE_MCP_TOOL_NAMES, PluginToolsRegistrationLive } from "./PluginToolsR
 const pluginId = PluginId.make("hello-board");
 const finalName = "plugin_hello_board__echo_note";
 
-const tool: PluginToolDescriptor = {
-  name: "echo_note",
-  description: "Echo a short message for MCP registration tests.",
-  inputSchema: Schema.Struct({ message: Schema.String }),
-  scope: "read",
-  title: "Echo note",
-  handle: (input) => {
-    const message =
-      typeof input === "object" && input !== null && "message" in input
-        ? String((input as { message: unknown }).message)
-        : "";
-    return Effect.succeed({
-      content: [{ type: "text" as const, text: `mcp:${message}` }],
-    });
-  },
+const clientHandshake = {
+  protocolVersion: "2025-03-26",
+  capabilities: {},
+  clientInfo: { name: "test", version: "1.0.0" },
+} as const;
+
+/**
+ * Mirrors McpServer tools/list filtering: EnabledWhen decides visibility.
+ * Raw `server.tools` always includes permanently registered tools.
+ */
+const listToolsAsProtocol = (server: {
+  readonly tools: ReadonlyArray<{
+    readonly tool: { readonly name: string };
+    readonly annotations: Context.Context<never>;
+  }>;
+}): ReadonlyArray<string> => {
+  const names: Array<string> = [];
+  for (const entry of server.tools) {
+    const enabledWhen = Context.getOption(entry.annotations, McpSchema.EnabledWhen);
+    if (enabledWhen._tag === "None" || enabledWhen.value(clientHandshake)) {
+      names.push(entry.tool.name);
+    }
+  }
+  return names;
+};
+
+const makeTool = (
+  overrides: Partial<PluginToolDescriptor> & { readonly name?: string } = {},
+): PluginToolDescriptor => {
+  const name = overrides.name ?? "echo_note";
+  return {
+    name,
+    description: overrides.description ?? "Echo a short message for MCP registration tests.",
+    inputSchema: overrides.inputSchema ?? Schema.Struct({ message: Schema.String }),
+    scope: overrides.scope ?? "read",
+    title: overrides.title ?? "Echo note",
+    handle:
+      overrides.handle ??
+      ((input) => {
+        const message =
+          typeof input === "object" && input !== null && "message" in input
+            ? String((input as { message: unknown }).message)
+            : "";
+        return Effect.succeed({
+          content: [{ type: "text" as const, text: `mcp:${message}` }],
+        });
+      }),
+    ...("destructive" in overrides ? { destructive: overrides.destructive } : {}),
+    ...("idempotent" in overrides ? { idempotent: overrides.idempotent } : {}),
+    ...("openWorld" in overrides ? { openWorld: overrides.openWorld } : {}),
+  };
 };
 
 const textOf = (result: {
@@ -40,12 +77,25 @@ const textOf = (result: {
   return first && first.type === "text" ? (first.text ?? "") : "";
 };
 
+/**
+ * Shared services built once in the layer graph so catalog, registry, and the
+ * live registration fiber see the same instances.
+ */
 const RegistryLive = PluginRuntimeRegistry.layer;
-const CatalogLive = PluginToolCatalog.layer.pipe(Layer.provide(RegistryLive));
-// Register tools synchronously in tests by driving catalog + addTool directly;
-// the live layer's stream subscription is covered via put→handler in a short
-// scoped run that activates after an explicit registerPending path.
-const TestLayer = Layer.mergeAll(McpServer.McpServer.layer, CatalogLive, RegistryLive);
+const CatalogAndRegistry = PluginToolCatalog.layer.pipe(Layer.provideMerge(RegistryLive));
+const ServicesLive = Layer.mergeAll(McpServer.McpServer.layer, CatalogAndRegistry);
+
+/** Real production wiring: stream subscription registers tools on registry put/remove. */
+const LiveLayer = PluginToolsRegistrationLive.pipe(Layer.provideMerge(ServicesLive));
+
+const waitFor = (predicate: Effect.Effect<boolean>, label: string) =>
+  Effect.gen(function* () {
+    for (let attempt = 0; attempt < 200; attempt++) {
+      if (yield* predicate) return;
+      yield* Effect.sleep(Duration.millis(5));
+    }
+    return yield* Effect.die(new Error(`timed out waiting for ${label}`));
+  });
 
 const putRuntime = (registrationTools: ReadonlyArray<PluginToolDescriptor>) =>
   Effect.gen(function* () {
@@ -68,69 +118,49 @@ const putRuntime = (registrationTools: ReadonlyArray<PluginToolDescriptor>) =>
     });
   });
 
-const registerLikeToolkit = Effect.fn("test.registerLikeToolkit")(function* () {
-  const server = yield* McpServer.McpServer;
-  const catalog = yield* PluginToolCatalog.PluginToolCatalog;
-  const pending = yield* catalog.pendingMcpRegistration(pluginId);
-  const existingNames = new Set(server.tools.map((entry) => entry.tool.name));
-  for (const entry of pending) {
-    assert.equal(existingNames.has(entry.finalName), false);
-    assert.equal(CORE_MCP_TOOL_NAMES.has(entry.finalName), false);
-    const annotations = Context.make(McpSchema.EnabledWhen, () =>
-      catalog.isActive(entry.finalName),
-    );
-    yield* server.addTool({
-      tool: new McpSchema.Tool({
-        name: entry.finalName,
-        description: entry.description,
-        inputSchema: entry.inputJsonSchema,
-        annotations: {
-          ...(entry.annotations.title === undefined ? {} : { title: entry.annotations.title }),
-          readOnlyHint: entry.annotations.readOnlyHint,
-          destructiveHint: entry.annotations.destructiveHint,
-          idempotentHint: entry.annotations.idempotentHint,
-          openWorldHint: entry.annotations.openWorldHint,
-        },
-      }),
-      annotations,
-      handle: catalog.makeTrampolineHandle(entry.pluginId, entry.localName),
-    });
-    yield* catalog.markAddedToMcp(entry.finalName);
-  }
-  yield* catalog.activate(pluginId);
+const reserveAndPut = (tools: ReadonlyArray<PluginToolDescriptor>) =>
+  Effect.gen(function* () {
+    const catalog = yield* PluginToolCatalog.PluginToolCatalog;
+    yield* catalog.reserve(pluginId, tools, { hasToolsCapability: true });
+    yield* putRuntime(tools);
+  });
+
+/** Live scheduler (not it.layer/TestClock) so the registration fiber and sleep can progress. */
+const runLive = <A, E>(
+  effect: Effect.Effect<
+    A,
+    E,
+    | McpServer.McpServer
+    | McpSchema.McpServerClient
+    | PluginRuntimeRegistry.PluginRuntimeRegistry
+    | PluginToolCatalog.PluginToolCatalog
+  >,
+): Promise<A> =>
+  Effect.runPromise(effect.pipe(Effect.provide(LiveLayer), Effect.scoped) as Effect.Effect<A, E>);
+
+it("core tool name set includes preview_snapshot", () => {
+  assert.equal(CORE_MCP_TOOL_NAMES.has("preview_snapshot"), true);
+  assert.equal(CORE_MCP_TOOL_NAMES.has(finalName), false);
 });
 
-it.layer(TestLayer)("PluginToolsRegistration", (it) => {
-  it.effect("registers once with EnabledWhen, hides when deactivated, no duplicates", () =>
+it("live put registers once; tools/list hides when inactive; call gate independent of runtime", async () => {
+  await runLive(
     Effect.gen(function* () {
       const server = yield* McpServer.McpServer;
       const registry = yield* PluginRuntimeRegistry.PluginRuntimeRegistry;
       const catalog = yield* PluginToolCatalog.PluginToolCatalog;
+      const tool = makeTool();
 
-      yield* catalog.reserve(pluginId, [tool], { hasToolsCapability: true });
-      yield* putRuntime([tool]);
-      yield* registerLikeToolkit();
+      yield* reserveAndPut([tool]);
+      yield* waitFor(
+        Effect.sync(() => catalog.isActive(finalName)),
+        "tool active after put",
+      );
 
-      assert.equal(catalog.isActive(finalName), true);
-      const listedWhileActive = server.tools
-        .map((entry) => entry.tool.name)
-        .filter((name) => name === finalName);
-      assert.equal(listedWhileActive.length, 1);
-
-      const registered = server.tools.find((entry) => entry.tool.name === finalName);
-      assert.ok(registered);
-      const enabledWhen = Context.getOption(registered!.annotations, McpSchema.EnabledWhen);
-      assert.equal(enabledWhen._tag, "Some");
-      if (enabledWhen._tag === "Some") {
-        assert.equal(
-          enabledWhen.value({
-            protocolVersion: "2025-03-26",
-            capabilities: {},
-            clientInfo: { name: "test", version: "1.0.0" },
-          }),
-          true,
-        );
-      }
+      // Protocol tools/list (EnabledWhen), not raw server.tools membership alone.
+      assert.include(listToolsAsProtocol(server), finalName);
+      const permanentCount = server.tools.filter((entry) => entry.tool.name === finalName).length;
+      assert.equal(permanentCount, 1);
 
       const callResult = yield* server.callTool({
         name: finalName,
@@ -139,63 +169,109 @@ it.layer(TestLayer)("PluginToolsRegistration", (it) => {
       assert.equal(callResult.isError, false);
       assert.deepEqual(callResult.content, [{ type: "text", text: "mcp:round-trip" }]);
 
-      yield* registry.remove(pluginId);
+      // Independent call-time gate: deactivate catalog while runtime remains live.
+      // If the active-set gate were removed, this call would still succeed.
       yield* catalog.deactivate(pluginId);
       assert.equal(catalog.isActive(finalName), false);
-      if (enabledWhen._tag === "Some") {
-        assert.equal(
-          enabledWhen.value({
-            protocolVersion: "2025-03-26",
-            capabilities: {},
-            clientInfo: { name: "test", version: "1.0.0" },
-          }),
-          false,
-        );
-      }
-      const disabledCall = yield* server.callTool({
+      assert.notInclude(listToolsAsProtocol(server), finalName);
+      const stillInRegistry = yield* registry.get(pluginId);
+      assert.equal(stillInRegistry._tag, "Some");
+      const gatedWhileRuntimeLive = yield* server.callTool({
         name: finalName,
         arguments: { message: "nope" },
       });
-      assert.equal(disabledCall.isError, true);
-      assert.match(textOf(disabledCall), /not enabled/i);
+      assert.equal(gatedWhileRuntimeLive.isError, true);
+      assert.match(textOf(gatedWhileRuntimeLive), /not enabled/i);
 
-      yield* catalog.reserve(pluginId, [tool], { hasToolsCapability: true });
-      yield* putRuntime([tool]);
-      yield* registerLikeToolkit();
+      yield* registry.remove(pluginId);
+      yield* waitFor(
+        Effect.sync(() => !catalog.isActive(finalName)),
+        "still inactive after remove",
+      );
+    }),
+  );
+});
 
-      const listedAfterReenable = server.tools
-        .map((entry) => entry.tool.name)
-        .filter((name) => name === finalName);
-      assert.equal(listedAfterReenable.length, 1);
-      assert.equal(catalog.isActive(finalName), true);
+it("reactivation with a CHANGED handler uses the new descriptor (trampoline)", async () => {
+  await runLive(
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const registry = yield* PluginRuntimeRegistry.PluginRuntimeRegistry;
+      const catalog = yield* PluginToolCatalog.PluginToolCatalog;
 
-      const reCall = yield* server.callTool({
-        name: finalName,
-        arguments: { message: "again" },
+      const v1 = makeTool({
+        handle: () =>
+          Effect.succeed({
+            content: [{ type: "text" as const, text: "version-one" }],
+          }),
       });
-      assert.equal(reCall.isError, false);
-      assert.deepEqual(reCall.content, [{ type: "text", text: "mcp:again" }]);
+      yield* reserveAndPut([v1]);
+      yield* waitFor(
+        Effect.sync(() => catalog.isActive(finalName)),
+        "v1 active",
+      );
+      const first = yield* server.callTool({ name: finalName, arguments: { message: "x" } });
+      assert.equal(textOf(first), "version-one");
+
+      yield* registry.remove(pluginId);
+      yield* waitFor(
+        Effect.sync(() => !catalog.isActive(finalName)),
+        "deactivated after remove",
+      );
+
+      // Same metadata (fingerprint), different handle — proves no handler capture.
+      const v2 = makeTool({
+        handle: () =>
+          Effect.succeed({
+            content: [{ type: "text" as const, text: "version-two" }],
+          }),
+      });
+      yield* reserveAndPut([v2]);
+      yield* waitFor(
+        Effect.sync(() => catalog.isActive(finalName)),
+        "v2 active",
+      );
+
+      const listed = listToolsAsProtocol(server).filter((name) => name === finalName);
+      assert.equal(listed.length, 1);
+      const second = yield* server.callTool({ name: finalName, arguments: { message: "x" } });
+      assert.equal(second.isError, false);
+      assert.equal(textOf(second), "version-two");
     }),
   );
+});
 
-  it.effect("core tool name set includes preview_snapshot", () =>
-    Effect.sync(() => {
-      assert.equal(CORE_MCP_TOOL_NAMES.has("preview_snapshot"), true);
-      assert.equal(CORE_MCP_TOOL_NAMES.has(finalName), false);
+it("rejects MCP final-name collision without activating the plugin", async () => {
+  await runLive(
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const catalog = yield* PluginToolCatalog.PluginToolCatalog;
+      const tool = makeTool();
+
+      // Occupy the final name before the live registration path runs.
+      yield* server.addTool({
+        tool: new McpSchema.Tool({
+          name: finalName,
+          description: "pre-existing occupant",
+          inputSchema: { type: "object", properties: {} },
+        }),
+        annotations: Context.empty(),
+        handle: () =>
+          Effect.succeed(
+            new McpSchema.CallToolResult({
+              content: [{ type: "text", text: "occupant" }],
+            }),
+          ),
+      });
+
+      yield* reserveAndPut([tool]);
+      // Allow the stream handler a chance to attempt (and fail) registration.
+      yield* Effect.sleep(Duration.millis(50));
+
+      assert.equal(catalog.isActive(finalName), false);
+      // Occupant has no EnabledWhen, so it remains visible; plugin never activated.
+      const call = yield* server.callTool({ name: finalName, arguments: { message: "x" } });
+      assert.equal(textOf(call), "occupant");
     }),
-  );
-
-  it.effect("PluginToolsRegistrationLive layer builds without throwing", () =>
-    // Smoke: the stream subscription layer starts under a real McpServer.
-    Effect.void.pipe(
-      Effect.provide(
-        PluginToolsRegistrationLive.pipe(
-          Layer.provideMerge(McpServer.McpServer.layer),
-          Layer.provideMerge(CatalogLive),
-          Layer.provideMerge(RegistryLive),
-        ),
-      ),
-      Effect.scoped,
-    ),
   );
 });
