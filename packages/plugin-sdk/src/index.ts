@@ -1402,8 +1402,71 @@ export interface PluginProviderDescriptor {
   readonly driverKind: string;
   /** What the user picks in settings. */
   readonly displayName: string;
-  /** Service-free decoder for this provider's configuration. */
+  /**
+   * Service-free decoder for this provider's configuration. The host DECODES the
+   * stored config against this before calling `startSession`, so the driver receives
+   * a validated value — never a raw `unknown`.
+   */
   readonly configSchema: Schema.Codec<unknown, unknown, never, never>;
+  readonly driver: PluginProviderDriver;
+}
+
+/** Streaming output from a plugin provider. One variant, deliberately. */
+export type PluginProviderEvent = { readonly type: "assistant-delta"; readonly text: string };
+
+/**
+ * What a plugin implements to BE an AI provider.
+ *
+ * Four methods, not the host's 13-member adapter. The host owns everything that is
+ * about routing or identity rather than about talking to a model: session
+ * bookkeeping, event stamping, the user's message, assistant message boundaries, and
+ * the provider snapshot. A plugin cannot be trusted with those and should not have to
+ * care about them.
+ *
+ * v1 NON-GOAL, so nobody builds against a promise that is not here: there is no
+ * tool-call loop. This is "a provider that streams text and stops" — a local model, a
+ * completion API. It is not enough for an agent-style driver.
+ */
+export interface PluginProviderDriver {
+  readonly startSession: (input: {
+    readonly threadId: ThreadId;
+    /** Already decoded against `configSchema`. */
+    readonly config: unknown;
+    /**
+     * Emit streaming output. CLOSED by the host over this session's provider and
+     * thread — it is not a bus you can address elsewhere. Live from a successful
+     * `startSession` until `stopSession`; calls outside that window are dropped and
+     * logged rather than crashing anything.
+     */
+    readonly emit: (event: PluginProviderEvent) => void;
+  }) => Effect.Effect<void, Error>;
+
+  /**
+   * Run one turn. The turn is over when this effect RETURNS (success) or FAILS —
+   * stream text with `emit` while it runs.
+   *
+   * There is deliberately no "turn finished" event: two ways to signal completion is
+   * how a thread ends up silently empty, with the host waiting for an event that
+   * already happened another way.
+   */
+  readonly sendTurn: (input: {
+    readonly threadId: ThreadId;
+    /** Host-stamped, so concurrent turns and interrupts correlate. */
+    readonly turnId: TurnId;
+    readonly prompt: string;
+  }) => Effect.Effect<void, Error>;
+
+  readonly stopSession: (threadId: ThreadId) => Effect.Effect<void, Error>;
+
+  /**
+   * Optional. If omitted — or if it ignores the interrupt — the HOST still ends the
+   * turn and stops accepting deltas, so an uncooperative driver cannot leave a turn
+   * running forever.
+   */
+  readonly interruptTurn?: (input: {
+    readonly threadId: ThreadId;
+    readonly turnId: TurnId;
+  }) => Effect.Effect<void, Error>;
 }
 
 /** The agent action a policy hook is being asked about. */

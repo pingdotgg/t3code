@@ -8,10 +8,17 @@ import { findProviderDescriptorViolation, make } from "./PluginProviderRegistry.
 
 const BUILT_IN = new Set(["codex", "claude", "cursor", "grok", "opencode"]);
 
+const noopDriver = {
+  startSession: () => Effect.void,
+  sendTurn: () => Effect.void,
+  stopSession: () => Effect.void,
+};
+
 const provider = (overrides: Partial<PluginProviderDescriptor> = {}): PluginProviderDescriptor => ({
   driverKind: "acme",
   displayName: "Acme AI",
   configSchema: Schema.Struct({ apiBase: Schema.String }) as never,
+  driver: noopDriver,
   ...overrides,
 });
 
