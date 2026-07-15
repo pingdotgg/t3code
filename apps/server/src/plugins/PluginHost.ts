@@ -328,6 +328,7 @@ const validateSettingsDescriptor = (
   }
   const violations = findPluginSettingsSchemaViolations(
     settings.schema as unknown as Parameters<typeof findPluginSettingsSchemaViolations>[0],
+    { allowPasswordControl: false },
   );
   if (violations.length > 0) {
     return Effect.fail(

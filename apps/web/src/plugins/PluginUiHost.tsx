@@ -348,7 +348,9 @@ export async function syncPluginUiHostRegistrations({
           // activation and then renders a text box that can never be saved. The host
           // cannot prove the copies match, but it can refuse to render one it knows
           // is unrenderable.
-          const violations = findPluginSettingsSchemaViolations(settingsSchema);
+          const violations = findPluginSettingsSchemaViolations(settingsSchema, {
+            allowPasswordControl: false,
+          });
           if (violations.length > 0) {
             ctx.logger.error(
               `web settings schema is not renderable, no settings page rendered: ${violations

@@ -135,8 +135,28 @@ const jsonTypeOf = (property: unknown): string | null => {
  * Returns every violation (not just the first) so a plugin author fixes the
  * whole schema in one pass rather than one field per install attempt.
  */
+export interface PluginSettingsValidationOptions {
+  /**
+   * Whether a `password` control is permitted.
+   *
+   * FALSE for plugins. In this codebase `password` means "mask the input", NOT
+   * "store securely" — OpenCode's own `serverPassword` uses it and its description
+   * says "Stored in plain text on disk." Plugin settings are stored as ordinary
+   * plaintext in `plugin_settings` and are readable by anyone with `plugins:manage`,
+   * so a plugin author reaching for `password` to hold an API key would be silently
+   * wrong. Secrets are deliberately out of scope for this slice; a plugin needing one
+   * uses SecretsCapability, which already exists. Fail closed until the secret
+   * settings slice lands, then revisit.
+   *
+   * TRUE for first-party provider schemas, which predate this and where the field
+   * descriptions already tell the user what is stored.
+   */
+  readonly allowPasswordControl: boolean;
+}
+
 export const findPluginSettingsSchemaViolations = (
   schema: SettingsSchema,
+  options: PluginSettingsValidationOptions = { allowPasswordControl: true },
 ): ReadonlyArray<PluginSettingsSchemaViolation> => {
   let document: ReturnType<typeof Schema.toJsonSchemaDocument>;
   try {
@@ -188,6 +208,14 @@ export const findPluginSettingsSchemaViolations = (
     }
 
     const control: ProviderSettingsFormControl = annotation.control ?? "text";
+    if (control === "password" && !options.allowPasswordControl) {
+      violations.push({
+        field: key,
+        reason:
+          'uses the "password" control, which only masks the input — plugin settings are stored as ordinary plaintext and are readable by anyone who can manage plugins. Use SecretsCapability for secrets',
+      });
+      continue;
+    }
     const expected = CONTROL_JSON_TYPE[control];
     const actual = jsonTypeOf((properties as Record<string, unknown>)[key]);
     if (actual !== expected) {
