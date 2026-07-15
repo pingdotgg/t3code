@@ -58,7 +58,36 @@ export interface PluginSettingsSchemaViolation {
  */
 export const fingerprintSettingsSchema = (schema: SettingsSchema): string => {
   try {
-    return JSON.stringify(Schema.toJsonSchemaDocument(schema).schema);
+    const root = Schema.toJsonSchemaDocument(schema).schema as Record<string, unknown>;
+    const properties =
+      typeof root["properties"] === "object" && root["properties"] !== null
+        ? (root["properties"] as Record<string, unknown>)
+        : {};
+    const required = new Set(
+      Array.isArray(root["required"]) ? (root["required"] as ReadonlyArray<unknown>) : [],
+    );
+
+    // Canonicalise to ONLY what affects whether stored values still decode: each
+    // field's name, its encoded type, and whether it is required.
+    //
+    // Raw JSON.stringify of the JSON Schema was wrong in both directions. It changed
+    // when a DESCRIPTION or title changed — so a documentation-only plugin update
+    // marked every user's stored settings incompatible and bricked their config —
+    // and it changed on mere field REORDERING, which affects nothing. Sorting by key
+    // removes the ordering sensitivity; projecting to (type, required) removes the
+    // cosmetic sensitivity.
+    //
+    // Adding or removing a decoding default IS still detected, because a defaulted
+    // field drops out of `required`. Changing a default's VALUE is deliberately NOT
+    // detected: the stored values still decode, so there is nothing to repair.
+    const canonical = Object.keys(properties)
+      .sort()
+      .map((key) => ({
+        key,
+        type: jsonTypeOf(properties[key]) ?? "unknown",
+        required: required.has(key),
+      }));
+    return JSON.stringify(canonical);
   } catch {
     // Unfingerprintable schemas are already rejected by
     // findPluginSettingsSchemaViolations; this keeps the function total.
