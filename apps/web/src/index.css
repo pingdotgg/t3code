@@ -36,6 +36,11 @@
 
 @theme inline {
   --animate-skeleton: skeleton 2s -1s infinite linear;
+  /* Duty-cycled indicator animations: long opacity holds with short stepped
+     ramps, so the compositor only produces frames while the value changes
+     (~20% of the cycle) instead of every vsync. Keep flat holds dominant. */
+  --animate-status-pulse: status-pulse 2s infinite;
+  --animate-status-ping: status-ping 2s infinite;
   --font-sans:
     "DM Sans Variable", "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
     sans-serif;
@@ -76,6 +81,36 @@
   @keyframes skeleton {
     to {
       background-position: -200% 0;
+    }
+  }
+  @keyframes status-pulse {
+    0%,
+    40% {
+      opacity: 1;
+      animation-timing-function: steps(6);
+    }
+    50%,
+    90% {
+      opacity: 0.5;
+      animation-timing-function: steps(6);
+    }
+    100% {
+      opacity: 1;
+    }
+  }
+  @keyframes status-ping {
+    /* Burst first (immediate feedback for click ripples), then hold
+       invisible for the rest of the cycle. Mirrors animate-ping's
+       75%-scale start. */
+    0% {
+      opacity: 0.9;
+      scale: 0.75;
+      animation-timing-function: steps(8);
+    }
+    40%,
+    100% {
+      opacity: 0;
+      scale: 2;
     }
   }
 }
@@ -151,9 +186,16 @@
     padding-inline-end: calc(env(safe-area-inset-right) + 0.75rem);
   }
 
-  .chat-composer-glass,
-  .chat-composer-lower-chrome {
+  .chat-composer-glass {
     background: color-mix(in srgb, var(--card) 20%, transparent);
+  }
+
+  /* Mix from --background (not --card): the lower chrome is a full-width
+     strip over the main view, and a card-tinted wash reads as a lighter
+     seam against it when no content is scrolled underneath. The backdrop
+     blur, not the tint, carries the frosted effect. */
+  .chat-composer-lower-chrome {
+    background: color-mix(in srgb, var(--background) 20%, transparent);
   }
 
   .chat-composer-glass {
@@ -167,9 +209,12 @@
     backdrop-filter: blur(16px);
   }
 
-  .dark .chat-composer-glass,
-  .dark .chat-composer-lower-chrome {
+  .dark .chat-composer-glass {
     background: color-mix(in srgb, var(--card) 45%, transparent);
+  }
+
+  .dark .chat-composer-lower-chrome {
+    background: color-mix(in srgb, var(--background) 45%, transparent);
   }
 
   .dark .chat-composer-glass {
@@ -192,9 +237,12 @@
   }
 
   @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-    .chat-composer-glass,
-    .chat-composer-lower-chrome {
+    .chat-composer-glass {
       background: var(--card);
+    }
+
+    .chat-composer-lower-chrome {
+      background: var(--background);
     }
   }
 }
@@ -213,6 +261,15 @@
 }
 @utility pr-safe {
   padding-right: max(env(safe-area-inset-right), 0px);
+}
+
+/* Grain texture for chrome surfaces that float above the body (see the
+   --surface-grain note). Layered over the element's background-color, so it
+   composes with bg-* utilities. */
+@utility surface-grain {
+  background-image: var(--surface-grain);
+  background-repeat: repeat;
+  background-size: 256px 256px;
 }
 
 /* Suppress all transitions during theme changes */
@@ -320,13 +377,19 @@ body {
   padding-top: max(env(safe-area-inset-top), 0px);
 }
 
-body::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0.035;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+/* App-chrome grain. Baked into each surface's own background (behind
+   content) rather than a fixed overlay on top: a full-viewport overlay
+   forces the compositor to re-blend every frame any animation produces,
+   which multiplied idle GPU cost. The overlay's 0.035 opacity lives in the
+   SVG rect instead. Surfaces that float over the body (e.g. the inset main
+   card) must opt in via the surface-grain utility, or they lose the
+   grain's subtle brightening and stand out against the body. */
+:root {
+  --surface-grain: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+}
+
+body {
+  background-image: var(--surface-grain);
   background-repeat: repeat;
   background-size: 256px 256px;
 }

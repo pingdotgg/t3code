@@ -60,11 +60,11 @@ sequenceDiagram
     Transport-->>Browser: Hydrate initial state
 ```
 
-1. The browser boots [`WsTransport`][1] and registers typed listeners in [`wsNativeApi`][2].
-2. The server accepts the connection in [`wsServer`][3] and brings up the runtime graph defined in [`serverLayers`][7].
-3. [`ServerReadiness`][4] waits until the key startup barriers are complete.
-4. Once the server is ready, [`wsServer`][3] sends `server.welcome` from the contracts in [`ws.ts`][6] through [`ServerPushBus`][5].
-5. The browser receives that ordered push through [`WsTransport`][1], and [`wsNativeApi`][2] uses it to seed local client state.
+1. The browser boots `WsTransport` and registers typed listeners in `wsNativeApi`.
+2. The server accepts the connection in `wsServer` and brings up the runtime graph defined in `serverLayers`.
+3. `ServerReadiness` waits until the key startup barriers are complete.
+4. Once the server is ready, `wsServer` sends `server.welcome` from the contracts in `ws.ts` through `ServerPushBus`.
+5. The browser receives that ordered push through `WsTransport`, and `wsNativeApi` uses it to seed local client state.
 
 ### User turn flow
 
@@ -90,12 +90,12 @@ sequenceDiagram
     Push-->>Browser: Typed push
 ```
 
-1. A user action in the browser becomes a typed request through [`WsTransport`][1] and the browser API layer in [`nativeApi`][12].
-2. [`wsServer`][3] decodes that request using the shared WebSocket contracts in [`ws.ts`][6] and routes it to the right service.
+1. A user action in the browser becomes a typed request through `WsTransport` and the browser API layer in `nativeApi`.
+2. `wsServer` decodes that request using the shared WebSocket contracts in `ws.ts` and routes it to the right service.
 3. [`ProviderService`][8] starts or resumes a session and talks to `codex app-server` over JSON-RPC on stdio.
 4. Provider-native events are pulled back into the server by [`ProviderRuntimeIngestion`][9], which converts them into orchestration events.
 5. [`OrchestrationEngine`][10] persists those events, updates the read model, and exposes them as domain events.
-6. [`wsServer`][3] pushes those updates to the browser through [`ServerPushBus`][5] on channels defined in [`orchestration.ts`][11].
+6. `wsServer` pushes those updates to the browser through `ServerPushBus` on channels defined in [`orchestration.ts`][11].
 
 ### Async completion flow
 
@@ -123,21 +123,13 @@ sequenceDiagram
 2. These flows run as queue-backed workers using [`DrainableWorker`][16], which helps keep side effects ordered and test synchronization deterministic.
 3. When a milestone completes, the server emits a typed receipt on [`RuntimeReceiptBus`][15], such as checkpoint completion or turn quiescence.
 4. Tests and orchestration code wait on those receipts instead of polling git state, projections, or timers.
-5. Any user-visible state changes produced by that async work still go back through [`wsServer`][3] and [`ServerPushBus`][5].
+5. Any user-visible state changes produced by that async work still go back through `wsServer` and `ServerPushBus`.
 
-[1]: ../apps/web/src/wsTransport.ts
-[2]: ../apps/web/src/wsNativeApi.ts
-[3]: ../apps/server/src/wsServer.ts
-[4]: ../apps/server/src/wsServer/readiness.ts
-[5]: ../apps/server/src/wsServer/pushBus.ts
-[6]: ../packages/contracts/src/ws.ts
-[7]: ../apps/server/src/serverLayers.ts
-[8]: ../apps/server/src/provider/Layers/ProviderService.ts
-[9]: ../apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts
-[10]: ../apps/server/src/orchestration/Layers/OrchestrationEngine.ts
-[11]: ../packages/contracts/src/orchestration.ts
-[12]: ../apps/web/src/nativeApi.ts
-[13]: ../apps/server/src/orchestration/Layers/ProviderCommandReactor.ts
-[14]: ../apps/server/src/orchestration/Layers/CheckpointReactor.ts
-[15]: ../apps/server/src/orchestration/Layers/RuntimeReceiptBus.ts
-[16]: ../packages/shared/src/DrainableWorker.ts
+[8]: ../../apps/server/src/provider/Layers/ProviderService.ts
+[9]: ../../apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts
+[10]: ../../apps/server/src/orchestration/Layers/OrchestrationEngine.ts
+[11]: ../../packages/contracts/src/orchestration.ts
+[13]: ../../apps/server/src/orchestration/Layers/ProviderCommandReactor.ts
+[14]: ../../apps/server/src/orchestration/Layers/CheckpointReactor.ts
+[15]: ../../apps/server/src/orchestration/Layers/RuntimeReceiptBus.ts
+[16]: ../../packages/shared/src/DrainableWorker.ts
