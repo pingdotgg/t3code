@@ -250,6 +250,7 @@ export const OpenInPicker = memo(function OpenInPicker({
     (option: PickerOption | null) => {
       if (!openInCwd || !option) return;
       if (isVSCodeTunnelOption(option)) {
+        latestEditorSelectionRef.current += 1;
         const editorSelectionVersion = latestEditorSelectionRef.current;
         const url = openVSCodeRemoteTunnelsInDesktop
           ? buildVSCodeTunnelDesktopUrl(option.vscodeTunnel.machineName, openInCwd)

@@ -86,6 +86,7 @@ import { makeManualOnlyProviderMaintenanceCapabilities } from "./provider/provid
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import * as VSCodeTunnel from "./vscodeTunnel.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -549,14 +550,29 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provide(
-        Layer.mock(ServerSettings.ServerSettingsService)({
-          start: Effect.void,
-          ready: Effect.void,
-          getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
-          updateSettings: () => Effect.succeed(DEFAULT_SERVER_SETTINGS),
-          streamChanges: Stream.empty,
-          ...options?.layers?.serverSettings,
-        }),
+        Layer.mergeAll(
+          Layer.mock(ServerSettings.ServerSettingsService)({
+            start: Effect.void,
+            ready: Effect.void,
+            getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+            updateSettings: () => Effect.succeed(DEFAULT_SERVER_SETTINGS),
+            streamChanges: Stream.empty,
+            ...options?.layers?.serverSettings,
+          }),
+          Layer.mock(VSCodeTunnel.VSCodeTunnelMonitor)({
+            getSnapshot: () =>
+              Effect.succeed({
+                tunnel: null,
+                status: {
+                  checked: false,
+                  connected: false,
+                  machineName: null,
+                  serviceInstalled: null,
+                },
+              }),
+            streamChanges: Stream.empty,
+          }),
+        ),
       ),
       Layer.provide(
         Layer.mock(ExternalLauncher.ExternalLauncher)({
@@ -4225,6 +4241,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         keybindings: [],
         issues: [],
       } as const;
+      const keybindingChanges = yield* PubSub.unbounded<typeof changeEvent>();
 
       yield* buildAppUnderTest({
         config: {
@@ -4233,11 +4250,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         },
         layers: {
           keybindings: {
-            loadConfigState: Effect.succeed({
-              keybindings: [],
-              issues: [],
-            }),
-            streamChanges: Stream.succeed(changeEvent),
+            loadConfigState: PubSub.publish(keybindingChanges, changeEvent).pipe(
+              Effect.as({
+                keybindings: [],
+                issues: [],
+              }),
+            ),
+            streamChanges: Stream.fromPubSub(keybindingChanges),
           },
           providerRegistry: {
             getProviders: Effect.succeed(providers),
@@ -4298,6 +4317,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           skills: [],
         },
       ] as const;
+      const providerChanges = yield* PubSub.unbounded<typeof nextProviders>();
 
       yield* buildAppUnderTest({
         layers: {
@@ -4309,8 +4329,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             streamChanges: Stream.empty,
           },
           providerRegistry: {
-            getProviders: Effect.succeed([]),
-            streamChanges: Stream.succeed(nextProviders),
+            getProviders: PubSub.publish(providerChanges, nextProviders).pipe(Effect.as([])),
+            streamChanges: Stream.fromPubSub(providerChanges).pipe(Stream.take(1)),
           },
         },
       });

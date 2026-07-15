@@ -1,12 +1,20 @@
 import { type ServerVSCodeTunnel, type ServerVSCodeTunnelStatus } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
+import * as Ref from "effect/Ref";
+import * as Semaphore from "effect/Semaphore";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import * as ProcessRunner from "./processRunner.ts";
+import * as ServerSettings from "./serverSettings.ts";
 
 const VSCODE_TUNNEL_STATUS_TIMEOUT = Duration.millis(1_500);
+const VSCODE_TUNNEL_REFRESH_INTERVAL = Duration.minutes(1);
 
 const VSCodeTunnelStatusJson = Schema.Struct({
   tunnel: Schema.optional(
@@ -51,7 +59,7 @@ function extractVSCodeTunnelStatusJson(stdout: string): string {
       continue;
     }
 
-    if (char === '"') {
+    if (char === '"' && depth > 0) {
       inString = true;
       continue;
     }
@@ -181,3 +189,91 @@ export const resolveVSCodeTunnel = Effect.fn("vscodeTunnel.resolve")(function* (
     status,
   } satisfies ResolvedVSCodeTunnel;
 });
+
+interface CachedVSCodeTunnel {
+  readonly enabled: boolean;
+  readonly resolved: ResolvedVSCodeTunnel;
+}
+
+export interface VSCodeTunnelMonitorShape {
+  readonly getSnapshot: (input: {
+    readonly enabled: boolean;
+  }) => Effect.Effect<ResolvedVSCodeTunnel>;
+  readonly streamChanges: Stream.Stream<ResolvedVSCodeTunnel>;
+}
+
+export class VSCodeTunnelMonitor extends Context.Service<
+  VSCodeTunnelMonitor,
+  VSCodeTunnelMonitorShape
+>()("t3/vscodeTunnel/VSCodeTunnelMonitor") {}
+
+const makeVSCodeTunnelMonitor = Effect.gen(function* () {
+  const processRunner = yield* ProcessRunner.ProcessRunner;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const cachedRef = yield* Ref.make<CachedVSCodeTunnel | null>(null);
+  const changesPubSub = yield* PubSub.unbounded<ResolvedVSCodeTunnel>();
+  const refreshSemaphore = yield* Semaphore.make(1);
+
+  const refresh = Effect.fn("VSCodeTunnelMonitor.refresh")(function* (input: {
+    readonly enabled: boolean;
+    readonly force: boolean;
+  }) {
+    return yield* refreshSemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        const cached = yield* Ref.get(cachedRef);
+        if (!input.force && cached?.enabled === input.enabled) {
+          return cached.resolved;
+        }
+
+        const resolved = yield* resolveVSCodeTunnel({ enabled: input.enabled }).pipe(
+          Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+        );
+        yield* Ref.set(cachedRef, { enabled: input.enabled, resolved });
+        yield* PubSub.publish(changesPubSub, resolved);
+        return resolved;
+      }),
+    );
+  });
+
+  const refreshFromCurrentSettings = (force: boolean) =>
+    serverSettings.getSettings.pipe(
+      Effect.flatMap((settings) =>
+        refresh({
+          enabled: settings.enableVSCodeRemoteTunnels,
+          force,
+        }),
+      ),
+      Effect.asVoid,
+      Effect.catchCause((cause) =>
+        Effect.logWarning("failed to refresh VS Code tunnel status", { cause }),
+      ),
+    );
+
+  const settingsRefreshes = serverSettings.streamChanges.pipe(
+    Stream.mapEffect((settings) =>
+      refresh({
+        enabled: settings.enableVSCodeRemoteTunnels,
+        force: false,
+      }),
+    ),
+  );
+  const periodicRefreshes = Stream.tick(VSCODE_TUNNEL_REFRESH_INTERVAL).pipe(
+    Stream.mapEffect(() => refreshFromCurrentSettings(true)),
+  );
+
+  yield* settingsRefreshes.pipe(
+    Stream.merge(periodicRefreshes),
+    Stream.runDrain,
+    Effect.ignoreCause({ log: true }),
+    Effect.forkScoped({ startImmediately: true }),
+  );
+
+  return VSCodeTunnelMonitor.of({
+    getSnapshot: ({ enabled }) => refresh({ enabled, force: false }),
+    get streamChanges() {
+      return Stream.fromPubSub(changesPubSub);
+    },
+  });
+});
+
+export const monitorLayer = Layer.effect(VSCodeTunnelMonitor, makeVSCodeTunnelMonitor);

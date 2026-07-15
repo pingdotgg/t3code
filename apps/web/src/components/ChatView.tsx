@@ -5051,7 +5051,7 @@ function ChatViewContent(props: ChatViewProps) {
               serverConfig?.settings.enableVSCodeRemoteTunnels ? serverConfig.vscodeTunnel : null
             }
             openVSCodeRemoteTunnelsInDesktop={
-              serverConfig?.settings.openVSCodeRemoteTunnelsInDesktop ?? false
+              primaryEnvironment?.serverConfig?.settings.openVSCodeRemoteTunnelsInDesktop ?? false
             }
             rightPanelOpen={rightPanelOpen}
             gitCwd={gitCwd}
