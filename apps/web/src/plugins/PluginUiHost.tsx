@@ -206,13 +206,24 @@ function getDefinition(module: unknown): PluginWebDefinition {
     typeof module === "object" && module !== null && "default" in module
       ? (module as { readonly default?: unknown }).default
       : null;
-  if (
-    typeof candidate !== "object" ||
-    candidate === null ||
-    !("register" in candidate) ||
-    typeof candidate.register !== "function"
-  ) {
+  if (typeof candidate !== "object" || candidate === null) {
     throw new Error("Plugin web entry does not default-export a defineWebPlugin-shaped object.");
+  }
+  const hasRegister = "register" in candidate && typeof candidate.register === "function";
+  const hasSettings =
+    "settings" in candidate &&
+    typeof (candidate as { readonly settings?: unknown }).settings === "object" &&
+    (candidate as { readonly settings?: unknown }).settings !== null;
+  // `register` is optional ONLY when the plugin declares settings: a plugin whose
+  // entire web surface is the host-rendered settings page has nothing to register
+  // imperatively. An entry with neither is a mistake, not a declarative plugin.
+  if (!hasRegister && !hasSettings) {
+    throw new Error(
+      "Plugin web entry must declare `register`, `settings`, or both (defineWebPlugin-shaped).",
+    );
+  }
+  if ("register" in candidate && candidate.register !== undefined && !hasRegister) {
+    throw new Error("Plugin web entry `register` must be a function.");
   }
   return candidate as PluginWebDefinition;
 }
@@ -295,7 +306,10 @@ export async function syncPluginUiHostRegistrations({
           projectActions.push({ ...registration, pluginId: plugin.id });
         },
       };
-      await maybeAwait(definition.register(ctx));
+      // Optional: a declarative-settings-only plugin has no imperative surface.
+      if (definition.register !== undefined) {
+        await maybeAwait(definition.register(ctx));
+      }
       state.loaded.set(plugin.id, {
         pluginId: plugin.id,
         version: plugin.version,

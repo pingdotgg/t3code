@@ -1,4 +1,5 @@
 import { PluginId, type PluginInfo } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { defineWebPlugin } from "@t3tools/plugin-sdk-web";
 import { describe, expect, it } from "vite-plus/test";
 import * as Stream from "effect/Stream";
@@ -269,5 +270,28 @@ describe("PluginSurfaceErrorBoundary", () => {
     boundary.state = { error: null };
     boundary.componentDidUpdate({ children: null, label: "route:a:overview" });
     expect(resets).toEqual([]);
+  });
+});
+
+describe("PluginUiHost declarative settings", () => {
+  it("still calls register when a plugin declares both settings and register", async () => {
+    const state = createPluginUiHostState();
+    let registered = false;
+
+    await syncPluginUiHostRegistrations({
+      state,
+      plugins: [pluginInfo()],
+      waitForHost: async () => {},
+      importWebPlugin: async () => ({
+        default: {
+          settings: { schema: Schema.Struct({ baseUrl: Schema.String }) },
+          register() {
+            registered = true;
+          },
+        },
+      }),
+    });
+
+    expect(registered).toBe(true);
   });
 });
