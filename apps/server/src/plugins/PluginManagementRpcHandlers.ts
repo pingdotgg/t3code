@@ -209,6 +209,23 @@ export const make = Effect.fn("PluginManagementRpcHandlers.make")(function* () {
       );
       if (Option.isSome(fromRuntime)) return fromRuntime;
       const fromDeclaration = yield* settingsStore.declaredSchema(pluginId);
+      if (Option.isNone(fromDeclaration)) return Option.none();
+
+      // The declaration map is not evidence the plugin is still INSTALLED.
+      //
+      // It is process-local and written when the module loads, and nothing clears
+      // it on uninstall — so a plugin activated earlier in this process, then
+      // uninstalled, still resolved a schema here, and a write RECREATED settings
+      // for a plugin that is gone (the user asked for its data to be removed). The
+      // lockfile is the record of what is installed, so require an entry.
+      //
+      // This does not re-break the repair path: a plugin that FAILED to activate is
+      // still in the lockfile, which is the case the fallback exists for.
+      const lockfile = yield* store.readLockfile.pipe(Effect.orElseSucceed(() => null));
+      const installed =
+        lockfile !== null &&
+        (lockfile.plugins as Readonly<Record<string, unknown>>)[pluginId] !== undefined;
+      if (!installed) return Option.none();
       return Option.map(fromDeclaration, (schema) => ({ schema }) as never);
     });
 
