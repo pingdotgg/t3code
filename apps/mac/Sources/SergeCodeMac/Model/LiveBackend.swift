@@ -34,9 +34,11 @@ import T3Kit
 //
 // ── Mapping decisions (wire -> UI) — best-effort, documented, never silent ────
 //  * ProviderKind: derived from ServerProvider.driver by substring match
-//    (claude/claude-synthero/codex/cursor/grok/fugu/opencode). Drivers with no ProviderKind
-//    equivalent are dropped from providers() — ProviderKind is a closed enum
-//    with no `.other`. See `providerKind(fromDriver:)`.
+//    (claude/claude-synthero/codex/cursor/grok/fugu/opencode), with exact
+//    instance mappings for separately selectable profiles such as
+//    `claude-work`. Drivers with no ProviderKind equivalent are dropped from
+//    providers() — ProviderKind is a closed enum with no `.other`. See
+//    `providerKind(fromDriver:)` and `providerKind(for:)`.
 //  * A thread's ProviderKind is resolved from its modelSelection.instanceId via
 //    the ServerConfig provider table, falling back to session.providerName, then
 //    to `.claude`. Documented in `resolveProviderKind`.
@@ -2812,6 +2814,9 @@ public actor LiveBackend: BackendService {
     private func providerKind(for provider: ServerProvider) -> ProviderKind? {
         let instanceId = provider.instanceId.lowercased()
         let displayName = provider.displayName?.lowercased() ?? ""
+        // Claude Work shares the claudeAgent driver with personal Claude, so
+        // preserve its instance identity before falling back to driver mapping.
+        if instanceId == "claude-work" || displayName == "claude work" { return .claudeWork }
         if instanceId == "claudex" || displayName == "claudex" { return .claudex }
         return providerKind(fromDriver: provider.driver)
     }
