@@ -45,7 +45,7 @@ struct EmptyStateView: View {
                     .controlSize(.large)
             }
             .padding(32)
-            .glassEffect(.regular, in: .rect(cornerRadius: 24))
+            .glassEffect(.regular, in: .rect(cornerRadius: AlpineTheme.Corners.hero))
             // Hero card settles into place on arrival instead of popping.
             .scaleEffect(hasAppeared ? 1.0 : 0.96)
             .opacity(hasAppeared ? 1.0 : 0.0)

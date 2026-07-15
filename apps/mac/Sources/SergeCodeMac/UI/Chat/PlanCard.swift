@@ -73,7 +73,7 @@ public struct PlanCard: View {
                             onImplement()
                         }
                         .buttonStyle(.glass)
-                        .tint(.accentColor)
+                        .tint(AlpineTheme.accent)
                         .keyboardShortcut(isActive ? Self.implementShortcut : nil)
                         .help(isActive ? "Implement plan (⌘⇧⏎)" : "Implement plan")
                     }
@@ -82,7 +82,7 @@ public struct PlanCard: View {
             }
         }
         .padding(14)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.card))
         // Implemented state arrives from the model, not a tap, so the badge
         // swap and button removal animate off this value change.
         .animation(Motion.structure, value: plan.isImplemented)

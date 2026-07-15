@@ -747,13 +747,13 @@ private struct SidebarStatusDot: View {
     private var statusTint: Color {
         // A server-reported stall is warning-tinted (not red): the turn is
         // still running, just gone quiet.
-        if thread.isStalled { return .orange }
+        if thread.isStalled { return AlpineTheme.clay }
         switch thread.status {
         case .idle: return .secondary
-        case .running: return .green
-        case .waiting: return .blue
-        case .waitingApproval: return .yellow
-        case .backgroundWork: return .green
+        case .running: return AlpineTheme.accent
+        case .waiting: return AlpineTheme.sky
+        case .waitingApproval: return AlpineTheme.lichen
+        case .backgroundWork: return AlpineTheme.meadow
         case .error: return .red
         case .archived: return .gray
         }

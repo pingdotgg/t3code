@@ -43,8 +43,38 @@ enum AlpineTheme {
         var bottom: RGB
     }
 
-    /// Alpine moss — the app-wide tint.
-    static let accent = Color(red: 0.30, green: 0.46, blue: 0.36)
+    // MARK: - Nature palette
+
+    /// Soft meadow sage — the stable app-wide tint. Scenery can still color
+    /// its own artwork and washes, but primary controls no longer change
+    /// identity as the selected thread's photograph changes.
+    static let accent = Color(red: 0.57, green: 0.79, blue: 0.64)
+
+    /// Deeper foliage used when pastel surfaces need a high-contrast
+    /// foreground rather than white text.
+    static let forest = Color(red: 0.08, green: 0.22, blue: 0.14)
+
+    /// Pastel nature tones for secondary, semantic accents.
+    static let meadow = Color(red: 0.47, green: 0.72, blue: 0.55)
+    static let sky = Color(red: 0.57, green: 0.75, blue: 0.78)
+    static let clay = Color(red: 0.82, green: 0.60, blue: 0.49)
+    static let lichen = Color(red: 0.82, green: 0.76, blue: 0.52)
+    static let lavender = Color(red: 0.69, green: 0.64, blue: 0.76)
+
+    /// The user's message is a light sage surface, deliberately distinct from
+    /// the darker app tint while remaining part of the same color family.
+    static let userBubbleTop = Color(red: 0.72, green: 0.89, blue: 0.76)
+    static let userBubbleBottom = Color(red: 0.58, green: 0.81, blue: 0.65)
+
+    /// A restrained, squarer geometry scale for the app's custom surfaces.
+    /// Capsules remain reserved for true tags and circular status marks.
+    enum Corners {
+        static let compact: CGFloat = 5
+        static let control: CGFloat = 8
+        static let card: CGFloat = 10
+        static let composer: CGFloat = 14
+        static let hero: CGFloat = 16
+    }
 
     /// Duotone washes sampled from Dolomites conditions: dawn limestone,
     /// glacier melt, high meadow, larch dusk, scree, spruce shade.

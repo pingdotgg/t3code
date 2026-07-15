@@ -837,7 +837,7 @@ struct AssistantMarkdownView: View {
         HStack(alignment: .firstTextBaseline, spacing: 5) {
             Image(systemName: "sparkles")
                 .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(Color.accentColor.opacity(0.9))
+                .foregroundStyle(AlpineTheme.accent.opacity(0.9))
             if !isStreaming, isHovering, let at {
                 TranscriptTimestamp(date: at)
                     .transition(.opacity)
@@ -1095,7 +1095,7 @@ private struct MarkdownListRow: View {
         if style == .userBubble {
             return MarkdownTheme.tokens(for: style).taskCheckboxForeground.color
         }
-        return checked ? Color.accentColor : .secondary
+        return checked ? AlpineTheme.accent : .secondary
     }
 
     private var textForeground: Color {

@@ -352,7 +352,7 @@ private struct AgentsPanelSiblingRow: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
         .background(
-            Color.accentColor.opacity(0.08),
+            AlpineTheme.accent.opacity(0.08),
             in: RoundedRectangle(cornerRadius: 10))
         .help("Open \(thread.title)")
         .accessibilityLabel("Open agent \(agentName)")

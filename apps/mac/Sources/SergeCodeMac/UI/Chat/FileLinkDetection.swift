@@ -77,7 +77,7 @@ func linkifyFilePaths(in attributed: AttributedString) -> AttributedString {
             let upper = result.characters.index(run.range.lowerBound, offsetBy: upperOffset)
             let range = lower..<upper
             result[range].link = url
-            result[range].foregroundColor = .accentColor
+            result[range].foregroundColor = AlpineTheme.accent
             result[range].underlineStyle = .single
         }
     }

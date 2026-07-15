@@ -129,13 +129,13 @@ private struct StatusBadge: View {
     }
 
     private var color: Color {
-        if stalled { return .orange }
+        if stalled { return AlpineTheme.clay }
         switch status {
         case .idle: return .secondary
-        case .running: return .accentColor
-        case .waiting: return .blue
-        case .waitingApproval: return .orange
-        case .backgroundWork: return .green
+        case .running: return AlpineTheme.accent
+        case .waiting: return AlpineTheme.sky
+        case .waitingApproval: return AlpineTheme.lichen
+        case .backgroundWork: return AlpineTheme.meadow
         case .error: return .red
         case .archived: return .secondary
         }

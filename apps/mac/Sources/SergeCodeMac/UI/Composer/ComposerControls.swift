@@ -21,7 +21,7 @@ struct ComposerControlsRow: View {
     }
 }
 
-/// Visually grouped model + effort + tier controls as a single capsule strip.
+/// Visually grouped model + effort + tier controls as one compact glass bar.
 private struct ModelEffortTierGroup: View {
     let thread: ChatThread
     let model: AppModel
@@ -54,18 +54,21 @@ private struct ModelEffortTierGroup: View {
                 ServiceTierMenu(thread: thread, model: model)
             }
         }
-        .glassEffect(.regular, in: Capsule())
+        .frame(minHeight: AlpineControls.segmentHeight)
+        .glassEffect(
+            .regular,
+            in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.control, style: .continuous))
     }
 
     private var segmentDivider: some View {
         Rectangle()
             .fill(.separator)
-            .frame(width: 1, height: 12)
-            .padding(.horizontal, 1)
+            .frame(width: 1, height: 18)
+            .padding(.horizontal, 2)
     }
 }
 
-/// Shared label chrome for compact menu segments inside the capsule group.
+/// Shared label chrome for segments inside the compact glass control groups.
 private struct ComposerSegmentLabel: View {
     let icon: String
     let title: String
@@ -76,31 +79,31 @@ private struct ComposerSegmentLabel: View {
     var animateSymbol: Bool = false
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 6) {
             Image(systemName: icon)
-                .font(.caption)
-                .foregroundStyle(isAccented ? Color.accentColor : Color.secondary)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(isAccented ? AlpineTheme.accent : Color.secondary)
                 .contentTransition(
                     animateSymbol && !Motion.reduceMotion
                         ? .symbolEffect(.replace) : .identity)
             Text(title)
-                .font(.caption.weight(.medium))
-                .foregroundStyle(isAccented ? Color.accentColor : Color.primary)
+                .font(.callout.weight(.medium))
+                .foregroundStyle(isAccented ? AlpineTheme.accent : Color.primary)
                 .lineLimit(1)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
+        .padding(.horizontal, AlpineControls.segmentHorizontalPadding)
+        .padding(.vertical, AlpineControls.segmentVerticalPadding)
         .contentShape(Rectangle())
         .background {
             if isHovering {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                RoundedRectangle(cornerRadius: AlpineTheme.Corners.compact, style: .continuous)
                     .fill(.fill.secondary)
             }
         }
     }
 }
 
-/// Visually grouped runtime-mode menu + interaction-mode menu as a single capsule.
+/// Visually grouped access-level and interaction-mode controls.
 private struct RuntimePlanModeGroup: View {
     let thread: ChatThread
     let model: AppModel
@@ -111,14 +114,17 @@ private struct RuntimePlanModeGroup: View {
             segmentDivider
             InteractionModeMenu(thread: thread, model: model)
         }
-        .glassEffect(.regular, in: Capsule())
+        .frame(minHeight: AlpineControls.segmentHeight)
+        .glassEffect(
+            .regular,
+            in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.control, style: .continuous))
     }
 
     private var segmentDivider: some View {
         Rectangle()
             .fill(.separator)
-            .frame(width: 1, height: 12)
-            .padding(.horizontal, 1)
+            .frame(width: 1, height: 18)
+            .padding(.horizontal, 2)
     }
 }
 
@@ -368,8 +374,8 @@ struct ContextMeterView: View {
 
     private func meterColor(_ fraction: Double) -> Color {
         switch fraction {
-        case ..<0.7: .green
-        case ..<0.9: .orange
+        case ..<0.7: AlpineTheme.meadow
+        case ..<0.9: AlpineTheme.clay
         default: .red
         }
     }

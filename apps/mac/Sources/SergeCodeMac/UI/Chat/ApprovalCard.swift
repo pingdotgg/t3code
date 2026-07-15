@@ -58,13 +58,13 @@ public struct ApprovalCard: View {
                     onRespond(true)
                 }
                 .buttonStyle(.glass)
-                .tint(.green)
+                .tint(AlpineTheme.meadow)
                 .keyboardShortcut(isActive ? Self.approveShortcut : nil)
                 .help(isActive ? "Approve (⌘⇧⏎)" : "Approve")
             }
         }
         .padding(14)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.card))
     }
 
     private var icon: String {

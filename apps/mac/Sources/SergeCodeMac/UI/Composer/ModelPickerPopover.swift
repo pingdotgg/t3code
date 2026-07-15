@@ -13,24 +13,24 @@ struct ModelPickerMenu: View {
         Button {
             isPresented.toggle()
         } label: {
-            HStack(spacing: 4) {
+            HStack(spacing: 6) {
                 Image(systemName: "cpu")
-                    .font(.caption)
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.secondary)
                 Text(currentModelName)
-                    .font(.caption.weight(.medium))
+                    .font(.callout.weight(.medium))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.system(size: 7, weight: .semibold))
                     .foregroundStyle(.tertiary)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
+            .padding(.horizontal, AlpineControls.segmentHorizontalPadding)
+            .padding(.vertical, AlpineControls.segmentVerticalPadding)
             .contentShape(Rectangle())
             .background {
                 if isHovering {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    RoundedRectangle(cornerRadius: AlpineTheme.Corners.compact, style: .continuous)
                         .fill(.fill.secondary)
                 }
             }
@@ -256,7 +256,7 @@ private struct ModelPickerRow: View {
                 Spacer(minLength: 8)
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(AlpineTheme.accent)
                         .imageScale(.medium)
                 }
             }

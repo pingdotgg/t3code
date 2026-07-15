@@ -124,9 +124,9 @@ enum SubagentTaskPresentation {
 
     static func backgroundTint(for task: SubagentTaskItem, stalled: Bool) -> Color {
         switch task.state {
-        case .running: stalled ? Color.orange.opacity(0.08) : Color.accentColor.opacity(0.08)
+        case .running: stalled ? AlpineTheme.clay.opacity(0.08) : AlpineTheme.accent.opacity(0.08)
         case .paused: Color.secondary.opacity(0.08)
-        case .completed: Color.green.opacity(0.08)
+        case .completed: AlpineTheme.meadow.opacity(0.08)
         case .failed: Color.red.opacity(0.08)
         case .stopped: Color.secondary.opacity(0.08)
         }
@@ -135,11 +135,11 @@ enum SubagentTaskPresentation {
     /// Leading state rail on the timeline card: the strongest at-a-glance
     /// state signal, stronger than the background tint alone.
     static func railColor(for task: SubagentTaskItem, stalled: Bool) -> Color {
-        if stalled { return .orange }
+        if stalled { return AlpineTheme.clay }
         switch task.state {
-        case .running: return .accentColor
+        case .running: return AlpineTheme.accent
         case .paused, .stopped: return .secondary
-        case .completed: return .green
+        case .completed: return AlpineTheme.meadow
         case .failed: return .red
         }
     }

@@ -153,7 +153,7 @@ public struct ChangesTimelineView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(selected ? Color.accentColor.opacity(0.12) : Color.clear)
+            .background(selected ? AlpineTheme.accent.opacity(0.12) : Color.clear)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -194,7 +194,7 @@ public struct ChangesTimelineView: View {
             // Vertical line + dot
             VStack(spacing: 0) {
                 Circle()
-                    .fill(selected ? Color.accentColor : Color.secondary.opacity(0.55))
+                    .fill(selected ? AlpineTheme.accent : Color.secondary.opacity(0.55))
                     .frame(width: 8, height: 8)
                     .padding(.top, 12)
                 if !isLast {
@@ -213,7 +213,7 @@ public struct ChangesTimelineView: View {
             .padding(.trailing, 10)
             .padding(.bottom, 10)
         }
-        .background(selected ? Color.accentColor.opacity(0.08) : Color.clear)
+        .background(selected ? AlpineTheme.accent.opacity(0.08) : Color.clear)
         .accessibilityIdentifier("timeline-checkpoint-\(checkpoint.turnCount)")
     }
 

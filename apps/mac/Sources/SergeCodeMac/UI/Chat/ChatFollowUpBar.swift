@@ -97,7 +97,7 @@ struct ChatFollowUpBar: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .glassEffect(.regular, in: .rect(cornerRadius: 16))
+        .glassEffect(.regular, in: .rect(cornerRadius: AlpineTheme.Corners.card))
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
         .help(vcs.prTitle ?? "Open pull request")
@@ -124,7 +124,7 @@ struct ChatFollowUpBar: View {
     private func archiveSuggestion(thread: ChatThread, vcs: VcsStatus) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "checkmark.seal.fill")
-                .foregroundStyle(.purple)
+                .foregroundStyle(AlpineTheme.lavender)
             Text(vcs.prNumber.map { "PR #\($0) merged" } ?? "PR merged")
                 .font(.callout)
                 .foregroundStyle(.secondary)
@@ -167,7 +167,7 @@ struct ChatFollowUpBar: View {
             } label: {
                 Label("Create PR", systemImage: "arrow.triangle.pull")
             }
-            .buttonStyle(BrightPillButtonStyle())
+            .buttonStyle(NatureActionButtonStyle())
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
@@ -187,7 +187,7 @@ struct ChatFollowUpBar: View {
             } label: {
                 Label("Fix Reviews", systemImage: "text.bubble")
             }
-            .buttonStyle(BrightPillButtonStyle())
+            .buttonStyle(NatureActionButtonStyle())
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
@@ -216,17 +216,17 @@ struct ChatFollowUpBar: View {
     }
 }
 
-private struct BrightPillButtonStyle: ButtonStyle {
+private struct NatureActionButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.callout.weight(.medium))
             .padding(.horizontal, 12)
             .padding(.vertical, 5)
             .background {
-                Capsule()
-                    .fill(.white.opacity(configuration.isPressed ? 0.75 : 0.92))
+                RoundedRectangle(cornerRadius: AlpineTheme.Corners.control, style: .continuous)
+                    .fill(AlpineTheme.userBubbleTop.opacity(configuration.isPressed ? 0.78 : 0.94))
             }
-            .foregroundStyle(.black)
+            .foregroundStyle(AlpineTheme.forest)
             .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
     }
 }

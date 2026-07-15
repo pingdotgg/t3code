@@ -99,7 +99,7 @@ struct SergeCodeApp: App {
                 .environment(\.colorScheme, .dark)
                 .preferredColorScheme(.dark)
                 .background(DarkAppearanceConfigurator())
-                .tint(AlpineTheme.accent(palette: activeSceneryPalette))
+                .tint(AlpineTheme.accent)
                 // Behind-window liquid glass: strength tracks sceneryTranslucency
                 // (1.0 = solid plate; lower = desktop visible through blur).
                 // Requires TransparentWindowConfigurator (isOpaque=false).
@@ -197,16 +197,6 @@ struct SergeCodeApp: App {
         }
     }
 
-    private var activeSceneryPalette: SceneryPalette? {
-        let model = multi.activeModel
-        guard let threadID = model.selectedThreadID else {
-            return scenery.palette(for: nil)
-        }
-        let threadKey = model.scopedThreadKey(threadID)
-        return scenery.palette(
-            for: scenery.photo(for: threadKey),
-            setId: scenery.resolvedSetId(forThread: threadKey))
-    }
 }
 
 /// Ensures `backend.stop()` (SIGTERM -> 2s grace -> SIGKILL of the node
