@@ -57,6 +57,11 @@ import {
   getProviderOptionDescriptors,
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
+import {
+  isNativeToolFamily,
+  parseToolIdentity,
+  summarizeToolArguments,
+} from "@t3tools/shared/toolIdentity";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -854,7 +859,27 @@ function rememberTaskModel(context: ClaudeSessionContext, taskId: string, model:
   return true;
 }
 
-function classifyToolItemType(toolName: string): CanonicalItemType {
+/**
+ * Classify a tool call. Native families (MCP, skills, computer use) are
+ * resolved first: their names routinely contain substrings the heuristics below
+ * would otherwise claim (`mcp__linear__agent_session_create` is not a subagent
+ * spawn, `mcp__github__create_issue` is not a file change).
+ */
+function classifyToolItemType(
+  toolName: string,
+  input?: Record<string, unknown> | undefined,
+): CanonicalItemType {
+  const identity = parseToolIdentity(toolName, input);
+  switch (identity.family) {
+    case "mcp":
+      return "mcp_tool_call";
+    case "skill":
+    case "computer_use":
+      return "dynamic_tool_call";
+    case "builtin":
+      break;
+  }
+
   const normalized = toolName.toLowerCase();
   if (normalized.includes("agent")) {
     return "collab_agent_tool_call";
@@ -1428,7 +1453,26 @@ function claudeTaskPlanFingerprint(plan: ReadonlyArray<PlanStep>): string {
   return JSON.stringify(plan);
 }
 
+/**
+ * Row detail for a tool call. Native families get their arguments rendered as
+ * `key=value` pairs — a raw `mcp__cloudflare__docs: {"query":"…"}` JSON blob is
+ * wire noise, not something a reader parses at a glance.
+ */
+function summarizeToolItemDetail(toolName: string, input: Record<string, unknown>): string {
+  const identity = parseToolIdentity(toolName, input);
+  if (isNativeToolFamily(identity.family)) {
+    return summarizeToolArguments(input, 400) ?? identity.displayName;
+  }
+  return summarizeToolRequest(toolName, input);
+}
+
 function summarizeToolRequest(toolName: string, input: Record<string, unknown>): string {
+  const identity = parseToolIdentity(toolName, input);
+  if (isNativeToolFamily(identity.family)) {
+    const args = summarizeToolArguments(input, 400);
+    return args ? `${identity.displayName}: ${args}` : identity.displayName;
+  }
+
   const commandValue = input.command ?? input.cmd;
   const command = typeof commandValue === "string" ? commandValue : undefined;
   if (command && command.trim().length > 0) {
@@ -1454,6 +1498,20 @@ function summarizeToolRequest(toolName: string, input: Record<string, unknown>):
     return `${toolName}: ${serialized}`;
   }
   return `${toolName}: ${serialized.slice(0, 397)}...`;
+}
+
+/**
+ * Row title for a tool call: the natural name of the thing being used
+ * ("Cloudflare · Docs", "Skill · deep-research") when we can name it, and the
+ * generic per-item-type label otherwise.
+ */
+function titleForToolCall(
+  itemType: CanonicalItemType,
+  toolName: string,
+  input: Record<string, unknown>,
+): string {
+  const identity = parseToolIdentity(toolName, input);
+  return isNativeToolFamily(identity.family) ? identity.displayName : titleForTool(itemType);
 }
 
 function titleForTool(itemType: CanonicalItemType): string {
@@ -2905,10 +2963,18 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
         const partialInputJson = tool.partialInputJson + event.delta.partial_json;
         const parsedInput = tryParseJsonRecord(partialInputJson);
-        const detail = parsedInput ? summarizeToolRequest(tool.toolName, parsedInput) : tool.detail;
+        const detail = parsedInput
+          ? summarizeToolItemDetail(tool.toolName, parsedInput)
+          : tool.detail;
+        // Dispatcher tools (Skill, computer) only name what they are running in
+        // their input, so the title firms up as the input streams in.
+        const title = parsedInput
+          ? titleForToolCall(tool.itemType, tool.toolName, parsedInput)
+          : tool.title;
         let nextTool: ToolInFlight = {
           ...tool,
           partialInputJson,
+          title,
           ...(parsedInput ? { input: parsedInput } : {}),
           ...(detail ? { detail } : {}),
         };
@@ -3018,13 +3084,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       }
 
       const toolName = block.name;
-      const itemType = classifyToolItemType(toolName);
       const toolInput =
         typeof block.input === "object" && block.input !== null
           ? (block.input as Record<string, unknown>)
           : {};
+      const itemType = classifyToolItemType(toolName, toolInput);
       const itemId = block.id;
-      const detail = summarizeToolRequest(toolName, toolInput);
+      const detail = summarizeToolItemDetail(toolName, toolInput);
       const inputFingerprint =
         Object.keys(toolInput).length > 0 ? toolInputFingerprint(toolInput) : undefined;
 
@@ -3032,7 +3098,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         itemId,
         itemType,
         toolName,
-        title: titleForTool(itemType),
+        title: titleForToolCall(itemType, toolName, toolInput),
         detail,
         input: toolInput,
         partialInputJson: "",

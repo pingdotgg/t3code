@@ -8,6 +8,7 @@ import type {
   UserInputQuestion,
 } from "@t3tools/contracts";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import { deriveToolIdentityFromData, type ToolIdentity } from "@t3tools/shared/toolIdentity";
 
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
@@ -46,11 +47,13 @@ export interface ThreadFeedActivity {
     | "alert"
     | "check"
     | "command"
+    | "computer"
     | "edit"
     | "eye"
     | "globe"
     | "hammer"
     | "message"
+    | "skill"
     | "warning"
     | "wrench"
     | "zap";
@@ -94,6 +97,8 @@ interface WorkLogEntry {
   requestKind?: PendingApproval["requestKind"];
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;
   toolData?: unknown;
+  /** MCP server / skill / computer-use identity, when the call has one. */
+  toolIdentity?: ToolIdentity;
 }
 
 interface DerivedWorkLogEntry extends WorkLogEntry {
@@ -380,6 +385,10 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       entry.toolData = data.item;
     }
   }
+  const toolIdentity = deriveToolIdentityFromData(payload?.data);
+  if (toolIdentity) {
+    entry.toolIdentity = toolIdentity;
+  }
   if (itemType) {
     entry.itemType = itemType;
   }
@@ -445,6 +454,7 @@ function mergeDerivedWorkLogEntries(
   const collapseKey = next.collapseKey ?? previous.collapseKey;
   const toolLifecycleStatus = next.toolLifecycleStatus ?? previous.toolLifecycleStatus;
   const toolData = next.toolData ?? previous.toolData;
+  const toolIdentity = next.toolIdentity ?? previous.toolIdentity;
   return {
     ...previous,
     ...next,
@@ -458,6 +468,7 @@ function mergeDerivedWorkLogEntries(
     ...(collapseKey ? { collapseKey } : {}),
     ...(toolLifecycleStatus ? { toolLifecycleStatus } : {}),
     ...(toolData !== undefined ? { toolData } : {}),
+    ...(toolIdentity ? { toolIdentity } : {}),
   };
 }
 
@@ -588,6 +599,11 @@ function workEntryIcon(entry: DerivedWorkLogEntry): ThreadFeedActivity["icon"] {
     return "message";
   }
   if (entry.activityKind === "runtime.warning") return "warning";
+  // Native tool families read off the call's identity, not its item type: a
+  // skill and an MCP call both arrive as generic tool item types.
+  if (entry.toolIdentity?.family === "skill") return "skill";
+  if (entry.toolIdentity?.family === "computer_use") return "computer";
+  if (entry.toolIdentity?.family === "mcp") return "wrench";
   if (entry.requestKind === "command") return "command";
   if (entry.requestKind === "file-read") return "eye";
   if (entry.requestKind === "file-change") return "edit";
@@ -650,6 +666,11 @@ function capitalizePhrase(value: string): string {
 }
 
 function workEntryHeading(workEntry: WorkLogEntry): string {
+  // The tool's own name ("Cloudflare · Docs") beats the generic lifecycle label
+  // ("MCP tool call") the provider stamped on the activity.
+  if (workEntry.toolIdentity) {
+    return workEntry.toolIdentity.displayName;
+  }
   if (!workEntry.toolTitle) {
     return capitalizePhrase(normalizeCompactToolLabel(workEntry.label));
   }

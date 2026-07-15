@@ -2675,7 +2675,9 @@ public actor LiveBackend: BackendService {
                 case .failed: .failed
                 }
             return .toolEvent(
-                id: id, name: title, detail: detail, kind: ToolEventKind(itemType: itemType),
+                id: id, name: title, detail: detail,
+                kind: ToolEventKind(
+                    itemType: itemType, family: ActivityRows.toolFamily(in: activity.payload)),
                 status: status, at: at, output: output, outputIsError: outputIsError)
         case .reasoning(let id, let text):
             return .reasoning(id: id, text: text, at: at)

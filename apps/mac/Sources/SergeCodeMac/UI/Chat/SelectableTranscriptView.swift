@@ -550,7 +550,7 @@ extension ToolEventKind {
         case .mcpCall: "mcp_tool_call"
         case .subagent: "collab_agent_tool_call"
         case .imageView: "image_view"
-        case .other: nil
+        case .skill, .computerUse, .other: nil
         }
     }
 }

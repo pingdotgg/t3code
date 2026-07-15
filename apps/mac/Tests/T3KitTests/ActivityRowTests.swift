@@ -330,6 +330,36 @@ struct ActivityRowTests {
                 itemType: "command_execution", phase: .succeeded, output: nil, outputIsError: false))
     }
 
+    // MARK: Native tool identity
+
+    @Test func toolIdentityNamesTheRowAndItsFamily() {
+        let payload = JSONValue.object([
+            "itemType": .string("mcp_tool_call"),
+            "detail": .string("query=workers kv"),
+            "data": .object([
+                "tool": .object([
+                    "family": .string("mcp"),
+                    "toolName": .string("mcp__cloudflare__docs"),
+                    "displayName": .string("Cloudflare · Docs"),
+                ])
+            ]),
+        ])
+        let row = ActivityRows.row(
+            for: activity(kind: "tool.completed", summary: "MCP tool call", payload: payload))
+        #expect(
+            row == .tool(
+                id: "a1", title: "Cloudflare · Docs", detail: "query=workers kv",
+                itemType: "mcp_tool_call", phase: .succeeded, output: nil, outputIsError: false))
+        #expect(ActivityRows.toolFamily(in: payload) == "mcp")
+    }
+
+    @Test func toolFamilyIsNilWithoutAnIdentity() {
+        #expect(
+            ActivityRows.toolFamily(
+                in: .object(["data": .object(["toolName": .string("Bash")])])) == nil)
+        #expect(ActivityRows.toolFamily(in: .null) == nil)
+    }
+
     @Test func dataWithoutInputFallsBackToPayloadDetail() {
         let row = ActivityRows.row(
             for: activity(

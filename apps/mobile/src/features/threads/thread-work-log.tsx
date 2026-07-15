@@ -58,6 +58,8 @@ function workRowSymbolName(icon: ThreadFeedActivity["icon"]): SFSymbol {
       return "checkmark";
     case "command":
       return "terminal";
+    case "computer":
+      return "desktopcomputer";
     case "edit":
       return "square.and.pencil";
     case "eye":
@@ -68,6 +70,8 @@ function workRowSymbolName(icon: ThreadFeedActivity["icon"]): SFSymbol {
       return "hammer";
     case "message":
       return "bubble.left";
+    case "skill":
+      return "wand.and.stars";
     case "warning":
       return "xmark";
     case "wrench":

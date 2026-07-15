@@ -30,6 +30,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { deriveToolIdentityFromData } from "@t3tools/shared/toolIdentity";
 import { deriveToolPresentation } from "@t3tools/shared/toolPresentation";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
@@ -245,6 +246,32 @@ function maxCheckpointTurnCount(
 
 function truncateDetail(value: string, limit = 180): string {
   return value.length > limit ? `${value.slice(0, limit - 3)}...` : value;
+}
+
+/**
+ * Attach the canonical tool identity (MCP server/tool, skill, computer use) to
+ * a tool activity's `data` so every client can render the call natively —
+ * icon and title — without re-parsing provider-shaped tool names itself.
+ * Derived here rather than per adapter so all providers get it.
+ */
+function withToolIdentity(data: unknown): Record<string, unknown> | undefined {
+  const identity = deriveToolIdentityFromData(data);
+  if (!identity) {
+    return undefined;
+  }
+  const record =
+    data !== null && typeof data === "object" && !Array.isArray(data)
+      ? (data as Record<string, unknown>)
+      : {};
+  return { ...record, tool: identity };
+}
+
+function toolActivityData(data: unknown): { data: unknown } | Record<string, never> {
+  const enriched = withToolIdentity(data);
+  if (enriched) {
+    return { data: enriched };
+  }
+  return data !== undefined ? { data } : {};
 }
 
 /**
@@ -829,7 +856,7 @@ function runtimeEventToActivities(
             itemType: event.payload.itemType,
             ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
-            ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
+            ...toolActivityData(event.payload.data),
             presentation: toolPresentationOf(
               event.payload.itemType,
               event.payload,
@@ -857,7 +884,7 @@ function runtimeEventToActivities(
           payload: {
             itemType: event.payload.itemType,
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
-            ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
+            ...toolActivityData(event.payload.data),
             presentation: toolPresentationOf(
               event.payload.itemType,
               event.payload,
@@ -875,6 +902,7 @@ function runtimeEventToActivities(
       if (!isToolLifecycleItemType(event.payload.itemType)) {
         return [];
       }
+      const startedToolIdentity = deriveToolIdentityFromData(event.payload.data);
       return [
         {
           id: event.eventId,
@@ -885,6 +913,8 @@ function runtimeEventToActivities(
           payload: {
             itemType: event.payload.itemType,
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+            // Identity only: the started row needs the icon/name, not the input.
+            ...(startedToolIdentity ? { data: { tool: startedToolIdentity } } : {}),
             presentation: toolPresentationOf(
               event.payload.itemType,
               event.payload,
