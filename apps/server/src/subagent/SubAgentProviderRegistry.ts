@@ -20,9 +20,7 @@ export interface SubAgentProviderRegistryShape {
     filter?: SubAgentProviderFilter,
   ) => Effect.Effect<ReadonlyArray<SubAgentProviderInfo>>;
 
-  readonly getProviderInfo: (
-    instanceId: string,
-  ) => Effect.Effect<SubAgentProviderInfo | null>;
+  readonly getProviderInfo: (instanceId: string) => Effect.Effect<SubAgentProviderInfo | null>;
 }
 
 export class SubAgentProviderRegistry extends Context.Service<

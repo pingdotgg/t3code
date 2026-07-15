@@ -1,12 +1,16 @@
 /**
  * Unified Sub-Agent System - Public API
- * 
+ *
  * This module provides cross-provider sub-agent orchestration for SergeCode.
  * Any provider can spawn agents on any other provider without MCP capability gates.
  */
 
 // Core coordinator
-export { UniversalSubAgentCoordinator, UniversalSubAgentCoordinatorLive, type UniversalSubAgentContext } from "./UniversalSubAgentCoordinator.ts";
+export {
+  UniversalSubAgentCoordinator,
+  UniversalSubAgentCoordinatorLive,
+  type UniversalSubAgentContext,
+} from "./UniversalSubAgentCoordinator.ts";
 
 // Tool and handlers
 export { UnifiedSubAgentTool } from "./UnifiedSubAgentTool.ts";
@@ -17,8 +21,15 @@ export * from "./UnifiedSubAgentHandlers.ts";
 export { createUnifiedSubAgentToolHandler, mapCodexCollabAgentToUnified } from "./integration.ts";
 
 // Provider registry
-export { SubAgentProviderRegistry, SubAgentProviderRegistryLive } from "./SubAgentProviderRegistry.ts";
-export type { SubAgentProviderInfo, SubAgentProviderFilter, SubAgentModelInfo } from "./SubAgentProviderInfo.ts";
+export {
+  SubAgentProviderRegistry,
+  SubAgentProviderRegistryLive,
+} from "./SubAgentProviderRegistry.ts";
+export type {
+  SubAgentProviderInfo,
+  SubAgentProviderFilter,
+  SubAgentModelInfo,
+} from "./SubAgentProviderInfo.ts";
 
 // Concurrency management
 export { ConcurrencyLimits, ConcurrencyLimitsLive } from "./ConcurrencyLimits.ts";

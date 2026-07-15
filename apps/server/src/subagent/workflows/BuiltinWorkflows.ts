@@ -9,11 +9,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import type { WorkflowDefinition } from "./WorkflowSchema.ts";
 
-const BUILTIN_WORKFLOWS = [
-  "code-review",
-  "parallel-search",
-  "multi-model-eval",
-] as const;
+const BUILTIN_WORKFLOWS = ["code-review", "parallel-search", "multi-model-eval"] as const;
 
 export type BuiltinWorkflowName = (typeof BUILTIN_WORKFLOWS)[number];
 

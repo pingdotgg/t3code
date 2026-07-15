@@ -324,8 +324,7 @@ const makeWorkflowEngine = Effect.gen(function* () {
         return {
           workflowId: context.workflowId,
           name: definition.name,
-          status:
-            phaseResults.every((p) => p.status === "completed") ? "completed" : "failed",
+          status: phaseResults.every((p) => p.status === "completed") ? "completed" : "failed",
           phases: phaseResults,
           startedAt: new Date(startTime).toISOString(),
           completedAt: new Date().toISOString(),

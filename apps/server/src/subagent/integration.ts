@@ -56,7 +56,7 @@ export type UnifiedSubAgentToolResult =
  * Create a handler for the UnifiedSubAgentTool.
  *
  * Call this in your adapter with the current thread, provider, and environment context.
- * 
+ *
  * NOTE: environmentId is required (not optional like in the broken PR #131).
  */
 export const createUnifiedSubAgentToolHandler = (context: {

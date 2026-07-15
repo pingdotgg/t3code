@@ -15,7 +15,10 @@ import type {
   SubAgentWaitInput,
   SubAgentWaitResult,
 } from "@t3tools/contracts";
-import { UniversalSubAgentCoordinator, type UniversalSubAgentContext } from "./UniversalSubAgentCoordinator.ts";
+import {
+  UniversalSubAgentCoordinator,
+  type UniversalSubAgentContext,
+} from "./UniversalSubAgentCoordinator.ts";
 import { SubAgentProviderRegistry } from "./SubAgentProviderRegistry.ts";
 import { ConcurrencyLimits } from "./ConcurrencyLimits.ts";
 import { WorkflowEngine } from "./workflows/WorkflowEngine.ts";

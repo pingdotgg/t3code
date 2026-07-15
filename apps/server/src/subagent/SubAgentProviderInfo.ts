@@ -1,8 +1,5 @@
 import * as Schema from "effect/Schema";
-import {
-  ProviderInstanceId,
-  ProviderDriverKind,
-} from "@t3tools/contracts";
+import { ProviderInstanceId, ProviderDriverKind } from "@t3tools/contracts";
 
 export const MODEL_COST_TIERS: Record<string, "cheap" | "moderate" | "expensive"> = {
   // Cheap: 30 concurrent

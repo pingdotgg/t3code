@@ -30,10 +30,9 @@ export interface ConcurrencyLimitsShape {
   readonly getActiveCount: (model?: string) => Effect.Effect<number>;
 }
 
-export class ConcurrencyLimits extends Context.Service<
-  ConcurrencyLimits,
-  ConcurrencyLimitsShape
->()("t3/subagent/ConcurrencyLimits") {}
+export class ConcurrencyLimits extends Context.Service<ConcurrencyLimits, ConcurrencyLimitsShape>()(
+  "t3/subagent/ConcurrencyLimits",
+) {}
 
 const makeConcurrencyLimits = Effect.gen(function* () {
   const active = yield* SynchronizedRef.make<ReadonlyMap<string, ActiveSubAgent>>(new Map());

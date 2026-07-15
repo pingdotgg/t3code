@@ -37,7 +37,7 @@ Cross-provider sub-agent orchestration for SergeCode. Any provider (Claude, Code
 ### From a Provider Adapter
 
 ```typescript
-import { createUnifiedSubAgentToolHandler } from '../subagent/integration.ts';
+import { createUnifiedSubAgentToolHandler } from "../subagent/integration.ts";
 
 // In your adapter's session initialization:
 const handler = createUnifiedSubAgentToolHandler({
@@ -47,12 +47,14 @@ const handler = createUnifiedSubAgentToolHandler({
 });
 
 // Execute tool calls:
-const result = yield* handler({
-  action: 'spawn',
-  providerInstanceId: 'grok-default',
-  model: 'grok-4.5',
-  prompt: 'Analyze this code'
-});
+const result =
+  yield *
+  handler({
+    action: "spawn",
+    providerInstanceId: "grok-default",
+    model: "grok-4.5",
+    prompt: "Analyze this code",
+  });
 ```
 
 ### From AI Models
@@ -107,36 +109,41 @@ To add UnifiedSubAgentTool to a provider adapter:
 Models are classified by cost to enforce appropriate concurrency limits:
 
 **Cheap (30 concurrent):**
+
 - claude-haiku-4.5, claude-haiku-4
 - gpt-4o-mini, gpt-4-turbo
 
 **Moderate (10 concurrent):**
+
 - claude-sonnet-5, claude-sonnet-4
 - gpt-4o, gpt-4
 
 **Expensive (5 concurrent):**
+
 - claude-fable-5, claude-opus-4.8, claude-opus-4
 - gpt-5.5, gpt-5
 
 ## Provider Cost Tiers
 
 **Subscription (spawnable):**
+
 - codex, claudeAgent, claudeSynthero, claudex
 - cursor, grok, fugu, chatgpt
 
 **API Credits (excluded):**
+
 - opencode - Automatically excluded to protect API credits
 
 ## Differences from MCP-based SubAgentCoordinator
 
-| Feature | MCP SubAgentCoordinator | UniversalSubAgentCoordinator |
-|---------|------------------------|------------------------------|
-| Capability check | Required ("agents") | None - universally available |
-| Scope type | McpInvocationScope (7 fields) | UniversalSubAgentContext (3 fields) |
-| Provider access | Only MCP-gated providers | All configured providers |
-| Tool name | agent_list, agent_spawn, etc. | subagent (single tool) |
-| Concurrency management | Basic | Per-model tier limits |
-| OpenCode handling | Manual check | Auto-excluded |
+| Feature                | MCP SubAgentCoordinator       | UniversalSubAgentCoordinator        |
+| ---------------------- | ----------------------------- | ----------------------------------- |
+| Capability check       | Required ("agents")           | None - universally available        |
+| Scope type             | McpInvocationScope (7 fields) | UniversalSubAgentContext (3 fields) |
+| Provider access        | Only MCP-gated providers      | All configured providers            |
+| Tool name              | agent_list, agent_spawn, etc. | subagent (single tool)              |
+| Concurrency management | Basic                         | Per-model tier limits               |
+| OpenCode handling      | Manual check                  | Auto-excluded                       |
 
 ## Workflow System
 
@@ -155,8 +162,9 @@ The original PR #131 tried to reuse `SubAgentCoordinator` by creating "mock" MCP
 ```typescript
 // BROKEN approach from PR #131
 const mockScope = {
-  threadId, providerInstanceId,
-  capabilities: new Set(["agents"])
+  threadId,
+  providerInstanceId,
+  capabilities: new Set(["agents"]),
 } as any; // Missing 4 required fields!
 ```
 
@@ -189,6 +197,7 @@ npm test apps/server/src/subagent
 ```
 
 Tests cover:
+
 - ConcurrencyLimits enforcement
 - SubAgentProviderInfo classification
 - WorkflowSchema validation

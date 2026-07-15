@@ -111,7 +111,7 @@ const UnifiedSubAgentToolHandlers = UnifiedSubAgentTool.toLayer({
 
 /**
  * Complete layer stack for the UnifiedSubAgentTool.
- * 
+ *
  * Includes all dependencies:
  * - UniversalSubAgentCoordinator
  * - SubAgentProviderRegistry

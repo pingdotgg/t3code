@@ -10,10 +10,7 @@ import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import type {
-  WorkflowDefinition,
-  WorkflowMetadata,
-} from "./WorkflowSchema.ts";
+import type { WorkflowDefinition, WorkflowMetadata } from "./WorkflowSchema.ts";
 
 export class WorkflowStorageError extends Error {
   constructor(
