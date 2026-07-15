@@ -1274,7 +1274,9 @@ const MarkdownThreadArtifactImage = memo(function MarkdownThreadArtifactImage({
         type="button"
         className="block w-full max-w-full cursor-zoom-in overflow-hidden rounded-xl border border-border bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         aria-label={`Preview ${reference}`}
-        onClick={() => {
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
           onImageExpand({ images: [{ src: imageUrl, name: reference }], index: 0 });
         }}
       >
