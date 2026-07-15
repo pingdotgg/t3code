@@ -6,6 +6,7 @@ import {
   type PluginCapability,
   type PluginLockfilePlugin,
 } from "@t3tools/contracts/plugin";
+import { fingerprintSettingsSchema } from "@t3tools/shared/pluginSettings";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -16,6 +17,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -1560,6 +1562,245 @@ export default {
       assert.isTrue(
         Option.isSome(yield* registry.get(pluginId)),
         "a renderable settings schema must not block activation",
+      );
+    }),
+  );
+});
+
+// The settings CAPABILITY, exercised by a real plugin through a real hostApi.
+//
+// The validation block above only proves activation is gated. It never obtains
+// `hostApi.settings`, so the read guards and the changes stream were entirely
+// untested — deleting the corrupt-storage guard or collapsing per-event recovery
+// into a per-stream catch left every test green. These drive the capability the
+// only way a plugin can reach it: register(hostApi), plus a plugin `service` for
+// the subscription, which is the host-forked home for long-running plugin work.
+layer("PluginHost settings capability", (it) => {
+  // A DEFAULTED field is what makes the corrupt-storage test honest. readDraft
+  // never fails, so a corrupt row arrives as an empty draft; decoding `{}` against
+  // this schema succeeds and yields the default. Without the guard the plugin is
+  // handed `https://default.example` as if the user had configured it.
+  const settingsEntry = `
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import * as NodeFs from "node:fs";
+
+export const schema = Schema.Struct({
+  endpoint: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed("https://default.example"))),
+});
+
+export default {
+  settings: { schema },
+  register(hostApi) {
+    return Effect.gen(function* () {
+      const settings = yield* hostApi.settings;
+      const dir = hostApi.config.dataDir;
+      NodeFs.mkdirSync(dir, { recursive: true });
+      // Record the OUTCOME rather than failing: an activation failure would be
+      // indistinguishable from the many other reasons activation can fail.
+      const outcome = yield* settings.get.pipe(
+        Effect.match({
+          onFailure: (error) => ({ ok: false, tag: error._tag, message: error.message }),
+          onSuccess: (value) => ({ ok: true, value }),
+        }),
+      );
+      NodeFs.writeFileSync(dir + "/settings-get.json", JSON.stringify(outcome));
+      return {
+        services: [
+          {
+            name: "watch-settings",
+            run: () =>
+              settings.changes.pipe(
+                Stream.runForEach((value) =>
+                  Effect.sync(() => {
+                    NodeFs.appendFileSync(dir + "/settings-changes.jsonl", JSON.stringify(value) + "\\n");
+                  }),
+                ),
+              ),
+          },
+        ],
+      };
+    });
+  },
+};
+`;
+
+  // Must match the plugin's schema exactly: the stored fingerprint has to be the
+  // CURRENT one, or the drift check rejects the read and the corrupt-storage guard
+  // under test never runs (the test would pass with the guard deleted).
+  const pluginSchema = Schema.Struct({
+    endpoint: Schema.String.pipe(
+      Schema.withDecodingDefault(Effect.succeed("https://default.example")),
+    ),
+  });
+  const currentFingerprint = fingerprintSettingsSchema(pluginSchema);
+
+  // The plugin records what it was handed; the test decodes it. Mirroring the
+  // recorded shape as a schema keeps a malformed recording a decode failure rather
+  // than an assertion that quietly compares `undefined` against `undefined`.
+  const decodeGetOutcome = Schema.decodeUnknownEffect(
+    Schema.fromJsonString(
+      Schema.Union([
+        Schema.Struct({
+          ok: Schema.Literal(true),
+          value: Schema.Struct({ endpoint: Schema.String }),
+        }),
+        Schema.Struct({ ok: Schema.Literal(false), tag: Schema.String, message: Schema.String }),
+      ]),
+    ),
+  );
+  const decodeSettingsEvent = Schema.decodeUnknownEffect(
+    Schema.fromJsonString(Schema.Struct({ endpoint: Schema.String })),
+  );
+
+  const storeRow = (input: {
+    readonly pluginId: PluginId;
+    readonly valuesJson: string;
+    readonly fingerprint: string;
+  }) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`
+        INSERT INTO plugin_settings (plugin_id, values_json, schema_fingerprint, revision, updated_at)
+        VALUES (${input.pluginId}, ${input.valuesJson}, ${input.fingerprint}, 1, 0)
+      `;
+    });
+
+  const readGetOutcome = (pluginId: PluginId) =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = pluginDataDir(config.pluginsDir, pluginId, path.join);
+      const raw = yield* fs.readFileString(path.join(dir, "settings-get.json"));
+      return yield* decodeGetOutcome(raw);
+    });
+
+  /** Poll until the subscriber has appended `count` events, or fail loudly. */
+  const awaitChanges = (pluginId: PluginId, count: number) =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const file = path.join(
+        pluginDataDir(config.pluginsDir, pluginId, path.join),
+        "settings-changes.jsonl",
+      );
+      const read = Effect.gen(function* () {
+        const raw = yield* fs.readFileString(file).pipe(Effect.orElseSucceed(() => ""));
+        const lines = raw.split("\n").filter((line) => line.length > 0);
+        if (lines.length < count) {
+          return yield* Effect.fail({ _tag: "SettingsEventsPending" as const, seen: lines.length });
+        }
+        // Wrap rather than passing `decodeSettingsEvent` point-free: its second
+        // parameter is decode OPTIONS, so forEach's index argument would land there.
+        return yield* Effect.forEach(lines, (line) => decodeSettingsEvent(line));
+      });
+      // Retry WITHOUT delay, and bound it with `recurs`.
+      //
+      // `it.effect` runs on the TestClock, so anything clock-driven — `spaced`,
+      // `Effect.timeout` — never advances: the poll simply hung until vitest's 120s
+      // timeout, reporting nothing useful. (`it.live` is not available on the nested
+      // `it` that `it.layer` hands back.) `recurs` never touches the clock; each
+      // attempt yields, which is what lets the subscriber fiber make progress, and a
+      // real failure surfaces in milliseconds with the event count it saw.
+      return yield* read.pipe(Effect.retry({ schedule: Schedule.recurs(200) }), Effect.orDie);
+    });
+
+  it.effect(
+    "fails the plugin's settings read rather than handing it defaults from a corrupt row",
+    () =>
+      Effect.gen(function* () {
+        const pluginId = PluginId.make("settings-capability-corrupt");
+        const host = yield* PluginHostModule.PluginHost;
+
+        yield* runMigrations({});
+        yield* installPlugin({
+          pluginId,
+          capabilities: ["settings"],
+          entrySource: settingsEntry,
+          webEntry: true,
+        });
+        // Valid JSON, but not an object — unreadable as settings. The CURRENT
+        // fingerprint is stored deliberately, so the drift check cannot be what
+        // rejects this read.
+        yield* storeRow({
+          pluginId,
+          valuesJson: `"not-an-object"`,
+          fingerprint: currentFingerprint,
+        });
+        yield* host.activatePlugin(pluginId);
+
+        const outcome = yield* readGetOutcome(pluginId);
+        assert.isFalse(
+          outcome.ok,
+          "a plugin must never be handed schema defaults derived from a row the host could not read",
+        );
+        assert.strictEqual(outcome.ok === false ? outcome.tag : "", "PluginSettingsInvalidStored");
+        assert.notMatch(
+          outcome.ok === false ? outcome.message : "",
+          /not-an-object/,
+          "the failure must not embed the stored values, which would leak configuration into logs",
+        );
+      }),
+  );
+
+  it.effect("keeps the changes stream alive when one event's read fails", () =>
+    Effect.gen(function* () {
+      const pluginId = PluginId.make("settings-capability-changes");
+      const host = yield* PluginHostModule.PluginHost;
+      const settingsStore = yield* PluginSettingsStoreLayer.PluginSettingsStore;
+
+      yield* runMigrations({});
+      yield* installPlugin({
+        pluginId,
+        capabilities: ["settings"],
+        entrySource: settingsEntry,
+        webEntry: true,
+      });
+      yield* storeRow({
+        pluginId,
+        valuesJson: `{"endpoint":"https://one.example"}`,
+        fingerprint: currentFingerprint,
+      });
+      yield* host.activatePlugin(pluginId);
+
+      const initial = yield* readGetOutcome(pluginId);
+      assert.isTrue(initial.ok, "a valid stored row must decode for the plugin");
+      assert.strictEqual(
+        initial.ok === true ? initial.value.endpoint : "",
+        "https://one.example",
+        "the plugin must receive the stored value, not the schema default",
+      );
+
+      yield* settingsStore.write({
+        pluginId,
+        values: { endpoint: "https://two.example" },
+        schemaFingerprint: currentFingerprint,
+        expectedRevision: 1,
+      });
+      // A write whose values were produced for a DIFFERENT schema shape: it reaches
+      // the PubSub, but the subscriber's read fails the drift check. Under a
+      // per-STREAM catch this event ends the subscription for the process lifetime.
+      yield* settingsStore.write({
+        pluginId,
+        values: { endpoint: "https://drifted.example" },
+        schemaFingerprint: "a-different-schema-shape",
+        expectedRevision: 2,
+      });
+      yield* settingsStore.write({
+        pluginId,
+        values: { endpoint: "https://three.example" },
+        schemaFingerprint: currentFingerprint,
+        expectedRevision: 3,
+      });
+
+      const events = yield* awaitChanges(pluginId, 2);
+      assert.deepStrictEqual(
+        events.map((event) => event.endpoint),
+        ["https://two.example", "https://three.example"],
+        "the unreadable event must be skipped, and the write AFTER it must still arrive",
       );
     }),
   );
