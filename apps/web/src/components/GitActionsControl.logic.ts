@@ -212,18 +212,7 @@ export function resolveQuickAction(
   }
 
   if (hasChanges) {
-    if (isBehind || (!gitStatus.hasUpstream && !hasPrimaryRemote)) {
-      return { label: "Commit", disabled: false, kind: "run_action", action: "commit" };
-    }
-    if (hasOpenPr || isDefaultRef) {
-      return { label: "Commit & push", disabled: false, kind: "run_action", action: "commit_push" };
-    }
-    return {
-      label: `Commit, push & ${terminology.shortLabel}`,
-      disabled: false,
-      kind: "run_action",
-      action: "commit_push_pr",
-    };
+    return { label: "Commit", disabled: false, kind: "run_action", action: "commit" };
   }
 
   if (!gitStatus.hasUpstream) {

@@ -80,7 +80,7 @@ describe("when: ref is clean, up to date, and has no open PR", () => {
 });
 
 describe("when: on default ref without open PR", () => {
-  it("resolveQuickAction returns commit and push when local changes exist", () => {
+  it("resolveQuickAction returns commit only when local changes exist", () => {
     const quick = resolveQuickAction(
       status({ refName: "main", hasWorkingTreeChanges: true }),
       false,
@@ -88,8 +88,8 @@ describe("when: on default ref without open PR", () => {
     );
     assert.deepInclude(quick, {
       kind: "run_action",
-      action: "commit_push",
-      label: "Commit & push",
+      action: "commit",
+      label: "Commit",
       disabled: false,
     });
   });
