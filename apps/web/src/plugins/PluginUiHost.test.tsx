@@ -279,6 +279,53 @@ describe("PluginUiHost declarative settings", () => {
   // a settings-only plugin contributes a real surface. (An earlier version asserted
   // state.loaded, which tracks ATTEMPTS — it passed even with register mandatory and
   // proved nothing.)
+  it("captures message actions from a plugin", async () => {
+    const state = createPluginUiHostState();
+
+    const snapshot = await syncPluginUiHostRegistrations({
+      state,
+      plugins: [pluginInfo()],
+      waitForHost: async () => {},
+      importWebPlugin: async () => ({
+        default: defineWebPlugin({
+          register(ctx) {
+            ctx.registerMessageAction({ id: "file-ticket", render: () => null });
+          },
+        }),
+      }),
+    });
+
+    expect(snapshot.messageActions).toHaveLength(1);
+    expect(snapshot.messageActions[0]).toMatchObject({
+      pluginId: pluginInfo().id,
+      id: "file-ticket",
+    });
+  });
+
+  it("drops a failed plugin's message actions along with its other surfaces", async () => {
+    const state = createPluginUiHostState();
+
+    // A plugin whose register() throws must contribute NOTHING — a half-registered
+    // plugin putting a broken action into every message is worse than one that is
+    // simply absent.
+    const snapshot = await syncPluginUiHostRegistrations({
+      state,
+      plugins: [pluginInfo()],
+      waitForHost: async () => {},
+      importWebPlugin: async () => ({
+        default: defineWebPlugin({
+          register(ctx) {
+            ctx.registerMessageAction({ id: "file-ticket", render: () => null });
+            throw new Error("register exploded");
+          },
+        }),
+      }),
+    });
+
+    expect(snapshot.messageActions).toHaveLength(0);
+    expect(snapshot.failures[pluginInfo().id]).toBeDefined();
+  });
+
   it("generates a settings page for a plugin that declares settings and no register", async () => {
     const state = createPluginUiHostState();
 

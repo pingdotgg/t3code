@@ -7,6 +7,7 @@ import type {
   PluginRouteComponentProps,
   PluginSettingsComponentProps,
   PluginSidebarSectionRenderProps,
+  PluginMessageActionRenderProps,
   PluginUiContext,
   PluginWebDefinition,
   PluginWebRpc,
@@ -56,6 +57,12 @@ export interface RegisteredPluginProjectAction {
   readonly render: (props: PluginProjectActionRenderProps) => unknown;
 }
 
+export interface RegisteredPluginMessageAction {
+  readonly pluginId: PluginId;
+  readonly id: string;
+  readonly render: (props: PluginMessageActionRenderProps) => unknown;
+}
+
 export interface RegisteredPluginCommand extends PluginCommandRegistration {
   readonly pluginId: PluginId;
   readonly context: PluginUiContext;
@@ -67,6 +74,7 @@ export interface PluginUiRegistrySnapshot {
   readonly settingsPages: ReadonlyArray<RegisteredPluginSettingsPage>;
   readonly commands: ReadonlyArray<RegisteredPluginCommand>;
   readonly projectActions: ReadonlyArray<RegisteredPluginProjectAction>;
+  readonly messageActions: ReadonlyArray<RegisteredPluginMessageAction>;
   readonly failures: Readonly<Record<string, string>>;
 }
 
@@ -78,6 +86,7 @@ interface LoadedPlugin {
   readonly settingsPages: ReadonlyArray<RegisteredPluginSettingsPage>;
   readonly commands: ReadonlyArray<RegisteredPluginCommand>;
   readonly projectActions: ReadonlyArray<RegisteredPluginProjectAction>;
+  readonly messageActions: ReadonlyArray<RegisteredPluginMessageAction>;
   readonly failure: string | null;
 }
 
@@ -91,6 +100,7 @@ export const EMPTY_PLUGIN_UI_REGISTRY_SNAPSHOT: PluginUiRegistrySnapshot = Objec
   settingsPages: Object.freeze([]),
   commands: Object.freeze([]),
   projectActions: Object.freeze([]),
+  messageActions: Object.freeze([]),
   failures: Object.freeze({}),
 });
 
@@ -132,6 +142,7 @@ function snapshotFromState(state: PluginUiHostState): PluginUiRegistrySnapshot {
   const settingsPages: Array<RegisteredPluginSettingsPage> = [];
   const commands: Array<RegisteredPluginCommand> = [];
   const projectActions: Array<RegisteredPluginProjectAction> = [];
+  const messageActions: Array<RegisteredPluginMessageAction> = [];
   const failures: Record<string, string> = {};
 
   for (const loaded of state.loaded.values()) {
@@ -144,9 +155,18 @@ function snapshotFromState(state: PluginUiHostState): PluginUiRegistrySnapshot {
     settingsPages.push(...loaded.settingsPages);
     commands.push(...loaded.commands);
     projectActions.push(...loaded.projectActions);
+    messageActions.push(...loaded.messageActions);
   }
 
-  return { routes, sidebarSections, settingsPages, commands, projectActions, failures };
+  return {
+    routes,
+    sidebarSections,
+    settingsPages,
+    commands,
+    projectActions,
+    messageActions,
+    failures,
+  };
 }
 
 export function getPluginWebEntryUrl(plugin: Pick<PluginInfo, "id" | "version">): string {
@@ -311,6 +331,7 @@ export async function syncPluginUiHostRegistrations({
     const settingsPages: Array<RegisteredPluginSettingsPage> = [];
     const commands: Array<RegisteredPluginCommand> = [];
     const projectActions: Array<RegisteredPluginProjectAction> = [];
+    const messageActions: Array<RegisteredPluginMessageAction> = [];
 
     try {
       const module = await importWebPlugin(getPluginWebEntryUrl(plugin));
@@ -344,6 +365,9 @@ export async function syncPluginUiHostRegistrations({
         },
         registerProjectAction: (registration) => {
           projectActions.push({ ...registration, pluginId: plugin.id });
+        },
+        registerMessageAction: (registration) => {
+          messageActions.push({ ...registration, pluginId: plugin.id });
         },
       };
       // Declarative settings become a real settings page rendered by the HOST, so
@@ -408,6 +432,7 @@ export async function syncPluginUiHostRegistrations({
         settingsPages,
         commands,
         projectActions,
+        messageActions,
         failure: null,
       });
     } catch (error) {
@@ -421,6 +446,7 @@ export async function syncPluginUiHostRegistrations({
         settingsPages: [],
         commands: [],
         projectActions: [],
+        messageActions: [],
         failure: message,
       });
     }
