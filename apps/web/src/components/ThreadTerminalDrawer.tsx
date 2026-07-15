@@ -207,16 +207,26 @@ export function classifyTerminalExitTransition(options: {
   previousVersion: number;
   previousStatus: string;
   currentStatus: string;
-  hasHandledExit: boolean;
 }): "none" | "initial" | "live" {
   if (
     (options.currentStatus !== "closed" && options.currentStatus !== "exited") ||
-    (options.previousVersion !== 0 && options.currentStatus === options.previousStatus) ||
-    options.hasHandledExit
+    (options.previousVersion !== 0 && options.currentStatus === options.previousStatus)
   ) {
     return "none";
   }
   return options.previousVersion === 0 ? "initial" : "live";
+}
+
+export function shouldHandleLiveTerminalExit(options: {
+  previousStatus: string;
+  currentStatus: string;
+  hasHandledExit: boolean;
+}): boolean {
+  return (
+    (options.currentStatus === "closed" || options.currentStatus === "exited") &&
+    options.currentStatus !== options.previousStatus &&
+    !options.hasHandledExit
+  );
 }
 
 function getTerminalSelectionRect(mountElement: HTMLElement): DOMRect | null {
@@ -393,6 +403,7 @@ export function TerminalViewport({
   const terminalError = terminalSession.error;
   const terminalStatus = terminalSession.status;
   const terminalVersion = terminalSession.version;
+  const previousTerminalStatusRef = useRef(terminalStatus);
   const previousSessionRef = useRef({
     buffer: terminalBuffer,
     error: terminalError,
@@ -809,23 +820,12 @@ export function TerminalViewport({
       previousVersion: previous.version,
       previousStatus: previous.status,
       currentStatus: current.status,
-      hasHandledExit: hasHandledExitRef.current,
     });
-    if (current.status === "running") {
-      hasHandledExitRef.current = false;
-    } else if (exitTransition !== "none") {
-      hasHandledExitRef.current = true;
+    if (exitTransition !== "none") {
       writeSystemMessage(
         terminal,
         current.status === "closed" ? "Terminal closed" : "Process exited",
       );
-      if (exitTransition === "live") {
-        window.setTimeout(() => {
-          if (hasHandledExitRef.current) {
-            handleSessionExited();
-          }
-        }, 0);
-      }
     }
 
     if (isInitialSessionSync && autoFocus) {
@@ -842,6 +842,30 @@ export function TerminalViewport({
     terminalStatus,
     terminalVersion,
   ]);
+
+  useEffect(() => {
+    const previousStatus = previousTerminalStatusRef.current;
+    previousTerminalStatusRef.current = terminalStatus;
+    if (terminalStatus === "running") {
+      hasHandledExitRef.current = false;
+      return;
+    }
+    if (
+      !shouldHandleLiveTerminalExit({
+        previousStatus,
+        currentStatus: terminalStatus,
+        hasHandledExit: hasHandledExitRef.current,
+      })
+    ) {
+      return;
+    }
+    hasHandledExitRef.current = true;
+    window.setTimeout(() => {
+      if (hasHandledExitRef.current) {
+        handleSessionExited();
+      }
+    }, 0);
+  }, [terminalStatus]);
 
   useEffect(() => {
     if (!autoFocus) return;

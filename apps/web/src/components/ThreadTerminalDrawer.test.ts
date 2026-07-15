@@ -4,6 +4,7 @@ import {
   classifyTerminalExitTransition,
   resolveTerminalSelectionActionPosition,
   shouldHandleTerminalSelectionMouseUp,
+  shouldHandleLiveTerminalExit,
   terminalSelectionActionDelayForClickCount,
 } from "./ThreadTerminalDrawer";
 
@@ -14,7 +15,6 @@ describe("classifyTerminalExitTransition", () => {
         previousVersion: 0,
         previousStatus: "closed",
         currentStatus: "exited",
-        hasHandledExit: false,
       }),
     ).toBe("initial");
   });
@@ -25,7 +25,6 @@ describe("classifyTerminalExitTransition", () => {
         previousVersion: 0,
         previousStatus: "closed",
         currentStatus: "closed",
-        hasHandledExit: false,
       }),
     ).toBe("initial");
   });
@@ -36,7 +35,6 @@ describe("classifyTerminalExitTransition", () => {
         previousVersion: 3,
         previousStatus: "running",
         currentStatus: "exited",
-        hasHandledExit: false,
       }),
     ).toBe("live");
     expect(
@@ -44,17 +42,37 @@ describe("classifyTerminalExitTransition", () => {
         previousVersion: 4,
         previousStatus: "exited",
         currentStatus: "exited",
-        hasHandledExit: false,
       }),
     ).toBe("none");
+  });
+});
+
+describe("shouldHandleLiveTerminalExit", () => {
+  it("tracks live exits independently of an xterm remount baseline", () => {
     expect(
-      classifyTerminalExitTransition({
-        previousVersion: 4,
+      shouldHandleLiveTerminalExit({
+        previousStatus: "running",
+        currentStatus: "exited",
+        hasHandledExit: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("ignores initial or already-handled exited snapshots", () => {
+    expect(
+      shouldHandleLiveTerminalExit({
+        previousStatus: "exited",
+        currentStatus: "exited",
+        hasHandledExit: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldHandleLiveTerminalExit({
         previousStatus: "running",
         currentStatus: "exited",
         hasHandledExit: true,
       }),
-    ).toBe("none");
+    ).toBe(false);
   });
 });
 
