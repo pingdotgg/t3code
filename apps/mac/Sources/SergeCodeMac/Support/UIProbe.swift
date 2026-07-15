@@ -30,9 +30,15 @@
             let model = multi.local
             try? FileManager.default.createDirectory(
                 atPath: dir, withIntermediateDirectories: true)
-            if ProcessInfo.processInfo.environment["SERGECODE_UI_PROBE_SCENARIO"] == "stream-perf" {
+            switch ProcessInfo.processInfo.environment["SERGECODE_UI_PROBE_SCENARIO"] {
+            case "stream-perf":
                 await runStreamPerf(model: model, dir: dir)
                 return
+            case "glass":
+                await GlassLayeringProbe.run(multi: multi, scenery: scenery, dir: dir)
+                return
+            default:
+                break
             }
 
             // Let the mock backend load, then select a thread so the

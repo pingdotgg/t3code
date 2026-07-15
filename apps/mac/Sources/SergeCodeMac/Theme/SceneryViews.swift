@@ -29,6 +29,11 @@ struct SceneryImageView: View {
         }
         .animation(Motion.scenery, value: loadedPhotoID)
         .clipped()
+        // Flatten the wash + photo before any caller applies `.opacity`:
+        // SwiftUI fades each leaf separately otherwise, so the two opaque
+        // layers stack and the pane covers more of the desktop than the
+        // requested translucency (measurably: 0.67 instead of 0.50).
+        .compositingGroup()
         .task(id: taskKey) {
             await scenery.ensureImage(photo, variant: variant, setId: setId)
         }
@@ -53,9 +58,10 @@ struct SceneryImageView: View {
 /// entirely. Pair with `.sceneryChrome()` on the foreground content. Long-form
 /// text never sits on this (Liquid Glass rule).
 ///
-/// Photo opacity follows `scenery.sceneryTranslucency` so the window's
-/// behind-window glass (`WindowGlassBackground`) can bleed through; the
-/// scrim is scaled gently so chrome labels stay readable at the 50% extreme.
+/// Renders at full coverage, unlike the chat wallpaper: its only surface is a
+/// preview band inside the New Session sheet, and a sheet is an opaque window
+/// — fading the photo there would dim it against the sheet's own plate rather
+/// than reveal anything behind the app.
 struct FrostedSceneryBackdrop: View {
     let scenery: SceneryStore
     let photo: SceneryPhoto?
@@ -66,22 +72,15 @@ struct FrostedSceneryBackdrop: View {
     var blurRadius: CGFloat = 9
 
     var body: some View {
-        let translucency = scenery.sceneryTranslucency
-        let wash = ScenerySettingsFile.washScale(forTranslucency: translucency)
         SceneryImageView(
             scenery: scenery,
             photo: photo,
             variant: preblurredVariant,
             setId: setId,
             fallbackSeed: fallbackSeed)
-            // Fade photo only — scrim stays above so chrome stays legible.
-            .opacity(translucency)
             .overlay(
                 LinearGradient(
-                    colors: [
-                        .black.opacity(0.34 * wash),
-                        .black.opacity(0.18 * wash),
-                    ],
+                    colors: [.black.opacity(0.34), .black.opacity(0.18)],
                     startPoint: .top, endPoint: .bottom))
             .clipped()
     }
@@ -108,10 +107,12 @@ extension View {
 /// in light) far enough that standard `.primary`/`.secondary` text stays
 /// readable everywhere on top, while the scene stays clearly visible.
 ///
-/// Photo opacity is `scenery.sceneryTranslucency` (default 0.85) so the
-/// behind-window glass underneath shows through. Wash layers sit above the
-/// opacity and are only gently scaled — they must not collapse with the
-/// photo at 50% translucency.
+/// This is the surface the translucency invariant is defined on: photo + wash
+/// composite to exactly `scenery.sceneryTranslucency`, so at the default 0.85
+/// the desktop reads faintly through the scene and at 0.5 it reads clearly
+/// (see `GlassLayering`). The photo, not the wash, absorbs the difference —
+/// scaling only the photo (the old behaviour) left the pane ~86% opaque even
+/// at the glass end, which is the layering bug this fixes.
 struct SceneryChatBackground: View {
     let scenery: SceneryStore
     let photo: SceneryPhoto?
@@ -122,26 +123,28 @@ struct SceneryChatBackground: View {
 
     var body: some View {
         let translucency = scenery.sceneryTranslucency
-        let wash = ScenerySettingsFile.washScale(forTranslucency: translucency)
+        let wash = GlassLayering.washAlpha(
+            base: GlassLayering.chatWashBase(colorScheme), translucency: translucency)
         SceneryImageView(
             scenery: scenery,
             photo: photo,
             variant: .heroBlurChat,
             setId: setId,
             fallbackSeed: fallbackSeed)
-            // Fade photo/gradient only; wash overlays stay above for contrast.
-            .opacity(translucency)
+            .opacity(
+                GlassLayering.photoOpacity(translucency: translucency, washAlpha: wash))
             .overlay(
                 colorScheme == .dark
-                    ? Color.black.opacity(0.50 * wash)
-                    : Color.white.opacity(0.58 * wash))
+                    ? Color.black.opacity(wash)
+                    : Color.white.opacity(wash))
             // Slightly heavier at the top so header text always clears the
-            // brightest part of a sky.
+            // brightest part of a sky. Edge tint only — it rides the same
+            // translucency so it can't reintroduce an opaque pane.
             .overlay(
                 LinearGradient(
                     colors: [
-                        washEdge.opacity(0.35 * wash), .clear, .clear,
-                        washEdge.opacity(0.25 * wash),
+                        washEdge.opacity(0.35 * translucency), .clear, .clear,
+                        washEdge.opacity(0.25 * translucency),
                     ],
                     startPoint: .top, endPoint: .bottom))
             .clipped()
