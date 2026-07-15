@@ -118,11 +118,14 @@ export function PluginSettingsPage({ pluginId, settingsSchema }: PluginSettingsP
       setError("Could not load settings.");
       return;
     }
-    // `declared: false` means the plugin declares no schema (or is disabled), so
-    // there is nothing to render — distinct from "declared but empty".
+    // `declared: false` means the plugin declares no schema, or is not installed —
+    // distinct from "declared but empty". It does NOT mean disabled: repair is
+    // deliberately reachable without a live runtime, which is the whole point of the
+    // declared-schema fallback, so saying "not currently enabled" sent the user to
+    // re-enable a plugin that was already enabled.
     if (!result.value.declared) {
       setDraft(null);
-      setError("This plugin does not expose settings, or is not currently enabled.");
+      setError("This plugin does not expose settings, or is not installed.");
       return;
     }
     setDraft({

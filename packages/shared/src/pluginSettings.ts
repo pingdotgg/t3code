@@ -361,8 +361,13 @@ export const fingerprintSettingsSchema = (schema: SettingsSchema): string => {
     // when a DESCRIPTION or title changed — so a documentation-only plugin update
     // marked every user's stored settings incompatible and bricked their config —
     // and it changed on mere field REORDERING, which affects nothing. Sorting by key
-    // removes the ordering sensitivity; projecting to (type, required) removes the
-    // cosmetic sensitivity.
+    // removes the ordering sensitivity; dropping the presentation keywords removes
+    // the cosmetic sensitivity.
+    //
+    // It does NOT reduce a field to its (type, required) pair — that was the first
+    // attempt, and it collided: String, Literals(["a","b"]) and Literals(["a","c"])
+    // all fingerprinted identically, so a schema change between them looked like no
+    // change at all. Every CONSTRAINING keyword is kept.
     //
     // Adding or removing a decoding default IS still detected, because a defaulted
     // field drops out of `required`. Changing a default's VALUE is deliberately NOT

@@ -276,7 +276,7 @@ export const make = Effect.fn("PluginManagementRpcHandlers.make")(function* () {
         return yield* Effect.fail(
           managementError(
             "settings-not-declared",
-            "This plugin does not declare settings, or is not currently enabled.",
+            "This plugin does not declare settings, or is not installed.",
           ),
         );
       }
