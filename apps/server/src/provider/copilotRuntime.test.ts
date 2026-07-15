@@ -47,7 +47,11 @@ describe("stopCopilotClient", () => {
 
       NodeAssert.equal(forceStopCalls, 1);
       NodeAssert.deepStrictEqual(error.cleanupErrors, [cleanupError]);
-      NodeAssert.match(error.message, /runtime shutdown timed out/);
+      NodeAssert.equal(
+        error.message,
+        "Copilot client cleanup was incomplete (cleanupErrors=1, gracefulStopFailures=0, forceStopFailures=0).",
+      );
+      NodeAssert.doesNotMatch(error.message, /runtime shutdown timed out/);
     }),
   );
 
@@ -81,7 +85,11 @@ describe("stopCopilotClient", () => {
       const error = yield* Fiber.join(stopFiber);
 
       NodeAssert.equal(forceStopCalls, 1);
-      NodeAssert.match(error.message, /timed out after 5 seconds/);
+      NodeAssert.equal(
+        error.message,
+        "Copilot client cleanup was incomplete (cleanupErrors=0, gracefulStopFailures=1, forceStopFailures=0).",
+      );
+      NodeAssert.doesNotMatch(error.message, /timed out after 5 seconds/);
       NodeAssert.match(String(error.stopCause), /timed out after 5 seconds/);
     }),
   );
