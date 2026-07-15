@@ -90,15 +90,23 @@ describe("findPluginSettingsSchemaViolations", () => {
   });
 
   // Every first-party provider parks non-renderable state (enabled: Boolean,
-  // customModels: Array) behind hidden:true. Validating hidden fields would
-  // reject all five real provider schemas — see the regression test below.
-  it("ignores hidden fields regardless of their type", () => {
+  // customModels: Array) behind hidden:true. Validating hidden fields against the
+  // control vocabulary would reject all five real provider schemas.
+  //
+  // They carry decoding defaults, which is what makes them satisfiable without the
+  // form. A hidden field with NO default is a different case and IS rejected — see
+  // "hidden field configurability" below.
+  it("ignores the TYPE of hidden fields that decoding can satisfy", () => {
     const schema = Schema.Struct({
       shown: Schema.String,
       customModels: Schema.Array(Schema.String).pipe(
+        Schema.withDecodingDefault(Effect.succeed([])),
         Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
       ),
-      retries: Schema.Number.pipe(Schema.annotateKey({ providerSettingsForm: { hidden: true } })),
+      retries: Schema.Number.pipe(
+        Schema.withDecodingDefault(Effect.succeed(3)),
+        Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+      ),
     }) as unknown as SettingsSchema;
     expect(findPluginSettingsSchemaViolations(schema)).toEqual([]);
   });
@@ -122,6 +130,42 @@ describe("findPluginSettingsSchemaViolations", () => {
     const schema = Schema.Struct({
       baseUrl: Schema.String.pipe(
         Schema.withDecodingDefault(Effect.succeed("https://example.com")),
+      ),
+    }) as unknown as SettingsSchema;
+    expect(findPluginSettingsSchemaViolations(schema)).toEqual([]);
+  });
+});
+
+describe("hidden field configurability", () => {
+  // A hidden field the form cannot supply, and decoding cannot fill in, makes the
+  // plugin permanently unconfigurable: the form omits it, so every save fails
+  // validation forever with no way for the user to fix it.
+  it("rejects a hidden field that is required with no decoding default", () => {
+    const schema = Schema.Struct({
+      shown: Schema.String,
+      token: Schema.String.pipe(Schema.annotateKey({ providerSettingsForm: { hidden: true } })),
+    }) as unknown as SettingsSchema;
+    expect(findPluginSettingsSchemaViolations(schema).map((v) => v.field)).toEqual(["token"]);
+  });
+
+  // This is how every first-party provider parks non-renderable state, so it must
+  // stay legal — the default is what makes the field satisfiable without the form.
+  it("accepts a hidden field carrying a decoding default", () => {
+    const schema = Schema.Struct({
+      shown: Schema.String,
+      customModels: Schema.Array(Schema.String).pipe(
+        Schema.withDecodingDefault(Effect.succeed([])),
+        Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+      ),
+    }) as unknown as SettingsSchema;
+    expect(findPluginSettingsSchemaViolations(schema)).toEqual([]);
+  });
+
+  it("accepts a hidden optional field", () => {
+    const schema = Schema.Struct({
+      shown: Schema.String,
+      note: Schema.optionalKey(
+        Schema.String.pipe(Schema.annotateKey({ providerSettingsForm: { hidden: true } })),
       ),
     }) as unknown as SettingsSchema;
     expect(findPluginSettingsSchemaViolations(schema)).toEqual([]);

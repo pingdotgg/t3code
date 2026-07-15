@@ -130,15 +130,33 @@ export const findPluginSettingsSchemaViolations = (
     return [{ field: "<schema>", reason: "must declare at least one field" }];
   }
 
+  const required = new Set(
+    Array.isArray(root["required"]) ? (root["required"] as ReadonlyArray<unknown>) : [],
+  );
+
   const violations: Array<PluginSettingsSchemaViolation> = [];
   for (const [key, fieldSchema] of Object.entries(schema.fields)) {
     const annotation = readSettingsFormAnnotation(fieldSchema);
-    // Hidden fields are never rendered (`ProviderSettingsForm` drops them before
-    // building a field model), so the control vocabulary does not constrain them.
-    // This is load-bearing, not a nicety: every first-party provider parks
-    // non-renderable state (`enabled: Boolean`, `customModels: Array`) in the same
-    // schema behind `hidden: true`. Validating hidden fields would reject all five.
-    if (annotation.hidden === true) continue;
+    if (annotation.hidden === true) {
+      // A hidden field the form can never supply, and that decoding cannot fill in,
+      // makes the plugin unconfigurable: the form omits it, so EVERY write fails
+      // validation forever. Reject it here rather than shipping a settings page that
+      // cannot be saved. (A hidden field WITH a decoding default is fine — that is
+      // how every first-party provider parks non-renderable state like
+      // `enabled: Boolean` / `customModels: Array`, and those are absent from
+      // `required`.)
+      if (required.has(key)) {
+        violations.push({
+          field: key,
+          reason:
+            "is hidden and required with no decoding default, so the settings form can never supply it and every save would fail",
+        });
+      }
+      // Otherwise hidden fields are never rendered (`ProviderSettingsForm` drops
+      // them before building a field model), so the control vocabulary does not
+      // constrain them.
+      continue;
+    }
 
     const control: ProviderSettingsFormControl = annotation.control ?? "text";
     const expected = CONTROL_JSON_TYPE[control];
