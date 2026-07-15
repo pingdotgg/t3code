@@ -164,9 +164,10 @@ struct RootView: View {
                             provider: thread.provider,
                             deviceID: model.deviceID)
                     } label: {
-                        Label(
-                            "New \(thread.provider.displayName) Session",
-                            systemImage: "plus.bubble")
+                        ProviderLabel(
+                            provider: thread.provider,
+                            modelID: thread.modelID,
+                            title: "New \(thread.provider.displayName) Session")
                     }
 
                     Menu("Other Provider") {
@@ -178,7 +179,7 @@ struct RootView: View {
                                     provider: provider,
                                     deviceID: model.deviceID)
                             } label: {
-                                Label(provider.displayName, systemImage: "bolt")
+                                ProviderLabel(provider: provider)
                             }
                             .disabled(!model.canCreateThread(with: provider))
                         }

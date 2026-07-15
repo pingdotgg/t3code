@@ -385,6 +385,11 @@ private struct ArchiveSettingsTab: View {
 
                     ForEach(filteredThreads) { thread in
                         HStack {
+                            ProviderIcon(
+                                provider: thread.provider, modelID: thread.modelID, size: 16
+                            )
+                            .foregroundStyle(.secondary)
+                            .frame(width: 20)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(thread.title)
                                     .lineLimit(1)
@@ -514,7 +519,7 @@ private struct ProviderRow: View {
 
     var body: some View {
         HStack {
-            Image(systemName: provider.kind.symbolName)
+            ProviderIcon(provider: provider.kind, size: 16)
                 .frame(width: 20)
                 .foregroundStyle(.secondary)
 
@@ -616,20 +621,6 @@ private struct AvailabilityBadge: View {
 }
 
 private extension ProviderKind {
-    var symbolName: String {
-        switch self {
-        case .claude: "sparkles"
-        case .claudeWork: "briefcase.fill"
-        case .claudex: "arrow.triangle.branch"
-        case .claudeSynthero: "link"
-        case .codex: "chevron.left.forwardslash.chevron.right"
-        case .grok: "bolt"
-        case .fugu: "fish"
-        case .opencode: "curlybraces"
-        case .legacyCursor: "exclamationmark.triangle"
-        }
-    }
-
     var cliCommand: String {
         switch self {
         case .claude: "claude"

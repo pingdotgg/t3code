@@ -146,7 +146,7 @@ struct NewSessionSheet: View {
                     Text("No providers found").tag(provider)
                 }
                 ForEach(configuredProviderKinds) { kind in
-                    Text(kind.displayName).tag(kind)
+                    ProviderLabel(provider: kind).tag(kind)
                 }
             }
             .onChange(of: provider) {

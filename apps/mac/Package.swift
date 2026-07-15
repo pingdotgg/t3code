@@ -35,6 +35,8 @@ let package = Package(
             resources: [
                 .process("Vendor/HighlightSwift/HighlightJS"),
                 .process("Vendor/HighlightSwift/HighlightSwift-LICENSE.md"),
+                .copy("Vendor/ProviderIcons/SVG"),
+                .copy("Vendor/ProviderIcons/LICENSES.md"),
             ]
         ),
         .testTarget(

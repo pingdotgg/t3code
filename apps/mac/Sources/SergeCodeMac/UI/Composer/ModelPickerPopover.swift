@@ -13,8 +13,7 @@ struct ModelPickerMenu: View {
             isPresented.toggle()
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: "cpu")
-                    .font(.system(size: 13, weight: .medium))
+                ProviderIcon(provider: thread.provider, modelID: thread.modelID, size: 14)
                     .foregroundStyle(.secondary)
                 Text(currentModelName)
                     .font(.callout.weight(.medium))
@@ -194,7 +193,7 @@ private struct ModelPickerPopoverContent: View {
 
             ForEach(availableProviders) { provider in
                 ProviderFilterRow(
-                    icon: provider.modelPickerSymbolName,
+                    provider: provider,
                     title: provider.displayName,
                     count: allItems.count { $0.option.provider == provider },
                     isSelected: providerFilter == .provider(provider)
@@ -288,7 +287,8 @@ private struct ModelPickerPopoverContent: View {
 
     private func providerHeader(_ provider: ProviderKind) -> some View {
         HStack(spacing: 6) {
-            Image(systemName: provider.modelPickerSymbolName)
+            ProviderIcon(provider: provider, size: 12)
+                .foregroundStyle(.secondary)
             Text(provider.displayName)
         }
         .font(.caption.weight(.semibold))
@@ -317,7 +317,8 @@ private struct ModelPickerPopoverContent: View {
 }
 
 private struct ProviderFilterRow: View {
-    let icon: String
+    let icon: String?
+    let provider: ProviderKind?
     let title: String
     let count: Int
     let isSelected: Bool
@@ -325,11 +326,40 @@ private struct ProviderFilterRow: View {
 
     @UIState private var isHovering = false
 
+    init(
+        icon: String, title: String, count: Int, isSelected: Bool, action: @escaping () -> Void
+    ) {
+        self.icon = icon
+        self.provider = nil
+        self.title = title
+        self.count = count
+        self.isSelected = isSelected
+        self.action = action
+    }
+
+    init(
+        provider: ProviderKind, title: String, count: Int, isSelected: Bool,
+        action: @escaping () -> Void
+    ) {
+        self.icon = nil
+        self.provider = provider
+        self.title = title
+        self.count = count
+        self.isSelected = isSelected
+        self.action = action
+    }
+
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
-                Image(systemName: icon)
-                    .font(.system(size: 11, weight: .semibold))
+                Group {
+                    if let provider {
+                        ProviderIcon(provider: provider, size: 13)
+                    } else if let icon {
+                        Image(systemName: icon)
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                }
                     .foregroundStyle(isSelected ? AlpineTheme.forest : Color.secondary)
                     .frame(width: 22, height: 22)
                     .background(
@@ -368,15 +398,17 @@ private struct ModelPickerRow: View {
     var body: some View {
         Button(action: onSelect) {
             HStack(spacing: 10) {
-                Image(systemName: item.option.provider.modelPickerSymbolName)
-                    .font(.system(size: 13, weight: .semibold))
+                ProviderIcon(
+                    provider: item.option.provider,
+                    modelID: item.option.modelID,
+                    size: 15
+                )
                     .foregroundStyle(isSelected ? AlpineTheme.forest : Color.secondary)
                     .frame(width: 32, height: 32)
                     .background(
                         isSelected ? AlpineTheme.accent.opacity(0.9) : Color.secondary.opacity(0.09),
                         in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.control, style: .continuous)
                     )
-
                 VStack(alignment: .leading, spacing: 2) {
                     Text(item.option.displayName)
                         .font(.callout.weight(.medium))
@@ -438,21 +470,5 @@ private struct ModelPickerRow: View {
         if isHovering { return Color.primary.opacity(0.075) }
         if isSelected { return AlpineTheme.accent.opacity(0.14) }
         return .clear
-    }
-}
-
-extension ProviderKind {
-    var modelPickerSymbolName: String {
-        switch self {
-        case .claude: "sparkles"
-        case .claudeWork: "briefcase.fill"
-        case .claudex: "arrow.triangle.branch"
-        case .claudeSynthero: "link"
-        case .codex: "chevron.left.forwardslash.chevron.right"
-        case .grok: "bolt"
-        case .fugu: "fish"
-        case .opencode: "curlybraces"
-        case .legacyCursor: "exclamationmark.triangle"
-        }
     }
 }

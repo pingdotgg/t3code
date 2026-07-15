@@ -46,7 +46,7 @@ struct ChatHeaderView: View {
 
             Spacer()
 
-            ProviderBadge(provider: thread.provider)
+            ProviderBadge(provider: thread.provider, modelID: thread.modelID)
             StatusBadge(status: thread.status, stalled: thread.isStalled)
 
             if let photo = scenery.photo(for: threadKey) {
@@ -85,26 +85,12 @@ struct ChatHeaderView: View {
 
 private struct ProviderBadge: View {
     let provider: ProviderKind
+    let modelID: String?
 
     var body: some View {
-        Label(provider.displayName, systemImage: icon)
-            .labelStyle(.titleAndIcon)
+        ProviderLabel(provider: provider, modelID: modelID, iconSize: 13)
             .font(.caption)
             .foregroundStyle(.primary.opacity(0.76))
-    }
-
-    private var icon: String {
-        switch provider {
-        case .claude: "sparkle"
-        case .claudeWork: "briefcase.fill"
-        case .claudex: "arrow.triangle.branch"
-        case .claudeSynthero: "link"
-        case .codex: "chevron.left.forwardslash.chevron.right"
-        case .grok: "bolt"
-        case .fugu: "fish"
-        case .opencode: "shippingbox"
-        case .legacyCursor: "exclamationmark.triangle"
-        }
     }
 }
 
