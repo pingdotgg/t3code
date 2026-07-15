@@ -1,7 +1,6 @@
 import {
   EventId,
   MessageId,
-  ProviderDriverKind,
   ThreadId,
   TurnId,
   type OrchestrationThreadActivity,
@@ -311,27 +310,6 @@ describe("derivePendingUserInputs", () => {
 });
 
 describe("deriveActivePlanState", () => {
-  it("does not expose Copilot task updates as a plan", () => {
-    const activities: OrchestrationThreadActivity[] = [
-      makeActivity({
-        id: "copilot-tasks",
-        createdAt: "2026-02-23T00:00:01.000Z",
-        kind: "turn.plan.updated",
-        summary: "Plan updated",
-        tone: "info",
-        turnId: "turn-1",
-        payload: {
-          explanation: "Copilot Tasks",
-          plan: [{ step: "Inspect implementation", status: "inProgress" }],
-        },
-      }),
-    ];
-
-    expect(
-      deriveActivePlanState(activities, TurnId.make("turn-1"), ProviderDriverKind.make("copilot")),
-    ).toBeNull();
-  });
-
   it("returns the latest plan update for the active turn", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -713,41 +691,27 @@ describe("workEntryIndicatesToolFailure", () => {
 });
 
 describe("deriveWorkLogEntries", () => {
-  it("hides noisy resolved approval and plan update rows for Copilot only", () => {
+  it("omits resolved approval entries", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
         id: "approval-requested",
+        createdAt: "2026-02-23T00:00:01.000Z",
         kind: "approval.requested",
-        summary: "Command approval requested",
+        summary: "Approval requested",
         tone: "approval",
-        payload: { requestId: "req-1", requestKind: "command" },
       }),
       makeActivity({
         id: "approval-resolved",
+        createdAt: "2026-02-23T00:00:02.000Z",
         kind: "approval.resolved",
         summary: "Approval resolved",
         tone: "approval",
-        payload: { requestId: "req-1", requestKind: "command" },
-      }),
-      makeActivity({
-        id: "plan-updated",
-        kind: "turn.plan.updated",
-        summary: "Plan updated",
-        tone: "info",
-        payload: {
-          plan: [{ step: "Implement the change", status: "inProgress" }],
-        },
       }),
     ];
 
-    expect(
-      deriveWorkLogEntries(activities, ProviderDriverKind.make("copilot")).map((entry) => entry.id),
-    ).toEqual(["approval-requested"]);
-    expect(
-      deriveWorkLogEntries(activities, ProviderDriverKind.make("codex"))
-        .map((entry) => entry.id)
-        .toSorted(),
-    ).toEqual(["approval-requested", "approval-resolved", "plan-updated"]);
+    expect(deriveWorkLogEntries(activities).map((entry) => entry.id)).toEqual([
+      "approval-requested",
+    ]);
   });
 
   it("omits tool started entries and keeps completed entries", () => {
@@ -1175,38 +1139,6 @@ describe("deriveWorkLogEntries", () => {
       detail: '{ "dev": "vite dev --port 3000" }',
       itemType: "command_execution",
       toolTitle: "bash",
-    });
-  });
-
-  it("uses Copilot command metadata instead of command output detail", () => {
-    const activities: OrchestrationThreadActivity[] = [
-      makeActivity({
-        id: "copilot-command-complete",
-        kind: "tool.completed",
-        summary: "Ran command",
-        payload: {
-          itemType: "command_execution",
-          title: "Ran command",
-          status: "completed",
-          detail: " M apps/server/src/provider/Layers/CopilotAdapter.ts",
-          data: {
-            toolCallId: "tool-command",
-            toolName: "bash",
-            command: "git status --short",
-            result: {
-              content: " M apps/server/src/provider/Layers/CopilotAdapter.ts",
-            },
-          },
-        },
-      }),
-    ];
-
-    const [entry] = deriveWorkLogEntries(activities);
-    expect(entry).toMatchObject({
-      command: "git status --short",
-      detail: "M apps/server/src/provider/Layers/CopilotAdapter.ts",
-      itemType: "command_execution",
-      toolTitle: "Ran command",
     });
   });
 

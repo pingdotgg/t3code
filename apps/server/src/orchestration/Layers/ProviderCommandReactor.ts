@@ -41,7 +41,6 @@ import {
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
-import { canReplaceThreadTitle } from "../threadTitle.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
@@ -87,6 +86,7 @@ const turnStartKeyForEvent = (event: ProviderIntentEvent): string =>
 const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
+const DEFAULT_THREAD_TITLE = "New thread";
 
 export function providerErrorLabel(value: string | undefined): string {
   const normalized = value?.trim();
@@ -101,6 +101,18 @@ export function providerErrorLabelFromInstanceHint(input: {
   return providerErrorLabel(
     input.instanceId ?? input.modelSelectionInstanceId ?? input.sessionProvider,
   );
+}
+
+function canReplaceThreadTitle(currentTitle: string, titleSeed?: string): boolean {
+  const trimmedCurrentTitle = currentTitle.trim();
+  if (trimmedCurrentTitle === DEFAULT_THREAD_TITLE) {
+    return true;
+  }
+
+  const trimmedTitleSeed = titleSeed?.trim();
+  return trimmedTitleSeed !== undefined && trimmedTitleSeed.length > 0
+    ? trimmedCurrentTitle === trimmedTitleSeed
+    : false;
 }
 
 function findProviderAdapterRequestError(
@@ -654,6 +666,7 @@ const make = Effect.gen(function* () {
     yield* Effect.gen(function* () {
       const { textGenerationModelSelection: modelSelection } =
         yield* serverSettingsService.getSettings;
+
       const generated = yield* textGeneration.generateBranchName({
         cwd,
         message: input.messageText,
@@ -698,6 +711,7 @@ const make = Effect.gen(function* () {
       yield* Effect.gen(function* () {
         const { textGenerationModelSelection: modelSelection } =
           yield* serverSettingsService.getSettings;
+
         const generated = yield* textGeneration.generateThreadTitle({
           cwd: input.cwd,
           message: input.messageText,
@@ -708,7 +722,7 @@ const make = Effect.gen(function* () {
 
         const thread = yield* resolveThread(input.threadId);
         if (!thread) return;
-        if (!canReplaceThreadTitle(thread.title, input.titleSeed, input.messageText)) {
+        if (!canReplaceThreadTitle(thread.title, input.titleSeed)) {
           return;
         }
 
@@ -771,23 +785,19 @@ const make = Effect.gen(function* () {
         ...(event.payload.titleSeed !== undefined ? { titleSeed: event.payload.titleSeed } : {}),
       };
 
-      yield* firstTurnAuxiliaryWorker.enqueue(
-        maybeGenerateAndRenameWorktreeBranchForFirstTurn({
-          threadId: event.payload.threadId,
-          branch: thread.branch,
-          worktreePath: thread.worktreePath,
-          ...generationInput,
-        }),
-      );
+      yield* maybeGenerateAndRenameWorktreeBranchForFirstTurn({
+        threadId: event.payload.threadId,
+        branch: thread.branch,
+        worktreePath: thread.worktreePath,
+        ...generationInput,
+      }).pipe(Effect.forkScoped);
 
-      if (canReplaceThreadTitle(thread.title, event.payload.titleSeed, message.text)) {
-        yield* firstTurnAuxiliaryWorker.enqueue(
-          maybeGenerateThreadTitleForFirstTurn({
-            threadId: event.payload.threadId,
-            cwd: generationCwd,
-            ...generationInput,
-          }),
-        );
+      if (canReplaceThreadTitle(thread.title, event.payload.titleSeed)) {
+        yield* maybeGenerateThreadTitleForFirstTurn({
+          threadId: event.payload.threadId,
+          cwd: generationCwd,
+          ...generationInput,
+        }).pipe(Effect.forkScoped);
       }
     }
 
@@ -1048,9 +1058,6 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const firstTurnAuxiliaryWorker = yield* makeDrainableWorker((job: Effect.Effect<void>) => job, {
-    concurrency: "unbounded",
-  });
   const worker = yield* makeDrainableWorker(processDomainEventSafely);
 
   const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
@@ -1074,7 +1081,7 @@ const make = Effect.gen(function* () {
 
   return {
     start,
-    drain: worker.drain.pipe(Effect.andThen(firstTurnAuxiliaryWorker.drain), Effect.asVoid),
+    drain: worker.drain,
   } satisfies ProviderCommandReactorShape;
 });
 

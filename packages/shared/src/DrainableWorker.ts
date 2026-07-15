@@ -28,11 +28,6 @@ export interface DrainableWorker<A> {
   readonly drain: Effect.Effect<void>;
 }
 
-export interface DrainableWorkerOptions {
-  /** Process queued items concurrently. Sequential processing remains the default. */
-  readonly concurrency?: "unbounded" | undefined;
-}
-
 /**
  * Create a drainable worker that processes items from an unbounded queue.
  *
@@ -44,33 +39,21 @@ export interface DrainableWorkerOptions {
  */
 export const makeDrainableWorker = <A, E, R>(
   process: (item: A) => Effect.Effect<void, E, R>,
-  options?: DrainableWorkerOptions,
 ): Effect.Effect<DrainableWorker<A>, never, Scope.Scope | R> =>
   Effect.gen(function* () {
     const queue = yield* Effect.acquireRelease(TxQueue.unbounded<A>(), TxQueue.shutdown);
     const outstanding = yield* TxRef.make(0);
 
-    const processNext = TxQueue.take(queue).pipe(
-      Effect.flatMap((item) =>
+    yield* TxQueue.take(queue).pipe(
+      Effect.tap((a) =>
         Effect.ensuring(
-          process(item),
+          process(a),
           TxRef.update(outstanding, (n) => n - 1),
         ),
       ),
+      Effect.forever,
+      Effect.forkScoped,
     );
-
-    yield* (
-      options?.concurrency === "unbounded"
-        ? TxQueue.take(queue).pipe(
-            Effect.flatMap((item) =>
-              Effect.ensuring(
-                process(item),
-                TxRef.update(outstanding, (n) => n - 1),
-              ).pipe(Effect.forkScoped),
-            ),
-          )
-        : processNext
-    ).pipe(Effect.forever, Effect.forkScoped);
 
     const drain: DrainableWorker<A>["drain"] = TxRef.get(outstanding).pipe(
       Effect.tap((n) => (n > 0 ? Effect.txRetry : Effect.void)),

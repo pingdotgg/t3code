@@ -148,8 +148,5 @@ function detailForPhase(
   if (phase === "running" && thread.session?.providerName) {
     return `${thread.session.providerName} is active.`;
   }
-  if (phase === "stale") {
-    return "No lifecycle updates received recently.";
-  }
   return undefined;
 }

@@ -9,7 +9,13 @@ import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";
 import ChatMarkdown from "./ChatMarkdown";
-import { ChevronDownIcon, ChevronRightIcon, EllipsisIcon } from "lucide-react";
+import {
+  CheckIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  EllipsisIcon,
+  LoaderIcon,
+} from "lucide-react";
 import { cn } from "~/lib/utils";
 import type { ActivePlanState } from "../session-logic";
 import type { LatestProposedPlanState } from "../session-logic";
@@ -19,15 +25,35 @@ import {
   buildProposedPlanMarkdownFilename,
   normalizePlanMarkdownForExport,
   downloadPlanAsTextFile,
-  extractProposedPlanTasks,
   stripDisplayedPlanMarkdown,
 } from "../proposedPlan";
-import { PlanTaskList } from "./PlanTaskList";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
 import { projectEnvironment } from "~/state/projects";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useAtomCommand } from "~/state/use-atom-command";
+
+function stepStatusIcon(status: string): React.ReactNode {
+  if (status === "completed") {
+    return (
+      <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-success/10 text-success-foreground">
+        <CheckIcon className="size-3" />
+      </span>
+    );
+  }
+  if (status === "inProgress") {
+    return (
+      <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+        <LoaderIcon className="size-3 animate-spin" />
+      </span>
+    );
+  }
+  return (
+    <span className="flex size-5 shrink-0 items-center justify-center rounded-full border border-border/60 bg-muted/30">
+      <span className="size-1.5 rounded-full bg-muted-foreground/30" />
+    </span>
+  );
+}
 
 interface PlanSidebarProps {
   activePlan: ActivePlanState | null;
@@ -62,8 +88,6 @@ const PlanSidebar = memo(function PlanSidebar({
   const planMarkdown = activeProposedPlan?.planMarkdown ?? null;
   const displayedPlanMarkdown = planMarkdown ? stripDisplayedPlanMarkdown(planMarkdown) : null;
   const planTitle = planMarkdown ? proposedPlanTitle(planMarkdown) : null;
-  const planTasks =
-    activePlan?.steps ?? (planMarkdown ? extractProposedPlanTasks(planMarkdown) : []);
 
   const handleCopyPlan = useCallback(() => {
     if (!planMarkdown) return;
@@ -179,7 +203,37 @@ const PlanSidebar = memo(function PlanSidebar({
           ) : null}
 
           {/* Plan Steps */}
-          {planTasks.length > 0 ? <PlanTaskList tasks={planTasks} /> : null}
+          {activePlan && activePlan.steps.length > 0 ? (
+            <div className="space-y-1">
+              <p className="mb-2 text-[10px] font-semibold tracking-widest text-muted-foreground/40 uppercase">
+                Steps
+              </p>
+              {activePlan.steps.map((step) => (
+                <div
+                  key={`${step.status}:${step.step}`}
+                  className={cn(
+                    "flex items-center gap-2.5 rounded-lg px-2.5 py-2 transition-colors duration-200",
+                    step.status === "inProgress" && "bg-blue-500/5",
+                    step.status === "completed" && "bg-emerald-500/5",
+                  )}
+                >
+                  {stepStatusIcon(step.status)}
+                  <p
+                    className={cn(
+                      "text-[13px] leading-snug",
+                      step.status === "completed"
+                        ? "text-muted-foreground/50 line-through decoration-muted-foreground/20"
+                        : step.status === "inProgress"
+                          ? "text-foreground/90"
+                          : "text-muted-foreground/70",
+                    )}
+                  >
+                    {step.step}
+                  </p>
+                </div>
+              ))}
+            </div>
+          ) : null}
 
           {/* Proposed Plan Markdown */}
           {planMarkdown ? (
@@ -195,7 +249,7 @@ const PlanSidebar = memo(function PlanSidebar({
                   <ChevronRightIcon className="size-3 shrink-0 text-muted-foreground/40 transition-transform" />
                 )}
                 <span className="text-[10px] font-semibold tracking-widest text-muted-foreground/40 uppercase group-hover:text-muted-foreground/60">
-                  {planTasks.length > 0 ? "Details" : (planTitle ?? "Full Plan")}
+                  {planTitle ?? "Full Plan"}
                 </span>
               </button>
               {proposedPlanExpanded ? (

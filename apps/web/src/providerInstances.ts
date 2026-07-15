@@ -260,51 +260,20 @@ export function getProviderInstanceModels(
  * as a fallback so downstream code can still send a turn.
  */
 export function resolveSelectableProviderInstance(
-  entries: ReadonlyArray<ProviderInstanceEntry>,
+  providers: ReadonlyArray<ServerProvider>,
   instanceId: ProviderInstanceId | undefined,
 ): ProviderInstanceId | undefined {
   if (instanceId === undefined) {
-    return entries.find((entry) => entry.enabled && entry.isAvailable)?.instanceId;
+    return deriveProviderInstanceEntries(providers).find(
+      (entry) => entry.enabled && entry.isAvailable,
+    )?.instanceId;
   }
+  const entries = deriveProviderInstanceEntries(providers);
   const requested = entries.find((entry) => entry.instanceId === instanceId);
   if (requested && requested.enabled && requested.isAvailable) {
     return instanceId;
   }
   return entries.find((entry) => entry.enabled && entry.isAvailable)?.instanceId;
-}
-
-/** Resolve the composer target without crossing a thread's provider or continuation lock. */
-export function resolveComposerProviderInstance(input: {
-  entries: ReadonlyArray<ProviderInstanceEntry>;
-  candidates: ReadonlyArray<string | null | undefined>;
-  selectedProvider: ProviderDriverKind;
-  lockedProvider?: ProviderDriverKind | null | undefined;
-  lockedContinuationGroupKey?: string | null | undefined;
-}): ProviderInstanceId | undefined {
-  const isSelectable = (entry: ProviderInstanceEntry): boolean =>
-    entry.enabled &&
-    entry.isAvailable &&
-    (!input.lockedProvider || entry.driverKind === input.lockedProvider) &&
-    (!input.lockedContinuationGroupKey ||
-      entry.continuationGroupKey === input.lockedContinuationGroupKey);
-
-  for (const candidate of input.candidates) {
-    if (!candidate) {
-      continue;
-    }
-    const match = input.entries.find(
-      (entry) => entry.instanceId === candidate && isSelectable(entry),
-    );
-    if (match) {
-      return match.instanceId;
-    }
-  }
-
-  return (
-    input.entries.find(
-      (entry) => isSelectable(entry) && entry.driverKind === input.selectedProvider,
-    )?.instanceId ?? input.entries.find(isSelectable)?.instanceId
-  );
 }
 
 /**

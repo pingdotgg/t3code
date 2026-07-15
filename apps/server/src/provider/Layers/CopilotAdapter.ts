@@ -752,10 +752,6 @@ function completedCopilotTaskStatus(
   }
 }
 
-function readString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
-}
-
 function copilotTaskId(task: CopilotTaskInfo): string | undefined {
   return task.id;
 }
@@ -2381,23 +2377,6 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           return;
         }
         await emitSessionIdleStateChanged(context, event);
-        return;
-      }
-      case "session.title_changed": {
-        const title = trimOrUndefined(event.data.title);
-        if (!title) {
-          return;
-        }
-        await emitAsync({
-          ...createBaseEvent({
-            threadId: context.threadId,
-            raw: event,
-          }),
-          type: "thread.metadata.updated",
-          payload: {
-            name: title,
-          },
-        });
         return;
       }
       case "session.warning": {

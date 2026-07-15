@@ -38,7 +38,6 @@ import {
   type ProviderRuntimeIngestionShape,
 } from "../Services/ProviderRuntimeIngestion.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { canReplaceThreadTitle } from "../threadTitle.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 
@@ -1150,16 +1149,10 @@ const make = Effect.gen(function* () {
     } as const;
   });
 
-  const getProviderSessionForThread = Effect.fn("getProviderSessionForThread")(function* (
-    threadId: ThreadId,
-  ) {
-    const sessions = yield* providerService.listSessions();
-    return sessions.find((entry) => entry.threadId === threadId);
-  });
-
   const getExpectedProviderTurnIdForThread = Effect.fn("getExpectedProviderTurnIdForThread")(
     function* (threadId: ThreadId) {
-      const session = yield* getProviderSessionForThread(threadId);
+      const sessions = yield* providerService.listSessions();
+      const session = sessions.find((entry) => entry.threadId === threadId);
       return session?.activeTurnId;
     },
   );
@@ -1228,31 +1221,10 @@ const make = Effect.gen(function* () {
       const now = event.createdAt;
       const eventTurnId = toTurnId(event.turnId);
       const activeTurnId = thread.session?.activeTurnId ?? null;
-      const lifecycleEventTurnId = eventTurnId;
-      const providerSessionForUnscopedCompletion =
-        event.type === "turn.completed" && eventTurnId === undefined
-          ? yield* getProviderSessionForThread(thread.id).pipe(
-              Effect.catchCause((cause) =>
-                Effect.logWarning(
-                  "provider runtime ingestion could not load provider session for unscoped turn completion",
-                  {
-                    threadId: thread.id,
-                    cause: Cause.pretty(cause),
-                  },
-                ).pipe(Effect.as(undefined)),
-              ),
-            )
-          : undefined;
-      const providerActiveTurnId = providerSessionForUnscopedCompletion?.activeTurnId;
-      const unscopedCompletionHasNoProviderSession =
-        event.type === "turn.completed" &&
-        eventTurnId === undefined &&
-        providerSessionForUnscopedCompletion === undefined;
 
       const conflictsWithActiveTurn =
-        activeTurnId !== null &&
-        lifecycleEventTurnId !== undefined &&
-        !sameId(activeTurnId, lifecycleEventTurnId);
+        activeTurnId !== null && eventTurnId !== undefined && !sameId(activeTurnId, eventTurnId);
+      const missingTurnForActiveTurn = activeTurnId !== null && eventTurnId === undefined;
 
       // A turn.started that conflicts with the active turn is legitimate when
       // the server itself has a turn start pending for this thread AND the
@@ -1283,18 +1255,12 @@ const make = Effect.gen(function* () {
           case "turn.started":
             return !conflictsWithActiveTurn || conflictingTurnStartIsPendingTurnStart;
           case "turn.completed":
-            if (conflictsWithActiveTurn) {
+            if (conflictsWithActiveTurn || missingTurnForActiveTurn) {
               return false;
             }
-            if (activeTurnId !== null && lifecycleEventTurnId === undefined) {
-              return (
-                !unscopedCompletionHasNoProviderSession &&
-                (providerActiveTurnId === undefined || sameId(activeTurnId, providerActiveTurnId))
-              );
-            }
             // Only the active turn may close the lifecycle state.
-            if (activeTurnId !== null && lifecycleEventTurnId !== undefined) {
-              return sameId(activeTurnId, lifecycleEventTurnId);
+            if (activeTurnId !== null && eventTurnId !== undefined) {
+              return sameId(activeTurnId, eventTurnId);
             }
             // If no active turn is tracked, accept completion scoped to this thread.
             return true;
@@ -1302,53 +1268,6 @@ const make = Effect.gen(function* () {
             return true;
         }
       })();
-
-      const lifecycleGuardRejectionReason = (() => {
-        if (shouldApplyThreadLifecycle) {
-          return null;
-        }
-        if (!STRICT_PROVIDER_LIFECYCLE_GUARD) {
-          return null;
-        }
-        if (event.type === "turn.started") {
-          return conflictsWithActiveTurn
-            ? "conflicting turn.started does not match active turn"
-            : "turn.started rejected by strict lifecycle guard";
-        }
-        if (event.type === "turn.completed") {
-          if (conflictsWithActiveTurn) {
-            return "conflicting turn.completed does not match active turn";
-          }
-          if (activeTurnId !== null && lifecycleEventTurnId === undefined) {
-            if (unscopedCompletionHasNoProviderSession) {
-              return "unscoped turn.completed rejected: provider session missing";
-            }
-            if (providerActiveTurnId !== undefined && !sameId(activeTurnId, providerActiveTurnId)) {
-              return "unscoped turn.completed rejected: provider active turn differs";
-            }
-          }
-          return "turn.completed rejected by strict lifecycle guard";
-        }
-        return "lifecycle event rejected by strict lifecycle guard";
-      })();
-
-      if (
-        lifecycleGuardRejectionReason !== null &&
-        (event.type === "turn.started" || event.type === "turn.completed")
-      ) {
-        yield* Effect.logWarning("provider runtime lifecycle event rejected", {
-          eventId: event.eventId,
-          eventType: event.type,
-          provider: event.provider,
-          threadId: thread.id,
-          reason: lifecycleGuardRejectionReason,
-          activeTurnId,
-          eventTurnId: lifecycleEventTurnId,
-          providerActiveTurnId: providerActiveTurnId ?? null,
-          strictLifecycleGuard: STRICT_PROVIDER_LIFECYCLE_GUARD,
-        });
-      }
-
       const acceptedTurnStartedSourcePlan =
         event.type === "turn.started" && shouldApplyThreadLifecycle
           ? yield* getSourceProposedPlanReferenceForAcceptedTurnStart(thread.id, eventTurnId)
@@ -1624,9 +1543,7 @@ const make = Effect.gen(function* () {
         const detailedThread = yield* getLoadedThreadDetail();
         const messages = detailedThread?.messages ?? [];
         const proposedPlans = detailedThread?.proposedPlans ?? [];
-        const turnId =
-          toTurnId(event.turnId) ??
-          (shouldApplyThreadLifecycle ? (activeTurnId ?? providerActiveTurnId ?? null) : null);
+        const turnId = toTurnId(event.turnId);
         if (turnId) {
           const assistantMessageIds = yield* getAssistantMessageIdsForTurn(thread.id, turnId);
           yield* Effect.forEach(
@@ -1691,11 +1608,7 @@ const make = Effect.gen(function* () {
         }
       }
 
-      if (
-        event.type === "thread.metadata.updated" &&
-        event.payload.name &&
-        canReplaceThreadTitle(thread.title)
-      ) {
+      if (event.type === "thread.metadata.updated" && event.payload.name) {
         yield* orchestrationEngine.dispatch({
           type: "thread.meta.update",
           commandId: yield* providerCommandId(event, "thread-meta-update"),

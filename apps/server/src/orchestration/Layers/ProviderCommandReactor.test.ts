@@ -22,7 +22,6 @@ import {
   TurnId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
@@ -144,7 +143,6 @@ describe("ProviderCommandReactor", () => {
   async function createHarness(input?: {
     readonly baseDir?: string;
     readonly threadModelSelection?: ModelSelection;
-    readonly textGenerationModelSelection?: ModelSelection;
     readonly sessionModelSwitch?: "unsupported" | "in-session";
     readonly requiresNewThreadForModelChange?: boolean;
   }) {
@@ -311,13 +309,7 @@ describe("ProviderCommandReactor", () => {
       getInstanceInfo: (instanceId) => {
         const raw = String(instanceId);
         const driverKind = ProviderDriverKind.make(
-          raw.startsWith("claude")
-            ? "claudeAgent"
-            : raw.startsWith("codex")
-              ? "codex"
-              : raw.startsWith("copilot")
-                ? "copilot"
-                : raw,
+          raw.startsWith("claude") ? "claudeAgent" : raw.startsWith("codex") ? "codex" : raw,
         );
         return Effect.succeed({
           instanceId,
@@ -376,13 +368,7 @@ describe("ProviderCommandReactor", () => {
           generateThreadTitle,
         }),
       ),
-      Layer.provideMerge(
-        ServerSettingsService.layerTest(
-          input?.textGenerationModelSelection !== undefined
-            ? { textGenerationModelSelection: input.textGenerationModelSelection }
-            : {},
-        ),
-      ),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -530,210 +516,6 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.title).toBe("Generated title");
   });
 
-  it("waits for first-turn thread title generation when draining", async () => {
-    const harness = await createHarness();
-    const now = "2026-01-01T00:00:00.000Z";
-    const seededTitle = "Please investigate reconnect failures after restar...";
-    const releaseTitleGeneration = await runtime!.runPromise(Deferred.make<void>());
-    harness.generateThreadTitle.mockReturnValue(
-      Deferred.await(releaseTitleGeneration).pipe(
-        Effect.as({
-          title: "Generated title",
-        }),
-      ),
-    );
-
-    await runtime!.runPromise(
-      harness.engine.dispatch({
-        type: "thread.meta.update",
-        commandId: CommandId.make("cmd-thread-title-drain-seed"),
-        threadId: ThreadId.make("thread-1"),
-        title: seededTitle,
-      }),
-    );
-
-    await runtime!.runPromise(
-      harness.engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.make("cmd-turn-start-title-drain"),
-        threadId: ThreadId.make("thread-1"),
-        message: {
-          messageId: asMessageId("user-message-title-drain"),
-          role: "user",
-          text: "Please investigate reconnect failures after restarting the session.",
-          attachments: [],
-        },
-        titleSeed: seededTitle,
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        createdAt: now,
-      }),
-    );
-
-    await waitFor(() => harness.generateThreadTitle.mock.calls.length === 1);
-    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
-
-    let drained = false;
-    const drainPromise = harness.drain().then(() => {
-      drained = true;
-    });
-    await runtime!.runPromise(Effect.yieldNow);
-    expect(drained).toBe(false);
-
-    await runtime!.runPromise(
-      Deferred.succeed(releaseTitleGeneration, undefined).pipe(Effect.orDie),
-    );
-    await drainPromise;
-
-    expect(harness.sendTurn).toHaveBeenCalledOnce();
-    const readModel = await harness.readModel();
-    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
-    expect(thread?.title).toBe("Generated title");
-  });
-
-  it("does not retry first-turn thread title generation failures", async () => {
-    const harness = await createHarness();
-    const now = "2026-01-01T00:00:00.000Z";
-    const seededTitle = "Please investigate reconnect failures after restar...";
-    harness.generateThreadTitle.mockReturnValueOnce(
-      Effect.fail(
-        new TextGenerationError({
-          operation: "generateThreadTitle",
-          detail: "transient provider error",
-        }),
-      ),
-    );
-
-    await runtime!.runPromise(
-      harness.engine.dispatch({
-        type: "thread.meta.update",
-        commandId: CommandId.make("cmd-thread-title-retry-seed"),
-        threadId: ThreadId.make("thread-1"),
-        title: seededTitle,
-      }),
-    );
-
-    await runtime!.runPromise(
-      harness.engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.make("cmd-turn-start-title-retry"),
-        threadId: ThreadId.make("thread-1"),
-        message: {
-          messageId: asMessageId("user-message-title-retry"),
-          role: "user",
-          text: "Please investigate reconnect failures after restarting the session.",
-          attachments: [],
-        },
-        titleSeed: seededTitle,
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        createdAt: now,
-      }),
-    );
-
-    await waitFor(() => harness.generateThreadTitle.mock.calls.length === 1);
-    await harness.drain();
-
-    const readModel = await harness.readModel();
-    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
-    expect(harness.generateThreadTitle).toHaveBeenCalledOnce();
-    expect(thread?.title).toBe(seededTitle);
-  });
-
-  it("generates a summarized title while starting the first Copilot turn", async () => {
-    const copilotSelection = createModelSelection(ProviderInstanceId.make("copilot"), "gpt-4.1");
-    const harness = await createHarness({
-      threadModelSelection: copilotSelection,
-      textGenerationModelSelection: copilotSelection,
-    });
-    const now = "2026-01-01T00:00:00.000Z";
-    const seededTitle = "Investigate Copilot thread startup";
-    harness.generateThreadTitle.mockReturnValue(
-      Effect.succeed({ title: "Copilot startup errors" }),
-    );
-
-    await runtime!.runPromise(
-      harness.engine.dispatch({
-        type: "thread.meta.update",
-        commandId: CommandId.make("cmd-thread-title-copilot-seed"),
-        threadId: ThreadId.make("thread-1"),
-        title: seededTitle,
-      }),
-    );
-
-    await runtime!.runPromise(
-      harness.engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.make("cmd-turn-start-copilot-title-skip"),
-        threadId: ThreadId.make("thread-1"),
-        message: {
-          messageId: asMessageId("user-message-copilot-title-skip"),
-          role: "user",
-          text: "Investigate Copilot thread startup errors.",
-          attachments: [],
-        },
-        titleSeed: seededTitle,
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        createdAt: now,
-      }),
-    );
-
-    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
-    await harness.drain();
-
-    expect(harness.generateThreadTitle).toHaveBeenCalledOnce();
-    const readModel = await harness.readModel();
-    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
-    expect(thread?.title).toBe("Copilot startup errors");
-  });
-
-  it("replaces the default Copilot title with the local fallback", async () => {
-    const copilotSelection = createModelSelection(ProviderInstanceId.make("copilot"), "gpt-4.1");
-    const harness = await createHarness({
-      threadModelSelection: copilotSelection,
-      textGenerationModelSelection: copilotSelection,
-    });
-    const now = "2026-01-01T00:00:00.000Z";
-    harness.generateThreadTitle.mockReturnValue(
-      Effect.succeed({ title: "Investigate Copilot reconnect failures" }),
-    );
-
-    await runtime!.runPromise(
-      harness.engine.dispatch({
-        type: "thread.meta.update",
-        commandId: CommandId.make("cmd-thread-title-copilot-default"),
-        threadId: ThreadId.make("thread-1"),
-        title: "New thread",
-      }),
-    );
-
-    await runtime!.runPromise(
-      harness.engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.make("cmd-turn-start-copilot-title-fallback"),
-        threadId: ThreadId.make("thread-1"),
-        message: {
-          messageId: asMessageId("user-message-copilot-title-fallback"),
-          role: "user",
-          text: "Investigate Copilot reconnect failures after restarting the session.",
-          attachments: [],
-        },
-        titleSeed: "Investigate Copilot reconnect failures after...",
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        createdAt: now,
-      }),
-    );
-
-    await waitFor(() => harness.generateThreadTitle.mock.calls.length === 1);
-    await harness.drain();
-
-    const readModel = await harness.readModel();
-    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
-    expect(thread?.title).toBe("Investigate Copilot reconnect failures");
-  });
-
   it("does not overwrite an existing custom thread title on the first turn", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
@@ -825,186 +607,6 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.title).toBe("Reconnect spinner resume bug");
   });
 
-  it("replaces provider-expanded first prompt titles that match the truncated client seed", async () => {
-    const harness = await createHarness();
-    const now = "2026-01-01T00:00:00.000Z";
-    const fullPromptTitle =
-      "Please investigate reconnect failures... after restarting the session and make the startup path reliable.";
-    const seededTitle = "Please investigate reconnect failures... after res...";
-    harness.generateThreadTitle.mockReturnValue(
-      Effect.succeed({
-        title: "Reconnect startup reliability",
-      }),
-    );
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.meta.update",
-        commandId: CommandId.make("cmd-thread-title-provider-expanded-prompt"),
-        threadId: ThreadId.make("thread-1"),
-        title: fullPromptTitle,
-      }),
-    );
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.make("cmd-turn-start-title-provider-expanded-prompt"),
-        threadId: ThreadId.make("thread-1"),
-        message: {
-          messageId: asMessageId("user-message-title-provider-expanded-prompt"),
-          role: "user",
-          text: fullPromptTitle,
-          attachments: [],
-        },
-        titleSeed: seededTitle,
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        createdAt: now,
-      }),
-    );
-
-    await waitFor(() => harness.generateThreadTitle.mock.calls.length === 1);
-    await waitFor(async () => {
-      const readModel = await harness.readModel();
-      return (
-        readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.title ===
-        "Reconnect startup reliability"
-      );
-    });
-
-    const readModel = await harness.readModel();
-    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
-    expect(thread?.title).toBe("Reconnect startup reliability");
-  });
-
-  it("replaces provider-expanded first prompt titles that match mobile title seeds", async () => {
-    const harness = await createHarness();
-    const now = "2026-01-01T00:00:00.000Z";
-    const fullPromptTitle =
-      "Please investigate reconnect failures after restarting the session and make the startup path reliable.";
-    const seededTitle = "Please investigate reconnect failures after restarting the session and...";
-    harness.generateThreadTitle.mockReturnValue(
-      Effect.succeed({
-        title: "Reconnect startup reliability",
-      }),
-    );
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.meta.update",
-        commandId: CommandId.make("cmd-thread-title-mobile-seed"),
-        threadId: ThreadId.make("thread-1"),
-        title: fullPromptTitle,
-      }),
-    );
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.make("cmd-turn-start-title-mobile-seed"),
-        threadId: ThreadId.make("thread-1"),
-        message: {
-          messageId: asMessageId("user-message-title-mobile-seed"),
-          role: "user",
-          text: fullPromptTitle,
-          attachments: [],
-        },
-        titleSeed: seededTitle,
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        createdAt: now,
-      }),
-    );
-
-    await waitFor(() => harness.generateThreadTitle.mock.calls.length === 1);
-    await waitFor(async () => {
-      const readModel = await harness.readModel();
-      return (
-        readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.title ===
-        "Reconnect startup reliability"
-      );
-    });
-
-    const readModel = await harness.readModel();
-    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
-    expect(thread?.title).toBe("Reconnect startup reliability");
-  });
-
-  it("does not replace user-edited titles that extend a truncated seed", async () => {
-    const harness = await createHarness();
-    const now = "2026-01-01T00:00:00.000Z";
-    const seededTitle = "Please investigate reconnect failures after restar...";
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.meta.update",
-        commandId: CommandId.make("cmd-thread-title-edited-truncated-seed"),
-        threadId: ThreadId.make("thread-1"),
-        title: `${seededTitle} (urgent)`,
-      }),
-    );
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.make("cmd-turn-start-title-edited-truncated-seed"),
-        threadId: ThreadId.make("thread-1"),
-        message: {
-          messageId: asMessageId("user-message-title-edited-truncated-seed"),
-          role: "user",
-          text: "Please investigate reconnect failures after restarting the session.",
-          attachments: [],
-        },
-        titleSeed: seededTitle,
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        createdAt: now,
-      }),
-    );
-
-    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
-    expect(harness.generateThreadTitle).not.toHaveBeenCalled();
-  });
-
-  it("does not replace user-edited titles that match a truncated seed without ellipsis", async () => {
-    const harness = await createHarness();
-    const now = "2026-01-01T00:00:00.000Z";
-    const seededTitle = "Please investigate reconnect failures after restar...";
-    const editedTitle =
-      "Please investigate reconnect failures after restarting the session and make startup reliable (urgent)";
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.meta.update",
-        commandId: CommandId.make("cmd-thread-title-edited-no-ellipsis-seed"),
-        threadId: ThreadId.make("thread-1"),
-        title: editedTitle,
-      }),
-    );
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.make("cmd-turn-start-title-edited-no-ellipsis-seed"),
-        threadId: ThreadId.make("thread-1"),
-        message: {
-          messageId: asMessageId("user-message-title-edited-no-ellipsis-seed"),
-          role: "user",
-          text: "Please investigate reconnect failures after restarting the session and make startup reliable.",
-          attachments: [],
-        },
-        titleSeed: seededTitle,
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        createdAt: now,
-      }),
-    );
-
-    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
-    expect(harness.generateThreadTitle).not.toHaveBeenCalled();
-  });
-
   it("generates a worktree branch name for the first turn", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
@@ -1057,65 +659,6 @@ describe("ProviderCommandReactor", () => {
       message: "Add a safer reconnect backoff.",
     });
     expect(harness.refreshStatus.mock.calls[0]?.[0]).toBe("/tmp/provider-project-worktree");
-  });
-
-  it("generates a worktree branch name for the first Copilot turn using Copilot text generation", async () => {
-    const copilotSelection = createModelSelection(ProviderInstanceId.make("copilot"), "gpt-4.1");
-    const harness = await createHarness({
-      threadModelSelection: copilotSelection,
-      textGenerationModelSelection: copilotSelection,
-    });
-    const now = "2026-01-01T00:00:00.000Z";
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.meta.update",
-        commandId: CommandId.make("cmd-thread-branch-copilot"),
-        threadId: ThreadId.make("thread-1"),
-        branch: "t3code/c0ffee42",
-        worktreePath: "/tmp/provider-copilot-worktree",
-      }),
-    );
-    await waitFor(async () => {
-      const readModel = await harness.readModel();
-      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
-      return (
-        thread?.branch === "t3code/c0ffee42" &&
-        thread.worktreePath === "/tmp/provider-copilot-worktree"
-      );
-    });
-
-    harness.generateBranchName.mockReturnValue(Effect.succeed({ branch: "copilot-provider" }));
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.make("cmd-turn-start-copilot-branch-model"),
-        threadId: ThreadId.make("thread-1"),
-        message: {
-          messageId: asMessageId("user-message-copilot-branch-model"),
-          role: "user",
-          text: "Add Copilot branch naming.",
-          attachments: [],
-        },
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        createdAt: now,
-      }),
-    );
-
-    await waitFor(() => harness.generateBranchName.mock.calls.length === 1);
-    await waitFor(() => harness.renameBranch.mock.calls.length === 1);
-    expect(harness.generateBranchName.mock.calls[0]?.[0]).toMatchObject({
-      cwd: "/tmp/provider-copilot-worktree",
-      message: "Add Copilot branch naming.",
-      modelSelection: copilotSelection,
-    });
-    expect(harness.renameBranch.mock.calls[0]?.[0]).toMatchObject({
-      cwd: "/tmp/provider-copilot-worktree",
-      oldBranch: "t3code/c0ffee42",
-      newBranch: "t3code/copilot-provider",
-    });
   });
 
   it("forwards codex model options through session start and turn send", async () => {
@@ -2224,7 +1767,7 @@ describe("ProviderCommandReactor", () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
 
-    await runtime!.runPromise(
+    await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-for-approval"),
@@ -2242,7 +1785,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await runtime!.runPromise(
+    await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.approval.respond",
         commandId: CommandId.make("cmd-approval-respond"),
@@ -2265,7 +1808,7 @@ describe("ProviderCommandReactor", () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
 
-    await runtime!.runPromise(
+    await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-for-user-input"),
@@ -2283,7 +1826,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await runtime!.runPromise(
+    await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.user-input.respond",
         commandId: CommandId.make("cmd-user-input-respond"),
@@ -2319,7 +1862,7 @@ describe("ProviderCommandReactor", () => {
       ),
     );
 
-    await runtime!.runPromise(
+    await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-for-approval-error"),
@@ -2337,7 +1880,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await runtime!.runPromise(
+    await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.activity.append",
         commandId: CommandId.make("cmd-approval-requested"),
@@ -2358,7 +1901,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await runtime!.runPromise(
+    await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.approval.respond",
         commandId: CommandId.make("cmd-approval-respond-stale"),
@@ -2414,7 +1957,7 @@ describe("ProviderCommandReactor", () => {
       ),
     );
 
-    await runtime!.runPromise(
+    await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-for-user-input-error"),
@@ -2432,7 +1975,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await runtime!.runPromise(
+    await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.activity.append",
         commandId: CommandId.make("cmd-user-input-requested"),
@@ -2465,7 +2008,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await runtime!.runPromise(
+    await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.user-input.respond",
         commandId: CommandId.make("cmd-user-input-respond-stale"),
@@ -2514,7 +2057,7 @@ describe("ProviderCommandReactor", () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
 
-    await runtime!.runPromise(
+    await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-for-stop"),
@@ -2533,7 +2076,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await runtime!.runPromise(
+    await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.session.stop",
         commandId: CommandId.make("cmd-session-stop"),

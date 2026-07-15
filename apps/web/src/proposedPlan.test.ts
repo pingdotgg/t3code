@@ -5,7 +5,6 @@ import {
   buildPlanImplementationThreadTitle,
   buildPlanImplementationPrompt,
   buildProposedPlanMarkdownFilename,
-  extractProposedPlanTasks,
   proposedPlanTitle,
   resolvePlanFollowUpSubmission,
   stripDisplayedPlanMarkdown,
@@ -18,112 +17,6 @@ describe("proposedPlanTitle", () => {
 
   it("returns null when the plan has no heading", () => {
     expect(proposedPlanTitle("- step 1")).toBeNull();
-  });
-});
-
-describe("extractProposedPlanTasks", () => {
-  it("prefers a named task section over descriptive lists", () => {
-    expect(
-      extractProposedPlanTasks(
-        [
-          "# Integrate RPC",
-          "## Summary",
-          "- Keep existing behavior",
-          "- Avoid extra round trips",
-          "## Tasks",
-          "1. Add the shared contract",
-          "2. Wire the server",
-          "3. Render the client state",
-        ].join("\n"),
-      ),
-    ).toEqual([
-      { step: "Add the shared contract", status: "pending" },
-      { step: "Wire the server", status: "pending" },
-      { step: "Render the client state", status: "pending" },
-    ]);
-  });
-
-  it("prefers a named task section over a larger checklist", () => {
-    expect(
-      extractProposedPlanTasks(
-        [
-          "# Integrate RPC",
-          "## Summary",
-          "- [x] Preserve current behavior",
-          "- [x] Avoid extra round trips",
-          "- [ ] Document the migration",
-          "- [ ] Add release notes",
-          "## Tasks",
-          "1. Add the shared contract",
-          "2. Wire the server",
-          "3. Render the client state",
-        ].join("\n"),
-      ),
-    ).toEqual([
-      { step: "Add the shared contract", status: "pending" },
-      { step: "Wire the server", status: "pending" },
-      { step: "Render the client state", status: "pending" },
-    ]);
-  });
-
-  it("combines task lists separated by prose", () => {
-    expect(
-      extractProposedPlanTasks(
-        [
-          "# Integrate RPC",
-          "## Tasks",
-          "1. Add the shared contract",
-          "2. Wire the server",
-          "3. Render the client state",
-          "The implementation should preserve current behavior.",
-          "- [x] Existing behavior documented",
-          "- [ ] Release notes drafted",
-        ].join("\n"),
-      ),
-    ).toEqual([
-      { step: "Add the shared contract", status: "pending" },
-      { step: "Wire the server", status: "pending" },
-      { step: "Render the client state", status: "pending" },
-      { step: "Existing behavior documented", status: "completed" },
-      { step: "Release notes drafted", status: "pending" },
-    ]);
-  });
-
-  it("combines task lists separated by a fenced code block", () => {
-    expect(
-      extractProposedPlanTasks(
-        [
-          "## Tasks",
-          "1. Add the shared contract",
-          "```md",
-          "- [ ] Not a real task",
-          "```",
-          "2. Wire the server",
-        ].join("\n"),
-      ),
-    ).toEqual([
-      { step: "Add the shared contract", status: "pending" },
-      { step: "Wire the server", status: "pending" },
-    ]);
-  });
-
-  it("preserves statuses from markdown task markers", () => {
-    expect(extractProposedPlanTasks("## Work\n- [x] Parse tasks\n- [ ] Render statuses")).toEqual([
-      { step: "Parse tasks", status: "completed" },
-      { step: "Render statuses", status: "pending" },
-    ]);
-  });
-
-  it("ignores lists inside fenced code blocks", () => {
-    expect(
-      extractProposedPlanTasks(
-        ["```md", "- [ ] Not a real task", "```", "", "1. Implement the parser"].join("\n"),
-      ),
-    ).toEqual([{ step: "Implement the parser", status: "pending" }]);
-  });
-
-  it("returns no tasks when the plan has no list", () => {
-    expect(extractProposedPlanTasks("# Plan\n\nImplement the feature safely.")).toEqual([]);
   });
 });
 

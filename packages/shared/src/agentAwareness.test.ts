@@ -154,39 +154,6 @@ describe("projectThreadAwareness", () => {
     expect(state?.phase).toBe("completed");
   });
 
-  it("keeps running threads in running phase even when updates are delayed", () => {
-    const state = projectThreadAwareness({
-      environmentId: "env-1" as EnvironmentId,
-      project,
-      thread: thread({
-        updatedAt: NOW,
-        session: {
-          threadId: "thread-1" as ThreadId,
-          status: "running",
-          providerName: "Codex",
-          runtimeMode: "full-access",
-          activeTurnId: "turn-1" as TurnId,
-          lastError: null,
-          updatedAt: NOW,
-        },
-        latestTurn: {
-          turnId: "turn-1" as TurnId,
-          state: "running",
-          requestedAt: NOW,
-          startedAt: NOW,
-          completedAt: null,
-          assistantMessageId: null,
-        },
-      }),
-    });
-
-    expect(state).toMatchObject({
-      phase: "running",
-      headline: "Agent is working",
-      detail: "Codex is active.",
-    });
-  });
-
   it("projects failures with the session error detail", () => {
     const state = projectThreadAwareness({
       environmentId: "env-1" as EnvironmentId,

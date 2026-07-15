@@ -298,32 +298,6 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
-  it.effect("falls back to an enabled custom instance before legacy providers", () =>
-    Effect.gen(function* () {
-      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
-      const fallbackInstanceId = ProviderInstanceId.make("copilot_personal");
-
-      const next = yield* serverSettings.updateSettings({
-        providerInstances: {
-          [fallbackInstanceId]: {
-            driver: ProviderDriverKind.make("copilot"),
-            enabled: true,
-            config: {},
-          },
-        },
-        textGenerationModelSelection: {
-          instanceId: ProviderInstanceId.make("copilot_deleted"),
-          model: "gpt-4.1",
-        },
-      });
-
-      assert.deepEqual(next.textGenerationModelSelection, {
-        instanceId: fallbackInstanceId,
-        model: "gpt-4.1",
-      });
-    }).pipe(Effect.provide(makeServerSettingsLayer())),
-  );
-
   it.effect("preserves enabled text generation selections for non-built-in drivers", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;

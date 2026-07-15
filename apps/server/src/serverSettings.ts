@@ -127,14 +127,6 @@ export class ServerSettingsService extends Context.Service<
 
     /** Stream of settings change events. */
     readonly streamChanges: Stream.Stream<ServerSettings>;
-
-    /**
-     * Acquire the settings change subscription synchronously and return a
-     * stream backed by it. Consumers that fork a long-running watcher should
-     * use this instead of `streamChanges` so a publish cannot land between
-     * scheduling the watcher fiber and the fiber subscribing.
-     */
-    readonly subscribeChanges: Effect.Effect<Stream.Stream<ServerSettings>, never, Scope.Scope>;
   }
 >()("t3/serverSettings/ServerSettingsService") {
   /** @deprecated Import and use `layerTest` from this module. */
@@ -164,7 +156,6 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
           Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
         ),
       streamChanges: Stream.empty,
-      subscribeChanges: Effect.succeed(Stream.empty),
     } satisfies ServerSettingsService["Service"];
   });
 
@@ -206,24 +197,6 @@ function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings
 }
 
 function fallbackTextGenerationProvider(settings: ServerSettings): ServerSettings {
-  const fallbackInstanceEntry = Object.entries(settings.providerInstances).find(
-    ([, instance]) => instance.enabled ?? true,
-  );
-  if (fallbackInstanceEntry) {
-    const [instanceId, instance] = fallbackInstanceEntry;
-    const driver = instance.driver;
-    return {
-      ...settings,
-      textGenerationModelSelection: {
-        instanceId: ProviderInstanceId.make(instanceId),
-        model:
-          DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER[driver] ??
-          DEFAULT_MODEL_BY_PROVIDER[driver] ??
-          DEFAULT_GIT_TEXT_GENERATION_MODEL,
-      } satisfies ModelSelection,
-    };
-  }
-
   const fallbackEntry = Object.entries(settings.providers).find(([, provider]) => provider.enabled);
   const fallback = fallbackEntry ? ProviderDriverKind.make(fallbackEntry[0]) : undefined;
   if (!fallback) {
@@ -583,23 +556,6 @@ const make = Effect.gen(function* () {
     yield* Deferred.succeed(startedDeferred, undefined).pipe(Effect.orDie);
   });
 
-  const resolveChangedSettings = (changes: Stream.Stream<ServerSettings>) =>
-    changes.pipe(
-      Stream.mapEffect((settings) =>
-        materializeProviderEnvironmentSecrets(settings).pipe(
-          Effect.catch((error: ServerSettingsError) =>
-            Effect.logWarning("failed to materialize provider environment secrets", {
-              operation: error.operation,
-              providerInstanceId: error.providerInstanceId,
-              environmentVariable: error.environmentVariable,
-              cause: error.cause,
-            }).pipe(Effect.as(settings)),
-          ),
-        ),
-      ),
-      Stream.map(resolveTextGenerationProvider),
-    );
-
   return {
     start,
     ready: Deferred.await(startedDeferred),
@@ -624,11 +580,20 @@ const make = Effect.gen(function* () {
         }),
       ),
     get streamChanges() {
-      return resolveChangedSettings(Stream.fromPubSub(changesPubSub));
-    },
-    get subscribeChanges() {
-      return PubSub.subscribe(changesPubSub).pipe(
-        Effect.map((subscription) => resolveChangedSettings(Stream.fromSubscription(subscription))),
+      return Stream.fromPubSub(changesPubSub).pipe(
+        Stream.mapEffect((settings) =>
+          materializeProviderEnvironmentSecrets(settings).pipe(
+            Effect.catch((error: ServerSettingsError) =>
+              Effect.logWarning("failed to materialize provider environment secrets", {
+                operation: error.operation,
+                providerInstanceId: error.providerInstanceId,
+                environmentVariable: error.environmentVariable,
+                cause: error.cause,
+              }).pipe(Effect.as(settings)),
+            ),
+          ),
+        ),
+        Stream.map(resolveTextGenerationProvider),
       );
     },
   } satisfies ServerSettingsService["Service"];
