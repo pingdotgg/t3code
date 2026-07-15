@@ -2,7 +2,11 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { findPluginSettingsSchemaViolations, type SettingsSchema } from "./pluginSettings.ts";
+import {
+  findPluginSettingsSchemaViolations,
+  fingerprintSettingsSchema,
+  type SettingsSchema,
+} from "./pluginSettings.ts";
 import {
   ClaudeSettings,
   CodexSettings,
@@ -169,5 +173,87 @@ describe("hidden field configurability", () => {
       ),
     }) as unknown as SettingsSchema;
     expect(findPluginSettingsSchemaViolations(schema)).toEqual([]);
+  });
+});
+
+describe("fingerprintSettingsSchema", () => {
+  const base = Schema.Struct({
+    baseUrl: Schema.String,
+    shout: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  }) as unknown as SettingsSchema;
+
+  // The whole point: a doc-only plugin update must not mark every user's stored
+  // settings incompatible. Raw JSON.stringify of the JSON Schema did exactly that,
+  // bricking configuration on a description edit.
+  it("is unchanged by a description-only edit", () => {
+    const documented = Schema.Struct({
+      baseUrl: Schema.String.pipe(Schema.annotateKey({ description: "Where to reach the API." })),
+      shout: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+    }) as unknown as SettingsSchema;
+    expect(fingerprintSettingsSchema(documented)).toBe(fingerprintSettingsSchema(base));
+  });
+
+  it("is unchanged by a title or control annotation", () => {
+    const annotated = Schema.Struct({
+      baseUrl: Schema.String.pipe(
+        Schema.annotateKey({ title: "Base URL", providerSettingsForm: { control: "text" } }),
+      ),
+      shout: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+    }) as unknown as SettingsSchema;
+    expect(fingerprintSettingsSchema(annotated)).toBe(fingerprintSettingsSchema(base));
+  });
+
+  // Field order affects nothing about decoding.
+  it("is unchanged by field reordering", () => {
+    const reordered = Schema.Struct({
+      shout: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+      baseUrl: Schema.String,
+    }) as unknown as SettingsSchema;
+    expect(fingerprintSettingsSchema(reordered)).toBe(fingerprintSettingsSchema(base));
+  });
+
+  it("changes when a field's encoded type changes", () => {
+    const retyped = Schema.Struct({
+      baseUrl: Schema.Boolean,
+      shout: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+    }) as unknown as SettingsSchema;
+    expect(fingerprintSettingsSchema(retyped)).not.toBe(fingerprintSettingsSchema(base));
+  });
+
+  it("changes when a field is renamed", () => {
+    const renamed = Schema.Struct({
+      endpoint: Schema.String,
+      shout: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+    }) as unknown as SettingsSchema;
+    expect(fingerprintSettingsSchema(renamed)).not.toBe(fingerprintSettingsSchema(base));
+  });
+
+  // Removing a default makes a field required, which genuinely can break stored
+  // values that omit it — so this MUST be detected.
+  it("changes when a decoding default is removed", () => {
+    const undefaulted = Schema.Struct({
+      baseUrl: Schema.String,
+      shout: Schema.Boolean,
+    }) as unknown as SettingsSchema;
+    expect(fingerprintSettingsSchema(undefaulted)).not.toBe(fingerprintSettingsSchema(base));
+  });
+
+  it("changes when a field is added", () => {
+    const extended = Schema.Struct({
+      baseUrl: Schema.String,
+      shout: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+      extra: Schema.String,
+    }) as unknown as SettingsSchema;
+    expect(fingerprintSettingsSchema(extended)).not.toBe(fingerprintSettingsSchema(base));
+  });
+
+  // Stored values still decode, so there is nothing to repair — flagging this would
+  // brick config for a cosmetic change.
+  it("is unchanged when only a default's VALUE changes", () => {
+    const otherDefault = Schema.Struct({
+      baseUrl: Schema.String,
+      shout: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+    }) as unknown as SettingsSchema;
+    expect(fingerprintSettingsSchema(otherDefault)).toBe(fingerprintSettingsSchema(base));
   });
 });
