@@ -133,9 +133,14 @@ const resolveNode = (
   // Only the local definitions form Effect emits is understood; anything else
   // (remote refs, JSON pointers into arbitrary subtrees) is refused rather than
   // guessed at.
-  const prefix = "#/definitions/";
-  if (!ref.startsWith(prefix)) {
-    return unsupported(path, `$ref "${ref}" is not a local #/definitions reference`);
+  // Effect emits `#/$defs/Inner` while keying the document map `definitions`, so the
+  // pointer prefix and the map name genuinely differ. Accepting only `#/definitions/`
+  // meant an identified nested struct — `Struct({...}).annotate({ identifier })` —
+  // decoded and activated, then had every save rejected. Both spellings are accepted
+  // because either may appear; the segment after the prefix is the key either way.
+  const prefix = ["#/$defs/", "#/definitions/"].find((candidate) => ref.startsWith(candidate));
+  if (prefix === undefined) {
+    return unsupported(path, `$ref "${ref}" is not a local $defs/definitions reference`);
   }
   if (ctx.seen.has(ref)) {
     // A recursive schema cannot be walked to a fixed point here, and pretending
@@ -253,6 +258,13 @@ const stripNode = (
 
   const properties = schemaNode["properties"];
   const additional = schemaNode["additionalProperties"];
+  if (schemaNode["patternProperties"] !== undefined) {
+    // Not modelled. Ignoring it is wrong in BOTH directions: a key matching a
+    // pattern but absent from `properties` would be silently DROPPED (data loss),
+    // and a pattern schema that further constrains a declared key would not be
+    // applied (a leak). Refuse instead of guessing which.
+    return unsupported(path, "`patternProperties` is not supported in settings schemas");
+  }
   if (additional === true) {
     // `true` means "any key is allowed". Keeping them all reopens the leak; dropping
     // them silently deletes data the schema permits. Neither is defensible, so refuse
