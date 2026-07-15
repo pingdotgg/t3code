@@ -13,27 +13,24 @@ The system consists of four main components:
 
 ## Quick Start
 
-### Bumping Version and Creating a Release
+### Release through a PR
+
+Release preparation is merged into `main` through a pull request. Do not push
+release commits directly to `main`.
 
 ```bash
-# Bump version (choose one)
-pnpm run version:bump patch        # 0.1.0 -> 0.1.1
-pnpm run version:bump minor        # 0.1.0 -> 0.2.0
-pnpm run version:bump major        # 0.1.0 -> 1.0.0
-pnpm run version:bump prerelease   # 0.1.0 -> 0.1.1-alpha.1
-
-# Push changes and trigger release
-git push && git push --tags
+git switch -c codex/release-0.1.0-alpha.3
+# Edit apps/mac/version.json: version + monotonically increasing buildNumber
+git add apps/mac/version.json
+git commit -m "chore: prepare SurgeCode 0.1.0-alpha.3"
+git push -u origin codex/release-0.1.0-alpha.3
+gh pr create --repo SergeSerb2/SergeCode --base main
 ```
 
-This will:
-
-- Update `version.json` with the new version
-- Commit the change and create a git tag
-- Trigger the GitHub Actions release workflow when pushed
-- Build the app, run tests, create DMG and ZIP
-- Publish a GitHub Release with artifacts
-- Update the Sparkle appcast for auto-updates
+After that PR is merged, run the `Release macOS App` workflow manually from
+`main` with the matching version. The workflow creates the GitHub Release and
+opens a second PR containing the signed `appcast.xml`. Merge that appcast PR
+to make the update visible to installed apps.
 
 ## Architecture
 
@@ -73,7 +70,7 @@ Reads version from Bundle.main.infoDictionary at runtime.
 
 **Workflow**: `.github/workflows/release-mac.yml`
 
-Triggered by: Pushing tags matching `v*` pattern
+Triggered manually from merged `main` with a version matching `version.json`.
 
 Steps:
 
@@ -85,7 +82,8 @@ Steps:
 6. **Sign**: Generate Sparkle EdDSA signature (if key configured)
 7. **Update Appcast**: Add release entry to `appcast.xml`
 8. **Publish**: Create GitHub Release with DMG and ZIP
-9. **Commit**: Push updated appcast back to main branch
+9. **Open PR**: Push the updated appcast to an automation branch and open a PR
+   against `main`
 
 ### Auto-Update with Sparkle
 
@@ -106,7 +104,7 @@ RSS feed listing available releases. Updated by CI during release process.
 **Update Script**: `apps/mac/scripts/update-appcast.sh`
 
 ```bash
-./update-appcast.sh VERSION DOWNLOAD_URL FILE_SIZE SIGNATURE
+./update-appcast.sh BUILD_VERSION DISPLAY_VERSION DOWNLOAD_URL FILE_SIZE SIGNATURE
 ```
 
 Adds a new `<item>` entry to appcast.xml with release metadata.
@@ -126,10 +124,11 @@ The version from `version.json` is automatically synced to Info.plist before bui
 
 ### Creating a Release
 
-1. **Bump version**:
+1. **Prepare a release branch**:
 
    ```bash
-   pnpm run version:bump patch
+   git switch -c codex/release-0.1.0-alpha.3
+   # Edit apps/mac/version.json and commit it through a PR to main
    ```
 
 2. **Review changes**:
@@ -139,18 +138,13 @@ The version from `version.json` is automatically synced to Info.plist before bui
    git show v0.1.1  # Check tag
    ```
 
-3. **Push to trigger release**:
-
-   ```bash
-   git push && git push --tags
-   ```
-
-4. **Monitor workflow**:
+3. **Run the release workflow after merge**:
    - Go to GitHub Actions tab
-   - Watch "Release macOS App" workflow
+   - Run "Release macOS App" from `main`
+   - Enter the exact version from `apps/mac/version.json`
    - Check for errors in test/build/publish steps
 
-5. **Verify release**:
+4. **Verify release**:
    - Check GitHub Releases page for new release
    - Download and test DMG/ZIP artifacts
    - Verify appcast.xml was updated
@@ -170,26 +164,43 @@ To enable signed updates:
    ./bin/generate_keys
    ```
 
-2. **Add private key to GitHub**:
-   - Go to repository Settings > Secrets and variables > Actions
-   - Add new secret: `SPARKLE_PRIVATE_KEY`
-   - Paste the private key value
+2. **Export the private key for GitHub Actions**:
+
+   ```bash
+   ./bin/generate_keys -x /tmp/surgecode-sparkle-private-key
+   ```
+
+   Add the file contents to the `SPARKLE_PRIVATE_KEY` Actions secret, then
+   delete the temporary file. Never commit this key.
 
 3. **Add public key to Info.plist**:
 
    ```bash
-   # Edit apps/mac/Support/Info.plist
-   # Replace the SUPublicEDKey value with the public key
+   # Set SUPublicEDKey to the value printed by generate_keys
    ```
 
-4. **Commit and push**:
+4. **Commit through a PR**:
    ```bash
    git add apps/mac/Support/Info.plist
    git commit -m "chore: add Sparkle public key"
-   git push
+   gh pr create --repo SergeSerb2/SergeCode --base main
    ```
 
 Future releases will be automatically signed.
+
+### Version fields
+
+`CFBundleVersion` and `sparkle:version` are the machine-readable, increasing
+build number. `CFBundleShortVersionString` and
+`sparkle:shortVersionString` are the human-readable semver version.
+
+### Current packaging limitation
+
+The native app currently resolves the Node server sidecar from a development
+checkout. A production release still needs the Node runtime and server bundle
+embedded in the app before the first public Sparkle release. The workflow is
+therefore configured for the release process, but this packaging task must be
+completed before distributing its artifacts to end users.
 
 ## Version Bump Tool
 
@@ -278,6 +289,7 @@ open apps/mac/dist/SurgeCode.app
 ```bash
 cd apps/mac
 ./scripts/update-appcast.sh \
+  "1" \
   "0.1.0-alpha.1" \
   "https://github.com/SergeSerb2/SergeCode/releases/download/v0.1.0-alpha.1/SurgeCode-0.1.0-alpha.1.zip" \
   "12345678" \

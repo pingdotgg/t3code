@@ -1,165 +1,181 @@
 name: Release macOS App
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version from apps/mac/version.json to release"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-macos
+  cancel-in-progress: false
 
 jobs:
   build-and-release:
+    name: Build, publish, and open appcast PR
     runs-on: macos-latest
+    timeout-minutes: 45
 
     steps:
-      - name: Checkout code
+      - name: Checkout merged main
         uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          ref: main
+          fetch-depth: 0
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@v3
+      - name: Require main branch
+        run: |
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "Run this workflow from the merged main branch." >&2
+            exit 1
+          fi
+
+      - name: Set up Vite+
+        uses: voidzero-dev/setup-vp@v1
         with:
-          version: 8
+          node-version-file: package.json
+          cache: true
+          run-install: true
 
-      - name: Extract version from tag
+      - name: Read and verify version
         id: version
-        run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-
-      - name: Run Swift tests
-        run: |
-          cd apps/mac
-          swift test
-
-      - name: Build release
-        run: |
-          cd apps/mac
-          ./scripts/make-app.sh
-
-      - name: Create DMG
-        run: |
-          cd apps/mac
-          APP_PATH="$PWD/dist/SurgeCode.app"
-          DMG_PATH="$PWD/dist/SurgeCode-${{ steps.version.outputs.version }}.dmg"
-
-          # Create a temporary directory for DMG contents
-          mkdir -p dmg-temp
-          cp -R "$APP_PATH" dmg-temp/
-
-          # Create DMG using hdiutil
-          hdiutil create -volname "SurgeCode" \
-            -srcfolder dmg-temp \
-            -ov -format UDZO \
-            "$DMG_PATH"
-
-          rm -rf dmg-temp
-          echo "DMG created at $DMG_PATH"
-
-      - name: Create ZIP
-        run: |
-          cd apps/mac/dist
-          zip -r "SurgeCode-${{ steps.version.outputs.version }}.zip" SurgeCode.app
-          echo "ZIP created"
-
-      - name: Install Sparkle tools
-        run: |
-          # Download and extract Sparkle tools for signing
-          curl -L -o sparkle.tar.xz https://github.com/sparkle-project/Sparkle/releases/download/2.6.4/Sparkle-2.6.4.tar.xz
-          tar -xf sparkle.tar.xz
-          echo "SPARKLE_BIN=$PWD/bin" >> $GITHUB_ENV
-
-      - name: Generate Sparkle signature
-        id: sparkle_sign
-        run: |
-          ZIP_PATH="apps/mac/dist/SurgeCode-${{ steps.version.outputs.version }}.zip"
-          FILE_SIZE=$(stat -f%z "$ZIP_PATH")
-          echo "file_size=$FILE_SIZE" >> $GITHUB_OUTPUT
-
-          # Generate or use existing EdDSA key pair
-          if [[ -n "${{ secrets.SPARKLE_PRIVATE_KEY }}" ]]; then
-            echo "${{ secrets.SPARKLE_PRIVATE_KEY }}" > sparkle_private_key
-            SIGNATURE=$("$SPARKLE_BIN/sign_update" -f "$ZIP_PATH" -s sparkle_private_key)
-            rm sparkle_private_key
-            echo "signature=$SIGNATURE" >> $GITHUB_OUTPUT
-            echo "Signed with existing private key"
-          else
-            echo "signature=UNSIGNED" >> $GITHUB_OUTPUT
-            echo "Warning: No SPARKLE_PRIVATE_KEY secret found. Skipping signature."
-            echo "To enable signing, generate a key pair with generate_keys and add SPARKLE_PRIVATE_KEY to GitHub secrets."
-          fi
-
-      - name: Update appcast.xml
-        if: steps.sparkle_sign.outputs.signature != 'UNSIGNED'
-        run: |
-          cd apps/mac
-          DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}/SurgeCode-${{ steps.version.outputs.version }}.zip"
-          ./scripts/update-appcast.sh \
-            "${{ steps.version.outputs.version }}" \
-            "$DOWNLOAD_URL" \
-            "${{ steps.sparkle_sign.outputs.file_size }}" \
-            "${{ steps.sparkle_sign.outputs.signature }}"
-
-      - name: Commit appcast changes
-        if: steps.sparkle_sign.outputs.signature != 'UNSIGNED'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add apps/mac/Support/appcast.xml
-          git diff --staged --quiet || git commit -m "chore: update appcast.xml for ${{ steps.version.outputs.version }}"
-          git push origin HEAD:main
-
-      - name: Generate release notes
-        id: release_notes
-        run: |
-          # Get the previous tag
-          PREV_TAG=$(git describe --tags --abbrev=0 ${{ steps.version.outputs.tag }}^ 2>/dev/null || echo "")
-
-          if [ -z "$PREV_TAG" ]; then
-            echo "notes=Initial release of SurgeCode for macOS." >> $GITHUB_OUTPUT
-          else
-            # Generate release notes from commits
-            NOTES=$(git log ${PREV_TAG}..${{ steps.version.outputs.tag }} --pretty=format:"- %s" --no-merges)
-
-            # Escape newlines for GitHub output
-            NOTES="${NOTES//$'\n'/'%0A'}"
-            echo "notes<<EOF" >> $GITHUB_OUTPUT
-            echo "$NOTES" >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: Release ${{ steps.version.outputs.version }}
-          body: |
-            ## What's New
-
-            ${{ steps.release_notes.outputs.notes }}
-
-            ## Installation
-
-            ### From DMG (Recommended)
-            1. Download `SurgeCode-${{ steps.version.outputs.version }}.dmg`
-            2. Open the DMG and drag SurgeCode to Applications
-            3. Right-click SurgeCode and select "Open" to bypass Gatekeeper on first launch
-
-            ### From ZIP
-            1. Download `SurgeCode-${{ steps.version.outputs.version }}.zip`
-            2. Extract and move SurgeCode.app to Applications
-            3. Right-click SurgeCode and select "Open" to bypass Gatekeeper on first launch
-
-            ## Notes
-            - This build is ad-hoc signed. You'll need to bypass Gatekeeper on first launch.
-            - macOS 26.0 or later required.
-          files: |
-            apps/mac/dist/SurgeCode-${{ steps.version.outputs.version }}.dmg
-            apps/mac/dist/SurgeCode-${{ steps.version.outputs.version }}.zip
-          draft: false
-          prerelease: ${{ contains(steps.version.outputs.version, 'alpha') || contains(steps.version.outputs.version, 'beta') || contains(steps.version.outputs.version, 'rc') }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          VERSION=$(python3 -c 'import json; print(json.load(open("apps/mac/version.json"))["version"])')
+          BUILD=$(python3 -c 'import json; print(json.load(open("apps/mac/version.json"))["buildNumber"])')
+          if [[ "$VERSION" != "$REQUESTED_VERSION" ]]; then
+            echo "Requested $REQUESTED_VERSION but main contains $VERSION" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Run repository checks
+        run: |
+          vp check
+          vp run typecheck
+          swift test --package-path apps/mac
+
+      - name: Build server sidecar
+        run: vp run build:server
+
+      - name: Build macOS app
+        run: ./apps/mac/scripts/make-app.sh
+
+      - name: Require standalone sidecar packaging
+        run: |
+          APP_PATH="$PWD/apps/mac/dist/SurgeCode.app"
+          if [[ ! -x "$APP_PATH/Contents/Resources/SergeCodeNode/node" || \
+                ! -f "$APP_PATH/Contents/Resources/SergeCodeServer/bin.mjs" ]]; then
+            echo "The release app does not yet contain the standalone Node runtime and server bundle." >&2
+            echo "Complete packaged sidecar support before publishing a public Sparkle release." >&2
+            exit 1
+          fi
+
+      - name: Install matching Sparkle tools
+        env:
+          SPARKLE_VERSION: "2.9.4"
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error \
+            -o sparkle.tar.xz \
+            "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz"
+          tar -xf sparkle.tar.xz
+          echo "SPARKLE_BIN=$PWD/bin" >> "$GITHUB_ENV"
+
+      - name: Require Sparkle signing key
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          if [[ -z "$SPARKLE_PRIVATE_KEY" ]]; then
+            echo "SPARKLE_PRIVATE_KEY is not configured; refusing to publish an unsigned update." >&2
+            exit 1
+          fi
+
+      - name: Create distributable archives
+        id: archive
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          APP_PATH="$PWD/apps/mac/dist/SurgeCode.app"
+          DIST_DIR="$PWD/apps/mac/dist"
+          DMG_PATH="$DIST_DIR/SurgeCode-$VERSION.dmg"
+          ZIP_PATH="$DIST_DIR/SurgeCode-$VERSION.zip"
+          mkdir -p "$PWD/apps/mac/dmg-temp"
+          cp -R "$APP_PATH" "$PWD/apps/mac/dmg-temp/"
+          hdiutil create -volname "SurgeCode" \
+            -srcfolder "$PWD/apps/mac/dmg-temp" \
+            -ov -format UDZO "$DMG_PATH"
+          rm -rf "$PWD/apps/mac/dmg-temp"
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ZIP_PATH"
+          echo "dmg=$DMG_PATH" >> "$GITHUB_OUTPUT"
+          echo "zip=$ZIP_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Generate signed appcast
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD: ${{ steps.version.outputs.build }}
+          TAG: ${{ steps.version.outputs.tag }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          UPDATE_DIR="$PWD/sparkle-updates"
+          mkdir -p "$UPDATE_DIR"
+          cp "apps/mac/Support/appcast.xml" "$UPDATE_DIR/appcast.xml"
+          cp "${{ steps.archive.outputs.zip }}" "$UPDATE_DIR/"
+          RELEASE_BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/"
+          printf '%s' "$SPARKLE_PRIVATE_KEY" |
+            "$SPARKLE_BIN/generate_appcast" \
+              --ed-key-file - \
+              --download-url-prefix "$RELEASE_BASE" \
+              "$UPDATE_DIR"
+          cp "$UPDATE_DIR/appcast.xml" apps/mac/Support/appcast.xml
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" \
+            "${{ steps.archive.outputs.dmg }}" \
+            "${{ steps.archive.outputs.zip }}" \
+            --repo SergeSerb2/SergeCode \
+            --target main \
+            --title "SurgeCode $VERSION" \
+            --generate-notes \
+            $(case "$VERSION" in *-alpha.*|*-beta.*|*-rc.*) echo --prerelease;; esac)
+
+      - name: Open appcast pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          BRANCH="automation/appcast-$VERSION"
+          git fetch origin main
+          git switch -c "$BRANCH" origin/main
+          cp sparkle-updates/appcast.xml apps/mac/Support/appcast.xml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/mac/Support/appcast.xml
+          git commit -m "chore: publish appcast for $VERSION"
+          git push --set-upstream origin "$BRANCH"
+          gh pr create \
+            --repo SergeSerb2/SergeCode \
+            --base main \
+            --head "$BRANCH" \
+            --title "chore: publish SurgeCode $VERSION appcast" \
+            --body "Automated Sparkle appcast update for the GitHub Release $VERSION. Merge this PR to make the update visible to installed apps."

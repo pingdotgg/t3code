@@ -186,11 +186,6 @@ private final class BlockingTimelineBackend: BackendService, @unchecked Sendable
         FilePreview(path: path, contents: "", truncated: false)
     }
     func openInEditor(threadID: String, subpath: String?, editor: ExternalEditor) async throws {}
-    func pullRequestReview(threadID: String, reference: String) async throws
-        -> PullRequestReviewSnapshot
-    {
-        fatalError("unused")
-    }
     func createThread(projectID: String, provider: ProviderKind, title: String?) async throws
         -> ChatThread
     {

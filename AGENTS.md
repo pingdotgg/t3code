@@ -15,6 +15,43 @@ SergeCode (github.com/SergeSerb2/SergeCode) is a **permanent hard fork** of `pin
   - If changing native mobile code, `vp run lint:mobile` must also pass.
 - Use `vp test` for the built-in Vite+ test command and `vp run test` when you specifically need the `test` package script.
 
+## macOS App Versioning and Release Policy
+
+Before changing `apps/mac/version.json`, tagging a release, generating an
+appcast entry, or running the macOS release workflow, every agent MUST ask the
+user this question and wait for the answer:
+
+> Should this work create a new app version/release, or should it be added to
+> the current rolling/pending version number?
+
+Do not infer the answer from the size of the change, the PR title, or the
+current branch.
+
+- **Rolling/pending version:** keep both `version` and `buildNumber` in
+  `apps/mac/version.json` unchanged. Add the code/docs changes to the current
+  PR or branch, but do not create a release tag, GitHub Release, or appcast
+  entry.
+- **New version/release:** get the user's desired semver bump (major, minor,
+  patch, or prerelease), increment `buildNumber` monotonically, and update
+  `apps/mac/version.json` in a PR targeting `main`.
+- `apps/mac/version.json` is the source of truth. Run
+  `apps/mac/scripts/sync-version.sh` when the bundle metadata needs syncing:
+  `version` maps to `CFBundleShortVersionString` and `buildNumber` maps to
+  `CFBundleVersion`.
+- Sparkle uses the numeric build number for update ordering
+  (`CFBundleVersion`/`sparkle:version`) and the semver string for display
+  (`CFBundleShortVersionString`/`sparkle:shortVersionString`).
+- Never create or push a release tag, publish a GitHub Release, or run
+  `Release macOS App` until the version decision is explicit and the version
+  change is merged into `main`. The release workflow then opens the appcast
+  update as a PR; merge that PR before expecting installed apps to see the
+  update.
+- `apps/mac/scripts/version-bump.sh` currently commits and tags immediately.
+  Do not run it in normal PR work unless the user explicitly requests that
+  local commit/tag behavior; edit `version.json` on the release branch instead.
+- Every version/release PR must target `SergeSerb2/SergeCode` with base
+  `main`, and must satisfy the repository validation requirements above.
+
 ## Project Snapshot
 
 SergeCode is a native Apple client for coding agents such as Codex and Claude. It is an independent hard fork of T3 Code that evolves on its own.

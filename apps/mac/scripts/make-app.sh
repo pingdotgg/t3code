@@ -33,17 +33,42 @@ BIN="$MAC_DIR/.build/$CONFIG/SergeCodeMac"
 RESOURCE_BUNDLE="$MAC_DIR/.build/$CONFIG/SergeCodeMac_SergeCodeMac.bundle"
 APP="$MAC_DIR/dist/SurgeCode.app"
 
+SPARKLE_FRAMEWORK=""
+PRODUCT_CONFIG="Release"
+if [[ "$CONFIG" == "debug" ]]; then
+  PRODUCT_CONFIG="Debug"
+fi
+for candidate in \
+  "$MAC_DIR/.build/out/Products/$PRODUCT_CONFIG/Sparkle.framework" \
+  "$MAC_DIR/.build/$CONFIG/Sparkle.framework"; do
+  if [[ -d "$candidate" ]]; then
+    SPARKLE_FRAMEWORK="$candidate"
+    break
+  fi
+done
+
+if [[ -z "$SPARKLE_FRAMEWORK" ]]; then
+  echo "error: Sparkle.framework was not produced by SwiftPM" >&2
+  exit 1
+fi
+
 ICON="$MAC_DIR/Support/AppIcon.icns"
 if [[ "$CONFIG" == "debug" ]]; then
   ICON="$MAC_DIR/Support/AppIcon-Dev.icns"
 fi
 
 rm -rf "$APP" "$MAC_DIR/dist/SergeCode.app"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
 cp "$MAC_DIR/Support/Info.plist" "$APP/Contents/Info.plist"
 cp "$ICON" "$APP/Contents/Resources/AppIcon.icns"
 cp "$BIN" "$APP/Contents/MacOS/SergeCodeMac"
 cp -R "$RESOURCE_BUNDLE" "$APP/Contents/Resources/"
+cp -R "$SPARKLE_FRAMEWORK" "$APP/Contents/Frameworks/"
+
+# SwiftPM leaves the executable's existing @loader_path rpath intact. Add the
+# conventional app-bundle framework location so @rpath/Sparkle.framework/...
+# resolves after Sparkle is embedded in Contents/Frameworks.
+install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/SergeCodeMac"
 
 # Prefer a stable signing identity when present: TCC permissions (Documents
 # -folder access for the node sidecar, and the macOS 15+ Local Network
@@ -55,7 +80,7 @@ cp -R "$RESOURCE_BUNDLE" "$APP/Contents/Resources/"
 # and every rebuild keeps its grants.
 IDENTITY="SergeCode Dev Signing"
 if security find-identity -v -p codesigning 2>/dev/null | grep -q "$IDENTITY"; then
-  codesign --force -s "$IDENTITY" "$APP"
+  codesign --force --deep -s "$IDENTITY" "$APP"
 else
   # Fall back to any local "Apple Development:" identity — still stable
   # across rebuilds (unlike ad-hoc), so TCC grants (Local Network, etc.)
@@ -65,14 +90,14 @@ else
     | grep '"Apple Development:' | head -n1 | sed -E 's/.*"(Apple Development:[^"]*)".*/\1/')"
   if [[ -n "$DEV_IDENTITY" ]]; then
     echo "note: '$IDENTITY' identity not found/trusted; using '$DEV_IDENTITY' instead" >&2
-    codesign --force -s "$DEV_IDENTITY" "$APP"
+    codesign --force --deep -s "$DEV_IDENTITY" "$APP"
   else
     echo "note: no '$IDENTITY' or 'Apple Development:' identity found/trusted; falling back to ad-hoc signing" >&2
     echo "      ad-hoc signatures change on every rebuild, so macOS revokes this app's Local Network" >&2
     echo "      permission after every rebuild — LAN pairing to/from this Mac will fail until you" >&2
     echo "      re-grant it in System Settings > Privacy & Security > Local Network. Same applies to" >&2
     echo "      the Documents-folder TCC grant used by the node sidecar. See ARCHITECTURE.md." >&2
-    codesign --force -s - "$APP"
+    codesign --force --deep -s - "$APP"
   fi
 fi
 
