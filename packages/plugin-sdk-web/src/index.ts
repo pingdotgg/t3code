@@ -1,3 +1,17 @@
+/**
+ * The plugin web SDK: what a plugin needs to BE a plugin.
+ *
+ * Deliberately self-contained — this entry depends only on `@t3tools/contracts` and
+ * `effect`, both of which the host serves through the runtime import map. Nothing here
+ * reaches into `apps/web`, which is what makes it consumable outside this repo: a
+ * third party can install it, typecheck against it, and ship a plugin.
+ *
+ * The host's UI components, hooks and atom plumbing live in `./ui` instead, because
+ * they re-export live `apps/web` modules and drag the whole app into a consumer's
+ * typecheck. See that module for why.
+ *
+ * @module plugin-sdk-web
+ */
 import type { PluginId } from "@t3tools/contracts/plugin";
 import type { SettingsSchema } from "@t3tools/contracts/pluginSettings";
 import { HOST_API_VERSION } from "@t3tools/contracts/plugin";
@@ -5,106 +19,6 @@ import type * as Stream from "effect/Stream";
 import { pluginSdkWebExternalDependencies } from "./externals";
 
 export { pluginSdkWebExternalDependencies, isPluginSdkWebExternal } from "./externals";
-export { createPluginAtoms, getAppAtomRegistry, getConnectionAtomRuntime } from "./atomAdapter";
-
-export {
-  HydrationBoundary,
-  RegistryContext,
-  RegistryProvider,
-  TypeId,
-  make,
-  scheduleTask,
-  useAtom,
-  useAtomInitialValues,
-  useAtomMount,
-  useAtomRef,
-  useAtomRefProp,
-  useAtomRefPropValue,
-  useAtomRefresh,
-  useAtomSet,
-  useAtomSubscribe,
-  useAtomSuspense,
-  useAtomValue,
-} from "../../../apps/web/src/plugins/pluginSdkAtomReact.ts";
-export {
-  AsyncResult,
-  Atom,
-  AtomRegistry,
-} from "../../../apps/web/src/plugins/pluginSdkAtomReact.ts";
-
-export * from "../../../apps/web/src/components/ui/alert.tsx";
-export * from "../../../apps/web/src/components/ui/alert-dialog.tsx";
-export * from "../../../apps/web/src/components/ui/badge.tsx";
-export * from "../../../apps/web/src/components/ui/button.tsx";
-export * from "../../../apps/web/src/components/ui/card.tsx";
-export * from "../../../apps/web/src/components/ui/checkbox.tsx";
-export * from "../../../apps/web/src/components/ui/command.tsx";
-export * from "../../../apps/web/src/components/ui/dialog.tsx";
-export * from "../../../apps/web/src/components/ui/empty.tsx";
-export * from "../../../apps/web/src/components/ui/field.tsx";
-export * from "../../../apps/web/src/components/ui/input.tsx";
-export * from "../../../apps/web/src/components/ui/label.tsx";
-export * from "../../../apps/web/src/components/ui/menu.tsx";
-export * from "../../../apps/web/src/components/ui/popover.tsx";
-export * from "../../../apps/web/src/components/ui/scroll-area.tsx";
-export * from "../../../apps/web/src/components/ui/select.tsx";
-export * from "../../../apps/web/src/components/ui/separator.tsx";
-export * from "../../../apps/web/src/components/ui/sheet.tsx";
-export * from "../../../apps/web/src/components/ui/sidebar.tsx";
-export * from "../../../apps/web/src/components/ui/spinner.tsx";
-export * from "../../../apps/web/src/components/ui/switch.tsx";
-export * from "../../../apps/web/src/components/ui/textarea.tsx";
-export * from "../../../apps/web/src/components/ui/toast.tsx";
-export * from "../../../apps/web/src/components/ui/tooltip.tsx";
-export { default as ChatMarkdown } from "../../../apps/web/src/components/ChatMarkdown.tsx";
-export { ProviderModelPicker } from "../../../apps/web/src/components/chat/ProviderModelPicker.tsx";
-export {
-  TraitsMenuContent,
-  TraitsPicker,
-  shouldRenderTraitsControls,
-} from "../../../apps/web/src/components/chat/TraitsPicker.tsx";
-export { useAtomCommand } from "../../../apps/web/src/state/use-atom-command.ts";
-export { useAtomQueryRunner } from "../../../apps/web/src/state/use-atom-query-runner.ts";
-// Environment/project context so a plugin surface can resolve the active
-// project(s) for the environment it renders in (e.g. the board list needs a real
-// projectId — the environment id is NOT a project id).
-export { useEnvironmentProjectRefs } from "../../../apps/web/src/state/entities.ts";
-// Schema-error formatting from @t3tools/shared. Re-exported through the SDK
-// singleton so plugins don't bundle @t3tools/shared/schemaJson (which imports
-// effect/* subpaths the browser import map can't resolve).
-export { formatSchemaError } from "@t3tools/shared/schemaJson";
-
-// Host UI/util surface available to plugin web bundles. These are re-exports of
-// live host modules — a separately-built plugin externalises
-// `@t3tools/plugin-sdk-web`, so at runtime it shares the host's
-// singleton instances (React, atoms, settings, provider state) through the import
-// map rather than bundling its own copies.
-export { cn, randomUUID } from "../../../apps/web/src/lib/utils.ts";
-export { useTheme } from "../../../apps/web/src/hooks/useTheme.ts";
-export { usePrimarySettings } from "../../../apps/web/src/hooks/useSettings.ts";
-export { formatDuration } from "../../../apps/web/src/session-logic.ts";
-export { primaryServerProvidersAtom } from "../../../apps/web/src/state/server.ts";
-export {
-  deriveProviderInstanceEntries,
-  sortProviderInstanceEntries,
-} from "../../../apps/web/src/providerInstances.ts";
-export {
-  getAppModelOptionsForInstance,
-  type AppModelOption,
-} from "../../../apps/web/src/modelSelection.ts";
-// Diff-rendering stack (ticket diffs). `FileDiff` comes from `@pierre/diffs/react`
-// (the host already depends on it for chat diffs) and relies on the host's
-// worker-pool context provider being mounted around the app.
-export { DiffStatLabel } from "../../../apps/web/src/components/chat/DiffStatLabel.tsx";
-export {
-  buildFileDiffRenderKey,
-  getRenderablePatch,
-  resolveDiffThemeName,
-  resolveFileDiffPath,
-  type RenderablePatch,
-  type DiffThemeName,
-} from "../../../apps/web/src/lib/diffRendering.ts";
-export { FileDiff } from "@pierre/diffs/react";
 
 export const hostCompat = {
   hostApiVersion: HOST_API_VERSION,

@@ -18,6 +18,9 @@ describe("hostSingletons", () => {
       "@effect/atom-react",
       "@t3tools/contracts",
       "@t3tools/plugin-sdk-web",
+      // The host UI half is its own singleton: an import map maps bare specifiers
+      // only, so a subpath needs its own entry, shim and instance.
+      "@t3tools/plugin-sdk-web/ui",
       "effect",
       "react",
       "react-dom",

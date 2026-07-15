@@ -124,6 +124,11 @@ bundle(
   [
     "@effect/atom-react",
     "@t3tools/plugin-sdk-web",
+    // esbuild does NOT imply subpaths from a bare external, and the host serves
+    // `@t3tools/plugin-sdk-web/ui` as its own import-map module. Without this the
+    // bundle would inline the host's UI — and with it a second React — instead of
+    // sharing the host's singletons. Nothing would fail until it ran in a browser.
+    "@t3tools/plugin-sdk-web/*",
     "effect",
     "react",
     "react/*",

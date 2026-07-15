@@ -32,6 +32,10 @@ export const pluginHostImportMap = {
     effect: "/plugin-host/effect.js",
     "@t3tools/contracts": "/plugin-host/@t3tools/contracts.js",
     "@t3tools/plugin-sdk-web": "/plugin-host/@t3tools/plugin-sdk-web.js",
+    // The host UI half. An import map maps bare specifiers only — it does NOT
+    // imply subpaths — so this needs its own entry, its own shim and its own
+    // singleton. See the note above: this is the documented way to add one.
+    "@t3tools/plugin-sdk-web/ui": "/plugin-host/@t3tools/plugin-sdk-web/ui.js",
   },
 } as const;
 
@@ -274,7 +278,23 @@ const effectExports = [
   "pipe",
 ] as const;
 
+// The SDK proper: what a plugin needs to BE a plugin. Four names — which is the
+// whole argument for keeping this entry separate from the host UI below.
 const pluginSdkWebExports = [
+  "defineWebPlugin",
+  "hostCompat",
+  "isPluginSdkWebExternal",
+  "pluginSdkWebExternalDependencies",
+] as const;
+
+// The host UI half (`@t3tools/plugin-sdk-web/ui`). 234 names.
+//
+// Worth staring at that number: every one of these is a public plugin API today, and
+// nobody chose them — they are whatever `apps/web` happens to export. Renaming a prop
+// on `alert.tsx` is a breaking change for every plugin in the wild. Curating this down
+// to a surface someone actually decided on is the follow-up; splitting the entry is
+// what makes that possible without breaking the portable SDK.
+const pluginSdkWebUiExports = [
   "Alert",
   "AlertAction",
   "AlertDescription",
@@ -294,6 +314,9 @@ const pluginSdkWebExports = [
   "AlertDialogViewport",
   "AlertTitle",
   "AnchoredToastProvider",
+  "AsyncResult",
+  "Atom",
+  "AtomRegistry",
   "Badge",
   "Button",
   "Card",
@@ -313,6 +336,7 @@ const pluginSdkWebExports = [
   "Checkbox",
   "Command",
   "CommandCollection",
+  "CommandCreateHandle",
   "CommandDialog",
   "CommandDialogPopup",
   "CommandDialogTrigger",
@@ -341,6 +365,7 @@ const pluginSdkWebExports = [
   "DialogTitle",
   "DialogTrigger",
   "DialogViewport",
+  "DiffStatLabel",
   "DropdownMenu",
   "DropdownMenuCheckboxItem",
   "DropdownMenuContent",
@@ -370,6 +395,7 @@ const pluginSdkWebExports = [
   "FieldItem",
   "FieldLabel",
   "FieldValidity",
+  "FileDiff",
   "HydrationBoundary",
   "Input",
   "Label",
@@ -379,8 +405,8 @@ const pluginSdkWebExports = [
   "MenuGroup",
   "MenuGroupLabel",
   "MenuItem",
-  "MenuPortal",
   "MenuPopup",
+  "MenuPortal",
   "MenuRadioGroup",
   "MenuRadioItem",
   "MenuSeparator",
@@ -462,22 +488,27 @@ const pluginSdkWebExports = [
   "TraitsPicker",
   "TypeId",
   "anchoredToastManager",
-  "AsyncResult",
-  "Atom",
-  "AtomRegistry",
   "badgeVariants",
+  "buildFileDiffRenderKey",
   "buttonVariants",
+  "cn",
   "createPluginAtoms",
-  "defineWebPlugin",
+  "deriveProviderInstanceEntries",
+  "formatDuration",
+  "formatSchemaError",
   "getAppAtomRegistry",
+  "getAppModelOptionsForInstance",
   "getConnectionAtomRuntime",
-  "hostCompat",
-  "isPluginSdkWebExternal",
+  "getRenderablePatch",
   "make",
-  "pluginSdkWebExternalDependencies",
+  "primaryServerProvidersAtom",
+  "randomUUID",
+  "resolveDiffThemeName",
+  "resolveFileDiffPath",
   "scheduleTask",
   "selectTriggerVariants",
   "shouldRenderTraitsControls",
+  "sortProviderInstanceEntries",
   "stackedThreadToast",
   "toastManager",
   "useAtom",
@@ -493,27 +524,11 @@ const pluginSdkWebExports = [
   "useAtomSubscribe",
   "useAtomSuspense",
   "useAtomValue",
+  "useEnvironmentProjectRefs",
+  "usePrimarySettings",
   "useSidebar",
   "useSidebarVisibility",
-  // Host UI/util surface re-exported by the SDK for plugin web bundles (kept in
-  // sync with packages/plugin-sdk-web/src/index.ts; validated by hostSingletons.test).
-  "cn",
-  "randomUUID",
   "useTheme",
-  "usePrimarySettings",
-  "formatDuration",
-  "primaryServerProvidersAtom",
-  "deriveProviderInstanceEntries",
-  "sortProviderInstanceEntries",
-  "getAppModelOptionsForInstance",
-  "DiffStatLabel",
-  "buildFileDiffRenderKey",
-  "getRenderablePatch",
-  "resolveDiffThemeName",
-  "resolveFileDiffPath",
-  "FileDiff",
-  "useEnvironmentProjectRefs",
-  "formatSchemaError",
 ] as const;
 
 // Auto-generated from `Object.keys(await import("@t3tools/contracts"))` — the full
@@ -1326,6 +1341,7 @@ export const pluginHostShimExportNames = {
   effect: effectExports,
   "@t3tools/contracts": contractsExports,
   "@t3tools/plugin-sdk-web": pluginSdkWebExports,
+  "@t3tools/plugin-sdk-web/ui": pluginSdkWebUiExports,
 } satisfies Record<PluginHostModuleSpecifier, ReadonlyArray<string>>;
 
 export function pluginHostModulePath(moduleName: PluginHostModuleSpecifier): string {

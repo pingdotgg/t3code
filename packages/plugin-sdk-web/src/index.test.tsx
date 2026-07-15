@@ -1,15 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  Button,
-  ChatMarkdown,
-  ProviderModelPicker,
-  TraitsPicker,
-  createPluginAtoms,
-  defineWebPlugin,
-  hostCompat,
-  pluginSdkWebExternalDependencies,
-} from "./index";
+import { defineWebPlugin, hostCompat, pluginSdkWebExternalDependencies } from "./index";
+// The host UI lives behind `/ui` now: it re-exports live apps/web modules, so it is
+// monorepo-only. Anything importable from `./index` is portable by construction.
+import { Button, ChatMarkdown, ProviderModelPicker, TraitsPicker, createPluginAtoms } from "./ui";
 
 describe("plugin-sdk-web", () => {
   it("re-exports the host web surface", () => {
