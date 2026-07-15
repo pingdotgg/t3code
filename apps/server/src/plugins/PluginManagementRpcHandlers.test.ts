@@ -326,6 +326,45 @@ managementTest("PluginManagementRpcHandlers settings", (it) => {
     }),
   );
 
+  // Sol's probe: a root-level filter is not enough. A hidden field can hold a NESTED
+  // Struct with its own preserve annotation, which carries arbitrary client keys
+  // through decode, encode, and a root-level filter alike.
+  it.effect("never persists an undeclared key nested inside a hidden field", () =>
+    Effect.gen(function* () {
+      const id = PluginId.make("mgmt-nested");
+      const handlers = yield* PluginManagementRpcHandlers;
+      yield* runMigrations({});
+
+      const nestedSchema = Schema.Struct({
+        baseUrl: Schema.String,
+        advanced: Schema.Struct({ retries: Schema.String })
+          .pipe(Schema.annotate({ parseOptions: { onExcessProperty: "preserve" } }))
+          .pipe(
+            Schema.withDecodingDefault(Effect.succeed({ retries: "0" })),
+            Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+          ),
+      });
+      yield* putRuntime(id, { schema: nestedSchema as never });
+
+      yield* handlers.settingsSet({
+        pluginId: id,
+        values: {
+          baseUrl: "https://example.com",
+          advanced: { retries: "3", injected: "should-not-persist" },
+        },
+        expectedRevision: 0,
+      });
+
+      const sql = yield* SqlClient.SqlClient;
+      const rows = yield* sql<{ readonly values_json: string }>`
+        SELECT values_json FROM plugin_settings WHERE plugin_id = ${id}
+      `;
+      assert.notInclude(rows[0]!.values_json, "injected");
+      assert.notInclude(rows[0]!.values_json, "should-not-persist");
+      assert.include(rows[0]!.values_json, "retries", "declared nested keys must survive");
+    }),
+  );
+
   it.effect("maps a stale expectedRevision to settings-conflict", () =>
     Effect.gen(function* () {
       const id = PluginId.make("mgmt-conflict");

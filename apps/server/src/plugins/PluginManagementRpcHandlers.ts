@@ -19,7 +19,11 @@ import {
   type PluginSettingsSetResult,
   type PluginUpgradeConfirmResult,
 } from "@t3tools/contracts/plugin";
-import { fingerprintSettingsSchema } from "@t3tools/shared/pluginSettings";
+import {
+  fingerprintSettingsSchema,
+  settingsJsonSchemaRoot,
+  stripUndeclaredProperties,
+} from "@t3tools/shared/pluginSettings";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -283,21 +287,18 @@ export const make = Effect.fn("PluginManagementRpcHandlers.make")(function* () {
         ),
       );
 
-      // Strip anything not declared by the schema, on the HOST side.
+      // Strip anything the schema does not declare, at EVERY level, on the HOST side.
       //
-      // decode→re-encode is NOT sufficient on its own: `parseOptions` is a schema
-      // ANNOTATION, so a plugin can declare
-      // `{ parseOptions: { onExcessProperty: "preserve" } }` and carry arbitrary
-      // client-supplied keys straight through both operations into storage. (An
-      // earlier commit claimed unknown keys could not persist; that was wrong —
-      // a reviewer proved it with a live probe.) Filtering to the declared field
-      // keys makes the guarantee the host's, not the plugin's to opt out of.
-      const declaredKeys = new Set(Object.keys(declared.value.schema.fields));
-      const canonical = Object.fromEntries(
-        Object.entries(encoded as Readonly<Record<string, unknown>>).filter(([key]) =>
-          declaredKeys.has(key),
-        ),
-      );
+      // decode->re-encode is NOT a guarantee the host owns: `parseOptions` is a schema
+      // ANNOTATION, so a plugin can declare `onExcessProperty: "preserve"` and carry
+      // arbitrary client keys through both operations. A root-level filter was not
+      // enough either — a hidden field can hold a nested Struct with its own preserve
+      // annotation, which smuggles keys past it. Walking the derived JSON Schema makes
+      // this structural rather than trusting anything the plugin declared.
+      const canonical = stripUndeclaredProperties(
+        encoded as Readonly<Record<string, unknown>>,
+        settingsJsonSchemaRoot(declared.value.schema as never),
+      ) as Readonly<Record<string, unknown>>;
 
       const revision = yield* settingsStore
         .write({
