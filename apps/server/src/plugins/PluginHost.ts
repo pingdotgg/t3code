@@ -71,6 +71,7 @@ import { makeProjectionsReadCapability } from "./capabilities/ProjectionsReadCap
 import { makeSecretsCapability } from "./capabilities/SecretsCapability.ts";
 import { makeSourceControlCapability } from "./capabilities/SourceControlCapability.ts";
 import { makeEventsCapability } from "./capabilities/EventsCapability.ts";
+import { findContextDescriptorViolation, PluginContextComposer } from "./PluginContextComposer.ts";
 import { makeTerminalsCapability } from "./capabilities/TerminalsCapability.ts";
 import { makeTextGenerationCapability } from "./capabilities/TextGenerationCapability.ts";
 import { makeVcsCapability } from "./capabilities/VcsCapability.ts";
@@ -277,6 +278,25 @@ function validateRegistration(
         detail: 'plugin declares tools but does not include the "tools" capability',
       }),
     );
+  }
+  // Context contributions require the dedicated "context" capability. This grants
+  // influence over what the agent DOES, so consent is not optional.
+  if ((registration.context?.length ?? 0) > 0 && !capabilities.includes("context")) {
+    return Effect.fail(
+      new PluginRegistrationError({
+        pluginId,
+        detail:
+          'plugin declares context contributions but does not include the "context" capability',
+      }),
+    );
+  }
+  for (const descriptor of registration.context ?? []) {
+    // Reject an oversized STATIC contribution HERE, at activation, rather than
+    // dropping it silently on every turn — the author would never find out.
+    const violation = findContextDescriptorViolation(descriptor);
+    if (violation !== null) {
+      return Effect.fail(new PluginRegistrationError({ pluginId, detail: violation }));
+    }
   }
   return Effect.void;
 }
@@ -680,6 +700,7 @@ export const make = Effect.fn("PluginHost.make")(function* () {
   const toolCatalog = yield* PluginToolCatalog;
   const settingsStore = yield* PluginSettingsStore;
   const httpRegistry = yield* PluginHttpRegistry;
+  const contextComposer = yield* PluginContextComposer;
   const clock = yield* Clock.Clock;
   const sql = yield* SqlClient.SqlClient;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
@@ -966,6 +987,13 @@ export const make = Effect.fn("PluginHost.make")(function* () {
         if (manifest.capabilities.includes("http") && (registration.http?.length ?? 0) > 0) {
           yield* httpRegistry.put(pluginId, registration.http ?? []);
           yield* Scope.addFinalizer(scope, httpRegistry.remove(pluginId));
+        }
+        if ((registration.context?.length ?? 0) > 0) {
+          // Removed on EVERY exit path via the plugin scope — disable, uninstall,
+          // crash. A disabled plugin must stop steering the agent immediately;
+          // leaving its instructions in place would be the plugin still running.
+          yield* contextComposer.put(pluginId, registration.context ?? []);
+          yield* Scope.addFinalizer(scope, contextComposer.remove(pluginId));
         }
         // Re-check lifecycle state right before publishing the runtime. A
         // concurrent disable/uninstall flips the lockfile and runs

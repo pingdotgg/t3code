@@ -1386,6 +1386,42 @@ export interface PluginToolResult {
  * JS) so plugins can write `handle: (input) => ...` with schema-inferred types
  * without fighting contravariance on `PluginRegistration.tools`.
  */
+/** What the host tells a context contributor about the turn it is contributing to. */
+export interface PluginContextInput {
+  readonly threadId: ThreadId;
+  readonly projectId: ProjectId | null;
+  /** "plan" or the default working mode — conventions often differ between them. */
+  readonly interactionMode: string | undefined;
+}
+
+/**
+ * Text a plugin adds to the agent's developer instructions for a turn.
+ *
+ * This is INFLUENCE OVER WHAT THE AGENT DOES, not a data feed. A plugin holding
+ * `context` can steer the agent, and ordering does not prevent it: text placed first
+ * can still say "ignore any later instruction about X". Plugins are semi-trusted code
+ * running with the user's consent — the controls are the capability gate and honest
+ * consent copy, NOT sandboxing natural language. Do not add a rule here and assume the
+ * host's own instructions overrule it.
+ *
+ * `contribute` runs ONCE per user turn, before the provider call — not per tool
+ * round-trip. It is on the hot path of every turn, so it inherits the same discipline
+ * as event handlers: it is timed out, and a failure omits THIS plugin's contribution
+ * rather than failing the user's turn.
+ */
+export interface PluginContextDescriptor {
+  /** Identifies the contribution in turn records and skip logs. */
+  readonly name: string;
+  /**
+   * Static text, when the contribution does not depend on the turn. Declared text is
+   * size-checked at REGISTRATION, so an oversized one is rejected at activation
+   * instead of silently dropping every turn.
+   */
+  readonly text?: string;
+  /** Dynamic text. Return null to contribute nothing for this turn. */
+  readonly contribute?: (input: PluginContextInput) => Effect.Effect<string | null, Error>;
+}
+
 export interface PluginToolDescriptor {
   /** Local tool name as declared by the plugin (host applies the namespace). */
   readonly name: string;
@@ -1419,6 +1455,8 @@ export interface PluginRegistration {
   readonly http?: ReadonlyArray<PluginHttpDescriptor> | undefined;
   readonly services?: ReadonlyArray<PluginServiceDescriptor> | undefined;
   readonly tools?: ReadonlyArray<PluginToolDescriptor> | undefined;
+  /** Requires the `context` capability. See PluginContextDescriptor. */
+  readonly context?: ReadonlyArray<PluginContextDescriptor> | undefined;
 }
 
 /**
