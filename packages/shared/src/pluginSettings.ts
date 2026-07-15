@@ -187,10 +187,30 @@ const stripNode = (
   const schemaNode = resolved.node;
   const nodeCtx = resolved.ctx;
 
-  if (schemaNode["allOf"] !== undefined) {
-    // An intersection would need every member applied and their results merged;
-    // picking one member is how the last fail-open bug worked. Refuse instead.
-    return unsupported(path, "`allOf` intersections are not supported in settings schemas");
+  const allOf = schemaNode["allOf"];
+  if (Array.isArray(allOf)) {
+    // Refuse only a STRUCTURAL intersection, not any `allOf` at all.
+    //
+    // Effect emits `allOf: [{ description }]` for `annotateKey` — on a node that
+    // ALSO carries its own `properties`. Refusing every `allOf` therefore bricked an
+    // ordinary annotated nested field: it decodes, it activates, and then every save
+    // is rejected forever. Fail-closed is meant to refuse what it cannot model, not
+    // what it merely finds documented. A reviewer predicted this and the real
+    // derivation confirmed it.
+    //
+    // A member that only carries presentation keywords constrains nothing, so it is
+    // ignored. A member with actual structure would need every member applied and
+    // the results merged — picking one is how the old fail-open bug worked — so that
+    // is still refused.
+    const structural = allOf.filter(
+      (member) =>
+        typeof member !== "object" ||
+        member === null ||
+        Object.keys(member as Record<string, unknown>).some((key) => !PRESENTATION_KEYS.has(key)),
+    );
+    if (structural.length > 0) {
+      return unsupported(path, "`allOf` intersections are not supported in settings schemas");
+    }
   }
 
   for (const keyword of ["anyOf", "oneOf"] as const) {
