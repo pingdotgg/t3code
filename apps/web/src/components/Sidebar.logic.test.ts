@@ -619,44 +619,28 @@ describe("resolveSidebarV2Status", () => {
 });
 
 describe("sortThreadsForSidebarV2", () => {
-  const sortable = (input: {
-    id: string;
-    hasPendingApprovals?: boolean;
-    latestUserMessageAt: string;
-    updatedAt?: string;
-  }) => ({
+  const sortable = (input: { id: string; createdAt: string }) => ({
     id: input.id,
-    hasPendingApprovals: input.hasPendingApprovals ?? false,
-    session: null,
-    createdAt: "2026-03-09T10:00:00.000Z",
-    updatedAt: input.updatedAt ?? input.latestUserMessageAt,
-    latestUserMessageAt: input.latestUserMessageAt,
+    createdAt: input.createdAt,
   });
 
-  it("pins approval-blocked threads above the recency flow, longest wait first", () => {
+  it("orders by creation time, newest first, ignoring activity", () => {
     const sorted = sortThreadsForSidebarV2([
-      sortable({ id: "fresh", latestUserMessageAt: "2026-03-09T12:00:00.000Z" }),
-      sortable({
-        id: "approval-new",
-        hasPendingApprovals: true,
-        latestUserMessageAt: "2026-03-09T08:00:00.000Z",
-        updatedAt: "2026-03-09T11:00:00.000Z",
-      }),
-      sortable({
-        id: "approval-old",
-        hasPendingApprovals: true,
-        latestUserMessageAt: "2026-03-09T11:30:00.000Z",
-        updatedAt: "2026-03-09T09:00:00.000Z",
-      }),
-      sortable({ id: "stale", latestUserMessageAt: "2026-03-09T08:00:00.000Z" }),
+      sortable({ id: "oldest", createdAt: "2026-03-09T08:00:00.000Z" }),
+      sortable({ id: "newest", createdAt: "2026-03-09T12:00:00.000Z" }),
+      sortable({ id: "middle", createdAt: "2026-03-09T10:00:00.000Z" }),
     ]);
 
-    expect(sorted.map((thread) => thread.id)).toEqual([
-      "approval-old",
-      "approval-new",
-      "fresh",
-      "stale",
+    expect(sorted.map((thread) => thread.id)).toEqual(["newest", "middle", "oldest"]);
+  });
+
+  it("breaks creation-time ties by id so the order is stable", () => {
+    const sorted = sortThreadsForSidebarV2([
+      sortable({ id: "b", createdAt: "2026-03-09T10:00:00.000Z" }),
+      sortable({ id: "a", createdAt: "2026-03-09T10:00:00.000Z" }),
     ]);
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["a", "b"]);
   });
 });
 

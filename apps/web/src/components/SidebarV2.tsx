@@ -140,15 +140,16 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   // Slim rows are either settled (action: un-settle) or merely quiet
   // (seen Ready threads — action: settle).
   variantAction: "settle" | "unsettle";
-  // Draws a hairline above the first quiet row after the card block, so the
-  // active island and the history tail read as separate zones (mock's
-  // SETTLED rule) without a labeled section header.
+  // Draws a hairline above the first settled row after a group's card
+  // block, so active work and the history tail read as separate zones
+  // inside each project section.
   showQuietDivider?: boolean;
   isActive: boolean;
   jumpLabel: string | null;
   currentEnvironmentId: string | null;
   environmentLabel: string | null;
   projectCwd: string | null;
+  projectTitle: string | null;
   providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
   onThreadClick: (event: ReactMouseEvent, threadRef: ScopedThreadRef) => void;
   onThreadActivate: (threadRef: ScopedThreadRef) => void;
@@ -310,14 +311,6 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
         : "hover:bg-foreground/5 dark:hover:bg-white/[0.06]",
   );
 
-  const favicon = (
-    <ProjectFavicon
-      environmentId={thread.environmentId}
-      cwd={props.projectCwd ?? ""}
-      className={variant === "card" ? "size-4" : "size-3.5"}
-    />
-  );
-
   const title = isRenaming ? (
     <input
       autoFocus
@@ -391,8 +384,8 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
           onKeyDown={handleKeyDown}
           onContextMenu={handleContextMenu}
         >
-          {/* Settled history recedes: desaturated and dimmed at rest, restored
-              on hover so the tail stays scannable when you're hunting. */}
+          {/* Settled history recedes: dimmed favicon at rest, restored on
+              hover so the tail stays scannable when you're hunting. */}
           <span
             className={cn(
               "shrink-0 transition-opacity",
@@ -400,7 +393,11 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                 "opacity-40 grayscale group-hover/v2-row:opacity-100 group-hover/v2-row:grayscale-0",
             )}
           >
-            {favicon}
+            <ProjectFavicon
+              environmentId={thread.environmentId}
+              cwd={props.projectCwd ?? ""}
+              className="size-3.5"
+            />
           </span>
           {title}
           {prBadge}
@@ -445,14 +442,14 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   return (
     <li
       data-thread-item
-      className="list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_88px]"
+      className="list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_100px]"
     >
       <div
         role="button"
         tabIndex={0}
         data-testid="sidebar-v2-row-card"
         className={cn(
-          "group/v2-row relative w-full cursor-pointer select-none overflow-hidden border bg-card py-2 pl-[15px] pr-3 text-left transition-colors dark:bg-white/[0.04]",
+          "group/v2-row relative w-full cursor-pointer select-none overflow-hidden border bg-card text-left transition-colors dark:bg-white/[0.04]",
           props.isActive
             ? "border-foreground/70 bg-foreground/5 dark:border-foreground/75 dark:bg-white/[0.08]"
             : isSelected
@@ -465,24 +462,36 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
         onContextMenu={handleContextMenu}
       >
         {statusEdge ? (
-          <span aria-hidden className={cn("absolute inset-y-0 left-0 w-[3px]", statusEdge)} />
+          <span aria-hidden className={cn("absolute inset-y-0 left-0 z-10 w-[3px]", statusEdge)} />
         ) : null}
-        <div className="flex items-start gap-2.5">
-          <span className="mt-0.5 shrink-0">{favicon}</span>
-          {title}
-          {diff ? (
-            <span className="shrink-0 font-mono text-[11px] leading-5">
-              <span className="text-emerald-600 dark:text-emerald-400">+{diff.insertions}</span>{" "}
-              <span className="text-red-600 dark:text-red-400">−{diff.deletions}</span>
+        {/* Title bar: the card is a tiny window whose chrome carries project
+            identity — favicon + name up top, separated by a hairline, so
+            "which project" reads before the thread content does. */}
+        <div
+          className={cn(
+            "flex items-center gap-1.5 border-b py-1 pl-[15px] pr-3",
+            props.isActive
+              ? "border-black/20 bg-black/[0.06] dark:border-white/25 dark:bg-white/[0.06]"
+              : "border-black/10 bg-black/[0.03] dark:border-white/10 dark:bg-white/[0.03]",
+          )}
+        >
+          <ProjectFavicon
+            environmentId={thread.environmentId}
+            cwd={props.projectCwd ?? ""}
+            className="size-3"
+          />
+          {props.projectTitle ? (
+            <span className="min-w-0 truncate font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              {props.projectTitle}
             </span>
           ) : null}
-          <span className="relative flex h-5 w-16 shrink-0 items-center justify-end">
+          <span className="relative ml-auto flex h-4 w-16 shrink-0 items-center justify-end">
             <span
               className={cn(
-                "font-mono text-[11px] tabular-nums transition-opacity group-hover/v2-row:opacity-0",
+                "font-mono text-[10px] tabular-nums transition-opacity group-hover/v2-row:opacity-0",
                 status === "approval"
                   ? "text-amber-600 dark:text-amber-400"
-                  : "text-muted-foreground/70",
+                  : "text-muted-foreground/50",
               )}
             >
               {props.jumpLabel ?? workingTimer ?? threadTimeLabel(thread, status)}
@@ -491,68 +500,79 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
               type="button"
               aria-label="Settle thread"
               onClick={handleSettleClick}
-              className="absolute inset-y-0 right-0 inline-flex items-center gap-1 border border-border bg-background px-2 text-[11px] text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover/v2-row:opacity-100"
+              className="absolute inset-y-0 right-0 inline-flex items-center gap-1 border border-border bg-background px-2 text-[10px] text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover/v2-row:opacity-100"
             >
               <CheckIcon className="size-3" />
               Settle
             </button>
           </span>
         </div>
-        <div className="mt-1.5 flex items-center gap-2 pl-[26px] text-[11px] text-muted-foreground/70">
-          {statusWord ? (
-            <span
-              className={cn(
-                "shrink-0 font-mono text-[10px] font-semibold uppercase tracking-[0.08em]",
-                statusWord.className,
-              )}
-            >
-              {statusWord.label}
-            </span>
-          ) : null}
-          {status === "failed" && thread.session?.lastError ? (
-            <span className="min-w-0 truncate text-red-600/80 dark:text-red-400/80">
-              {thread.session.lastError}
-            </span>
-          ) : (
-            <>
-              {thread.branch ? (
-                <span className="min-w-0 truncate font-mono text-muted-foreground/70">
-                  {thread.branch}
-                </span>
+        <div className="py-2 pl-[15px] pr-3">
+          <div className="flex items-start gap-2.5">
+            {title}
+            {diff ? (
+              <span className="shrink-0 font-mono text-[11px] leading-5">
+                <span className="text-emerald-600 dark:text-emerald-400">+{diff.insertions}</span>{" "}
+                <span className="text-red-600 dark:text-red-400">−{diff.deletions}</span>
+              </span>
+            ) : null}
+          </div>
+          <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground/70">
+            {statusWord ? (
+              <span
+                className={cn(
+                  "shrink-0 font-mono text-[10px] font-semibold uppercase tracking-[0.08em]",
+                  statusWord.className,
+                )}
+              >
+                {statusWord.label}
+              </span>
+            ) : null}
+            {status === "failed" && thread.session?.lastError ? (
+              <span className="min-w-0 truncate text-red-600/80 dark:text-red-400/80">
+                {thread.session.lastError}
+              </span>
+            ) : (
+              <>
+                {thread.branch ? (
+                  <span className="min-w-0 truncate font-mono text-muted-foreground/70">
+                    {thread.branch}
+                  </span>
+                ) : null}
+                {prBadge}
+              </>
+            )}
+            <span className="ml-auto inline-flex shrink-0 items-center gap-1.5">
+              {driverKind ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={<span className="inline-flex shrink-0 items-center opacity-70" />}
+                  >
+                    <ProviderInstanceIcon
+                      driverKind={driverKind}
+                      displayName={thread.session?.providerName ?? modelInstanceId}
+                      iconClassName="size-3"
+                    />
+                  </TooltipTrigger>
+                  <TooltipPopup side="top">{thread.modelSelection.model}</TooltipPopup>
+                </Tooltip>
               ) : null}
-              {prBadge}
-            </>
-          )}
-          <span className="ml-auto inline-flex shrink-0 items-center gap-1.5">
-            {driverKind ? (
-              <Tooltip>
-                <TooltipTrigger
-                  render={<span className="inline-flex shrink-0 items-center opacity-70" />}
-                >
-                  <ProviderInstanceIcon
-                    driverKind={driverKind}
-                    displayName={thread.session?.providerName ?? modelInstanceId}
-                    iconClassName="size-3"
-                  />
-                </TooltipTrigger>
-                <TooltipPopup side="top">{thread.modelSelection.model}</TooltipPopup>
-              </Tooltip>
-            ) : null}
-            {isRemote ? (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <span className="inline-flex shrink-0 items-center text-muted-foreground/50" />
-                  }
-                >
-                  <CloudIcon className="size-3" />
-                </TooltipTrigger>
-                <TooltipPopup side="top">
-                  Running on {props.environmentLabel ?? "a remote environment"}
-                </TooltipPopup>
-              </Tooltip>
-            ) : null}
-          </span>
+              {isRemote ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span className="inline-flex shrink-0 items-center text-muted-foreground/50" />
+                    }
+                  >
+                    <CloudIcon className="size-3" />
+                  </TooltipTrigger>
+                  <TooltipPopup side="top">
+                    Running on {props.environmentLabel ?? "a remote environment"}
+                  </TooltipPopup>
+                </Tooltip>
+              ) : null}
+            </span>
+          </div>
         </div>
       </div>
     </li>
@@ -620,6 +640,11 @@ export default function SidebarV2() {
           project.workspaceRoot,
         ]),
       ),
+    [projects],
+  );
+  const projectTitleByKey = useMemo(
+    () =>
+      new Map(projects.map((project) => [`${project.environmentId}:${project.id}`, project.title])),
     [projects],
   );
 
@@ -1343,6 +1368,9 @@ export default function SidebarV2() {
                   environmentLabel={environmentLabelById.get(thread.environmentId) ?? null}
                   projectCwd={
                     projectCwdByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null
+                  }
+                  projectTitle={
+                    projectTitleByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null
                   }
                   providerEntryByInstanceId={providerEntryByInstanceId}
                   onThreadClick={handleThreadClick}

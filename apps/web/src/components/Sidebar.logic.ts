@@ -379,29 +379,17 @@ export function resolveSidebarV2Status(thread: SidebarV2StatusInput): SidebarV2S
   return "ready";
 }
 
-// v2 sort: approval-blocked threads pin above the recency flow, longest wait
-// first, so nothing actionable can scroll away. Everything else is recency.
+// v2 sort: static creation order, newest thread on top. Activity NEVER
+// reorders the list — a row holds its position from open until settled, so
+// the screen only moves at lifecycle transitions. Status (including pending
+// approval) is carried by each card's edge strip, not by position.
 export function sortThreadsForSidebarV2<
-  T extends SidebarV2StatusInput & ThreadSortInput & { readonly id: string },
+  T extends { readonly id: string; readonly createdAt: string },
 >(threads: readonly T[]): T[] {
-  return [...threads].toSorted((left, right) => {
-    const leftApproval = resolveSidebarV2Status(left) === "approval";
-    const rightApproval = resolveSidebarV2Status(right) === "approval";
-    if (leftApproval !== rightApproval) {
-      return leftApproval ? -1 : 1;
-    }
-    // Approval activities update the shell's updatedAt in the projection
-    // pipeline, making it the best available request-time proxy. Oldest waits
-    // pin first. (The shell does not expose the approval request timestamp.)
-    if (leftApproval && rightApproval) {
-      return (
-        Date.parse(left.updatedAt) - Date.parse(right.updatedAt) || left.id.localeCompare(right.id)
-      );
-    }
-    const byRecency =
-      getThreadSortTimestamp(right, "updated_at") - getThreadSortTimestamp(left, "updated_at");
-    return byRecency || left.id.localeCompare(right.id);
-  });
+  return [...threads].toSorted(
+    (left, right) =>
+      Date.parse(right.createdAt) - Date.parse(left.createdAt) || left.id.localeCompare(right.id),
+  );
 }
 
 export function resolveThreadStatusPill(input: {

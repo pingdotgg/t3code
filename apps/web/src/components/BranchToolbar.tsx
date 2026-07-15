@@ -24,6 +24,7 @@ import {
 import { BranchToolbarBranchSelector } from "./BranchToolbarBranchSelector";
 import { BranchToolbarEnvironmentSelector } from "./BranchToolbarEnvironmentSelector";
 import { BranchToolbarEnvModeSelector } from "./BranchToolbarEnvModeSelector";
+import { ProjectFavicon } from "./ProjectFavicon";
 import { Button } from "./ui/button";
 import {
   Menu,
@@ -240,6 +241,21 @@ export const BranchToolbar = memo(function BranchToolbar({
 
   return (
     <div className="mx-auto flex w-full max-w-3xl items-center gap-2 px-2.5 pb-3 pt-1 sm:px-3">
+      {/* The submit target leads the run-context strip: this is the one
+          surface where "which project am I about to send this to" must be
+          answered before the first keystroke, especially on drafts.
+          Mirrors the sidebar cards' title bar — favicon + mono name. */}
+      <span className="inline-flex shrink-0 items-center gap-1.5 border border-black/12 py-0.5 pl-1.5 pr-2 dark:border-white/12">
+        <ProjectFavicon
+          environmentId={activeProject.environmentId}
+          cwd={activeProject.workspaceRoot}
+          className="size-3"
+        />
+        <span className="max-w-32 truncate font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+          {activeProject.title}
+        </span>
+      </span>
+      <Separator orientation="vertical" className="mx-0.5 h-3.5!" />
       {isMobile ? (
         <MobileRunContextSelector
           envLocked={envLocked}
