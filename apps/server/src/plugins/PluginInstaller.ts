@@ -108,6 +108,8 @@ export const PLUGIN_CAPABILITY_DESCRIPTIONS = {
   // Says what it CANNOT do as plainly as what it can. A user reading "can block what
   // the agent does" would reasonably fear the opposite too — a plugin waving things
   // through — so the copy rules that out explicitly, because the code does.
+  providers:
+    "Add a new AI provider you can configure and chat with. Anything you send to a thread using that provider goes wherever the plugin sends it \u2014 the app cannot see or vouch for where that is. Grant this only to plugins you trust with the contents of those conversations.",
   policy:
     "See what the agent asks permission for \u2014 commands it wants to run, files it wants to read or change \u2014 and block them. It can only block: it can never approve something on your behalf, so you will still be asked about anything it does not block. A broken plugin here can stop the agent working; it cannot let it do more.",
   context:

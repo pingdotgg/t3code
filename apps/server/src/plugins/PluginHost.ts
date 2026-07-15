@@ -291,6 +291,16 @@ function validateRegistration(
       }),
     );
   }
+  // Provider drivers require the dedicated "providers" capability: a plugin provider
+  // receives whatever the user sends to a thread using it.
+  if ((registration.providers?.length ?? 0) > 0 && !capabilities.includes("providers")) {
+    return Effect.fail(
+      new PluginRegistrationError({
+        pluginId,
+        detail: 'plugin declares providers but does not include the "providers" capability',
+      }),
+    );
+  }
   // Policy hooks require the dedicated "policy" capability. A hook can only DENY, so
   // this grants the ability to block the agent — never to approve for the user.
   if ((registration.policy?.length ?? 0) > 0 && !capabilities.includes("policy")) {
