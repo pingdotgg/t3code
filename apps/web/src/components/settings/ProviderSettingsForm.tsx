@@ -1,5 +1,6 @@
 "use client";
 
+import type { SettingsSchema } from "@t3tools/contracts/pluginSettings";
 import { useMemo, type ReactNode } from "react";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -56,9 +57,9 @@ function readProviderSettingsFormAnnotation(
 }
 
 function readProviderSettingsFormSchemaAnnotation(
-  definition: ProviderClientDefinition,
+  settingsSchema: SettingsSchema,
 ): ProviderSettingsFormSchemaAnnotation {
-  return Schema.resolveAnnotations(definition.settingsSchema)?.providerSettingsFormSchema ?? {};
+  return Schema.resolveAnnotations(settingsSchema)?.providerSettingsFormSchema ?? {};
 }
 
 function readFieldBooleanDefault(
@@ -70,15 +71,15 @@ function readFieldBooleanDefault(
 }
 
 export function deriveProviderSettingsFields(
-  definition: ProviderClientDefinition,
+  settingsSchema: SettingsSchema,
 ): ReadonlyArray<ProviderSettingsFieldModel> {
-  const schemaAnnotation = readProviderSettingsFormSchemaAnnotation(definition);
+  const schemaAnnotation = readProviderSettingsFormSchemaAnnotation(settingsSchema);
   const orderedKeys = new Map(
     (schemaAnnotation.order ?? []).map((key, index) => [key, index] as const),
   );
   const orderFallbackOffset = orderedKeys.size;
 
-  return Object.keys(definition.settingsSchema.fields)
+  return Object.keys(settingsSchema.fields)
     .map((key, index) => ({ key, index }))
     .toSorted((left, right) => {
       return (
@@ -87,7 +88,7 @@ export function deriveProviderSettingsFields(
       );
     })
     .flatMap(({ key }) => {
-      const fieldSchema = definition.settingsSchema.fields[key]!;
+      const fieldSchema = settingsSchema.fields[key]!;
       const formAnnotation = readProviderSettingsFormAnnotation(fieldSchema);
       if (formAnnotation.hidden) return [];
 
@@ -155,7 +156,13 @@ export function nextProviderConfigWithFieldValue(
 }
 
 interface ProviderSettingsFormProps {
-  readonly definition: ProviderClientDefinition;
+  /**
+   * The annotated settings struct. Deliberately NOT a ProviderClientDefinition:
+   * this component only ever read `definition.settingsSchema`, and taking the
+   * schema directly is what lets plugins reuse the host form instead of shipping
+   * their own.
+   */
+  readonly settingsSchema: SettingsSchema;
   readonly value: unknown;
   readonly idPrefix: string;
   readonly variant: "card" | "dialog";
@@ -275,13 +282,13 @@ function ProviderSettingsFieldRow({
 }
 
 export function ProviderSettingsForm({
-  definition,
+  settingsSchema,
   value,
   idPrefix,
   variant,
   onChange,
 }: ProviderSettingsFormProps) {
-  const fields = useMemo(() => deriveProviderSettingsFields(definition), [definition]);
+  const fields = useMemo(() => deriveProviderSettingsFields(settingsSchema), [settingsSchema]);
 
   if (fields.length === 0) {
     return null;
