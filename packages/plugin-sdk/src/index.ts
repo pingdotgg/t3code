@@ -1386,6 +1386,26 @@ export interface PluginToolResult {
  * JS) so plugins can write `handle: (input) => ...` with schema-inferred types
  * without fighting contravariance on `PluginRegistration.tools`.
  */
+/**
+ * A provider driver contributed by a plugin — a new AI provider the app can talk to.
+ *
+ * Every provider today is compiled into the build (`BUILT_IN_DRIVERS`), so adding one
+ * means editing the app. This is how a plugin ships one instead.
+ *
+ * `driverKind` is the ROUTING KEY: every configured instance resolves through it. It
+ * must not collide with a built-in or another plugin's, and the host rejects a
+ * registration that tries — a plugin quietly claiming "codex" would see every request
+ * meant for the real one.
+ */
+export interface PluginProviderDescriptor {
+  /** Unique slug. Not a built-in's, not another plugin's. */
+  readonly driverKind: string;
+  /** What the user picks in settings. */
+  readonly displayName: string;
+  /** Service-free decoder for this provider's configuration. */
+  readonly configSchema: Schema.Codec<unknown, unknown, never, never>;
+}
+
 /** The agent action a policy hook is being asked about. */
 export interface PluginPolicyRequest {
   readonly threadId: ThreadId;
@@ -1502,6 +1522,8 @@ export interface PluginRegistration {
   readonly context?: ReadonlyArray<PluginContextDescriptor> | undefined;
   /** Requires the `policy` capability. See PluginPolicyDescriptor. */
   readonly policy?: ReadonlyArray<PluginPolicyDescriptor> | undefined;
+  /** Requires the `providers` capability. See PluginProviderDescriptor. */
+  readonly providers?: ReadonlyArray<PluginProviderDescriptor> | undefined;
 }
 
 /**

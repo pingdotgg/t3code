@@ -1789,6 +1789,59 @@ export default {
   );
 });
 
+layer("PluginHost provider contribution", (it) => {
+  const providerEntry = `
+import * as Schema from "effect/Schema";
+export default {
+  register() {
+    return {
+      providers: [
+        {
+          driverKind: "acme",
+          displayName: "Acme AI",
+          configSchema: Schema.Struct({ apiBase: Schema.String }),
+        },
+      ],
+    };
+  },
+};
+`;
+
+  // A plugin provider receives whatever the user sends to a thread using it, so
+  // reaching this without consent is not a missing feature — it is an unconsented
+  // grant over conversation contents.
+  it.effect("refuses to activate a plugin declaring providers without the capability", () =>
+    Effect.gen(function* () {
+      const pluginId = PluginId.make("providers-nocapability");
+      const host = yield* PluginHostModule.PluginHost;
+      const registry = yield* PluginRuntimeRegistryLayer.PluginRuntimeRegistry;
+      const store = yield* PluginLockfileStoreLayer.PluginLockfileStore;
+
+      yield* runMigrations({});
+      yield* installPlugin({ pluginId, capabilities: [], entrySource: providerEntry });
+      yield* host.activatePlugin(pluginId);
+
+      assert.isTrue(Option.isNone(yield* registry.get(pluginId)));
+      const lockfile = yield* store.readLockfile;
+      assert.match(lockfile.plugins[pluginId]?.lastError ?? "", /providers/);
+    }),
+  );
+
+  it.effect("activates a plugin declaring providers with the capability", () =>
+    Effect.gen(function* () {
+      const pluginId = PluginId.make("providers-ok");
+      const host = yield* PluginHostModule.PluginHost;
+      const registry = yield* PluginRuntimeRegistryLayer.PluginRuntimeRegistry;
+
+      yield* runMigrations({});
+      yield* installPlugin({ pluginId, capabilities: ["providers"], entrySource: providerEntry });
+      yield* host.activatePlugin(pluginId);
+
+      assert.isTrue(Option.isSome(yield* registry.get(pluginId)));
+    }),
+  );
+});
+
 layer("PluginHost policy hooks", (it) => {
   const policyEntry = `
 import * as Effect from "effect/Effect";
