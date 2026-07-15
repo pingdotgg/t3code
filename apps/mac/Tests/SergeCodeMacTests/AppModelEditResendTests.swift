@@ -319,7 +319,9 @@ private final class RecordingBackend: BackendService, @unchecked Sendable {
     func pullRequestReview(threadID: String, reference: String) async throws
         -> PullRequestReviewSnapshot
     {
-        fatalError("unused")
+        PullRequestReviewSnapshot(
+            provider: "github", number: 0, url: "", conversation: [], threads: [],
+            unresolvedThreadCount: 0, truncated: false)
     }
     func listBranches(threadID: String, query: String?) async throws -> [BranchRef] { [] }
     func switchBranch(threadID: String, name: String) async throws {}

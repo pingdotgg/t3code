@@ -151,6 +151,27 @@ public actor UnsplashClient {
         return try decoder.decode(SearchResponse.self, from: data).results
     }
 
+    /// Full photo record (`GET /photos/:id`).
+    ///
+    /// `/search/photos` results omit `location` entirely, so a photo fetched by
+    /// search carries no place name until it is looked up here.
+    func photoDetails(id: String) async throws -> APIPhoto {
+        guard
+            let encoded = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+            let url = URL(string: "https://api.unsplash.com/photos/\(encoded)")
+        else { throw UnsplashError.badStatus(400) }
+        var request = URLRequest(url: url)
+        request.setValue("Client-ID \(accessKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("v1", forHTTPHeaderField: "Accept-Version")
+        let (data, response) = try await session.data(for: request)
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            throw UnsplashError.badStatus(http.statusCode)
+        }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(APIPhoto.self, from: data)
+    }
+
     /// Ping `links.download_location` — required by the Unsplash guidelines
     /// whenever a photo is put to use. Throws on transport or non-2xx so
     /// callers can avoid recording a successful registration and retry later.
