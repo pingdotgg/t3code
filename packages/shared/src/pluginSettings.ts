@@ -97,58 +97,224 @@ const PRESENTATION_KEYS = new Set([
  * Nodes the schema does not describe as objects/arrays are passed through: they are
  * already constrained by decoding.
  */
-export const stripUndeclaredProperties = (value: unknown, node: unknown): unknown => {
-  if (typeof node !== "object" || node === null) return value;
-  let schemaNode = node as Record<string, unknown>;
+type StripContext = {
+  readonly definitions: Record<string, unknown>;
+  readonly seen: ReadonlySet<string>;
+};
 
-  // Unwrap nullable unions before looking for `properties`. A field carrying a
-  // decoding default derives to `anyOf: [{...}, {type:"null"}]`, so the object shape
-  // is a UNION MEMBER, not the node itself — reading `properties` off the wrapper
-  // finds nothing and passes the value through unfiltered. That is exactly how an
-  // undeclared key survived inside a hidden, defaulted, preserve-annotated Struct.
-  const anyOf = schemaNode["anyOf"];
-  if (Array.isArray(anyOf)) {
-    const structural = anyOf.find(
-      (member): member is Record<string, unknown> =>
-        typeof member === "object" &&
-        member !== null &&
-        ((member as Record<string, unknown>)["properties"] !== undefined ||
-          (member as Record<string, unknown>)["items"] !== undefined),
-    );
-    if (structural === undefined) return value;
-    schemaNode = structural;
+/**
+ * The result of stripping. `Unsupported` is NOT a detail — it is the whole point.
+ *
+ * The previous version returned the value unchanged whenever it met a node it did
+ * not understand, which is FAIL-OPEN: every shape outside its vocabulary silently
+ * became "nothing to strip", and the undeclared key was persisted. That defect was
+ * found twice, in two different wrappers, because enumerating wrappers is a game you
+ * lose by playing. Now the host either PROVES it stripped a node or refuses the
+ * write, so an unmodelled shape is a loud rejection instead of a quiet leak.
+ */
+export type SettingsStripResult =
+  | { readonly _tag: "Stripped"; readonly value: unknown }
+  | { readonly _tag: "Unsupported"; readonly path: string; readonly detail: string };
+
+const unsupported = (path: string, detail: string): SettingsStripResult => ({
+  _tag: "Unsupported",
+  path,
+  detail,
+});
+
+/** Follow `$ref` into the document's definitions, refusing cycles. */
+const resolveNode = (
+  node: Record<string, unknown>,
+  ctx: StripContext,
+  path: string,
+): { readonly node: Record<string, unknown>; readonly ctx: StripContext } | SettingsStripResult => {
+  const ref = node["$ref"];
+  if (typeof ref !== "string") return { node, ctx };
+  // Only the local definitions form Effect emits is understood; anything else
+  // (remote refs, JSON pointers into arbitrary subtrees) is refused rather than
+  // guessed at.
+  const prefix = "#/definitions/";
+  if (!ref.startsWith(prefix)) {
+    return unsupported(path, `$ref "${ref}" is not a local #/definitions reference`);
+  }
+  if (ctx.seen.has(ref)) {
+    // A recursive schema cannot be walked to a fixed point here, and pretending
+    // otherwise would either loop forever or fall back to passing the value through.
+    return unsupported(path, `$ref "${ref}" is recursive`);
+  }
+  const target = ctx.definitions[ref.slice(prefix.length)];
+  if (typeof target !== "object" || target === null) {
+    return unsupported(path, `$ref "${ref}" does not resolve`);
+  }
+  return {
+    node: target as Record<string, unknown>,
+    ctx: { definitions: ctx.definitions, seen: new Set([...ctx.seen, ref]) },
+  };
+};
+
+/**
+ * Members of a union that could describe an object/array value, ignoring `null`
+ * (which is how a decoding default shows up: `anyOf: [{...}, {type:"null"}]`).
+ */
+const structuralMembers = (
+  members: ReadonlyArray<unknown>,
+): ReadonlyArray<Record<string, unknown>> =>
+  members.filter((member): member is Record<string, unknown> => {
+    if (typeof member !== "object" || member === null) return false;
+    const record = member as Record<string, unknown>;
+    return record["type"] !== "null";
+  });
+
+const stripNode = (
+  value: unknown,
+  node: unknown,
+  ctx: StripContext,
+  path: string,
+): SettingsStripResult => {
+  // A primitive cannot carry an undeclared key, so there is nothing to strip and
+  // nothing to prove. This is what keeps fail-closed from rejecting ordinary
+  // schemas: only objects and arrays ever reach the shape checks below.
+  const isObject = typeof value === "object" && value !== null && !Array.isArray(value);
+  const isArray = Array.isArray(value);
+  if (!isObject && !isArray) return { _tag: "Stripped", value };
+
+  if (typeof node !== "object" || node === null) {
+    return unsupported(path, "the schema does not describe this value");
   }
 
-  const items = schemaNode["items"];
-  if (Array.isArray(value) && items !== undefined) {
-    return value.map((element) => stripUndeclaredProperties(element, items));
+  const resolved = resolveNode(node as Record<string, unknown>, ctx, path);
+  if ("_tag" in resolved) return resolved;
+  const schemaNode = resolved.node;
+  const nodeCtx = resolved.ctx;
+
+  if (schemaNode["allOf"] !== undefined) {
+    // An intersection would need every member applied and their results merged;
+    // picking one member is how the last fail-open bug worked. Refuse instead.
+    return unsupported(path, "`allOf` intersections are not supported in settings schemas");
+  }
+
+  for (const keyword of ["anyOf", "oneOf"] as const) {
+    const members = schemaNode[keyword];
+    if (!Array.isArray(members)) continue;
+    const structural = structuralMembers(members);
+    if (structural.length === 0) {
+      return unsupported(path, `\`${keyword}\` has no member describing this value`);
+    }
+    if (structural.length > 1) {
+      // Choosing a branch is guesswork with two failure modes, and the old code
+      // silently took the first: strip against the wrong arm DELETES the user's
+      // legitimate keys, strip against a permissive arm KEEPS undeclared ones.
+      return unsupported(
+        path,
+        `\`${keyword}\` has ${structural.length} object/array branches, so the host cannot tell which one these values belong to`,
+      );
+    }
+    return stripNode(value, structural[0], nodeCtx, path);
+  }
+
+  if (isArray) {
+    const prefixItems = schemaNode["prefixItems"];
+    const items = schemaNode["items"];
+    const elements: Array<unknown> = [];
+    for (const [index, element] of (value as ReadonlyArray<unknown>).entries()) {
+      // A tuple derives to `prefixItems`, positionally. `items` covers the rest (or
+      // everything, for a plain Array).
+      const elementNode =
+        Array.isArray(prefixItems) && index < prefixItems.length ? prefixItems[index] : items;
+      if (elementNode === undefined) {
+        return unsupported(`${path}[${index}]`, "the schema does not describe this element");
+      }
+      const stripped = stripNode(element, elementNode, nodeCtx, `${path}[${index}]`);
+      if (stripped._tag === "Unsupported") return stripped;
+      elements.push(stripped.value);
+    }
+    return { _tag: "Stripped", value: elements };
   }
 
   const properties = schemaNode["properties"];
-  if (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    typeof properties === "object" &&
-    properties !== null
-  ) {
-    const declared = properties as Record<string, unknown>;
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>)
-        .filter(([key]) => Object.hasOwn(declared, key))
-        .map(([key, nested]) => [key, stripUndeclaredProperties(nested, declared[key])]),
-    );
+  const additional = schemaNode["additionalProperties"];
+  const declared =
+    typeof properties === "object" && properties !== null
+      ? (properties as Record<string, unknown>)
+      : {};
+  const hasProperties = typeof properties === "object" && properties !== null;
+  const additionalIsSchema = typeof additional === "object" && additional !== null;
+  if (!hasProperties && !additionalIsSchema) {
+    // e.g. a bare `{"type":"object"}` — every key is undeclared, and silently
+    // keeping them all is exactly the leak this function exists to stop.
+    return unsupported(path, "the schema describes an object but declares no properties");
   }
-  return value;
+
+  const entries: Array<readonly [string, unknown]> = [];
+  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+    const keyPath = path === "" ? key : `${path}.${key}`;
+    const declaredNode = Object.hasOwn(declared, key) ? declared[key] : undefined;
+    if (declaredNode === undefined) {
+      // `additionalProperties` as a SCHEMA means the keys are legitimately open
+      // (Schema.Record): keep them, but strip their VALUES against that schema.
+      // Anything else (false, or absent) means undeclared — drop it. That drop is
+      // the strip.
+      if (!additionalIsSchema) continue;
+      const stripped = stripNode(nested, additional, nodeCtx, keyPath);
+      if (stripped._tag === "Unsupported") return stripped;
+      entries.push([key, stripped.value]);
+      continue;
+    }
+    const stripped = stripNode(nested, declaredNode, nodeCtx, keyPath);
+    if (stripped._tag === "Unsupported") return stripped;
+    entries.push([key, stripped.value]);
+  }
+  return { _tag: "Stripped", value: Object.fromEntries(entries) };
 };
 
-/** The derived JSON Schema root for a settings schema, for stripUndeclaredProperties. */
-export const settingsJsonSchemaRoot = (schema: SettingsSchema): unknown => {
+/**
+ * Remove every property the schema does not declare, at every level.
+ *
+ * `onExcessProperty: "preserve"` is a schema ANNOTATION, so decoding cannot be
+ * trusted to drop unknown keys — the plugin chooses. The host must own the strip,
+ * or a plugin annotating a nested Struct with `preserve` persists whatever a client
+ * sends. Walking the DERIVED JSON Schema makes the guarantee structural rather than
+ * a matter of what the plugin declared.
+ *
+ * Takes the schema (not a pre-derived node) so that a schema which cannot be derived
+ * is an `Unsupported` REJECTION rather than a silent skip: the previous version
+ * returned `null` from its derivation helper and then treated `null` as "nothing to
+ * strip", so a throwing derivation disabled stripping entirely.
+ */
+export const stripAgainstJsonSchemaDocument = (input: {
+  readonly value: unknown;
+  readonly schema: unknown;
+  readonly definitions?: Record<string, unknown> | undefined;
+}): SettingsStripResult =>
+  stripNode(
+    input.value,
+    input.schema,
+    { definitions: input.definitions ?? {}, seen: new Set<string>() },
+    "",
+  );
+
+export const stripUndeclaredSettings = (
+  value: unknown,
+  schema: SettingsSchema,
+): SettingsStripResult => {
+  let document: ReturnType<typeof Schema.toJsonSchemaDocument>;
   try {
-    return Schema.toJsonSchemaDocument(schema).schema;
-  } catch {
-    return null;
+    document = Schema.toJsonSchemaDocument(schema);
+  } catch (error) {
+    return unsupported(
+      "<schema>",
+      `settings schema cannot be derived to JSON Schema: ${String(error)}`,
+    );
   }
+  const definitions = document.definitions;
+  return stripAgainstJsonSchemaDocument({
+    value,
+    schema: document.schema,
+    definitions:
+      typeof definitions === "object" && definitions !== null
+        ? (definitions as Record<string, unknown>)
+        : {},
+  });
 };
 
 const isEmptyObject = (value: unknown): boolean =>

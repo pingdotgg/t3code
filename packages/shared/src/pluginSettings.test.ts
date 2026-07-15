@@ -5,6 +5,8 @@ import * as Schema from "effect/Schema";
 import {
   findPluginSettingsSchemaViolations,
   fingerprintSettingsSchema,
+  stripAgainstJsonSchemaDocument,
+  stripUndeclaredSettings,
   type SettingsSchema,
 } from "./pluginSettings.ts";
 import {
@@ -308,5 +310,150 @@ describe("fingerprint distinguishes constraints", () => {
   it("is stable for the same Literals union", () => {
     const again = Schema.Struct({ a: Schema.Literals(["a", "b"]) }) as unknown as SettingsSchema;
     expect(fingerprintSettingsSchema(again)).toBe(fingerprintSettingsSchema(litAB));
+  });
+});
+
+describe("stripUndeclaredSettings", () => {
+  // Every case below is a shape a reviewer named as a fail-open bypass in the
+  // previous version, which returned the value UNCHANGED for anything outside its
+  // vocabulary. The rule now: prove the strip, or refuse the write.
+
+  it("drops an undeclared key at the root", () => {
+    const result = stripUndeclaredSettings(
+      { baseUrl: "https://example.com", injected: "no" },
+      Schema.Struct({ baseUrl: Schema.String }),
+    );
+    expect(result).toEqual({ _tag: "Stripped", value: { baseUrl: "https://example.com" } });
+  });
+
+  it("drops an undeclared key nested inside a defaulted field", () => {
+    // A decoding default derives to `anyOf: [{...}, {type:"null"}]`, so the object
+    // shape is a union MEMBER — reading `properties` off the wrapper finds nothing.
+    const schema = Schema.Struct({
+      advanced: Schema.Struct({ retries: Schema.String }).pipe(
+        Schema.withDecodingDefault(Effect.succeed({ retries: "0" })),
+      ),
+    });
+    const result = stripUndeclaredSettings({ advanced: { retries: "3", injected: "no" } }, schema);
+    expect(result).toEqual({ _tag: "Stripped", value: { advanced: { retries: "3" } } });
+  });
+
+  it("strips inside every element of an array", () => {
+    const schema = Schema.Struct({ list: Schema.Array(Schema.Struct({ retries: Schema.String })) });
+    const result = stripUndeclaredSettings(
+      { list: [{ retries: "1", injected: "no" }, { retries: "2" }] },
+      schema,
+    );
+    expect(result).toEqual({
+      _tag: "Stripped",
+      value: { list: [{ retries: "1" }, { retries: "2" }] },
+    });
+  });
+
+  it("strips each tuple position against its own schema", () => {
+    // A tuple derives to `prefixItems`, NOT an `items` array — the old code saw no
+    // `items`, fell through, and returned the tuple unfiltered.
+    const schema = Schema.Struct({
+      pair: Schema.Tuple([Schema.String, Schema.Struct({ retries: Schema.String })]),
+    });
+    const result = stripUndeclaredSettings(
+      { pair: ["a", { retries: "1", injected: "no" }] },
+      schema,
+    );
+    expect(result).toEqual({ _tag: "Stripped", value: { pair: ["a", { retries: "1" }] } });
+  });
+
+  it("keeps open Record keys but strips their values", () => {
+    // `additionalProperties` as a SCHEMA means the keys are legitimately open, so
+    // dropping them would delete the user's data. The VALUES are still stripped.
+    const schema = Schema.Struct({
+      map: Schema.Record(Schema.String, Schema.Struct({ retries: Schema.String })),
+    });
+    const result = stripUndeclaredSettings(
+      { map: { anyKey: { retries: "1", injected: "no" } } },
+      schema,
+    );
+    expect(result).toEqual({
+      _tag: "Stripped",
+      value: { map: { anyKey: { retries: "1" } } },
+    });
+  });
+
+  it("refuses a union with more than one object branch rather than guessing", () => {
+    // Guessing has two failure modes and the old code silently took the first
+    // branch: strip against the wrong arm DELETES legitimate keys; strip against a
+    // permissive arm KEEPS undeclared ones.
+    const schema = Schema.Struct({
+      u: Schema.Union([
+        Schema.Struct({ retries: Schema.String }),
+        Schema.Struct({ other: Schema.String }),
+      ]),
+    });
+    const result = stripUndeclaredSettings({ u: { other: "x" } }, schema);
+    expect(result._tag).toBe("Unsupported");
+  });
+
+  it("refuses allOf rather than passing the value through", () => {
+    const result = stripAgainstJsonSchemaDocument({
+      value: { retries: "1", injected: "no" },
+      schema: {
+        allOf: [{ type: "object", properties: { retries: { type: "string" } } }],
+      },
+    });
+    expect(result._tag).toBe("Unsupported");
+  });
+
+  it("resolves a $ref into the document's definitions", () => {
+    const result = stripAgainstJsonSchemaDocument({
+      value: { inner: { retries: "1", injected: "no" } },
+      schema: {
+        type: "object",
+        properties: { inner: { $ref: "#/definitions/Inner" } },
+      },
+      definitions: {
+        Inner: { type: "object", properties: { retries: { type: "string" } } },
+      },
+    });
+    expect(result).toEqual({ _tag: "Stripped", value: { inner: { retries: "1" } } });
+  });
+
+  it("refuses a recursive $ref rather than looping or passing through", () => {
+    const result = stripAgainstJsonSchemaDocument({
+      value: { self: { self: {} } },
+      schema: { $ref: "#/definitions/Node" },
+      definitions: {
+        Node: { type: "object", properties: { self: { $ref: "#/definitions/Node" } } },
+      },
+    });
+    expect(result._tag).toBe("Unsupported");
+  });
+
+  it("refuses an object schema that declares no properties", () => {
+    // A bare {"type":"object"} declares nothing, so every key is undeclared and
+    // keeping them all is the exact leak this function exists to stop.
+    const result = stripAgainstJsonSchemaDocument({
+      value: { anything: "goes" },
+      schema: { type: "object" },
+    });
+    expect(result._tag).toBe("Unsupported");
+  });
+
+  it("names the path of the offending node so the failure is actionable", () => {
+    const result = stripAgainstJsonSchemaDocument({
+      value: { outer: { inner: { x: 1 } } },
+      schema: {
+        type: "object",
+        properties: { outer: { type: "object", properties: { inner: { type: "object" } } } },
+      },
+    });
+    expect(result._tag).toBe("Unsupported");
+    expect(result._tag === "Unsupported" ? result.path : "").toBe("outer.inner");
+  });
+
+  it("passes primitives through: they cannot carry an undeclared key", () => {
+    // This is what keeps fail-closed from rejecting ordinary schemas — only objects
+    // and arrays ever reach a shape check.
+    const result = stripUndeclaredSettings({ n: 1 }, Schema.Struct({ n: Schema.Number }));
+    expect(result).toEqual({ _tag: "Stripped", value: { n: 1 } });
   });
 });

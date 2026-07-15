@@ -19,11 +19,7 @@ import {
   type PluginSettingsSetResult,
   type PluginUpgradeConfirmResult,
 } from "@t3tools/contracts/plugin";
-import {
-  fingerprintSettingsSchema,
-  settingsJsonSchemaRoot,
-  stripUndeclaredProperties,
-} from "@t3tools/shared/pluginSettings";
+import { fingerprintSettingsSchema, stripUndeclaredSettings } from "@t3tools/shared/pluginSettings";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -295,10 +291,25 @@ export const make = Effect.fn("PluginManagementRpcHandlers.make")(function* () {
       // enough either — a hidden field can hold a nested Struct with its own preserve
       // annotation, which smuggles keys past it. Walking the derived JSON Schema makes
       // this structural rather than trusting anything the plugin declared.
-      const canonical = stripUndeclaredProperties(
-        encoded as Readonly<Record<string, unknown>>,
-        settingsJsonSchemaRoot(declared.value.schema as never),
-      ) as Readonly<Record<string, unknown>>;
+      //
+      // REFUSE the write when the strip cannot be proven, rather than storing the
+      // value unstripped. The strip used to pass through any shape it did not model,
+      // which meant every gap in its vocabulary was a silent leak — a defect found
+      // twice, in two different wrappers. Failing closed turns the next unmodelled
+      // shape into a rejected save instead of a persisted undeclared key.
+      const stripped = stripUndeclaredSettings(encoded, declared.value.schema);
+      if (stripped._tag === "Unsupported") {
+        yield* Effect.logWarning("plugin settings strip unsupported", {
+          pluginId: input.pluginId,
+          path: stripped.path,
+          detail: stripped.detail,
+        });
+        return yield* managementError(
+          "settings-invalid",
+          "These settings could not be stored: the plugin's settings schema uses a shape this host cannot safely store.",
+        );
+      }
+      const canonical = stripped.value as Readonly<Record<string, unknown>>;
 
       const revision = yield* settingsStore
         .write({
