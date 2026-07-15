@@ -287,3 +287,26 @@ describe("password control", () => {
     expect(findPluginSettingsSchemaViolations(schema, { allowPasswordControl: true })).toEqual([]);
   });
 });
+
+describe("fingerprint distinguishes constraints", () => {
+  // Reducing a field to its primitive JSON `type` erased enums entirely, so these
+  // three accept different values yet fingerprinted identically — a schema change
+  // between them went undetected, which is the opposite of the bug the fingerprint
+  // exists to catch.
+  const str = Schema.Struct({ a: Schema.String }) as unknown as SettingsSchema;
+  const litAB = Schema.Struct({ a: Schema.Literals(["a", "b"]) }) as unknown as SettingsSchema;
+  const litAC = Schema.Struct({ a: Schema.Literals(["a", "c"]) }) as unknown as SettingsSchema;
+
+  it("distinguishes a bare String from a Literals union", () => {
+    expect(fingerprintSettingsSchema(litAB)).not.toBe(fingerprintSettingsSchema(str));
+  });
+
+  it("distinguishes two Literals unions with different members", () => {
+    expect(fingerprintSettingsSchema(litAC)).not.toBe(fingerprintSettingsSchema(litAB));
+  });
+
+  it("is stable for the same Literals union", () => {
+    const again = Schema.Struct({ a: Schema.Literals(["a", "b"]) }) as unknown as SettingsSchema;
+    expect(fingerprintSettingsSchema(again)).toBe(fingerprintSettingsSchema(litAB));
+  });
+});
