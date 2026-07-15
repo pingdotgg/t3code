@@ -1,4 +1,5 @@
 import { definePlugin, type PluginRegistration } from "@t3tools/plugin-sdk";
+import { HelloBoardSettings } from "../shared/settings.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -45,6 +46,8 @@ function noteBodyFromPayload(payload: unknown): Effect.Effect<string, Error> {
 }
 
 export default definePlugin({
+  // Same module the web entry imports — see shared/settings.ts.
+  settings: { schema: HelloBoardSettings },
   register: (hostApi) =>
     Effect.gen(function* () {
       const database = yield* hostApi.database;
