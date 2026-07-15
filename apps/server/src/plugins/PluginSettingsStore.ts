@@ -17,11 +17,20 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
+
+/**
+ * A declared settings schema, kept structural so this store does not depend on the
+ * plugin SDK's descriptor type.
+ */
+export type SettingsSchemaLike = Schema.Codec<unknown, unknown, never, never> & {
+  readonly fields: Readonly<Record<string, Schema.Top>>;
+};
 
 /** Encoded settings payload as stored and as exchanged with the web form. */
 export type PluginSettingsValues = Readonly<Record<string, unknown>>;
@@ -107,8 +116,33 @@ export class PluginSettingsStore extends Context.Service<
      * Called when uninstall removes plugin data. Without it, "Remove plugin data"
      * left settings behind and reinstalling the same id silently RECOVERED the old
      * values — the user asked for their configuration to be gone and it wasn't.
+     *
+     * Fails loudly: reconcile removes the lockfile entry after this, so swallowing a
+     * deletion error would report success while the values survive, and a reinstall
+     * would expose settings the user believes are gone.
      */
-    readonly remove: (pluginId: PluginId) => Effect.Effect<void>;
+    readonly remove: (pluginId: PluginId) => Effect.Effect<void, SqlError>;
+
+    /**
+     * Records the settings schema a plugin DECLARED, as soon as its module loads —
+     * before `register()` runs and therefore before the runtime exists.
+     *
+     * This is what keeps the repair path reachable. The settings RPC used to resolve
+     * the schema from the runtime registry, which is only populated after a
+     * successful `register()`. A plugin that reads its settings during `register()`
+     * fails activation when the stored row is unreadable, so there is no runtime, so
+     * the RPC reported "no settings declared" — and the repair UI was unavailable
+     * exactly when the user needed it. Declaring at load time breaks that deadlock.
+     */
+    readonly noteDeclaredSchema: (
+      pluginId: PluginId,
+      schema: SettingsSchemaLike,
+    ) => Effect.Effect<void>;
+
+    /** The declared schema, whether or not the plugin activated. */
+    readonly declaredSchema: (
+      pluginId: PluginId,
+    ) => Effect.Effect<Option.Option<SettingsSchemaLike>>;
   }
 >()("t3/plugins/PluginSettingsStore") {}
 
@@ -131,6 +165,9 @@ export const make = Effect.fn("PluginSettingsStore.make")(function* () {
   // Unbounded: a settings write is a rare, user-driven event, and dropping one
   // would leave a plugin running on config the user believes they changed.
   const writes = yield* PubSub.unbounded<PluginId>();
+  // Declared at module load, before register() — see noteDeclaredSchema. Process-
+  // local by design: it describes the code currently loaded, not persisted state.
+  const declared = new Map<PluginId, SettingsSchemaLike>();
 
   const readRow = (pluginId: PluginId) =>
     sql<SettingsRow>`
@@ -229,18 +266,41 @@ export const make = Effect.fn("PluginSettingsStore.make")(function* () {
   const remove: PluginSettingsStore["Service"]["remove"] = (pluginId) =>
     sql`DELETE FROM plugin_settings WHERE plugin_id = ${pluginId}`.pipe(
       Effect.asVoid,
-      // Uninstall must not fail because settings could not be deleted; the row is
-      // orphaned at worst, and reinstall overwrites it. Log rather than block.
+      // Do NOT swallow failures here. Reconcile removes the lockfile entry after
+      // this, so an ignored deletion error reports success while the values survive
+      // — and a reinstall then exposes settings the user asked to delete. Failing
+      // loudly keeps the entry, so the removal is retried rather than lost.
       Effect.tapCause((cause) =>
         Effect.logWarning("failed to delete plugin settings", {
           pluginId,
           cause: Cause.pretty(cause),
         }),
       ),
-      Effect.ignore,
+      Effect.map(() => undefined),
     );
 
-  return PluginSettingsStore.of({ readDraft, write, changes, remove });
+  const noteDeclaredSchema: PluginSettingsStore["Service"]["noteDeclaredSchema"] = (
+    pluginId,
+    schema,
+  ) =>
+    Effect.sync(() => {
+      declared.set(pluginId, schema);
+    });
+
+  const declaredSchema: PluginSettingsStore["Service"]["declaredSchema"] = (pluginId) =>
+    Effect.sync(() => {
+      const schema = declared.get(pluginId);
+      return schema === undefined ? Option.none() : Option.some(schema);
+    });
+
+  return PluginSettingsStore.of({
+    readDraft,
+    write,
+    changes,
+    remove,
+    noteDeclaredSchema,
+    declaredSchema,
+  });
 });
 
 export const layer = Layer.effect(PluginSettingsStore, make());

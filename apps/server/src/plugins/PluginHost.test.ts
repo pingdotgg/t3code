@@ -947,6 +947,11 @@ layer("PluginHost", (it) => {
 
   it.effect("applies pending-remove before loading plugins", () =>
     Effect.gen(function* () {
+      // Migrations must run: removing plugin data now DELETES the plugin's settings
+      // row and fails loudly if it cannot (a swallowed failure would report the data
+      // gone while it survived). Without the table, reconcile correctly refuses to
+      // drop the lockfile entry — which is the retry behaviour, not a bug.
+      yield* runMigrations({});
       const pluginId = PluginId.make("remove-plugin");
       const host = yield* PluginHostModule.PluginHost;
       const fs = yield* FileSystem.FileSystem;

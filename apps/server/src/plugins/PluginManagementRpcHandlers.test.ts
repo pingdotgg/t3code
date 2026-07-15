@@ -225,6 +225,44 @@ managementTest("PluginManagementRpcHandlers settings", (it) => {
     }),
   );
 
+  // The repair deadlock: a plugin that reads its settings in register() fails
+  // activation when the stored row is unreadable, so no runtime is ever put. If the
+  // RPC resolved the schema only from live runtimes it would report "no settings
+  // declared" and hide the form needed to fix the very values that broke activation.
+  it.effect("still reports settings as declared when the plugin failed to activate", () =>
+    Effect.gen(function* () {
+      const id = PluginId.make("mgmt-neveractivated");
+      const handlers = yield* PluginManagementRpcHandlers;
+      const settingsStore = yield* PluginSettingsStoreLayer.PluginSettingsStore;
+      yield* runMigrations({});
+
+      // Declared at module load; register() then failed, so there is NO runtime.
+      yield* settingsStore.noteDeclaredSchema(id, schema as never);
+
+      const result = yield* handlers.settingsGet({ pluginId: id });
+      assert.equal(result.declared, true, "the repair form must still be reachable");
+    }),
+  );
+
+  it.effect(
+    "accepts a write for a plugin that failed to activate, so settings can be repaired",
+    () =>
+      Effect.gen(function* () {
+        const id = PluginId.make("mgmt-repair");
+        const handlers = yield* PluginManagementRpcHandlers;
+        const settingsStore = yield* PluginSettingsStoreLayer.PluginSettingsStore;
+        yield* runMigrations({});
+        yield* settingsStore.noteDeclaredSchema(id, schema as never);
+
+        const revision = yield* handlers.settingsSet({
+          pluginId: id,
+          values: { baseUrl: "https://repaired.example" },
+          expectedRevision: 0,
+        });
+        assert.equal(revision.revision, 1, "repair must be possible without a live runtime");
+      }),
+  );
+
   it.effect("rejects a write for a plugin that declares no settings", () =>
     Effect.gen(function* () {
       const id = PluginId.make("mgmt-nosettings-write");
