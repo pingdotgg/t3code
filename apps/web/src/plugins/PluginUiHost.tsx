@@ -1,3 +1,4 @@
+import { PluginSettingsPage } from "./PluginSettingsPage";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import type {
   PluginCommandRegistration,
@@ -12,7 +13,7 @@ import type {
 } from "@t3tools/plugin-sdk-web";
 import { PLUGIN_ID_PATTERN_SOURCE, type PluginId, type PluginInfo } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
-import { Component, useEffect, useRef, type ErrorInfo, type ReactNode } from "react";
+import { Component, createElement, useEffect, useRef, type ErrorInfo, type ReactNode } from "react";
 
 import { pluginListAtom, pluginRpc } from "../state/plugins";
 import { whenPluginHostReady } from "./hostSingletonsReady";
@@ -29,6 +30,12 @@ export interface RegisteredPluginSidebarSection {
   readonly title: string;
   readonly render: (props: PluginSidebarSectionRenderProps) => unknown;
 }
+
+/**
+ * Page id for the host-generated settings page. Fixed so a plugin's own
+ * registerSettingsPage cannot collide with it or shadow it.
+ */
+export const GENERATED_SETTINGS_PAGE_ID = "settings";
 
 export interface RegisteredPluginSettingsPage {
   readonly pluginId: PluginId;
@@ -306,6 +313,21 @@ export async function syncPluginUiHostRegistrations({
           projectActions.push({ ...registration, pluginId: plugin.id });
         },
       };
+      // Declarative settings become a real settings page rendered by the HOST, so
+      // the plugin ships no form. Synthesised BEFORE register() so a plugin that
+      // declares both gets its generated page first, then its own pages — and so a
+      // plugin declaring only settings still contributes a surface (otherwise the
+      // declaration would be inert).
+      if (definition.settings !== undefined) {
+        const settingsSchema = definition.settings.schema;
+        settingsPages.push({
+          pluginId: plugin.id,
+          id: GENERATED_SETTINGS_PAGE_ID,
+          title: "Settings",
+          component: () =>
+            createElement(PluginSettingsPage, { pluginId: plugin.id, settingsSchema }),
+        });
+      }
       // Optional: a declarative-settings-only plugin has no imperative surface.
       if (definition.register !== undefined) {
         await maybeAwait(definition.register(ctx));

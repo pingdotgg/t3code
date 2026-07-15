@@ -1,10 +1,11 @@
 import { PluginId, type PluginInfo } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { defineWebPlugin } from "@t3tools/plugin-sdk-web";
+import { defineWebPlugin, type PluginUiContext } from "@t3tools/plugin-sdk-web";
 import { describe, expect, it } from "vite-plus/test";
 import * as Stream from "effect/Stream";
 
 import {
+  GENERATED_SETTINGS_PAGE_ID,
   createPluginUiHostState,
   getPluginWebEntryUrl,
   parsePluginIdParam,
@@ -274,6 +275,67 @@ describe("PluginSurfaceErrorBoundary", () => {
 });
 
 describe("PluginUiHost declarative settings", () => {
+  // Now assertable: declaring settings produces a host-generated settings page, so
+  // a settings-only plugin contributes a real surface. (An earlier version asserted
+  // state.loaded, which tracks ATTEMPTS — it passed even with register mandatory and
+  // proved nothing.)
+  it("generates a settings page for a plugin that declares settings and no register", async () => {
+    const state = createPluginUiHostState();
+
+    const snapshot = await syncPluginUiHostRegistrations({
+      state,
+      plugins: [pluginInfo()],
+      waitForHost: async () => {},
+      importWebPlugin: async () => ({
+        default: { settings: { schema: Schema.Struct({ baseUrl: Schema.String }) } },
+      }),
+    });
+
+    expect(snapshot.settingsPages).toHaveLength(1);
+    expect(snapshot.settingsPages[0]).toMatchObject({
+      pluginId: pluginInfo().id,
+      id: GENERATED_SETTINGS_PAGE_ID,
+    });
+  });
+
+  it("keeps the generated page alongside a plugin's own settings pages", async () => {
+    const state = createPluginUiHostState();
+
+    const snapshot = await syncPluginUiHostRegistrations({
+      state,
+      plugins: [pluginInfo()],
+      waitForHost: async () => {},
+      importWebPlugin: async () => ({
+        default: {
+          settings: { schema: Schema.Struct({ baseUrl: Schema.String }) },
+          register(ctx: PluginUiContext) {
+            ctx.registerSettingsPage({ id: "custom", title: "Custom", component: () => null });
+          },
+        },
+      }),
+    });
+
+    expect(snapshot.settingsPages.map((page) => page.id)).toEqual([
+      GENERATED_SETTINGS_PAGE_ID,
+      "custom",
+    ]);
+  });
+
+  it("does not generate a settings page for a plugin that declares none", async () => {
+    const state = createPluginUiHostState();
+
+    const snapshot = await syncPluginUiHostRegistrations({
+      state,
+      plugins: [pluginInfo()],
+      waitForHost: async () => {},
+      importWebPlugin: async () => ({
+        default: defineWebPlugin({ register() {} }),
+      }),
+    });
+
+    expect(snapshot.settingsPages).toEqual([]);
+  });
+
   it("still calls register when a plugin declares both settings and register", async () => {
     const state = createPluginUiHostState();
     let registered = false;
