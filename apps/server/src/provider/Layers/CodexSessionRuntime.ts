@@ -339,21 +339,33 @@ function buildCodexCollaborationMode(input: {
   readonly interactionMode?: ProviderInteractionMode;
   readonly model?: string;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
+  /** Already composed AND budgeted by PluginContextComposer. Never raw plugin text. */
+  readonly pluginContext?: string;
 }): EffectCodexSchema.V2TurnStartParams__CollaborationMode | undefined {
   if (input.interactionMode === undefined) {
     return undefined;
   }
   const model = normalizeCodexModelSlug(input.model) ?? DEFAULT_MODEL;
   const reasoningEffort = input.effort ?? "medium";
+  const base =
+    buildCodexDeveloperInstructions(input.interactionMode, { model, reasoningEffort });
   return {
     mode: input.interactionMode,
     settings: {
       model,
       reasoning_effort: reasoningEffort,
-      developer_instructions: buildCodexDeveloperInstructions(input.interactionMode, {
-        model,
-        reasoningEffort,
-      }),
+      // Append AFTER the branch, not inside it, so plan and default get plugin
+      // context from one code path. Wiring only the default mode is the predictable
+      // bug: plan mode would ignore every plugin's instructions and nobody would
+      // notice until a user asked why their rule only works sometimes.
+      //
+      // Plugin text goes after the host's. That is a weak heuristic, NOT a guarantee
+      // the host's rules win — a plugin can simply say "ignore the above". The
+      // capability gate and consent copy are the actual controls.
+      developer_instructions:
+        input.pluginContext === undefined || input.pluginContext === ""
+          ? base
+          : `${base}\n\n${input.pluginContext}`,
     },
   };
 }
@@ -370,6 +382,7 @@ export function buildTurnStartParams(input: {
   readonly serviceTier?: CodexServiceTier;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
   readonly interactionMode?: ProviderInteractionMode;
+  readonly pluginContext?: string;
 }): Effect.Effect<
   CodexTurnStartParamsWithCollaborationMode,
   CodexErrors.CodexAppServerProtocolParseError
@@ -390,6 +403,7 @@ export function buildTurnStartParams(input: {
     ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
     ...(input.model ? { model: input.model } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
+    ...(input.pluginContext ? { pluginContext: input.pluginContext } : {}),
   });
 
   return decodeCodexTurnStartParamsWithCollaborationMode({
