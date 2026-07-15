@@ -109,21 +109,39 @@ public enum ActivityRows {
 
     private static func toolRow(for activity: OrchestrationThreadActivity) -> T3ActivityRow {
         let payload = activity.decodePayload(ToolLifecycleActivityPayload.self)
+        let presentation = payload?.presentation
+        // The server-derived presentation is authoritative: it is the only
+        // place that can tell a skill or an MCP call from a generic tool. The
+        // scraping below stays as the fallback for activities persisted before
+        // the server derived one.
         let title =
-            nonEmpty(normalizeToolTitle(activity.summary))
+            nonEmpty(presentation?.title)
+            ?? nonEmpty(normalizeToolTitle(activity.summary))
             ?? humanizedItemType(payload?.itemType) ?? "Tool"
+        // `detailFromData` stays first: for command/file_change it emits the
+        // `"<Tool>: <command|json>"` form that ToolDetailParsing turns into a
+        // command body or an inline diff. The presentation subtitle is the
+        // one-liner for every other surface (skill, MCP, generic, ...), which
+        // previously had no detail at all.
         var detail =
             detailFromData(activity.payload, itemType: payload?.itemType)
+            ?? nonEmpty(presentation?.subtitle)
             ?? nonEmpty(payload?.detail).map(stripTrailingExitCode) ?? ""
         // A detail that just restates the title is dead weight in the
         // disclosure body.
         if compactLabel(detail) == compactLabel(title) { detail = "" }
 
         let phase: T3ActivityRowPhase
-        switch payload?.status {
-        case "inProgress": phase = .running
-        case "failed", "declined", "stopped": phase = .failed
-        default: phase = activity.kind == ActivityKind.toolCompleted ? .succeeded : .running
+        switch presentation?.state {
+        case .pending, .running: phase = .running
+        case .failed, .declined: phase = .failed
+        case .succeeded: phase = .succeeded
+        case nil:
+            switch payload?.status {
+            case "inProgress": phase = .running
+            case "failed", "declined", "stopped": phase = .failed
+            default: phase = activity.kind == ActivityKind.toolCompleted ? .succeeded : .running
+            }
         }
 
         let extracted = outputFromData(activity.payload)

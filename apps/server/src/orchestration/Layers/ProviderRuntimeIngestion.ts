@@ -10,6 +10,10 @@ import {
   isToolLifecycleItemType,
   ThreadId,
   type ThreadTokenUsageSnapshot,
+  type ToolExecutionState,
+  type ToolLifecycleItemType,
+  type ToolPresentation,
+  type ProviderDriverKind,
   TurnId,
   type OrchestrationCheckpointSummary,
   type OrchestrationProposedPlan,
@@ -26,6 +30,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { deriveToolPresentation } from "@t3tools/shared/toolPresentation";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { isUsageLimitDetail } from "../../provider/UsageLimit.ts";
@@ -240,6 +245,34 @@ function maxCheckpointTurnCount(
 
 function truncateDetail(value: string, limit = 180): string {
   return value.length > limit ? `${value.slice(0, limit - 3)}...` : value;
+}
+
+/**
+ * Normalizes a tool lifecycle item into the typed native presentation clients
+ * render (contracts `ToolPresentation`). Derived here, once, so skills,
+ * plugins, MCP tools, and unknown tools reach every client already typed
+ * instead of each app re-scraping the provider-specific `data` bag.
+ */
+function toolPresentationOf(
+  itemType: ToolLifecycleItemType,
+  payload: {
+    readonly status?: string | undefined;
+    readonly title?: string | undefined;
+    readonly detail?: string | undefined;
+    readonly data?: unknown;
+  },
+  provider: ProviderDriverKind,
+  fallbackState: ToolExecutionState,
+): ToolPresentation {
+  return deriveToolPresentation({
+    itemType,
+    provider,
+    fallbackState,
+    ...(payload.status !== undefined ? { status: payload.status } : {}),
+    ...(payload.title !== undefined ? { title: payload.title } : {}),
+    ...(payload.detail !== undefined ? { detail: payload.detail } : {}),
+    ...(payload.data !== undefined ? { data: payload.data } : {}),
+  });
 }
 
 function normalizeProposedPlanMarkdown(planMarkdown: string | undefined): string | undefined {
@@ -797,6 +830,12 @@ function runtimeEventToActivities(
             ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
             ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
+            presentation: toolPresentationOf(
+              event.payload.itemType,
+              event.payload,
+              event.provider,
+              "running",
+            ),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -819,6 +858,12 @@ function runtimeEventToActivities(
             itemType: event.payload.itemType,
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
             ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
+            presentation: toolPresentationOf(
+              event.payload.itemType,
+              event.payload,
+              event.provider,
+              "succeeded",
+            ),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -840,6 +885,12 @@ function runtimeEventToActivities(
           payload: {
             itemType: event.payload.itemType,
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+            presentation: toolPresentationOf(
+              event.payload.itemType,
+              event.payload,
+              event.provider,
+              "running",
+            ),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
