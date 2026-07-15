@@ -1,4 +1,5 @@
 import type { PluginId } from "@t3tools/contracts/plugin";
+import type { SettingsSchema } from "@t3tools/contracts/pluginSettings";
 import { HOST_API_VERSION } from "@t3tools/contracts/plugin";
 import type * as Stream from "effect/Stream";
 import { pluginSdkWebExternalDependencies } from "./externals";
@@ -206,7 +207,27 @@ export interface PluginCommandRegistration {
 }
 
 export interface PluginWebDefinition {
-  readonly register: (context: PluginUiContext) => void | Promise<void>;
+  /**
+   * Declarative settings for the host-rendered settings page.
+   *
+   * MUST be the SAME schema module the plugin's SERVER entry declares — export it
+   * from one shared file and import it in both. The two entries are bundled
+   * separately, so each gets its own copy of the schema object; that is harmless
+   * (both are built by the host's Schema classes and every use is structural), but
+   * it does mean the host cannot verify they match. The SERVER's schema is
+   * authoritative for validation; this copy only renders. If they drift, the form
+   * shows fields whose writes the server rejects — contained, but avoidable by
+   * sharing the module.
+   *
+   * The schema must satisfy the renderable field vocabulary; the server rejects a
+   * plugin whose schema does not, at registration.
+   */
+  readonly settings?: { readonly schema: SettingsSchema };
+  /**
+   * Optional when `settings` is declared: a plugin whose only web surface is a
+   * host-rendered settings page has nothing to register imperatively.
+   */
+  readonly register?: (context: PluginUiContext) => void | Promise<void>;
 }
 
 export function defineWebPlugin<const Definition extends PluginWebDefinition>(
