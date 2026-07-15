@@ -53,37 +53,28 @@ definePlugin({
     }),
 });
 
-// NEGATIVE: a schema whose DECODING needs services must be rejected at the
-// declaration site. The host decodes stored values with no plugin context, so this
-// has to be a compile error rather than a runtime failure.
-declare const serviceBoundSchema: Schema.Codec<
-  { readonly a: string },
-  { readonly a: string },
-  { readonly _: unique symbol },
-  never
->;
+// NEGATIVE: service-bound schemas must be rejected at the DECLARATION site, because
+// the host decodes stored values and re-encodes them on write with no plugin context.
+//
+// These MUST be real Schema.Structs whose FIELDS carry the service requirement. An
+// earlier version declared bare `Schema.Codec`s, which a reviewer showed were vacuous:
+// a Codec has no `.fields`, so `PluginDefinition<S extends Schema.Struct<...>>`
+// rejected them for lacking Struct fields — they stayed red even with the `never`
+// service constraints removed, proving nothing about the constraint they existed to
+// guard.
+declare const decodeBoundField: Schema.Codec<string, string, { readonly _: unique symbol }, never>;
+declare const encodeBoundField: Schema.Codec<string, string, never, { readonly _: unique symbol }>;
+
 definePlugin({
   // @ts-expect-error decoding services must be `never`
-  settings: { schema: serviceBoundSchema },
+  settings: { schema: Schema.Struct({ a: decodeBoundField }) },
   register: () => registration,
 });
 
-// NEGATIVE: a schema whose ENCODING needs services must also be rejected.
-//
-// This half is the one that was actually broken: Schema.Decoder<T, RD> expands to
-// Codec<T, unknown, RD, unknown>, pinning DECODING services to never while leaving
-// ENCODING services as `unknown`. The host re-encodes on every write with no plugin
-// context, so an encoding-service-bound schema could not run. Probing only the
-// decoding half would have let that regress silently.
-declare const encodeBoundSchema: Schema.Codec<
-  { readonly a: string },
-  { readonly a: string },
-  never,
-  { readonly _: unique symbol }
->;
 definePlugin({
-  // @ts-expect-error encoding services must be `never`
-  settings: { schema: encodeBoundSchema },
+  // @ts-expect-error encoding services must be `never` (Schema.Decoder<T, RD> would
+  // permit this: it expands to Codec<T, unknown, RD, unknown>)
+  settings: { schema: Schema.Struct({ a: encodeBoundField }) },
   register: () => registration,
 });
 
