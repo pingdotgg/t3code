@@ -44,11 +44,13 @@ import { SettingsAppearanceRouteScreen } from "./features/settings/SettingsAppea
 import { SettingsClientStorageRouteScreen } from "./features/settings/SettingsClientStorageRouteScreen";
 import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteScreen";
 import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnvironmentsRouteScreen";
-import { SettingsPrivacyPolicyRouteScreen } from "./features/settings/SettingsPrivacyPolicyRouteScreen";
-import { SettingsSecurityPolicyRouteScreen } from "./features/settings/SettingsSecurityPolicyRouteScreen";
+import { SettingsLegalRouteScreen } from "./features/settings/SettingsLegalRouteScreen";
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
-import { SettingsTermsOfServiceRouteScreen } from "./features/settings/SettingsTermsOfServiceRouteScreen";
 import { SettingsWaitlistRouteScreen } from "./features/settings/SettingsWaitlistRouteScreen";
+import {
+  SettingsLegalDocumentCloseHeaderButton,
+  SettingsLegalDocumentExternalHeaderButton,
+} from "./features/settings/components/SettingsLegalDocumentRouteScreen";
 import { useAppShortcuts } from "./features/shortcuts/useAppShortcuts";
 import { nativeHeaderScrollEdgeEffects } from "./native/StackHeader";
 import { useThreadOutboxDrain } from "./state/use-thread-outbox-drain";
@@ -109,6 +111,14 @@ const SHEET_SOLID_HEADER_OPTIONS: AppScreenOptions = {
   unstable_navigationItemStyle: undefined,
 };
 
+const LEGAL_DOCUMENT_HEADER_OPTIONS: AppScreenOptions = {
+  ...SHEET_SOLID_HEADER_OPTIONS,
+  headerBackVisible: false,
+  headerLeft: SettingsLegalDocumentCloseHeaderButton,
+  headerRight: SettingsLegalDocumentExternalHeaderButton,
+  presentation: "fullScreenModal",
+};
+
 const SettingsSheetStack = createNativeStackNavigator({
   initialRouteName: "Settings",
   screenOptions: {
@@ -157,30 +167,6 @@ const SettingsSheetStack = createNativeStackNavigator({
       linking: "client-storage",
       options: {
         title: "Client Storage",
-      },
-    }),
-    SettingsPrivacyPolicy: createNativeStackScreen({
-      screen: SettingsPrivacyPolicyRouteScreen,
-      linking: "privacy-policy",
-      options: {
-        ...SHEET_SOLID_HEADER_OPTIONS,
-        title: "Privacy Policy",
-      },
-    }),
-    SettingsSecurityPolicy: createNativeStackScreen({
-      screen: SettingsSecurityPolicyRouteScreen,
-      linking: "security-policy",
-      options: {
-        ...SHEET_SOLID_HEADER_OPTIONS,
-        title: "Security Policy",
-      },
-    }),
-    SettingsTermsOfService: createNativeStackScreen({
-      screen: SettingsTermsOfServiceRouteScreen,
-      linking: "terms-of-service",
-      options: {
-        ...SHEET_SOLID_HEADER_OPTIONS,
-        title: "Terms of Service",
       },
     }),
     SettingsAuth: createNativeStackScreen({
@@ -461,6 +447,14 @@ export const RootStack = createNativeStackNavigator({
               sheetAllowedDetents: [0.7, 0.92],
               sheetGrabberVisible: true,
             }),
+      },
+    }),
+    SettingsLegal: createNativeStackScreen({
+      screen: SettingsLegalRouteScreen,
+      linking: "settings/legal",
+      options: {
+        ...LEGAL_DOCUMENT_HEADER_OPTIONS,
+        title: "Legal",
       },
     }),
     ConnectOnboarding: createNativeStackScreen({

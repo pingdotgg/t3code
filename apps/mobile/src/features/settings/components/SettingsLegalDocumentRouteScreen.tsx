@@ -1,3 +1,4 @@
+import { useNavigation } from "@react-navigation/native";
 import { useCallback, useRef, useState } from "react";
 import { ActivityIndicator, Linking, Pressable, View } from "react-native";
 import { WebView } from "react-native-webview";
@@ -6,6 +7,52 @@ import { AppText as Text } from "../../../components/AppText";
 import { LoadingStrip } from "../../../components/LoadingStrip";
 import { SymbolView } from "../../../components/AppSymbol";
 import { useThemeColor } from "../../../lib/useThemeColor";
+import { LEGAL_URL } from "../lib/legal-document-url";
+
+export function SettingsLegalDocumentCloseHeaderButton() {
+  const navigation = useNavigation();
+  const iconColor = useThemeColor("--color-icon");
+
+  return (
+    <Pressable
+      accessibilityLabel="Close legal document"
+      accessibilityRole="button"
+      hitSlop={12}
+      onPress={() => navigation.goBack()}
+      className="p-2 active:opacity-60"
+    >
+      <SymbolView
+        name="xmark"
+        size={18}
+        tintColor={iconColor}
+        type="monochrome"
+        weight="semibold"
+      />
+    </Pressable>
+  );
+}
+
+export function SettingsLegalDocumentExternalHeaderButton() {
+  const iconColor = useThemeColor("--color-icon");
+
+  return (
+    <Pressable
+      accessibilityLabel="Open legal documents in external browser"
+      accessibilityRole="button"
+      hitSlop={12}
+      onPress={() => void Linking.openURL(LEGAL_URL).catch(() => undefined)}
+      className="p-2 active:opacity-60"
+    >
+      <SymbolView
+        name="safari"
+        size={19}
+        tintColor={iconColor}
+        type="monochrome"
+        weight="regular"
+      />
+    </Pressable>
+  );
+}
 
 function webDocumentIdentity(value: string): string | null {
   try {
@@ -22,15 +69,18 @@ function webDocumentIdentity(value: string): string | null {
 interface SettingsLegalDocumentRouteScreenProps {
   readonly documentName: string;
   readonly documentUrl: string;
+  readonly allowedDocumentUrls: readonly string[];
 }
 
 export function SettingsLegalDocumentRouteScreen({
   documentName,
   documentUrl,
+  allowedDocumentUrls,
 }: SettingsLegalDocumentRouteScreenProps) {
   const iconColor = useThemeColor("--color-icon");
-  const initialDocumentIdentity = webDocumentIdentity(documentUrl);
-  const allowedDocumentIdentityRef = useRef(initialDocumentIdentity);
+  const allowedDocumentIdentities = new Set(
+    allowedDocumentUrls.map(webDocumentIdentity).filter((value): value is string => value !== null),
+  );
   const isInitialLoadRef = useRef(true);
   const [reloadKey, setReloadKey] = useState(0);
   const [loadProgress, setLoadProgress] = useState(0);
@@ -39,7 +89,6 @@ export function SettingsLegalDocumentRouteScreen({
   const openExternalUrl = useCallback((url: string) => {
     void Linking.openURL(url).catch(() => undefined);
   }, []);
-
   if (loadError) {
     return (
       <View className="flex-1 items-center justify-center gap-4 bg-sheet px-8">
@@ -62,7 +111,6 @@ export function SettingsLegalDocumentRouteScreen({
           <Pressable
             accessibilityRole="button"
             onPress={() => {
-              allowedDocumentIdentityRef.current = initialDocumentIdentity;
               isInitialLoadRef.current = true;
               setLoadError(null);
               setReloadKey((value) => value + 1);
@@ -92,6 +140,7 @@ export function SettingsLegalDocumentRouteScreen({
         originWhitelist={["http://*", "https://*", "mailto:*"]}
         cacheEnabled={false}
         cacheMode="LOAD_NO_CACHE"
+        allowsBackForwardNavigationGestures
         domStorageEnabled={false}
         incognito
         javaScriptEnabled={false}
@@ -100,8 +149,9 @@ export function SettingsLegalDocumentRouteScreen({
         thirdPartyCookiesEnabled={false}
         startInLoadingState
         onShouldStartLoadWithRequest={(request) => {
+          const requestIdentity = webDocumentIdentity(request.url);
           const isConfiguredDocument =
-            webDocumentIdentity(request.url) === allowedDocumentIdentityRef.current;
+            requestIdentity !== null && allowedDocumentIdentities.has(requestIdentity);
           const isInitialRedirect = isInitialLoadRef.current && request.navigationType === "other";
           if (isConfiguredDocument || isInitialRedirect) return true;
 
@@ -115,9 +165,7 @@ export function SettingsLegalDocumentRouteScreen({
           setLoadProgress(0.05);
           setLoadError(null);
         }}
-        onLoadEnd={(event) => {
-          allowedDocumentIdentityRef.current =
-            webDocumentIdentity(event.nativeEvent.url) ?? initialDocumentIdentity;
+        onLoadEnd={() => {
           isInitialLoadRef.current = false;
           setLoadProgress(0);
         }}

@@ -2,7 +2,6 @@ export type SettingsSheetTarget =
   | "SettingsEnvironments"
   | "SettingsArchive"
   | "SettingsAppearance"
-  | "SettingsClientStorage"
-  | "SettingsPrivacyPolicy"
-  | "SettingsSecurityPolicy"
-  | "SettingsTermsOfService";
+  | "SettingsClientStorage";
+
+export type SettingsLegalDocumentTarget = "SettingsLegal";

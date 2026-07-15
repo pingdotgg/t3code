@@ -25,3 +25,4 @@ function marketingSiteDocumentUrl(path: string): string {
 export const PRIVACY_POLICY_URL = marketingSiteDocumentUrl("privacy-policy");
 export const SECURITY_POLICY_URL = marketingSiteDocumentUrl("security-policy");
 export const TERMS_OF_SERVICE_URL = marketingSiteDocumentUrl("terms-of-service");
+export const LEGAL_URL = marketingSiteDocumentUrl("legal");
