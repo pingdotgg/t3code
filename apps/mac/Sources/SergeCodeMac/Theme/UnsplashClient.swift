@@ -107,17 +107,38 @@ public actor UnsplashClient {
             if let name = location?.name?.trimmingCharacters(in: .whitespacesAndNewlines),
                 !name.isEmpty
             {
-                return Self.shortenSceneName(name)
+                return Self.cleanPlaceName(name)
             }
             let city = location?.city?.trimmingCharacters(in: .whitespacesAndNewlines)
             let country = location?.country?.trimmingCharacters(in: .whitespacesAndNewlines)
             if let city, !city.isEmpty {
-                return Self.shortenSceneName(city)
+                return Self.cleanPlaceName(city)
             }
             if let country, !country.isEmpty {
-                return Self.shortenSceneName(country)
+                return Self.cleanPlaceName(country)
             }
             return nil
+        }
+
+        /// Cleans and formats a place name for display as a thread title.
+        /// Removes commas, multi-part location strings, region codes, and applies Title Case.
+        /// "vernazza, sp, Italy" → "Vernazza"
+        /// "New York, NY" → "New York"
+        private static func cleanPlaceName(_ raw: String) -> String {
+            // Collapse multiple spaces first
+            let collapsed = raw.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+
+            // Split by comma and take the first meaningful part (the primary place name)
+            let parts = collapsed.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+            guard let primaryPart = parts.first, !primaryPart.isEmpty else {
+                return Self.shortenSceneName(collapsed)
+            }
+
+            // Apply Title Case
+            let titleCased = primaryPart.localizedCapitalized
+
+            // Shorten if needed
+            return Self.shortenSceneName(titleCased)
         }
 
         private static func shortenSceneName(_ raw: String) -> String {
