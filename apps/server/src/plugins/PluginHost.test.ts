@@ -328,8 +328,6 @@ export default {
 };
 `;
 
-// A settings schema the host form cannot render: Number has no numeric control, so
-
 const installPlugin = (input: {
   readonly pluginId: PluginId;
   readonly manifestHostApi?: string;
