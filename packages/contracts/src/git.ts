@@ -14,10 +14,18 @@ export const GitStackedAction = Schema.Literals([
   "create_pr",
   "commit_push",
   "commit_push_pr",
+  "ready_pr",
   "merge_pr",
 ]);
 export type GitStackedAction = typeof GitStackedAction.Type;
-export const GitActionProgressPhase = Schema.Literals(["branch", "commit", "push", "pr", "merge"]);
+export const GitActionProgressPhase = Schema.Literals([
+  "branch",
+  "commit",
+  "push",
+  "pr",
+  "ready",
+  "merge",
+]);
 export type GitActionProgressPhase = typeof GitActionProgressPhase.Type;
 export const GitActionProgressKind = Schema.Literals([
   "action_started",
@@ -45,6 +53,7 @@ const GitBranchStepStatus = Schema.Literals(["created", "skipped_not_requested"]
 const GitPrStepStatus = Schema.Literals([
   "created",
   "opened_existing",
+  "marked_ready",
   "merged",
   "skipped_not_requested",
 ]);
@@ -219,6 +228,8 @@ const VcsStatusChangeRequest = Schema.Struct({
   baseRef: TrimmedNonEmptyStringSchema,
   headRef: TrimmedNonEmptyStringSchema,
   state: VcsStatusChangeRequestState,
+  /** True while the pull request is a draft. */
+  isDraft: Schema.optional(Schema.Boolean),
   /**
    * GitHub reviewDecision, or null when the repo has no required reviewers,
    * the value is unavailable, the provider is not GitHub, or the fetch failed.

@@ -2217,6 +2217,7 @@ public actor LiveBackend: BackendService {
             prNumber: remote?.pr?.number,
             prTitle: remote?.pr?.title, prURL: remote?.pr?.url,
             prState: (remote?.pr?.state).flatMap(PullRequestState.init(rawValue:)),
+            isDraftPR: remote?.pr?.isDraft,
             reviewDecision: (remote?.pr?.reviewDecision).flatMap(
                 PullRequestReviewDecision.init(rawValue:)),
             unresolvedReviewThreadCount: remote?.pr?.unresolvedReviewThreadCount,
@@ -2272,6 +2273,7 @@ public actor LiveBackend: BackendService {
             case .push: .push
             case .commitPush: .commitPush
             case .commitPushPR: .commitPushPR
+            case .readyPR: .readyPR
             case .mergePR: .mergePR
             }
         let stream = await client.runStackedAction(

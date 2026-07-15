@@ -27,6 +27,8 @@ public struct VcsStatusChangeRequest: Decodable, Sendable {
     public var headRef: String
     /// "open" | "closed" | "merged"
     public var state: String
+    /// True while the pull request is a draft.
+    public var isDraft: Bool?
     /// GitHub reviewDecision: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null
     public var reviewDecision: String?
     /// Unresolved review thread count, or null when unavailable.
@@ -231,6 +233,7 @@ public enum GitStackedAction: String, Encodable, Sendable {
     case createPR = "create_pr"
     case commitPush = "commit_push"
     case commitPushPR = "commit_push_pr"
+    case readyPR = "ready_pr"
     case mergePR = "merge_pr"
 }
 

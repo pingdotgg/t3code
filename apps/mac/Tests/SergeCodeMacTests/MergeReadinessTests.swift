@@ -6,6 +6,7 @@ import Testing
 struct MergeReadinessTests {
     private func status(
         prState: PullRequestState? = .open,
+        isDraftPR: Bool? = false,
         reviewDecision: PullRequestReviewDecision? = .approved,
         unresolvedReviewThreadCount: Int? = 0
     ) -> VcsStatus {
@@ -16,6 +17,7 @@ struct MergeReadinessTests {
             prNumber: 1, prTitle: "Ship it",
             prURL: "https://github.com/SergeSerb2/SergeCode/pull/1",
             prState: prState,
+            isDraftPR: isDraftPR,
             reviewDecision: reviewDecision,
             unresolvedReviewThreadCount: unresolvedReviewThreadCount)
     }
@@ -23,6 +25,11 @@ struct MergeReadinessTests {
     @Test("ready when open, approved, and all threads resolved")
     func readyWhenApprovedAndClean() {
         #expect(MergeReadiness.isReady(for: status()))
+    }
+
+    @Test("not ready to merge while the PR is a draft")
+    func notReadyWhileDraft() {
+        #expect(!MergeReadiness.isReady(for: status(isDraftPR: true)))
     }
 
     @Test("ready when review decision is nil and all threads are resolved")

@@ -39,17 +39,23 @@ struct VcsToolbar: View {
                 Spacer()
                 if let prURL = status.prURL, let url = URL(string: prURL) {
                     let isMerged = status.prState == .merged
+                    let isDraft = status.isDraftPR == true
                     Button {
                         NSWorkspace.shared.open(url)
                     } label: {
                         Label(
                             (status.prNumber.map { "PR #\($0)" } ?? "PR")
-                                + (isMerged ? " · Merged" : ""),
-                            systemImage: isMerged ? "checkmark.seal.fill" : "arrow.triangle.pull")
+                                + (isMerged ? " · Merged" : isDraft ? " · Draft" : ""),
+                            systemImage: isMerged
+                                ? "checkmark.seal.fill"
+                                : isDraft ? "doc.badge.clock" : "arrow.triangle.pull")
                         .font(.caption)
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(isMerged ? AnyShapeStyle(.purple) : AnyShapeStyle(.tint))
+                    .foregroundStyle(
+                        isMerged
+                            ? AnyShapeStyle(.purple)
+                            : isDraft ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
                     .help(status.prTitle ?? "Open pull request")
                 }
                 if let prNumber = status.prNumber {
@@ -67,6 +73,28 @@ struct VcsToolbar: View {
                         (status.unresolvedReviewThreadCount ?? 0) > 0
                             ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
                     .help("View comments and review threads on PR #\(prNumber)")
+                }
+                if status.prState == .open, status.isDraftPR == true {
+                    Button {
+                        run(.readyPR, message: nil)
+                    } label: {
+                        if runningAction == .readyPR {
+                            HStack(spacing: 6) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text("Marking ready…")
+                            }
+                            .transition(.opacity)
+                        } else {
+                            Label("Ready for Review", systemImage: "checkmark.circle")
+                                .transition(.opacity)
+                        }
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                    .disabled(isRunningAction)
+                    .animation(Motion.reveal, value: runningAction)
+                    .help("Mark PR #\(status.prNumber ?? 0) ready for review")
                 }
                 if MergeReadiness.isReady(for: status) {
                     Button {
@@ -207,7 +235,7 @@ struct VcsToolbar: View {
             }
         } label: {
             // Merge owns its own in-button spinner; only show menu spinner for other actions.
-            if let runningAction, runningAction != .mergePR {
+            if let runningAction, runningAction != .mergePR, runningAction != .readyPR {
                 ProgressView()
                     .controlSize(.small)
                     .transition(.opacity)

@@ -1089,6 +1089,8 @@ public struct VcsStatus: Hashable, Sendable {
     public var prTitle: String?
     public var prURL: String?
     public var prState: PullRequestState?
+    /// True while the open pull request is a draft; nil when unavailable.
+    public var isDraftPR: Bool?
     /// GitHub review decision; nil when unknown / non-GitHub / fetch failed.
     public var reviewDecision: PullRequestReviewDecision?
     /// Unresolved review thread count; nil when unknown / fetch failed.
@@ -1104,6 +1106,7 @@ public struct VcsStatus: Hashable, Sendable {
         hasPrimaryRemote: Bool = false, aheadOfDefaultCount: Int? = nil,
         prNumber: Int? = nil, prTitle: String? = nil, prURL: String? = nil,
         prState: PullRequestState? = nil,
+        isDraftPR: Bool? = nil,
         reviewDecision: PullRequestReviewDecision? = nil,
         unresolvedReviewThreadCount: Int? = nil,
         actionableReviewItemCount: Int? = nil,
@@ -1124,6 +1127,7 @@ public struct VcsStatus: Hashable, Sendable {
         self.prTitle = prTitle
         self.prURL = prURL
         self.prState = prState
+        self.isDraftPR = isDraftPR
         self.reviewDecision = reviewDecision
         self.unresolvedReviewThreadCount = unresolvedReviewThreadCount
         self.actionableReviewItemCount = actionableReviewItemCount
@@ -1149,7 +1153,7 @@ public struct BranchRef: Identifiable, Hashable, Sendable {
 
 /// The stacked git pipelines the toolbar offers.
 public enum GitAction: String, CaseIterable, Sendable, Identifiable {
-    case commit, push, commitPush, commitPushPR, mergePR
+    case commit, push, commitPush, commitPushPR, readyPR, mergePR
     public var id: String { rawValue }
 
     public var displayName: String {
@@ -1158,20 +1162,21 @@ public enum GitAction: String, CaseIterable, Sendable, Identifiable {
         case .push: "Push"
         case .commitPush: "Commit & Push"
         case .commitPushPR: "Commit, Push & Open PR"
+        case .readyPR: "Ready for Review"
         case .mergePR: "Merge PR"
         }
     }
 
     public var needsCommitMessage: Bool {
         switch self {
-        case .push, .mergePR: false
+        case .push, .readyPR, .mergePR: false
         default: true
         }
     }
 
     /// Actions listed in the generic Git overflow menu (not dedicated buttons).
     public static var menuActions: [GitAction] {
-        allCases.filter { $0 != .mergePR }
+        allCases.filter { $0 != .mergePR && $0 != .readyPR }
     }
 }
 
