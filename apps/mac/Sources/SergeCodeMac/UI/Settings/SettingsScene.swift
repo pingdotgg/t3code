@@ -533,6 +533,7 @@ private extension ProviderKind {
         case .grok: "bolt"
         case .fugu: "fish"
         case .opencode: "curlybraces"
+        case .legacyCursor: "exclamationmark.triangle"
         }
     }
 
@@ -546,6 +547,7 @@ private extension ProviderKind {
         case .grok: "grok"
         case .fugu: "codex-fugu"
         case .opencode: "opencode"
+        case .legacyCursor: "cursor"
         }
     }
 }

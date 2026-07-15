@@ -81,6 +81,7 @@ private struct ProviderBadge: View {
         case .grok: "bolt"
         case .fugu: "fish"
         case .opencode: "shippingbox"
+        case .legacyCursor: "exclamationmark.triangle"
         }
     }
 }

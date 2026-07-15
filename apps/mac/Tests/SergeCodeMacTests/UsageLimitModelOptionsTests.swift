@@ -1,9 +1,19 @@
+import Foundation
 import Testing
 
 @testable import SergeCodeMac
 
 @Suite("Usage-limit model options")
 struct UsageLimitModelOptionsTests {
+    @Test func legacyCursorProviderDecodesButIsNotSelectable() throws {
+        let provider = try JSONDecoder().decode(
+            ProviderKind.self,
+            from: Data(#""cursor""#.utf8))
+
+        #expect(provider == .legacyCursor)
+        #expect(!ProviderKind.allCases.contains(.legacyCursor))
+    }
+
     private func option(_ id: String, provider: ProviderKind) -> ModelOption {
         ModelOption(
             instanceID: "instance-\(provider.rawValue)",

@@ -2282,6 +2282,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
     if (!monitor) return;
 
+    if (monitor.fiber && monitor.fiber.pollUnsafe() === undefined) {
+      yield* Fiber.interrupt(monitor.fiber);
+    }
     yield* drainBackgroundTaskOutput(context, taskId, monitor).pipe(
       Effect.catch(() => Effect.void),
     );
@@ -2290,9 +2293,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       yield* emitBackgroundTaskOutput(context, taskId, finalText);
     }
     context.backgroundTaskOutputMonitors.delete(taskId);
-    if (monitor.fiber && monitor.fiber.pollUnsafe() === undefined) {
-      yield* Fiber.interrupt(monitor.fiber);
-    }
   });
 
   const logNativeSdkMessage = Effect.fn("logNativeSdkMessage")(function* (
@@ -2798,8 +2798,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return;
     }
     const openIds = Array.from(context.openTaskIds);
-    context.openTaskIds.clear();
     for (const taskId of openIds) {
+      yield* stopBackgroundTaskOutputMonitor(context, taskId);
+      context.openTaskIds.delete(taskId);
       context.syntheticallyStoppedTaskIds.add(taskId);
       forgetTaskToolInputForTask(context, taskId);
       const stamp = yield* makeEventStamp();
@@ -5070,6 +5071,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
               if (context.stopped || !context.openTaskIds.has(taskId)) {
                 return;
               }
+              yield* stopBackgroundTaskOutputMonitor(context, taskId);
               context.openTaskIds.delete(taskId);
               context.syntheticallyStoppedTaskIds.add(taskId);
               forgetTaskToolInputForTask(context, taskId);

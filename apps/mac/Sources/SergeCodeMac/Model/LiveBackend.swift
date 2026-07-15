@@ -2847,6 +2847,7 @@ public actor LiveBackend: BackendService {
         if lowered.contains("grok") { return .grok }
         if lowered.contains("fugu") { return .fugu }
         if lowered.contains("opencode") { return .opencode }
+        if lowered.contains("cursor") { return .legacyCursor }
         return nil
     }
 
