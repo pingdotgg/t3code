@@ -228,6 +228,108 @@ describe("WorkflowEngine", () => {
     }),
   );
 
+  it.effect("continues into later phases after a recoverable task failure", () =>
+    Effect.gen(function* () {
+      const prompts: string[] = [];
+      const handlers = successfulHandlers();
+      const engine = makeWorkflowEngine({
+        ...handlers,
+        spawn: (toolContext, input) => {
+          prompts.push(input.prompt);
+          return input.prompt === "Fail"
+            ? new SubAgentError({ reason: "dispatch-failed", description: "failed" })
+            : handlers.spawn(toolContext, input);
+        },
+      });
+      const definition: WorkflowDefinition = {
+        ...workflow([]),
+        phases: [
+          {
+            id: "recoverable",
+            title: "Recoverable failure",
+            execution: "sequential",
+            tasks: [
+              {
+                id: "failed",
+                type: "spawn",
+                provider: ProviderInstanceId.make("codex"),
+                prompt: "Fail",
+                onError: "continue",
+              },
+            ],
+          },
+          {
+            id: "later",
+            title: "Later phase",
+            execution: "sequential",
+            tasks: [
+              {
+                id: "later-task",
+                type: "spawn",
+                provider: ProviderInstanceId.make("codex"),
+                prompt: "Later",
+              },
+            ],
+          },
+        ],
+      };
+
+      const result = yield* engine.execute(definition, context);
+
+      expect(prompts).toEqual(["Fail", "Later"]);
+      expect(result.status).toBe("failed");
+      expect(result.phases.map((phase) => phase.phaseId)).toEqual(["recoverable", "later"]);
+    }),
+  );
+
+  it.effect("rejects duplicate task IDs before executing handlers", () =>
+    Effect.gen(function* () {
+      let spawnCalls = 0;
+      const handlers = successfulHandlers();
+      const engine = makeWorkflowEngine({
+        ...handlers,
+        spawn: (toolContext, input) => {
+          spawnCalls += 1;
+          return handlers.spawn(toolContext, input);
+        },
+      });
+      const duplicateTask = {
+        id: "duplicate",
+        type: "spawn" as const,
+        provider: ProviderInstanceId.make("codex"),
+        prompt: "Duplicate",
+      };
+      const definition: WorkflowDefinition = {
+        ...workflow([]),
+        phases: [
+          {
+            id: "first-phase",
+            title: "First phase",
+            execution: "sequential",
+            tasks: [duplicateTask],
+          },
+          {
+            id: "second-phase",
+            title: "Second phase",
+            execution: "sequential",
+            tasks: [duplicateTask],
+          },
+        ],
+      };
+
+      const exit = yield* engine.execute(definition, context).pipe(Effect.exit);
+
+      expect(spawnCalls).toBe(0);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.squash(exit.cause)).toMatchObject({
+          code: "INVALID_WORKFLOW",
+          message: "Workflow test-workflow contains duplicate task ID: duplicate",
+        });
+      }
+    }),
+  );
+
   it.effect("propagates aborting task failures", () =>
     Effect.gen(function* () {
       const engine = makeWorkflowEngine({

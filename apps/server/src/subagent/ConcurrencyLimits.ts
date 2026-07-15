@@ -2,11 +2,14 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import { SubAgentError, type ProviderInstanceId, type SubAgentStatus } from "@t3tools/contracts";
 import { CONCURRENCY_LIMITS, getModelCostTier } from "./SubAgentProviderInfo.ts";
+
+const MAX_CONSECUTIVE_STATUS_FAILURES = 3;
 
 interface ActiveSubAgent {
   readonly reservationId: string;
@@ -31,9 +34,9 @@ export interface ConcurrencyLimitsShape {
 
   readonly release: (reservationOrThreadId: string) => Effect.Effect<void>;
 
-  readonly monitorTurn: (
+  readonly monitorTurn: <E>(
     threadId: string,
-    observeStatus: Effect.Effect<SubAgentStatus>,
+    observeStatus: Effect.Effect<SubAgentStatus, E>,
   ) => Effect.Effect<void>;
 
   readonly getActiveCount: (model?: string) => Effect.Effect<number>;
@@ -139,12 +142,23 @@ const makeConcurrencyLimits = Effect.gen(function* () {
   const monitorTurn: ConcurrencyLimitsShape["monitorTurn"] = (threadId, observeStatus) =>
     Effect.gen(function* () {
       const monitor = Effect.gen(function* () {
+        let consecutiveFailures = 0;
         while (true) {
-          const status = yield* observeStatus.pipe(Effect.orElseSucceed(() => "running" as const));
-          if (status !== "running") {
-            yield* release(threadId);
-            return;
+          const observed = yield* Effect.exit(observeStatus);
+          if (Exit.isFailure(observed)) {
+            consecutiveFailures += 1;
+            if (consecutiveFailures >= MAX_CONSECUTIVE_STATUS_FAILURES) {
+              yield* release(threadId);
+              return;
+            }
+          } else {
+            consecutiveFailures = 0;
+            if (observed.value !== "running") {
+              yield* release(threadId);
+              return;
+            }
           }
+
           yield* Effect.sleep(Duration.seconds(1));
         }
       });

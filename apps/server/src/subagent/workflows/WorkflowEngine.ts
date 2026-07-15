@@ -83,6 +83,11 @@ export interface WorkflowEngineShape<R = WorkflowHandlerRequirements> {
   readonly cancel: (workflowId: string) => Effect.Effect<void, WorkflowError>;
 }
 
+interface PhaseExecutionOutcome {
+  readonly result: WorkflowPhaseResult;
+  readonly shouldAbort: boolean;
+}
+
 export class WorkflowEngine extends Context.Service<WorkflowEngine, WorkflowEngineShape>()(
   "t3/subagent/workflows/WorkflowEngine",
 ) {}
@@ -91,6 +96,23 @@ const workflowError = (message: string, code: string) => new WorkflowError({ mes
 
 const literalReplace = (value: string, key: string, replacement: string): string =>
   value.split(`{{${key}}}`).join(replacement);
+
+const validateUniqueTaskIds = Effect.fn("WorkflowEngine.validateUniqueTaskIds")(function* (
+  definition: WorkflowDefinition,
+) {
+  const taskIds = new Set<string>();
+  for (const phase of definition.phases) {
+    for (const task of phase.tasks) {
+      if (taskIds.has(task.id)) {
+        return yield* workflowError(
+          `Workflow ${definition.name} contains duplicate task ID: ${task.id}`,
+          "INVALID_WORKFLOW",
+        );
+      }
+      taskIds.add(task.id);
+    }
+  }
+});
 
 const defaultHandlers: WorkflowTaskHandlers = {
   spawn: handleSpawn,
@@ -272,7 +294,7 @@ export const makeWorkflowEngine = <R>(
     allResults: Map<string, WorkflowTaskResult>,
     signal: Deferred.Deferred<void>,
     parallelismLimit: number,
-  ): Effect.Effect<WorkflowPhaseResult, WorkflowError, R> =>
+  ): Effect.Effect<PhaseExecutionOutcome, WorkflowError, R> =>
     Effect.gen(function* () {
       const startedAtMs = yield* Clock.currentTimeMillis;
       const startedAt = DateTime.formatIso(yield* DateTime.now);
@@ -335,21 +357,30 @@ export const makeWorkflowEngine = <R>(
         const result = phaseResults.get(task.id);
         return result === undefined ? [] : [result];
       });
+      const continuedTaskIds = new Set(
+        phase.tasks.filter((task) => task.onError === "continue").map((task) => task.id),
+      );
       const completedAtMs = yield* Clock.currentTimeMillis;
       return {
-        phaseId: phase.id,
-        status: orderedResults.every((result) => result.status === "completed")
-          ? "completed"
-          : "failed",
-        tasks: orderedResults,
-        startedAt,
-        completedAt: DateTime.formatIso(yield* DateTime.now),
-        durationMs: Math.max(0, completedAtMs - startedAtMs),
+        result: {
+          phaseId: phase.id,
+          status: orderedResults.every((result) => result.status === "completed")
+            ? "completed"
+            : "failed",
+          tasks: orderedResults,
+          startedAt,
+          completedAt: DateTime.formatIso(yield* DateTime.now),
+          durationMs: Math.max(0, completedAtMs - startedAtMs),
+        },
+        shouldAbort: orderedResults.some(
+          (result) => result.status === "failed" && !continuedTaskIds.has(result.taskId),
+        ),
       };
     });
 
   const execute: WorkflowEngineShape<R>["execute"] = (definition, context) =>
     Effect.gen(function* () {
+      yield* validateUniqueTaskIds(definition);
       const startedAtMs = yield* Clock.currentTimeMillis;
       const startedAt = DateTime.formatIso(yield* DateTime.now);
       const signal = yield* Deferred.make<void>();
@@ -382,12 +413,12 @@ export const makeWorkflowEngine = <R>(
 
       const program = Effect.gen(function* () {
         for (const phase of definition.phases) {
-          const phaseResult = yield* withCancellation(
+          const phaseOutcome = yield* withCancellation(
             executePhase(phase, context, allTaskResults, signal, definition.parallelismLimit ?? 10),
             signal,
           );
-          phaseResults.push(phaseResult);
-          if (phaseResult.status === "failed") break;
+          phaseResults.push(phaseOutcome.result);
+          if (phaseOutcome.shouldAbort) break;
         }
         return yield* buildResult(
           phaseResults.every((phase) => phase.status === "completed") ? "completed" : "failed",

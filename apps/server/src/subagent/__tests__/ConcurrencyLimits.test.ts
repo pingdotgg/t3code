@@ -2,6 +2,7 @@ import { ProviderInstanceId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as TestClock from "effect/testing/TestClock";
 
 import { ConcurrencyLimits, ConcurrencyLimitsLive } from "../ConcurrencyLimits.ts";
 
@@ -51,6 +52,22 @@ describe("ConcurrencyLimits", () => {
       };
 
       expect(result).toEqual({ before: 2, after: 1, cheap: 0, moderate: 1 });
+    }).pipe(Effect.provide(ConcurrencyLimitsLive)),
+  );
+
+  it.effect("releases capacity after repeated status probe failures", () =>
+    Effect.gen(function* () {
+      const limits = yield* ConcurrencyLimits;
+      const reservation = yield* limits.reserve(codex, "gpt-4o-mini");
+      yield* limits.bindReservation(reservation, "thread-failing-probe");
+      yield* limits.monitorTurn("thread-failing-probe", Effect.fail("provider unavailable"));
+
+      yield* Effect.yieldNow;
+      expect(yield* limits.getActiveCount()).toBe(1);
+
+      yield* TestClock.adjust("2 seconds");
+      yield* Effect.yieldNow;
+      expect(yield* limits.getActiveCount()).toBe(0);
     }).pipe(Effect.provide(ConcurrencyLimitsLive)),
   );
 });
