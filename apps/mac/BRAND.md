@@ -26,7 +26,7 @@ Display uses SF Pro Rounded via `.system(design: .rounded)` on brand surfaces. B
 
 ## App icon
 
-Generate icons with `scripts/generate-appicon.swift` from `BrandMarkGeometry`. Use `AppIcon.icns` for production and `AppIcon-Dev.icns` for the dev channel. The Icon Composer source is `Support/AppIcon.icon/`.
+Generate the single blue app icon with `scripts/generate-appicon.swift` from `BrandMarkGeometry`. All build configurations use `Support/AppIcon.icns`; the Icon Composer source is `Support/AppIcon.icon/`.
 
 ## Voice
 
