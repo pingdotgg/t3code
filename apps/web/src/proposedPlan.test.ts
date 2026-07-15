@@ -66,6 +66,27 @@ describe("extractProposedPlanTasks", () => {
     ]);
   });
 
+  it("does not treat a trailing list as part of an earlier task section", () => {
+    expect(
+      extractProposedPlanTasks(
+        [
+          "# Integrate RPC",
+          "## Tasks",
+          "1. Add the shared contract",
+          "2. Wire the server",
+          "3. Render the client state",
+          "The implementation should preserve current behavior.",
+          "- [x] Existing behavior documented",
+          "- [ ] Release notes drafted",
+        ].join("\n"),
+      ),
+    ).toEqual([
+      { step: "Add the shared contract", status: "pending" },
+      { step: "Wire the server", status: "pending" },
+      { step: "Render the client state", status: "pending" },
+    ]);
+  });
+
   it("preserves statuses from markdown task markers", () => {
     expect(extractProposedPlanTasks("## Work\n- [x] Parse tasks\n- [ ] Render statuses")).toEqual([
       { step: "Parse tasks", status: "completed" },

@@ -35,6 +35,7 @@ export function extractProposedPlanTasks(planMarkdown: string): ProposedPlanTask
   const finishGroup = () => {
     if (currentGroup?.tasks.length) {
       groups.push(currentGroup);
+      heading = null;
     }
     currentGroup = null;
   };
