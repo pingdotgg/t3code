@@ -279,6 +279,38 @@ export const PluginUninstallInput = Schema.Struct({
 });
 export type PluginUninstallInput = typeof PluginUninstallInput.Type;
 
+export const PluginSettingsGetInput = Schema.Struct({ pluginId: PluginId });
+export type PluginSettingsGetInput = typeof PluginSettingsGetInput.Type;
+
+/**
+ * The ENCODED settings draft, plus the concurrency token.
+ *
+ * Encoded rather than decoded on purpose: the form edits encoded data, and this
+ * must be servable even when the stored values no longer decode against the
+ * plugin's current schema — that is exactly when the user needs the form to open
+ * in order to repair them. `incompatible` flags that case so the UI can say so.
+ */
+export const PluginSettingsGetResult = Schema.Struct({
+  values: Schema.Record(Schema.String, Schema.Unknown),
+  /** Pass back as `expectedRevision` on write; stale values are rejected. */
+  revision: Schema.Number,
+  incompatible: Schema.Boolean,
+  /** False when the plugin declares no settings schema; the UI renders nothing. */
+  declared: Schema.Boolean,
+});
+export type PluginSettingsGetResult = typeof PluginSettingsGetResult.Type;
+
+export const PluginSettingsSetInput = Schema.Struct({
+  pluginId: PluginId,
+  values: Schema.Record(Schema.String, Schema.Unknown),
+  /** From the preceding get. A stale value is a conflict, not a clobber. */
+  expectedRevision: Schema.Number,
+});
+export type PluginSettingsSetInput = typeof PluginSettingsSetInput.Type;
+
+export const PluginSettingsSetResult = Schema.Struct({ revision: Schema.Number });
+export type PluginSettingsSetResult = typeof PluginSettingsSetResult.Type;
+
 export const PluginUpgradeBeginInput = Schema.Struct({
   pluginId: PluginId,
   version: SemverString,
@@ -322,6 +354,9 @@ export class PluginManagementError extends Schema.TaggedErrorClass<PluginManagem
       "filesystem",
       "lockfile",
       "activation-failed",
+      "settings-not-declared",
+      "settings-invalid",
+      "settings-conflict",
     ]),
     message: Schema.String,
     data: Schema.optional(Schema.Unknown),
@@ -351,6 +386,8 @@ export const PLUGINS_WS_METHODS = {
   upgradeBegin: "plugins.upgrade.begin",
   upgradeConfirm: "plugins.upgrade.confirm",
   checkUpdates: "plugins.checkUpdates",
+  settingsGet: "plugins.settings.get",
+  settingsSet: "plugins.settings.set",
 } as const;
 
 const LockfileSource = Schema.Struct({

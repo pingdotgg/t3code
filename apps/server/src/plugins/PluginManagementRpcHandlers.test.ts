@@ -11,7 +11,10 @@ import * as ServerConfig from "../config.ts";
 import { PluginHttpClientTransportService } from "./capabilities/HttpClientCapability.ts";
 import { OutboundUrlLookup } from "./OutboundUrlValidator.ts";
 import { PluginInstaller } from "./PluginInstaller.ts";
+import * as NodeSqliteClient from "../persistence/NodeSqliteClient.ts";
 import { PluginLockfileStore } from "./PluginLockfileStore.ts";
+import * as PluginRuntimeRegistryLayer from "./PluginRuntimeRegistry.ts";
+import * as PluginSettingsStoreLayer from "./PluginSettingsStore.ts";
 import * as PluginLockfileStoreLayer from "./PluginLockfileStore.ts";
 import { PluginManagementRpcHandlers } from "./PluginManagementRpcHandlers.ts";
 import * as PluginManagementRpcHandlersModule from "./PluginManagementRpcHandlers.ts";
@@ -50,6 +53,9 @@ const InstallerMockLive = Layer.succeed(
 const managementTest = it.layer(
   PluginManagementRpcHandlersModule.layer.pipe(
     Layer.provideMerge(PluginLockfileStoreLayer.layer),
+    Layer.provideMerge(PluginRuntimeRegistryLayer.layer),
+    Layer.provideMerge(PluginSettingsStoreLayer.layer),
+    Layer.provideMerge(NodeSqliteClient.layerMemory()),
     Layer.provideMerge(PluginMarketplace.layer),
     Layer.provideMerge(InstallerMockLive),
     Layer.provideMerge(TestOutboundDepsLive),

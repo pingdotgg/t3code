@@ -1499,6 +1499,16 @@ const makeWsRpcLayer = (
               "plugin.id": input.pluginId,
             },
           ),
+        [PLUGINS_WS_METHODS.settingsGet]: (input) =>
+          observeRpcEffect(PLUGINS_WS_METHODS.settingsGet, pluginManagement.settingsGet(input), {
+            "rpc.aggregate": "plugins",
+            "plugin.id": input.pluginId,
+          }),
+        [PLUGINS_WS_METHODS.settingsSet]: (input) =>
+          observeRpcEffect(PLUGINS_WS_METHODS.settingsSet, pluginManagement.settingsSet(input), {
+            "rpc.aggregate": "plugins",
+            "plugin.id": input.pluginId,
+          }),
         [PLUGINS_WS_METHODS.uninstall]: (input) =>
           observeRpcEffect(
             PLUGINS_WS_METHODS.uninstall,

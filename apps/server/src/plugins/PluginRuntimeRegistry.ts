@@ -1,5 +1,5 @@
 import type { PluginId, PluginManifest } from "@t3tools/contracts/plugin";
-import type { PluginRegistration } from "@t3tools/plugin-sdk";
+import type { PluginRegistration, PluginSettingsDescriptor } from "@t3tools/plugin-sdk";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -13,6 +13,14 @@ import * as Stream from "effect/Stream";
 export interface ActivePluginRuntime {
   readonly manifest: PluginManifest;
   readonly registration: PluginRegistration;
+  /**
+   * Declared on the plugin's DEFINITION (not its registration), so it is carried
+   * here rather than read off `registration`. The settings RPC resolves the schema
+   * from the live runtime, which is also what makes settings unreadable for a
+   * disabled plugin and impossible to reach across plugins: the host keys off the
+   * runtime it looked up, never a client-supplied id.
+   */
+  readonly settings: PluginSettingsDescriptor | undefined;
   readonly readiness: Deferred.Deferred<void>;
   readonly scope: Scope.Scope;
 }

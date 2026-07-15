@@ -169,6 +169,10 @@ import {
   PluginMethodInput,
   PluginRpcError,
   PluginSetEnabledInput,
+  PluginSettingsGetInput,
+  PluginSettingsGetResult,
+  PluginSettingsSetInput,
+  PluginSettingsSetResult,
   PluginSourcesAddInput,
   PluginSourcesAddResult,
   PluginSourcesListResult,
@@ -860,6 +864,18 @@ export const WsPluginsSetEnabledRpc = Rpc.make(PLUGINS_WS_METHODS.setEnabled, {
   error: Schema.Union([PluginManagementError, EnvironmentAuthorizationError]),
 });
 
+export const WsPluginsSettingsGetRpc = Rpc.make(PLUGINS_WS_METHODS.settingsGet, {
+  payload: PluginSettingsGetInput,
+  success: PluginSettingsGetResult,
+  error: Schema.Union([PluginManagementError, EnvironmentAuthorizationError]),
+});
+
+export const WsPluginsSettingsSetRpc = Rpc.make(PLUGINS_WS_METHODS.settingsSet, {
+  payload: PluginSettingsSetInput,
+  success: PluginSettingsSetResult,
+  error: Schema.Union([PluginManagementError, EnvironmentAuthorizationError]),
+});
+
 export const WsPluginsUninstallRpc = Rpc.make(PLUGINS_WS_METHODS.uninstall, {
   payload: PluginUninstallInput,
   success: Schema.Struct({}),
@@ -966,6 +982,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsPluginsInstallConfirmRpc,
   WsPluginsInstallAbortRpc,
   WsPluginsSetEnabledRpc,
+  WsPluginsSettingsGetRpc,
+  WsPluginsSettingsSetRpc,
   WsPluginsUninstallRpc,
   WsPluginsUpgradeBeginRpc,
   WsPluginsUpgradeConfirmRpc,

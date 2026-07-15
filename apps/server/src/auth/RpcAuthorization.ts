@@ -116,6 +116,10 @@ export const RPC_REQUIRED_SCOPES = {
   [PLUGINS_WS_METHODS.upgradeBegin]: AuthPluginsManageScope,
   [PLUGINS_WS_METHODS.upgradeConfirm]: AuthPluginsManageScope,
   [PLUGINS_WS_METHODS.checkUpdates]: AuthPluginsManageScope,
+  // Settings are plugin administration: the host renders the settings page, so
+  // configuration uses the same management scope as install, enable, and uninstall.
+  [PLUGINS_WS_METHODS.settingsGet]: AuthPluginsManageScope,
+  [PLUGINS_WS_METHODS.settingsSet]: AuthPluginsManageScope,
 } as const satisfies Readonly<Record<WsRpcMethod, AuthEnvironmentScope>>;
 
 export function requiredScopeForRpcMethod(method: string): AuthEnvironmentScope {

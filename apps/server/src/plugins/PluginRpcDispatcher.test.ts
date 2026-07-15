@@ -110,6 +110,7 @@ const putRuntime = Effect.fn("PluginRpcDispatcherTest.putRuntime")(function* (in
   const scope = yield* Scope.make();
   yield* registry.put(pluginId, {
     manifest: input.runtimeManifest ?? manifest(),
+    settings: undefined,
     registration: input.registration ?? registration,
     readiness,
     scope,

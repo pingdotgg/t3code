@@ -80,6 +80,7 @@ const makeRuntime = (
         capabilities: ["tools"] as const,
         entries: { server: "server.js" },
       },
+      settings: undefined,
       registration: { tools: registrationTools },
       readiness,
       scope,
