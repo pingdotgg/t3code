@@ -483,6 +483,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           provider_thread_id AS "providerThreadId",
           runtime_mode AS "runtimeMode",
           active_turn_id AS "activeTurnId",
+          waiting_json AS "waiting",
           last_error AS "lastError",
           updated_at AS "updatedAt"
         FROM projection_thread_sessions
@@ -504,6 +505,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           sessions.provider_thread_id AS "providerThreadId",
           sessions.runtime_mode AS "runtimeMode",
           sessions.active_turn_id AS "activeTurnId",
+          sessions.waiting_json AS "waiting",
           sessions.last_error AS "lastError",
           sessions.updated_at AS "updatedAt"
         FROM projection_thread_sessions sessions
@@ -529,6 +531,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           sessions.provider_thread_id AS "providerThreadId",
           sessions.runtime_mode AS "runtimeMode",
           sessions.active_turn_id AS "activeTurnId",
+          sessions.waiting_json AS "waiting",
           sessions.last_error AS "lastError",
           sessions.updated_at AS "updatedAt"
         FROM projection_thread_sessions sessions
@@ -846,6 +849,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           provider_instance_id AS "providerInstanceId",
           runtime_mode AS "runtimeMode",
           active_turn_id AS "activeTurnId",
+          waiting_json AS "waiting",
           last_error AS "lastError",
           updated_at AS "updatedAt"
         FROM projection_thread_sessions

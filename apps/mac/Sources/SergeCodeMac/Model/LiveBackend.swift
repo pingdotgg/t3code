@@ -2597,6 +2597,7 @@ public actor LiveBackend: BackendService {
         {
         case .idle: return .idle
         case .running: return .running
+        case .waiting: return .waiting
         case .waitingApproval: return .waitingApproval
         case .backgroundWork: return .backgroundWork
         case .error: return .error

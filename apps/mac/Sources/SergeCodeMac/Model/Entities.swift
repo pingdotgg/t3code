@@ -35,12 +35,12 @@ public struct Project: Identifiable, Hashable, Sendable {
 }
 
 public enum ThreadStatus: String, Sendable {
-    case idle, running, waitingApproval, backgroundWork, error, archived
+    case idle, running, waiting, waitingApproval, backgroundWork, error, archived
 
     public var isSettled: Bool {
         switch self {
         case .idle, .archived, .error: true
-        case .running, .waitingApproval, .backgroundWork: false
+        case .running, .waiting, .waitingApproval, .backgroundWork: false
         }
     }
 }

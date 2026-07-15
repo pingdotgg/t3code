@@ -363,13 +363,14 @@ function normalizeRuntimeTurnState(
 
 function orchestrationSessionStatusFromRuntimeState(
   state: "starting" | "running" | "waiting" | "ready" | "interrupted" | "stopped" | "error",
-): "starting" | "running" | "ready" | "interrupted" | "stopped" | "error" {
+): "starting" | "running" | "waiting" | "ready" | "interrupted" | "stopped" | "error" {
   switch (state) {
     case "starting":
       return "starting";
     case "running":
-    case "waiting":
       return "running";
+    case "waiting":
+      return "waiting";
     case "ready":
       return "ready";
     case "interrupted":
@@ -379,6 +380,37 @@ function orchestrationSessionStatusFromRuntimeState(
     case "error":
       return "error";
   }
+}
+
+function parseWaitingState(detail: unknown):
+  | {
+      readonly reason: "scheduled-wakeup" | "dependency";
+      readonly target:
+        | { readonly kind: "time"; readonly at: string }
+        | { readonly kind: "event"; readonly event: string };
+      readonly outcome?: "missed" | "cancelled";
+    }
+  | undefined {
+  if (detail === null || typeof detail !== "object") return undefined;
+  const value = detail as Record<string, unknown>;
+  const reason = value.reason === "dependency" ? "dependency" : "scheduled-wakeup";
+  const outcome =
+    value.outcome === "cancelled" || value.status === "cancelled"
+      ? "cancelled"
+      : value.outcome === "missed" || value.status === "missed"
+        ? "missed"
+        : undefined;
+  if (typeof value.at === "string" && Number.isFinite(Date.parse(value.at))) {
+    return { reason, target: { kind: "time", at: value.at }, ...(outcome ? { outcome } : {}) };
+  }
+  if (typeof value.event === "string" && value.event.trim().length > 0) {
+    return {
+      reason,
+      target: { kind: "event", event: value.event.trim() },
+      ...(outcome ? { outcome } : {}),
+    };
+  }
+  return undefined;
 }
 
 function requestKindFromCanonicalRequestType(
@@ -1646,6 +1678,16 @@ const make = Effect.gen(function* () {
               return activeTurnId !== null ? "running" : "ready";
           }
         })();
+        const waiting =
+          event.type === "session.state.changed" && event.payload.state === "waiting"
+            ? parseWaitingState(event.payload.detail)
+            : undefined;
+        const effectiveStatus =
+          status === "waiting" && waiting === undefined
+            ? "running"
+            : status === "waiting" && waiting?.outcome === "cancelled"
+              ? "ready"
+              : status;
         const lastError =
           event.type === "session.state.changed" && event.payload.state === "error"
             ? (event.payload.reason ?? thread.session?.lastError ?? "Provider session error")
@@ -1683,13 +1725,14 @@ const make = Effect.gen(function* () {
             threadId: thread.id,
             session: {
               threadId: thread.id,
-              status,
+              status: effectiveStatus,
               providerName: event.provider,
               ...(event.providerInstanceId !== undefined
                 ? { providerInstanceId: event.providerInstanceId }
                 : {}),
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
               activeTurnId: nextActiveTurnId,
+              ...(waiting !== undefined ? { waiting } : {}),
               lastError,
               updatedAt: now,
             },

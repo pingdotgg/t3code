@@ -345,7 +345,33 @@ public struct OrchestrationProposedPlan: Codable, Sendable {
 }
 
 public enum OrchestrationSessionStatus: String, Codable, Sendable {
-    case idle, starting, running, ready, interrupted, stopped, error
+    case idle, starting, running, waiting, ready, interrupted, stopped, error
+}
+
+public struct OrchestrationWaitingState: Codable, Sendable {
+    public var reason: String
+    public var target: Target
+    public var outcome: String?
+    public enum Target: Codable, Sendable {
+        case time(at: String)
+        case event(name: String)
+        private enum CodingKeys: String, CodingKey { case kind, at, event }
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            switch try c.decode(String.self, forKey: .kind) {
+            case "time": self = .time(at: try c.decode(String.self, forKey: .at))
+            case "event": self = .event(name: try c.decode(String.self, forKey: .event))
+            default: throw DecodingError.dataCorruptedError(forKey: .kind, in: c, debugDescription: "Unknown waiting target")
+            }
+        }
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            switch self {
+            case .time(let at): try c.encode("time", forKey: .kind); try c.encode(at, forKey: .at)
+            case .event(let name): try c.encode("event", forKey: .kind); try c.encode(name, forKey: .event)
+            }
+        }
+    }
 }
 
 public struct OrchestrationSession: Codable, Sendable {
@@ -355,13 +381,14 @@ public struct OrchestrationSession: Codable, Sendable {
     public var providerInstanceId: String?
     public var runtimeMode: RuntimeMode
     public var activeTurnId: String?
+    public var waiting: OrchestrationWaitingState?
     public var lastError: String?
     public var updatedAt: String
 
     public init(
         threadId: String, status: OrchestrationSessionStatus, providerName: String? = nil,
         providerInstanceId: String? = nil, runtimeMode: RuntimeMode = .wireDefault,
-        activeTurnId: String? = nil, lastError: String? = nil, updatedAt: String
+        activeTurnId: String? = nil, waiting: OrchestrationWaitingState? = nil, lastError: String? = nil, updatedAt: String
     ) {
         self.threadId = threadId
         self.status = status
@@ -369,13 +396,14 @@ public struct OrchestrationSession: Codable, Sendable {
         self.providerInstanceId = providerInstanceId
         self.runtimeMode = runtimeMode
         self.activeTurnId = activeTurnId
+        self.waiting = waiting
         self.lastError = lastError
         self.updatedAt = updatedAt
     }
 
     private enum CodingKeys: String, CodingKey {
         case threadId, status, providerName, providerInstanceId, runtimeMode, activeTurnId,
-            lastError, updatedAt
+            waiting, lastError, updatedAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -387,6 +415,7 @@ public struct OrchestrationSession: Codable, Sendable {
         runtimeMode = try container.decode(
             RuntimeMode.self, forKey: .runtimeMode, default: .wireDefault)
         activeTurnId = try container.decode(String?.self, forKey: .activeTurnId, default: nil)
+        waiting = try container.decodeIfPresent(OrchestrationWaitingState.self, forKey: .waiting)
         lastError = try container.decode(String?.self, forKey: .lastError, default: nil)
         updatedAt = try container.decode(String.self, forKey: .updatedAt)
     }
