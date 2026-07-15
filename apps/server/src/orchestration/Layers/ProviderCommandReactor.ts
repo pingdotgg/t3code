@@ -684,6 +684,7 @@ const make = Effect.gen(function* () {
       });
     }
     const preferredProvider: ProviderDriverKind = desiredDriverKind;
+    const allowAfterUsageLimit = latestTurnFailedWithUsageLimit(thread);
     if (thread.session !== null) {
       yield* rejectStartedThreadModelChangeIfRequired({
         threadId,
@@ -696,14 +697,25 @@ const make = Effect.gen(function* () {
               }
             : thread.modelSelection,
         requestedModelSelection,
-        allowAfterUsageLimit: latestTurnFailedWithUsageLimit(thread),
+        allowAfterUsageLimit,
       });
     }
-    if (
+    // A switch across drivers (or across instances whose resume state is not
+    // portable) cannot continue the bound session. Normally that is a hard
+    // stop; after a usage limit the alternative is a thread stuck on an
+    // exhausted account, so the session is restarted from scratch on the new
+    // instance instead — see `requiresFreshProviderSession` below.
+    const continuationIsPortable =
+      currentInfo.driverKind === desiredInfo.driverKind &&
+      currentInfo.continuationIdentity.continuationKey ===
+        desiredInfo.continuationIdentity.continuationKey;
+    const instanceSwitchRequested =
       thread.session !== null &&
       requestedModelSelection !== undefined &&
-      requestedModelSelection.instanceId !== currentInstanceId
-    ) {
+      requestedModelSelection.instanceId !== currentInstanceId;
+    const requiresFreshProviderSession =
+      instanceSwitchRequested && !continuationIsPortable && allowAfterUsageLimit;
+    if (instanceSwitchRequested && !continuationIsPortable && !allowAfterUsageLimit) {
       if (currentInfo.driverKind !== desiredInfo.driverKind) {
         return yield* new ProviderAdapterRequestError({
           provider: preferredProvider,
@@ -711,16 +723,11 @@ const make = Effect.gen(function* () {
           detail: `Thread '${threadId}' is bound to driver '${currentInfo.driverKind}' and cannot switch to '${desiredInfo.driverKind}'.`,
         });
       }
-      if (
-        currentInfo.continuationIdentity.continuationKey !==
-        desiredInfo.continuationIdentity.continuationKey
-      ) {
-        return yield* new ProviderAdapterRequestError({
-          provider: preferredProvider,
-          method: "thread.turn.start",
-          detail: `Thread '${threadId}' cannot switch from instance '${currentInstanceId}' to '${desiredInstanceId}' because their provider resume state is incompatible.`,
-        });
-      }
+      return yield* new ProviderAdapterRequestError({
+        provider: preferredProvider,
+        method: "thread.turn.start",
+        detail: `Thread '${threadId}' cannot switch from instance '${currentInstanceId}' to '${desiredInstanceId}' because their provider resume state is incompatible.`,
+      });
     }
     const project = yield* resolveProject(thread.projectId);
     const effectiveCwd = resolveThreadWorkspaceCwd({
@@ -825,15 +832,20 @@ const make = Effect.gen(function* () {
         !runtimeModeChanged &&
         !cwdChanged &&
         !instanceChanged &&
+        !requiresFreshProviderSession &&
         !shouldRestartForModelChange &&
         !shouldRestartForModelSelectionChange
       ) {
         return existingSessionThreadId;
       }
 
-      const resumeCursor = shouldRestartForModelChange
-        ? undefined
-        : (activeSession?.resumeCursor ?? undefined);
+      // The cursor resumes the exhausted provider's conversation; it is
+      // meaningless (and rejected) on a driver that does not share its
+      // continuation identity.
+      const resumeCursor =
+        shouldRestartForModelChange || requiresFreshProviderSession
+          ? undefined
+          : (activeSession?.resumeCursor ?? undefined);
       yield* Effect.logInfo("provider command reactor restarting provider session", {
         threadId,
         existingSessionThreadId,
@@ -853,6 +865,7 @@ const make = Effect.gen(function* () {
         instanceChanged,
         shouldRestartForModelChange,
         shouldRestartForModelSelectionChange,
+        requiresFreshProviderSession,
         hasResumeCursor: resumeCursor !== undefined,
       });
       const restartedSession = yield* startProviderSession(
