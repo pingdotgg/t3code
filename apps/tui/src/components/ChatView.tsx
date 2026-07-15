@@ -1,10 +1,13 @@
 import { type ScrollBoxRenderable, type SelectOption, SyntaxStyle } from "@opentui/core";
 import {
+  DEFAULT_SERVER_SETTINGS,
   type GitStackedAction,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type ProviderInteractionMode,
   type RuntimeMode,
+  type VcsRef,
 } from "@t3tools/contracts";
+import { truncate } from "@t3tools/shared/String";
 import { useRenderer, useTerminalDimensions } from "@opentui/react";
 import { getKittyImageManager } from "@t3tools/opentui-image";
 import * as NodeChildProcess from "node:child_process";
@@ -22,6 +25,15 @@ import {
 } from "../composerAttachments.ts";
 import { normalizeEditedPrompt, resolveEditorCommand } from "../promptEditor.ts";
 import type { TuiClient } from "../connection.ts";
+import {
+  cycleBranch,
+  type NewThreadField,
+  type NewThreadWorkspaceMode,
+  newThreadValidationMessage,
+  resolveInitialBranch,
+  resolveNewThreadContext,
+  validateNewThread,
+} from "../newThread.logic.ts";
 import { useKeyBindings } from "../hooks/useKeyBindings.ts";
 import { useKittyGraphicsSupport } from "../hooks/useKittyGraphicsSupport.ts";
 import { latestActionableProposedPlan } from "../proposedPlan.ts";
@@ -98,6 +110,21 @@ export function ChatView({
     store.start();
     return () => store.stop();
   }, [store]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    void client
+      .getServerConfig()
+      .then((config) => {
+        if (!cancelled) setNewThreadSettings(config.settings);
+      })
+      .catch(() => {
+        // Defaults remain usable while disconnected or on an older server.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client]);
 
   const [focus, setFocus] = React.useState<"compose" | "new" | "rename" | "filter" | "commit">(
     "compose",
@@ -177,10 +204,17 @@ export function ChatView({
   const [newRuntimeMode, setNewRuntimeMode] = React.useState<RuntimeMode>("full-access");
   const [newInteractionMode, setNewInteractionMode] =
     React.useState<ProviderInteractionMode>("default");
-  const [newBranch, setNewBranch] = React.useState("");
-  const [newWorktree, setNewWorktree] = React.useState("");
-  // Which text field the new-thread dialog is editing (Tab cycles).
-  const [newField, setNewField] = React.useState<"message" | "branch" | "worktree">("message");
+  const [newWorkspaceMode, setNewWorkspaceMode] = React.useState<NewThreadWorkspaceMode>("current");
+  const [newBranch, setNewBranch] = React.useState<string | null>(null);
+  const [newContextWorktreePath, setNewContextWorktreePath] = React.useState<string | null>(null);
+  const [newRefs, setNewRefs] = React.useState<ReadonlyArray<VcsRef>>([]);
+  const [newBranchStatus, setNewBranchStatus] = React.useState<
+    "loading" | "ready" | "empty" | "error"
+  >("empty");
+  const [newField, setNewField] = React.useState<NewThreadField>("message");
+  const newSubmissionPendingRef = React.useRef(false);
+  const [newSubmissionPending, setNewSubmissionPending] = React.useState(false);
+  const [newThreadSettings, setNewThreadSettings] = React.useState(DEFAULT_SERVER_SETTINGS);
   // Which pending approval ^A/^R act on; ↑/↓ move it while an approval is up.
   const [approvalIndex, setApprovalIndex] = React.useState(0);
   // The right-side source-control panel (^L), auto-hidden on narrow terminals.
@@ -224,6 +258,33 @@ export function ChatView({
     [state.shell, state.expanded, state.loadedInFull, selectedThreadId, state.filter],
   );
   const detail = state.detail;
+
+  React.useEffect(() => {
+    if (focus !== "new") return;
+    const project = projects[activeProjectIndex];
+    if (!project) {
+      setNewRefs([]);
+      setNewBranchStatus("empty");
+      return;
+    }
+    let cancelled = false;
+    setNewRefs([]);
+    setNewBranchStatus("loading");
+    void client.listRefs(project.workspaceRoot).then(
+      (result) => {
+        if (cancelled) return;
+        setNewRefs(result.refs);
+        setNewBranch((branch) => resolveInitialBranch(result.refs, branch));
+        setNewBranchStatus(result.refs.length > 0 ? "ready" : "empty");
+      },
+      () => {
+        if (!cancelled) setNewBranchStatus("error");
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProjectIndex, client, focus, projects]);
   // The selected thread's terminal tabs + the single active terminal the drawer
   // renders (derived so the existing single-terminal usages keep working).
   const terminalCwd = detail
@@ -341,11 +402,19 @@ export function ChatView({
   };
 
   const openNewThread = () => {
-    setProjectIndex(0);
+    const context = resolveNewThreadContext({
+      projects,
+      thread: detail,
+      defaultEnvironmentMode: newThreadSettings.defaultThreadEnvMode,
+    });
+    setProjectIndex(context.projectIndex);
     setNewRuntimeMode(detail?.runtimeMode ?? "full-access");
     setNewInteractionMode("default");
-    setNewBranch("");
-    setNewWorktree("");
+    setNewWorkspaceMode(context.workspaceMode);
+    setNewBranch(context.branch);
+    setNewContextWorktreePath(context.worktreePath);
+    setNewRefs([]);
+    setNewBranchStatus("loading");
     setNewField("message");
     setFocus("new");
   };
@@ -701,34 +770,66 @@ export function ChatView({
   };
 
   const submitNewThread = () => {
+    if (newSubmissionPendingRef.current) return;
     const project = projects[activeProjectIndex];
     const message = draft.trim();
-    // Keep the dialog open (and the typed message) when the project can't accept
-    // it yet, so the user doesn't lose what they wrote.
-    if (project && message.length > 0 && !project.defaultModelSelection) {
-      store.setStatus("Project has no default model — set one in the web UI first.");
+    const validationError = validateNewThread({
+      hasProject: !!project,
+      message,
+      hasDefaultModel: !!project?.defaultModelSelection,
+      workspaceMode: newWorkspaceMode,
+      branch: newBranch,
+    });
+    if (validationError) {
+      setNewField(
+        validationError === "missing-base-branch"
+          ? "branch"
+          : validationError === "missing-project"
+            ? "project"
+            : "message",
+      );
+      store.setStatus(newThreadValidationMessage(validationError), "error");
       return;
     }
-    if (project && message.length > 0 && project.defaultModelSelection) {
-      void client
-        .createThread({
-          projectId: project.id,
-          title: message.slice(0, 60),
-          modelSelection: project.defaultModelSelection,
-          firstMessage: message,
-          runtimeMode: newRuntimeMode,
-          interactionMode: newInteractionMode,
-          branch: newBranch,
-          worktreePath: newWorktree,
-        })
-        .catch((error) => store.setStatus(`create failed: ${String(error)}`, "error"));
-      store.setStatus("Creating thread…", "busy");
-    }
-    setDraft("");
-    setNewBranch("");
-    setNewWorktree("");
-    setNewField("message");
-    setFocus("compose");
+    if (!project || !project.defaultModelSelection) return;
+
+    newSubmissionPendingRef.current = true;
+    setNewSubmissionPending(true);
+    store.setStatus("Creating thread and starting its first turn…", "busy");
+    const createWorktree = newWorkspaceMode === "new-worktree";
+    void client
+      .createThread({
+        projectId: project.id,
+        projectCwd: project.workspaceRoot,
+        title: truncate(message),
+        modelSelection: project.defaultModelSelection,
+        firstMessage: message,
+        runtimeMode: newRuntimeMode,
+        interactionMode: newInteractionMode,
+        branch: newBranch,
+        worktreePath: createWorktree ? null : newContextWorktreePath,
+        createWorktree,
+        startFromOrigin: createWorktree && newThreadSettings.newWorktreesStartFromOrigin,
+      })
+      .then(
+        (threadId) => {
+          setDraft("");
+          setNewBranch(null);
+          setNewContextWorktreePath(null);
+          setNewField("message");
+          setFocus("compose");
+          if (!store.getState().expanded.has(project.id)) store.toggleProject(project.id);
+          store.select({ kind: "thread", id: threadId });
+          store.setStatus("Thread created.", "success");
+        },
+        (error) => {
+          store.setStatus(`create failed: ${String(error)}`, "error");
+        },
+      )
+      .finally(() => {
+        newSubmissionPendingRef.current = false;
+        setNewSubmissionPending(false);
+      });
   };
 
   // Update one thread's tabs from the LATEST map (functional, so rapid tab ops
@@ -1236,6 +1337,25 @@ export function ChatView({
                               ? "userInput"
                               : "compose";
 
+  const navigateNewThreadControl = (field: NewThreadField, delta: 1 | -1) => {
+    if (field === "project") {
+      setProjectIndex((index) => {
+        const count = Math.max(projects.length, 1);
+        return (index + delta + count) % count;
+      });
+      setNewContextWorktreePath(null);
+      setNewBranch(null);
+      return;
+    }
+    if (field === "workspace") {
+      setNewWorkspaceMode((mode) => (mode === "current" ? "new-worktree" : "current"));
+      return;
+    }
+    if (field === "branch") {
+      setNewBranch((branch) => cycleBranch(newRefs, branch, delta));
+    }
+  };
+
   useKeyBindings({
     mode: keyMode,
     onExit,
@@ -1250,25 +1370,26 @@ export function ChatView({
     onImagePreviewClose: () => setExpandedImage(null),
     onToggleFocus: toggleFocus,
     onCancelNew: () => {
+      if (newSubmissionPendingRef.current) return;
       setDraft("");
-      setNewBranch("");
-      setNewWorktree("");
+      setNewBranch(null);
+      setNewContextWorktreePath(null);
       setNewField("message");
       setFocus("compose");
     },
-    onProjectPrev: () =>
-      setProjectIndex((index) => (index > 0 ? index - 1 : Math.max(projects.length - 1, 0))),
-    onProjectNext: () => setProjectIndex((index) => (index + 1) % Math.max(projects.length, 1)),
+    newNavigation: newField !== "message",
+    onNewPrev: () => navigateNewThreadControl(newField, -1),
+    onNewNext: () => navigateNewThreadControl(newField, 1),
     onNewCycleRuntime: () =>
       setNewRuntimeMode((mode) => {
         const current = RUNTIME_MODES.indexOf(mode);
         return RUNTIME_MODES[(current + 1) % RUNTIME_MODES.length] ?? "full-access";
       }),
     onNewTogglePlan: () => setNewInteractionMode((mode) => (mode === "plan" ? "default" : "plan")),
-    onNewCycleField: () =>
-      setNewField((field) =>
-        field === "message" ? "branch" : field === "branch" ? "worktree" : "message",
-      ),
+    onNewCycleField: () => {
+      const fields: ReadonlyArray<NewThreadField> = ["message", "project", "workspace", "branch"];
+      setNewField((field) => fields[(fields.indexOf(field) + 1) % fields.length] ?? "message");
+    },
     onSubmitNew: submitNewThread,
     // Plain arrows stay with the composer except while choosing between multiple
     // pending approvals. Threads use the explicit Alt+↑/↓ shortcuts or mouse.
@@ -1645,12 +1766,21 @@ export function ChatView({
         }
         newRuntimeMode={newRuntimeMode}
         newBranch={newBranch}
-        newWorktree={newWorktree}
+        newWorkspaceMode={newWorkspaceMode}
+        newWorkspaceLabel={
+          newWorkspaceMode === "new-worktree"
+            ? "New worktree"
+            : newContextWorktreePath
+              ? "Current worktree"
+              : "Project workspace"
+        }
+        newBranchStatus={newBranchStatus}
         newField={newField}
         editorRows={promptLines}
         inputFocused={
           !terminalFocused &&
           !replySubmissionPending &&
+          !newSubmissionPending &&
           !diffOpen &&
           !filesOpen &&
           !settingsOpen &&
@@ -1673,8 +1803,10 @@ export function ChatView({
         onReplyInput={setReply}
         onReplySubmit={sendReply}
         onDraftInput={(value) => setDraft(value.replace(/\t/g, ""))}
-        onBranchInput={(value) => setNewBranch(value.replace(/\t/g, ""))}
-        onWorktreeInput={(value) => setNewWorktree(value.replace(/\t/g, ""))}
+        onNewFieldActivate={(field) => {
+          setNewField(field);
+          if (field !== "message") navigateNewThreadControl(field, 1);
+        }}
         onAuxInput={focus === "commit" ? setCommitDraft : setRenameDraft}
         onTogglePlan={togglePlanMode}
         onOpenAccess={openRuntimePicker}

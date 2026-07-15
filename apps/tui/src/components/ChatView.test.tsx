@@ -2,6 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { testRender } from "@opentui/react/test-utils";
 import * as React from "react";
 
+import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+
 import type { OrchestrationShellSnapshot, OrchestrationThread, TuiClient } from "../connection.ts";
 import { ChatView } from "./ChatView.tsx";
 
@@ -25,6 +27,7 @@ const project = {
   id: "p1",
   title: "Project one",
   workspaceRoot: "/workspace/project-one",
+  defaultModelSelection: { instanceId: "codex", model: "gpt-5" },
   createdAt: "2026-07-13T00:00:00.000Z",
   updatedAt: "2026-07-13T00:00:00.000Z",
 };
@@ -36,6 +39,7 @@ function thread(activities: OrchestrationThread["activities"] = []): Orchestrati
     title: "Thread one",
     interactionMode: "default",
     runtimeMode: "full-access",
+    branch: "main",
     worktreePath: null,
     updatedAt: "2026-07-13T00:00:00.000Z",
     session: { status: "idle" },
@@ -70,11 +74,13 @@ function fakeClient({
   shellSnapshot = shell(),
   sendReply = () => Promise.resolve(),
   respondUserInput = () => Promise.resolve(),
+  createThread = async () => "t-new" as never,
 }: {
   readonly detail: OrchestrationThread;
   readonly shellSnapshot?: OrchestrationShellSnapshot;
   readonly sendReply?: TuiClient["sendReply"];
   readonly respondUserInput?: TuiClient["respondUserInput"];
+  readonly createThread?: TuiClient["createThread"];
 }): {
   readonly client: TuiClient;
   readonly connect: () => void;
@@ -98,6 +104,23 @@ function fakeClient({
     subscribeTerminalMetadata: () => () => {},
     sendReply,
     respondUserInput,
+    createThread,
+    getServerConfig: async () => ({ settings: DEFAULT_SERVER_SETTINGS }) as never,
+    listRefs: async () =>
+      ({
+        refs: [
+          {
+            name: "main",
+            current: true,
+            isDefault: true,
+            worktreePath: null,
+          },
+        ],
+        isRepo: true,
+        hasPrimaryRemote: true,
+        nextCursor: null,
+        totalCount: 1,
+      }) as never,
     getThreadActivities: async () => ({ activities: [], hasMore: false }),
     getAttachmentUrl: async () => null,
     getAttachmentImage: async () => null,
@@ -323,6 +346,136 @@ describe("ChatView acknowledged submissions", () => {
     });
     const frame = await setup.waitForFrame((next) => next.includes("answer failed"));
     expect(frame).toContain("Only the terminal UI");
+    setup.renderer.destroy();
+  });
+});
+
+describe("ChatView new-thread parity", () => {
+  it("Given creation is in flight, when Enter repeats and creation fails, then one request is made and the task remains", async () => {
+    const request = deferred<Awaited<ReturnType<TuiClient["createThread"]>>>();
+    const calls: Array<Parameters<TuiClient["createThread"]>[0]> = [];
+    const fake = fakeClient({
+      detail: thread(),
+      createThread: async (input) => {
+        calls.push(input);
+        return request.promise;
+      },
+    });
+    const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
+      width: 110,
+      height: 28,
+    });
+
+    await selectThread(setup, fake.connect);
+    await React.act(async () => {
+      setup.mockInput.pressKey("n", { ctrl: true });
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("new thread"));
+    await React.act(async () => {
+      await setup.mockInput.typeText("preserve this new task");
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("preserve this new task"));
+    await React.act(async () => {
+      setup.mockInput.pressEnter();
+      setup.mockInput.pressEnter();
+      await setup.renderOnce();
+    });
+    await setup.waitFor(() => calls.length > 0);
+
+    expect(calls).toHaveLength(1);
+    await React.act(async () => {
+      request.reject(new Error("offline"));
+      await Promise.resolve();
+    });
+    const frame = await setup.waitForFrame((next) => next.includes("create failed"));
+    expect(frame).toContain("new thread");
+    expect(frame).toContain("preserve this new task");
+    setup.renderer.destroy();
+  });
+
+  it("Given an empty task, when Enter is pressed, then the new-thread dialog stays open", async () => {
+    let calls = 0;
+    const fake = fakeClient({
+      detail: thread(),
+      createThread: async () => {
+        calls += 1;
+        return "t-new" as never;
+      },
+    });
+    const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
+      width: 110,
+      height: 28,
+    });
+
+    await selectThread(setup, fake.connect);
+    await React.act(async () => {
+      setup.mockInput.pressKey("n", { ctrl: true });
+      setup.mockInput.pressEnter();
+      await setup.renderOnce();
+    });
+    const frame = await setup.waitForFrame((next) => next.includes("Describe the task"));
+    expect(frame).toContain("new thread");
+    expect(calls).toBe(0);
+    setup.renderer.destroy();
+  });
+
+  it("Given New worktree is selected, when creation succeeds, then the atomic request contains its base branch and the returned thread is selected", async () => {
+    const calls: Array<Parameters<TuiClient["createThread"]>[0]> = [];
+    const fake = fakeClient({
+      detail: thread(),
+      createThread: async (input) => {
+        calls.push(input);
+        return "t-created" as never;
+      },
+    });
+    const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
+      width: 110,
+      height: 28,
+    });
+
+    await selectThread(setup, fake.connect);
+    await React.act(async () => {
+      setup.mockInput.pressKey("n", { ctrl: true });
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("main"));
+    await React.act(async () => {
+      await setup.mockInput.typeText("create in isolation");
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("create in isolation"));
+    await React.act(async () => {
+      setup.mockInput.pressKey("\t");
+      setup.mockInput.pressKey("\t");
+      await setup.renderOnce();
+    });
+    await React.act(async () => {
+      setup.mockInput.pressArrow("down");
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("New worktree"));
+    await React.act(async () => {
+      setup.mockInput.pressKey("\t");
+      setup.mockInput.pressEnter();
+      await setup.renderOnce();
+      await Promise.resolve();
+    });
+    await setup.waitFor(() => calls.length === 1);
+    await setup.waitFor(() => fake.subscribedThreadIds.at(-1) === "t-created");
+    const frame = setup.captureCharFrame();
+
+    expect(calls[0]).toMatchObject({
+      projectCwd: "/workspace/project-one",
+      firstMessage: "create in isolation",
+      branch: "main",
+      worktreePath: null,
+      createWorktree: true,
+    });
+    expect(fake.subscribedThreadIds.at(-1)).toBe("t-created");
+    expect(frame).not.toContain("new thread");
+    expect(frame).not.toContain("create in isolation");
     setup.renderer.destroy();
   });
 });

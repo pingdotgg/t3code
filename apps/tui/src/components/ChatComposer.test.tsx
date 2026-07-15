@@ -18,8 +18,10 @@ const base = {
   projectName: "Acme",
   interactionMode: "default",
   newRuntimeMode: "full-access",
-  newBranch: "",
-  newWorktree: "",
+  newBranch: null,
+  newWorkspaceMode: "current",
+  newWorkspaceLabel: "Project workspace",
+  newBranchStatus: "empty",
   newField: "message",
   editorRows: 3,
   composerEpoch: 0,
@@ -42,8 +44,7 @@ const base = {
   onReplyInput: noop,
   onReplySubmit: noop,
   onDraftInput: noop,
-  onBranchInput: noop,
-  onWorktreeInput: noop,
+  onNewFieldActivate: noop,
   onAuxInput: noop,
   onTogglePlan: noop,
   onOpenAccess: noop,
@@ -191,14 +192,26 @@ describe("ChatComposer", () => {
     expect(frame).toContain("approval-required");
     expect(frame).toContain("plan");
     expect(frame).toContain("branch");
-    expect(frame).toContain("worktree");
+    expect(frame).toContain("Project workspace");
   });
 
-  it("Given new-thread mode editing the branch field, then the branch value shows in its input", async () => {
+  it("Given New worktree mode, then it shows the selected base branch without a raw path field", async () => {
     const frame = await frameOf(
-      <ChatComposer {...base} mode="new" newField="branch" newBranch="feature/x" inputFocused />,
+      <ChatComposer
+        {...base}
+        mode="new"
+        newField="branch"
+        newWorkspaceMode="new-worktree"
+        newWorkspaceLabel="New worktree"
+        newBranch="feature/x"
+        newBranchStatus="ready"
+        inputFocused
+      />,
     );
+    expect(frame).toContain("New worktree");
+    expect(frame).toContain("base branch");
     expect(frame).toContain("feature/x");
+    expect(frame).not.toContain("worktree ▸ /");
   });
 
   it("Given a focused multiline reply editor, when text is typed, then it renders the content", async () => {

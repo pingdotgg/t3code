@@ -5,6 +5,7 @@ import * as React from "react";
 import type { ComposerImageAttachment } from "../composerAttachments.ts";
 import type { ComposerControls } from "../controls.ts";
 import { clip } from "../format.ts";
+import type { NewThreadField, NewThreadWorkspaceMode } from "../newThread.logic.ts";
 import { usePalette } from "../theme.ts";
 import type { PendingUserInput } from "../userInput.ts";
 import { ComposerFooter } from "./ComposerFooter.tsx";
@@ -45,13 +46,14 @@ const replyKeyBindings: typeof defaultTextareaKeyBindings = [
 // One labelled field in the new-thread dialog. Only the active field mounts a
 // focused <input>; the others render static text (so a single input consumes
 // keystrokes — the same guard the reply composer uses).
-function NewThreadField({
+function NewThreadTextField({
   label,
   value,
   active,
   inputFocused,
   placeholder,
   onInput,
+  onActivate,
 }: {
   readonly label: string;
   readonly value: string;
@@ -59,10 +61,11 @@ function NewThreadField({
   readonly inputFocused: boolean;
   readonly placeholder: string;
   readonly onInput: (value: string) => void;
+  readonly onActivate: () => void;
 }): React.ReactNode {
   const palette = usePalette();
   return (
-    <box flexDirection="row">
+    <box flexDirection="row" onMouseDown={onActivate}>
       <text>
         <span fg={active ? palette.accent : palette.dim}>{active ? "▸ " : "  "}</span>
         <span fg={active ? palette.accent : palette.dim}>{`${label} ▸ `}</span>
@@ -87,6 +90,29 @@ function NewThreadField({
           )}
         </text>
       )}
+    </box>
+  );
+}
+
+function NewThreadOption({
+  label,
+  value,
+  active,
+  onActivate,
+}: {
+  readonly label: string;
+  readonly value: string;
+  readonly active: boolean;
+  readonly onActivate: () => void;
+}): React.ReactNode {
+  const palette = usePalette();
+  return (
+    <box flexDirection="row" onMouseDown={onActivate}>
+      <text>
+        <span fg={active ? palette.accent : palette.dim}>{active ? "▸ " : "  "}</span>
+        <span fg={active ? palette.accent : palette.dim}>{`${label} ▸ `}</span>
+        <span fg={palette.text}>{value}</span>
+      </text>
     </box>
   );
 }
@@ -149,7 +175,9 @@ export const ChatComposer = React.memo(function ChatComposer({
   interactionMode,
   newRuntimeMode,
   newBranch,
-  newWorktree,
+  newWorkspaceMode,
+  newWorkspaceLabel,
+  newBranchStatus,
   newField,
   editorRows,
   inputFocused,
@@ -168,8 +196,7 @@ export const ChatComposer = React.memo(function ChatComposer({
   onReplyInput,
   onReplySubmit,
   onDraftInput,
-  onBranchInput,
-  onWorktreeInput,
+  onNewFieldActivate,
   onAuxInput,
   onTogglePlan,
   onOpenAccess,
@@ -191,10 +218,12 @@ export const ChatComposer = React.memo(function ChatComposer({
   readonly interactionMode: "default" | "plan";
   /** Runtime mode the new thread will start in (shown in the new-thread dialog). */
   readonly newRuntimeMode: string;
-  readonly newBranch: string;
-  readonly newWorktree: string;
-  /** Which new-thread text field is being edited (Tab cycles). */
-  readonly newField: "message" | "branch" | "worktree";
+  readonly newBranch: string | null;
+  readonly newWorkspaceMode: NewThreadWorkspaceMode;
+  readonly newWorkspaceLabel: string;
+  readonly newBranchStatus: "loading" | "ready" | "empty" | "error";
+  /** Which new-thread control is active (Tab cycles). */
+  readonly newField: NewThreadField;
   /** Fixed height (rows) of the reply editor; content beyond it scrolls. */
   readonly editorRows: number;
   /** False when the terminal pane holds focus — render static text, not an input. */
@@ -219,8 +248,7 @@ export const ChatComposer = React.memo(function ChatComposer({
   readonly onReplyInput: (value: string) => void;
   readonly onReplySubmit: () => void;
   readonly onDraftInput: (value: string) => void;
-  readonly onBranchInput: (value: string) => void;
-  readonly onWorktreeInput: (value: string) => void;
+  readonly onNewFieldActivate: (field: NewThreadField) => void;
   readonly onAuxInput: (value: string) => void;
   readonly onTogglePlan: () => void;
   readonly onOpenAccess: () => void;
@@ -297,9 +325,8 @@ export const ChatComposer = React.memo(function ChatComposer({
         flexShrink={0}
       >
         <text>
-          <span fg={palette.accent}>new thread ▸ project: </span>
-          <span fg={palette.text}>{projectName}</span>
-          <span fg={palette.dim}>{"  ↑/↓ change · Tab field · Esc cancel"}</span>
+          <span fg={palette.accent}>new thread</span>
+          <span fg={palette.dim}>{"  Tab field · ↑/↓ change · Enter create · Esc cancel"}</span>
         </text>
         <text>
           <span fg={palette.accent}>options ▸ </span>
@@ -310,29 +337,39 @@ export const ChatComposer = React.memo(function ChatComposer({
           </span>
           <span fg={palette.dim}>{" (^B)"}</span>
         </text>
-        <NewThreadField
+        <NewThreadTextField
           label="message"
           value={draft}
           active={newField === "message"}
           inputFocused={inputFocused}
           placeholder="Describe the task…"
           onInput={onDraftInput}
+          onActivate={() => onNewFieldActivate("message")}
         />
-        <NewThreadField
-          label="branch"
-          value={newBranch}
+        <NewThreadOption
+          label="project"
+          value={projectName}
+          active={newField === "project"}
+          onActivate={() => onNewFieldActivate("project")}
+        />
+        <NewThreadOption
+          label="workspace"
+          value={newWorkspaceLabel}
+          active={newField === "workspace"}
+          onActivate={() => onNewFieldActivate("workspace")}
+        />
+        <NewThreadOption
+          label={newWorkspaceMode === "new-worktree" ? "base branch" : "branch"}
+          value={
+            newBranch ??
+            (newBranchStatus === "loading"
+              ? "Loading branches…"
+              : newBranchStatus === "error"
+                ? "Branches unavailable"
+                : "No Git branches")
+          }
           active={newField === "branch"}
-          inputFocused={inputFocused}
-          placeholder="(default branch)"
-          onInput={onBranchInput}
-        />
-        <NewThreadField
-          label="worktree"
-          value={newWorktree}
-          active={newField === "worktree"}
-          inputFocused={inputFocused}
-          placeholder="(no worktree)"
-          onInput={onWorktreeInput}
+          onActivate={() => onNewFieldActivate("branch")}
         />
       </box>
     );

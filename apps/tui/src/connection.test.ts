@@ -1,6 +1,11 @@
 import { describe, expect, it } from "bun:test";
 
-import { makeTuiClient, type TuiRuntime } from "./connection.ts";
+import {
+  buildThreadCreationBootstrap,
+  makeTuiClient,
+  type TuiCreateThreadInput,
+  type TuiRuntime,
+} from "./connection.ts";
 import type { ThreadId } from "@t3tools/contracts";
 
 // A fake runtime that just counts runFork calls. Each cold warm-thread scope does
@@ -47,5 +52,56 @@ describe("makeTuiClient warm thread registry", () => {
     const client = makeTuiClient(f.runtime);
     client.subscribeThread(tid("A"), () => {});
     expect(client.peekThread(tid("A"))).toBeNull();
+  });
+});
+
+describe("new-thread bootstrap", () => {
+  const input = {
+    projectId: "p1",
+    projectCwd: "/workspace/project-one",
+    title: "Create safely",
+    modelSelection: { instanceId: "codex", model: "gpt-5" },
+    firstMessage: "Create safely",
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: "main",
+    worktreePath: null,
+    createWorktree: true,
+    startFromOrigin: true,
+  } as unknown as TuiCreateThreadInput;
+
+  it("Given a new worktree, when building the first turn, then thread creation and worktree preparation share one bootstrap", () => {
+    const bootstrap = buildThreadCreationBootstrap(
+      input,
+      "2026-07-15T12:00:00.000Z",
+      "t3code/1234abcd",
+    );
+
+    expect(bootstrap).toMatchObject({
+      createThread: {
+        projectId: "p1",
+        branch: "main",
+        worktreePath: null,
+      },
+      prepareWorktree: {
+        projectCwd: "/workspace/project-one",
+        baseBranch: "main",
+        branch: "t3code/1234abcd",
+        startFromOrigin: true,
+      },
+      runSetupScript: true,
+    });
+  });
+
+  it("Given the current workspace, when building the first turn, then no worktree is prepared", () => {
+    const bootstrap = buildThreadCreationBootstrap(
+      { ...input, createWorktree: false, worktreePath: "/workspace/current" },
+      "2026-07-15T12:00:00.000Z",
+      null,
+    );
+
+    expect(bootstrap.createThread?.worktreePath).toBe("/workspace/current");
+    expect(bootstrap.prepareWorktree).toBeUndefined();
+    expect(bootstrap.runSetupScript).toBeUndefined();
   });
 });

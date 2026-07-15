@@ -23,6 +23,7 @@
     "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/opentui-image": "workspace:*",
+    "@t3tools/shared": "workspace:*",
     "@xterm/headless": "^5.5.0",
     "effect": "catalog:",
     "react": "19.2.6"

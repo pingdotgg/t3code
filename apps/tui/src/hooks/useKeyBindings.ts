@@ -103,8 +103,10 @@ export interface KeyBindingActions {
   readonly onCancelCommit: () => void;
   // New-thread mode
   readonly onCancelNew: () => void;
-  readonly onProjectPrev: () => void;
-  readonly onProjectNext: () => void;
+  /** Whether ↑/↓ own the selected non-text new-thread control. */
+  readonly newNavigation: boolean;
+  readonly onNewPrev: () => void;
+  readonly onNewNext: () => void;
   readonly onNewCycleRuntime: () => void;
   readonly onNewTogglePlan: () => void;
   readonly onNewCycleField: () => void;
@@ -231,12 +233,24 @@ export function useKeyBindings(actions: KeyBindingActions): void {
     // ── New-thread dialog ───────────────────────────────────────────────────
     if (actions.mode === "new") {
       if (key.name === "escape") return actions.onCancelNew();
-      if (key.name === "up") return actions.onProjectPrev();
-      if (key.name === "down") return actions.onProjectNext();
+      if (actions.newNavigation && key.name === "up") {
+        key.preventDefault();
+        return actions.onNewPrev();
+      }
+      if (actions.newNavigation && key.name === "down") {
+        key.preventDefault();
+        return actions.onNewNext();
+      }
       if (key.ctrl && key.name === "o") return actions.onNewCycleRuntime();
       if (key.ctrl && key.name === "b") return actions.onNewTogglePlan();
-      if (key.name === "tab") return actions.onNewCycleField();
-      if (key.name === "return" || key.name === "enter") return actions.onSubmitNew();
+      if (key.name === "tab") {
+        key.preventDefault();
+        return actions.onNewCycleField();
+      }
+      if (key.name === "return" || key.name === "enter") {
+        key.preventDefault();
+        return actions.onSubmitNew();
+      }
       return;
     }
 
