@@ -217,6 +217,16 @@ function taskIdFallback(activity: OrchestrationThreadActivity): string | null {
   return activity.kind.startsWith("task.") ? String(activity.id) : null;
 }
 
+function isSubagentTaskActivity(activity: OrchestrationThreadActivity): boolean {
+  const payload = asRecord(activity.payload);
+  if (payload?.entityType === "command") return false;
+  if (payload?.entityType === "subagent") return true;
+  if (payload?.itemType === "command_execution" || typeof payload?.command === "string") {
+    return false;
+  }
+  return true;
+}
+
 function applyTaskStarted(
   state: FoldState,
   activity: OrchestrationThreadActivity,
@@ -388,7 +398,30 @@ export function deriveSubagentTasks(
     startedTaskIds: new Set(),
   };
   const sorted = [...activities].sort(compareActivities);
+  const commandTaskIds = new Set(
+    sorted
+      .filter((activity) => {
+        const payload = asRecord(activity.payload);
+        return payload?.entityType === "command" || payload?.itemType === "command_execution";
+      })
+      .map((activity) => asRecord(activity.payload)?.taskId)
+      .filter((taskId): taskId is string => typeof taskId === "string" && taskId.length > 0),
+  );
+  const subagentTaskIds = new Set(
+    sorted
+      .filter(isSubagentTaskActivity)
+      .map((activity) => asRecord(activity.payload)?.taskId)
+      .filter((taskId): taskId is string => typeof taskId === "string" && taskId.length > 0),
+  );
   for (const activity of sorted) {
+    const taskId = asRecord(activity.payload)?.taskId;
+    if (typeof taskId === "string" && commandTaskIds.has(taskId)) continue;
+    if (
+      !isSubagentTaskActivity(activity) &&
+      !(typeof taskId === "string" && subagentTaskIds.has(taskId))
+    ) {
+      continue;
+    }
     switch (activity.kind) {
       case "task.started":
         applyTaskStarted(state, activity, activity.createdAt);

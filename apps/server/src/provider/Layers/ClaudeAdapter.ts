@@ -820,6 +820,20 @@ function resolveSubagentTaskModel(
   return readOptionalTrimmedString(input?.model);
 }
 
+function taskEntityType(
+  taskType: string | undefined,
+  subagentType: string | undefined,
+): "subagent" | "command" | undefined {
+  const normalizedTaskType = taskType?.toLowerCase();
+  if (["local_bash", "bash", "command", "command_execution"].includes(normalizedTaskType ?? "")) {
+    return "command";
+  }
+  if (["local_agent", "subagent", "sub-agent"].includes(normalizedTaskType ?? "") || subagentType) {
+    return "subagent";
+  }
+  return undefined;
+}
+
 /**
  * Resolve the reasoning effort a subagent task runs at. A Task tool input
  * `effort` override wins when present; otherwise the subagent inherits the
@@ -879,16 +893,25 @@ function classifyToolItemType(
     case "builtin":
       break;
   }
-
   const normalized = toolName.toLowerCase();
-  if (normalized.includes("agent")) {
-    return "collab_agent_tool_call";
+  // The command shape is authoritative. Some Claude runtimes expose local
+  // shell execution through a tool name containing "agent"; using the name
+  // first mislabels those commands as collaboration work.
+  if (
+    typeof input?.command === "string" ||
+    Array.isArray(input?.command) ||
+    typeof input?.cmd === "string" ||
+    Array.isArray(input?.cmd)
+  ) {
+    return "command_execution";
   }
   if (
     normalized === "task" ||
     normalized === "agent" ||
-    normalized.includes("subagent") ||
-    normalized.includes("sub-agent")
+    normalized === "delegate" ||
+    normalized === "spawn_agent" ||
+    normalized === "spawn-agent" ||
+    normalized === "subagent"
   ) {
     return "collab_agent_tool_call";
   }
@@ -3570,6 +3593,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         const workflowName = readOptionalTrimmedString(
           (message as { workflow_name?: unknown }).workflow_name,
         );
+        const entityType = taskEntityType(message.task_type, subagentType);
         const model = resolveSubagentTaskModel(context, toolUseId);
         const effort = resolveSubagentTaskEffort(context, toolUseId);
         context.openTaskIds.add(message.task_id);
@@ -3582,6 +3606,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           type: "task.started",
           payload: {
             taskId: RuntimeTaskId.make(message.task_id),
+            ...(entityType ? { entityType } : {}),
             description: message.description,
             ...(model ? { model } : {}),
             ...(effort ? { effort } : {}),
@@ -3600,6 +3625,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         const subagentType = readOptionalTrimmedString(
           (message as { subagent_type?: unknown }).subagent_type,
         );
+        const entityType = taskEntityType(
+          readOptionalTrimmedString((message as { task_type?: unknown }).task_type),
+          subagentType,
+        );
         yield* emitThreadTokenUsage(
           context,
           normalizeClaudeTaskProgressTokenUsage(message.usage, context),
@@ -3613,6 +3642,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           type: "task.progress",
           payload: {
             taskId: RuntimeTaskId.make(message.task_id),
+            ...(entityType ? { entityType } : {}),
             description: message.description,
             ...(message.summary ? { summary: message.summary } : {}),
             ...(message.usage ? { usage: message.usage } : {}),
@@ -3644,6 +3674,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           typeof patch.total_paused_ms === "number" ? patch.total_paused_ms : undefined;
         const isBackgrounded =
           typeof patch.is_backgrounded === "boolean" ? patch.is_backgrounded : undefined;
+        const entityType = taskEntityType(
+          readOptionalTrimmedString(patch.task_type),
+          readOptionalTrimmedString(patch.subagent_type),
+        );
         if (isTerminalTaskUpdatedStatus(status)) {
           context.openTaskIds.delete(message.task_id);
           forgetTaskToolInputForTask(
@@ -3662,6 +3696,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           type: "task.updated",
           payload: {
             taskId: RuntimeTaskId.make(message.task_id),
+            ...(entityType ? { entityType } : {}),
             ...(status ? { status } : {}),
             ...(description ? { description } : {}),
             ...(error ? { error } : {}),
@@ -3678,6 +3713,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         );
         const toolUseId = readOptionalTrimmedString(
           (message as { tool_use_id?: unknown }).tool_use_id,
+        );
+        const entityType = taskEntityType(
+          readOptionalTrimmedString((message as { task_type?: unknown }).task_type),
+          readOptionalTrimmedString((message as { subagent_type?: unknown }).subagent_type),
         );
         context.openTaskIds.delete(message.task_id);
         forgetTaskToolInputForTask(context, message.task_id, toolUseId);
@@ -3698,6 +3737,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           type: "task.completed",
           payload: {
             taskId: RuntimeTaskId.make(message.task_id),
+            ...(entityType ? { entityType } : {}),
             status: message.status,
             ...(message.summary ? { summary: message.summary } : {}),
             ...(message.usage ? { usage: message.usage } : {}),

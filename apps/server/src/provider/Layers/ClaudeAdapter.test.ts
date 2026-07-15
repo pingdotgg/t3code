@@ -2569,6 +2569,7 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(started?.type, "task.started");
       if (started?.type === "task.started") {
         assert.equal(started.payload.taskId, "task-meta-1");
+        assert.equal(started.payload.entityType, "subagent");
         assert.equal(started.payload.subagentType, "Explore");
         assert.equal(started.payload.workflowName, "spec");
         assert.equal(started.payload.toolUseId, "toolu-task-1");

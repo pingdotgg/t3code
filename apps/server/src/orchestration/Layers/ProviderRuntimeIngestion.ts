@@ -718,6 +718,7 @@ function runtimeEventToActivities(
                 : "Task started",
           payload: {
             taskId: event.payload.taskId,
+            ...(event.payload.entityType ? { entityType: event.payload.entityType } : {}),
             ...(event.payload.model ? { model: event.payload.model } : {}),
             ...(event.payload.effort ? { effort: event.payload.effort } : {}),
             ...(event.payload.taskType ? { taskType: event.payload.taskType } : {}),
@@ -747,6 +748,7 @@ function runtimeEventToActivities(
           summary: "Reasoning update",
           payload: {
             taskId: event.payload.taskId,
+            ...(event.payload.entityType ? { entityType: event.payload.entityType } : {}),
             detail: truncateDetail(event.payload.summary ?? event.payload.description),
             ...(event.payload.description
               ? { description: truncateDetail(event.payload.description) }
@@ -781,6 +783,7 @@ function runtimeEventToActivities(
             : "Task updated",
           payload: {
             taskId: event.payload.taskId,
+            ...(event.payload.entityType ? { entityType: event.payload.entityType } : {}),
             ...(status ? { status } : {}),
             ...(event.payload.model ? { model: event.payload.model } : {}),
             ...(event.payload.description
@@ -819,6 +822,7 @@ function runtimeEventToActivities(
                 : "Task completed",
           payload: {
             taskId: event.payload.taskId,
+            ...(event.payload.entityType ? { entityType: event.payload.entityType } : {}),
             status: event.payload.status,
             ...(event.payload.summary ? { detail: truncateDetail(event.payload.summary) } : {}),
             ...(event.payload.summary ? { summary: truncateDetail(event.payload.summary) } : {}),

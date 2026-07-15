@@ -270,20 +270,57 @@ function resolvePendingUserInputAnswer(
   return normalizeDraftAnswer(draft?.selectedOptionLabel);
 }
 
+function isSubagentTaskActivity(activity: OrchestrationThreadActivity): boolean {
+  if (!activity.kind.startsWith("task.")) {
+    return false;
+  }
+  const payload = asRecord(activity.payload);
+  if (payload?.entityType === "command") {
+    return false;
+  }
+  if (payload?.entityType === "subagent") {
+    return true;
+  }
+  if (payload?.itemType === "command_execution" || typeof payload?.command === "string") {
+    return false;
+  }
+  // Legacy activities predate entityType. Preserve their established task
+  // projection; command-shaped legacy records are handled above.
+  return true;
+}
+
 function deriveWorkLogEntries(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
 ): DerivedWorkLogEntry[] {
   const ordered = Arr.sort(activities, activityOrder);
+  const commandTaskIds = new Set(
+    ordered
+      .filter((activity) => {
+        const payload = asRecord(activity.payload);
+        return payload?.entityType === "command" || payload?.itemType === "command_execution";
+      })
+      .map((activity) => asRecord(activity.payload)?.taskId)
+      .filter((taskId): taskId is string => typeof taskId === "string" && taskId.length > 0),
+  );
+  const subagentTaskIds = new Set(
+    ordered
+      .filter(isSubagentTaskActivity)
+      .map((activity) => asRecord(activity.payload)?.taskId)
+      .filter(
+        (taskId): taskId is string =>
+          typeof taskId === "string" && taskId.length > 0 && !commandTaskIds.has(taskId),
+      ),
+  );
   const entries: DerivedWorkLogEntry[] = [];
   for (const activity of ordered) {
     if (activity.kind === "tool.started") continue;
     // Subagent task lifecycle activities render as dedicated SubagentTaskRow
     // entries (see deriveSubagentTasks below) instead of generic work-log rows.
+    const taskId = asRecord(activity.payload)?.taskId;
     if (
-      activity.kind === "task.started" ||
-      activity.kind === "task.progress" ||
-      activity.kind === "task.updated" ||
-      activity.kind === "task.completed"
+      (!(typeof taskId === "string" && commandTaskIds.has(taskId)) &&
+        isSubagentTaskActivity(activity)) ||
+      (typeof taskId === "string" && subagentTaskIds.has(taskId))
     ) {
       continue;
     }
@@ -292,7 +329,7 @@ function deriveWorkLogEntries(
     if (activity.kind === "context-window.updated") continue;
     if (activity.summary === "Checkpoint captured") continue;
     if (isPlanBoundaryToolActivity(activity)) continue;
-    entries.push(toDerivedWorkLogEntry(activity));
+    entries.push(toDerivedWorkLogEntry(activity, commandTaskIds));
   }
   return collapseDerivedWorkLogEntries(entries);
 }
@@ -309,7 +346,10 @@ function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): bool
   return typeof payload?.detail === "string" && payload.detail.startsWith("ExitPlanMode:");
 }
 
-function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWorkLogEntry {
+function toDerivedWorkLogEntry(
+  activity: OrchestrationThreadActivity,
+  commandTaskIds: ReadonlySet<string>,
+): DerivedWorkLogEntry {
   const payload =
     activity.payload && typeof activity.payload === "object"
       ? (activity.payload as Record<string, unknown>)
@@ -346,7 +386,12 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
           : activity.tone,
     activityKind: activity.kind,
   };
-  const itemType = extractWorkLogItemType(payload);
+  const itemType =
+    extractWorkLogItemType(payload) ??
+    (payload?.entityType === "command" ||
+    (typeof payload?.taskId === "string" && commandTaskIds.has(payload.taskId))
+      ? "command_execution"
+      : undefined);
   const requestKind = extractWorkLogRequestKind(payload);
   if (
     !taskDetailAsLabel &&
