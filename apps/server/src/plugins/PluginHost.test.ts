@@ -327,28 +327,6 @@ export default {
 `;
 
 // A settings schema the host form cannot render: Number has no numeric control, so
-// it would be drawn as a text box and every write it produced would fail validation.
-const unrenderableSettingsEntrySource = `
-import * as Schema from "effect/Schema";
-
-export default {
-  settings: { schema: Schema.Struct({ retries: Schema.Number }) },
-  register() {
-    return {};
-  },
-};
-`;
-
-const validSettingsEntrySource = `
-import * as Schema from "effect/Schema";
-
-export default {
-  settings: { schema: Schema.Struct({ baseUrl: Schema.String }) },
-  register() {
-    return {};
-  },
-};
-`;
 
 const installPlugin = (input: {
   readonly pluginId: PluginId;

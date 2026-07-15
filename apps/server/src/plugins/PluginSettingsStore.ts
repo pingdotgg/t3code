@@ -6,7 +6,9 @@
  *    must succeed even when the stored data cannot be decoded, otherwise a plugin
  *    with a required, non-defaulted field could never be configured — the form
  *    would refuse to open on the very data the user needs to fix.
- *  - `readDecoded` serves PLUGIN code: decoded, typed values, with typed failures.
+ * Decoding lives in the HOST (hostApi.settings), not here: this store deals only in
+ * the encoded shape. Plugin code gets decoded values with typed failures via the
+ * settings capability.
  *
  * @module plugins/PluginSettingsStore
  */
