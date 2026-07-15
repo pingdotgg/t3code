@@ -2976,6 +2976,40 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("adds repository commit instructions to the selected writing style", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      NodeFS.mkdirSync(NodePath.join(repoDir, ".t3code"));
+      NodeFS.writeFileSync(
+        NodePath.join(repoDir, ".t3code", "commit-message.md"),
+        "Prefix commits with the affected package.\n",
+      );
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\npolicy\n");
+      let generatedPolicy: TextGeneration.CommitMessageGenerationInput["policy"] = undefined;
+
+      const { manager } = yield* makeManager({
+        serverSettings: {
+          sourceControlWritingStyle: {
+            mode: "custom" as const,
+            customInstructions: "Use a direct tone.",
+          },
+        },
+        textGeneration: {
+          generateCommitMessage: (input) => {
+            generatedPolicy = input.policy;
+            return Effect.succeed({ subject: "Honor repository policy", body: "" });
+          },
+        },
+      });
+      yield* runStackedAction(manager, { cwd: repoDir, action: "commit" });
+
+      expect(generatedPolicy).toMatchObject({
+        commitInstructions: "Use a direct tone.\n\nPrefix commits with the affected package.",
+      });
+    }),
+  );
+
   it.effect("falls back when the dedicated source control writer is unavailable", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

@@ -2135,7 +2135,19 @@ export const make = Effect.gen(function* () {
         };
       }
 
-      const policy = yield* resolveStylePolicy(input.cwd, input.settings);
+      const stylePolicy = yield* resolveStylePolicy(input.cwd, input.settings);
+      const repositoryCommitInstructions = yield* readRepositoryInstructions(
+        input.cwd,
+        ".t3code/commit-message.md",
+      );
+      const policy = repositoryCommitInstructions
+        ? {
+            ...stylePolicy,
+            commitInstructions: [stylePolicy.commitInstructions, repositoryCommitInstructions]
+              .filter((instructions): instructions is string => Boolean(instructions))
+              .join("\n\n"),
+          }
+        : stylePolicy;
 
       const generated = yield* textGeneration
         .generateCommitMessage({
