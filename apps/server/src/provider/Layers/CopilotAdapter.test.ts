@@ -4331,7 +4331,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     }),
   );
 
-  it.effect("emits Copilot background tasks as task list plan updates", () =>
+  it.effect("emits Copilot background task lifecycle events without plan updates", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
       const threadId = asThreadId("copilot-background-tasks-plan");
@@ -4343,7 +4343,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         runtimeMode: "approval-required",
       });
 
-      const turn = yield* adapter.sendTurn({
+      yield* adapter.sendTurn({
         threadId,
         input: "delegate the investigation",
         attachments: [],
@@ -4402,26 +4402,19 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         data: {},
       } as SessionEvent);
 
-      let planEvent: ProviderRuntimeEvent | undefined;
-      for (let attempt = 0; attempt < 20 && planEvent === undefined; attempt += 1) {
+      for (
+        let attempt = 0;
+        attempt < 20 && runtimeEvents.filter((event) => event.type === "task.started").length < 3;
+        attempt += 1
+      ) {
         yield* waitForSdkEventQueue();
-        planEvent = runtimeEvents.find((event) => event.type === "turn.plan.updated");
       }
       yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
 
-      NodeAssert.equal(planEvent?.type, "turn.plan.updated");
-      if (planEvent?.type === "turn.plan.updated") {
-        NodeAssert.equal(planEvent.threadId, threadId);
-        NodeAssert.equal(String(planEvent.turnId), String(turn.turnId));
-        NodeAssert.deepStrictEqual(planEvent.payload, {
-          explanation: "Copilot Tasks",
-          plan: [
-            { step: "Exploring provider events", status: "inProgress" },
-            { step: "Running tests", status: "completed" },
-            { step: "Reviewing implementation (failed)", status: "pending" },
-          ],
-        });
-      }
+      NodeAssert.equal(
+        runtimeEvents.find((event) => event.type === "turn.plan.updated"),
+        undefined,
+      );
       const startedTasks = runtimeEvents.filter((event) => event.type === "task.started");
       NodeAssert.deepStrictEqual(startedTasks.map((event) => String(event.payload.taskId)).sort(), [
         "task-explore-1",
@@ -4572,7 +4565,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
     }),
   );
 
-  it.effect("maps Copilot todo tool input to T3 plan updates", () =>
+  it.effect("does not map Copilot todo tool input to plan updates", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;
       const threadId = asThreadId("copilot-todo-tool-plan-update");
@@ -4584,7 +4577,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         runtimeMode: "approval-required",
       });
 
-      const turn = yield* adapter.sendTurn({
+      yield* adapter.sendTurn({
         threadId,
         input: "track todos",
         attachments: [],
@@ -4627,26 +4620,32 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
           turnId: "sdk-turn-todo-tool",
         },
       } as SessionEvent);
+      config.onEvent({
+        id: "evt-copilot-todo-drain-marker",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_start",
+        data: {
+          turnId: "sdk-turn-after-todo-tool",
+        },
+      } as SessionEvent);
 
-      let planEvent: ProviderRuntimeEvent | undefined;
-      for (let attempt = 0; attempt < 20 && planEvent === undefined; attempt += 1) {
+      let markerEvent: ProviderRuntimeEvent | undefined;
+      for (let attempt = 0; attempt < 20 && markerEvent === undefined; attempt += 1) {
         yield* waitForSdkEventQueue();
-        planEvent = runtimeEvents.find((event) => event.type === "turn.plan.updated");
+        markerEvent = runtimeEvents.find(
+          (event) =>
+            event.type === "session.state.changed" &&
+            event.payload.reason === "Copilot turn started",
+        );
       }
       yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
 
-      NodeAssert.equal(planEvent?.type, "turn.plan.updated");
-      if (planEvent?.type === "turn.plan.updated") {
-        NodeAssert.equal(String(planEvent.turnId), String(turn.turnId));
-        NodeAssert.deepStrictEqual(planEvent.payload, {
-          explanation: "Copilot Todos",
-          plan: [
-            { step: "Inspect adapter", status: "completed" },
-            { step: "Wire task events", status: "inProgress" },
-            { step: "Run validation", status: "pending" },
-          ],
-        });
-      }
+      NodeAssert.equal(markerEvent?.type, "session.state.changed");
+      NodeAssert.equal(
+        runtimeEvents.find((event) => event.type === "turn.plan.updated"),
+        undefined,
+      );
 
       yield* adapter.stopSession(threadId);
     }),

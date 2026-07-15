@@ -311,6 +311,27 @@ describe("derivePendingUserInputs", () => {
 });
 
 describe("deriveActivePlanState", () => {
+  it("does not expose Copilot task updates as a plan", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "copilot-tasks",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: {
+          explanation: "Copilot Tasks",
+          plan: [{ step: "Inspect implementation", status: "inProgress" }],
+        },
+      }),
+    ];
+
+    expect(
+      deriveActivePlanState(activities, TurnId.make("turn-1"), ProviderDriverKind.make("copilot")),
+    ).toBeNull();
+  });
+
   it("returns the latest plan update for the active turn", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

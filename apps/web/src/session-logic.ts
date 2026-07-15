@@ -511,7 +511,11 @@ export function derivePendingUserInputs(
 export function deriveActivePlanState(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
   latestTurnId: TurnId | undefined,
+  provider?: ProviderDriverKind,
 ): ActivePlanState | null {
+  if (provider === "copilot") {
+    return null;
+  }
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
   const allPlanActivities = ordered.filter((activity) => activity.kind === "turn.plan.updated");
   // Prefer plan from the current turn; fall back to the most recent plan from any turn
