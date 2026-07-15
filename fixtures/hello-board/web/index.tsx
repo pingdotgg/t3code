@@ -1,4 +1,8 @@
-import { Button, defineWebPlugin, Input, type PluginWebRpc } from "@t3tools/plugin-sdk-web";
+import { defineWebPlugin, type PluginWebRpc } from "@t3tools/plugin-sdk-web";
+// Host components come from the `/ui` subpath. It re-exports live apps/web modules,
+// so it only works inside this monorepo — which is exactly why it is a separate entry
+// from the SDK proper above.
+import { Button, Input } from "@t3tools/plugin-sdk-web/ui";
 import { HelloBoardSettings } from "../shared/settings.ts";
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useState } from "react";

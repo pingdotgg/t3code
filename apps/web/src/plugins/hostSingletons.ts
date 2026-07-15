@@ -1,6 +1,7 @@
 import * as atomReact from "@effect/atom-react";
 import * as contracts from "@t3tools/contracts";
 import * as pluginSdkWeb from "@t3tools/plugin-sdk-web";
+import * as pluginSdkWebUi from "@t3tools/plugin-sdk-web/ui";
 import * as effect from "effect";
 import * as React from "react";
 import * as ReactDOM from "react-dom";
@@ -26,6 +27,10 @@ export interface PluginHostSingletons {
   readonly effect: typeof effect;
   readonly "@t3tools/contracts": typeof contracts;
   readonly "@t3tools/plugin-sdk-web": typeof pluginSdkWeb;
+  // The host UI half of the SDK. A separate singleton because it is a separate
+  // module specifier — a bare-specifier import map does not cover subpaths, so
+  // `@t3tools/plugin-sdk-web/ui` needs its own entry, shim and instance.
+  readonly "@t3tools/plugin-sdk-web/ui": typeof pluginSdkWebUi;
 }
 
 const pluginHost: PluginHostSingletons = {
@@ -38,6 +43,7 @@ const pluginHost: PluginHostSingletons = {
   effect,
   "@t3tools/contracts": contracts,
   "@t3tools/plugin-sdk-web": pluginSdkWeb,
+  "@t3tools/plugin-sdk-web/ui": pluginSdkWebUi,
 };
 
 publishPluginHostSingletons(pluginHost);

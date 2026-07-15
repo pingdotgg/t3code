@@ -6,6 +6,10 @@
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
+    },
+    "./ui": {
+      "types": "./src/ui.ts",
+      "import": "./src/ui.ts"
     }
   },
   "scripts": {
