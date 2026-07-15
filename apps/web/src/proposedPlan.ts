@@ -9,6 +9,7 @@ export interface ProposedPlanTask {
 }
 
 interface ProposedPlanTaskGroup {
+  sectionId: number;
   heading: string | null;
   explicitTaskCount: number;
   tasks: ProposedPlanTask[];
@@ -29,13 +30,13 @@ function normalizeProposedPlanTaskText(markdown: string): string {
 export function extractProposedPlanTasks(planMarkdown: string): ProposedPlanTask[] {
   const groups: ProposedPlanTaskGroup[] = [];
   let heading: string | null = null;
+  let sectionId = 0;
   let currentGroup: ProposedPlanTaskGroup | null = null;
   let fenced = false;
 
   const finishGroup = () => {
     if (currentGroup?.tasks.length) {
       groups.push(currentGroup);
-      heading = null;
     }
     currentGroup = null;
   };
@@ -53,6 +54,7 @@ export function extractProposedPlanTasks(planMarkdown: string): ProposedPlanTask
     const headingMatch = line.match(/^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/);
     if (headingMatch) {
       finishGroup();
+      sectionId += 1;
       heading = normalizeProposedPlanTaskText(headingMatch[1] ?? "") || null;
       continue;
     }
@@ -64,6 +66,7 @@ export function extractProposedPlanTasks(planMarkdown: string): ProposedPlanTask
         continue;
       }
       currentGroup ??= {
+        sectionId,
         heading,
         explicitTaskCount: 0,
         tasks: [],
@@ -85,7 +88,18 @@ export function extractProposedPlanTasks(planMarkdown: string): ProposedPlanTask
   }
   finishGroup();
 
-  const rankedGroups = groups.toSorted((left, right) => {
+  const consolidatedGroups = groups.reduce<ProposedPlanTaskGroup[]>((result, group) => {
+    const previous = result.at(-1);
+    if (previous?.sectionId === group.sectionId && TASK_SECTION_HEADING.test(group.heading ?? "")) {
+      previous.explicitTaskCount += group.explicitTaskCount;
+      previous.tasks.push(...group.tasks);
+      return result;
+    }
+    result.push({ ...group, tasks: [...group.tasks] });
+    return result;
+  }, []);
+
+  const rankedGroups = consolidatedGroups.toSorted((left, right) => {
     const headingDifference =
       Number(TASK_SECTION_HEADING.test(right.heading ?? "")) -
       Number(TASK_SECTION_HEADING.test(left.heading ?? ""));

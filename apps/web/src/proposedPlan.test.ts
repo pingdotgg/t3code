@@ -66,7 +66,7 @@ describe("extractProposedPlanTasks", () => {
     ]);
   });
 
-  it("does not treat a trailing list as part of an earlier task section", () => {
+  it("combines task lists separated by prose", () => {
     expect(
       extractProposedPlanTasks(
         [
@@ -84,6 +84,26 @@ describe("extractProposedPlanTasks", () => {
       { step: "Add the shared contract", status: "pending" },
       { step: "Wire the server", status: "pending" },
       { step: "Render the client state", status: "pending" },
+      { step: "Existing behavior documented", status: "completed" },
+      { step: "Release notes drafted", status: "pending" },
+    ]);
+  });
+
+  it("combines task lists separated by a fenced code block", () => {
+    expect(
+      extractProposedPlanTasks(
+        [
+          "## Tasks",
+          "1. Add the shared contract",
+          "```md",
+          "- [ ] Not a real task",
+          "```",
+          "2. Wire the server",
+        ].join("\n"),
+      ),
+    ).toEqual([
+      { step: "Add the shared contract", status: "pending" },
+      { step: "Wire the server", status: "pending" },
     ]);
   });
 
