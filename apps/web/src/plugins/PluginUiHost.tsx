@@ -261,13 +261,33 @@ export async function syncPluginUiHostRegistrations({
   createRpc = pluginRpc,
 }: SyncPluginUiHostRegistrationsInput): Promise<PluginUiRegistrySnapshot> {
   const activeWebPlugins = plugins.filter((plugin) => plugin.state === "active" && plugin.hasWeb);
-  const activeKeys = new Set(activeWebPlugins.map((plugin) => `${plugin.id}@${plugin.version}`));
 
-  // Inject/remove each active web plugin's stylesheet <link> alongside its JS.
+  // A plugin that FAILED activation still needs its settings page, because bad
+  // settings are often WHY it failed: a plugin that reads `hostApi.settings.get` in
+  // register() fails activation on an unreadable or unconfigured row. The server
+  // deliberately keeps the declaration reachable for exactly this case, but loading
+  // web entries only for `active` plugins made the repair form unreachable — the
+  // fallback was correct and no user could get to it.
+  //
+  // Its module is imported for the DECLARATIVE schema only. `register()` is never
+  // called for it below, so none of its imperative surfaces — routes, sidebar,
+  // commands, project actions — go live for a plugin the host has rejected.
+  const repairableWebPlugins = plugins.filter(
+    (plugin) =>
+      plugin.state === "failed" && plugin.hasWeb && plugin.capabilities.includes("settings"),
+  );
+  const loadableWebPlugins = [...activeWebPlugins, ...repairableWebPlugins];
+  const loadableKeys = new Set(
+    loadableWebPlugins.map((plugin) => `${plugin.id}@${plugin.version}`),
+  );
+
+  // Inject/remove each ACTIVE web plugin's stylesheet <link> alongside its JS. A
+  // failed plugin gets no stylesheet: the repair form is host-rendered, and its CSS
+  // would style surfaces that are not live.
   reconcilePluginStyleLinks(activeWebPlugins);
 
   for (const [pluginId, loaded] of state.loaded.entries()) {
-    if (!activeKeys.has(`${pluginId}@${loaded.version}`)) {
+    if (!loadableKeys.has(`${pluginId}@${loaded.version}`)) {
       state.loaded.delete(pluginId);
     }
   }
@@ -277,7 +297,7 @@ export async function syncPluginUiHostRegistrations({
   // blip), and lifecycle-driven resyncs are the self-healing signal. A retry is
   // cheap — the browser caches the module once it succeeds — and a
   // deterministic failure just re-records itself.
-  const pluginsToLoad = activeWebPlugins.filter((plugin) => {
+  const pluginsToLoad = loadableWebPlugins.filter((plugin) => {
     const loaded = state.loaded.get(plugin.id);
     return loaded === undefined || loaded.failure !== null;
   });
@@ -373,7 +393,11 @@ export async function syncPluginUiHostRegistrations({
         }
       }
       // Optional: a declarative-settings-only plugin has no imperative surface.
-      if (definition.register !== undefined) {
+      //
+      // Skipped entirely for a plugin that failed activation: it is loaded ONLY for
+      // the declarative settings schema, so its routes/sidebar/commands must not go
+      // live. This is what makes importing a rejected plugin's module safe.
+      if (definition.register !== undefined && plugin.state === "active") {
         await maybeAwait(definition.register(ctx));
       }
       state.loaded.set(plugin.id, {
