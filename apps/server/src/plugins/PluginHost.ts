@@ -10,7 +10,7 @@ import {
 import {
   findPluginSettingsSchemaViolations,
   fingerprintSettingsSchema,
-} from "@t3tools/contracts/pluginSettings";
+} from "@t3tools/shared/pluginSettings";
 import type {
   PluginDefinition,
   PluginHostApi,

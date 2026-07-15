@@ -13,7 +13,7 @@ import {
   CursorSettings,
   GrokSettings,
   OpenCodeSettings,
-} from "./settings.ts";
+} from "@t3tools/contracts";
 
 const withControl = <S extends Schema.Top>(schema: S, control: "text" | "password" | "switch") =>
   schema.pipe(Schema.annotate({ providerSettingsForm: { control } }));

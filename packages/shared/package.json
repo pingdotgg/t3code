@@ -190,6 +190,10 @@
     "./pluginHostWeb": {
       "types": "./src/pluginHostWeb.ts",
       "import": "./src/pluginHostWeb.ts"
+    },
+    "./pluginSettings": {
+      "types": "./src/pluginSettings.ts",
+      "import": "./src/pluginSettings.ts"
     }
   },
   "scripts": {

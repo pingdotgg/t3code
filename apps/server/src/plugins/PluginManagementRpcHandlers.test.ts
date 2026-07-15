@@ -6,7 +6,7 @@ import * as Deferred from "effect/Deferred";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { fingerprintSettingsSchema } from "@t3tools/contracts/pluginSettings";
+import { fingerprintSettingsSchema } from "@t3tools/shared/pluginSettings";
 import { runMigrations } from "../persistence/Migrations.ts";
 
 import * as Layer from "effect/Layer";
