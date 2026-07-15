@@ -221,9 +221,12 @@ export const make = Effect.fn("PluginManagementRpcHandlers.make")(function* () {
       //
       // This does not re-break the repair path: a plugin that FAILED to activate is
       // still in the lockfile, which is the case the fallback exists for.
-      const lockfile = yield* store.readLockfile.pipe(Effect.orElseSucceed(() => null));
+      // FAIL on a lockfile read error rather than defaulting to "not installed".
+      // A transient I/O error would otherwise be indistinguishable from an uninstall:
+      // the form would say the plugin has no settings, exactly when the user is
+      // trying to repair one that does.
+      const lockfile = yield* store.readLockfile.pipe(Effect.mapError(lockfileError));
       const installed =
-        lockfile !== null &&
         (lockfile.plugins as Readonly<Record<string, unknown>>)[pluginId] !== undefined;
       if (!installed) return Option.none();
       return Option.map(fromDeclaration, (schema) => ({ schema }) as never);
@@ -321,9 +324,13 @@ export const make = Effect.fn("PluginManagementRpcHandlers.make")(function* () {
           path: stripped.path,
           detail: stripped.detail,
         });
+        // Name the offending path. Without it the operator sees only "could not be
+        // stored" and the reason lives in server logs they may not have.
         return yield* managementError(
           "settings-invalid",
-          "These settings could not be stored: the plugin's settings schema uses a shape this host cannot safely store.",
+          `These settings could not be stored: the plugin's settings schema uses a shape this host cannot safely store (at ${
+            stripped.path === "" ? "the settings root" : stripped.path
+          }).`,
         );
       }
       const canonical = stripped.value as Readonly<Record<string, unknown>>;
