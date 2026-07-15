@@ -120,6 +120,7 @@ export interface PluginUiContext {
   readonly registerSettingsPage: (registration: PluginSettingsPageRegistration) => void;
   readonly registerCommand: (registration: PluginCommandRegistration) => void;
   readonly registerProjectAction: (registration: PluginProjectActionRegistration) => void;
+  readonly registerMessageAction: (registration: PluginMessageActionRegistration) => void;
 }
 
 export interface PluginWebLogger {
@@ -186,6 +187,40 @@ export interface PluginProjectActionRenderProps {
 export interface PluginProjectActionRegistration {
   readonly id: string;
   readonly render: (props: PluginProjectActionRenderProps) => unknown;
+}
+
+/**
+ * What the host tells a message action about the message it is rendered against.
+ *
+ * `text` is the message's own content — the plugin already has it, because the whole
+ * point is acting on it ("file this as a ticket", "explain this diff"). A plugin
+ * without the message text could not do anything useful here.
+ */
+export interface PluginMessageActionRenderProps {
+  readonly pluginId: PluginId;
+  readonly threadId: string;
+  readonly messageId: string;
+  readonly role: "user" | "assistant";
+  readonly text: string;
+  // The plugin's route base for this environment (`/<env>/p/<pluginId>`), for
+  // navigating to plugin routes after the action runs.
+  readonly routeBasePath: string | null;
+}
+
+/**
+ * An action the host renders in a chat message's action row, beside Copy.
+ *
+ * The plugin returns its own trigger and manages its own UI. Return null to render
+ * nothing for a given message — that is how an action scopes itself to assistant
+ * messages, or to messages containing a diff, without the host inventing a filter
+ * vocabulary it would then have to maintain.
+ *
+ * A render that throws is contained by the host's surface error boundary: a broken
+ * plugin must not take the chat down with it.
+ */
+export interface PluginMessageActionRegistration {
+  readonly id: string;
+  readonly render: (props: PluginMessageActionRenderProps) => unknown;
 }
 
 export interface PluginSettingsComponentProps {
