@@ -28,6 +28,7 @@ import {
   type ValidatedPluginTool,
 } from "../mcp/toolkits/plugins/pluginToolValidation.ts";
 import { makePluginLogger } from "./PluginLogger.ts";
+import { PluginLockfileStore } from "./PluginLockfileStore.ts";
 import { PluginRuntimeRegistry } from "./PluginRuntimeRegistry.ts";
 
 export class PluginToolCatalogError extends Schema.TaggedErrorClass<PluginToolCatalogError>()(
@@ -56,6 +57,13 @@ interface CatalogState {
   /** finalName set mirrored for synchronous EnabledWhen reads. */
   readonly active: Set<string>;
   readonly inFlight: Map<string, number>;
+  /**
+   * Plugins with a pending disable intent. Set synchronously by disable before
+   * the activation lock wait; cleared only on a subsequent successful enable.
+   * `activate` refuses to open gates while set so a queued registry-put
+   * subscriber cannot reopen tools after early catalog deactivation.
+   */
+  readonly disableIntent: Set<PluginId>;
 }
 
 export class PluginToolCatalog extends Context.Service<
@@ -71,11 +79,29 @@ export class PluginToolCatalog extends Context.Service<
       options: { readonly hasToolsCapability: boolean },
     ) => Effect.Effect<ReadonlyArray<ValidatedPluginTool>, PluginToolCatalogError>;
 
-    /** Mark reserved tools for pluginId as active (visible + callable). */
+    /**
+     * Mark reserved tools for pluginId as active (visible + callable).
+     * No-ops when the runtime is absent or a disable intent is pending.
+     */
     readonly activate: (pluginId: PluginId) => Effect.Effect<void>;
 
     /** Clear active bindings for pluginId (visibility + call-time gate). */
     readonly deactivate: (pluginId: PluginId) => Effect.Effect<void>;
+
+    /**
+     * Record that disable is in progress. Must be set before waiting on the
+     * activation lock so a concurrent put-subscriber activate cannot reopen.
+     */
+    readonly noteDisableIntent: (pluginId: PluginId) => Effect.Effect<void>;
+
+    /**
+     * Clear disable intent after a successful enable (lockfile enabled+active
+     * and activation path is about to load). Does not open call gates by itself.
+     */
+    readonly clearDisableIntent: (pluginId: PluginId) => Effect.Effect<void>;
+
+    /** True when a disable intent is pending for pluginId. */
+    readonly hasDisableIntent: (pluginId: PluginId) => Effect.Effect<boolean>;
 
     /** Synchronous visibility predicate for McpSchema.EnabledWhen. */
     readonly isActive: (finalName: string) => boolean;
@@ -126,12 +152,18 @@ const serializedResultSize = (result: McpSchema.CallToolResult): number | null =
 
 export const make = Effect.fn("PluginToolCatalog.make")(function* () {
   const registry = yield* PluginRuntimeRegistry;
+  // Optional: production wires PluginLockfileStore so call-time can require
+  // enabled+active lifecycle. Unit tests without a store still exercise active
+  // + registry + disable-intent gates.
+  const lockfileStore = yield* Effect.serviceOption(PluginLockfileStore);
   // Mutable Set shared with state.active for synchronous EnabledWhen predicates.
   const activeSync = new Set<string>();
+  const disableIntentSync = new Set<PluginId>();
   const stateRef = yield* Ref.make<CatalogState>({
     permanent: new Map(),
     active: activeSync,
     inFlight: new Map(),
+    disableIntent: disableIntentSync,
   });
 
   const reserve: PluginToolCatalog["Service"]["reserve"] = (pluginId, tools, options) =>
@@ -196,16 +228,21 @@ export const make = Effect.fn("PluginToolCatalog.make")(function* () {
 
   const activate: PluginToolCatalog["Service"]["activate"] = (pluginId) =>
     Effect.gen(function* () {
-      // Refuse to open call/visibility gates unless the runtime is published.
-      // Closes the disable∩activation race: deactivate clears active, then a
-      // late registry.put subscriber would re-activate while disable waits on
-      // the activation lock — unless we require a live registry entry (which
-      // post-put cancel removes under that lock).
+      // Disable intent is authoritative for reopen: disable sets it before waiting
+      // on the activation lock, so a queued registry.put → activate cannot reopen
+      // gates while registry removal is still blocked behind that lock.
+      if (disableIntentSync.has(pluginId)) {
+        return;
+      }
+      // Also require a live runtime — catalog-active alone is not enough.
       const runtime = yield* registry.get(pluginId);
       if (Option.isNone(runtime)) {
         return;
       }
       yield* Ref.update(stateRef, (state) => {
+        if (state.disableIntent.has(pluginId)) {
+          return state;
+        }
         for (const [finalName, entry] of state.permanent) {
           if (entry.pluginId === pluginId) {
             state.active.add(finalName);
@@ -213,9 +250,9 @@ export const make = Effect.fn("PluginToolCatalog.make")(function* () {
         }
         return state;
       });
-      // Roll back if remove interleaved between the check and the add.
+      // Roll back if remove or disable intent interleaved between check and add.
       const stillLive = yield* registry.get(pluginId);
-      if (Option.isNone(stillLive)) {
+      if (Option.isNone(stillLive) || disableIntentSync.has(pluginId)) {
         yield* Ref.update(stateRef, (state) => {
           for (const [finalName, entry] of state.permanent) {
             if (entry.pluginId === pluginId) {
@@ -237,8 +274,35 @@ export const make = Effect.fn("PluginToolCatalog.make")(function* () {
       return state;
     });
 
+  const noteDisableIntent: PluginToolCatalog["Service"]["noteDisableIntent"] = (pluginId) =>
+    Effect.sync(() => {
+      disableIntentSync.add(pluginId);
+    });
+
+  const clearDisableIntent: PluginToolCatalog["Service"]["clearDisableIntent"] = (pluginId) =>
+    Effect.sync(() => {
+      disableIntentSync.delete(pluginId);
+    });
+
+  const hasDisableIntent: PluginToolCatalog["Service"]["hasDisableIntent"] = (pluginId) =>
+    Effect.sync(() => disableIntentSync.has(pluginId));
+
   const isActive: PluginToolCatalog["Service"]["isActive"] = (finalName) =>
     activeSync.has(finalName);
+
+  /** Fail closed when lockfile is wired and lifecycle is not enabled+active. */
+  const lifecycleAllowsCall = (pluginId: PluginId): Effect.Effect<boolean> => {
+    if (Option.isNone(lockfileStore)) {
+      return Effect.succeed(true);
+    }
+    return lockfileStore.value.readLockfile.pipe(
+      Effect.map((lockfile) => {
+        const entry = lockfile.plugins[pluginId];
+        return entry?.enabled === true && entry.state === "active";
+      }),
+      Effect.orElseSucceed(() => false),
+    );
+  };
 
   const pendingMcpRegistration: PluginToolCatalog["Service"]["pendingMcpRegistration"] = (
     pluginId,
@@ -333,8 +397,13 @@ export const make = Effect.fn("PluginToolCatalog.make")(function* () {
         Effect.gen(function* () {
           const startedAt = yield* Effect.clockWith((clock) => clock.currentTimeMillis);
 
-          // Call-time gate (EnabledWhen is visibility only, never authorization).
-          if (!activeSync.has(finalName)) {
+          // Call-time authorization (EnabledWhen is visibility only, never auth):
+          // require active binding, no pending disable intent, live runtime, AND
+          // (when lockfile is wired) enabled+active persisted lifecycle state.
+          if (!activeSync.has(finalName) || disableIntentSync.has(pluginId)) {
+            return errorResult(`Plugin ${pluginId} is not enabled.`);
+          }
+          if (!(yield* lifecycleAllowsCall(pluginId))) {
             return errorResult(`Plugin ${pluginId} is not enabled.`);
           }
 
@@ -456,6 +525,9 @@ export const make = Effect.fn("PluginToolCatalog.make")(function* () {
     reserve,
     activate,
     deactivate,
+    noteDisableIntent,
+    clearDisableIntent,
+    hasDisableIntent,
     isActive,
     pendingMcpRegistration,
     markAddedToMcp,

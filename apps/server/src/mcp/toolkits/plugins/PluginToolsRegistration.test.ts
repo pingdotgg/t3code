@@ -136,6 +136,7 @@ const runLive = <A, E>(
  * In-process MCP HTTP + RpcClient harness (no real socket). Shares catalog/registry
  * with PluginToolsRegistrationLive so put/remove drive registration while
  * client["tools/list"] exercises the real protocol filter (EnabledWhen).
+ * Also exposes the live McpServer so permanent addTool counts can be asserted.
  */
 const makeProtocolClient = Effect.gen(function* () {
   const registry = yield* PluginRuntimeRegistry.make();
@@ -147,7 +148,19 @@ const makeProtocolClient = Effect.gen(function* () {
     Layer.succeed(PluginToolCatalog.PluginToolCatalog, catalog),
   );
 
-  const appLayer = PluginToolsRegistrationLive.pipe(
+  // Capture McpServer from the same layer graph the HTTP handler builds so
+  // permanentCount assertions see the real registered tools list.
+  const serverRef = yield* Ref.make<{
+    readonly tools: ReadonlyArray<{ readonly tool: { readonly name: string } }>;
+  } | null>(null);
+  const captureServer = Layer.effectDiscard(
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      yield* Ref.set(serverRef, server);
+    }),
+  );
+
+  const appLayer = Layer.mergeAll(captureServer, PluginToolsRegistrationLive).pipe(
     Layer.provideMerge(shared),
     Layer.provideMerge(
       McpServer.layerHttp({
@@ -195,7 +208,12 @@ const makeProtocolClient = Effect.gen(function* () {
     clientInfo: { name: "plugin-tools-test", version: "1.0.0" },
   });
 
-  return { client, catalog, registry } as const;
+  const server = yield* Ref.get(serverRef);
+  if (server === null) {
+    return yield* Effect.die(new Error("McpServer was not captured from the HTTP layer graph"));
+  }
+
+  return { client, catalog, registry, server } as const;
 });
 
 it("core tool name set includes preview_snapshot", () => {
@@ -206,7 +224,7 @@ it("core tool name set includes preview_snapshot", () => {
 it("live put registers once; tools/list hides when inactive; call gate independent of runtime", async () => {
   await Effect.runPromise(
     Effect.gen(function* () {
-      const { client, catalog, registry } = yield* makeProtocolClient;
+      const { client, catalog, registry, server } = yield* makeProtocolClient;
       const tool = makeTool();
       yield* catalog.reserve(pluginId, [tool], { hasToolsCapability: true });
       yield* registry.put(pluginId, yield* makeRuntime(pluginId, [tool]));
@@ -219,6 +237,10 @@ it("live put registers once; tools/list hides when inactive; call gate independe
         Effect.map((result) => result.tools.map((entry) => entry.name)),
       );
       assert.include(listedActive, finalName);
+      // Permanent MCP registration is once (addTool has no remove); double put must
+      // not double-register. Deletion-sensitive: title claims "registers once".
+      const permanentCount = server.tools.filter((entry) => entry.tool.name === finalName).length;
+      assert.equal(permanentCount, 1);
 
       const callResult = yield* client["tools/call"]({
         name: finalName,
@@ -254,11 +276,9 @@ it("live put registers once; tools/list hides when inactive; call gate independe
 });
 
 it("reactivation with a CHANGED handler uses the new descriptor (trampoline)", async () => {
-  await runLive(
+  await Effect.runPromise(
     Effect.gen(function* () {
-      const server = yield* McpServer.McpServer;
-      const registry = yield* PluginRuntimeRegistry.PluginRuntimeRegistry;
-      const catalog = yield* PluginToolCatalog.PluginToolCatalog;
+      const { client, catalog, registry } = yield* makeProtocolClient;
 
       const v1 = makeTool({
         handle: () =>
@@ -266,12 +286,13 @@ it("reactivation with a CHANGED handler uses the new descriptor (trampoline)", a
             content: [{ type: "text" as const, text: "version-one" }],
           }),
       });
-      yield* reserveAndPut(pluginId, [v1]);
+      yield* catalog.reserve(pluginId, [v1], { hasToolsCapability: true });
+      yield* registry.put(pluginId, yield* makeRuntime(pluginId, [v1]));
       yield* waitFor(
         Effect.sync(() => catalog.isActive(finalName)),
         "v1 active",
       );
-      const first = yield* server.callTool({ name: finalName, arguments: { message: "x" } });
+      const first = yield* client["tools/call"]({ name: finalName, arguments: { message: "x" } });
       assert.equal(textOf(first), "version-one");
 
       yield* registry.remove(pluginId);
@@ -287,16 +308,25 @@ it("reactivation with a CHANGED handler uses the new descriptor (trampoline)", a
             content: [{ type: "text" as const, text: "version-two" }],
           }),
       });
-      yield* reserveAndPut(pluginId, [v2]);
+      yield* catalog.reserve(pluginId, [v2], { hasToolsCapability: true });
+      yield* registry.put(pluginId, yield* makeRuntime(pluginId, [v2]));
       yield* waitFor(
         Effect.sync(() => catalog.isActive(finalName)),
         "v2 active",
       );
 
-      const second = yield* server.callTool({ name: finalName, arguments: { message: "x" } });
+      // tools/list uniqueness after re-enable (no duplicate final name).
+      const listed = yield* client["tools/list"]({}).pipe(
+        Effect.map((result) =>
+          result.tools.map((entry) => entry.name).filter((n) => n === finalName),
+        ),
+      );
+      assert.equal(listed.length, 1);
+
+      const second = yield* client["tools/call"]({ name: finalName, arguments: { message: "x" } });
       assert.equal(second.isError, false);
       assert.equal(textOf(second), "version-two");
-    }),
+    }).pipe(Effect.scoped, Effect.orDie),
   );
 });
 
@@ -358,8 +388,9 @@ it("rejects MCP final-name collision without activating or partially adding tool
 });
 
 /**
- * Controlled registry: `list` publishes a concurrent put AFTER the snapshot is
- * taken. With subscribe-before-list the late put is delivered on the stream; with
+ * Controlled registry: `list` synchronously injects a put AFTER the snapshot is
+ * taken and BEFORE list returns (not a separate concurrent fiber). With
+ * subscribe-before-list the injected put is delivered on the stream; with
  * snapshot-then-subscribe it is lost (published with no subscriber, absent from
  * the empty snapshot).
  */
@@ -395,7 +426,7 @@ const makeSubscribeFirstRaceRegistry = Effect.gen(function* () {
       ),
     list: Effect.gen(function* () {
       const snapshot = yield* Ref.get(runtimes);
-      // Concurrent put after snapshot read, before this effect returns.
+      // Inject put after snapshot read, before this effect returns (same fiber).
       const runtime = yield* makeRuntime(latePluginId, [lateTool]);
       yield* put(latePluginId, runtime);
       return Array.from(snapshot.values());
