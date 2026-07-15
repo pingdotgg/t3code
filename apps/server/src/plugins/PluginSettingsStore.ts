@@ -33,6 +33,15 @@ export interface PluginSettingsDraft {
    * it; plugin-side reads fail instead.
    */
   readonly incompatible: boolean;
+  /**
+   * The schema shape that produced `values`, or null when nothing is stored.
+   *
+   * Callers compare this against the plugin's CURRENT schema fingerprint: a
+   * mismatch means an upgrade changed the shape, so the stored values may not
+   * decode. Surfacing it lets the read path preserve the data and flag it for
+   * repair rather than silently misreading it.
+   */
+  readonly schemaFingerprint: string | null;
 }
 
 export class PluginSettingsNotConfiguredError extends Schema.TaggedErrorClass<PluginSettingsNotConfiguredError>()(
@@ -122,7 +131,12 @@ export const make = Effect.fn("PluginSettingsStore.make")(function* () {
     Effect.gen(function* () {
       const row = yield* readRow(pluginId);
       if (row === null) {
-        return { values: {}, revision: 0, incompatible: false } satisfies PluginSettingsDraft;
+        return {
+          values: {},
+          revision: 0,
+          incompatible: false,
+          schemaFingerprint: null,
+        } satisfies PluginSettingsDraft;
       }
       const parsed = yield* decodeJson(row.values_json).pipe(Effect.orElseSucceed(() => null));
       const values = asValues(parsed);
@@ -132,12 +146,19 @@ export const make = Effect.fn("PluginSettingsStore.make")(function* () {
         // A row whose JSON will not parse, or is not an object, is corrupt rather
         // than merely stale — surface it so the form can flag a repair.
         incompatible: values === null,
+        schemaFingerprint: row.schema_fingerprint,
       } satisfies PluginSettingsDraft;
     }).pipe(
       // The form must always open, including on a corrupt/unreadable row — that is
       // exactly when the user needs it. Fail closed to an empty draft, never error.
       Effect.orElseSucceed(
-        () => ({ values: {}, revision: 0, incompatible: true }) satisfies PluginSettingsDraft,
+        () =>
+          ({
+            values: {},
+            revision: 0,
+            incompatible: true,
+            schemaFingerprint: null,
+          }) satisfies PluginSettingsDraft,
       ),
     );
 

@@ -29,7 +29,12 @@ layer((it) => {
         const pluginId = nextPluginId();
         const store = yield* PluginSettingsStore;
         const draft = yield* store.readDraft(pluginId);
-        assert.deepEqual(draft, { values: {}, revision: 0, incompatible: false });
+        assert.deepEqual(draft, {
+          values: {},
+          revision: 0,
+          incompatible: false,
+          schemaFingerprint: null,
+        });
       }),
     );
 
@@ -174,6 +179,66 @@ layer((it) => {
         );
         assert.deepEqual(stored, { baseUrl: "https://example.com", enabled: true });
         assert.equal(rows[0]!.schema_fingerprint, fingerprint);
+      }),
+    );
+  });
+});
+
+layer((it) => {
+  describe("PluginSettingsStore schema fingerprint", () => {
+    // An upgrade can change a plugin's schema under already-stored values. The
+    // fingerprint is how a reader tells "these values were written for a different
+    // shape" from "these values are current" — without it, stale values are read
+    // back as if they still matched, which is the silent misread Sol MUST #13 is about.
+    it.effect("reports the fingerprint that produced the stored values", () =>
+      Effect.gen(function* () {
+        yield* runMigrations({});
+        const pluginId = nextPluginId();
+        const store = yield* PluginSettingsStore;
+
+        yield* store.write({
+          pluginId,
+          values: { baseUrl: "https://example.com" },
+          schemaFingerprint: "shape-v1",
+          expectedRevision: 0,
+        });
+
+        const draft = yield* store.readDraft(pluginId);
+        assert.equal(draft.schemaFingerprint, "shape-v1");
+      }),
+    );
+
+    it.effect("reports the NEW fingerprint after a rewrite under a changed shape", () =>
+      Effect.gen(function* () {
+        yield* runMigrations({});
+        const pluginId = nextPluginId();
+        const store = yield* PluginSettingsStore;
+
+        yield* store.write({
+          pluginId,
+          values: { baseUrl: "https://example.com" },
+          schemaFingerprint: "shape-v1",
+          expectedRevision: 0,
+        });
+        yield* store.write({
+          pluginId,
+          values: { endpoint: "https://example.com" },
+          schemaFingerprint: "shape-v2",
+          expectedRevision: 1,
+        });
+
+        const draft = yield* store.readDraft(pluginId);
+        assert.equal(draft.schemaFingerprint, "shape-v2");
+        assert.deepEqual(draft.values, { endpoint: "https://example.com" });
+      }),
+    );
+
+    it.effect("reports a null fingerprint when nothing is stored", () =>
+      Effect.gen(function* () {
+        yield* runMigrations({});
+        const store = yield* PluginSettingsStore;
+        const draft = yield* store.readDraft(nextPluginId());
+        assert.equal(draft.schemaFingerprint, null);
       }),
     );
   });
