@@ -27,6 +27,7 @@ git push && git push --tags
 ```
 
 This will:
+
 - Update `version.json` with the new version
 - Commit the change and create a git tag
 - Trigger the GitHub Actions release workflow when pushed
@@ -75,6 +76,7 @@ Reads version from Bundle.main.infoDictionary at runtime.
 Triggered by: Pushing tags matching `v*` pattern
 
 Steps:
+
 1. **Checkout & Setup**: Clone repo, install dependencies
 2. **Test**: Run Swift tests (`swift test`)
 3. **Build**: Run `make-app.sh` to create release build
@@ -90,10 +92,10 @@ Steps:
 **Integration Points**:
 
 1. **Package.swift**: Sparkle added as dependency
-2. **Info.plist**: 
+2. **Info.plist**:
    - `SUFeedURL`: Points to appcast.xml on GitHub
    - `SUPublicEDKey`: Public key for signature verification
-3. **App.swift**: 
+3. **App.swift**:
    - `SPUStandardUpdaterController` initialized in init
    - "Check for Updates" menu item in app menu
 
@@ -114,6 +116,7 @@ Adds a new `<item>` entry to appcast.xml with release metadata.
 ### Local Development
 
 Build with version sync:
+
 ```bash
 pnpm run package:mac        # Release build
 pnpm run package:mac --debug # Debug build
@@ -124,17 +127,20 @@ The version from `version.json` is automatically synced to Info.plist before bui
 ### Creating a Release
 
 1. **Bump version**:
+
    ```bash
    pnpm run version:bump patch
    ```
 
 2. **Review changes**:
+
    ```bash
    git log -1 --stat
    git show v0.1.1  # Check tag
    ```
 
 3. **Push to trigger release**:
+
    ```bash
    git push && git push --tags
    ```
@@ -154,11 +160,12 @@ The version from `version.json` is automatically synced to Info.plist before bui
 To enable signed updates:
 
 1. **Generate key pair** (on your machine):
+
    ```bash
    # Download Sparkle tools
    curl -L -o sparkle.tar.xz https://github.com/sparkle-project/Sparkle/releases/download/2.6.4/Sparkle-2.6.4.tar.xz
    tar -xf sparkle.tar.xz
-   
+
    # Generate keys
    ./bin/generate_keys
    ```
@@ -169,6 +176,7 @@ To enable signed updates:
    - Paste the private key value
 
 3. **Add public key to Info.plist**:
+
    ```bash
    # Edit apps/mac/Support/Info.plist
    # Replace the SUPublicEDKey value with the public key
@@ -194,6 +202,7 @@ Future releases will be automatically signed.
 ```
 
 Or via npm:
+
 ```bash
 pnpm run version:bump [major|minor|patch|prerelease]
 ```
@@ -203,13 +212,14 @@ pnpm run version:bump [major|minor|patch|prerelease]
 - **patch**: Increment patch version (1.0.0 → 1.0.1)
 - **minor**: Increment minor, reset patch (1.0.0 → 1.1.0)
 - **major**: Increment major, reset minor/patch (1.0.0 → 2.0.0)
-- **prerelease**: 
+- **prerelease**:
   - If already prerelease: increment number (1.0.0-alpha.1 → 1.0.0-alpha.2)
   - If not: bump patch and add -alpha.1 (1.0.0 → 1.0.1-alpha.1)
 
 Always increments build number.
 
 Creates:
+
 - Git commit: `chore: bump version to X.Y.Z`
 - Git tag: `vX.Y.Z`
 
@@ -283,6 +293,7 @@ cat Support/appcast.xml
 **Error**: "No such module 'Sparkle'"
 
 **Fix**: Resolve dependencies first:
+
 ```bash
 cd apps/mac
 swift package resolve
@@ -291,6 +302,7 @@ swift package resolve
 ### Version not updating in app
 
 **Check**:
+
 1. `sync-version.sh` runs before build (check `make-app.sh`)
 2. `version.json` has correct format
 3. `AppVersion.swift` is in target sources
@@ -299,6 +311,7 @@ swift package resolve
 ### GitHub Actions release fails
 
 **Common issues**:
+
 - Tag already exists: Delete and recreate tag
 - Tests failing: Fix tests before releasing
 - DMG creation fails: Check disk space and permissions
@@ -307,6 +320,7 @@ swift package resolve
 ### Auto-updates not working
 
 **Check**:
+
 1. `SUFeedURL` in Info.plist points to correct appcast URL
 2. Appcast.xml is accessible (test URL in browser)
 3. Public key in Info.plist matches private key used for signing
