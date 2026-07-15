@@ -243,3 +243,41 @@ layer((it) => {
     );
   });
 });
+
+layer((it) => {
+  describe("PluginSettingsStore.remove", () => {
+    // Settings live in the host DB, not under the plugin directory, so uninstall's
+    // filesystem removal does not touch them. Without an explicit delete, "Remove
+    // plugin data" then reinstalling the same id recovers the old configuration —
+    // the user asked for it to be gone and it wasn't.
+    it.effect("deletes stored settings so a reinstall cannot recover them", () =>
+      Effect.gen(function* () {
+        yield* runMigrations({});
+        const pluginId = nextPluginId();
+        const store = yield* PluginSettingsStore;
+
+        yield* store.write({
+          pluginId,
+          values: { baseUrl: "https://secret.example" },
+          schemaFingerprint: fingerprint,
+          expectedRevision: 0,
+        });
+        assert.equal((yield* store.readDraft(pluginId)).revision, 1, "precondition: stored");
+
+        yield* store.remove(pluginId);
+
+        const draft = yield* store.readDraft(pluginId);
+        assert.deepEqual(draft.values, {}, "values must be gone, not merely unreferenced");
+        assert.equal(draft.revision, 0, "a reinstall must start from a clean revision");
+      }),
+    );
+
+    it.effect("is a no-op for a plugin with no stored settings", () =>
+      Effect.gen(function* () {
+        yield* runMigrations({});
+        const store = yield* PluginSettingsStore;
+        yield* store.remove(nextPluginId());
+      }),
+    );
+  });
+});

@@ -11,6 +11,7 @@
  * @module plugins/PluginSettingsStore
  */
 import type { PluginId } from "@t3tools/contracts/plugin";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -97,6 +98,15 @@ export class PluginSettingsStore extends Context.Service<
      * would otherwise have to reconcile against the row.
      */
     readonly changes: (pluginId: PluginId) => Stream.Stream<void>;
+
+    /**
+     * Deletes a plugin's stored settings.
+     *
+     * Called when uninstall removes plugin data. Without it, "Remove plugin data"
+     * left settings behind and reinstalling the same id silently RECOVERED the old
+     * values — the user asked for their configuration to be gone and it wasn't.
+     */
+    readonly remove: (pluginId: PluginId) => Effect.Effect<void>;
   }
 >()("t3/plugins/PluginSettingsStore") {}
 
@@ -214,7 +224,21 @@ export const make = Effect.fn("PluginSettingsStore.make")(function* () {
       Stream.map(() => undefined),
     );
 
-  return PluginSettingsStore.of({ readDraft, write, changes });
+  const remove: PluginSettingsStore["Service"]["remove"] = (pluginId) =>
+    sql`DELETE FROM plugin_settings WHERE plugin_id = ${pluginId}`.pipe(
+      Effect.asVoid,
+      // Uninstall must not fail because settings could not be deleted; the row is
+      // orphaned at worst, and reinstall overwrites it. Log rather than block.
+      Effect.tapCause((cause) =>
+        Effect.logWarning("failed to delete plugin settings", {
+          pluginId,
+          cause: Cause.pretty(cause),
+        }),
+      ),
+      Effect.ignore,
+    );
+
+  return PluginSettingsStore.of({ readDraft, write, changes, remove });
 });
 
 export const layer = Layer.effect(PluginSettingsStore, make());
