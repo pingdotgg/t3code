@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import { PluginId } from "@t3tools/contracts/plugin";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -277,6 +278,40 @@ layer((it) => {
         yield* runMigrations({});
         const store = yield* PluginSettingsStore;
         yield* store.remove(nextPluginId());
+      }),
+    );
+  });
+});
+
+// A SEPARATE layer block: this one destroys the table, which every other test needs.
+layer((it) => {
+  describe("PluginSettingsStore.remove failure", () => {
+    // remove() must FAIL LOUDLY, because reconcile drops the lockfile entry after it.
+    // If a deletion error were swallowed (an easy regression to `orElseSucceed`),
+    // uninstall would report "data gone" while the row survived — and reinstalling
+    // the same id would hand back settings the user believes are deleted.
+    it.effect("surfaces a SQL failure instead of reporting a successful delete", () =>
+      Effect.gen(function* () {
+        yield* runMigrations({});
+        const sql = yield* SqlClient.SqlClient;
+        const store = yield* PluginSettingsStore;
+        const pluginId = nextPluginId();
+
+        yield* store.write({
+          pluginId,
+          values: { baseUrl: "https://secret.example" },
+          schemaFingerprint: fingerprint,
+          expectedRevision: 0,
+        });
+        // Break the DELETE for real rather than mocking the client: the statement
+        // now targets a table that does not exist.
+        yield* sql`DROP TABLE plugin_settings`;
+
+        const exit = yield* Effect.exit(store.remove(pluginId));
+        assert.isTrue(
+          Exit.isFailure(exit),
+          "a failed delete must not be reported as a successful removal",
+        );
       }),
     );
   });

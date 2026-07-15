@@ -229,6 +229,27 @@ managementTest("PluginManagementRpcHandlers settings", (it) => {
   // activation when the stored row is unreadable, so no runtime is ever put. If the
   // RPC resolved the schema only from live runtimes it would report "no settings
   // declared" and hide the form needed to fix the very values that broke activation.
+  // A plugin that failed to ACTIVATE is still INSTALLED — it keeps its lockfile
+  // entry, with the failure recorded in `lastError`. Tests that noted a declared
+  // schema without one were simulating a state that cannot occur, which is why they
+  // could not tell "failed to activate" (repairable) apart from "uninstalled".
+  const installEntry = (pluginId: PluginId, lastError: string | null = "register failed") =>
+    Effect.gen(function* () {
+      const store = yield* PluginLockfileStore;
+      yield* store.updatePlugin(pluginId, () =>
+        Effect.succeed({
+          version: "1.0.0",
+          sha256: "sha",
+          sourceId: "src-test",
+          enabled: true,
+          state: "failed",
+          activation: { activatingSince: null, crashCount: 1 },
+          installedAt: "2026-07-03T00:00:00.000Z",
+          lastError,
+        }),
+      );
+    });
+
   it.effect("still reports settings as declared when the plugin failed to activate", () =>
     Effect.gen(function* () {
       const id = PluginId.make("mgmt-neveractivated");
@@ -236,8 +257,10 @@ managementTest("PluginManagementRpcHandlers settings", (it) => {
       const settingsStore = yield* PluginSettingsStoreLayer.PluginSettingsStore;
       yield* runMigrations({});
 
-      // Declared at module load; register() then failed, so there is NO runtime.
+      // Declared at module load; register() then failed, so there is NO runtime —
+      // but the plugin is still installed, so its lockfile entry remains.
       yield* settingsStore.noteDeclaredSchema(id, schema as never);
+      yield* installEntry(id);
 
       const result = yield* handlers.settingsGet({ pluginId: id });
       assert.equal(result.declared, true, "the repair form must still be reachable");
@@ -253,6 +276,7 @@ managementTest("PluginManagementRpcHandlers settings", (it) => {
         const settingsStore = yield* PluginSettingsStoreLayer.PluginSettingsStore;
         yield* runMigrations({});
         yield* settingsStore.noteDeclaredSchema(id, schema as never);
+        yield* installEntry(id);
 
         const revision = yield* handlers.settingsSet({
           pluginId: id,
@@ -261,6 +285,46 @@ managementTest("PluginManagementRpcHandlers settings", (it) => {
         });
         assert.equal(revision.revision, 1, "repair must be possible without a live runtime");
       }),
+  );
+
+  // The declaration map is process-local and nothing clears it on uninstall, so a
+  // plugin activated earlier in this process kept resolving a schema after removal —
+  // and a write RECREATED the settings the user asked to delete.
+  it.effect("rejects a write for a plugin that is no longer installed", () =>
+    Effect.gen(function* () {
+      const id = PluginId.make("mgmt-uninstalled-write");
+      const handlers = yield* PluginManagementRpcHandlers;
+      const settingsStore = yield* PluginSettingsStoreLayer.PluginSettingsStore;
+      yield* runMigrations({});
+      // Activated earlier this process (schema noted), then uninstalled: the
+      // lockfile entry is gone but the declaration survives in memory.
+      yield* settingsStore.noteDeclaredSchema(id, schema as never);
+
+      const result = yield* Effect.result(
+        handlers.settingsSet({
+          pluginId: id,
+          values: { baseUrl: "https://recreated.example" },
+          expectedRevision: 0,
+        }),
+      );
+
+      assert.isTrue(Result.isFailure(result), "an uninstalled plugin must not accept settings");
+      const draft = yield* settingsStore.readDraft(id);
+      assert.equal(draft.revision, 0, "nothing may be persisted for an uninstalled plugin");
+    }),
+  );
+
+  it.effect("reports no settings for a plugin that is no longer installed", () =>
+    Effect.gen(function* () {
+      const id = PluginId.make("mgmt-uninstalled-read");
+      const handlers = yield* PluginManagementRpcHandlers;
+      const settingsStore = yield* PluginSettingsStoreLayer.PluginSettingsStore;
+      yield* runMigrations({});
+      yield* settingsStore.noteDeclaredSchema(id, schema as never);
+
+      const result = yield* handlers.settingsGet({ pluginId: id });
+      assert.equal(result.declared, false, "an uninstalled plugin has no settings form");
+    }),
   );
 
   it.effect("rejects a write for a plugin that declares no settings", () =>
