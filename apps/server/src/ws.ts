@@ -5,6 +5,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -32,6 +33,7 @@ import {
   type OrchestrationShellStreamEvent,
   type OrchestrationShellStreamItem,
   type OrchestrationThreadStreamItem,
+  type OrchestrationThread,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetSnapshotError,
   OrchestrationGetTurnDiffError,
@@ -49,10 +51,13 @@ import {
   OrchestrationReplayEventsError,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
+  AssetWorkspaceAssetInspectionError,
+  AssetWorkspaceAssetNotFoundError,
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
   EnvironmentAuthorizationError,
   ThreadId,
+  type TurnId,
   type TerminalAttachStreamEvent,
   type TerminalError,
   type TerminalEvent,
@@ -85,6 +90,7 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
+import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
@@ -116,6 +122,53 @@ import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
+
+function asUnknownRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+const WINDOWS_ABSOLUTE_PATH = /^[A-Za-z]:[\\/]/;
+
+function normalizeThreadArtifactReference(value: string): string | null {
+  const normalized = value.trim().replaceAll("\\", "/");
+  const segments = normalized.split("/");
+  if (
+    segments.length < 2 ||
+    normalized.startsWith("/") ||
+    WINDOWS_ABSOLUTE_PATH.test(normalized) ||
+    normalized.includes(":") ||
+    segments.some((segment) => !segment || segment === "." || segment === "..") ||
+    !isWorkspaceImagePreviewPath(normalized)
+  ) {
+    return null;
+  }
+  return normalized;
+}
+
+function findThreadArtifactPath(
+  thread: OrchestrationThread,
+  turnId: TurnId,
+  reference: string,
+): string | null {
+  const normalizedReference = normalizeThreadArtifactReference(reference);
+  if (!normalizedReference) return null;
+  for (const activity of [...thread.activities].toReversed()) {
+    if (activity.turnId !== turnId) continue;
+    const payload = asUnknownRecord(activity.payload);
+    const data = asUnknownRecord(payload?.data);
+    const rawOutput = asUnknownRecord(data?.rawOutput);
+    const artifactPath = rawOutput?.path;
+    if (
+      typeof artifactPath === "string" &&
+      artifactPath.replaceAll("\\", "/").endsWith(`/${normalizedReference}`)
+    ) {
+      return artifactPath;
+    }
+  }
+  return null;
+}
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -404,6 +457,7 @@ const makeWsRpcLayer = (
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
       const crypto = yield* Crypto.Crypto;
+      const path = yield* Path.Path;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
       const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
@@ -1694,6 +1748,42 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.assetsCreateUrl,
             Effect.gen(function* () {
+              if (input.resource._tag === "thread-artifact") {
+                const thread = yield* projectionSnapshotQuery
+                  .getThreadDetailById(input.resource.threadId)
+                  .pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new AssetWorkspaceAssetInspectionError({
+                          resource: input.resource,
+                          cause,
+                        }),
+                    ),
+                  );
+                if (Option.isNone(thread)) {
+                  return yield* new AssetWorkspaceAssetNotFoundError({
+                    resource: input.resource,
+                  });
+                }
+                const artifactPath = findThreadArtifactPath(
+                  thread.value,
+                  input.resource.turnId,
+                  input.resource.path,
+                );
+                if (!artifactPath) {
+                  return yield* new AssetWorkspaceAssetNotFoundError({
+                    resource: input.resource,
+                  });
+                }
+                return yield* issueAssetUrl({
+                  resource: {
+                    _tag: "workspace-file",
+                    threadId: input.resource.threadId,
+                    path: path.basename(artifactPath),
+                  },
+                  workspaceRoot: path.dirname(artifactPath),
+                });
+              }
               if (input.resource._tag !== "workspace-file") {
                 return yield* issueAssetUrl({ resource: input.resource });
               }
