@@ -32,7 +32,14 @@ public struct ChatScreen: View {
                         thread: thread, model: model, scenery: scenery, threadKey: threadKey)
                     Divider()
                     VcsToolbar(model: model, threadID: thread.id).id(thread.id)
-                    ChatTimelineScrollView(model: model, isPinnedToBottom: $isPinnedToBottom)
+                    // A LazyVStack keeps substantial layout/realization state. Give
+                    // every thread its own scroll-view identity so a selection never
+                    // inherits an empty/stale realized viewport from the prior chat.
+                    ChatTimelineScrollView(
+                        model: model, threadID: thread.id,
+                        isPinnedToBottom: $isPinnedToBottom
+                    )
+                    .id(thread.id)
                     ChatFollowUpBar(model: model)
                     PlanProgressStrip(model: model)
                         .padding(.horizontal, 16)

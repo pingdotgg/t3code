@@ -362,8 +362,16 @@ public final class AppModel {
         threads.first { $0.id == selectedThreadID }
     }
 
+    public func thread(threadID: String) -> ChatThread? {
+        threads.first { $0.id == threadID }
+    }
+
+    public func timeline(threadID: String) -> [TimelineItem] {
+        threadStates[threadID]?.timeline ?? []
+    }
+
     public func selectedTimeline() -> [TimelineItem] {
-        selectedThreadID.flatMap { threadStates[$0]?.timeline } ?? []
+        selectedThreadID.map { timeline(threadID: $0) } ?? []
     }
 
     public var selectedQueuedMessages: [QueuedOutgoingMessage] {
