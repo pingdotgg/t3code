@@ -44,6 +44,7 @@ interface FakeGhScenario {
     baseRefName: string;
     headRefName: string;
     state?: "open" | "closed" | "merged";
+    isDraft?: boolean;
     isCrossRepository?: boolean;
     headRepositoryNameWithOwner?: string | null;
     headRepositoryOwnerLogin?: string | null;
@@ -157,6 +158,7 @@ function normalizeFakePullRequestSummary(raw: unknown): GitHubCli.GitHubPullRequ
       : undefined;
   const isCrossRepository =
     typeof record.isCrossRepository === "boolean" ? record.isCrossRepository : undefined;
+  const isDraft = typeof record.isDraft === "boolean" ? record.isDraft : undefined;
   const headRepositoryNameWithOwner =
     typeof record.headRepositoryNameWithOwner === "string"
       ? record.headRepositoryNameWithOwner
@@ -177,6 +179,7 @@ function normalizeFakePullRequestSummary(raw: unknown): GitHubCli.GitHubPullRequ
     baseRefName,
     headRefName,
     ...(state ? { state } : {}),
+    ...(isDraft !== undefined ? { isDraft } : {}),
     ...(isCrossRepository !== undefined ? { isCrossRepository } : {}),
     ...(headRepositoryNameWithOwner ? { headRepositoryNameWithOwner } : {}),
     ...(headRepositoryOwnerLogin ? { headRepositoryOwnerLogin } : {}),
@@ -502,6 +505,10 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
       return Effect.succeed(fakeGhOutput(""));
     }
 
+    if (args[0] === "pr" && args[1] === "ready") {
+      return Effect.succeed(fakeGhOutput(""));
+    }
+
     if (args[0] === "api" && args[1] === "graphql") {
       const unresolved = scenario.unresolvedReviewThreadCount ?? null;
       const actionable = scenario.actionableReviewItemCount ?? 0;
@@ -629,7 +636,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
             "--limit",
             String(input.limit ?? 1),
             "--json",
-            "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
+            "number,title,url,baseRefName,headRefName,state,mergedAt,isDraft,isCrossRepository,headRepository,headRepositoryOwner",
           ],
         }).pipe(
           Effect.map((result) => JSON.parse(result.stdout) as unknown[]),
@@ -673,7 +680,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
             "view",
             input.reference,
             "--json",
-            "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
+            "number,title,url,baseRefName,headRefName,state,mergedAt,isDraft,isCrossRepository,headRepository,headRepositoryOwner",
           ],
         }).pipe(
           Effect.map((result) => JSON.parse(result.stdout) as GitHubCli.GitHubPullRequestSummary),
@@ -730,6 +737,11 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
           cwd: input.cwd,
           args: ["pr", "merge", input.reference, "--merge"],
         }).pipe(Effect.asVoid),
+      markPullRequestReady: (input) =>
+        execute({
+          cwd: input.cwd,
+          args: ["pr", "ready", input.reference],
+        }).pipe(Effect.asVoid),
     },
     ghCalls,
   };
@@ -739,7 +751,14 @@ function runStackedAction(
   manager: GitManager.GitManager["Service"],
   input: {
     cwd: string;
-    action: "commit" | "push" | "create_pr" | "commit_push" | "commit_push_pr" | "merge_pr";
+    action:
+      | "commit"
+      | "push"
+      | "create_pr"
+      | "commit_push"
+      | "commit_push_pr"
+      | "ready_pr"
+      | "merge_pr";
     actionId?: string;
     commitMessage?: string;
     featureBranch?: boolean;
@@ -1218,7 +1237,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           unresolvedReviewThreadCount: null,
         });
         expect(ghCalls).toContain(
-          "pr list --head jasonLaster:statemachine --state all --limit 20 --json number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
+          "pr list --head jasonLaster:statemachine --state all --limit 20 --json number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,isDraft,isCrossRepository,headRepository,headRepositoryOwner",
         );
       }),
     20_000,
@@ -1709,6 +1728,53 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       });
       expect(result.toast.title).toContain("Merged");
       expect(ghCalls).toContain("pr merge 42 --merge");
+    }),
+  );
+
+  it.effect("ready_pr marks the current branch's draft PR ready for review", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/ready-pr"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/ready-pr"]);
+
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 44,
+                title: "Draft work",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/44",
+                baseRefName: "main",
+                headRefName: "feature/ready-pr",
+                state: "OPEN",
+                isDraft: true,
+              },
+            ]),
+          ],
+        },
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "ready_pr",
+      });
+
+      expect(result.action).toBe("ready_pr");
+      expect(result.pr).toEqual({
+        status: "marked_ready",
+        url: "https://github.com/pingdotgg/codething-mvp/pull/44",
+        number: 44,
+        baseBranch: "main",
+        headBranch: "feature/ready-pr",
+        title: "Draft work",
+      });
+      expect(result.toast.title).toContain("ready for review");
+      expect(ghCalls).toContain("pr ready 44");
     }),
   );
 

@@ -226,6 +226,18 @@ public final class MockBackend: BackendService, @unchecked Sendable {
                 success: true, title: "Merged PR #1",
                 prURL: "https://github.com/SergeSerb2/SergeCode/pull/1")
         }
+        if action == .readyPR {
+            await state.emitVcsStatus(
+                threadID: threadID,
+                branch: "feat/native-mac-app",
+                prState: .open,
+                isDraftPR: false,
+                reviewDecision: nil,
+                unresolvedReviewThreadCount: 0)
+            return GitActionOutcome(
+                success: true, title: "Marked PR #1 ready for review",
+                prURL: "https://github.com/SergeSerb2/SergeCode/pull/1")
+        }
         return GitActionOutcome(
             success: true, title: "\(action.displayName) finished",
             detail: commitMessage,
@@ -846,6 +858,7 @@ private actor MockState {
         threadID: String,
         branch: String = "feat/native-mac-app",
         prState: PullRequestState? = nil,
+        isDraftPR: Bool? = nil,
         reviewDecision: PullRequestReviewDecision? = nil,
         unresolvedReviewThreadCount: Int? = nil,
         reviewLifecycle: PullRequestReviewLifecycle? = nil
@@ -865,6 +878,7 @@ private actor MockState {
                     prTitle: hasOpenPR ? "Native mac app" : nil,
                     prURL: hasOpenPR ? "https://github.com/SergeSerb2/SergeCode/pull/1" : nil,
                     prState: prState,
+                    isDraftPR: isDraftPR,
                     reviewDecision: reviewDecision,
                     unresolvedReviewThreadCount: unresolvedReviewThreadCount,
                     reviewLifecycle: reviewLifecycle)))

@@ -29,6 +29,8 @@ export const ChangeRequest = Schema.Struct({
   baseRefName: TrimmedNonEmptyString,
   headRefName: TrimmedNonEmptyString,
   state: ChangeRequestState,
+  /** Whether the change request is still a draft, when exposed by the provider. */
+  isDraft: Schema.optional(Schema.Boolean),
   updatedAt: Schema.Option(Schema.DateTimeUtc),
   isCrossRepository: Schema.optional(Schema.Boolean),
   headRepositoryNameWithOwner: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),

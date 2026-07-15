@@ -1797,7 +1797,7 @@ public final class AppModel {
             lastGitActionOutcomeByThread[threadID] = outcome
             // Merge (and other actions that change remote PR state) need a
             // fresh VCS snapshot so dedicated buttons disappear promptly.
-            if action == .mergePR, outcome.success {
+            if (action == .mergePR || action == .readyPR), outcome.success {
                 try? await backend.watchVcsStatus(threadID: threadID)
             }
         } catch {

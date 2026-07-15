@@ -96,6 +96,16 @@ describe("GitRunStackedActionInput", () => {
 
     expect(parsed.action).toBe("merge_pr");
   });
+
+  it("accepts the ready_pr stacked action", () => {
+    const parsed = decodeRunStackedActionInput({
+      actionId: "action-ready",
+      cwd: "/repo",
+      action: "ready_pr",
+    });
+
+    expect(parsed.action).toBe("ready_pr");
+  });
 });
 
 describe("VcsStatusResult pull request review fields", () => {
@@ -117,6 +127,7 @@ describe("VcsStatusResult pull request review fields", () => {
         baseRef: "main",
         headRef: "feature/merge-ready",
         state: "open",
+        isDraft: true,
         reviewDecision: "APPROVED",
         unresolvedReviewThreadCount: 0,
         actionableReviewItemCount: 0,
@@ -124,6 +135,7 @@ describe("VcsStatusResult pull request review fields", () => {
     });
 
     expect(parsed.pr?.reviewDecision).toBe("APPROVED");
+    expect(parsed.pr?.isDraft).toBe(true);
     expect(parsed.pr?.unresolvedReviewThreadCount).toBe(0);
     expect(parsed.pr?.actionableReviewItemCount).toBe(0);
   });

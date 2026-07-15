@@ -205,6 +205,7 @@ export interface GitHubPullRequestSummary {
   readonly baseRefName: string;
   readonly headRefName: string;
   readonly state?: "open" | "closed" | "merged";
+  readonly isDraft?: boolean;
   readonly isCrossRepository?: boolean;
   readonly headRepositoryNameWithOwner?: string | null;
   readonly headRepositoryOwnerLogin?: string | null;
@@ -286,6 +287,11 @@ export class GitHubCli extends Context.Service<
     }) => Effect.Effect<PullRequestReviewResult, GitHubCliError>;
 
     readonly mergePullRequest: (input: {
+      readonly cwd: string;
+      readonly reference: string;
+    }) => Effect.Effect<void, GitHubCliError>;
+
+    readonly markPullRequestReady: (input: {
       readonly cwd: string;
       readonly reference: string;
     }) => Effect.Effect<void, GitHubCliError>;
@@ -416,7 +422,7 @@ export const make = Effect.gen(function* () {
           "--limit",
           String(input.limit ?? 1),
           "--json",
-          "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
+          "number,title,url,baseRefName,headRefName,state,mergedAt,isDraft,isCrossRepository,headRepository,headRepositoryOwner",
         ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
@@ -450,7 +456,7 @@ export const make = Effect.gen(function* () {
           "view",
           input.reference,
           "--json",
-          "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
+          "number,title,url,baseRefName,headRefName,state,mergedAt,isDraft,isCrossRepository,headRepository,headRepositoryOwner",
         ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
@@ -687,6 +693,11 @@ export const make = Effect.gen(function* () {
       execute({
         cwd: input.cwd,
         args: ["pr", "merge", input.reference, "--merge"],
+      }).pipe(Effect.asVoid),
+    markPullRequestReady: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: ["pr", "ready", input.reference],
       }).pipe(Effect.asVoid),
   });
 });

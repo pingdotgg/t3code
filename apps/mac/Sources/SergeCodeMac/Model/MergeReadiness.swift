@@ -2,6 +2,7 @@
 ///
 /// Ready only when:
 /// - the PR is open
+/// - the PR is not a draft
 /// - every review thread is resolved (count known and zero)
 /// - the review decision is nil or `APPROVED`
 ///
@@ -11,6 +12,7 @@
 enum MergeReadiness {
     static func isReady(for status: VcsStatus) -> Bool {
         guard status.prState == .open else { return false }
+        guard status.isDraftPR != true else { return false }
         guard let unresolved = status.unresolvedReviewThreadCount, unresolved == 0 else {
             return false
         }
