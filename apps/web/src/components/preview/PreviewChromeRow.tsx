@@ -266,7 +266,7 @@ export function PreviewChromeRow({
             >
               <Camera className={cn(recording && "text-destructive")} />
               {recording ? (
-                <span className="absolute right-0.5 top-0.5 size-1.5 animate-pulse rounded-full bg-destructive" />
+                <span className="absolute right-0.5 top-0.5 size-1.5 animate-status-pulse rounded-full bg-destructive" />
               ) : null}
             </TooltipTrigger>
             <TooltipPopup>
