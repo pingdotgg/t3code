@@ -903,6 +903,14 @@ export const make = Effect.fn("PluginHost.make")(function* () {
         // handed over via register(hostApi), which runs after the finalizers are
         // registered.
         const definition = yield* loader.loadServerEntry(pluginDir, serverEntry);
+        // Declare the schema BEFORE register() can fail. If a plugin reads its
+        // settings during register() and the stored row is unreadable, activation
+        // fails and no runtime is ever put — so a settings RPC that resolved the
+        // schema only from live runtimes would report "no settings declared" and the
+        // repair UI would be unreachable exactly when it is needed.
+        if (definition.settings !== undefined) {
+          yield* settingsStore.noteDeclaredSchema(pluginId, definition.settings.schema as never);
+        }
         yield* validateSettingsDescriptor(
           pluginId,
           definition.settings,

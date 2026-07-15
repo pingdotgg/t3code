@@ -193,16 +193,24 @@ export const make = Effect.fn("PluginManagementRpcHandlers.make")(function* () {
   // The declared schema lives on the live runtime's definition, so settings are
   // only readable/writable while the plugin is active. Keying off the runtime (not
   // a client-supplied id) is also what makes cross-plugin access impossible.
+  // Resolve from the live runtime first, then fall back to what the plugin DECLARED
+  // at module load.
+  //
+  // The fallback is what keeps the repair path reachable. A plugin that reads its
+  // settings during register() fails activation when the stored row is unreadable,
+  // so no runtime is ever put — and resolving only from runtimes would report "no
+  // settings declared", hiding the form the user needs to fix the very values that
+  // broke activation.
   const declaredSettings = (pluginId: PluginSettingsGetInput["pluginId"]) =>
-    registry
-      .get(pluginId)
-      .pipe(
-        Effect.map((runtime) =>
-          Option.flatMap(runtime, (value) =>
-            value.settings === undefined ? Option.none() : Option.some(value.settings),
-          ),
-        ),
+    Effect.gen(function* () {
+      const runtime = yield* registry.get(pluginId);
+      const fromRuntime = Option.flatMap(runtime, (value) =>
+        value.settings === undefined ? Option.none() : Option.some(value.settings),
       );
+      if (Option.isSome(fromRuntime)) return fromRuntime;
+      const fromDeclaration = yield* settingsStore.declaredSchema(pluginId);
+      return Option.map(fromDeclaration, (schema) => ({ schema }) as never);
+    });
 
   const settingsGet: PluginManagementRpcHandlers["Service"]["settingsGet"] = (input) =>
     Effect.gen(function* () {
