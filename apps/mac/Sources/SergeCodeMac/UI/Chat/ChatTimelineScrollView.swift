@@ -5,6 +5,7 @@ import SwiftUI
 /// without fighting an autoscroll.
 struct ChatTimelineScrollView: View {
     let model: AppModel
+    let threadID: String
     @Binding var isPinnedToBottom: Bool
 
     /// Item count at the last scroll-triggering change, to tell row appends
@@ -36,12 +37,14 @@ struct ChatTimelineScrollView: View {
     private static let bottomAnchorID = "chat-timeline-bottom-anchor"
 
     var body: some View {
-        let items = model.selectedTimeline()
+        // `threadID` is an immutable input rather than a second read of the
+        // mutable selection. ChatScreen keys this view by the same ID, keeping
+        // the LazyVStack, its rows, and every scroll callback on one thread.
+        let items = model.timeline(threadID: threadID)
         // Finished tool bursts render condensed; grouping is pure render
         // sugar over the untouched timeline array. Memoized on
         // (threadID, structureVersion, settled), with timelineVersion used
         // only for content refreshes when assistant markdown changes.
-        let threadID = model.selectedThreadID ?? ""
         let threadKey = model.scopedThreadKey(threadID)
         let displayItems = TimelineDisplayCache.grouped(
             items: items,
@@ -55,7 +58,7 @@ struct ChatTimelineScrollView: View {
         // those, so any thread churn during a run re-rendered the whole
         // visible transcript. See TimelineRowContext.
         let rowContext = TimelineRowContext(
-            threadStatus: model.selectedThread?.status,
+            threadStatus: model.thread(threadID: threadID)?.status,
             projectRoot: model.projectPath(forScopedThreadKey: threadKey),
             activeDecisionCardID: items.activeDecisionCardID,
             isConnectionReady: model.connection == .ready)
@@ -121,7 +124,7 @@ struct ChatTimelineScrollView: View {
                 geometry.contentSize.height
             } action: { oldHeight, newHeight in
                 guard newHeight != oldHeight else { return }
-                if pendingInitialScrollThreadID == model.selectedThreadID, !items.isEmpty {
+                if pendingInitialScrollThreadID == threadID, !items.isEmpty {
                     pendingInitialScrollThreadID = nil
                     lastItemCount = items.count
                     isPinnedToBottom = true
@@ -140,32 +143,14 @@ struct ChatTimelineScrollView: View {
             .onChange(of: items.count) { _, newCount in
                 let appendedRow = newCount > lastItemCount
                 lastItemCount = newCount
-                guard pendingInitialScrollThreadID != model.selectedThreadID else { return }
+                guard pendingInitialScrollThreadID != threadID else { return }
                 guard isPinnedToBottom, appendedRow else { return }
                 withAnimation(Motion.structure) {
                     proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
                 }
             }
-            // Thread switches reuse this ScrollView. A same-sized timeline
-            // changes neither items.count nor contentSize, so without this
-            // the new thread would inherit the old thread's scroll offset.
-            .onChange(of: model.selectedThreadID) { _, newThreadID in
-                isPinnedToBottom = true
-                lastItemCount = items.count
-                guard let newThreadID else {
-                    pendingInitialScrollThreadID = nil
-                    return
-                }
-                guard !items.isEmpty else {
-                    pendingInitialScrollThreadID = newThreadID
-                    return
-                }
-                pendingInitialScrollThreadID = nil
-                proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
-            }
             .onAppear {
                 lastItemCount = items.count
-                guard let threadID = model.selectedThreadID else { return }
                 guard !items.isEmpty else {
                     pendingInitialScrollThreadID = threadID
                     return
@@ -189,14 +174,14 @@ struct ChatTimelineScrollView: View {
     /// Nil while the initial anchor is still pending (nothing should animate
     /// into place on a thread switch) and while the user is scrolling.
     private var revealAnimation: Animation? {
-        guard pendingInitialScrollThreadID != model.selectedThreadID else { return nil }
+        guard pendingInitialScrollThreadID != threadID else { return nil }
         return isUserScrolling ? nil : Motion.reveal
     }
 
     /// Mirrors ToolEventRow's settled rule: once the thread is no longer
     /// working, tool rows stuck "running" count as finished for grouping.
     private var threadIsSettled: Bool {
-        model.selectedThread?.status.isSettled ?? false
+        model.thread(threadID: threadID)?.status.isSettled ?? false
     }
 }
 
