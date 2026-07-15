@@ -46,10 +46,7 @@ public struct ChatScreen: View {
                         .padding(.top, 8)
                     ComposerBar(
                         model: model,
-                        accent: AlpineTheme.accent(
-                            palette: scenery.palette(
-                                for: scenery.photo(for: threadKey),
-                                setId: scenery.resolvedSetId(forThread: threadKey))))
+                        accent: AlpineTheme.accent)
                         // Breathing room against the window edges and sidebars —
                         // the floating glass composer shouldn't touch chrome.
                         .padding(.horizontal, 16)

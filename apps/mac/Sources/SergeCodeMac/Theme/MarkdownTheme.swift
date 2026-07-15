@@ -100,6 +100,8 @@ enum MarkdownTheme {
         case secondaryOpacity(Double)
         case white
         case whiteOpacity(Double)
+        case forest
+        case forestOpacity(Double)
         case accentOpacity(Double)
         case separatorOpacity(Double)
 
@@ -115,8 +117,12 @@ enum MarkdownTheme {
                 return .white
             case .whiteOpacity(let opacity):
                 return .white.opacity(opacity)
+            case .forest:
+                return AlpineTheme.forest
+            case .forestOpacity(let opacity):
+                return AlpineTheme.forest.opacity(opacity)
             case .accentOpacity(let opacity):
-                return Color.accentColor.opacity(opacity)
+                return AlpineTheme.accent.opacity(opacity)
             case .separatorOpacity(let opacity):
                 return Color(nsColor: .separatorColor).opacity(opacity)
             }
@@ -190,17 +196,17 @@ enum MarkdownTheme {
                 table: .rich)
         case .userBubble:
             return StyleTokens(
-                proseForeground: .white,
-                headingForeground: .white,
-                listMarkerForeground: .whiteOpacity(0.75),
-                taskCheckboxForeground: .whiteOpacity(0.75),
-                checkedTaskTextForeground: .white,
-                quoteBar: .whiteOpacity(0.6),
-                quoteText: .whiteOpacity(0.85),
-                quoteFill: .whiteOpacity(0.08),
-                headingRule: .whiteOpacity(0.35),
-                rule: .whiteOpacity(0.35),
-                inlineCodeBackground: .whiteOpacity(0.18),
+                proseForeground: .forest,
+                headingForeground: .forest,
+                listMarkerForeground: .forestOpacity(0.72),
+                taskCheckboxForeground: .forestOpacity(0.72),
+                checkedTaskTextForeground: .forest,
+                quoteBar: .forestOpacity(0.55),
+                quoteText: .forestOpacity(0.82),
+                quoteFill: .forestOpacity(0.08),
+                headingRule: .forestOpacity(0.28),
+                rule: .forestOpacity(0.28),
+                inlineCodeBackground: .forestOpacity(0.12),
                 linksAreUnderlined: true,
                 codeBlock: .plainPanel,
                 table: .plainPanel)

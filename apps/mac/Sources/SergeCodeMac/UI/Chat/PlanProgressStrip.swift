@@ -24,7 +24,7 @@ struct PlanProgressStrip: View {
                 }
             }
             .padding(10)
-            .glassEffect(.regular, in: .rect(cornerRadius: 16))
+            .glassEffect(.regular, in: .rect(cornerRadius: AlpineTheme.Corners.card))
             .onReceive(NotificationCenter.default.publisher(for: .uiProbeToggleSection)) { note in
                 guard note.object as? String == "plan" else { return }
                 withDeferredAnimation(Motion.feedback) {
@@ -48,7 +48,7 @@ struct PlanProgressStrip: View {
             HStack(spacing: 8) {
                 Image(systemName: "checklist")
                     .font(.callout)
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(AlpineTheme.accent)
                 Text("Plan")
                     .font(.callout.weight(.semibold))
                 Text("\(completed)/\(progress.steps.count)")
@@ -148,8 +148,8 @@ struct PlanProgressStrip: View {
     private func iconTint(_ status: PlanStepStatus) -> Color {
         switch status {
         case .pending: .secondary
-        case .inProgress: .accentColor
-        case .completed: .green
+        case .inProgress: AlpineTheme.accent
+        case .completed: AlpineTheme.meadow
         }
     }
 }

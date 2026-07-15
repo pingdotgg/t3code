@@ -39,7 +39,7 @@ struct ConnectionStatusPill: View {
     }
 
     private var tint: Color {
-        // Yellow communicates in-flight work without perpetual movement.
-        phase.isSettling ? .yellow : phase.statusColor
+        // Lichen communicates in-flight work without perpetual movement.
+        phase.isSettling ? AlpineTheme.lichen : phase.statusColor
     }
 }

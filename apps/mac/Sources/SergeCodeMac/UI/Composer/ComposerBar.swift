@@ -372,7 +372,7 @@ public struct ComposerBar: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 10)
             }
-            .glassEffect(.regular, in: .rect(cornerRadius: 25))
+            .glassEffect(.regular, in: .rect(cornerRadius: AlpineTheme.Corners.composer))
         }
         // Typing and suggestion filtering are deliberately unanimated. Async
         // arrivals reveal independently without moving the entire composer on
@@ -461,7 +461,7 @@ public struct ComposerBar: View {
         if active {
             smartSendStopBaseButton
                 .buttonStyle(.glassProminent)
-                .tint(showsStop ? .red : (isThreadRunning ? .orange : accent))
+                .tint(showsStop ? .red : (isThreadRunning ? AlpineTheme.clay : accent))
         } else {
             smartSendStopBaseButton
                 .foregroundStyle(.secondary)
@@ -995,8 +995,12 @@ private struct SuggestionList: View {
                 }
             }
         }
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(.quaternary, lineWidth: 1))
+        .background(
+            .regularMaterial,
+            in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.control))
+        .overlay(
+            RoundedRectangle(cornerRadius: AlpineTheme.Corners.control)
+                .stroke(.quaternary, lineWidth: 1))
     }
 }
 
@@ -1012,7 +1016,7 @@ private struct QueuedMessagesStrip: View {
             HStack(spacing: 8) {
                 Image(systemName: "tray.and.arrow.down")
                     .font(.callout)
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(AlpineTheme.accent)
                 Text("Queued for next turn")
                     .font(.callout.weight(.semibold))
                 Text("\(messages.count)")
@@ -1031,7 +1035,7 @@ private struct QueuedMessagesStrip: View {
             }
         }
         .padding(10)
-        .glassEffect(.regular, in: .rect(cornerRadius: 16))
+        .glassEffect(.regular, in: .rect(cornerRadius: AlpineTheme.Corners.card))
         .accessibilityIdentifier("queued-messages-strip")
     }
 }

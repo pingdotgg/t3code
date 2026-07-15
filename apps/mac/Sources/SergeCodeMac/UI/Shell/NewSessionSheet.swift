@@ -173,14 +173,14 @@ struct NewSessionSheet: View {
                     Task { await create() }
                 }
                 .buttonStyle(.glass)
-                .tint(.accentColor)
+                .tint(AlpineTheme.accent)
                 .disabled(isBusy || !canCreate)
                 .keyboardShortcut(.defaultAction)
             }
         }
         .padding(24)
         .frame(width: 420)
-        .glassEffect(.regular, in: .rect(cornerRadius: 20))
+        .glassEffect(.regular, in: .rect(cornerRadius: AlpineTheme.Corners.hero))
         .animation(Motion.structure, value: mode)
         .animation(Motion.reveal, value: errorMessage == nil)
         .task {

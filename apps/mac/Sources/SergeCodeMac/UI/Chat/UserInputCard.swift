@@ -40,14 +40,14 @@ public struct UserInputCard: View {
                     onSubmit(collectAnswers())
                 }
                 .buttonStyle(.glass)
-                .tint(.accentColor)
+                .tint(AlpineTheme.accent)
                 .disabled(!isComplete)
                 .keyboardShortcut(isActive ? Self.submitShortcut : nil)
                 .help(isActive ? "Submit (⌘⇧⏎)" : "Submit")
             }
         }
         .padding(14)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.card))
     }
 
     @ViewBuilder
@@ -90,7 +90,7 @@ public struct UserInputCard: View {
                     systemName: isSelected
                         ? (question.multiSelect ? "checkmark.square.fill" : "largecircle.fill.circle")
                         : (question.multiSelect ? "square" : "circle"))
-                .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+                .foregroundStyle(isSelected ? AlpineTheme.accent : Color.secondary)
                 .contentTransition(
                     Motion.reduceMotion ? .identity : .symbolEffect(.replace))
                 VStack(alignment: .leading, spacing: 2) {

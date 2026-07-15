@@ -138,7 +138,7 @@ struct PassportView: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
-        .glassEffect(.regular, in: .rect(cornerRadius: 18))
+        .glassEffect(.regular, in: .rect(cornerRadius: AlpineTheme.Corners.hero))
         .padding(8)
     }
 

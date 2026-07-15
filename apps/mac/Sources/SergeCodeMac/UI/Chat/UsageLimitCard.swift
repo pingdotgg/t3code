@@ -90,12 +90,12 @@ public struct UsageLimitCard: View {
                     Label("Switch model", systemImage: "arrow.left.arrow.right")
                 }
                 .buttonStyle(.glass)
-                .tint(.accentColor)
+                .tint(AlpineTheme.accent)
                 .disabled(switchModels.isEmpty || isBusy)
             }
         }
         .padding(14)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.card))
     }
 
     private var resetLine: String {

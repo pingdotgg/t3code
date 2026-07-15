@@ -45,7 +45,7 @@ private extension View {
     func transcriptCard<S: ShapeStyle>(
         fill: S,
         showRail: Bool = false,
-        railColor: Color = .accentColor
+        railColor: Color = AlpineTheme.accent
     ) -> some View {
         modifier(
             TranscriptCardModifier(
@@ -262,11 +262,11 @@ private struct UserMessageBubble: View {
                     .padding(.vertical, 10)
                     .background(
                         LinearGradient(
-                            colors: [Color.accentColor, Color.accentColor.opacity(0.92)],
+                            colors: [AlpineTheme.userBubbleTop, AlpineTheme.userBubbleBottom],
                             startPoint: .top,
                             endPoint: .bottom),
-                        in: RoundedRectangle(cornerRadius: 16))
-                    .foregroundStyle(.white)
+                        in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.card))
+                    .foregroundStyle(AlpineTheme.forest)
                     .overlay(alignment: .topTrailing) {
                         MessageActionChip {
                             CopyActionButton(text: text)
@@ -289,8 +289,8 @@ private struct UserMessageBubble: View {
                         .padding(3)
                     }
                     .overlay(
-                        RoundedRectangle(cornerRadius: 16)
-                            .strokeBorder(Color.white.opacity(0.12), lineWidth: 1))
+                        RoundedRectangle(cornerRadius: AlpineTheme.Corners.card)
+                            .strokeBorder(AlpineTheme.forest.opacity(0.14), lineWidth: 1))
                     .overlay(alignment: .bottomLeading) {
                         if isLarge {
                             Button(isExpanded ? "Show Less" : "Show More") {
@@ -298,7 +298,7 @@ private struct UserMessageBubble: View {
                             }
                             .buttonStyle(.plain)
                             .font(.caption.weight(.medium))
-                            .foregroundStyle(.white.opacity(0.8))
+                            .foregroundStyle(AlpineTheme.forest.opacity(0.78))
                             .padding(.leading, 14)
                             .padding(.bottom, 5)
                         }
