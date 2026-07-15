@@ -1,89 +1,56 @@
-import { describe, it, expect } from "vitest";
+import { ProviderInstanceId } from "@t3tools/contracts";
+import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+
 import { ConcurrencyLimits, ConcurrencyLimitsLive } from "../ConcurrencyLimits.ts";
 
+const codex = ProviderInstanceId.make("codex");
+const claude = ProviderInstanceId.make("claudeAgent");
+
 describe("ConcurrencyLimits", () => {
-  it("should allow spawn within cheap model limit", async () => {
-    const result = await Effect.runPromise(
-      Effect.gen(function* () {
-        const limits = yield* ConcurrencyLimits;
+  it.effect("atomically reserves and binds capacity", () =>
+    Effect.gen(function* () {
+      const limits = yield* ConcurrencyLimits;
+      const reservation = yield* limits.reserve(codex, "gpt-4o-mini");
+      yield* limits.bindReservation(reservation, "thread-1");
+      const result = yield* limits.getActiveCount("gpt-4o-mini");
 
-        // Spawn cheap model - should succeed
-        yield* limits.checkCanSpawn("codex", "gpt-4o-mini");
-        yield* limits.registerSpawn("thread-1", "codex", "gpt-4o-mini");
+      expect(result).toBe(1);
+    }).pipe(Effect.provide(ConcurrencyLimitsLive)),
+  );
 
-        const count = yield* limits.getActiveCount("gpt-4o-mini");
-        return count;
-      }).pipe(Effect.provide(ConcurrencyLimitsLive)),
-    );
+  it.effect("rejects concurrent reservations beyond the model limit", () =>
+    Effect.gen(function* () {
+      const limits = yield* ConcurrencyLimits;
+      const exits = yield* Effect.all(
+        Array.from({ length: 6 }, () => limits.reserve(claude, "claude-fable-5").pipe(Effect.exit)),
+        { concurrency: "unbounded" },
+      );
 
-    expect(result).toBe(1);
-  });
+      expect(exits.filter(Exit.isSuccess)).toHaveLength(5);
+      expect(exits.filter(Exit.isFailure)).toHaveLength(1);
+    }).pipe(Effect.provide(ConcurrencyLimitsLive)),
+  );
 
-  it("should reject spawn when model limit exceeded", async () => {
-    const result = await Effect.runPromise(
-      Effect.gen(function* () {
-        const limits = yield* ConcurrencyLimits;
+  it.effect("tracks models independently and releases by thread id", () =>
+    Effect.gen(function* () {
+      const limits = yield* ConcurrencyLimits;
+      const first = yield* limits.reserve(codex, "gpt-4o-mini");
+      const second = yield* limits.reserve(claude, "claude-sonnet-5");
+      yield* limits.bindReservation(first, "thread-1");
+      yield* limits.bindReservation(second, "thread-2");
 
-        // Fill expensive model limit (5)
-        for (let i = 0; i < 5; i++) {
-          yield* limits.registerSpawn(`thread-${i}`, "claudeAgent", "claude-fable-5");
-        }
+      const before = yield* limits.getActiveCount();
+      yield* limits.release("thread-1");
+      const result = {
+        before,
+        after: yield* limits.getActiveCount(),
+        cheap: yield* limits.getActiveCount("gpt-4o-mini"),
+        moderate: yield* limits.getActiveCount("claude-sonnet-5"),
+      };
 
-        // Try to spawn 6th - should fail
-        return yield* limits.checkCanSpawn("claudeAgent", "claude-fable-5");
-      }).pipe(
-        Effect.provide(ConcurrencyLimitsLive),
-        Effect.match({
-          onSuccess: () => "allowed",
-          onFailure: (error) => error._tag,
-        }),
-      ),
-    );
-
-    expect(result).toBe("SubAgentError");
-  });
-
-  it("should track different models independently", async () => {
-    const result = await Effect.runPromise(
-      Effect.gen(function* () {
-        const limits = yield* ConcurrencyLimits;
-
-        yield* limits.registerSpawn("thread-1", "codex", "gpt-4o-mini");
-        yield* limits.registerSpawn("thread-2", "claudeAgent", "claude-sonnet-5");
-
-        const cheapCount = yield* limits.getActiveCount("gpt-4o-mini");
-        const moderateCount = yield* limits.getActiveCount("claude-sonnet-5");
-        const totalCount = yield* limits.getActiveCount();
-
-        return { cheapCount, moderateCount, totalCount };
-      }).pipe(Effect.provide(ConcurrencyLimitsLive)),
-    );
-
-    expect(result.cheapCount).toBe(1);
-    expect(result.moderateCount).toBe(1);
-    expect(result.totalCount).toBe(2);
-  });
-
-  it("should unregister spawns correctly", async () => {
-    const result = await Effect.runPromise(
-      Effect.gen(function* () {
-        const limits = yield* ConcurrencyLimits;
-
-        yield* limits.registerSpawn("thread-1", "codex", "gpt-4o-mini");
-        yield* limits.registerSpawn("thread-2", "codex", "gpt-4o-mini");
-
-        const beforeCount = yield* limits.getActiveCount("gpt-4o-mini");
-
-        yield* limits.unregisterSpawn("thread-1");
-
-        const afterCount = yield* limits.getActiveCount("gpt-4o-mini");
-
-        return { beforeCount, afterCount };
-      }).pipe(Effect.provide(ConcurrencyLimitsLive)),
-    );
-
-    expect(result.beforeCount).toBe(2);
-    expect(result.afterCount).toBe(1);
-  });
+      expect(result).toEqual({ before: 2, after: 1, cheap: 0, moderate: 1 });
+    }).pipe(Effect.provide(ConcurrencyLimitsLive)),
+  );
 });

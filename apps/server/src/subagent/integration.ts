@@ -9,8 +9,12 @@
  * 2. Add to tool list or handle in adapter-specific way
  * 3. Map native tool calls (like Codex collabAgent) to this handler
  */
-import * as Effect from "effect/Effect";
-import type { ThreadId, ProviderInstanceId, EnvironmentId } from "@t3tools/contracts";
+import {
+  SubAgentError,
+  type ThreadId,
+  type ProviderInstanceId,
+  type EnvironmentId,
+} from "@t3tools/contracts";
 import {
   handleList,
   handleSpawn,
@@ -20,11 +24,8 @@ import {
 } from "./UnifiedSubAgentHandlers.ts";
 import type {
   SubAgentListResult,
-  SubAgentSpawnInput,
   SubAgentSpawnResult,
-  SubAgentSendInput,
   SubAgentSendResult,
-  SubAgentWaitInput,
   SubAgentWaitResult,
 } from "@t3tools/contracts";
 import type { UniversalSubAgentContext } from "./UniversalSubAgentCoordinator.ts";
@@ -70,15 +71,14 @@ export const createUnifiedSubAgentToolHandler = (context: {
     environmentId: context.environmentId,
   };
 
-  return (input: UnifiedSubAgentToolInput): Effect.Effect<UnifiedSubAgentToolResult, any> => {
+  return (input: UnifiedSubAgentToolInput) => {
     switch (input.action) {
       case "list":
         return handleList(universalContext);
 
       case "spawn": {
         if (!input.providerInstanceId || !input.prompt) {
-          return Effect.fail({
-            _tag: "SubAgentError",
+          return new SubAgentError({
             reason: "dispatch-failed",
             description: "spawn requires providerInstanceId and prompt",
           });
@@ -86,16 +86,15 @@ export const createUnifiedSubAgentToolHandler = (context: {
         return handleSpawn(universalContext, {
           providerInstanceId: input.providerInstanceId as ProviderInstanceId,
           prompt: input.prompt,
-          model: input.model,
-          name: input.name,
-          title: input.title,
+          ...(input.model !== undefined ? { model: input.model } : {}),
+          ...(input.name !== undefined ? { name: input.name } : {}),
+          ...(input.title !== undefined ? { title: input.title } : {}),
         });
       }
 
       case "send": {
         if (!input.threadId || !input.prompt) {
-          return Effect.fail({
-            _tag: "SubAgentError",
+          return new SubAgentError({
             reason: "dispatch-failed",
             description: "send requires threadId and prompt",
           });
@@ -108,38 +107,34 @@ export const createUnifiedSubAgentToolHandler = (context: {
 
       case "wait": {
         if (!input.threadId) {
-          return Effect.fail({
-            _tag: "SubAgentError",
+          return new SubAgentError({
             reason: "dispatch-failed",
             description: "wait requires threadId",
           });
         }
         return handleWait(universalContext, {
           threadId: input.threadId as ThreadId,
-          timeoutSeconds: input.timeoutSeconds,
+          ...(input.timeoutSeconds !== undefined ? { timeoutSeconds: input.timeoutSeconds } : {}),
         });
       }
 
       case "workflow": {
         if (!input.workflowName) {
-          return Effect.fail({
-            _tag: "SubAgentError",
+          return new SubAgentError({
             reason: "dispatch-failed",
             description: "workflow requires workflowName",
           });
         }
         return handleWorkflow(universalContext, {
           workflowName: input.workflowName,
-          variables: input.workflowVariables,
+          ...(input.workflowVariables !== undefined ? { variables: input.workflowVariables } : {}),
         });
       }
 
-      default:
-        return Effect.fail({
-          _tag: "SubAgentError",
-          reason: "dispatch-failed",
-          description: `Unknown action: ${(input as any).action}`,
-        });
+      default: {
+        const exhaustiveAction: never = input.action;
+        return exhaustiveAction;
+      }
     }
   };
 };
@@ -167,8 +162,8 @@ export function mapCodexCollabAgentToUnified(item: {
       return {
         action: "spawn",
         providerInstanceId: item.config.provider,
-        model: item.config.model,
         prompt: item.config.prompt,
+        ...(item.config.model !== undefined ? { model: item.config.model } : {}),
       };
 
     case "waitAgent":
@@ -194,3 +189,6 @@ export function mapCodexCollabAgentToUnified(item: {
       return null;
   }
 }
+
+export const isUnifiedSubAgentToolCall = (toolName: string): boolean =>
+  toolName === "subagent" || toolName === "unified_subagent";

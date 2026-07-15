@@ -1,31 +1,40 @@
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Scope from "effect/Scope";
 import * as SynchronizedRef from "effect/SynchronizedRef";
-import type { ProviderInstanceId } from "@t3tools/contracts";
+import { SubAgentError, type ProviderInstanceId, type SubAgentStatus } from "@t3tools/contracts";
 import { CONCURRENCY_LIMITS, getModelCostTier } from "./SubAgentProviderInfo.ts";
-import { SubAgentError } from "./SubAgentError.ts";
 
 interface ActiveSubAgent {
-  readonly threadId: string;
+  readonly reservationId: string;
+  readonly threadId?: string;
   readonly provider: ProviderInstanceId;
   readonly model: string;
   readonly startedAt: string;
 }
 
+interface ConcurrencyState {
+  readonly nextReservationId: number;
+  readonly active: ReadonlyMap<string, ActiveSubAgent>;
+}
+
 export interface ConcurrencyLimitsShape {
-  readonly checkCanSpawn: (
+  readonly reserve: (
     provider: ProviderInstanceId,
     model: string,
-  ) => Effect.Effect<void, SubAgentError>;
+  ) => Effect.Effect<string, SubAgentError>;
 
-  readonly registerSpawn: (
+  readonly bindReservation: (reservationId: string, threadId: string) => Effect.Effect<void>;
+
+  readonly release: (reservationOrThreadId: string) => Effect.Effect<void>;
+
+  readonly monitorTurn: (
     threadId: string,
-    provider: ProviderInstanceId,
-    model: string,
+    observeStatus: Effect.Effect<SubAgentStatus>,
   ) => Effect.Effect<void>;
-
-  readonly unregisterSpawn: (threadId: string) => Effect.Effect<void>;
 
   readonly getActiveCount: (model?: string) => Effect.Effect<number>;
 }
@@ -35,58 +44,116 @@ export class ConcurrencyLimits extends Context.Service<ConcurrencyLimits, Concur
 ) {}
 
 const makeConcurrencyLimits = Effect.gen(function* () {
-  const active = yield* SynchronizedRef.make<ReadonlyMap<string, ActiveSubAgent>>(new Map());
+  const scope = yield* Scope.Scope;
+  const state = yield* SynchronizedRef.make<ConcurrencyState>({
+    nextReservationId: 1,
+    active: new Map(),
+  });
 
-  const checkCanSpawn: ConcurrencyLimitsShape["checkCanSpawn"] = (provider, model) =>
+  const reserve: ConcurrencyLimitsShape["reserve"] = (provider, model) =>
     Effect.gen(function* () {
-      const current = yield* SynchronizedRef.get(active);
-      const totalActive = current.size;
+      const startedAt = DateTime.formatIso(yield* DateTime.now);
+      type ReservationDecision =
+        | { readonly ok: true; readonly reservationId: string }
+        | { readonly ok: false; readonly error: SubAgentError };
+      const decision = yield* SynchronizedRef.modify(
+        state,
+        (current): readonly [ReservationDecision, ConcurrencyState] => {
+          const totalActive = current.active.size;
+          if (totalActive >= CONCURRENCY_LIMITS.global) {
+            return [
+              {
+                ok: false,
+                error: new SubAgentError({
+                  reason: "concurrency-limit-exceeded",
+                  description: `Global sub-agent limit reached (${totalActive}/${CONCURRENCY_LIMITS.global}). Wait for existing sub-agents to complete.`,
+                }),
+              },
+              current,
+            ] as const;
+          }
 
-      // Check global limit
-      if (totalActive >= CONCURRENCY_LIMITS.global) {
-        return yield* new SubAgentError({
-          reason: "concurrency-limit-exceeded",
-          description: `Global sub-agent limit reached (${totalActive}/${CONCURRENCY_LIMITS.global}). Wait for existing sub-agents to complete.`,
-        });
+          const costTier = getModelCostTier(model);
+          const modelLimit = CONCURRENCY_LIMITS[costTier];
+          const modelActive = Array.from(current.active.values()).filter(
+            (agent) => agent.model.toLowerCase() === model.toLowerCase(),
+          ).length;
+          if (modelActive >= modelLimit) {
+            return [
+              {
+                ok: false,
+                error: new SubAgentError({
+                  reason: "concurrency-limit-exceeded",
+                  description: `Model ${model} limit reached (${modelActive}/${modelLimit}). This is a ${costTier} model with restricted concurrency.`,
+                }),
+              },
+              current,
+            ] as const;
+          }
+
+          const reservationId = `subagent-reservation-${current.nextReservationId}`;
+          const nextActive = new Map(current.active);
+          nextActive.set(reservationId, {
+            reservationId,
+            provider,
+            model,
+            startedAt,
+          });
+          return [
+            { ok: true, reservationId },
+            {
+              nextReservationId: current.nextReservationId + 1,
+              active: nextActive,
+            },
+          ] as const;
+        },
+      );
+
+      if (!decision.ok) {
+        return yield* decision.error;
       }
-
-      // Check per-model limit
-      const costTier = getModelCostTier(model);
-      const modelLimit = CONCURRENCY_LIMITS[costTier];
-      const modelActive = Array.from(current.values()).filter(
-        (agent) => agent.model.toLowerCase() === model.toLowerCase(),
-      ).length;
-
-      if (modelActive >= modelLimit) {
-        return yield* new SubAgentError({
-          reason: "concurrency-limit-exceeded",
-          description: `Model ${model} limit reached (${modelActive}/${modelLimit}). This is a ${costTier} model with restricted concurrency.`,
-        });
-      }
+      return decision.reservationId;
     });
 
-  const registerSpawn: ConcurrencyLimitsShape["registerSpawn"] = (threadId, provider, model) =>
-    SynchronizedRef.update(active, (current) => {
-      const next = new Map(current);
-      next.set(threadId, {
-        threadId,
-        provider,
-        model,
-        startedAt: new Date().toISOString(),
+  const bindReservation: ConcurrencyLimitsShape["bindReservation"] = (reservationId, threadId) =>
+    SynchronizedRef.update(state, (current) => {
+      const reservation = current.active.get(reservationId);
+      if (!reservation) return current;
+      const nextActive = new Map(current.active);
+      nextActive.set(reservationId, { ...reservation, threadId });
+      return { ...current, active: nextActive };
+    });
+
+  const release: ConcurrencyLimitsShape["release"] = (reservationOrThreadId) =>
+    SynchronizedRef.update(state, (current) => {
+      const nextActive = new Map(current.active);
+      nextActive.delete(reservationOrThreadId);
+      for (const [reservationId, reservation] of nextActive) {
+        if (reservation.threadId === reservationOrThreadId) {
+          nextActive.delete(reservationId);
+        }
+      }
+      return { ...current, active: nextActive };
+    });
+
+  const monitorTurn: ConcurrencyLimitsShape["monitorTurn"] = (threadId, observeStatus) =>
+    Effect.gen(function* () {
+      const monitor = Effect.gen(function* () {
+        while (true) {
+          const status = yield* observeStatus.pipe(Effect.orElseSucceed(() => "running" as const));
+          if (status !== "running") {
+            yield* release(threadId);
+            return;
+          }
+          yield* Effect.sleep(Duration.seconds(1));
+        }
       });
-      return next;
-    });
-
-  const unregisterSpawn: ConcurrencyLimitsShape["unregisterSpawn"] = (threadId) =>
-    SynchronizedRef.update(active, (current) => {
-      const next = new Map(current);
-      next.delete(threadId);
-      return next;
+      yield* Effect.forkIn(monitor, scope);
     });
 
   const getActiveCount: ConcurrencyLimitsShape["getActiveCount"] = (model) =>
     Effect.gen(function* () {
-      const current = yield* SynchronizedRef.get(active);
+      const current = (yield* SynchronizedRef.get(state)).active;
       if (!model) {
         return current.size;
       }
@@ -96,9 +163,10 @@ const makeConcurrencyLimits = Effect.gen(function* () {
     });
 
   return ConcurrencyLimits.of({
-    checkCanSpawn,
-    registerSpawn,
-    unregisterSpawn,
+    reserve,
+    bindReservation,
+    release,
+    monitorTurn,
     getActiveCount,
   });
 });

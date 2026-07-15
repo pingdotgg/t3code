@@ -38,8 +38,7 @@ const makeSubAgentProviderRegistry = Effect.gen(function* () {
       const modelCostTier = getModelCostTier(model.slug);
       return {
         slug: model.slug,
-        displayName: model.displayName ?? model.slug,
-        contextWindow: model.capabilities?.contextWindow,
+        displayName: model.name,
         supportedOptions: model.capabilities?.optionDescriptors?.map((d) => d.id) ?? [],
         costTier: modelCostTier,
         concurrencyLimit: CONCURRENCY_LIMITS[modelCostTier],
@@ -47,7 +46,7 @@ const makeSubAgentProviderRegistry = Effect.gen(function* () {
     });
 
     const status: SubAgentProviderInfo["status"] =
-      provider.status === "available"
+      provider.status === "ready"
         ? "available"
         : provider.status === "disabled"
           ? "disabled"
@@ -117,4 +116,4 @@ const makeSubAgentProviderRegistry = Effect.gen(function* () {
 export const SubAgentProviderRegistryLive = Layer.effect(
   SubAgentProviderRegistry,
   makeSubAgentProviderRegistry,
-).pipe(Layer.provide(ProviderRegistry.Default));
+);

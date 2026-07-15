@@ -6,31 +6,42 @@
  */
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
-import type { WorkflowDefinition } from "./WorkflowSchema.ts";
+import * as Schema from "effect/Schema";
+import * as NodeURL from "node:url";
+import { WorkflowDefinition } from "./WorkflowSchema.ts";
 
 const BUILTIN_WORKFLOWS = ["code-review", "parallel-search", "multi-model-eval"] as const;
 
 export type BuiltinWorkflowName = (typeof BUILTIN_WORKFLOWS)[number];
+
+export class BuiltinWorkflowError extends Schema.TaggedErrorClass<BuiltinWorkflowError>()(
+  "BuiltinWorkflowError",
+  {
+    workflowName: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {}
+
+const decodeWorkflowJson = Schema.decodeUnknownEffect(Schema.fromJsonString(WorkflowDefinition));
 
 /**
  * Load a built-in workflow by name.
  */
 export const loadBuiltinWorkflow = (
   name: BuiltinWorkflowName,
-): Effect.Effect<WorkflowDefinition, Error> =>
+): Effect.Effect<WorkflowDefinition, BuiltinWorkflowError, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-
-    const workflowPath = path.join(__dirname, "builtins", `${name}.json`);
+    const workflowPath = NodeURL.fileURLToPath(new URL(`./builtins/${name}.json`, import.meta.url));
     const content = yield* fs.readFileString(workflowPath);
-    const parsed = JSON.parse(content);
-
-    return parsed as WorkflowDefinition;
+    return yield* decodeWorkflowJson(content);
   }).pipe(
-    Effect.catchAll((error) =>
-      Effect.fail(new Error(`Failed to load builtin workflow ${name}: ${error}`)),
+    Effect.mapError(
+      (cause) =>
+        new BuiltinWorkflowError({
+          workflowName: name,
+          cause,
+        }),
     ),
   );
 

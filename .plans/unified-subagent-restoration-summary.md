@@ -1,8 +1,8 @@
-# Unified Sub-Agent System Restoration - Complete
+# Unified Sub-Agent System Restoration
 
-## Status: ✅ CORE IMPLEMENTATION COMPLETE
+## Status: RESTORED; PROVIDER INTEGRATION PENDING
 
-All core files from PR #131 have been restored with critical fixes to resolve the app startup failure.
+The core files from PR #131 have been restored and hardened. The MCP registration is present; direct provider-adapter integration and end-to-end cross-provider validation remain pending.
 
 ## What Was Fixed
 
@@ -126,15 +126,20 @@ Each provider adapter needs to expose the UnifiedSubAgentTool:
 - [ ] Create PR with all changes
 - [ ] Add integration examples
 
-## Features Delivered
+## Restored and Hardened Components
 
-✅ **Cross-Provider Spawning** - Any provider can spawn on any other
+✅ **Cross-Provider Routing Core** - The coordinator can target configured spawnable providers
 ✅ **Provider Registry** - Automatic discovery of all providers and models
 ✅ **Concurrency Management** - Per-model tier limits (cheap: 30, moderate: 10, expensive: 5)
 ✅ **OpenCode Protection** - Automatically excluded (API credits)
-✅ **Workflow Engine** - Multi-agent orchestration system
-✅ **Type Safety** - No `as any` bypasses, proper type checking
+✅ **Workflow Engine** - Multi-agent orchestration core with runtime schema validation
+✅ **Type-Safe Scope Construction** - No partial MCP scope or `as any` bypass at the wrapper boundary
 ✅ **MCP Compatibility** - Works alongside existing MCP-based tools
+
+Pending before universal availability can be claimed:
+
+- Wire the unified tool into each provider adapter
+- Complete end-to-end cross-provider validation
 
 ## Usage Example
 

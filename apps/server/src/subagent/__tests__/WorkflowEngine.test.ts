@@ -1,221 +1,293 @@
-import { describe, it, expect, vi } from "vitest";
+import { EnvironmentId, ProviderInstanceId, SubAgentError, ThreadId } from "@t3tools/contracts";
+import { describe, expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
-import { WorkflowEngine, WorkflowEngineLive } from "../workflows/WorkflowEngine.ts";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+
+import { makeWorkflowEngine, type WorkflowTaskHandlers } from "../workflows/WorkflowEngine.ts";
 import type { WorkflowDefinition } from "../workflows/WorkflowSchema.ts";
-import { ThreadId, ProviderInstanceId } from "@t3tools/contracts";
+
+const context = {
+  workflowId: "test-wf-123",
+  callerThreadId: ThreadId.make("thread-123"),
+  callerProviderInstanceId: ProviderInstanceId.make("codex"),
+  environmentId: EnvironmentId.make("local"),
+  variables: new Map([
+    ["query", "test query"],
+    ["a+b", "literal replacement"],
+  ]),
+};
+
+const successfulHandlers = (): WorkflowTaskHandlers<never> => ({
+  spawn: (_context, input) =>
+    Effect.succeed({
+      threadId: ThreadId.make(`thread-${input.prompt.replace(/\s+/g, "-")}`),
+      providerInstanceId: input.providerInstanceId,
+      model: input.model ?? "default-model",
+      title: input.prompt,
+      status: "running",
+    }),
+  send: (_context, input) =>
+    Effect.succeed({
+      threadId: input.threadId,
+      status: "running",
+    }),
+  wait: (_context, input) =>
+    Effect.succeed({
+      threadId: input.threadId,
+      status: "completed",
+      finalText: "finished",
+      stalled: false,
+    }),
+});
+
+const workflow = (tasks: WorkflowDefinition["phases"][number]["tasks"]): WorkflowDefinition => ({
+  name: "test-workflow",
+  description: "Workflow engine runtime test",
+  version: "1.0.0",
+  phases: [
+    {
+      id: "phase",
+      title: "Test phase",
+      execution: "sequential",
+      tasks,
+    },
+  ],
+});
 
 describe("WorkflowEngine", () => {
-  const mockContext = {
-    workflowId: "test-wf-123",
-    callerThreadId: ThreadId.make("thread-123"),
-    callerProviderInstanceId: ProviderInstanceId.make("codex"),
-    variables: new Map([["query", "test query"]]),
-  };
-
-  it("should validate workflow definition structure", () => {
-    const workflow: WorkflowDefinition = {
-      name: "test-workflow",
-      description: "Test workflow",
-      version: "1.0.0",
-      phases: [
-        {
-          id: "phase1",
-          title: "Test Phase",
-          execution: "sequential",
-          tasks: [
-            {
-              id: "task1",
-              type: "spawn",
-              provider: ProviderInstanceId.make("codex"),
-              prompt: "Test prompt",
-            },
-          ],
+  it.effect("executes tasks in order and replaces literal placeholders", () =>
+    Effect.gen(function* () {
+      const prompts: string[] = [];
+      const handlers = successfulHandlers();
+      const engine = makeWorkflowEngine({
+        ...handlers,
+        spawn: (toolContext, input) => {
+          prompts.push(input.prompt);
+          return handlers.spawn(toolContext, input);
         },
-      ],
-    };
+      });
 
-    expect(workflow.phases).toHaveLength(1);
-    expect(workflow.phases[0].tasks).toHaveLength(1);
-    expect(workflow.phases[0].execution).toBe("sequential");
-  });
+      const result = yield* engine.execute(
+        workflow([
+          {
+            id: "first",
+            type: "spawn",
+            provider: ProviderInstanceId.make("codex"),
+            prompt: "Search {{query}} and {{a+b}}",
+          },
+          {
+            id: "second",
+            type: "spawn",
+            provider: ProviderInstanceId.make("codex"),
+            prompt: "Second",
+            dependencies: ["first"],
+          },
+        ]),
+        context,
+      );
 
-  it("should handle sequential task execution", () => {
-    const workflow: WorkflowDefinition = {
-      name: "sequential-test",
-      description: "Sequential execution test",
-      version: "1.0.0",
-      phases: [
-        {
-          id: "seq-phase",
-          title: "Sequential Phase",
-          execution: "sequential",
-          tasks: [
-            {
-              id: "task1",
-              type: "spawn",
-              provider: ProviderInstanceId.make("codex"),
-              prompt: "First task",
-            },
-            {
-              id: "task2",
-              type: "spawn",
-              provider: ProviderInstanceId.make("codex"),
-              prompt: "Second task - depends on task1",
-              dependencies: ["task1"],
-            },
-          ],
-        },
-      ],
-    };
+      expect(result.status).toBe("completed");
+      expect(result.phases[0]?.tasks.map((task) => task.taskId)).toEqual(["first", "second"]);
+      expect(prompts).toEqual(["Search test query and literal replacement", "Second"]);
+    }),
+  );
 
-    expect(workflow.phases[0].tasks[1].dependencies).toContain("task1");
-  });
+  it.effect("runs dependency-ready parallel batches within parallelismLimit", () =>
+    Effect.gen(function* () {
+      let active = 0;
+      let maxActive = 0;
+      const handlers = successfulHandlers();
+      const engine = makeWorkflowEngine({
+        ...handlers,
+        spawn: (toolContext, input) =>
+          Effect.gen(function* () {
+            active += 1;
+            maxActive = Math.max(maxActive, active);
+            yield* Effect.yieldNow;
+            active -= 1;
+            return yield* handlers.spawn(toolContext, input);
+          }),
+      });
 
-  it("should handle parallel task execution", () => {
-    const workflow: WorkflowDefinition = {
-      name: "parallel-test",
-      description: "Parallel execution test",
-      version: "1.0.0",
-      phases: [
-        {
-          id: "parallel-phase",
-          title: "Parallel Phase",
-          execution: "parallel",
-          tasks: [
-            {
-              id: "task1",
-              type: "spawn",
-              provider: ProviderInstanceId.make("codex"),
-              prompt: "Task 1",
-            },
-            {
-              id: "task2",
-              type: "spawn",
-              provider: ProviderInstanceId.make("claudeAgent"),
-              prompt: "Task 2",
-            },
-            {
-              id: "task3",
-              type: "spawn",
-              provider: ProviderInstanceId.make("codex"),
-              prompt: "Task 3",
-            },
-          ],
-        },
-      ],
-    };
-
-    expect(workflow.phases[0].execution).toBe("parallel");
-    expect(workflow.phases[0].tasks).toHaveLength(3);
-  });
-
-  it("should substitute variables in prompts", () => {
-    const workflow: WorkflowDefinition = {
-      name: "variable-test",
-      description: "Variable substitution test",
-      version: "1.0.0",
-      phases: [
-        {
-          id: "var-phase",
-          title: "Variable Phase",
-          execution: "sequential",
-          tasks: [
-            {
-              id: "task1",
-              type: "spawn",
-              provider: ProviderInstanceId.make("codex"),
-              prompt: "Search for {{query}} in the codebase",
-            },
-          ],
-        },
-      ],
-    };
-
-    const prompt = workflow.phases[0].tasks[0].prompt;
-    expect(prompt).toContain("{{query}}");
-
-    // In actual execution, {{query}} would be replaced with "test query"
-    const expectedResolved = "Search for test query in the codebase";
-    expect(prompt?.replace("{{query}}", mockContext.variables.get("query") ?? "")).toBe(
-      expectedResolved,
-    );
-  });
-
-  it("should handle aggregate task type", () => {
-    const workflow: WorkflowDefinition = {
-      name: "aggregate-test",
-      description: "Aggregate task test",
-      version: "1.0.0",
-      phases: [
-        {
-          id: "gather",
-          title: "Gather",
-          execution: "parallel",
-          tasks: [
-            {
-              id: "source1",
-              type: "spawn",
-              provider: ProviderInstanceId.make("codex"),
-              prompt: "Search source 1",
-            },
-            {
-              id: "source2",
-              type: "spawn",
-              provider: ProviderInstanceId.make("codex"),
-              prompt: "Search source 2",
-            },
-          ],
-        },
-        {
-          id: "combine",
-          title: "Combine",
-          execution: "sequential",
-          tasks: [
-            {
-              id: "aggregate",
-              type: "aggregate",
-              dependencies: ["source1", "source2"],
-            },
-          ],
-        },
-      ],
-    };
-
-    const aggregateTask = workflow.phases[1].tasks[0];
-    expect(aggregateTask.type).toBe("aggregate");
-    expect(aggregateTask.dependencies).toEqual(["source1", "source2"]);
-  });
-
-  it("should handle error with retry policy", () => {
-    const workflow: WorkflowDefinition = {
-      name: "retry-test",
-      description: "Retry policy test",
-      version: "1.0.0",
-      phases: [
-        {
-          id: "retry-phase",
-          title: "Retry Phase",
-          execution: "sequential",
-          tasks: [
-            {
-              id: "task1",
-              type: "spawn",
-              provider: ProviderInstanceId.make("codex"),
-              prompt: "Task with retry",
-              onError: "retry",
-              retryPolicy: {
-                maxAttempts: 3,
-                backoffMs: 1000,
+      const definition: WorkflowDefinition = {
+        ...workflow([]),
+        parallelismLimit: 1,
+        phases: [
+          {
+            id: "parallel",
+            title: "Parallel",
+            execution: "parallel",
+            tasks: [
+              {
+                id: "first",
+                type: "spawn",
+                provider: ProviderInstanceId.make("codex"),
+                prompt: "First",
               },
-            },
-          ],
-        },
-      ],
-    };
+              {
+                id: "second",
+                type: "spawn",
+                provider: ProviderInstanceId.make("codex"),
+                prompt: "Second",
+              },
+              {
+                id: "after-first",
+                type: "wait",
+                dependencies: ["first"],
+              },
+            ],
+          },
+        ],
+      };
 
-    const task = workflow.phases[0].tasks[0];
-    expect(task.onError).toBe("retry");
-    expect(task.retryPolicy?.maxAttempts).toBe(3);
-    expect(task.retryPolicy?.backoffMs).toBe(1000);
-  });
+      const result = yield* engine.execute(definition, context);
+
+      expect(maxActive).toBe(1);
+      expect(result.phases[0]?.tasks.map((task) => task.taskId)).toEqual([
+        "first",
+        "second",
+        "after-first",
+      ]);
+    }),
+  );
+
+  it.effect("retries failed tasks with the configured policy", () =>
+    Effect.gen(function* () {
+      let attempts = 0;
+      const handlers = successfulHandlers();
+      const engine = makeWorkflowEngine({
+        ...handlers,
+        spawn: (toolContext, input) => {
+          attempts += 1;
+          return attempts < 3
+            ? new SubAgentError({
+                reason: "dispatch-failed",
+                description: "temporary failure",
+              })
+            : handlers.spawn(toolContext, input);
+        },
+      });
+
+      const result = yield* engine.execute(
+        workflow([
+          {
+            id: "retry",
+            type: "spawn",
+            provider: ProviderInstanceId.make("codex"),
+            prompt: "Retry",
+            onError: "retry",
+            retryPolicy: { maxAttempts: 3, backoffMs: 0 },
+          },
+        ]),
+        context,
+      );
+
+      expect(attempts).toBe(3);
+      expect(result.status).toBe("completed");
+    }),
+  );
+
+  it.effect("continues after a recoverable task failure", () =>
+    Effect.gen(function* () {
+      const prompts: string[] = [];
+      const handlers = successfulHandlers();
+      const engine = makeWorkflowEngine({
+        ...handlers,
+        spawn: (toolContext, input) => {
+          prompts.push(input.prompt);
+          return input.prompt === "Fail"
+            ? new SubAgentError({ reason: "dispatch-failed", description: "failed" })
+            : handlers.spawn(toolContext, input);
+        },
+      });
+
+      const result = yield* engine.execute(
+        workflow([
+          {
+            id: "failed",
+            type: "spawn",
+            provider: ProviderInstanceId.make("codex"),
+            prompt: "Fail",
+            onError: "continue",
+          },
+          {
+            id: "continued",
+            type: "spawn",
+            provider: ProviderInstanceId.make("codex"),
+            prompt: "Continue",
+          },
+        ]),
+        context,
+      );
+
+      expect(prompts).toEqual(["Fail", "Continue"]);
+      expect(result.status).toBe("failed");
+      expect(result.phases[0]?.tasks.map((task) => task.status)).toEqual(["failed", "completed"]);
+    }),
+  );
+
+  it.effect("propagates aborting task failures", () =>
+    Effect.gen(function* () {
+      const engine = makeWorkflowEngine({
+        ...successfulHandlers(),
+        spawn: () =>
+          new SubAgentError({
+            reason: "dispatch-failed",
+            description: "permanent failure",
+          }),
+      });
+
+      const exit = yield* engine
+        .execute(
+          workflow([
+            {
+              id: "abort",
+              type: "spawn",
+              provider: ProviderInstanceId.make("codex"),
+              prompt: "Abort",
+            },
+          ]),
+          context,
+        )
+        .pipe(Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.squash(exit.cause)).toMatchObject({
+          message: "Task abort failed: permanent failure",
+        });
+      }
+    }),
+  );
+
+  it.effect("interrupts an active task and returns cancelled", () =>
+    Effect.gen(function* () {
+      const engine = makeWorkflowEngine({
+        ...successfulHandlers(),
+        spawn: () => Effect.never,
+      });
+
+      const fiber = yield* engine
+        .execute(
+          workflow([
+            {
+              id: "long-running",
+              type: "spawn",
+              provider: ProviderInstanceId.make("codex"),
+              prompt: "Long running",
+            },
+          ]),
+          context,
+        )
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      yield* engine.cancel(context.workflowId);
+      const result = yield* Fiber.join(fiber);
+
+      expect(result.status).toBe("cancelled");
+    }),
+  );
 });

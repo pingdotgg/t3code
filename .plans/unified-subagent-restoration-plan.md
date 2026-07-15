@@ -26,9 +26,9 @@
 
 ### What PR #131 Was Supposed to Do
 
-Create a **truly unified cross-provider sub-agent system** where:
+Create a **unified caller-facing cross-provider sub-agent system** where:
 - ANY provider (Claude, Codex, Grok, Fugu, Cursor) can spawn agents on ANY other provider
-- Single `UnifiedSubAgentTool` available to all providers (no MCP capability gates)
+- Single `UnifiedSubAgentTool` that safely delegates through the existing MCP coordinator
 - Provider registry that tracks all available providers and their models
 - Concurrency management per model cost tier (cheap: 30, moderate: 10, expensive: 5)
 - Workflow engine for multi-agent orchestration
@@ -36,34 +36,34 @@ Create a **truly unified cross-provider sub-agent system** where:
 
 ## Root Cause
 
-The system tried to **reuse the MCP-based SubAgentCoordinator** (which requires proper MCP capability scopes) by creating fake scopes. This is architecturally wrong because:
+The system tried to reuse the MCP-based `SubAgentCoordinator` with incomplete fake scopes. Reuse is the right architecture, but the scope construction was unsafe because:
 
 1. SubAgentCoordinator is designed for MCP-gated access
-2. The unified system should be **universal** (no gates)
-3. Creating fake scopes breaks the security/capability model
+2. The unified entry point must preserve internal capability enforcement
+3. Creating incomplete scopes breaks the security/capability model
 4. Type safety violations cause runtime failures
 
 ## Solution Architecture
 
-### Approach: Create Parallel Implementation
+### Approach: Safe Delegation Through the Existing Coordinator
 
-Instead of trying to bypass MCP with fake scopes, create a **parallel universal sub-agent coordinator** that:
+Create a provider-neutral wrapper that accepts a smaller caller context and delegates through the existing coordinator using a complete MCP invocation scope:
 
 1. **UniversalSubAgentCoordinator** (new)
-   - Similar to `SubAgentCoordinator` but without MCP dependency
-   - Takes simple context (threadId, providerInstanceId)
-   - Directly uses OrchestrationEngine, ProviderRegistry, etc.
-   - No capability checks (universally available)
+   - Takes a simple context (threadId, providerInstanceId, environmentId)
+   - Constructs all required MCP scope fields
+   - Delegates list/spawn/send/wait to `SubAgentCoordinator`
+   - Preserves the `agents` capability internally
 
-2. **Keep existing SubAgentCoordinator** (unchanged)
-   - Still used for MCP-based agent tools
-   - Maintains backward compatibility
-   - Proper capability enforcement for MCP clients
+2. **Keep existing SubAgentCoordinator as the execution authority**
+   - Continues serving the existing MCP agent tools
+   - Remains the single source of truth for child lifecycle state
+   - Preserves capability enforcement and backward compatibility
 
 3. **UnifiedSubAgentTool** uses `UniversalSubAgentCoordinator`
-   - No fake scopes needed
-   - Clean type safety
-   - Universal availability
+   - No fake or partial scopes
+   - Clean type safety at the wrapper boundary
+   - Provider-neutral caller-facing API
 
 ## Implementation Plan
 
@@ -108,10 +108,10 @@ export class UniversalSubAgentCoordinator {
 }
 ```
 
-**Key Difference**: 
-- No `McpInvocationScope` dependency
-- Direct access to orchestration services
-- Shared in-memory child tracking with SubAgentCoordinator (single source of truth)
+**Key Difference**:
+- Callers supply `UniversalSubAgentContext`
+- The wrapper creates a complete `McpInvocationScope`
+- `SubAgentCoordinator` remains the single execution and child-tracking authority
 
 ### Phase 3: Fix UnifiedSubAgentHandlers
 
@@ -240,8 +240,8 @@ Layer.mergeAll(
 
 ## Risk Mitigation
 
-1. **Keep MCP SubAgentCoordinator unchanged** - No breaking changes to existing functionality
-2. **Create parallel system** - If unified system fails, MCP tools still work
+1. **Keep MCP SubAgentCoordinator authoritative** - No duplicate child lifecycle state
+2. **Use a narrow wrapper** - The unified entry point delegates instead of reimplementing orchestration
 3. **Type-safe from the start** - No `as any` bypasses
 4. **Incremental integration** - Can test each adapter separately
 5. **Feature flag ready** - Easy to disable if issues arise

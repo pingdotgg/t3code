@@ -9,7 +9,7 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import { SubAgentToolkitHandlersLive } from "./toolkits/agents/handlers.ts";
 import { SubAgentToolkit } from "./toolkits/agents/tools.ts";
-import { UnifiedSubAgentTool } from "../subagent/UnifiedSubAgentTool.ts";
+import { UnifiedSubAgentToolkit } from "../subagent/UnifiedSubAgentTool.ts";
 import { UnifiedSubAgentToolHandlerLive } from "../subagent/UnifiedSubAgentToolHandler.ts";
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
@@ -81,7 +81,7 @@ export const SubAgentToolkitRegistrationLive = McpServer.toolkit(SubAgentToolkit
   Layer.provide(SubAgentToolkitHandlersLive),
 );
 
-export const UnifiedSubAgentToolRegistrationLive = McpServer.toolkit(UnifiedSubAgentTool).pipe(
+export const UnifiedSubAgentToolRegistrationLive = McpServer.toolkit(UnifiedSubAgentToolkit).pipe(
   Layer.provide(UnifiedSubAgentToolHandlerLive),
 );
 

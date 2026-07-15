@@ -6,7 +6,7 @@
  */
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { UnifiedSubAgentTool } from "./UnifiedSubAgentTool.ts";
+import { UnifiedSubAgentToolkit } from "./UnifiedSubAgentTool.ts";
 import {
   handleList,
   handleSpawn,
@@ -21,6 +21,7 @@ import { WorkflowEngineLive } from "./workflows/WorkflowEngine.ts";
 import { WorkflowStorageLive } from "./workflows/WorkflowStorage.ts";
 import type { UniversalSubAgentContext } from "./UniversalSubAgentCoordinator.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
+import { SubAgentError } from "@t3tools/contracts";
 
 /**
  * Handler implementation for UnifiedSubAgentTool.
@@ -28,7 +29,7 @@ import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
  * Gets context from McpInvocationContext in the Effect context.
  * This is available when the tool is invoked through MCP.
  */
-const UnifiedSubAgentToolHandlers = UnifiedSubAgentTool.toLayer({
+const UnifiedSubAgentToolHandlers = UnifiedSubAgentToolkit.toLayer({
   subagent: (input) =>
     Effect.gen(function* () {
       // Get context from the Effect context
@@ -46,8 +47,7 @@ const UnifiedSubAgentToolHandlers = UnifiedSubAgentTool.toLayer({
 
         case "spawn":
           if (!input.providerInstanceId || !input.prompt) {
-            return yield* Effect.fail({
-              _tag: "SubAgentError",
+            return yield* new SubAgentError({
               reason: "dispatch-failed",
               description: "spawn requires providerInstanceId and prompt",
             });
@@ -55,15 +55,14 @@ const UnifiedSubAgentToolHandlers = UnifiedSubAgentTool.toLayer({
           return yield* handleSpawn(universalContext, {
             providerInstanceId: input.providerInstanceId,
             prompt: input.prompt,
-            model: input.model,
-            name: input.name,
-            title: input.title,
+            ...(input.model !== undefined ? { model: input.model } : {}),
+            ...(input.name !== undefined ? { name: input.name } : {}),
+            ...(input.title !== undefined ? { title: input.title } : {}),
           });
 
         case "send":
           if (!input.threadId || !input.prompt) {
-            return yield* Effect.fail({
-              _tag: "SubAgentError",
+            return yield* new SubAgentError({
               reason: "dispatch-failed",
               description: "send requires threadId and prompt",
             });
@@ -75,36 +74,34 @@ const UnifiedSubAgentToolHandlers = UnifiedSubAgentTool.toLayer({
 
         case "wait":
           if (!input.threadId) {
-            return yield* Effect.fail({
-              _tag: "SubAgentError",
+            return yield* new SubAgentError({
               reason: "dispatch-failed",
               description: "wait requires threadId",
             });
           }
           return yield* handleWait(universalContext, {
             threadId: input.threadId,
-            timeoutSeconds: input.timeoutSeconds,
+            ...(input.timeoutSeconds !== undefined ? { timeoutSeconds: input.timeoutSeconds } : {}),
           });
 
         case "workflow":
           if (!input.workflowName) {
-            return yield* Effect.fail({
-              _tag: "SubAgentError",
+            return yield* new SubAgentError({
               reason: "dispatch-failed",
               description: "workflow requires workflowName",
             });
           }
           return yield* handleWorkflow(universalContext, {
             workflowName: input.workflowName,
-            variables: input.workflowVariables,
+            ...(input.workflowVariables !== undefined
+              ? { variables: input.workflowVariables }
+              : {}),
           });
 
-        default:
-          return yield* Effect.fail({
-            _tag: "SubAgentError",
-            reason: "dispatch-failed",
-            description: `Unknown action: ${(input as any).action}`,
-          });
+        default: {
+          const exhaustiveAction: never = input.action;
+          return exhaustiveAction;
+        }
       }
     }),
 });

@@ -1,20 +1,20 @@
 # Unified Sub-Agent System
 
-Cross-provider sub-agent orchestration for SergeCode. Any provider (Claude, Codex, Grok, Fugu, Cursor) can spawn agents on any other provider.
+Cross-provider sub-agent orchestration for SergeCode. The unified entry point is designed to let any wired provider spawn agents on any configured spawnable provider; provider-adapter wiring is still pending.
 
 ## Architecture
 
 ### Core Components
 
 1. **UniversalSubAgentCoordinator** - Provider-agnostic coordinator
-   - Similar to MCP-based `SubAgentCoordinator` but without capability gates
+   - Provider-neutral caller-facing wrapper around `SubAgentCoordinator`
    - Takes simple context (threadId, providerInstanceId, environmentId)
    - Delegates to `SubAgentCoordinator` with properly-formed MCP scopes
 
 2. **UnifiedSubAgentTool** - Universal tool available to all providers
    - Single tool with actions: list, spawn, send, wait, workflow
-   - No MCP capability checks required
-   - Registered with all provider adapters
+   - Preserves the internal `agents` capability through a complete MCP scope
+   - Currently registered on the MCP server; provider adapters are pending
 
 3. **SubAgentProviderRegistry** - Tracks all available providers
    - Lists spawnable providers (excludes OpenCode - API credits)
@@ -98,6 +98,11 @@ Wait for completion:
 
 ## Provider Integration
 
+Current integration state:
+
+- MCP server: wired through `UnifiedSubAgentToolkit`
+- Claude, Codex, Grok, Cursor, Fugu provider adapters: not yet wired
+
 To add UnifiedSubAgentTool to a provider adapter:
 
 1. Add the tool to your Effect layer stack
@@ -136,14 +141,15 @@ Models are classified by cost to enforce appropriate concurrency limits:
 
 ## Differences from MCP-based SubAgentCoordinator
 
-| Feature                | MCP SubAgentCoordinator       | UniversalSubAgentCoordinator        |
-| ---------------------- | ----------------------------- | ----------------------------------- |
-| Capability check       | Required ("agents")           | None - universally available        |
-| Scope type             | McpInvocationScope (7 fields) | UniversalSubAgentContext (3 fields) |
-| Provider access        | Only MCP-gated providers      | All configured providers            |
-| Tool name              | agent_list, agent_spawn, etc. | subagent (single tool)              |
-| Concurrency management | Basic                         | Per-model tier limits               |
-| OpenCode handling      | Manual check                  | Auto-excluded                       |
+| Feature                | MCP tools                      | Unified entry point                                    |
+| ---------------------- | ------------------------------ | ------------------------------------------------------ |
+| Caller context         | `McpInvocationScope`           | `UniversalSubAgentContext`                             |
+| Internal execution     | `SubAgentCoordinator`          | `SubAgentCoordinator` through a complete MCP scope     |
+| Capability enforcement | `agents` required              | `agents` preserved in the internally constructed scope |
+| Provider access        | Configured spawnable providers | Configured spawnable providers                         |
+| Tool name              | agent_list, agent_spawn, etc.  | subagent (single tool)                                 |
+| Concurrency management | Coordinator lifecycle          | Atomic per-model reservations around coordinator turns |
+| OpenCode handling      | Coordinator readiness rules    | Registry additionally excludes API-credit providers    |
 
 ## Workflow System
 
@@ -155,7 +161,7 @@ Built-in workflows for common multi-agent patterns:
 
 Custom workflows can be defined in JSON and stored in the workflow directory.
 
-## Architecture Decision: Why Not Reuse SubAgentCoordinator?
+## Architecture Decision: Reuse SubAgentCoordinator Safely
 
 The original PR #131 tried to reuse `SubAgentCoordinator` by creating "mock" MCP scopes:
 
@@ -186,7 +192,7 @@ const createMcpScope = (context: UniversalSubAgentContext) => {
 };
 ```
 
-Now `UniversalSubAgentCoordinator` delegates to `SubAgentCoordinator` with properly-formed scopes, avoiding code duplication while fixing the type safety issue.
+`UniversalSubAgentCoordinator` delegates to `SubAgentCoordinator` with a complete capability-bearing scope. This keeps one execution authority, avoids duplicate lifecycle state, and fixes the original type-safety issue without weakening capability enforcement.
 
 ## Testing
 

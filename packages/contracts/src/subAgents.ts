@@ -178,6 +178,7 @@ export const SubAgentErrorReason = Schema.Literals([
   "provider-not-found",
   "provider-not-spawnable",
   "model-not-resolved",
+  "concurrency-limit-exceeded",
   "caller-thread-not-found",
   "thread-not-found",
   "depth-limit-exceeded",

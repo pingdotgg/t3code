@@ -1,5 +1,11 @@
-import { describe, it, expect } from "vitest";
-import { listBuiltinWorkflows, isBuiltinWorkflow } from "../workflows/BuiltinWorkflows.ts";
+import { describe, expect, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Effect from "effect/Effect";
+import {
+  listBuiltinWorkflows,
+  isBuiltinWorkflow,
+  loadBuiltinWorkflow,
+} from "../workflows/BuiltinWorkflows.ts";
 
 describe("BuiltinWorkflows", () => {
   it("should list all built-in workflows", () => {
@@ -41,4 +47,13 @@ describe("BuiltinWorkflows", () => {
     const multiModel = workflows.find((w) => w.name === "multi-model-eval");
     expect(multiModel?.description).toContain("model");
   });
+
+  it.effect("loads and decodes every built-in workflow from its ESM module path", () =>
+    Effect.gen(function* () {
+      for (const name of ["code-review", "parallel-search", "multi-model-eval"] as const) {
+        const workflow = yield* loadBuiltinWorkflow(name);
+        expect(workflow.phases.length).toBeGreaterThan(0);
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });

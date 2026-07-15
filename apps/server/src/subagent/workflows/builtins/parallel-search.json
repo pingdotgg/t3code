@@ -13,6 +13,7 @@
         {
           "id": "search-docs",
           "type": "spawn",
+          "provider": "codex",
           "model": "gpt-4o-mini",
           "prompt": "Search documentation for: {{query}}. Return relevant excerpts with sources.",
           "timeout": 120
@@ -20,6 +21,7 @@
         {
           "id": "search-code",
           "type": "spawn",
+          "provider": "codex",
           "model": "gpt-4o-mini",
           "prompt": "Search codebase for: {{query}}. Find relevant functions, classes, and usage examples.",
           "timeout": 120
@@ -27,6 +29,7 @@
         {
           "id": "search-issues",
           "type": "spawn",
+          "provider": "codex",
           "model": "gpt-4o-mini",
           "prompt": "Search GitHub issues for: {{query}}. Find related bugs, feature requests, and discussions.",
           "timeout": 120
@@ -34,6 +37,7 @@
         {
           "id": "search-tests",
           "type": "spawn",
+          "provider": "codex",
           "model": "gpt-4o-mini",
           "prompt": "Search test files for: {{query}}. Find relevant test cases and examples.",
           "timeout": 120

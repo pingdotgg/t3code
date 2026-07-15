@@ -16,22 +16,46 @@ export const WorkflowErrorHandling = Schema.Literals(["continue", "abort", "retr
 export type WorkflowErrorHandling = typeof WorkflowErrorHandling.Type;
 
 export const WorkflowRetryPolicy = Schema.Struct({
-  maxAttempts: Schema.Int.pipe(Schema.between(1, 5)),
-  backoffMs: Schema.Int.pipe(Schema.between(100, 10000)),
+  maxAttempts: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 5 })),
+  backoffMs: Schema.Int.check(Schema.isBetween({ minimum: 100, maximum: 10_000 })),
 });
 export type WorkflowRetryPolicy = typeof WorkflowRetryPolicy.Type;
 
-export const WorkflowTask = Schema.Struct({
+const WorkflowTaskSharedFields = {
   id: TrimmedNonEmptyString,
-  type: WorkflowTaskType,
-  provider: Schema.optional(ProviderInstanceId),
   model: Schema.optional(TrimmedNonEmptyString),
-  prompt: Schema.optional(TrimmedNonEmptyString),
-  dependencies: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
-  timeout: Schema.optional(Schema.Int.pipe(Schema.between(10, 600))),
+  timeout: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 10, maximum: 600 }))),
   onError: Schema.optional(WorkflowErrorHandling),
   retryPolicy: Schema.optional(WorkflowRetryPolicy),
-});
+} as const;
+
+const WorkflowDependencies = Schema.NonEmptyArray(TrimmedNonEmptyString);
+
+export const WorkflowTask = Schema.Union([
+  Schema.Struct({
+    ...WorkflowTaskSharedFields,
+    type: Schema.Literal("spawn"),
+    provider: ProviderInstanceId,
+    prompt: TrimmedNonEmptyString,
+    dependencies: Schema.optional(WorkflowDependencies),
+  }),
+  Schema.Struct({
+    ...WorkflowTaskSharedFields,
+    type: Schema.Literal("wait"),
+    dependencies: WorkflowDependencies,
+  }),
+  Schema.Struct({
+    ...WorkflowTaskSharedFields,
+    type: Schema.Literal("send"),
+    prompt: TrimmedNonEmptyString,
+    dependencies: WorkflowDependencies,
+  }),
+  Schema.Struct({
+    ...WorkflowTaskSharedFields,
+    type: Schema.Literal("aggregate"),
+    dependencies: WorkflowDependencies,
+  }),
+]);
 export type WorkflowTask = typeof WorkflowTask.Type;
 
 export const WorkflowPhase = Schema.Struct({
@@ -48,7 +72,9 @@ export const WorkflowDefinition = Schema.Struct({
   version: TrimmedNonEmptyString,
   phases: Schema.Array(WorkflowPhase),
   defaultProvider: Schema.optional(ProviderInstanceId),
-  parallelismLimit: Schema.optional(Schema.Int.pipe(Schema.between(1, 50))),
+  parallelismLimit: Schema.optional(
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 })),
+  ),
 });
 export type WorkflowDefinition = typeof WorkflowDefinition.Type;
 

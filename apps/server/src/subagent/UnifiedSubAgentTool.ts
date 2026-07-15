@@ -1,9 +1,8 @@
 /**
  * UnifiedSubAgentTool - Universal sub-agent tool available to all providers.
  *
- * Unlike the MCP-based agent_* tools that require capability grants, this tool
- * is universally available to every provider (Claude, Codex, Cursor, Grok, etc.)
- * without any MCP restrictions.
+ * This is a provider-neutral entry point. MCP callers still use a complete
+ * capability-bearing invocation scope internally.
  *
  * Provides cross-provider sub-agent orchestration with:
  * - Provider discovery (list available providers and capabilities)
@@ -12,42 +11,45 @@
  * - OpenCode exclusion (API credits protection)
  * - Workflow execution (JSON-based multi-agent orchestration)
  */
-import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { Tool } from "effect/unstable/ai";
+import * as Crypto from "effect/Crypto";
+import * as FileSystem from "effect/FileSystem";
+import { Tool, Toolkit } from "effect/unstable/ai";
 import {
   SubAgentError,
   SubAgentListResult,
-  SubAgentSpawnInput,
   SubAgentSpawnResult,
-  SubAgentSendInput,
   SubAgentSendResult,
-  SubAgentWaitInput,
   SubAgentWaitResult,
+  ProviderInstanceId,
+  ThreadId,
 } from "@t3tools/contracts";
 import { UniversalSubAgentCoordinator } from "./UniversalSubAgentCoordinator.ts";
 import { SubAgentProviderRegistry } from "./SubAgentProviderRegistry.ts";
 import { ConcurrencyLimits } from "./ConcurrencyLimits.ts";
+import { WorkflowEngine } from "./workflows/WorkflowEngine.ts";
+import { WorkflowStorage } from "./workflows/WorkflowStorage.ts";
+import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 
 // Tool input combines all actions into one schema
 const UnifiedSubAgentToolInput = Schema.Struct({
-  action: Schema.Literal("list", "spawn", "send", "wait", "workflow"),
+  action: Schema.Literals(["list", "spawn", "send", "wait", "workflow"]),
   // Spawn-specific fields
-  providerInstanceId: Schema.optional(Schema.String),
+  providerInstanceId: Schema.optional(ProviderInstanceId),
   model: Schema.optional(Schema.String),
   prompt: Schema.optional(Schema.String),
   name: Schema.optional(Schema.String),
   title: Schema.optional(Schema.String),
   // Send/Wait-specific fields
-  threadId: Schema.optional(Schema.String),
+  threadId: Schema.optional(ThreadId),
   timeoutSeconds: Schema.optional(Schema.Int),
   // Workflow-specific fields
   workflowName: Schema.optional(Schema.String),
-  workflowVariables: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.String })),
+  workflowVariables: Schema.optional(Schema.Record(Schema.String, Schema.String)),
 });
 
 // Tool result is a union of all action results
-const UnifiedSubAgentToolResult = Schema.Union(
+const UnifiedSubAgentToolResult = Schema.Union([
   SubAgentListResult,
   SubAgentSpawnResult,
   SubAgentSendResult,
@@ -57,7 +59,7 @@ const UnifiedSubAgentToolResult = Schema.Union(
     status: Schema.String,
     summary: Schema.String,
   }),
-);
+]);
 
 /**
  * UnifiedSubAgentTool - Single tool for all sub-agent operations.
@@ -105,7 +107,16 @@ Then:
   parameters: UnifiedSubAgentToolInput,
   success: UnifiedSubAgentToolResult,
   failure: SubAgentError,
-  dependencies: [UniversalSubAgentCoordinator, SubAgentProviderRegistry, ConcurrencyLimits],
+  dependencies: [
+    UniversalSubAgentCoordinator,
+    SubAgentProviderRegistry,
+    ConcurrencyLimits,
+    WorkflowEngine,
+    WorkflowStorage,
+    Crypto.Crypto,
+    FileSystem.FileSystem,
+    McpInvocationContext.McpInvocationContext,
+  ],
 })
   .annotate(Tool.Title, "Spawn and manage sub-agents")
   .annotate(Tool.OpenWorld, true)
@@ -113,3 +124,5 @@ Then:
 
 export type UnifiedSubAgentToolInput = typeof UnifiedSubAgentToolInput.Type;
 export type UnifiedSubAgentToolResult = typeof UnifiedSubAgentToolResult.Type;
+
+export const UnifiedSubAgentToolkit = Toolkit.make(UnifiedSubAgentTool);

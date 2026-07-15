@@ -773,16 +773,19 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
     function* (scope, input) {
       const record = yield* requireChildOfCaller(scope, input.threadId);
 
-      // A prior wait (or list refresh) already marked this handle terminal.
-      // Refuse so callers cannot treat a finished agent as still producing
-      // output — start a follow-up turn with agent_send first.
+      // A list refresh may observe completion before the explicit wait call.
+      // Return the settled turn in that case so background lifecycle observers
+      // do not consume the caller's ability to collect the final response.
       if (isTerminalStatus(record.status)) {
-        const { status } = yield* observeStatus(input.threadId, record);
+        const { thread, status } = yield* observeStatus(input.threadId, record);
         if (isTerminalStatus(status)) {
-          return yield* new SubAgentError({
-            reason: "invalid-status",
-            description: `Sub-agent ${input.threadId} is not running (status: ${status}). Call agent_send to start a follow-up turn, or agent_list to inspect finished agents.`,
-          });
+          return {
+            threadId: input.threadId,
+            status,
+            finalText: finalAssistantText(thread),
+            lastActivityAt: lastActivityAt(thread) ?? record.lastTurnRequestedAt,
+            stalled: false,
+          };
         }
       }
 

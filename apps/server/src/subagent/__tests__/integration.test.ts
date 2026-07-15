@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "vite-plus/test";
 import { mapCodexCollabAgentToUnified, isUnifiedSubAgentToolCall } from "../integration.ts";
 
 describe("SubAgent Integration Helpers", () => {
