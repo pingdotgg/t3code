@@ -15,7 +15,11 @@ struct ChatTimelineScrollView: View {
     /// turn. Streaming deltas and in-place row remeasures can fire many
     /// height changes per frame; queuing a single unanimated scrollTo is
     /// enough to stay glued to the bottom without thrashing layout.
-    @UIState private var scrollQueued = false
+    ///
+    /// Deliberately a reference box, not `@UIState`: a `@State` flag would
+    /// invalidate this body twice more per streaming tick (set, then clear),
+    /// re-running the grouping and the whole `ForEach` diff each time.
+    @UIState private var scrollCoalescer = ScrollCoalescer()
 
     /// Thread whose first non-empty timeline render still needs to be anchored
     /// after layout. Uncached thread selection renders an empty LazyVStack
@@ -46,6 +50,15 @@ struct ChatTimelineScrollView: View {
             structureVersion: model.timelineStructureVersion(threadID: threadID),
             threadIsSettled: threadIsSettled)
         let isLoadingTimeline = model.threadState(threadID)?.isLoadingTimeline == true
+        // Resolved once here so no row has to scan `threads` / `projects` /
+        // the timeline itself — a per-row scan also made every row observe
+        // those, so any thread churn during a run re-rendered the whole
+        // visible transcript. See TimelineRowContext.
+        let rowContext = TimelineRowContext(
+            threadStatus: model.selectedThread?.status,
+            projectRoot: model.projectPath(forScopedThreadKey: threadKey),
+            activeDecisionCardID: items.activeDecisionCardID,
+            isConnectionReady: model.connection == .ready)
 
         if displayItems.isEmpty && isLoadingTimeline {
             VStack(spacing: 8) {
@@ -61,7 +74,9 @@ struct ChatTimelineScrollView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
                     ForEach(displayItems) { item in
-                        ChatTimelineRowView(item: item, threadID: threadID, model: model)
+                        ChatTimelineRowView(
+                            item: item, threadID: threadID, context: rowContext, model: model)
+                            .equatable()
                             .id(item.id)
                             .transition(Motion.rise)
                     }
@@ -74,10 +89,11 @@ struct ChatTimelineScrollView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 // Keyed to count, not content: new rows rise in, but
                 // per-token streaming updates never re-trigger layout
-                // animation.
-                .animation(
-                    pendingInitialScrollThreadID == model.selectedThreadID ? nil : Motion.reveal,
-                    value: items.count)
+                // animation. Suppressed mid-gesture too — a row landing while
+                // the user drags would otherwise animate the whole stack's
+                // layout, re-measuring every realized row for the duration of
+                // the animation while the scroll needs those frames.
+                .animation(revealAnimation, value: items.count)
             }
             .defaultScrollAnchor(.bottom)
             // Transparent: the timeline reads off ChatScreen's washed scenery
@@ -112,10 +128,12 @@ struct ChatTimelineScrollView: View {
                     proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
                     return
                 }
-                guard isPinnedToBottom, newHeight > oldHeight, !scrollQueued else { return }
-                scrollQueued = true
-                DispatchQueue.main.async {
-                    scrollQueued = false
+                guard isPinnedToBottom, newHeight > oldHeight,
+                    !scrollCoalescer.isQueued
+                else { return }
+                scrollCoalescer.isQueued = true
+                DispatchQueue.main.async { [scrollCoalescer] in
+                    scrollCoalescer.isQueued = false
                     proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
                 }
             }
@@ -168,9 +186,23 @@ struct ChatTimelineScrollView: View {
         }
     }
 
+    /// Nil while the initial anchor is still pending (nothing should animate
+    /// into place on a thread switch) and while the user is scrolling.
+    private var revealAnimation: Animation? {
+        guard pendingInitialScrollThreadID != model.selectedThreadID else { return nil }
+        return isUserScrolling ? nil : Motion.reveal
+    }
+
     /// Mirrors ToolEventRow's settled rule: once the thread is no longer
     /// working, tool rows stuck "running" count as finished for grouping.
     private var threadIsSettled: Bool {
         model.selectedThread?.status.isSettled ?? false
     }
+}
+
+/// Holds the "a pin-scroll is already queued for this runloop turn" flag
+/// outside SwiftUI's state graph, so toggling it costs nothing.
+@MainActor
+private final class ScrollCoalescer {
+    var isQueued = false
 }

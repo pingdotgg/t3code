@@ -387,7 +387,12 @@ public enum UsageLimitActionState: Equatable, Sendable {
     case failed(String)
 }
 
-public enum TimelineItem: Identifiable, Sendable {
+/// `Equatable` is load-bearing for render cost, not just convenience: the
+/// display cache uses it to reuse untouched rows across a streaming refresh,
+/// and `ChatTimelineRowView` uses it to skip re-rendering rows whose content
+/// did not change. Every payload is `Hashable`, so the conformance is
+/// synthesized.
+public enum TimelineItem: Identifiable, Equatable, Sendable {
     case userMessage(id: String, text: String, at: Date)
     case assistantMessage(id: String, markdown: String, isStreaming: Bool, at: Date)
     /// `output` is the tool's result text when available (command stdout,
