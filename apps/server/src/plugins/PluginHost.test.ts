@@ -356,6 +356,9 @@ const installPlugin = (input: {
   readonly capabilities?: ReadonlyArray<PluginCapability>;
   readonly entrySource?: string;
   readonly lockEntry?: Partial<PluginLockfilePlugin>;
+  /** Declare a `web` manifest entry. Required for declarative settings, whose page
+   *  the host renders into the plugin's web surface. */
+  readonly webEntry?: boolean;
 }) =>
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
@@ -372,7 +375,8 @@ const installPlugin = (input: {
       version: entry.version,
       hostApi: input.manifestHostApi ?? "^1.0.0",
       capabilities: input.capabilities ?? [],
-      entries: { server: "server.js" },
+      entries:
+        input.webEntry === true ? { server: "server.js", web: "web.js" } : { server: "server.js" },
     });
     yield* fs.writeFileString(path.join(pluginDir, "manifest.json"), encodedManifest);
     yield* fs.writeFileString(
@@ -1489,6 +1493,7 @@ export default {
         pluginId,
         capabilities: ["settings"],
         entrySource: unrenderableEntry,
+        webEntry: true,
       });
       yield* host.activatePlugin(pluginId);
 
@@ -1515,12 +1520,42 @@ export default {
       const host = yield* PluginHostModule.PluginHost;
 
       yield* runMigrations({});
-      yield* installPlugin({ pluginId, capabilities: [], entrySource: renderableEntry });
+      yield* installPlugin({
+        pluginId,
+        capabilities: [],
+        entrySource: renderableEntry,
+        webEntry: true,
+      });
       yield* host.activatePlugin(pluginId);
 
       assert.isTrue(Option.isNone(yield* registry.get(pluginId)));
       const lockfile = yield* store.readLockfile;
       assert.match(lockfile.plugins[pluginId]?.lastError ?? "", /capability/);
+    }),
+  );
+
+  // The settings page is HOST-rendered into the plugin's web surface, so a plugin
+  // with no web entry has nowhere to render one — its settings could never be filled
+  // in by anyone.
+  it.effect("refuses to activate a server-only plugin that declares settings", () =>
+    Effect.gen(function* () {
+      const pluginId = PluginId.make("settings-serveronly");
+      const registry = yield* PluginRuntimeRegistryLayer.PluginRuntimeRegistry;
+      const store = yield* PluginLockfileStoreLayer.PluginLockfileStore;
+      const host = yield* PluginHostModule.PluginHost;
+
+      yield* runMigrations({});
+      yield* installPlugin({
+        pluginId,
+        capabilities: ["settings"],
+        entrySource: renderableEntry,
+        webEntry: false,
+      });
+      yield* host.activatePlugin(pluginId);
+
+      assert.isTrue(Option.isNone(yield* registry.get(pluginId)));
+      const lockfile = yield* store.readLockfile;
+      assert.match(lockfile.plugins[pluginId]?.lastError ?? "", /web/);
     }),
   );
 
@@ -1531,7 +1566,12 @@ export default {
       const host = yield* PluginHostModule.PluginHost;
 
       yield* runMigrations({});
-      yield* installPlugin({ pluginId, capabilities: ["settings"], entrySource: renderableEntry });
+      yield* installPlugin({
+        pluginId,
+        capabilities: ["settings"],
+        entrySource: renderableEntry,
+        webEntry: true,
+      });
       yield* host.activatePlugin(pluginId);
 
       assert.isTrue(
