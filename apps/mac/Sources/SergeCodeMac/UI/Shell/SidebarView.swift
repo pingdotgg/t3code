@@ -390,8 +390,10 @@ private struct RemoteProjectSubheaderRow: View {
                     Text("No providers found")
                 }
                 ForEach(configuredProviderKinds) { provider in
-                    Button(provider.displayName) { onNewSession(provider) }
-                        .disabled(!canCreateThread(provider))
+                    Button { onNewSession(provider) } label: {
+                        ProviderLabel(provider: provider)
+                    }
+                    .disabled(!canCreateThread(provider))
                 }
             } label: {
                 Image(systemName: "plus")
@@ -417,8 +419,10 @@ private struct RemoteProjectSubheaderRow: View {
                     Text("No providers found")
                 }
                 ForEach(configuredProviderKinds) { provider in
-                    Button(provider.displayName) { onNewSession(provider) }
-                        .disabled(!canCreateThread(provider))
+                    Button { onNewSession(provider) } label: {
+                        ProviderLabel(provider: provider)
+                    }
+                    .disabled(!canCreateThread(provider))
                 }
             }
             .disabled(!isReady)
@@ -530,8 +534,10 @@ private struct ProjectSectionHeader: View {
                     Text("No providers found")
                 }
                 ForEach(configuredProviderKinds) { provider in
-                    Button(provider.displayName) { onNewSession(provider) }
-                        .disabled(!canCreateThread(provider))
+                    Button { onNewSession(provider) } label: {
+                        ProviderLabel(provider: provider)
+                    }
+                    .disabled(!canCreateThread(provider))
                 }
             } label: {
                 Image(systemName: "plus")
@@ -553,8 +559,10 @@ private struct ProjectSectionHeader: View {
                     Text("No providers found")
                 }
                 ForEach(configuredProviderKinds) { provider in
-                    Button(provider.displayName) { onNewSession(provider) }
-                        .disabled(!canCreateThread(provider))
+                    Button { onNewSession(provider) } label: {
+                        ProviderLabel(provider: provider)
+                    }
+                    .disabled(!canCreateThread(provider))
                 }
             }
             Menu("Scenery Set") {
