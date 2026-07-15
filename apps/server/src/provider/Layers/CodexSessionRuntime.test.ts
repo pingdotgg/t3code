@@ -60,6 +60,52 @@ function makeThreadOpenResponse(
   } as unknown as CodexRpc.ClientRequestResponsesByMethod["thread/start"];
 }
 
+describe("buildTurnStartParams plugin context", () => {
+  const contextFor = (interactionMode: "plan" | "default") =>
+    Effect.runSync(
+      buildTurnStartParams({
+        threadId: "provider-thread-context",
+        runtimeMode: "full-access",
+        prompt: "hello",
+        model: "gpt-5.3-codex",
+        effort: "medium",
+        interactionMode,
+        pluginContext: "PLUGIN-CONTRIBUTED-RULE",
+      }),
+    ).collaborationMode?.settings.developer_instructions;
+
+  // Wiring only the default mode is THE predictable bug in this shape: plan mode
+  // would silently ignore every plugin's instructions and nobody would notice until
+  // a user asked why their rule only works sometimes. Both modes are asserted.
+  it("appends plugin context in default mode", () => {
+    const instructions = contextFor("default");
+    NodeAssert.ok(String(instructions ?? "").includes(CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS));
+    NodeAssert.ok(String(instructions ?? "").includes("PLUGIN-CONTRIBUTED-RULE"));
+  });
+
+  it("appends plugin context in plan mode", () => {
+    const instructions = contextFor("plan");
+    NodeAssert.ok(String(instructions ?? "").includes(CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS));
+    NodeAssert.ok(String(instructions ?? "").includes("PLUGIN-CONTRIBUTED-RULE"));
+  });
+
+  it("leaves the host instructions untouched when no plugin contributes", () => {
+    const instructions = Effect.runSync(
+      buildTurnStartParams({
+        threadId: "provider-thread-context",
+        runtimeMode: "full-access",
+        prompt: "hello",
+        model: "gpt-5.3-codex",
+        effort: "medium",
+        interactionMode: "default",
+      }),
+    ).collaborationMode?.settings.developer_instructions;
+    // Byte-identical, not merely containing: an empty contribution must not leave
+    // stray separators in the agent's instructions.
+    NodeAssert.strictEqual(instructions, CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS);
+  });
+});
+
 describe("buildTurnStartParams", () => {
   it("keeps invalid turn values only in the schema cause", () => {
     const secret = "codex-turn-input-secret-sentinel";
