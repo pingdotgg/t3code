@@ -28,6 +28,12 @@ struct SidebarView: View {
     @UIState private var deleteTarget: ProjectActionTarget?
     @UIState private var deleteThreadTarget: ThreadActionTarget?
     @UIState private var forgetTarget: RemoteDeviceSession?
+    @AppStorage("sidebarCollapsedRemoteDevices") private var collapsedRemoteDevicesData = Data()
+    @UIState private var collapsedRemoteDevices: Set<DeviceID> = []
+
+    // Persistent state for collapsed projects
+    @AppStorage("sidebarCollapsedProjects") private var collapsedProjectsData = Data()
+    @UIState private var collapsedProjects: Set<String> = []
 
     var body: some View {
         List(selection: Binding(
@@ -37,55 +43,59 @@ struct SidebarView: View {
             ForEach(model.projects) { project in
                 // Archived threads live in Settings > Archive, not the sidebar.
                 let threadsForProject = visibleThreads(for: project)
+                let isCollapsed = collapsedProjects.contains(project.id)
                 Section {
-                    ForEach(threadsForProject) { thread in
-                        SidebarThreadRow(
-                            thread: thread,
-                            vcs: model.threadState(thread.id)?.vcsStatus,
-                            scenery: scenery,
-                            threadKey: model.scopedThreadKey(thread.id),
-                            isPinned: model.isThreadPinned(thread))
-                            .tag(ThreadSelection(deviceID: .local, threadID: thread.id))
-                            .contextMenu {
-                                Button(
-                                    model.isThreadPinned(thread) ? "Unpin" : "Pin",
-                                    systemImage: model.isThreadPinned(thread) ? "pin.slash" : "pin")
-                                {
-                                    model.togglePinned(thread)
+                    if !isCollapsed {
+                        ForEach(threadsForProject) { thread in
+                            SidebarThreadRow(
+                                thread: thread,
+                                vcs: model.threadState(thread.id)?.vcsStatus,
+                                scenery: scenery,
+                                threadKey: model.scopedThreadKey(thread.id),
+                                isPinned: model.isThreadPinned(thread))
+                                .tag(ThreadSelection(deviceID: .local, threadID: thread.id))
+                                .contextMenu {
+                                    Button(
+                                        model.isThreadPinned(thread) ? "Unpin" : "Pin",
+                                        systemImage: model.isThreadPinned(thread) ? "pin.slash" : "pin")
+                                    {
+                                        model.togglePinned(thread)
+                                    }
+                                    Divider()
+                                    Button("Archive", systemImage: "archivebox") {
+                                        Task { await model.archiveThread(thread) }
+                                    }
+                                    Button("Delete", systemImage: "trash", role: .destructive) {
+                                        deleteThreadTarget = ThreadActionTarget(
+                                            model: model, thread: thread)
+                                    }
+                                    Divider()
+                                    Button("Move Up", systemImage: "arrow.up") {
+                                        model.moveThread(thread, direction: .up)
+                                    }
+                                    .disabled(!model.canMoveThread(thread, direction: .up))
+                                    Button("Move Down", systemImage: "arrow.down") {
+                                        model.moveThread(thread, direction: .down)
+                                    }
+                                    .disabled(!model.canMoveThread(thread, direction: .down))
                                 }
-                                Divider()
-                                Button("Archive", systemImage: "archivebox") {
-                                    Task { await model.archiveThread(thread) }
-                                }
-                                Button("Delete", systemImage: "trash", role: .destructive) {
-                                    deleteThreadTarget = ThreadActionTarget(
-                                        model: model, thread: thread)
-                                }
-                                Divider()
-                                Button("Move Up", systemImage: "arrow.up") {
-                                    model.moveThread(thread, direction: .up)
-                                }
-                                .disabled(!model.canMoveThread(thread, direction: .up))
-                                Button("Move Down", systemImage: "arrow.down") {
-                                    model.moveThread(thread, direction: .down)
-                                }
-                                .disabled(!model.canMoveThread(thread, direction: .down))
-                            }
-                    }
-                    .onMove { offsets, destination in
-                        model.reorderThreads(
-                            threadsForProject, fromOffsets: offsets, toOffset: destination,
-                            projectID: project.id)
-                    }
-                    if threadsForProject.isEmpty {
-                        Text("No sessions yet")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
+                        }
+                        .onMove { offsets, destination in
+                            model.reorderThreads(
+                                threadsForProject, fromOffsets: offsets, toOffset: destination,
+                                projectID: project.id)
+                        }
+                        if threadsForProject.isEmpty {
+                            Text("No sessions yet")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
                     }
                 } header: {
                     ProjectSectionHeader(
                         project: project,
                         scenery: scenery,
+                        isCollapsed: isCollapsed,
                         configuredProviderKinds: model.configuredProviderKinds,
                         canCreateThread: { model.canCreateThread(with: $0) },
                         onNewSession: { provider in
@@ -99,6 +109,9 @@ struct SidebarView: View {
                                     multi.select(threadID: thread.id, on: model.deviceID)
                                 }
                             }
+                        },
+                        onToggleCollapse: {
+                            toggleProjectCollapse(project.id)
                         },
                         onRename: {
                             renameText = project.name
@@ -120,6 +133,10 @@ struct SidebarView: View {
         // smoothly rather than snapping the rows into new positions.
         // Session selection, refreshes, and pin reordering are frequent. Rows
         // own any insertion/removal transition; the complete list stays still.
+        .onAppear {
+            loadCollapsedRemoteDevices()
+            loadCollapsedProjects()
+        }
         .alert(
             "Rename Project",
             isPresented: Binding(
@@ -207,95 +224,144 @@ struct SidebarView: View {
         return AppModel.pinnedFirst(threads, pinnedIDs: model.pinnedThreadIDs)
     }
 
+    private func loadCollapsedRemoteDevices() {
+        if let decoded = try? JSONDecoder().decode(Set<DeviceID>.self, from: collapsedRemoteDevicesData) {
+            collapsedRemoteDevices = decoded
+        }
+    }
+
+    private func saveCollapsedRemoteDevices() {
+        if let encoded = try? JSONEncoder().encode(collapsedRemoteDevices) {
+            collapsedRemoteDevicesData = encoded
+        }
+    }
+
+    private func toggleRemoteDeviceCollapse(_ deviceID: DeviceID) {
+        if collapsedRemoteDevices.contains(deviceID) {
+            collapsedRemoteDevices.remove(deviceID)
+        } else {
+            collapsedRemoteDevices.insert(deviceID)
+        }
+        saveCollapsedRemoteDevices()
+    }
+
+    private func loadCollapsedProjects() {
+        if let decoded = try? JSONDecoder().decode(Set<String>.self, from: collapsedProjectsData) {
+            collapsedProjects = decoded
+        }
+    }
+
+    private func saveCollapsedProjects() {
+        if let encoded = try? JSONEncoder().encode(collapsedProjects) {
+            collapsedProjectsData = encoded
+        }
+    }
+
+    private func toggleProjectCollapse(_ projectID: String) {
+        withAnimation(Motion.feedback) {
+            if collapsedProjects.contains(projectID) {
+                collapsedProjects.remove(projectID)
+            } else {
+                collapsedProjects.insert(projectID)
+            }
+        }
+        saveCollapsedProjects()
+    }
+
     @ViewBuilder
     private func remoteDeviceSection(_ session: RemoteDeviceSession) -> some View {
+        let isCollapsed = collapsedRemoteDevices.contains(session.id)
         Section {
-            if session.model.projects.isEmpty {
-                Text("No projects")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            } else {
-                ForEach(session.model.projects) { project in
-                    RemoteProjectSubheaderRow(
-                        project: project,
-                        isReady: session.model.connection == .ready,
-                        configuredProviderKinds: session.model.configuredProviderKinds,
-                        canCreateThread: { session.model.canCreateThread(with: $0) },
-                        onNewSession: { provider in
-                            Task {
-                                guard session.model.connection == .ready else { return }
-                                if let thread = await session.model.createSceneThread(
-                                    projectID: project.id,
-                                    provider: provider,
-                                    scenery: scenery,
-                                    passport: passport)
-                                {
-                                    multi.select(threadID: thread.id, on: session.id)
+            if !isCollapsed {
+                if session.model.projects.isEmpty {
+                    Text("No projects")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                } else {
+                    ForEach(session.model.projects) { project in
+                        RemoteProjectSubheaderRow(
+                            project: project,
+                            isReady: session.model.connection == .ready,
+                            configuredProviderKinds: session.model.configuredProviderKinds,
+                            canCreateThread: { session.model.canCreateThread(with: $0) },
+                            onNewSession: { provider in
+                                Task {
+                                    guard session.model.connection == .ready else { return }
+                                    if let thread = await session.model.createSceneThread(
+                                        projectID: project.id,
+                                        provider: provider,
+                                        scenery: scenery,
+                                        passport: passport)
+                                    {
+                                        multi.select(threadID: thread.id, on: session.id)
+                                    }
                                 }
-                            }
-                        },
-                        onRename: {
-                            renameText = project.name
-                            renameTarget = ProjectActionTarget(
-                                model: session.model, project: project)
-                        },
-                        onDelete: {
-                            deleteTarget = ProjectActionTarget(
-                                model: session.model, project: project)
-                        })
+                            },
+                            onRename: {
+                                renameText = project.name
+                                renameTarget = ProjectActionTarget(
+                                    model: session.model, project: project)
+                            },
+                            onDelete: {
+                                deleteTarget = ProjectActionTarget(
+                                    model: session.model, project: project)
+                            })
 
-                    let threadsForProject = visibleThreads(for: project, in: session.model)
-                    ForEach(threadsForProject) { thread in
-                        SidebarThreadRow(
-                            thread: thread,
-                            vcs: session.model.threadState(thread.id)?.vcsStatus,
-                            scenery: scenery,
-                            threadKey: session.model.scopedThreadKey(thread.id),
-                            isPinned: session.model.isThreadPinned(thread))
-                            .tag(ThreadSelection(deviceID: session.id, threadID: thread.id))
-                            .disabled(session.model.connection != .ready)
-                            .opacity(session.model.connection == .ready ? 1 : 0.5)
-                            .contextMenu {
-                                Button("Move Up", systemImage: "arrow.up") {
-                                    session.model.moveThread(thread, direction: .up)
-                                }
-                                .disabled(
-                                    session.model.connection != .ready
-                                        || !session.model.canMoveThread(thread, direction: .up))
-                                Button("Move Down", systemImage: "arrow.down") {
-                                    session.model.moveThread(thread, direction: .down)
-                                }
-                                .disabled(
-                                    session.model.connection != .ready
-                                        || !session.model.canMoveThread(thread, direction: .down))
-                                Divider()
-                                Button("Archive") {
-                                    Task { await session.model.archiveThread(thread) }
-                                }
+                        let threadsForProject = visibleThreads(for: project, in: session.model)
+                        ForEach(threadsForProject) { thread in
+                            SidebarThreadRow(
+                                thread: thread,
+                                vcs: session.model.threadState(thread.id)?.vcsStatus,
+                                scenery: scenery,
+                                threadKey: session.model.scopedThreadKey(thread.id),
+                                isPinned: session.model.isThreadPinned(thread))
+                                .tag(ThreadSelection(deviceID: session.id, threadID: thread.id))
                                 .disabled(session.model.connection != .ready)
-                                Button("Delete", role: .destructive) {
-                                    deleteThreadTarget = ThreadActionTarget(
-                                        model: session.model, thread: thread)
+                                .opacity(session.model.connection == .ready ? 1 : 0.5)
+                                .contextMenu {
+                                    Button("Move Up", systemImage: "arrow.up") {
+                                        session.model.moveThread(thread, direction: .up)
+                                    }
+                                    .disabled(
+                                        session.model.connection != .ready
+                                            || !session.model.canMoveThread(thread, direction: .up))
+                                    Button("Move Down", systemImage: "arrow.down") {
+                                        session.model.moveThread(thread, direction: .down)
+                                    }
+                                    .disabled(
+                                        session.model.connection != .ready
+                                            || !session.model.canMoveThread(thread, direction: .down))
+                                    Divider()
+                                    Button("Archive") {
+                                        Task { await session.model.archiveThread(thread) }
+                                    }
+                                    .disabled(session.model.connection != .ready)
+                                    Button("Delete", role: .destructive) {
+                                        deleteThreadTarget = ThreadActionTarget(
+                                            model: session.model, thread: thread)
+                                    }
+                                    .disabled(session.model.connection != .ready)
                                 }
-                                .disabled(session.model.connection != .ready)
-                            }
-                    }
-                    .onMove { offsets, destination in
-                        guard session.model.connection == .ready else { return }
-                        session.model.reorderThreads(
-                            threadsForProject, fromOffsets: offsets, toOffset: destination,
-                            projectID: project.id)
-                    }
-                    if threadsForProject.isEmpty {
-                        Text("No sessions yet")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
+                        }
+                        .onMove { offsets, destination in
+                            guard session.model.connection == .ready else { return }
+                            session.model.reorderThreads(
+                                threadsForProject, fromOffsets: offsets, toOffset: destination,
+                                projectID: project.id)
+                        }
+                        if threadsForProject.isEmpty {
+                            Text("No sessions yet")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
                     }
                 }
             }
         } header: {
             DeviceSectionHeader(
                 session: session,
+                isCollapsed: isCollapsed,
+                onToggleCollapse: { toggleRemoteDeviceCollapse(session.id) },
                 onReconnect: {
                     Task { await multi.reconnect(id: session.id) }
                 },
@@ -367,17 +433,35 @@ private struct RemoteProjectSubheaderRow: View {
 
 private struct DeviceSectionHeader: View {
     let session: RemoteDeviceSession
+    let isCollapsed: Bool
+    let onToggleCollapse: () -> Void
     let onReconnect: () -> Void
     let onForget: () -> Void
 
     var body: some View {
         HStack(spacing: 6) {
+            Button(action: onToggleCollapse) {
+                Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 12, height: 12)
+                    .contentShape(Rectangle())
+                    .rotationEffect(.degrees(isCollapsed ? 0 : 90))
+                    .animation(.easeInOut(duration: 0.2), value: isCollapsed)
+            }
+            .buttonStyle(.plain)
+            .help(isCollapsed ? "Expand device" : "Collapse device")
+
             Image(systemName: "laptopcomputer")
                 .foregroundStyle(.secondary)
             Text(session.descriptor.name)
                 .lineLimit(1)
             Spacer(minLength: 4)
             DeviceStatusDot(phase: session.connection)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            onToggleCollapse()
         }
         .contextMenu {
             Button("Reconnect") { onReconnect() }
@@ -418,14 +502,27 @@ private struct DeviceStatusDot: View {
 private struct ProjectSectionHeader: View {
     let project: Project
     let scenery: SceneryStore
+    let isCollapsed: Bool
     let configuredProviderKinds: [ProviderKind]
     let canCreateThread: (ProviderKind) -> Bool
     let onNewSession: (ProviderKind) -> Void
+    let onToggleCollapse: () -> Void
     let onRename: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
         HStack(spacing: 4) {
+            Button(action: onToggleCollapse) {
+                Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 12, height: 12)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(isCollapsed ? "Expand \(project.name)" : "Collapse \(project.name)")
+            .animation(Motion.feedback, value: isCollapsed)
+
             if let prefs = projectPrefs, prefs.showsProjectBadge {
                 ProjectSceneryBadge(prefs: prefs, symbolSize: 10, dotSize: 5)
                 Text(project.name)
@@ -450,6 +547,10 @@ private struct ProjectSectionHeader: View {
             .menuIndicator(.hidden)
             .fixedSize()
             .help("New session in \(project.name)")
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            onToggleCollapse()
         }
         .contextMenu {
             Menu("New Session") {
