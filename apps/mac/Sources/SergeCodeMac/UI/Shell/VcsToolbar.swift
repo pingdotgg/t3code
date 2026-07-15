@@ -75,8 +75,8 @@ struct VcsToolbar: View {
                         if runningAction == .mergePR {
                             HStack(spacing: 6) {
                                 ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .black))
                                     .controlSize(.small)
-                                    .tint(.black)
                                 Text("Merging…")
                             }
                             .transition(.opacity)
