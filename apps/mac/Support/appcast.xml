@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>SurgeCode Releases</title>
+    <description>Release feed for SurgeCode macOS app</description>
+    <language>en</language>
+    <!-- CI will inject release items here -->
+  </channel>
+</rss>

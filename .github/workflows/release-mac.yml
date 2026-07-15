@@ -1,0 +1,165 @@
+name: Release macOS App
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-and-release:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 8
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Run Swift tests
+        run: |
+          cd apps/mac
+          swift test
+
+      - name: Build release
+        run: |
+          cd apps/mac
+          ./scripts/make-app.sh
+
+      - name: Create DMG
+        run: |
+          cd apps/mac
+          APP_PATH="$PWD/dist/SurgeCode.app"
+          DMG_PATH="$PWD/dist/SurgeCode-${{ steps.version.outputs.version }}.dmg"
+
+          # Create a temporary directory for DMG contents
+          mkdir -p dmg-temp
+          cp -R "$APP_PATH" dmg-temp/
+
+          # Create DMG using hdiutil
+          hdiutil create -volname "SurgeCode" \
+            -srcfolder dmg-temp \
+            -ov -format UDZO \
+            "$DMG_PATH"
+
+          rm -rf dmg-temp
+          echo "DMG created at $DMG_PATH"
+
+      - name: Create ZIP
+        run: |
+          cd apps/mac/dist
+          zip -r "SurgeCode-${{ steps.version.outputs.version }}.zip" SurgeCode.app
+          echo "ZIP created"
+
+      - name: Install Sparkle tools
+        run: |
+          # Download and extract Sparkle tools for signing
+          curl -L -o sparkle.tar.xz https://github.com/sparkle-project/Sparkle/releases/download/2.6.4/Sparkle-2.6.4.tar.xz
+          tar -xf sparkle.tar.xz
+          echo "SPARKLE_BIN=$PWD/bin" >> $GITHUB_ENV
+
+      - name: Generate Sparkle signature
+        id: sparkle_sign
+        run: |
+          ZIP_PATH="apps/mac/dist/SurgeCode-${{ steps.version.outputs.version }}.zip"
+          FILE_SIZE=$(stat -f%z "$ZIP_PATH")
+          echo "file_size=$FILE_SIZE" >> $GITHUB_OUTPUT
+
+          # Generate or use existing EdDSA key pair
+          if [[ -n "${{ secrets.SPARKLE_PRIVATE_KEY }}" ]]; then
+            echo "${{ secrets.SPARKLE_PRIVATE_KEY }}" > sparkle_private_key
+            SIGNATURE=$("$SPARKLE_BIN/sign_update" -f "$ZIP_PATH" -s sparkle_private_key)
+            rm sparkle_private_key
+            echo "signature=$SIGNATURE" >> $GITHUB_OUTPUT
+            echo "Signed with existing private key"
+          else
+            echo "signature=UNSIGNED" >> $GITHUB_OUTPUT
+            echo "Warning: No SPARKLE_PRIVATE_KEY secret found. Skipping signature."
+            echo "To enable signing, generate a key pair with generate_keys and add SPARKLE_PRIVATE_KEY to GitHub secrets."
+          fi
+
+      - name: Update appcast.xml
+        if: steps.sparkle_sign.outputs.signature != 'UNSIGNED'
+        run: |
+          cd apps/mac
+          DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}/SurgeCode-${{ steps.version.outputs.version }}.zip"
+          ./scripts/update-appcast.sh \
+            "${{ steps.version.outputs.version }}" \
+            "$DOWNLOAD_URL" \
+            "${{ steps.sparkle_sign.outputs.file_size }}" \
+            "${{ steps.sparkle_sign.outputs.signature }}"
+
+      - name: Commit appcast changes
+        if: steps.sparkle_sign.outputs.signature != 'UNSIGNED'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add apps/mac/Support/appcast.xml
+          git diff --staged --quiet || git commit -m "chore: update appcast.xml for ${{ steps.version.outputs.version }}"
+          git push origin HEAD:main
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          # Get the previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 ${{ steps.version.outputs.tag }}^ 2>/dev/null || echo "")
+
+          if [ -z "$PREV_TAG" ]; then
+            echo "notes=Initial release of SurgeCode for macOS." >> $GITHUB_OUTPUT
+          else
+            # Generate release notes from commits
+            NOTES=$(git log ${PREV_TAG}..${{ steps.version.outputs.tag }} --pretty=format:"- %s" --no-merges)
+
+            # Escape newlines for GitHub output
+            NOTES="${NOTES//$'\n'/'%0A'}"
+            echo "notes<<EOF" >> $GITHUB_OUTPUT
+            echo "$NOTES" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Release ${{ steps.version.outputs.version }}
+          body: |
+            ## What's New
+
+            ${{ steps.release_notes.outputs.notes }}
+
+            ## Installation
+
+            ### From DMG (Recommended)
+            1. Download `SurgeCode-${{ steps.version.outputs.version }}.dmg`
+            2. Open the DMG and drag SurgeCode to Applications
+            3. Right-click SurgeCode and select "Open" to bypass Gatekeeper on first launch
+
+            ### From ZIP
+            1. Download `SurgeCode-${{ steps.version.outputs.version }}.zip`
+            2. Extract and move SurgeCode.app to Applications
+            3. Right-click SurgeCode and select "Open" to bypass Gatekeeper on first launch
+
+            ## Notes
+            - This build is ad-hoc signed. You'll need to bypass Gatekeeper on first launch.
+            - macOS 26.0 or later required.
+          files: |
+            apps/mac/dist/SurgeCode-${{ steps.version.outputs.version }}.dmg
+            apps/mac/dist/SurgeCode-${{ steps.version.outputs.version }}.zip
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.version, 'alpha') || contains(steps.version.outputs.version, 'beta') || contains(steps.version.outputs.version, 'rc') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

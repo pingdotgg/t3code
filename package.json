@@ -12,6 +12,7 @@
     "build:mac": "swift build --package-path apps/mac",
     "build:local": "scripts/build-local.sh",
     "package:mac": "apps/mac/scripts/make-app.sh",
+    "version:bump": "apps/mac/scripts/version-bump.sh",
     "typecheck": "vp run -r --concurrency-limit 2 typecheck",
     "tc": "vp run -r --concurrency-limit 2 typecheck",
     "lint": "vp lint --report-unused-disable-directives",
