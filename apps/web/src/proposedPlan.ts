@@ -85,15 +85,15 @@ export function extractProposedPlanTasks(planMarkdown: string): ProposedPlanTask
   finishGroup();
 
   const rankedGroups = groups.toSorted((left, right) => {
-    const explicitDifference = right.explicitTaskCount - left.explicitTaskCount;
-    if (explicitDifference !== 0) {
-      return explicitDifference;
-    }
     const headingDifference =
       Number(TASK_SECTION_HEADING.test(right.heading ?? "")) -
       Number(TASK_SECTION_HEADING.test(left.heading ?? ""));
     if (headingDifference !== 0) {
       return headingDifference;
+    }
+    const explicitDifference = right.explicitTaskCount - left.explicitTaskCount;
+    if (explicitDifference !== 0) {
+      return explicitDifference;
     }
     return right.tasks.length - left.tasks.length;
   });
