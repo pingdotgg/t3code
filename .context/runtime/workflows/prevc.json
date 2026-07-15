@@ -1,7 +1,7 @@
 {
   "version": 2,
   "workflowType": "prevc",
-  "updatedAt": "2026-07-15T00:45:28.434Z",
+  "updatedAt": "2026-07-15T00:45:28.587Z",
   "status": {
     "project": {
       "name": "issue-780-native-desktop-notifications",
@@ -111,10 +111,20 @@
           "stepDescription": "Review issue",
           "notes": "Issue and prior PR state reviewed; no new maintainer stop or direction change.",
           "timestamp": "2026-07-15T00:45:28.434Z"
+        },
+        {
+          "phase": "P",
+          "action": "step_completed",
+          "plan": "issue-780-native-desktop-notifications",
+          "planPhase": "planning",
+          "stepIndex": 2,
+          "stepDescription": "Map shell, settings, IPC, window, and routing sources",
+          "notes": "Mapped shell/projector, settings persistence, Electron window/IPC, and environment-thread routing.",
+          "timestamp": "2026-07-15T00:45:28.587Z"
         }
       ],
-      "last_activity": "2026-07-15T00:45:28.434Z",
-      "resume_context": "Concluído: Review issue"
+      "last_activity": "2026-07-15T00:45:28.587Z",
+      "resume_context": "Concluído: Map shell, settings, IPC, window, and routing sources"
     }
   },
   "binding": {

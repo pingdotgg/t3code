@@ -95,9 +95,9 @@ phases:
         deliverables: [Draft PR URL and handoff]
 generated: "2026-07-15"
 status: filled
-progress: 9
+progress: 18
 scaffoldVersion: "2.0.0"
-lastUpdated: "2026-07-15T00:45:28.430Z"
+lastUpdated: "2026-07-15T00:45:28.583Z"
 ---
 
 # Issue #780 native desktop notifications
@@ -170,11 +170,13 @@ None.
 
 ## Execution History
 
-> Last updated: 2026-07-15T00:45:28.430Z | Progress: 9%
+> Last updated: 2026-07-15T00:45:28.583Z | Progress: 18%
 
 ### planning [DONE]
 - Started: 2026-07-15T00:45:28.430Z
-- Completed: 2026-07-15T00:45:28.430Z
+- Completed: 2026-07-15T00:45:28.583Z
 
 - [x] Step 1: Review issue *(2026-07-15T00:45:28.430Z)*
   - Notes: Issue and prior PR state reviewed; no new maintainer stop or direction change.
+- [x] Step 2: Map shell, settings, IPC, window, and routing sources *(2026-07-15T00:45:28.583Z)*
+  - Notes: Mapped shell/projector, settings persistence, Electron window/IPC, and environment-thread routing.

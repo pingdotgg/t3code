@@ -1,7 +1,7 @@
 {
   "planSlug": "issue-780-native-desktop-notifications",
   "linkedAt": "2026-07-15T00:43:17.078Z",
-  "progress": 9,
+  "progress": 18,
   "phases": {
     "planning": {
       "phaseId": "planning",
@@ -17,9 +17,23 @@
           ],
           "completedAt": "2026-07-15T00:45:28.430Z",
           "notes": "Issue and prior PR state reviewed; no new maintainer stop or direction change."
+        },
+        {
+          "stepIndex": 2,
+          "description": "Map shell, settings, IPC, window, and routing sources",
+          "status": "completed",
+          "deliverables": [
+            "Architecture map"
+          ],
+          "completedAt": "2026-07-15T00:45:28.583Z",
+          "notes": "Mapped shell/projector, settings persistence, Electron window/IPC, and environment-thread routing."
         }
       ],
-      "completedAt": "2026-07-15T00:45:28.430Z"
+      "completedAt": "2026-07-15T00:45:28.583Z",
+      "commitHash": "f3b0514721a199efe3a9607ad66b0c5e35b91382",
+      "commitShortHash": "f3b051472",
+      "committedAt": "2026-07-15T00:45:28.572Z",
+      "committedBy": "AI Context Agent"
     }
   },
   "decisions": [
@@ -72,5 +86,5 @@
       "decidedAt": "2026-07-15T00:45:28.412Z"
     }
   ],
-  "lastUpdated": "2026-07-15T00:45:28.430Z"
+  "lastUpdated": "2026-07-15T00:45:28.583Z"
 }
