@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import Sparkle
 
 // App entry point. AppModel is a reference type (@Observable class), so a
 // plain `let` on the App struct is sufficient — no @State needed (and @State
@@ -15,9 +16,17 @@ struct SergeCodeApp: App {
     // Alpine identity: Dolomites photo pool + per-thread scene assignment.
     private let scenery = SceneryStore()
     private let passport = PassportStore()
+    // Sparkle auto-updater controller
+    private let updaterController: SPUStandardUpdaterController
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     init() {
+        // Initialize Sparkle updater controller
+        self.updaterController = SPUStandardUpdaterController(
+            startingUpdater: true,
+            updaterDelegate: nil,
+            userDriverDelegate: nil)
+
         let sharedDictation = DictationController()
         self.dictation = sharedDictation
         let localModel = AppModel(backend: SergeCodeApp.backend, dictation: sharedDictation)
@@ -146,6 +155,16 @@ struct SergeCodeApp: App {
                 // scenes entirely.
                 Button("About SurgeCode") {
                     AboutWindowController.shared.show()
+                }
+            }
+            CommandGroup(after: .appInfo) {
+                Button("Version \(AppVersion.fullVersion)") {}
+                    .disabled(true)
+                Divider()
+            }
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates...") {
+                    updaterController.checkForUpdates(nil)
                 }
             }
             // `.replacing` (not `.after`): a bare `WindowGroup` auto-vends a

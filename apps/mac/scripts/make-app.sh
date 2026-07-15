@@ -4,6 +4,10 @@
 set -euo pipefail
 
 MAC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Sync version from version.json to Info.plist before building
+"$MAC_DIR/scripts/sync-version.sh"
+
 CONFIG="release"
 if [[ "${1:-}" == "--debug" ]]; then
   CONFIG="debug"
