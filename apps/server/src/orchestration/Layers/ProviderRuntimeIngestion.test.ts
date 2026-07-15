@@ -227,7 +227,10 @@ describe("ProviderRuntimeIngestion", () => {
     }
   });
 
-  async function createHarness(options?: { serverSettings?: Partial<ServerSettings> }) {
+  async function createHarness(options?: {
+    serverSettings?: Partial<ServerSettings>;
+    initialThreadTitle?: string;
+  }) {
     const workspaceRoot = makeTempDir("t3-provider-project-");
     NodeFS.mkdirSync(NodePath.join(workspaceRoot, ".git"));
     const provider = createProviderServiceHarness();
@@ -289,7 +292,7 @@ describe("ProviderRuntimeIngestion", () => {
         commandId: CommandId.make("cmd-thread-create"),
         threadId: ThreadId.make("thread-1"),
         projectId: asProjectId("project-1"),
-        title: "Thread",
+        title: options?.initialThreadTitle ?? "Thread",
         modelSelection: {
           instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
@@ -2728,8 +2731,29 @@ describe("ProviderRuntimeIngestion", () => {
     ).toBe(true);
   });
 
-  it("consumes P1 runtime events into thread metadata, diff checkpoints, and activities", async () => {
+  it("does not replace a custom thread title from provider metadata", async () => {
     const harness = await createHarness();
+
+    harness.emit({
+      type: "thread.metadata.updated",
+      eventId: asEventId("evt-thread-custom-title-metadata-updated"),
+      provider: ProviderDriverKind.make("copilot"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: asThreadId("thread-1"),
+      payload: {
+        name: "Renamed by provider",
+      },
+    });
+
+    await harness.drain();
+
+    const snapshot = await harness.readModel();
+    const thread = snapshot.threads.find((entry) => entry.id === "thread-1");
+    expect(thread?.title).toBe("Thread");
+  });
+
+  it("consumes P1 runtime events into thread metadata, diff checkpoints, and activities", async () => {
+    const harness = await createHarness({ initialThreadTitle: "New thread" });
     const now = "2026-01-01T00:00:00.000Z";
 
     harness.emit({
