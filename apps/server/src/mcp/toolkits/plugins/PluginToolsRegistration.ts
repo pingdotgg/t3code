@@ -1,4 +1,5 @@
 import type { PluginId } from "@t3tools/contracts/plugin";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -110,7 +111,11 @@ const handleRuntimeChange = Effect.fn("PluginToolsRegistration.handleRuntimeChan
       Effect.logError("Failed to register plugin MCP tools", {
         pluginId: change.pluginId,
         error: error.detail,
-      }),
+      }).pipe(
+        // Fail-closed is correct, but a log line alone makes "active plugin with
+        // zero tools" undiagnosable. Surface it on the lockfile entry too.
+        Effect.andThen(catalog.noteRegistrationFailure(change.pluginId, error.detail)),
+      ),
     ),
   );
 });
@@ -138,8 +143,24 @@ export const registerPluginTools = Effect.fn("PluginToolsRegistration.register")
   }
 
   // Drain subsequent puts/removes for the process lifetime.
+  //
+  // Every non-interrupt cause MUST be contained here. handleRuntimeChange only
+  // catches PluginToolRegistrationError; anything else (an addTool fault, a catalog
+  // op, a defect) would fail Effect.forever, kill this forked fiber, and silently
+  // stop ALL plugin tool registration for the rest of the process — a live plugin
+  // would simply never get its tools. Interrupts still propagate so scope close
+  // stops the drain (mirrors mapPluginHandlerCause in PluginRpcDispatcher).
   yield* Effect.forever(
-    PubSub.take(subscription).pipe(Effect.flatMap((change) => handleRuntimeChange(change))),
+    PubSub.take(subscription).pipe(
+      Effect.flatMap((change) => handleRuntimeChange(change)),
+      Effect.catchCause((cause) =>
+        Cause.hasInterrupts(cause)
+          ? Effect.failCause(cause)
+          : Effect.logError("Plugin tool registration drain: change handling failed", {
+              cause: Cause.pretty(cause),
+            }),
+      ),
+    ),
   ).pipe(Effect.forkScoped);
 });
 

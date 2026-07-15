@@ -197,6 +197,18 @@ function installerDeps(input: InstallerLayerInput) {
         Effect.sync(() => {
           input.deactivated?.push(id);
         }),
+      // Mirrors the real ordering: persist runs first, then the host action. The
+      // real implementation additionally holds the per-plugin activation lock
+      // across both halves — that atomicity is covered in PluginHost.test.ts.
+      setPluginEnabled: (id, enabled, persist) =>
+        Effect.gen(function* () {
+          yield* persist;
+          if (enabled) {
+            input.activated?.push(id);
+          } else {
+            input.deactivated?.push(id);
+          }
+        }),
     }),
   );
   const catalog = Layer.succeed(
