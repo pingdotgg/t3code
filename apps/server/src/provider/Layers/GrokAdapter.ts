@@ -982,6 +982,17 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 mapError: (cause) =>
                   mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
               });
+              // ACP has already committed the model switch at this point. Keep
+              // both the internal comparison state and the public snapshot in
+              // sync even if later prompt preparation (for example, skill
+              // discovery) fails.
+              ctx.currentModelId = currentModelId;
+              const displayModel = currentModelId
+                ? resolveGrokAcpBaseModelId(currentModelId)
+                : undefined;
+              if (displayModel) {
+                ctx.session = { ...ctx.session, model: displayModel };
+              }
 
               const rawText = input.input?.trim();
               const text =
@@ -1045,10 +1056,6 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 });
               }
 
-              ctx.currentModelId = currentModelId;
-              const displayModel = currentModelId
-                ? resolveGrokAcpBaseModelId(currentModelId)
-                : undefined;
               for (let yieldAttempt = 0; yieldAttempt < 8; yieldAttempt += 1) {
                 yield* Effect.yieldNow;
               }
