@@ -52,15 +52,10 @@ if [[ -z "$SPARKLE_FRAMEWORK" ]]; then
   exit 1
 fi
 
-ICON="$MAC_DIR/Support/AppIcon.icns"
-if [[ "$CONFIG" == "debug" ]]; then
-  ICON="$MAC_DIR/Support/AppIcon-Dev.icns"
-fi
-
 rm -rf "$APP" "$MAC_DIR/dist/SergeCode.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
 cp "$MAC_DIR/Support/Info.plist" "$APP/Contents/Info.plist"
-cp "$ICON" "$APP/Contents/Resources/AppIcon.icns"
+cp "$MAC_DIR/Support/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 cp "$BIN" "$APP/Contents/MacOS/SergeCodeMac"
 cp -R "$RESOURCE_BUNDLE" "$APP/Contents/Resources/"
 cp -R "$SPARKLE_FRAMEWORK" "$APP/Contents/Frameworks/"
