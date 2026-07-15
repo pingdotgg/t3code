@@ -149,7 +149,7 @@ export function useProjectFilePickerQuery(
 
   if (hasQuery) {
     return {
-      entries: search.entries,
+      entries: search.isPending ? [] : search.entries,
       error: search.error,
       isPending: search.isPending,
       matchedQuery: search.searchedQuery,
