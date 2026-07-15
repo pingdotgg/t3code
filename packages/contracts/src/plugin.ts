@@ -28,6 +28,7 @@ export const PluginCapability = Schema.Literals([
   "httpClient",
   "sourceControl",
   "textGeneration",
+  "tools",
 ]);
 export type PluginCapability = typeof PluginCapability.Type;
 

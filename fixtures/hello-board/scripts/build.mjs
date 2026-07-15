@@ -30,10 +30,16 @@ const shaPath = `${tarballPath}.sha256`;
 const marketplacePath = NodePath.join(outDir, "marketplace.json");
 
 function run(command, args) {
+  // Ensure pnpm-managed bins (esbuild) are visible even when the parent test
+  // process does not inherit a PATH that includes the monorepo .pnpm shims.
+  const pnpmBin = NodePath.join(repoRoot, "node_modules", ".pnpm", "node_modules", ".bin");
   const result = NodeChildProcess.spawnSync(command, args, {
     cwd: repoRoot,
     stdio: "inherit",
-    env: process.env,
+    env: {
+      ...process.env,
+      PATH: `${pnpmBin}${NodePath.delimiter}${process.env.PATH ?? ""}`,
+    },
   });
   if (result.status !== 0) {
     throw new Error(`${command} ${args.join(" ")} failed with exit code ${result.status}`);

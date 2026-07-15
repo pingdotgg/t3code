@@ -1,6 +1,11 @@
-import { definePlugin } from "@t3tools/plugin-sdk";
+import { definePlugin, type PluginRegistration } from "@t3tools/plugin-sdk";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+
+const EchoToolInput = Schema.Struct({
+  message: Schema.String.check(Schema.isMaxLength(200)),
+});
 
 class HelloBoardPluginError extends Error {
   readonly _tag = "HelloBoardPluginError";
@@ -46,7 +51,7 @@ export default definePlugin({
       const filesystem = yield* hostApi.filesystem;
       const httpClient = yield* hostApi.httpClient;
 
-      return {
+      const registration: PluginRegistration = {
         migrations: [
           {
             version: 1,
@@ -125,6 +130,21 @@ export default definePlugin({
               }),
           },
         ],
+        tools: [
+          {
+            name: "echo_note",
+            description: "Echo a short message back through the hello-board plugin tool path.",
+            inputSchema: EchoToolInput,
+            scope: "read",
+            title: "Echo note",
+            handle: (input, _ctx) =>
+              Effect.succeed({
+                content: [{ type: "text" as const, text: `hello-board: ${input.message}` }],
+                structuredContent: { echoed: input.message, plugin: "hello-board" },
+              }),
+          },
+        ],
       };
+      return registration;
     }).pipe(Effect.mapError(toPluginError)),
 });

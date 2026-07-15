@@ -43,6 +43,7 @@ import * as PluginMigrator from "./PluginMigrator.ts";
 import * as PluginModuleLoaderLayer from "./PluginModuleLoader.ts";
 import * as PluginRpcDispatcherModule from "./PluginRpcDispatcher.ts";
 import * as PluginRuntimeRegistryLayer from "./PluginRuntimeRegistry.ts";
+import * as PluginToolCatalogLayer from "./PluginToolCatalog.ts";
 
 const pluginId = PluginId.make("hello-board");
 const WORKSPACE_ROOT_ENV = "T3_HELLO_BOARD_WORKSPACE_ROOT";
@@ -81,6 +82,9 @@ const TestPluginHttpClientTransportLive = Layer.succeed(
 );
 
 const PluginRuntimeRegistryLayerLive = PluginRuntimeRegistryLayer.layer;
+const PluginToolCatalogLayerLive = PluginToolCatalogLayer.layer.pipe(
+  Layer.provide(PluginRuntimeRegistryLayerLive),
+);
 const PluginHttpRegistryLayerLive = PluginHttpRegistry.layer;
 const PluginLockfileStoreLayerLive = PluginLockfileStoreLayer.layer;
 const PluginHostCapabilityDepsLayerLive = Layer.mergeAll(
@@ -246,6 +250,7 @@ const PluginHostLayerLive = PluginHostModule.layer.pipe(
   Layer.provideMerge(PluginModuleLoaderLayer.layer),
   Layer.provideMerge(PluginMigrator.layer),
   Layer.provideMerge(PluginRuntimeRegistryLayerLive),
+  Layer.provideMerge(PluginToolCatalogLayerLive),
   Layer.provideMerge(PluginHttpRegistryLayerLive),
   Layer.provideMerge(ServerLifecycleEvents.layer),
   Layer.provideMerge(PluginHostCapabilityDepsLayerLive),
@@ -282,6 +287,7 @@ const PluginLayerLive = Layer.mergeAll(
   PluginManagementRpcHandlersLayerLive,
   PluginHttpRegistryLayerLive,
   PluginLockfileStoreLayerLive,
+  PluginToolCatalogLayerLive,
 );
 
 const testLayer = PluginLayerLive.pipe(
@@ -418,6 +424,8 @@ layer("hello-board fixture plugin", (it) => {
           assert.property(staged.capabilityDescriptions, "database");
           assert.property(staged.capabilityDescriptions, "filesystem");
           assert.property(staged.capabilityDescriptions, "httpClient");
+          assert.property(staged.capabilityDescriptions, "tools");
+          assert.match(staged.capabilityDescriptions.tools ?? "", /blanket grant/i);
 
           const confirmed = yield* handlers.confirmInstall(staged.stageToken);
           assert.equal(confirmed.plugin.id, pluginId);
@@ -437,10 +445,64 @@ layer("hello-board fixture plugin", (it) => {
               state: "active",
               hasWeb: true,
               hasStyles: false,
-              capabilities: ["database", "filesystem", "httpClient"],
+              capabilities: ["database", "filesystem", "httpClient", "tools"],
               lastError: null,
             },
           );
+
+          const toolCatalog = yield* PluginToolCatalogLayer.PluginToolCatalog;
+          const finalToolName = "plugin_hello_board__echo_note";
+          // Host reserves tools on activation; MCP registration sets active when
+          // the runtime is put. In this fixture harness the MCP toolkit is not
+          // mounted, so activate manually to exercise the trampoline call path.
+          yield* toolCatalog.activate(pluginId);
+          assert.equal(toolCatalog.isActive(finalToolName), true);
+
+          const echo = yield* toolCatalog.makeTrampolineHandle(
+            pluginId,
+            "echo_note",
+          )({
+            message: "from-agent",
+          });
+          assert.equal(echo.isError, false);
+          assert.deepEqual(echo.content, [{ type: "text", text: "hello-board: from-agent" }]);
+          assert.deepEqual(echo.structuredContent, {
+            echoed: "from-agent",
+            plugin: "hello-board",
+          });
+
+          // Disable → call-time gate fails closed (and visibility drops).
+          yield* handlers.setEnabled({ pluginId, enabled: false });
+          assert.equal(toolCatalog.isActive(finalToolName), false);
+          const disabledCall = yield* toolCatalog.makeTrampolineHandle(
+            pluginId,
+            "echo_note",
+          )({
+            message: "should-not-run",
+          });
+          assert.equal(disabledCall.isError, true);
+          const disabledText =
+            disabledCall.content[0]?.type === "text" ? disabledCall.content[0].text : "";
+          assert.match(disabledText, /not enabled/i);
+
+          // Re-enable → callable again, still a single reserved permanent entry.
+          yield* handlers.setEnabled({ pluginId, enabled: true });
+          yield* toolCatalog.activate(pluginId);
+          assert.equal(toolCatalog.isActive(finalToolName), true);
+          const reenabled = yield* toolCatalog.makeTrampolineHandle(
+            pluginId,
+            "echo_note",
+          )({
+            message: "again",
+          });
+          assert.equal(reenabled.isError, false);
+          assert.deepEqual(reenabled.content, [{ type: "text", text: "hello-board: again" }]);
+          const permanent = yield* toolCatalog.getPermanent(finalToolName);
+          assert.equal(permanent._tag, "Some");
+          if (permanent._tag === "Some") {
+            assert.equal(permanent.value.pluginId, pluginId);
+            assert.equal(permanent.value.localName, "echo_note");
+          }
 
           const added = (yield* dispatcher.call(
             pluginId,

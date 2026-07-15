@@ -78,6 +78,7 @@ import { PluginModuleLoader } from "./PluginModuleLoader.ts";
 import { makePluginLogger } from "./PluginLogger.ts";
 import { pluginDataDir, pluginManifestPath, pluginVersionDir } from "./PluginPaths.ts";
 import { PluginRuntimeRegistry } from "./PluginRuntimeRegistry.ts";
+import { PluginToolCatalog, PluginToolCatalogError } from "./PluginToolCatalog.ts";
 import { makePluginWorkspaceGrants, type PluginWorkspaceGrants } from "./PluginWorkspaceGrants.ts";
 
 const APP_VERSION = packageJson.version;
@@ -205,6 +206,7 @@ const resolveRegistration = (
 function validateRegistration(
   pluginId: PluginId,
   registration: PluginRegistration,
+  capabilities: ReadonlyArray<PluginManifest["capabilities"][number]>,
 ): Effect.Effect<void, PluginRegistrationError> {
   // Plugin modules are dynamically loaded JS, so the SDK's `"read" | "operate"`
   // scope type is NOT enforced at runtime. Validate rpc AND streams identically
@@ -241,6 +243,17 @@ function validateRegistration(
       );
     }
     streamMethods.add(stream.method);
+  }
+  // Tools require the dedicated "tools" capability (capability-level consent).
+  // Full descriptor validation + fingerprint reserve happen via PluginToolCatalog
+  // before any irreversible McpServer.addTool.
+  if ((registration.tools?.length ?? 0) > 0 && !capabilities.includes("tools")) {
+    return Effect.fail(
+      new PluginRegistrationError({
+        pluginId,
+        detail: 'plugin declares tools but does not include the "tools" capability',
+      }),
+    );
   }
   return Effect.void;
 }
@@ -460,6 +473,7 @@ export const make = Effect.fn("PluginHost.make")(function* () {
   const loader = yield* PluginModuleLoader;
   const migrator = yield* PluginMigrator;
   const registry = yield* PluginRuntimeRegistry;
+  const toolCatalog = yield* PluginToolCatalog;
   const httpRegistry = yield* PluginHttpRegistry;
   const clock = yield* Clock.Clock;
   const sql = yield* SqlClient.SqlClient;
@@ -689,7 +703,22 @@ export const make = Effect.fn("PluginHost.make")(function* () {
         const registration = yield* resolveRegistration(pluginId, definition, hostApi).pipe(
           Effect.timeout(registrationTimeout()),
         );
-        yield* validateRegistration(pluginId, registration);
+        yield* validateRegistration(pluginId, registration, manifest.capabilities);
+        // Reserve tool ownership/fingerprints BEFORE any irreversible MCP addTool
+        // (the MCP toolkit registers on registry.put). Reject capability/metadata
+        // issues here so activation fails closed.
+        if ((registration.tools?.length ?? 0) > 0) {
+          yield* toolCatalog
+            .reserve(pluginId, registration.tools, {
+              hasToolsCapability: manifest.capabilities.includes("tools"),
+            })
+            .pipe(
+              Effect.mapError(
+                (error: PluginToolCatalogError) =>
+                  new PluginRegistrationError({ pluginId, detail: error.detail }),
+              ),
+            );
+        }
         yield* migrator.run(pluginId, registration.migrations ?? []);
         if (registration.recover) {
           yield* registration.recover().pipe(Effect.timeout(registrationTimeout()));
@@ -790,6 +819,7 @@ export const make = Effect.fn("PluginHost.make")(function* () {
             // and registry.list keep reporting the plugin as active with a dead
             // scope and an unresolved readiness Deferred.
             yield* registry.remove(pluginId).pipe(Effect.ignore);
+            yield* toolCatalog.deactivate(pluginId).pipe(Effect.ignore);
             if (causeContainsInterrupt(exit.cause)) {
               // ANY interruption (a clean host shutdown / scope close / stop), even
               // when mixed with the cancel sentinel or a teardown error. The teardown
@@ -874,8 +904,12 @@ export const make = Effect.fn("PluginHost.make")(function* () {
       Effect.gen(function* () {
         const runtime = yield* registry.get(pluginId);
         if (Option.isNone(runtime)) return;
-        yield* Scope.close(runtime.value.scope, Exit.void).pipe(Effect.ignore);
+        // Clear runtime (+ tool bindings via registry.changes → catalog.deactivate)
+        // BEFORE scope closure so tools/list and tools/call fail closed while
+        // in-flight handlers are interrupted by the subsequent scope close.
         yield* registry.remove(pluginId);
+        yield* toolCatalog.deactivate(pluginId);
+        yield* Scope.close(runtime.value.scope, Exit.void).pipe(Effect.ignore);
         yield* httpRegistry.remove(pluginId).pipe(Effect.ignore);
         // Announce the state that is actually persisted rather than a hardcoded
         // "disabled": uninstall sets "pending-remove" then calls this, and
