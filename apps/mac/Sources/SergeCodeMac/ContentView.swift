@@ -14,7 +14,6 @@ struct RootView: View {
     @UIState private var columnVisibility: NavigationSplitViewVisibility = .all
 
     private var model: AppModel { multi.activeModel }
-    private var localModel: AppModel { multi.local }
 
     var body: some View {
         // Drag-collapse writes visibility through this binding; wrapping
@@ -142,89 +141,60 @@ struct RootView: View {
         }
     }
 
-    /// Toolbar "New Session" menu: pick an existing project + provider
-    /// directly (calls model.createSceneThread immediately), or fall through
-    /// to the glass sheet to add a new project first.
+    /// Primary click opens the scalable chooser. The disclosure menu stays a
+    /// genuinely quick path: repeat the current session's target or choose a
+    /// different provider for that same project. It deliberately does not
+    /// reproduce the full device × project × provider tree.
     @ViewBuilder
     private var newSessionMenu: some View {
         Menu {
-            if multi.remoteSessions.isEmpty {
-                // Preserve the original flat menu while there are no remote
-                // targets. This is also the fast path for the common case.
-                localProjectMenus
+            Button {
+                showNewSessionSheet = true
+            } label: {
+                Label("Choose Target…", systemImage: "slider.horizontal.3")
+            }
+
+            if let thread = multi.selectedThread, let project = selectedProject {
                 Divider()
-                addProjectButton
-            } else {
-                Section("This Mac") {
-                    localProjectMenus
-                    addProjectButton
-                }
-                Divider()
-                ForEach(multi.remoteSessions) { session in
-                    remoteProjectSection(session)
+                Section(project.name) {
+                    Button {
+                        createSession(
+                            owner: model,
+                            projectID: project.id,
+                            provider: thread.provider,
+                            deviceID: model.deviceID)
+                    } label: {
+                        Label(
+                            "New \(thread.provider.displayName) Session",
+                            systemImage: "plus.bubble")
+                    }
+
+                    Menu("Other Provider") {
+                        ForEach(model.configuredProviderKinds) { provider in
+                            Button {
+                                createSession(
+                                    owner: model,
+                                    projectID: project.id,
+                                    provider: provider,
+                                    deviceID: model.deviceID)
+                            } label: {
+                                Label(provider.displayName, systemImage: "bolt")
+                            }
+                            .disabled(!model.canCreateThread(with: provider))
+                        }
+                    }
                 }
             }
         } label: {
             Label("New Session", systemImage: "plus")
-        }
-    }
-
-    @ViewBuilder
-    private var localProjectMenus: some View {
-        projectMenus(
-            for: localModel,
-            deviceID: localModel.deviceID)
-    }
-
-    private var addProjectButton: some View {
-        Button {
+        } primaryAction: {
             showNewSessionSheet = true
-        } label: {
-            Label("Add Project…", systemImage: "folder.badge.plus")
         }
     }
 
-    @ViewBuilder
-    private func remoteProjectSection(_ session: RemoteDeviceSession) -> some View {
-        Section {
-            if session.model.projects.isEmpty {
-                Text("No projects yet")
-            } else {
-                projectMenus(for: session.model, deviceID: session.id)
-            }
-        } header: {
-            Label(session.descriptor.name, systemImage: "laptopcomputer")
-        }
-    }
-
-    @ViewBuilder
-    private func projectMenus(for owner: AppModel, deviceID: DeviceID) -> some View {
-        if owner.projects.isEmpty {
-            Text("No projects yet")
-        }
-        ForEach(owner.projects) { project in
-            Menu(project.name) {
-                if owner.configuredProviderKinds.isEmpty {
-                    Text("No providers found")
-                }
-                ForEach(owner.configuredProviderKinds) { provider in
-                    Button {
-                        createSession(
-                            owner: owner,
-                            projectID: project.id,
-                            provider: provider,
-                            deviceID: deviceID)
-                    } label: {
-                        Label(provider.displayName, systemImage: "bolt")
-                    }
-                    .disabled(
-                        owner.deviceID != .local
-                            && owner.connection != .ready
-                            || !owner.canCreateThread(with: provider))
-                }
-            }
-            .disabled(owner.deviceID != .local && owner.connection != .ready)
-        }
+    private var selectedProject: Project? {
+        guard let thread = multi.selectedThread else { return nil }
+        return model.projects.first { $0.id == thread.projectID }
     }
 
     private func createSession(

@@ -260,9 +260,9 @@ public struct ComposerBar: View {
                                 // inset, 5pt line-fragment padding) so the
                                 // placeholder sits exactly where typed text
                                 // appears.
-                                Text("Message…  (@ to mention files, / for commands)")
+                                Text("Message…  (@ files, / commands)")
                                     .font(.body)
-                                    .foregroundStyle(.tertiary)
+                                    .foregroundStyle(.secondary)
                                     .padding(.leading, 5)
                                     .allowsHitTesting(false)
                                     .transition(.opacity)

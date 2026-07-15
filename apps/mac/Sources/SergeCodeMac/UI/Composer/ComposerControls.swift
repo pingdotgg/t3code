@@ -8,7 +8,7 @@ struct ComposerControlsRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            ModelEffortTierGroup(thread: thread, model: model)
+            ModelRunProfileGroup(thread: thread, model: model)
             RuntimePlanModeGroup(thread: thread, model: model)
             Spacer()
             if let status = model.threadState(thread.id)?.contextWindow {
@@ -21,8 +21,10 @@ struct ComposerControlsRow: View {
     }
 }
 
-/// Visually grouped model + effort + tier controls as one compact neutral bar.
-private struct ModelEffortTierGroup: View {
+/// The model remains immediately visible. Lower-frequency tuning lives in one
+/// run-profile menu instead of competing with model, access, and interaction
+/// mode as separate controls.
+private struct ModelRunProfileGroup: View {
     let thread: ChatThread
     let model: AppModel
 
@@ -32,26 +34,17 @@ private struct ModelEffortTierGroup: View {
         }
     }
 
-    private var showsEffort: Bool {
+    private var showsRunProfile: Bool {
         guard let option = currentModelOption else { return false }
-        return !option.effortChoices.isEmpty
-    }
-
-    private var showsTier: Bool {
-        guard let option = currentModelOption else { return false }
-        return !option.serviceTierChoices.isEmpty
+        return !option.effortChoices.isEmpty || !option.serviceTierChoices.isEmpty
     }
 
     var body: some View {
         HStack(spacing: 0) {
             ModelPickerMenu(thread: thread, model: model)
-            if showsEffort {
+            if showsRunProfile {
                 segmentDivider
-                EffortMenu(thread: thread, model: model)
-            }
-            if showsTier {
-                segmentDivider
-                ServiceTierMenu(thread: thread, model: model)
+                RunProfileMenu(thread: thread, model: model)
             }
         }
         .frame(minHeight: AlpineControls.segmentHeight)
@@ -128,93 +121,57 @@ private struct RuntimePlanModeGroup: View {
     }
 }
 
-/// Reasoning-effort picker for the thread's current model. Hidden when the
-/// model exposes no effort option descriptor.
-private struct EffortMenu: View {
+/// Combined reasoning + service-tier chooser. Its summary preserves the
+/// active values while the menu groups their full choices by meaning.
+private struct RunProfileMenu: View {
     let thread: ChatThread
     let model: AppModel
 
     @UIState private var isHovering = false
 
     var body: some View {
-        if let option = currentModelOption, !option.effortChoices.isEmpty {
+        if let option = currentModelOption {
             Menu {
-                ForEach(option.effortChoices) { choice in
-                    Button {
-                        Task { await model.setReasoningEffort(choice.id) }
-                    } label: {
-                        if choice.id == effectiveEffort(of: option) {
-                            Label(choice.label, systemImage: "checkmark")
-                        } else {
-                            Text(choice.label)
+                if !option.effortChoices.isEmpty {
+                    Section("Reasoning") {
+                        ForEach(option.effortChoices) { choice in
+                            Button {
+                                Task { await model.setReasoningEffort(choice.id) }
+                            } label: {
+                                if choice.id == effectiveEffort(of: option) {
+                                    Label(choice.label, systemImage: "checkmark")
+                                } else {
+                                    Text(choice.label)
+                                }
+                            }
+                        }
+                    }
+                }
+                if showsTier(option) {
+                    Section("Service Tier") {
+                        ForEach(option.serviceTierChoices) { choice in
+                            Button {
+                                Task { await model.setServiceTier(choice.id) }
+                            } label: {
+                                if choice.id == effectiveTier(of: option) {
+                                    Label(choice.label, systemImage: "checkmark")
+                                } else {
+                                    Text(choice.label)
+                                }
+                            }
                         }
                     }
                 }
             } label: {
                 ComposerSegmentLabel(
-                    icon: "brain",
-                    title: currentLabel(of: option),
+                    icon: "slider.horizontal.3",
+                    title: summary(of: option),
                     isHovering: isHovering
                 )
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
-            .help("Reasoning effort")
-            .onHover { isHovering = $0 }
-        }
-    }
-
-    private var currentModelOption: ModelOption? {
-        model.models.first {
-            $0.instanceID == thread.modelInstanceID && $0.modelID == thread.modelID
-        }
-    }
-
-    /// Explicit thread selection, else the model's default choice.
-    private func effectiveEffort(of option: ModelOption) -> String? {
-        thread.reasoningEffort ?? option.effortChoices.first(where: \.isDefault)?.id
-    }
-
-    private func currentLabel(of option: ModelOption) -> String {
-        let effort = effectiveEffort(of: option)
-        return option.effortChoices.first { $0.id == effort }?.label ?? "Effort"
-    }
-}
-
-/// Service-tier picker for the thread's current model (e.g. Standard / Fast).
-/// Hidden when the model exposes no serviceTier option descriptor.
-private struct ServiceTierMenu: View {
-    let thread: ChatThread
-    let model: AppModel
-
-    @UIState private var isHovering = false
-
-    var body: some View {
-        if !isSubagentThread, let option = currentModelOption,
-            !option.serviceTierChoices.isEmpty
-        {
-            Menu {
-                ForEach(option.serviceTierChoices) { choice in
-                    Button {
-                        Task { await model.setServiceTier(choice.id) }
-                    } label: {
-                        if choice.id == effectiveTier(of: option) {
-                            Label(choice.label, systemImage: "checkmark")
-                        } else {
-                            Text(choice.label)
-                        }
-                    }
-                }
-            } label: {
-                ComposerSegmentLabel(
-                    icon: "bolt",
-                    title: currentLabel(of: option),
-                    isHovering: isHovering
-                )
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .help("Service tier")
+            .help("Run profile: reasoning effort and service tier")
             .onHover { isHovering = $0 }
         }
     }
@@ -230,13 +187,29 @@ private struct ServiceTierMenu: View {
             .range(of: #"^Agent:\s*"#, options: [.regularExpression, .caseInsensitive]) != nil
     }
 
+    private func effectiveEffort(of option: ModelOption) -> String? {
+        thread.reasoningEffort ?? option.effortChoices.first(where: \.isDefault)?.id
+    }
+
     private func effectiveTier(of option: ModelOption) -> String? {
         thread.serviceTier ?? option.serviceTierChoices.first(where: \.isDefault)?.id
     }
 
-    private func currentLabel(of option: ModelOption) -> String {
-        let tier = effectiveTier(of: option)
-        return option.serviceTierChoices.first { $0.id == tier }?.label ?? "Tier"
+    private func showsTier(_ option: ModelOption) -> Bool {
+        !isSubagentThread && !option.serviceTierChoices.isEmpty
+    }
+
+    private func summary(of option: ModelOption) -> String {
+        var parts: [String] = []
+        if !option.effortChoices.isEmpty {
+            let effort = effectiveEffort(of: option)
+            parts.append(option.effortChoices.first { $0.id == effort }?.label ?? "Default")
+        }
+        if showsTier(option) {
+            let tier = effectiveTier(of: option)
+            parts.append(option.serviceTierChoices.first { $0.id == tier }?.label ?? "Default")
+        }
+        return parts.joined(separator: " · ")
     }
 }
 

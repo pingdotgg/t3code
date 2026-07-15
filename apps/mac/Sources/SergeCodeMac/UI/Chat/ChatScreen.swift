@@ -58,10 +58,9 @@ public struct ChatScreen: View {
                             .transition(Motion.paneChange)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    // Active work gets a predictable reading surface. The scene remains
-                    // atmospheric in the shallow task header instead of competing with
-                    // transcript text, controls, and diffs across the entire pane.
-                    .background(Color(nsColor: .textBackgroundColor).opacity(0.92))
+                    // Active work is fully opaque. Scenery belongs to the shallow task
+                    // header; a ghosted image under long-form work reads as visual noise.
+                    .background(Color(nsColor: .textBackgroundColor))
                 }
             } else {
                 ChatEmptyStateView()
