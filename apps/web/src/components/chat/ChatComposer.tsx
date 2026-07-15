@@ -9,7 +9,6 @@ import type {
   RuntimeMode,
   ScopedThreadRef,
   ServerProvider,
-  ServerProviderSkill,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -133,9 +132,13 @@ import { formatProviderSkillDisplayName } from "../../providerSkillPresentation"
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
+import {
+  type CachedComposerProviderSkills,
+  getComposerProviderSkillsCacheEntry,
+  resolveComposerProviderSkills,
+} from "../../composerProviderSkills";
 
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
-const EMPTY_PROVIDER_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
 
 const runtimeModeConfig: Record<
   RuntimeMode,
@@ -965,24 +968,31 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     enabled: composerTriggerKind === "skill",
   });
   const providerSkillsTargetKey = `${environmentId ?? ""}\0${selectedProviderStatus?.instanceId ?? ""}\0${gitCwd ?? ""}`;
-  const [cachedProviderSkills, setCachedProviderSkills] = useState<{
-    readonly targetKey: string;
-    readonly skills: ReadonlyArray<ServerProviderSkill>;
-  } | null>(null);
+  const [cachedProviderSkills, setCachedProviderSkills] =
+    useState<CachedComposerProviderSkills | null>(null);
   useEffect(() => {
-    if (providerSkills.data) {
-      setCachedProviderSkills({
-        targetKey: providerSkillsTargetKey,
-        skills: providerSkills.data.skills,
-      });
+    const cacheEntry = getComposerProviderSkillsCacheEntry({
+      targetKey: providerSkillsTargetKey,
+      discoveredSkills: providerSkills.data?.skills ?? null,
+      snapshotSkills: selectedProviderStatus?.skills,
+      discoveryUnsupported: providerSkills.isUnsupported,
+    });
+    if (cacheEntry !== null) {
+      setCachedProviderSkills(cacheEntry);
     }
-  }, [providerSkills.data, providerSkillsTargetKey]);
-  const composerProviderSkills =
-    providerSkills.data?.skills ??
-    (cachedProviderSkills?.targetKey === providerSkillsTargetKey
-      ? cachedProviderSkills.skills
-      : selectedProviderStatus?.skills) ??
-    EMPTY_PROVIDER_SKILLS;
+  }, [
+    providerSkills.data,
+    providerSkills.isUnsupported,
+    providerSkillsTargetKey,
+    selectedProviderStatus?.skills,
+  ]);
+  const composerProviderSkills = resolveComposerProviderSkills({
+    targetKey: providerSkillsTargetKey,
+    discoveredSkills: providerSkills.data?.skills ?? null,
+    cachedSkills: cachedProviderSkills,
+    snapshotSkills: selectedProviderStatus?.skills,
+    discoveryUnsupported: providerSkills.isUnsupported,
+  });
 
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];

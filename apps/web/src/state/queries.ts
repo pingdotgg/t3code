@@ -4,16 +4,18 @@ import {
   type ComposerPathSearchTarget,
 } from "@t3tools/client-runtime/state/threads";
 import { type VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
-import type {
-  EnvironmentId,
-  OrchestrationThread,
-  ProviderInstanceId,
-  ThreadId,
-  VcsListRefsResult,
-  VcsRef,
+import {
+  type EnvironmentId,
+  type OrchestrationThread,
+  type ProviderInstanceId,
+  ServerProviderSkillsUnsupportedError,
+  type ThreadId,
+  type VcsListRefsResult,
+  type VcsRef,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -29,6 +31,7 @@ const COMPOSER_PATH_SEARCH_LIMIT = 80;
 const VCS_REF_LIST_LIMIT = 100;
 const EMPTY_REFS: ReadonlyArray<VcsRef> = [];
 const INITIAL_BRANCH_CURSORS = [undefined] as const;
+const isProviderSkillsUnsupportedError = Schema.is(ServerProviderSkillsUnsupportedError);
 
 export interface ThreadDetailView {
   readonly data: OrchestrationThread | null;
@@ -221,7 +224,7 @@ export function useProviderSkills(target: {
   readonly cwd: string | null;
   readonly enabled: boolean;
 }) {
-  return useEnvironmentQuery(
+  const result = useEnvironmentQuery(
     target.enabled &&
       target.environmentId !== null &&
       target.instanceId !== null &&
@@ -232,6 +235,10 @@ export function useProviderSkills(target: {
         })
       : null,
   );
+  return {
+    ...result,
+    isUnsupported: result.failure !== null && isProviderSkillsUnsupportedError(result.failure),
+  };
 }
 
 export function useCheckpointDiff(
