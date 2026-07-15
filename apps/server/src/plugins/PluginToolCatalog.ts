@@ -106,6 +106,15 @@ export class PluginToolCatalog extends Context.Service<
     /** Synchronous visibility predicate for McpSchema.EnabledWhen. */
     readonly isActive: (finalName: string) => boolean;
 
+    /**
+     * Records why a plugin activated but contributed no tools (e.g. a final-name
+     * collision). Without this the only evidence is a log line, leaving an
+     * "active plugin, zero tools" state undiagnosable from the UI/lockfile.
+     * Sets `lastError` only — the plugin is still functional minus its tools, so
+     * it must NOT be flipped to `failed`.
+     */
+    readonly noteRegistrationFailure: (pluginId: PluginId, message: string) => Effect.Effect<void>;
+
     /** Entries that still need McpServer.addTool (addedToMcp === false). */
     readonly pendingMcpRegistration: (
       pluginId: PluginId,
@@ -304,6 +313,18 @@ export const make = Effect.fn("PluginToolCatalog.make")(function* () {
     );
   };
 
+  const noteRegistrationFailure: PluginToolCatalog["Service"]["noteRegistrationFailure"] = (
+    pluginId,
+    message,
+  ) =>
+    Option.isNone(lockfileStore)
+      ? Effect.void
+      : lockfileStore.value
+          .updatePlugin(pluginId, ({ current }) =>
+            Effect.succeed(current ? { ...current, lastError: message } : undefined),
+          )
+          .pipe(Effect.ignore);
+
   const pendingMcpRegistration: PluginToolCatalog["Service"]["pendingMcpRegistration"] = (
     pluginId,
   ) =>
@@ -361,8 +382,11 @@ export const make = Effect.fn("PluginToolCatalog.make")(function* () {
     localName: string,
     cause: Cause.Cause<Error>,
   ): Effect.Effect<McpSchema.CallToolResult, never> => {
-    // Interrupt-first: external cancellation must propagate.
-    if (Cause.hasInterruptsOnly(cause)) {
+    // Interrupt-first: external cancellation must propagate. Use hasInterrupts, not
+    // hasInterruptsOnly — a cause carrying an interrupt AND a failure/defect is still
+    // a cancellation, and hasInterruptsOnly would misclassify it as an isError result,
+    // swallowing the interrupt.
+    if (Cause.hasInterrupts(cause)) {
       return Effect.failCause(cause as Cause.Cause<never>);
     }
     if (Cause.hasDies(cause)) {
@@ -534,6 +558,7 @@ export const make = Effect.fn("PluginToolCatalog.make")(function* () {
     getPermanent,
     listActiveFinalNames,
     makeTrampolineHandle,
+    noteRegistrationFailure,
   });
 });
 

@@ -170,6 +170,20 @@ export class PluginHost extends Context.Service<
       pluginId: PluginId,
     ) => Effect.Effect<void, PluginLockfileReadError | PluginLockfileCorruptError>;
     readonly deactivatePlugin: (pluginId: PluginId) => Effect.Effect<void>;
+    /**
+     * Runs `persist` and the matching activate/deactivate under ONE acquisition of
+     * the per-plugin activation lock, so a lockfile write can never land between a
+     * concurrent caller's write and its host action. Callers own the lockfile shape
+     * and inject it as `persist`; the host owns the ordering.
+     *
+     * Prefer this over `persist; activatePlugin(...)` — that sequence is racy (see
+     * the implementation comment) and left plugins in an unrecoverable state.
+     */
+    readonly setPluginEnabled: <E>(
+      pluginId: PluginId,
+      enabled: boolean,
+      persist: Effect.Effect<void, E>,
+    ) => Effect.Effect<void, E | PluginLockfileReadError | PluginLockfileCorruptError>;
   }
 >()("t3/plugins/PluginHost") {}
 
@@ -875,6 +889,41 @@ export const make = Effect.fn("PluginHost.make")(function* () {
       );
     });
 
+  // Body of activatePlugin WITHOUT acquiring the activation lock. The caller MUST
+  // already hold it. Split out so setPluginEnabled can persist the lockfile and
+  // activate under a SINGLE acquisition — withPluginActivationLock is a
+  // Semaphore(1) and is NOT reentrant, so calling activatePlugin from inside the
+  // lock would deadlock.
+  const activatePluginLocked = (pluginId: PluginId) =>
+    Effect.gen(function* () {
+      // Propagate a lockfile read/parse failure instead of substituting an empty
+      // lockfile: an empty lockfile makes getLockfilePlugin return undefined and
+      // the guard below no-op, so activatePlugin would SUCCEED without loading
+      // anything and callers (PluginInstaller) would treat a failed
+      // install/enable as done. A genuinely MISSING lockfile is already handled
+      // inside readLockfile (it returns EMPTY_PLUGIN_LOCKFILE for a null read),
+      // so this only surfaces real read/parse errors.
+      const lockfile = yield* store.readLockfile;
+      const entry = getLockfilePlugin(lockfile, pluginId);
+      if (!entry?.enabled || entry.state !== "active") return;
+      // Successful enable: clear disable intent even when a runtime is already
+      // present (e.g. enable races a slow disable teardown). Intent must not
+      // permanently block catalog.activate after the user re-enabled.
+      yield* toolCatalog.clearDisableIntent(pluginId);
+      const active = yield* registry.get(pluginId);
+      if (Option.isSome(active)) {
+        // Runtime survived; re-open catalog gates now that intent is cleared.
+        yield* toolCatalog.activate(pluginId);
+        return;
+      }
+      yield* loader.ensureHostSingletonResolution;
+      yield* loadPlugin(pluginId, entry).pipe(
+        Effect.catchCause((cause) =>
+          handleLoadFailureCause(pluginId, "Plugin hot activation failed", cause),
+        ),
+      );
+    });
+
   const activatePlugin: PluginHost["Service"]["activatePlugin"] = (pluginId) =>
     Effect.gen(function* () {
       if (process.env.T3_NO_PLUGINS === "1") {
@@ -885,76 +934,89 @@ export const make = Effect.fn("PluginHost.make")(function* () {
       // activatePlugin waits for the first to finish, then its registry.get
       // double-check returns Some and short-circuits — no second loadPlugin, no
       // leaked runtime. The registry.get early-return stays INSIDE the lock.
-      yield* withPluginActivationLock(
-        pluginId,
-        Effect.gen(function* () {
-          // Propagate a lockfile read/parse failure instead of substituting an empty
-          // lockfile: an empty lockfile makes getLockfilePlugin return undefined and
-          // the guard below no-op, so activatePlugin would SUCCEED without loading
-          // anything and callers (PluginInstaller) would treat a failed
-          // install/enable as done. A genuinely MISSING lockfile is already handled
-          // inside readLockfile (it returns EMPTY_PLUGIN_LOCKFILE for a null read),
-          // so this only surfaces real read/parse errors.
-          const lockfile = yield* store.readLockfile;
-          const entry = getLockfilePlugin(lockfile, pluginId);
-          if (!entry?.enabled || entry.state !== "active") return;
-          // Successful enable: clear disable intent even when a runtime is already
-          // present (e.g. enable races a slow disable teardown). Intent must not
-          // permanently block catalog.activate after the user re-enabled.
-          yield* toolCatalog.clearDisableIntent(pluginId);
-          const active = yield* registry.get(pluginId);
-          if (Option.isSome(active)) {
-            // Runtime survived; re-open catalog gates now that intent is cleared.
-            yield* toolCatalog.activate(pluginId);
-            return;
-          }
-          yield* loader.ensureHostSingletonResolution;
-          yield* loadPlugin(pluginId, entry).pipe(
-            Effect.catchCause((cause) =>
-              handleLoadFailureCause(pluginId, "Plugin hot activation failed", cause),
-            ),
-          );
-        }),
+      yield* withPluginActivationLock(pluginId, activatePluginLocked(pluginId));
+    });
+
+  // Signals disable intent and closes the catalog gates WITHOUT taking the lock.
+  // MUST run before waiting on the activation lock. Ordering:
+  //   1. noteDisableIntent — activate refuses to reopen while this is set
+  //   2. deactivate — clears visibility/call active bindings immediately
+  //   3. (caller) wait for activation lock, then remove runtime
+  // Without (1), a registry.put subscriber queued before remove can still see a
+  // live runtime and reopen active while we wait on the lock.
+  // Idempotent: setPluginEnabled re-asserts it INSIDE the lock, because a
+  // concurrent enable that wins the lock clears the intent and reopens the
+  // catalog, which would otherwise leave the catalog active with no runtime.
+  const signalDisableIntent = (pluginId: PluginId) =>
+    Effect.gen(function* () {
+      yield* toolCatalog.noteDisableIntent(pluginId);
+      yield* toolCatalog.deactivate(pluginId);
+    });
+
+  // Body of deactivatePlugin WITHOUT acquiring the activation lock. The caller
+  // MUST already hold it (see activatePluginLocked — the semaphore is not reentrant).
+  const deactivatePluginLocked = (pluginId: PluginId) =>
+    Effect.gen(function* () {
+      const runtime = yield* registry.get(pluginId);
+      if (Option.isNone(runtime)) return;
+      // Drop the runtime so registry.get fails closed, then interrupt
+      // invocation fibers owned by the plugin scope (handlers forkIn that
+      // scope). Scope.close does not by itself stop work still running only
+      // on the MCP request fiber — ownership is required.
+      yield* registry.remove(pluginId);
+      yield* toolCatalog.deactivate(pluginId);
+      yield* Scope.close(runtime.value.scope, Exit.void).pipe(Effect.ignore);
+      yield* httpRegistry.remove(pluginId).pipe(Effect.ignore);
+      // Announce the state that is actually persisted rather than a hardcoded
+      // "disabled": uninstall sets "pending-remove" then calls this, and
+      // publishing "disabled" would contradict the lockfile + list APIs.
+      const persistedState = yield* store.readLockfile.pipe(
+        Effect.map((lockfile) => getLockfilePlugin(lockfile, pluginId)?.state ?? "disabled"),
+        Effect.orElseSucceed(() => "disabled" as PluginState),
       );
+      yield* publishPluginStateChanged(pluginId, persistedState);
     });
 
   const deactivatePlugin: PluginHost["Service"]["deactivatePlugin"] = (pluginId) =>
-    // Share the per-plugin activation lock so an activate/deactivate pair for one
-    // plugin can't interleave (the round-4/5 pre-put re-check + persisted-state
-    // publish remain as defense-in-depth). Neither path calls the other while
-    // holding the lock, so this cannot deadlock.
     Effect.gen(function* () {
-      // Disable intent + catalog deactivate MUST run synchronously BEFORE waiting
-      // on the activation lock. Ordering:
-      //   1. noteDisableIntent — activate refuses to reopen while this is set
-      //   2. deactivate — clears visibility/call active bindings immediately
-      //   3. wait for activation lock, then remove runtime
-      // Without (1), a registry.put subscriber queued before remove can still see
-      // a live runtime and reopen active while we wait on the lock.
-      yield* toolCatalog.noteDisableIntent(pluginId);
-      yield* toolCatalog.deactivate(pluginId);
+      yield* signalDisableIntent(pluginId);
+      yield* withPluginActivationLock(pluginId, deactivatePluginLocked(pluginId));
+    });
 
-      yield* withPluginActivationLock(
+  // Persist the enabled/disabled lockfile write AND the corresponding host action
+  // under a SINGLE activation-lock acquisition.
+  //
+  // Why this exists: PluginInstaller.setEnabled used to persist first and only then
+  // call activatePlugin/deactivatePlugin, which each took the lock separately. Two
+  // concurrent setEnabled calls could interleave between the persist and the host
+  // action: disable persisted "disabled"; a later enable persisted "active" and
+  // returned reusing the live runtime; then the older disable removed that runtime.
+  // Final state was lockfile enabled+active with NO runtime and disable intent stuck
+  // set — a permanently broken plugin. Making persist+action atomic per plugin means
+  // whichever call acquires the lock last determines a coherent final state.
+  const setPluginEnabled: PluginHost["Service"]["setPluginEnabled"] = (
+    pluginId,
+    enabled,
+    persist,
+  ) =>
+    Effect.gen(function* () {
+      // Pre-lock intent still matters: it stops a registry.put subscriber queued
+      // before removal from reopening the gates while we wait for the lock.
+      if (!enabled) yield* signalDisableIntent(pluginId);
+      return yield* withPluginActivationLock(
         pluginId,
         Effect.gen(function* () {
-          const runtime = yield* registry.get(pluginId);
-          if (Option.isNone(runtime)) return;
-          // Drop the runtime so registry.get fails closed, then interrupt
-          // invocation fibers owned by the plugin scope (handlers forkIn that
-          // scope). Scope.close does not by itself stop work still running only
-          // on the MCP request fiber — ownership is required.
-          yield* registry.remove(pluginId);
-          yield* toolCatalog.deactivate(pluginId);
-          yield* Scope.close(runtime.value.scope, Exit.void).pipe(Effect.ignore);
-          yield* httpRegistry.remove(pluginId).pipe(Effect.ignore);
-          // Announce the state that is actually persisted rather than a hardcoded
-          // "disabled": uninstall sets "pending-remove" then calls this, and
-          // publishing "disabled" would contradict the lockfile + list APIs.
-          const persistedState = yield* store.readLockfile.pipe(
-            Effect.map((lockfile) => getLockfilePlugin(lockfile, pluginId)?.state ?? "disabled"),
-            Effect.orElseSucceed(() => "disabled" as PluginState),
-          );
-          yield* publishPluginStateChanged(pluginId, persistedState);
+          yield* persist;
+          if (enabled) {
+            yield* activatePluginLocked(pluginId);
+            return;
+          }
+          // Re-assert INSIDE the lock: a concurrent enable that won the lock first
+          // cleared the intent and reopened the catalog, so the pre-lock signal is
+          // no longer in effect. Without this, disable would remove the runtime and
+          // leave the catalog active with no runtime behind it.
+          yield* signalDisableIntent(pluginId);
+          yield* deactivatePluginLocked(pluginId);
         }),
       );
     });
@@ -1142,7 +1204,7 @@ export const make = Effect.fn("PluginHost.make")(function* () {
     ),
   );
 
-  return PluginHost.of({ start, activatePlugin, deactivatePlugin });
+  return PluginHost.of({ start, activatePlugin, deactivatePlugin, setPluginEnabled });
 });
 
 export const layer = Layer.effect(PluginHost, make());

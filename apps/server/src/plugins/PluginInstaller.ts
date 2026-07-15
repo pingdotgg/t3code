@@ -851,7 +851,13 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
 
   const setEnabled: PluginInstaller["Service"]["setEnabled"] = (input) =>
     Effect.gen(function* () {
-      yield* store
+      // Persist + activate/deactivate MUST be atomic per plugin. Doing the write
+      // here and then calling activatePlugin/deactivatePlugin (which take the
+      // activation lock separately) let two concurrent setEnabled calls interleave
+      // between the write and the host action, stranding the plugin as
+      // lockfile-enabled with no runtime and disable intent stuck. The host runs
+      // both halves under one lock acquisition; we still own the lockfile shape.
+      const persist = store
         .updatePlugin(input.pluginId, ({ current }) =>
           Effect.succeed({
             ...installedEntry(current),
@@ -863,17 +869,29 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
               : (current?.activation ?? { activatingSince: null, crashCount: 0 }),
           }),
         )
-        .pipe(Effect.mapError(lockfileError));
+        .pipe(Effect.mapError(lockfileError), Effect.asVoid);
+
       if (input.enabled) {
+        yield* host.setPluginEnabled(input.pluginId, true, persist).pipe(
+          // `persist` already fails as a PluginManagementError; only the host's own
+          // lockfile read/parse failures need wrapping as activation failures.
+          Effect.mapError((error) =>
+            error._tag === "PluginLockfileReadError" || error._tag === "PluginLockfileCorruptError"
+              ? managementError("activation-failed", "Plugin activation failed.", { cause: error })
+              : error,
+          ),
+        );
+      } else {
         yield* host
-          .activatePlugin(input.pluginId)
+          .setPluginEnabled(input.pluginId, false, persist)
           .pipe(
-            Effect.mapError((cause) =>
-              managementError("activation-failed", "Plugin activation failed.", { cause }),
+            Effect.mapError((error) =>
+              error._tag === "PluginLockfileReadError" ||
+              error._tag === "PluginLockfileCorruptError"
+                ? lockfileError(error)
+                : error,
             ),
           );
-      } else {
-        yield* host.deactivatePlugin(input.pluginId);
       }
     });
 

@@ -7,6 +7,7 @@ import {
   type PluginLockfilePlugin,
 } from "@t3tools/contracts/plugin";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -583,6 +584,112 @@ layer("PluginHost", (it) => {
       assert.equal(lockfile.plugins[pluginId]?.activation.activatingSince, null);
       assert.equal(lockfile.plugins[pluginId]?.activation.crashCount, 0);
     }),
+  );
+
+  it.effect(
+    "setPluginEnabled runs persist + host action atomically, so concurrent disable/enable cannot strand the plugin",
+    () =>
+      Effect.gen(function* () {
+        const pluginId = PluginId.make("test-plugin");
+        const host = yield* PluginHostModule.PluginHost;
+        const registry = yield* PluginRuntimeRegistryLayer.PluginRuntimeRegistry;
+        const store = yield* PluginLockfileStoreLayer.PluginLockfileStore;
+
+        yield* runMigrations({ toMigrationInclusive: 34 });
+        yield* installPlugin({ pluginId });
+        const previousHealthyDelay = process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS;
+        process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS = "0";
+        try {
+          yield* host.start;
+          yield* Effect.yieldNow;
+        } finally {
+          if (previousHealthyDelay === undefined) {
+            delete process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS;
+          } else {
+            process.env.T3_PLUGIN_HOST_HEALTHY_DELAY_MS = previousHealthyDelay;
+          }
+        }
+        assert.isTrue(
+          Option.isSome(yield* registry.get(pluginId)),
+          "precondition: runtime is live",
+        );
+
+        const persistState = (enabled: boolean) =>
+          store
+            .updatePlugin(pluginId, ({ current }) =>
+              Effect.succeed({
+                ...makeLockEntry(current ?? {}),
+                enabled,
+                state: enabled ? ("active" as const) : ("disabled" as const),
+              }),
+            )
+            .pipe(Effect.orDie, Effect.asVoid);
+
+        // Hold DISABLE inside its persist, while it owns the activation lock.
+        // `enteredPersist` makes this deterministic: we do not fork enable until
+        // disable has provably reached its persist, i.e. is holding the lock.
+        // (An earlier version used yieldNow to guess and was flaky — if enable won
+        // the lock first the assertion below fired spuriously.)
+        const enteredPersist = yield* Deferred.make<void>();
+        const gate = yield* Deferred.make<void>();
+        let enablePersisted = false;
+
+        const disableFiber = yield* host
+          .setPluginEnabled(
+            pluginId,
+            false,
+            Deferred.succeed(enteredPersist, undefined).pipe(
+              Effect.andThen(Deferred.await(gate)),
+              Effect.andThen(persistState(false)),
+            ),
+          )
+          .pipe(Effect.forkChild({ startImmediately: true }));
+
+        // Deterministic: disable now holds the activation lock and is parked.
+        yield* Deferred.await(enteredPersist);
+
+        const enableFiber = yield* host
+          .setPluginEnabled(
+            pluginId,
+            true,
+            Effect.sync(() => {
+              enablePersisted = true;
+            }).pipe(Effect.andThen(persistState(true))),
+          )
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+
+        // THE ASSERTION THAT MATTERS. Disable owns the lock and is parked mid-persist,
+        // so enable must still be queued behind it. If persist is ever hoisted back
+        // outside withPluginActivationLock, enable's write lands here and this fails —
+        // which is exactly the interleaving that stranded the plugin as
+        // lockfile-enabled with no runtime.
+        assert.isFalse(
+          enablePersisted,
+          "enable persisted while disable held the activation lock — persist is not atomic with the host action",
+        );
+
+        yield* Deferred.succeed(gate, undefined);
+        yield* Fiber.join(disableFiber);
+        yield* Fiber.join(enableFiber);
+
+        // Guards the assertion above against passing vacuously: if enable had never
+        // been scheduled at all, `enablePersisted === false` would prove nothing.
+        assert.isTrue(enablePersisted, "enable must persist once the lock is released");
+
+        // Whoever acquired the lock last wins, but the result must be coherent:
+        // lockfile enabled+active if and only if a runtime is present.
+        const lockfile = yield* store.readLockfile;
+        const entry = lockfile.plugins[pluginId];
+        const lockfileActive = entry?.enabled === true && entry.state === "active";
+        const runtimePresent = Option.isSome(yield* registry.get(pluginId));
+        assert.equal(
+          runtimePresent,
+          lockfileActive,
+          `incoherent final state: lockfileActive=${lockfileActive} runtimePresent=${runtimePresent}`,
+        );
+      }),
   );
 
   it.effect(
