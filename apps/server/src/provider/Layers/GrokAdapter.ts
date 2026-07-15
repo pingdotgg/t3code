@@ -92,9 +92,23 @@ export interface GrokAdapterLiveOptions {
   ) => Effect.Effect<ReadonlyArray<ServerProviderSkill>, ProviderDriverError>;
 }
 
+// Provider requests contain only flattened prompt text, so an inserted skill
+// chip cannot be distinguished from manually typed shell syntax here. Grok's
+// normal skill names are lowercase or qualified; reserve conventional
+// all-uppercase identifiers for environment variables so `$PATH` does not run
+// (or fail on) `grok inspect`. An all-uppercase skill can still be rewritten
+// when discovery is triggered by another normal skill token in the prompt.
+const ENVIRONMENT_VARIABLE_STYLE_TOKEN = /^[A-Z][A-Z0-9_]*$/;
+
 function submittedSkillTokens(input: string) {
   return collectComposerInlineTokens(input, { includeTrailingSkillToken: true }).filter(
     (token) => token.type === "skill",
+  );
+}
+
+function potentialGrokSkillTokens(input: string) {
+  return submittedSkillTokens(input).filter(
+    (token) => !ENVIRONMENT_VARIABLE_STYLE_TOKEN.test(token.value),
   );
 }
 
@@ -996,7 +1010,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
 
               const rawText = input.input?.trim();
               const text =
-                rawText && options?.listSkills && submittedSkillTokens(rawText).length > 0
+                rawText && options?.listSkills && potentialGrokSkillTokens(rawText).length > 0
                   ? yield* options.listSkills(ctx.session.cwd ?? "").pipe(
                       Effect.map((skills) => rewriteGrokSkillReferences(rawText, skills)),
                       Effect.mapError(

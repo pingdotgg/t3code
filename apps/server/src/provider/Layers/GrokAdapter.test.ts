@@ -152,10 +152,30 @@ it("rewrites only exact enabled Grok skill references", () => {
 
   assert.equal(
     rewriteGrokSkillReferences(
-      "Use $review and keep $PATH plus $disabled then run $local:verify",
+      "Use $review and keep $PATH plus $NODE_ENV and $disabled then run $local:verify",
       skills,
     ),
-    "Use /review and keep $PATH plus $disabled then run /local:verify",
+    "Use /review and keep $PATH plus $NODE_ENV and $disabled then run /local:verify",
+  );
+});
+
+it("rewrites an exact all-uppercase skill once skills have been discovered", () => {
+  assert.equal(
+    rewriteGrokSkillReferences("Use $review with $PATH", [
+      {
+        name: "review",
+        path: "/skills/review/SKILL.md",
+        scope: "project",
+        enabled: true,
+      },
+      {
+        name: "PATH",
+        path: "/skills/path/SKILL.md",
+        scope: "project",
+        enabled: true,
+      },
+    ]),
+    "Use /review with /PATH",
   );
 });
 
@@ -223,6 +243,43 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
         runtimeMode: "full-access",
       });
       yield* adapter.sendTurn({ threadId, input: "ordinary prompt", attachments: [] });
+
+      assert.equal(yield* Ref.get(discoveryCalls), 0);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("bypasses discovery for shell-style environment variables", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-env-var-discovery-bypass");
+      const wrapperPath = yield* Effect.promise(() => makeMockGrokWrapper());
+      const discoveryCalls = yield* Ref.make(0);
+      const adapter = yield* makeTestAdapter(wrapperPath, {
+        listSkills: () =>
+          Ref.update(discoveryCalls, (count) => count + 1).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new ProviderDriverError({
+                  driver: "grok",
+                  instanceId: "grok",
+                  detail: "inspect failed",
+                }),
+              ),
+            ),
+          ),
+      });
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "Print $PATH and $NODE_ENV",
+        attachments: [],
+      });
 
       assert.equal(yield* Ref.get(discoveryCalls), 0);
       yield* adapter.stopSession(threadId);
