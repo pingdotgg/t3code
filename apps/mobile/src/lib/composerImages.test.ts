@@ -36,11 +36,41 @@ vi.mock("./uuid", () => ({
   uuidv4: () => "attachment-id",
 }));
 
-import { convertPastedImagesToAttachments, isOwnedPastedImageUri } from "./composerImages";
+const clipboard = { text: "", hasImage: false };
+vi.mock("expo-clipboard", () => ({
+  hasImageAsync: async () => clipboard.hasImage,
+  hasStringAsync: async () => clipboard.text.length > 0,
+  getStringAsync: async () => clipboard.text,
+}));
+
+import {
+  convertPastedImagesToAttachments,
+  isOwnedPastedImageUri,
+  pasteComposerClipboard,
+} from "./composerImages";
 
 describe("native pasted image cleanup", () => {
   beforeEach(() => {
     files.clear();
+    clipboard.text = "";
+    clipboard.hasImage = false;
+  });
+
+  it("turns oversized clipboard text into a named text attachment", async () => {
+    clipboard.text = "line\n".repeat(3_000);
+
+    const result = await pasteComposerClipboard({ existingCount: 0 });
+
+    expect(result.text).toBeNull();
+    expect(result.textAttachment).toEqual(
+      expect.objectContaining({
+        name: "pasted-text.txt",
+        type: "text",
+        mimeType: "text/plain",
+        preview: clipboard.text.slice(0, 1_600),
+      }),
+    );
+    expect(result.textAttachment?.dataUrl.startsWith("data:text/plain;base64,")).toBe(true);
   });
 
   it("recognizes only files created in the native composer paste directory", () => {

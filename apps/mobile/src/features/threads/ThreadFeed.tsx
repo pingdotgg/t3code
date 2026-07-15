@@ -103,6 +103,8 @@ const MESSAGE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
   hour: "numeric",
   minute: "2-digit",
 });
+const LARGE_USER_MESSAGE_THRESHOLD = 12_000;
+const LARGE_USER_MESSAGE_PREVIEW_CHARS = 1_600;
 function formatMessageTime(input: string): string {
   const timestamp = Date.parse(input);
   if (Number.isNaN(timestamp)) {
@@ -225,6 +227,64 @@ function MessageAttachmentImage(props: {
         <Text className="text-xs text-white/80">{formatChatAttachmentSize(props.sizeBytes)}</Text>
       </View>
     </View>
+  );
+}
+
+function MessageAttachmentText(props: {
+  readonly attachment: { readonly id: string; readonly name: string; readonly preview: string };
+}) {
+  return (
+    <View className="rounded-[14px] bg-black/10 px-3 py-2 dark:bg-white/10">
+      <View className="flex-row items-center gap-2">
+        <SymbolView name="doc.text" size={15} tintColor="#ffffff" type="monochrome" />
+        <Text className="flex-1 font-t3-medium text-xs text-white">{props.attachment.name}</Text>
+      </View>
+      <NativeText
+        selectable
+        numberOfLines={8}
+        style={{ color: "rgba(255,255,255,0.82)", fontFamily: "ui-monospace", fontSize: 11 }}
+      >
+        {props.attachment.preview}
+      </NativeText>
+    </View>
+  );
+}
+
+function CollapsibleUserMessage(props: {
+  readonly text: string;
+  readonly markdownStyles: MarkdownStyleSet;
+  readonly reviewCommentColors: ReviewCommentColors;
+  readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
+  readonly onLinkPress: (href: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const isLarge = props.text.length > LARGE_USER_MESSAGE_THRESHOLD;
+  const visibleText =
+    !isLarge || expanded
+      ? props.text
+      : `${props.text.slice(0, LARGE_USER_MESSAGE_PREVIEW_CHARS)}\n\n…`;
+  return (
+    <>
+      <UserMessageContent
+        text={visibleText}
+        markdownStyles={props.markdownStyles}
+        reviewCommentColors={props.reviewCommentColors}
+        skills={props.skills}
+        onLinkPress={props.onLinkPress}
+      />
+      {isLarge ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={expanded ? "Show less" : "Show more"}
+          onPress={() => setExpanded((value) => !value)}
+          className="self-start py-1"
+        >
+          <Text className="font-t3-medium text-xs text-white/80">
+            {expanded ? "Show Less" : "Show More"}
+          </Text>
+        </Pressable>
+      ) : null}
+    </>
   );
 }
 
@@ -895,7 +955,7 @@ function renderFeedEntry(
             }}
           >
             {message.text.trim().length > 0 ? (
-              <UserMessageContent
+              <CollapsibleUserMessage
                 text={message.text}
                 markdownStyles={styles}
                 reviewCommentColors={props.reviewCommentColors}
@@ -903,19 +963,26 @@ function renderFeedEntry(
                 onLinkPress={props.onMarkdownLinkPress}
               />
             ) : null}
-            {attachments.map((attachment) => {
-              return (
-                <MessageAttachmentImage
-                  key={attachment.id}
-                  environmentId={props.environmentId}
-                  attachmentId={attachment.id}
-                  name={attachment.name}
-                  sizeBytes={attachment.sizeBytes}
-                  className="aspect-[1.3] w-full rounded-[14px] bg-white/15"
-                  onPressImage={props.onPressImage}
-                />
-              );
-            })}
+            {attachments
+              .filter((attachment) => attachment.type === "image")
+              .map((attachment) => {
+                return (
+                  <MessageAttachmentImage
+                    key={attachment.id}
+                    environmentId={props.environmentId}
+                    attachmentId={attachment.id}
+                    name={attachment.name}
+                    sizeBytes={attachment.sizeBytes}
+                    className="aspect-[1.3] w-full rounded-[14px] bg-white/15"
+                    onPressImage={props.onPressImage}
+                  />
+                );
+              })}
+            {attachments
+              .filter((attachment) => attachment.type === "text")
+              .map((attachment) => (
+                <MessageAttachmentText key={attachment.id} attachment={attachment} />
+              ))}
           </View>
           <View className="mt-1 flex-row items-center justify-end gap-1 pr-0.5">
             <Text className="font-t3-medium text-xs tabular-nums text-scenery-foreground-muted">

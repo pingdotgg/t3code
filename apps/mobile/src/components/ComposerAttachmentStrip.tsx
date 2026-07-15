@@ -1,12 +1,12 @@
 import { SymbolView } from "expo-symbols";
-import { Image, Pressable, ScrollView, View } from "react-native";
+import { Image, Pressable, ScrollView, Text, View } from "react-native";
 import { useThemeColor } from "../lib/useThemeColor";
 
-import type { DraftComposerImageAttachment } from "../lib/composerImages";
+import type { DraftComposerAttachment } from "../lib/composerImages";
 
 export interface ComposerAttachmentStripProps {
   /** Attachment images to display. */
-  readonly attachments: ReadonlyArray<DraftComposerImageAttachment>;
+  readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   /** Called when the user taps the remove button on an image. */
   readonly onRemove: (imageId: string) => void;
   /** Called when the user taps on an image thumbnail to preview it. */
@@ -51,20 +51,41 @@ export function ComposerAttachmentStrip(props: ComposerAttachmentStripProps) {
               paddingRight: removeButtonGutter,
             }}
           >
-            <Pressable
-              onPress={props.onPressImage ? () => props.onPressImage!(image.previewUri) : undefined}
-            >
-              <Image
-                source={{ uri: image.previewUri }}
+            {image.type === "image" ? (
+              <Pressable
+                onPress={
+                  props.onPressImage ? () => props.onPressImage!(image.previewUri) : undefined
+                }
+              >
+                <Image
+                  source={{ uri: image.previewUri }}
+                  style={{
+                    width: size,
+                    height: size,
+                    borderRadius: radius,
+                    backgroundColor: subtleBg,
+                  }}
+                  resizeMode="cover"
+                />
+              </Pressable>
+            ) : (
+              <View
                 style={{
                   width: size,
                   height: size,
                   borderRadius: radius,
                   backgroundColor: subtleBg,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: 4,
                 }}
-                resizeMode="cover"
-              />
-            </Pressable>
+              >
+                <SymbolView name="doc.text" size={22} tintColor="#777777" type="monochrome" />
+                <Text numberOfLines={2} style={{ fontSize: 9, textAlign: "center" }}>
+                  {image.name}
+                </Text>
+              </View>
+            )}
             <Pressable
               style={{
                 position: "absolute",

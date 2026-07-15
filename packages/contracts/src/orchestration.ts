@@ -143,7 +143,9 @@ export type ProviderUserInputAnswers = typeof ProviderUserInputAnswers.Type;
 export const PROVIDER_SEND_TURN_MAX_INPUT_CHARS = 120_000;
 export const PROVIDER_SEND_TURN_MAX_ATTACHMENTS = 8;
 export const PROVIDER_SEND_TURN_MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+export const PROVIDER_SEND_TURN_MAX_TEXT_ATTACHMENT_BYTES = 2 * 1024 * 1024;
 const PROVIDER_SEND_TURN_MAX_IMAGE_DATA_URL_CHARS = 14_000_000;
+const PROVIDER_SEND_TURN_MAX_TEXT_DATA_URL_CHARS = 3_000_000;
 const CHAT_ATTACHMENT_ID_MAX_CHARS = 128;
 // Correlation id is command id by design in this model.
 export const CorrelationId = CommandId;
@@ -175,9 +177,35 @@ const UploadChatImageAttachment = Schema.Struct({
 });
 export type UploadChatImageAttachment = typeof UploadChatImageAttachment.Type;
 
-export const ChatAttachment = Schema.Union([ChatImageAttachment]);
+export const ChatTextAttachment = Schema.Struct({
+  type: Schema.Literal("text"),
+  id: ChatAttachmentId,
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100), Schema.isPattern(/^text\//i)),
+  sizeBytes: NonNegativeInt.check(
+    Schema.isLessThanOrEqualTo(PROVIDER_SEND_TURN_MAX_TEXT_ATTACHMENT_BYTES),
+  ),
+  preview: Schema.String,
+});
+export type ChatTextAttachment = typeof ChatTextAttachment.Type;
+
+const UploadChatTextAttachment = Schema.Struct({
+  type: Schema.Literal("text"),
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100), Schema.isPattern(/^text\//i)),
+  sizeBytes: NonNegativeInt.check(
+    Schema.isLessThanOrEqualTo(PROVIDER_SEND_TURN_MAX_TEXT_ATTACHMENT_BYTES),
+  ),
+  dataUrl: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_TEXT_DATA_URL_CHARS),
+  ),
+  preview: Schema.String,
+});
+export type UploadChatTextAttachment = typeof UploadChatTextAttachment.Type;
+
+export const ChatAttachment = Schema.Union([ChatImageAttachment, ChatTextAttachment]);
 export type ChatAttachment = typeof ChatAttachment.Type;
-const UploadChatAttachment = Schema.Union([UploadChatImageAttachment]);
+const UploadChatAttachment = Schema.Union([UploadChatImageAttachment, UploadChatTextAttachment]);
 export type UploadChatAttachment = typeof UploadChatAttachment.Type;
 export const ComposerPayloadSourceKind = Schema.Literals([
   "prompt",
