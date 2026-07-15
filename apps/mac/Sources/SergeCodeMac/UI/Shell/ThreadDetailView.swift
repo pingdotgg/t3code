@@ -11,6 +11,8 @@ struct ThreadDetailView: View {
 
     var body: some View {
         ChatScreen(model: model, scenery: scenery)
-            .navigationTitle(thread.title)
+            // ChatHeaderView is the single task-identity surface. Repeating the
+            // title in the window toolbar weakens hierarchy and wastes width.
+            .navigationTitle("")
     }
 }

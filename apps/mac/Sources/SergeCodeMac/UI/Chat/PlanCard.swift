@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// A proposed plan (plan mode output) rendered as a timeline item, with an
-/// action to start the implementation turn. The plan body is long-form
-/// reading content, so it stays opaque; only the card frame is glass.
+/// A proposed plan rendered as a solid, predictable reading surface. A newer
+/// decision card temporarily owns the next action, preventing competing calls
+/// to action in the same transcript state.
 public struct PlanCard: View {
     let plan: ProposedPlan
     let model: AppModel
@@ -34,7 +34,7 @@ public struct PlanCard: View {
                 withAnimation(Motion.feedback) { isExpanded.toggle() }
             } label: {
                 HStack(spacing: 8) {
-                    Label("Proposed plan", systemImage: "list.clipboard")
+                    Label(plan.isImplemented ? "Plan" : "Plan ready", systemImage: "list.clipboard")
                         .font(.callout.weight(.semibold))
                     if plan.isImplemented {
                         Text("Implemented")
@@ -61,19 +61,24 @@ public struct PlanCard: View {
                     showsRoleChrome: false)
                     .padding(10)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        Color(nsColor: .textBackgroundColor),
-                        in: RoundedRectangle(cornerRadius: 8))
                     .transition(Motion.unfold)
 
                 if !plan.isImplemented {
-                    HStack {
+                    HStack(spacing: 10) {
+                        if !isActive {
+                            Label(
+                                "Resolve the newer decision before implementing.",
+                                systemImage: "info.circle")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                         Spacer()
                         Button("Implement plan") {
                             onImplement()
                         }
-                        .buttonStyle(.glass)
+                        .buttonStyle(.borderedProminent)
                         .tint(AlpineTheme.accent)
+                        .disabled(!isActive)
                         .keyboardShortcut(isActive ? Self.implementShortcut : nil)
                         .help(isActive ? "Implement plan (⌘⇧⏎)" : "Implement plan")
                     }
@@ -82,7 +87,13 @@ public struct PlanCard: View {
             }
         }
         .padding(14)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.card))
+        .background(
+            Color(nsColor: .textBackgroundColor),
+            in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.card, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: AlpineTheme.Corners.card, style: .continuous)
+                .stroke(.separator.opacity(0.65), lineWidth: 1)
+        }
         // Implemented state arrives from the model, not a tap, so the badge
         // swap and button removal animate off this value change.
         .animation(Motion.structure, value: plan.isImplemented)

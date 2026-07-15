@@ -1,8 +1,15 @@
 import SwiftUI
 
-/// Slim inspector timeline: pinned "All Changes" plus checkpoint markers.
-/// Selecting a row opens main-area review mode — no code renders here.
+/// File-first changes inspector with an optional checkpoint activity history.
+/// Selecting a file or activity row opens main-area review mode.
 public struct ChangesTimelineView: View {
+    private enum Mode: String, CaseIterable, Identifiable {
+        case files = "Files"
+        case activity = "Activity"
+
+        var id: Self { self }
+    }
+
     private let model: AppModel
     private let threadID: String
 
@@ -10,6 +17,7 @@ public struct ChangesTimelineView: View {
     @UIState private var isConfirmingRestore = false
     @UIState private var expandedFileCheckpoints: Set<String> = []
     @UIState private var hoveredCheckpointID: String?
+    @UIState private var mode: Mode = .files
 
     public init(model: AppModel, threadID: String) {
         self.model = model
@@ -40,9 +48,14 @@ public struct ChangesTimelineView: View {
             Divider()
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    allChangesRow
-                    if !checkpoints.isEmpty {
-                        timelineSpine
+                    switch mode {
+                    case .files:
+                        filesList
+                    case .activity:
+                        allChangesRow
+                        if !checkpoints.isEmpty {
+                            timelineSpine
+                        }
                     }
                 }
                 .padding(.vertical, 8)
@@ -78,36 +91,135 @@ public struct ChangesTimelineView: View {
     // MARK: - Header
 
     private var header: some View {
-        HStack {
-            Label("Changes", systemImage: "clock.arrow.circlepath")
-                .font(.headline)
-                .lineLimit(1)
-            if !checkpoints.isEmpty {
-                Text("\(checkpoints.count)")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .contentTransition(.numericText())
-            }
-            Spacer(minLength: 4)
-            Button {
-                Task {
-                    await model.refreshDiff(threadID: threadID)
-                    await model.refreshCheckpoints(threadID: threadID)
-                    if model.threadState(threadID)?.isReviewing == true {
-                        await model.loadReviewDiff(threadID: threadID)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("Changes", systemImage: "arrow.left.arrow.right")
+                    .font(.headline)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Button {
+                    Task {
+                        await model.refreshDiff(threadID: threadID)
+                        await model.refreshCheckpoints(threadID: threadID)
+                        if model.threadState(threadID)?.isReviewing == true {
+                            await model.loadReviewDiff(threadID: threadID)
+                        }
                     }
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                        .labelStyle(.iconOnly)
                 }
-            } label: {
-                Label("Refresh", systemImage: "arrow.clockwise")
-                    .labelStyle(.iconOnly)
+                .buttonStyle(.plain)
+                .help("Refresh changes and activity")
             }
-            .buttonStyle(.glass)
-            .help("Refresh changes")
+
+            Picker("Changes view", selection: $mode) {
+                ForEach(Mode.allCases) { mode in
+                    Text(mode.rawValue).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .glassEffect(.regular, in: .rect(cornerRadius: 12))
-        .padding(8)
+        .padding(.vertical, 10)
+    }
+
+    // MARK: - Files
+
+    private var filesList: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            if fullDiff.isEmpty {
+                ContentUnavailableView(
+                    "No Changes",
+                    systemImage: "checkmark.circle",
+                    description: Text("Working-tree changes will appear here."))
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 32)
+            } else {
+                let totals = DiffPresentation.aggregateCounts(in: fullDiff)
+                HStack(spacing: 8) {
+                    Text("^[\(fullDiff.count) changed file](inflect: true)")
+                    Spacer()
+                    changeCounts(additions: totals.additions, deletions: totals.deletions)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 6)
+
+                ForEach(fullDiff) { file in
+                    Button {
+                        withAnimation(Motion.structure) {
+                            model.openReview(
+                                threadID: threadID, scope: .allChanges, focusPath: file.path)
+                        }
+                    } label: {
+                        changedFileRow(file)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private func changedFileRow(_ file: DiffFile) -> some View {
+        let counts = DiffPresentation.aggregateCounts(in: [file])
+        return HStack(spacing: 8) {
+            Label(fileStatusLabel(file.status), systemImage: fileStatusGlyph(file.status))
+                .labelStyle(.iconOnly)
+                .foregroundStyle(fileStatusColor(file.status))
+                .frame(width: 16)
+                .accessibilityLabel(fileStatusLabel(file.status))
+            Text(file.path)
+                .font(.caption.monospaced())
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 6)
+            changeCounts(additions: counts.additions, deletions: counts.deletions)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .contentShape(Rectangle())
+    }
+
+    private func changeCounts(additions: Int, deletions: Int) -> some View {
+        HStack(spacing: 5) {
+            if additions > 0 {
+                Text("+\(additions)").foregroundStyle(.green)
+            }
+            if deletions > 0 {
+                Text("−\(deletions)").foregroundStyle(.red)
+            }
+        }
+        .font(.caption2.monospacedDigit())
+    }
+
+    private func fileStatusGlyph(_ status: DiffFileStatus) -> String {
+        switch status {
+        case .added: "plus.circle"
+        case .modified: "pencil.circle"
+        case .deleted: "minus.circle"
+        case .renamed: "arrow.right.circle"
+        }
+    }
+
+    private func fileStatusLabel(_ status: DiffFileStatus) -> String {
+        switch status {
+        case .added: "Added"
+        case .modified: "Modified"
+        case .deleted: "Deleted"
+        case .renamed: "Renamed"
+        }
+    }
+
+    private func fileStatusColor(_ status: DiffFileStatus) -> Color {
+        switch status {
+        case .added: .green
+        case .modified: .secondary
+        case .deleted: .red
+        case .renamed: AlpineTheme.accent
+        }
     }
 
     // MARK: - All Changes

@@ -1,8 +1,7 @@
 import SwiftUI
 
 /// Inline provider-question prompt (`user-input.requested`) rendered as a
-/// timeline item. Interactive chrome, so it sits on Liquid Glass like
-/// `ApprovalCard`.
+/// solid decision surface so its question and next action remain legible.
 public struct UserInputCard: View {
     let request: UserInputRequest
     /// Whether this is the most-recent pending user-input request in the
@@ -27,19 +26,24 @@ public struct UserInputCard: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("Input needed", systemImage: "questionmark.bubble")
+            Label("One decision needed", systemImage: "questionmark.bubble")
                 .font(.callout.weight(.semibold))
 
             ForEach(request.questions) { question in
                 questionSection(question)
             }
 
-            HStack {
+            HStack(spacing: 10) {
+                if !isComplete {
+                    Text("Choose an option to continue.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
-                Button("Submit") {
+                Button("Submit decision") {
                     onSubmit(collectAnswers())
                 }
-                .buttonStyle(.glass)
+                .buttonStyle(.borderedProminent)
                 .tint(AlpineTheme.accent)
                 .disabled(!isComplete)
                 .keyboardShortcut(isActive ? Self.submitShortcut : nil)
@@ -47,7 +51,13 @@ public struct UserInputCard: View {
             }
         }
         .padding(14)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.card))
+        .background(
+            Color(nsColor: .textBackgroundColor),
+            in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.card, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: AlpineTheme.Corners.card, style: .continuous)
+                .stroke(.separator.opacity(0.65), lineWidth: 1)
+        }
     }
 
     @ViewBuilder
