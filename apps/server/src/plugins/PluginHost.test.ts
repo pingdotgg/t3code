@@ -1449,3 +1449,95 @@ describe("PluginHost cause predicates", () => {
     );
   });
 });
+
+// A SEPARATE layer block, deliberately.
+//
+// `it.layer(testLayer)` builds a fresh registry/lockfile/sqlite per describe block,
+// but tests WITHIN a block share them. These tests install plugins, and the
+// "PluginHost" block asserts `registry.list.length === 1` — an extra lockfile entry
+// there makes host.start activate a second plugin and breaks that assertion. (First
+// attempt lived in that block: the tests were vacuous because registry.get observed
+// a runtime from an earlier test, and once given distinct ids they broke the
+// neighbour instead.) Isolating them is what makes both sides honest.
+layer("PluginHost settings validation", (it) => {
+  // Settings schema the host form cannot render: Number has no numeric control, so
+  // it would be drawn as a text box and every write it produced would fail.
+  const unrenderableEntry = `
+import * as Schema from "effect/Schema";
+export default {
+  settings: { schema: Schema.Struct({ retries: Schema.Number }) },
+  register() { return {}; },
+};
+`;
+  const renderableEntry = `
+import * as Schema from "effect/Schema";
+export default {
+  settings: { schema: Schema.Struct({ baseUrl: Schema.String }) },
+  register() { return {}; },
+};
+`;
+
+  it.effect("refuses to activate a plugin whose settings schema is not renderable", () =>
+    Effect.gen(function* () {
+      const pluginId = PluginId.make("settings-unrenderable");
+      const registry = yield* PluginRuntimeRegistryLayer.PluginRuntimeRegistry;
+      const store = yield* PluginLockfileStoreLayer.PluginLockfileStore;
+      const host = yield* PluginHostModule.PluginHost;
+
+      yield* runMigrations({});
+      yield* installPlugin({
+        pluginId,
+        capabilities: ["settings"],
+        entrySource: unrenderableEntry,
+      });
+      yield* host.activatePlugin(pluginId);
+
+      assert.isTrue(
+        Option.isNone(yield* registry.get(pluginId)),
+        "a plugin whose settings schema cannot be rendered must not activate",
+      );
+      const lockfile = yield* store.readLockfile;
+      assert.match(
+        lockfile.plugins[pluginId]?.lastError ?? "",
+        /retries/,
+        "the failure must name the offending field, not just say 'invalid'",
+      );
+    }),
+  );
+
+  // The capability is what the user consents to; settings without it would read
+  // config the user never granted access to.
+  it.effect("refuses to activate a plugin declaring settings without the settings capability", () =>
+    Effect.gen(function* () {
+      const pluginId = PluginId.make("settings-nocapability");
+      const registry = yield* PluginRuntimeRegistryLayer.PluginRuntimeRegistry;
+      const store = yield* PluginLockfileStoreLayer.PluginLockfileStore;
+      const host = yield* PluginHostModule.PluginHost;
+
+      yield* runMigrations({});
+      yield* installPlugin({ pluginId, capabilities: [], entrySource: renderableEntry });
+      yield* host.activatePlugin(pluginId);
+
+      assert.isTrue(Option.isNone(yield* registry.get(pluginId)));
+      const lockfile = yield* store.readLockfile;
+      assert.match(lockfile.plugins[pluginId]?.lastError ?? "", /capability/);
+    }),
+  );
+
+  it.effect("activates a plugin whose settings schema is renderable", () =>
+    Effect.gen(function* () {
+      const pluginId = PluginId.make("settings-renderable");
+      const registry = yield* PluginRuntimeRegistryLayer.PluginRuntimeRegistry;
+      const host = yield* PluginHostModule.PluginHost;
+
+      yield* runMigrations({});
+      yield* installPlugin({ pluginId, capabilities: ["settings"], entrySource: renderableEntry });
+      yield* host.activatePlugin(pluginId);
+
+      assert.isTrue(
+        Option.isSome(yield* registry.get(pluginId)),
+        "a renderable settings schema must not block activation",
+      );
+    }),
+  );
+});
