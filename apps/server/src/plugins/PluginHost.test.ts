@@ -1567,6 +1567,33 @@ export default {
     }),
   );
 
+  // Caching the declaration BEFORE validating it meant a plugin the host had just
+  // rejected — no `settings` capability, or no web surface to render the form on —
+  // still populated the declaration map and could serve settings RPCs for a schema
+  // that is not allowed to exist.
+  it.effect("does not record a declaration for a plugin whose settings are rejected", () =>
+    Effect.gen(function* () {
+      const pluginId = PluginId.make("settings-rejected-declaration");
+      const host = yield* PluginHostModule.PluginHost;
+      const settingsStore = yield* PluginSettingsStoreLayer.PluginSettingsStore;
+
+      yield* runMigrations({});
+      yield* installPlugin({
+        pluginId,
+        // Declares settings but never requested the capability: validation rejects it.
+        capabilities: [],
+        entrySource: renderableEntry,
+        webEntry: true,
+      });
+      yield* host.activatePlugin(pluginId);
+
+      assert.isTrue(
+        Option.isNone(yield* settingsStore.declaredSchema(pluginId)),
+        "a rejected settings descriptor must not be cached as a declaration",
+      );
+    }),
+  );
+
   it.effect("activates a plugin whose settings schema is renderable", () =>
     Effect.gen(function* () {
       const pluginId = PluginId.make("settings-renderable");

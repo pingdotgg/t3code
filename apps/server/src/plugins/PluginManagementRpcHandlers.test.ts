@@ -358,6 +358,53 @@ managementTest("PluginManagementRpcHandlers settings", (it) => {
       }),
   );
 
+  // An uninstall in progress: `uninstall()` marks the entry `pending-remove` and
+  // reconcile deletes it later. Accepting settings in that window recreates the data
+  // the user asked to delete — the same bug the lockfile check exists to stop, just
+  // inside a narrower window.
+  it.effect("rejects a write for a plugin whose uninstall is pending", () =>
+    Effect.gen(function* () {
+      const id = PluginId.make("mgmt-pending-remove");
+      const handlers = yield* PluginManagementRpcHandlers;
+      const settingsStore = yield* PluginSettingsStoreLayer.PluginSettingsStore;
+      const store = yield* PluginLockfileStore;
+      yield* runMigrations({});
+      yield* settingsStore.noteDeclaredSchema(id, schema as never);
+      yield* installEntry(id);
+      yield* store.updatePlugin(id, ({ current }) =>
+        Effect.succeed({ ...current!, state: "pending-remove" as const, lastError: null }),
+      );
+
+      const result = yield* Effect.result(
+        handlers.settingsSet({
+          pluginId: id,
+          values: { baseUrl: "https://recreated.example" },
+          expectedRevision: 0,
+        }),
+      );
+
+      assert.isTrue(Result.isFailure(result), "a pending uninstall must not accept settings");
+    }),
+  );
+
+  // A live runtime is authoritative, including when it declares NO settings: an
+  // upgrade that removes them must not leave the old schema writable via the map.
+  it.effect("prefers a live runtime that declares no settings over a stale declaration", () =>
+    Effect.gen(function* () {
+      const id = PluginId.make("mgmt-settings-removed");
+      const handlers = yield* PluginManagementRpcHandlers;
+      const settingsStore = yield* PluginSettingsStoreLayer.PluginSettingsStore;
+      yield* runMigrations({});
+      // v1 declared settings earlier in this process; active v2 does not.
+      yield* settingsStore.noteDeclaredSchema(id, schema as never);
+      yield* installEntry(id, null);
+      yield* putRuntime(id, undefined);
+
+      const result = yield* handlers.settingsGet({ pluginId: id });
+      assert.equal(result.declared, false, "the upgraded plugin declares no settings");
+    }),
+  );
+
   it.effect("rejects a write for a plugin that declares no settings", () =>
     Effect.gen(function* () {
       const id = PluginId.make("mgmt-nosettings-write");
