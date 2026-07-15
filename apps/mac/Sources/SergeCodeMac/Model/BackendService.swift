@@ -51,6 +51,9 @@ public protocol BackendService: Sendable {
 
     func projects() async throws -> [Project]
     func threads() async throws -> [ChatThread]
+    /// Returns archived threads without relying on the active shell snapshot.
+    /// Backends that do not have a separate query can use the default filter.
+    func archivedThreads() async throws -> [ChatThread]
     func timeline(threadID: String) async throws -> [TimelineItem]
     /// Drop a thread's live timeline subscription and per-thread caches.
     /// Re-opening later goes through `timeline(threadID:)` which re-subscribes
@@ -158,6 +161,12 @@ public protocol BackendService: Sendable {
     /// AI-curated scene names + Unsplash queries for a location photo set.
     /// Used by `SceneSetComposer`; fails when the sidecar/model is unavailable.
     func generateScenerySet(location: String) async throws -> GeneratedScenerySet
+}
+
+public extension BackendService {
+    func archivedThreads() async throws -> [ChatThread] {
+        try await threads().filter { $0.status == .archived }
+    }
 }
 
 public extension BackendService {

@@ -250,10 +250,10 @@ public struct ScenerySet: Codable, Hashable, Sendable, Identifiable {
 /// Global scenery settings (`scenery/settings.json`).
 public struct ScenerySettingsFile: Codable, Hashable, Sendable {
     public var defaultSetId: String
-    /// Opacity of the scenery photo layer over the window glass, and
-    /// solidifying strength of that glass. `1.0` = fully solid (historical
-    /// look); lower values let the behind-window desktop blur show through
-    /// the photo *and* the window plate. Clamped to `translucencyRange`.
+    /// How much of the window the app paints over the blurred desktop: `1.0`
+    /// = fully solid (historical look), `0.5` = half the desktop reads
+    /// through the scene. `GlassLayering` splits it across the photo, the
+    /// legibility wash and the window plate. Clamped to `translucencyRange`.
     public var sceneryTranslucency: Double
 
     public static let defaultTranslucency: Double = 0.85
@@ -292,14 +292,6 @@ public struct ScenerySettingsFile: Codable, Hashable, Sendable {
     /// Clamps a raw translucency to the supported range.
     public static func clampTranslucency(_ value: Double) -> Double {
         min(max(value, translucencyRange.lowerBound), translucencyRange.upperBound)
-    }
-
-    /// Legibility-wash multiplier for a given translucency.
-    /// At `1.0` the factor is `1.0` (pixel-identical wash); at `0.5` it stays
-    /// high enough that `.primary` text remains readable over a bright desktop.
-    public static func washScale(forTranslucency value: Double) -> Double {
-        let t = clampTranslucency(value)
-        return 0.7 + 0.3 * t
     }
 }
 

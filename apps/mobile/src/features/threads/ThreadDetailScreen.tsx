@@ -240,6 +240,40 @@ const ThreadStallHeaderBadge = memo(function ThreadStallHeaderBadge(props: {
   );
 });
 
+const ThreadWaitingBadge = memo(function ThreadWaitingBadge(props: {
+  readonly waiting: NonNullable<
+    NonNullable<ThreadDetailScreenProps["selectedThread"]["session"]>["waiting"]
+  >;
+}) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const intervalId = setInterval(() => setNowMs(Date.now()), 1_000);
+    return () => clearInterval(intervalId);
+  }, []);
+  const label =
+    props.waiting.target.kind === "event"
+      ? `Waiting for ${props.waiting.target.event}`
+      : (() => {
+          const remainingMs = Date.parse(props.waiting.target.at) - nowMs;
+          if (remainingMs <= 0) return "Wakeup overdue — waiting for reconciliation";
+          const seconds = Math.ceil(remainingMs / 1_000);
+          return `Wakes in ${seconds < 60 ? `${seconds}s` : `${Math.ceil(seconds / 60)}m`}`;
+        })();
+  return (
+    <View className="items-center px-4 pb-2 pt-2" style={{ flexShrink: 0 }}>
+      <View
+        accessible
+        accessibilityLabel={label}
+        className="flex-row items-center gap-2 rounded-full border border-sky-500/20 bg-sky-500/10 px-3 py-2"
+      >
+        <View className="h-2 w-2 rounded-full bg-sky-500" />
+        <Text className="font-t3-bold text-xs text-sky-700 dark:text-sky-300">Waiting</Text>
+        <Text className="text-xs text-sky-700/80 dark:text-sky-300/80">{label}</Text>
+      </View>
+    </View>
+  );
+});
+
 export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: ThreadDetailScreenProps) {
   const { onOpenDrawer } = props;
 
@@ -280,7 +314,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const composerChrome = composerExpanded ? COMPOSER_EXPANDED_CHROME : COMPOSER_COLLAPSED_CHROME;
   const composerOverlapHeight = composerChrome + composerBottomInset;
   const activeWorkIndicatorHeight =
-    props.activeWorkStartedAt && !threadHealth?.stalled ? WORKING_INDICATOR_HEIGHT : 0;
+    props.activeWorkStartedAt &&
+    !threadHealth?.stalled &&
+    props.selectedThread.session?.status !== "waiting"
+      ? WORKING_INDICATOR_HEIGHT
+      : 0;
   const estimatedOverlayHeight = composerOverlapHeight + activeWorkIndicatorHeight + 8;
   const { contentInsetEndAdjustment, onComposerLayout } = useKeyboardChatComposerInset(
     listRef,
@@ -474,7 +512,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               style={{ width: "100%", paddingTop: 8 }}
             >
               <View style={{ alignSelf: "center", maxWidth: contentMaxWidth, width: "100%" }}>
-                {props.activeWorkStartedAt && !threadHealth?.stalled ? (
+                {props.activeWorkStartedAt &&
+                !threadHealth?.stalled &&
+                props.selectedThread.session?.status !== "waiting" ? (
                   <Animated.View entering={bannerDrop()}>
                     <WorkingDurationPill startedAt={props.activeWorkStartedAt} />
                   </Animated.View>
@@ -539,6 +579,10 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               />
             </View>
           </KeyboardStickyView>
+        ) : null}
+        {props.selectedThread.session?.status === "waiting" &&
+        props.selectedThread.session.waiting ? (
+          <ThreadWaitingBadge waiting={props.selectedThread.session.waiting} />
         ) : null}
       </View>
     </GestureDetector>

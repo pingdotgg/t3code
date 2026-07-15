@@ -1,7 +1,8 @@
 import SwiftUI
 import T3Kit
 
-private enum TranscriptMetrics {
+/// Shared transcript card geometry — also used by the subagent inner thread.
+enum TranscriptMetrics {
     static let cardRadius: CGFloat = 10
     static let cardPadH: CGFloat = 10
     static let cardPadV: CGFloat = 7
@@ -57,17 +58,56 @@ private extension View {
 // TranscriptPill lives in SubagentTaskComponents.swift — shared with the
 // agents panel so both surfaces render identical capsule tags.
 
+/// Everything a timeline row needs from `AppModel` beyond its own item.
+///
+/// Resolved once per render in `ChatTimelineScrollView` and passed down as a
+/// value. Rows used to derive these themselves (`model.threads.first { … }`,
+/// `model.selectedThread?.status`, a reversed scan of the thread's timeline),
+/// which both cost a linear scan per row and — worse — made every row observe
+/// `threads`, `projects`, and `timeline`. While the agent was running, any
+/// touch of those (a token count, a status flip, every streaming delta)
+/// invalidated the entire visible transcript, which is what made scrolling
+/// judder mid-run.
+struct TimelineRowContext: Equatable {
+    /// Selected thread's status. Tool rows use it to decide that a row stuck
+    /// "running" on a settled thread should read as finished.
+    var threadStatus: ThreadStatus?
+    /// Project cwd, for path shortening in tool rows.
+    var projectRoot: String?
+    /// The one decision card that currently owns keyboard shortcuts.
+    var activeDecisionCardID: String?
+    /// Gate for the user-bubble edit/retry affordances.
+    var isConnectionReady: Bool
+
+    init(
+        threadStatus: ThreadStatus? = nil,
+        projectRoot: String? = nil,
+        activeDecisionCardID: String? = nil,
+        isConnectionReady: Bool = false
+    ) {
+        self.threadStatus = threadStatus
+        self.projectRoot = projectRoot
+        self.activeDecisionCardID = activeDecisionCardID
+        self.isConnectionReady = isConnectionReady
+    }
+}
+
 /// Dispatches a single `TimelineDisplayItem` to its row view.
-struct ChatTimelineRowView: View {
+///
+/// `Equatable` so SwiftUI can skip the body of rows whose item and context are
+/// unchanged. Combined with `TimelineDisplayCache` reusing untouched rows
+/// verbatim, a streaming delta re-renders only the row it actually changed.
+struct ChatTimelineRowView: View, Equatable {
     let item: TimelineDisplayItem
     let threadID: String
+    let context: TimelineRowContext
     let model: AppModel
 
-    /// Project cwd for path shortening in tool rows; plain String? so child
-    /// views never need AppModel.
-    private var projectRoot: String? {
-        guard let thread = model.threads.first(where: { $0.id == threadID }) else { return nil }
-        return model.projects.first { $0.id == thread.projectID }?.path
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        ObjectIdentifier(lhs.model) == ObjectIdentifier(rhs.model)
+            && lhs.threadID == rhs.threadID
+            && lhs.context == rhs.context
+            && lhs.item == rhs.item
     }
 
     var body: some View {
@@ -77,8 +117,8 @@ struct ChatTimelineRowView: View {
         case .toolGroup(_, let items, let summary):
             ToolGroupRow(
                 items: items, summary: summary,
-                threadStatus: model.selectedThread?.status,
-                projectRoot: projectRoot)
+                threadStatus: context.threadStatus,
+                projectRoot: context.projectRoot)
         case .daySeparator(_, let label):
             SessionSeparatorRow(label: label)
         }
@@ -89,7 +129,8 @@ struct ChatTimelineRowView: View {
         switch item {
         case .userMessage(let id, let text, let at):
             UserMessageBubble(
-                messageID: id, text: text, threadID: threadID, model: model, at: at)
+                messageID: id, text: text, threadID: threadID, model: model, at: at,
+                canSend: context.isConnectionReady && context.threadStatus != .running)
         case .assistantMessage(let id, let markdown, let isStreaming, let at):
             AssistantMarkdownView(
                 markdown: markdown, isStreaming: isStreaming, threadID: threadID,
@@ -98,13 +139,16 @@ struct ChatTimelineRowView: View {
             ToolEventRow(
                 name: name, detail: detail, kind: kind, status: status,
                 output: output, outputIsError: outputIsError,
-                threadStatus: model.selectedThread?.status, at: at,
-                projectRoot: projectRoot)
+                threadStatus: context.threadStatus, at: at,
+                projectRoot: context.projectRoot)
         case .subagentTask(let task):
             SubagentTaskRow(
                 task: task,
                 modelDisplayNames: model.modelDisplayNames,
                 stopError: model.subagentStopErrors[task.taskId],
+                onOpenInnerThread: {
+                    model.openSubagent(taskId: task.taskId, threadID: threadID)
+                },
                 onStopAgent: {
                     Task { await model.stopSubagentTask(taskId: task.taskId) }
                 },
@@ -116,11 +160,11 @@ struct ChatTimelineRowView: View {
                 }
             )
         case .approval(let request):
-            ApprovalCard(request: request, isActive: isMostRecentApproval(request)) { approve in
+            ApprovalCard(request: request, isActive: isActiveDecisionCard(request.id)) { approve in
                 Task { await model.respond(to: request, approve: approve) }
             }
         case .userInput(let request):
-            UserInputCard(request: request, isActive: isMostRecentUserInput(request)) { answers in
+            UserInputCard(request: request, isActive: isActiveDecisionCard(request.id)) { answers in
                 Task { await model.respond(to: request, answers: answers) }
             }
         case .usageLimit(let notice):
@@ -128,7 +172,7 @@ struct ChatTimelineRowView: View {
                 notice: notice,
                 state: model.usageLimitActions[notice.id] ?? .idle,
                 switchModels: switchModels(for: notice),
-                isActive: isMostRecentUsageLimit(notice)
+                isActive: isActiveDecisionCard(notice.id)
             ) {
                 model.waitForUsageLimitReset(notice)
             } onSwitch: { option in
@@ -137,7 +181,7 @@ struct ChatTimelineRowView: View {
                 model.dismissUsageLimit(notice)
             }
         case .plan(let plan):
-            PlanCard(plan: plan, model: model, isActive: isMostRecentPlan(plan)) {
+            PlanCard(plan: plan, model: model, isActive: isActiveDecisionCard(plan.id)) {
                 Task { await model.implementPlan(plan) }
             }
         case .checkpoint(let checkpoint):
@@ -160,58 +204,11 @@ struct ChatTimelineRowView: View {
             exhaustedProvider: notice.provider)
     }
 
-    // MARK: - Decision-card keyboard shortcut gating
-    //
-    // Approve/Deny/Submit/Implement/Wait/Dismiss gain keyboard shortcuts
-    // (ApprovalCard, UserInputCard, PlanCard, UsageLimitCard), but only the
-    // single most-recent actionable card across all kinds should own them — a
-    // scrollback full of historical cards must never let a keystroke
-    // resolve the wrong one. Approvals and user-input requests are removed
-    // from the timeline once resolved (AppModel.resolveInteraction), while
-    // usage-limit notices and already-implemented plans can remain alongside
-    // newer pending cards. Scan from the end and stop at the nearest card that
-    // still has an action, regardless of its kind.
-
-    private func isMostRecentDecisionCard(_ matches: (TimelineItem) -> Bool) -> Bool {
-        for item in (model.threadState(threadID)?.timeline ?? []).reversed() {
-            switch item {
-            case .approval(_), .userInput(_), .usageLimit(_):
-                return matches(item)
-            case .plan(let plan) where !plan.isImplemented:
-                return matches(item)
-            default:
-                continue
-            }
-        }
-        return false
-    }
-
-    private func isMostRecentApproval(_ request: ApprovalRequest) -> Bool {
-        isMostRecentDecisionCard { item in
-            guard case .approval(let candidate) = item else { return false }
-            return candidate.id == request.id
-        }
-    }
-
-    private func isMostRecentUserInput(_ request: UserInputRequest) -> Bool {
-        isMostRecentDecisionCard { item in
-            guard case .userInput(let candidate) = item else { return false }
-            return candidate.id == request.id
-        }
-    }
-
-    private func isMostRecentUsageLimit(_ notice: UsageLimitNotice) -> Bool {
-        isMostRecentDecisionCard { item in
-            guard case .usageLimit(let candidate) = item else { return false }
-            return candidate.id == notice.id
-        }
-    }
-
-    private func isMostRecentPlan(_ plan: ProposedPlan) -> Bool {
-        isMostRecentDecisionCard { item in
-            guard case .plan(let candidate) = item else { return false }
-            return candidate.id == plan.id
-        }
+    /// Only the single most-recent actionable card owns the keyboard shortcuts
+    /// (`Array<TimelineItem>.activeDecisionCardID` picks it); a scrollback full
+    /// of historical cards must never let a keystroke resolve the wrong one.
+    private func isActiveDecisionCard(_ id: String) -> Bool {
+        context.activeDecisionCardID == id
     }
 }
 
@@ -226,6 +223,10 @@ private struct UserMessageBubble: View {
     let threadID: String
     let model: AppModel
     let at: Date?
+    /// Backend is ready and the thread is not mid-turn. Passed in rather than
+    /// read off `model` so this row does not observe `threads` — see
+    /// `TimelineRowContext`.
+    let canSend: Bool
 
     @UIState private var isHovering = false
     /// Local double-click guard: `canResend` flips only after the thread's
@@ -236,7 +237,7 @@ private struct UserMessageBubble: View {
     /// Resending mid-turn would interleave with the running agent; the
     /// composer's send path has the same gate.
     private var canResend: Bool {
-        model.connection == .ready && model.selectedThread?.status != .running && !isResending
+        canSend && !isResending
     }
 
     var body: some View {
@@ -449,7 +450,7 @@ private struct ToolEventRow: View {
         case .failed: return .failed
         case .running:
             switch threadStatus {
-            case .running, .waitingApproval, .backgroundWork, nil: return .running
+            case .running, .waiting, .waitingApproval, .backgroundWork, nil: return .running
             case .idle, .archived, .error: return .settled
             }
         }
@@ -663,6 +664,8 @@ private struct SubagentTaskRow: View {
     let modelDisplayNames: [String: String]
     /// Transient stop-RPC failure (not part of the provider task payload).
     let stopError: String?
+    /// Drill into the agent's own transcript (see SubagentInnerThreadView).
+    let onOpenInnerThread: () -> Void
     let onStopAgent: () -> Void
     let onStopTurn: () -> Void
     let onClearStopError: () -> Void
@@ -672,11 +675,7 @@ private struct SubagentTaskRow: View {
     @UIState private var showStopTurnConfirm = false
 
     private var hasExpandableContent: Bool {
-        !task.progressLog.isEmpty
-            || task.error != nil
-            || stopError != nil
-            || task.lastToolName != nil
-            || task.usageSummary != nil
+        SubagentTaskPresentation.hasExpandableContent(for: task, stopError: stopError)
     }
 
     var body: some View {
@@ -696,66 +695,72 @@ private struct SubagentTaskRow: View {
     @ViewBuilder
     private func rowChrome(now currentNow: Date) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Button {
-                guard hasExpandableContent else { return }
-                withAnimation(Motion.feedback) { isExpanded.toggle() }
-            } label: {
-                HStack(alignment: .top, spacing: 9) {
-                    statusIcon()
-                        .frame(width: TranscriptMetrics.iconColumn, height: 16)
-                        .padding(.top, 1)
+            HStack(alignment: .top, spacing: 9) {
+                Button {
+                    guard hasExpandableContent else { return }
+                    withAnimation(Motion.feedback) { isExpanded.toggle() }
+                } label: {
+                    HStack(alignment: .top, spacing: 9) {
+                        statusIcon()
+                            .frame(width: TranscriptMetrics.iconColumn, height: 16)
+                            .padding(.top, 1)
 
-                    VStack(alignment: .leading, spacing: 5) {
-                        HStack(spacing: 7) {
-                            Image(systemName: "person.2")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .frame(width: TranscriptMetrics.iconColumn)
-                            Text(title)
-                                .font(.callout.weight(.medium))
-                                .lineLimit(2)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Spacer(minLength: 8)
-                            if task.state == .running || task.state == .paused, isHovering {
-                                stopAgentButton
-                            }
-                            durationLabel
-                            if hasExpandableContent {
-                                Image(systemName: "chevron.right")
-                                    .font(.caption2)
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack(spacing: 7) {
+                                Image(systemName: "person.2")
+                                    .font(.caption)
                                     .foregroundStyle(.secondary)
-                                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                                    .frame(width: TranscriptMetrics.iconColumn)
+                                Text(title)
+                                    .font(.callout.weight(.medium))
+                                    .lineLimit(2)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Spacer(minLength: 8)
+                                durationLabel
+                                if hasExpandableContent {
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                                }
                             }
-                        }
 
-                        SubagentTaskIdentityBadge(
-                            task: task, modelDisplayNames: modelDisplayNames)
+                            SubagentTaskIdentityBadge(
+                                task: task, modelDisplayNames: modelDisplayNames)
 
-                        SubagentTaskHealthTags(
-                            task: task, now: currentNow)
+                            SubagentTaskHealthTags(
+                                task: task, now: currentNow)
 
-                        if let subtitle = SubagentTaskPresentation.subtitle(for: task) {
-                            Text(subtitle)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
+                            if let subtitle = SubagentTaskPresentation.subtitle(for: task) {
+                                Text(subtitle)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
 
-                        // Always visible — stop failures must not require expand.
-                        if let stopError = SubagentTaskPresentation.nonEmpty(stopError) {
-                            Text(stopError)
-                                .font(.caption)
-                                .foregroundStyle(.red)
-                                .textSelection(.enabled)
-                                .fixedSize(horizontal: false, vertical: true)
+                            // Always visible — stop failures must not require expand.
+                            if let stopError = SubagentTaskPresentation.nonEmpty(stopError) {
+                                Text(stopError)
+                                    .font(.caption)
+                                    .foregroundStyle(.red)
+                                    .textSelection(.enabled)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                     }
+                    .contentShape(Rectangle())
                 }
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .disabled(!hasExpandableContent)
+
+                if isHovering {
+                    openInnerThreadButton
+                }
+                if task.state == .running || task.state == .paused, isHovering {
+                    stopAgentButton
+                }
             }
-            .buttonStyle(.plain)
-            .disabled(!hasExpandableContent)
 
             if isExpanded && hasExpandableContent {
                 expandedBody
@@ -772,6 +777,9 @@ private struct SubagentTaskRow: View {
         }
         .onHover { isHovering = $0 }
         .contextMenu {
+            Button("Open agent thread") {
+                onOpenInnerThread()
+            }
             if task.state == .running || task.state == .paused {
                 Button("Stop agent", role: .destructive) {
                     onStopAgent()
@@ -795,6 +803,20 @@ private struct SubagentTaskRow: View {
                 "Stopping interrupts the whole turn, including all running agents — not just this one."
             )
         }
+    }
+
+    @ViewBuilder
+    private var openInnerThreadButton: some View {
+        Button {
+            onOpenInnerThread()
+        } label: {
+            Image(systemName: "arrow.up.forward.app")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.plain)
+        .help("Open agent thread")
+        .accessibilityLabel("Open agent thread")
     }
 
     @ViewBuilder
@@ -892,6 +914,8 @@ extension ToolEventKind {
         case .fileRead: "eye"
         case .webSearch: "globe"
         case .mcpCall: "wrench.adjustable"
+        case .skill: "wand.and.stars"
+        case .computerUse: "desktopcomputer"
         case .subagent: "person.2"
         case .imageView: "photo"
         case .other: "hammer"
@@ -908,7 +932,7 @@ extension ToolEventKind {
         case .mcpCall: "mcp_tool_call"
         case .subagent: "collab_agent_tool_call"
         case .imageView: "image_view"
-        case .other: nil
+        case .skill, .computerUse, .other: nil
         }
     }
 }

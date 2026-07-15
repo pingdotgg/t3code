@@ -6,6 +6,7 @@ import {
   type OrchestrationEvent,
   type OrchestrationThreadShell,
   ProviderDriverKind,
+  type ProviderInteractionMode,
   type ProjectId,
   type OrchestrationSession,
   type OrchestrationThread,
@@ -45,6 +46,7 @@ import {
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
+import { resolveEffectiveRuntimeMode } from "../InteractionModePermissions.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
@@ -597,6 +599,7 @@ const make = Effect.gen(function* () {
     createdAt: string,
     options?: {
       readonly modelSelection?: ModelSelection;
+      readonly interactionMode?: ProviderInteractionMode;
     },
   ) {
     const thread = yield* resolveThread(threadId);
@@ -604,7 +607,17 @@ const make = Effect.gen(function* () {
       return yield* Effect.die(new Error(`Thread '${threadId}' was not found in read model.`));
     }
 
-    const desiredRuntimeMode = thread.runtimeMode;
+    // The turn's interaction mode wins over the projected thread state: a turn
+    // carries the mode the user pressed send with.
+    const desiredInteractionMode = options?.interactionMode ?? thread.interactionMode;
+    // Advisor clamps the permission axis, so the session runtime mode is not
+    // necessarily the thread's. Everything downstream (including the
+    // restart-on-change check) must compare against the effective mode, or an
+    // advisor thread would look permanently out of date and restart each turn.
+    const desiredRuntimeMode = resolveEffectiveRuntimeMode(
+      thread.runtimeMode,
+      desiredInteractionMode,
+    );
     const requestedModelSelection = options?.modelSelection;
     const resolveActiveSession = (threadId: ThreadId) =>
       providerService
@@ -671,6 +684,7 @@ const make = Effect.gen(function* () {
       });
     }
     const preferredProvider: ProviderDriverKind = desiredDriverKind;
+    const allowAfterUsageLimit = latestTurnFailedWithUsageLimit(thread);
     if (thread.session !== null) {
       yield* rejectStartedThreadModelChangeIfRequired({
         threadId,
@@ -683,14 +697,25 @@ const make = Effect.gen(function* () {
               }
             : thread.modelSelection,
         requestedModelSelection,
-        allowAfterUsageLimit: latestTurnFailedWithUsageLimit(thread),
+        allowAfterUsageLimit,
       });
     }
-    if (
+    // A switch across drivers (or across instances whose resume state is not
+    // portable) cannot continue the bound session. Normally that is a hard
+    // stop; after a usage limit the alternative is a thread stuck on an
+    // exhausted account, so the session is restarted from scratch on the new
+    // instance instead — see `requiresFreshProviderSession` below.
+    const continuationIsPortable =
+      currentInfo.driverKind === desiredInfo.driverKind &&
+      currentInfo.continuationIdentity.continuationKey ===
+        desiredInfo.continuationIdentity.continuationKey;
+    const instanceSwitchRequested =
       thread.session !== null &&
       requestedModelSelection !== undefined &&
-      requestedModelSelection.instanceId !== currentInstanceId
-    ) {
+      requestedModelSelection.instanceId !== currentInstanceId;
+    const requiresFreshProviderSession =
+      instanceSwitchRequested && !continuationIsPortable && allowAfterUsageLimit;
+    if (instanceSwitchRequested && !continuationIsPortable && !allowAfterUsageLimit) {
       if (currentInfo.driverKind !== desiredInfo.driverKind) {
         return yield* new ProviderAdapterRequestError({
           provider: preferredProvider,
@@ -698,16 +723,11 @@ const make = Effect.gen(function* () {
           detail: `Thread '${threadId}' is bound to driver '${currentInfo.driverKind}' and cannot switch to '${desiredInfo.driverKind}'.`,
         });
       }
-      if (
-        currentInfo.continuationIdentity.continuationKey !==
-        desiredInfo.continuationIdentity.continuationKey
-      ) {
-        return yield* new ProviderAdapterRequestError({
-          provider: preferredProvider,
-          method: "thread.turn.start",
-          detail: `Thread '${threadId}' cannot switch from instance '${currentInstanceId}' to '${desiredInstanceId}' because their provider resume state is incompatible.`,
-        });
-      }
+      return yield* new ProviderAdapterRequestError({
+        provider: preferredProvider,
+        method: "thread.turn.start",
+        detail: `Thread '${threadId}' cannot switch from instance '${currentInstanceId}' to '${desiredInstanceId}' because their provider resume state is incompatible.`,
+      });
     }
     const project = yield* resolveProject(thread.projectId);
     const effectiveCwd = resolveThreadWorkspaceCwd({
@@ -791,7 +811,7 @@ const make = Effect.gen(function* () {
     const existingSessionThreadId =
       thread.session && thread.session.status !== "stopped" && activeSession ? thread.id : null;
     if (existingSessionThreadId) {
-      const runtimeModeChanged = thread.runtimeMode !== thread.session?.runtimeMode;
+      const runtimeModeChanged = desiredRuntimeMode !== thread.session?.runtimeMode;
       const cwdChanged = effectiveCwd !== activeSession?.cwd;
       const sessionModelSwitch = (yield* providerService.getCapabilities(desiredInstanceId))
         .sessionModelSwitch;
@@ -812,15 +832,20 @@ const make = Effect.gen(function* () {
         !runtimeModeChanged &&
         !cwdChanged &&
         !instanceChanged &&
+        !requiresFreshProviderSession &&
         !shouldRestartForModelChange &&
         !shouldRestartForModelSelectionChange
       ) {
         return existingSessionThreadId;
       }
 
-      const resumeCursor = shouldRestartForModelChange
-        ? undefined
-        : (activeSession?.resumeCursor ?? undefined);
+      // The cursor resumes the exhausted provider's conversation; it is
+      // meaningless (and rejected) on a driver that does not share its
+      // continuation identity.
+      const resumeCursor =
+        shouldRestartForModelChange || requiresFreshProviderSession
+          ? undefined
+          : (activeSession?.resumeCursor ?? undefined);
       yield* Effect.logInfo("provider command reactor restarting provider session", {
         threadId,
         existingSessionThreadId,
@@ -829,7 +854,9 @@ const make = Effect.gen(function* () {
         desiredInstanceId,
         desiredProvider: desiredModelSelection.instanceId,
         currentRuntimeMode: thread.session?.runtimeMode,
-        desiredRuntimeMode: thread.runtimeMode,
+        desiredRuntimeMode,
+        threadRuntimeMode: thread.runtimeMode,
+        desiredInteractionMode,
         runtimeModeChanged,
         previousCwd: activeSession?.cwd,
         desiredCwd: effectiveCwd,
@@ -838,6 +865,7 @@ const make = Effect.gen(function* () {
         instanceChanged,
         shouldRestartForModelChange,
         shouldRestartForModelSelectionChange,
+        requiresFreshProviderSession,
         hasResumeCursor: resumeCursor !== undefined,
       });
       const restartedSession = yield* startProviderSession(
@@ -865,7 +893,7 @@ const make = Effect.gen(function* () {
     readonly messageText: string;
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly modelSelection?: ModelSelection;
-    readonly interactionMode?: "default" | "plan";
+    readonly interactionMode?: ProviderInteractionMode;
     readonly createdAt: string;
   }) {
     const thread = yield* resolveThread(input.threadId);
@@ -874,11 +902,10 @@ const make = Effect.gen(function* () {
         new Error(`Thread '${input.threadId}' was not found in read model.`),
       );
     }
-    yield* ensureSessionForThread(
-      input.threadId,
-      input.createdAt,
-      input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {},
-    );
+    yield* ensureSessionForThread(input.threadId, input.createdAt, {
+      ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
+      ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+    });
     if (input.modelSelection !== undefined) {
       threadModelSelections.set(input.threadId, input.modelSelection);
     }

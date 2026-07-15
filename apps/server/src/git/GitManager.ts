@@ -50,7 +50,11 @@ import type { GitManagerServiceError } from "@t3tools/contracts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
-import type { ChangeRequest, GitPullRequestReviewDecision } from "@t3tools/contracts";
+import type {
+  ChangeRequest,
+  GitPullRequestReviewDecision,
+  GitPullRequestReviewLifecycle,
+} from "@t3tools/contracts";
 
 export interface GitActionProgressReporter {
   readonly publish: (event: GitActionProgressEvent) => Effect.Effect<void, never>;
@@ -466,6 +470,7 @@ function toStatusPr(
     reviewDecision: GitPullRequestReviewDecision | null;
     unresolvedReviewThreadCount: number | null;
     actionableReviewItemCount?: number | null;
+    reviewLifecycle?: GitPullRequestReviewLifecycle | null;
   },
 ): {
   number: number;
@@ -477,7 +482,9 @@ function toStatusPr(
   reviewDecision: GitPullRequestReviewDecision | null;
   unresolvedReviewThreadCount: number | null;
   actionableReviewItemCount?: number | null;
+  reviewLifecycle?: GitPullRequestReviewLifecycle;
 } {
+  const reviewLifecycle = review?.reviewLifecycle ?? null;
   return {
     number: pr.number,
     title: pr.title,
@@ -490,6 +497,8 @@ function toStatusPr(
     ...(review && "actionableReviewItemCount" in review
       ? { actionableReviewItemCount: review.actionableReviewItemCount ?? null }
       : {}),
+    // Omitted rather than nulled: an absent lifecycle means unknown.
+    ...(reviewLifecycle !== null ? { reviewLifecycle } : {}),
   };
 }
 
@@ -1040,10 +1049,13 @@ export const make = Effect.gen(function* () {
           ...("actionableReviewItemCount" in status
             ? { actionableReviewItemCount: status.actionableReviewItemCount }
             : {}),
+          reviewLifecycle: status.reviewLifecycle ?? null,
         })),
         Effect.orElseSucceed(() => ({
           reviewDecision: null,
           unresolvedReviewThreadCount: null,
+          actionableReviewItemCount: null,
+          reviewLifecycle: null,
         })),
       );
 

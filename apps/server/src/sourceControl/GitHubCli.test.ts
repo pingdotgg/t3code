@@ -340,6 +340,7 @@ describe("GitHubCli.layer", () => {
         reviewDecision: "APPROVED",
         unresolvedReviewThreadCount: 2,
         actionableReviewItemCount: 1,
+        reviewLifecycle: "actionable-comments",
       });
     }).pipe(Effect.provide(layer)),
   );

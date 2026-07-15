@@ -206,6 +206,11 @@ final class FixedSceneryBackend: BackendService, @unchecked Sendable {
         FilePreview(path: path, contents: "", truncated: false)
     }
     func openInEditor(threadID: String, subpath: String?, editor: ExternalEditor) async throws {}
+    func pullRequestReview(threadID: String, reference: String) async throws
+        -> PullRequestReviewSnapshot
+    {
+        fatalError("unused")
+    }
     func createThread(projectID: String, provider: ProviderKind, title: String?) async throws
         -> ChatThread
     {
@@ -234,6 +239,13 @@ final class FixedSceneryBackend: BackendService, @unchecked Sendable {
     func renameProject(id: String, name: String) async throws {}
     func deleteProject(id: String) async throws {}
     func watchVcsStatus(threadID: String) async throws {}
+    func pullRequestReview(threadID: String, reference: String) async throws
+        -> PullRequestReviewSnapshot
+    {
+        PullRequestReviewSnapshot(
+            provider: "github", number: 0, url: "", conversation: [], threads: [],
+            unresolvedThreadCount: 0, truncated: false)
+    }
     func listBranches(threadID: String, query: String?) async throws -> [BranchRef] { [] }
     func switchBranch(threadID: String, name: String) async throws {}
     func createBranch(threadID: String, name: String) async throws {}
@@ -266,9 +278,19 @@ final class FixedSceneryBackend: BackendService, @unchecked Sendable {
     }
 }
 
-/// URLProtocol that answers Unsplash search with query-keyed fixture photos.
+/// URLProtocol that answers Unsplash search with query-keyed fixture photos,
+/// and `GET /photos/:id` with per-photo detail fixtures.
+///
+/// The split is deliberate: the real search endpoint never returns `location`,
+/// so a photo only has a place name once it is looked up by id. Detail
+/// fixtures live in `detailsByID`; ids without one 404, like a photo Unsplash
+/// has no location for.
 final class UnsplashSearchStub: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var resultsByQuery: [String: [[String: Any]]] = [:]
+    nonisolated(unsafe) static var detailsByID: [String: [String: Any]] = [:]
+    /// Photo ids looked up by detail request — lets tests assert nothing is
+    /// spent on photos that already carry an authentic place name.
+    nonisolated(unsafe) static var detailRequests: [String] = []
 
     override class func canInit(with request: URLRequest) -> Bool {
         request.url?.host?.contains("unsplash.com") == true
@@ -281,24 +303,57 @@ final class UnsplashSearchStub: URLProtocol, @unchecked Sendable {
             client?.urlProtocol(self, didFailWithError: URLError(.badURL))
             return
         }
+
+        if let photoID = Self.detailPhotoID(from: url) {
+            Self.detailRequests.append(photoID)
+            guard let photo = Self.detailsByID[photoID] else {
+                respond(url: url, status: 404, body: nil)
+                return
+            }
+            respond(url: url, status: 200, body: photo)
+            return
+        }
+
         let query =
             URLComponents(url: url, resolvingAgainstBaseURL: false)?
             .queryItems?.first(where: { $0.name == "query" })?.value ?? ""
         let results = Self.resultsByQuery[query] ?? Self.resultsByQuery["*"] ?? []
-        let body: [String: Any] = ["results": results, "total": results.count]
-        let data = try! JSONSerialization.data(withJSONObject: body)
-        let response = HTTPURLResponse(
-            url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: data)
-        client?.urlProtocolDidFinishLoading(self)
+        respond(url: url, status: 200, body: ["results": results, "total": results.count])
     }
 
     override func stopLoading() {}
 
+    private func respond(url: URL, status: Int, body: [String: Any]?) {
+        let response = HTTPURLResponse(
+            url: url, statusCode: status, httpVersion: nil, headerFields: nil)!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        if let body {
+            client?.urlProtocol(self, didLoad: try! JSONSerialization.data(withJSONObject: body))
+        }
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    /// `https://api.unsplash.com/photos/<id>` → `<id>` (search is `/search/photos`).
+    private static func detailPhotoID(from url: URL) -> String? {
+        let parts = url.path.split(separator: "/").map(String.init)
+        guard parts.count == 2, parts[0] == "photos" else { return nil }
+        return parts[1].removingPercentEncoding ?? parts[1]
+    }
+
+    /// Fixtures for one test: search results by query, optional detail records.
+    static func reset(
+        resultsByQuery: [String: [[String: Any]]],
+        detailsByID: [String: [String: Any]] = [:]
+    ) {
+        Self.resultsByQuery = resultsByQuery
+        Self.detailsByID = detailsByID
+        Self.detailRequests = []
+    }
+
     static func photoJSON(
         id: String,
         locationName: String? = nil,
+        locationCity: String? = nil,
         description: String? = nil
     ) -> [String: Any] {
         var dict: [String: Any] = [
@@ -311,9 +366,10 @@ final class UnsplashSearchStub: URLProtocol, @unchecked Sendable {
             ],
             "user": ["name": "Tester"],
         ]
-        if let locationName {
-            dict["location"] = ["name": locationName]
-        }
+        var location: [String: Any] = [:]
+        if let locationName { location["name"] = locationName }
+        if let locationCity { location["city"] = locationCity }
+        if !location.isEmpty { dict["location"] = location }
         if let description {
             dict["description"] = description
             dict["alt_description"] = description
@@ -483,6 +539,158 @@ struct SceneSetComposerPipelineTests {
         for photo in photos.dropFirst(2) {
             #expect(store.threadTitle(for: photo) == "Iceland")
         }
+    }
+
+    @Test("legacy path names photos after their real Unsplash place, not the set title")
+    func legacyPathHydratesRealPlaceNames() async throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        defer { UnsplashSearchStub.reset(resultsByQuery: [:]) }
+
+        // Search results carry no `location` (the real endpoint omits it), so a
+        // place name exists only in each photo's detail record.
+        UnsplashSearchStub.reset(
+            resultsByQuery: [
+                "Barbados landscape": [
+                    UnsplashSearchStub.photoJSON(
+                        id: "bb-1", description: "this image describes a beach"),
+                    UnsplashSearchStub.photoJSON(id: "bb-2"),
+                    UnsplashSearchStub.photoJSON(id: "bb-3"),
+                ],
+                "*": [],
+            ],
+            detailsByID: [
+                "bb-1": UnsplashSearchStub.photoJSON(id: "bb-1", locationName: "Bathsheba Beach"),
+                "bb-2": UnsplashSearchStub.photoJSON(id: "bb-2", locationCity: "Speightstown"),
+                // bb-3: Unsplash knows no location → keeps the bare set title.
+            ])
+
+        // Backend failure → templated fallback → no AI locations. This is the
+        // reported case: every thread came out named "Barbados".
+        let backend = FixedSceneryBackend(
+            response: GeneratedScenerySet(sceneNames: [], queries: []))
+        backend.shouldFail = true
+
+        let store = SceneryStore(client: nil, root: root)
+        store.reloadFromDiskForTesting()
+        let composer = SceneSetComposer(store: store, backend: backend, client: makeClient())
+        composer.createSet(location: "Barbados")
+
+        let state = await awaitFinished(composer: composer)
+        guard case .finished(let setId) = state else {
+            Issue.record("expected finished, got \(state)")
+            return
+        }
+
+        let photos = store.photos(forSetId: setId)
+        let first = photos.first { $0.id == "bb-1" }
+        #expect(first?.name == "Bathsheba Beach")
+        #expect(photos.first { $0.id == "bb-2" }?.name == "Speightstown")
+        #expect(photos.first { $0.id == "bb-3" }?.name == "Barbados")
+        // Captions still never become names.
+        for photo in photos {
+            #expect(!photo.name.lowercased().contains("image describes"))
+        }
+        // Threads get the place, not another "Barbados".
+        if let first {
+            #expect(store.threadTitle(for: first) == "Bathsheba Beach")
+        }
+        #expect(store.peekNextScene(setIdOverride: setId)?.name != "Barbados")
+        #expect(store.set(id: setId)?.sceneNames.contains("Bathsheba Beach") == true)
+    }
+
+    @Test("top-up photos take their real place name; located photos cost no lookup")
+    func topUpHydratesRealPlaceNames() async throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        defer { UnsplashSearchStub.reset(resultsByQuery: [:]) }
+
+        UnsplashSearchStub.reset(
+            resultsByQuery: [
+                "Place A Iceland": [UnsplashSearchStub.photoJSON(id: "a")],
+                "Place B Iceland": [UnsplashSearchStub.photoJSON(id: "b")],
+                "iceland landscape": (1...12).map { UnsplashSearchStub.photoJSON(id: "top-\($0)") },
+            ],
+            detailsByID: [
+                "top-1": UnsplashSearchStub.photoJSON(id: "top-1", locationName: "Vestrahorn"),
+            ])
+
+        let backend = FixedSceneryBackend(
+            response: GeneratedScenerySet(
+                sceneNames: ["Place A", "Place B"],
+                queries: [GeneratedSceneryQuery(text: "iceland landscape")],
+                locations: [
+                    GeneratedSceneryLocation(name: "Place A", query: "Place A Iceland"),
+                    GeneratedSceneryLocation(name: "Place B", query: "Place B Iceland"),
+                ]))
+
+        let store = SceneryStore(client: nil, root: root)
+        store.reloadFromDiskForTesting()
+        let composer = SceneSetComposer(store: store, backend: backend, client: makeClient())
+        composer.createSet(location: "Iceland")
+
+        let state = await awaitFinished(composer: composer)
+        guard case .finished(let setId) = state else {
+            Issue.record("expected finished, got \(state)")
+            return
+        }
+
+        let photos = store.photos(forSetId: setId)
+        #expect(photos[0].name == "Place A")
+        #expect(photos[1].name == "Place B")
+        // Top-up photo Unsplash has a location for gets it; the rest keep the title.
+        #expect(photos.first { $0.id == "top-1" }?.name == "Vestrahorn")
+        #expect(photos.first { $0.id == "top-2" }?.name == "Iceland")
+        // Photos fetched for a known location are already named — no request spent.
+        #expect(!UnsplashSearchStub.detailRequests.contains("a"))
+        #expect(!UnsplashSearchStub.detailRequests.contains("b"))
+    }
+
+    @Test("refreshPool repairs a custom set whose names are all the bare set title")
+    func refreshPoolHydratesTitleOnlyCustomSet() async throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        defer { UnsplashSearchStub.reset(resultsByQuery: [:]) }
+
+        UnsplashSearchStub.reset(
+            resultsByQuery: [
+                "barbados landscape": [
+                    UnsplashSearchStub.photoJSON(id: "r1"),
+                    UnsplashSearchStub.photoJSON(id: "r2"),
+                ]
+            ],
+            detailsByID: [
+                "r1": UnsplashSearchStub.photoJSON(id: "r1", locationName: "Bathsheba Beach")
+            ])
+
+        let store = SceneryStore(client: makeClient(), root: root)
+        store.reloadFromDiskForTesting()
+
+        // A set created before per-photo place names existed: sceneNames is the
+        // set title, so a legacy refresh would round-robin "Barbados" onto both.
+        let setId = "barbados-old"
+        store.registerSet(
+            ScenerySet(
+                id: setId,
+                title: "Barbados",
+                origin: .custom,
+                createdAt: Date(timeIntervalSince1970: 1),
+                queries: [SceneryQuery(text: "barbados landscape", take: 12)],
+                sceneNames: ["Barbados"],
+                locations: nil),
+            pool: [])
+
+        await store.refreshPoolForTesting(setId: setId)
+
+        let photos = store.photos(forSetId: setId)
+        let repaired = photos.first { $0.id == "r1" }
+        #expect(repaired?.name == "Bathsheba Beach")
+        #expect(photos.first { $0.id == "r2" }?.name == "Barbados")
+        if let repaired {
+            #expect(store.threadTitle(for: repaired) == "Bathsheba Beach")
+        }
+        // Manifest keeps step, so the next refresh cannot round-robin the title back on.
+        #expect(store.set(id: setId)?.sceneNames == ["Bathsheba Beach", "Barbados"])
     }
 
     @Test("legacy path (no locations) still works and never uses captions")

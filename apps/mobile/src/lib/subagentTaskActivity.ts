@@ -25,6 +25,8 @@ export interface SubagentTaskItem {
   readonly description: string | null;
   readonly subagentType: string | null;
   readonly model: string | null;
+  /** Reasoning effort the subagent's turns run at (e.g. "high"), when known. */
+  readonly effort: string | null;
   readonly workflowName: string | null;
   readonly toolUseId: string | null;
   readonly state: SubagentTaskState;
@@ -171,6 +173,7 @@ function existingOrNew(
     description: null,
     subagentType: null,
     model: null,
+    effort: null,
     workflowName: null,
     toolUseId: null,
     state: "running",
@@ -214,6 +217,16 @@ function taskIdFallback(activity: OrchestrationThreadActivity): string | null {
   return activity.kind.startsWith("task.") ? String(activity.id) : null;
 }
 
+function isSubagentTaskActivity(activity: OrchestrationThreadActivity): boolean {
+  const payload = asRecord(activity.payload);
+  if (payload?.entityType === "command") return false;
+  if (payload?.entityType === "subagent") return true;
+  if (payload?.itemType === "command_execution" || typeof payload?.command === "string") {
+    return false;
+  }
+  return true;
+}
+
 function applyTaskStarted(
   state: FoldState,
   activity: OrchestrationThreadActivity,
@@ -231,6 +244,7 @@ function applyTaskStarted(
       asTrimmedString(payload?.description) ?? asTrimmedString(payload?.detail) ?? item.description,
     subagentType: asTrimmedString(payload?.subagentType) ?? item.subagentType,
     model: asTrimmedString(payload?.model) ?? item.model,
+    effort: asTrimmedString(payload?.effort) ?? item.effort,
     workflowName: asTrimmedString(payload?.workflowName) ?? item.workflowName,
     toolUseId: asTrimmedString(payload?.toolUseId) ?? item.toolUseId,
     startedAt: minIso(item.startedAt, at),
@@ -384,7 +398,30 @@ export function deriveSubagentTasks(
     startedTaskIds: new Set(),
   };
   const sorted = [...activities].sort(compareActivities);
+  const commandTaskIds = new Set(
+    sorted
+      .filter((activity) => {
+        const payload = asRecord(activity.payload);
+        return payload?.entityType === "command" || payload?.itemType === "command_execution";
+      })
+      .map((activity) => asRecord(activity.payload)?.taskId)
+      .filter((taskId): taskId is string => typeof taskId === "string" && taskId.length > 0),
+  );
+  const subagentTaskIds = new Set(
+    sorted
+      .filter(isSubagentTaskActivity)
+      .map((activity) => asRecord(activity.payload)?.taskId)
+      .filter((taskId): taskId is string => typeof taskId === "string" && taskId.length > 0),
+  );
   for (const activity of sorted) {
+    const taskId = asRecord(activity.payload)?.taskId;
+    if (typeof taskId === "string" && commandTaskIds.has(taskId)) continue;
+    if (
+      !isSubagentTaskActivity(activity) &&
+      !(typeof taskId === "string" && subagentTaskIds.has(taskId))
+    ) {
+      continue;
+    }
     switch (activity.kind) {
       case "task.started":
         applyTaskStarted(state, activity, activity.createdAt);
@@ -425,7 +462,18 @@ function shortModelName(model: string): string {
   return trimmed.startsWith("claude-") ? trimmed.slice("claude-".length) : trimmed;
 }
 
-/** Compact identity badge: "Explore · sonnet-5" or "workflow · opus-4.8". */
+/** Readable label for a reasoning-effort slug: "xhigh" → "Extra High". */
+export function effortDisplayName(effort: string): string {
+  const trimmed = effort.trim();
+  if (trimmed.length === 0) return trimmed;
+  if (trimmed.toLowerCase() === "xhigh") return "Extra High";
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+}
+
+/**
+ * Compact identity badge: "Explore · sonnet-5 · High" or "workflow · opus-4.8".
+ * Effort qualifies the model, so it only shows once the model is known.
+ */
 export function subagentTaskIdentityBadge(
   task: SubagentTaskItem,
   modelDisplayNames?: ReadonlyMap<string, string>,
@@ -441,6 +489,10 @@ export function subagentTaskIdentityBadge(
   if (task.model) {
     const displayName = modelDisplayNames?.get(task.model.trim())?.trim();
     parts.push(displayName || shortModelName(task.model));
+    const effort = task.effort?.trim();
+    if (effort) {
+      parts.push(effortDisplayName(effort));
+    }
   }
   return parts.length > 0 ? parts.join(" · ") : null;
 }

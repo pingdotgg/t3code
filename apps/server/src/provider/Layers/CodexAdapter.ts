@@ -1186,6 +1186,7 @@ function mapToRuntimeEvents(
           type: "task.started",
           payload: {
             taskId: collabAgentTaskId(item),
+            entityType: "subagent",
             description: itemDetail(item) ?? "Subagent task",
             taskType: "sub-agent",
             subagentType: "codex",
@@ -1202,6 +1203,7 @@ function mapToRuntimeEvents(
           type: "task.progress",
           payload: {
             taskId: collabAgentTaskId(item),
+            entityType: "subagent",
             description: itemDetail(item) ?? "Subagent task",
             summary: collabAgentSummary(item),
             lastToolName: item.tool,
@@ -1231,6 +1233,7 @@ function mapToRuntimeEvents(
           type: "task.progress",
           payload: {
             taskId: collabAgentTaskId(item),
+            entityType: "subagent",
             description: itemDetail(item) ?? "Subagent task",
             summary: collabAgentSummary(item),
             lastToolName: item.tool,
@@ -1246,6 +1249,7 @@ function mapToRuntimeEvents(
           type: "task.completed",
           payload: {
             taskId: collabAgentTaskId(item),
+            entityType: "subagent",
             status:
               item.status === "failed"
                 ? "failed"

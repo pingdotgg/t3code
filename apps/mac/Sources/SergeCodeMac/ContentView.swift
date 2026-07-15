@@ -82,10 +82,16 @@ struct RootView: View {
                     .buttonStyle(.plain)
                     .help("Show running agents")
                     .popover(isPresented: $showAgentsPanel, arrowEdge: .top) {
-                        AgentsPanel(model: model) { threadID in
-                            model.selectedThreadID = threadID
-                            showAgentsPanel = false
-                        }
+                        AgentsPanel(
+                            model: model,
+                            onSelectThread: { threadID in
+                                model.selectedThreadID = threadID
+                                showAgentsPanel = false
+                            },
+                            onOpenTask: { threadID, taskId in
+                                model.openSubagent(taskId: taskId, threadID: threadID)
+                                showAgentsPanel = false
+                            })
                     }
                 }
             }

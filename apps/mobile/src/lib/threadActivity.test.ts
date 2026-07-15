@@ -175,6 +175,78 @@ describe("buildThreadFeed", () => {
     ]);
   });
 
+  it("renders skills, MCP and computer-use calls under their own name and icon", () => {
+    const turnId = TurnId.make("turn-native-tools");
+    const thread = makeThread({
+      id: ThreadId.make("thread-native-tools"),
+      projectId: ProjectId.make("project-1"),
+      title: "Native tool rows",
+      activities: [
+        makeActivity({
+          id: EventId.make("skill-completed"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Tool call",
+          createdAt: "2026-04-01T00:00:01.000Z",
+          turnId,
+          payload: {
+            itemType: "dynamic_tool_call",
+            status: "completed",
+            data: {
+              tool: {
+                family: "skill",
+                toolName: "Skill",
+                displayName: "Skill · deep-research",
+                action: "deep-research",
+              },
+              toolName: "Skill",
+              input: { skill: "deep-research" },
+            },
+          },
+        }),
+        makeActivity({
+          id: EventId.make("mcp-completed"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "MCP tool call",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          turnId,
+          payload: {
+            itemType: "mcp_tool_call",
+            status: "completed",
+            data: { toolName: "mcp__cloudflare__docs", input: { query: "workers kv" } },
+          },
+        }),
+        makeActivity({
+          id: EventId.make("computer-completed"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Tool call",
+          createdAt: "2026-04-01T00:00:03.000Z",
+          turnId,
+          payload: {
+            itemType: "dynamic_tool_call",
+            status: "completed",
+            data: { toolName: "computer", input: { action: "screenshot" } },
+          },
+        }),
+      ],
+    });
+
+    const group = buildThreadFeed(thread)[0];
+    expect(group).toMatchObject({ type: "activity-group" });
+    if (!group || group.type !== "activity-group") {
+      return;
+    }
+    expect(
+      group.activities.map((activity) => ({ summary: activity.summary, icon: activity.icon })),
+    ).toEqual([
+      { summary: "Skill · deep-research", icon: "skill" },
+      { summary: "Cloudflare · Docs", icon: "wrench" },
+      { summary: "Computer use · Screenshot", icon: "computer" },
+    ]);
+  });
+
   it("keeps MCP inputs available to expanded mobile work rows", () => {
     const turnId = TurnId.make("turn-mcp");
     const thread = makeThread({
@@ -290,6 +362,78 @@ describe("buildThreadFeed", () => {
     });
 
     expect(buildThreadFeed(thread)).toEqual([]);
+  });
+
+  it("renders explicit command tasks as tool activity under their parent turn", () => {
+    const turnId = TurnId.make("turn-command-task");
+    const thread = makeThread({
+      id: ThreadId.make("thread-command-task"),
+      projectId: ProjectId.make("project-1"),
+      title: "Local command task",
+      activities: [
+        makeActivity({
+          id: EventId.make("command-started"),
+          kind: "task.started",
+          summary: "Task started",
+          createdAt: "2026-04-01T00:00:00.000Z",
+          turnId,
+          payload: {
+            taskId: "command-task-1",
+            entityType: "command",
+            description: "Run tests",
+          },
+        }),
+        makeActivity({
+          id: EventId.make("command-completed"),
+          kind: "task.completed",
+          summary: "Task completed",
+          createdAt: "2026-04-01T00:00:01.000Z",
+          turnId,
+          payload: {
+            taskId: "command-task-1",
+            status: "completed",
+            summary: "pnpm test",
+          },
+        }),
+      ],
+    });
+
+    const feed = buildThreadFeed(thread);
+    expect(feed.some((entry) => entry.type === "subagent-task")).toBe(false);
+    expect(feed).toMatchObject([
+      {
+        type: "activity-group",
+        turnId: "turn-command-task",
+        activities: [
+          { icon: "command", turnId: "turn-command-task" },
+          { icon: "command", turnId: "turn-command-task" },
+        ],
+      },
+    ]);
+  });
+
+  it("does not promote explicit command legacy task events to subagent rows", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-legacy-task"),
+      projectId: ProjectId.make("project-1"),
+      title: "Legacy task",
+      activities: [
+        makeActivity({
+          id: EventId.make("legacy-task"),
+          kind: "task.completed",
+          summary: "Task completed",
+          createdAt: "2026-04-01T00:00:00.000Z",
+          payload: {
+            taskId: "legacy-task-1",
+            itemType: "command_execution",
+            status: "completed",
+            summary: "Bash finished",
+          },
+        }),
+      ],
+    });
+
+    expect(buildThreadFeed(thread).some((entry) => entry.type === "subagent-task")).toBe(false);
   });
 
   it("drops session exits whose stderr tail is empty after trimming", () => {
@@ -614,5 +758,84 @@ describe("buildThreadFeed", () => {
       type: "work-toggle",
       expanded: true,
     });
+  });
+
+  it("renders a skill call from its native presentation, not the provider title", () => {
+    const turnId = TurnId.make("turn-skill");
+    const thread = makeThread({
+      id: ThreadId.make("thread-skill"),
+      projectId: ProjectId.make("project-1"),
+      title: "Skill row",
+      activities: [
+        makeActivity({
+          id: EventId.make("skill-completed"),
+          kind: "tool.completed",
+          tone: "tool",
+          // The adapter types a Skill call as a generic dynamic tool and titles
+          // it "Tool call"; only the presentation knows it is a skill.
+          summary: "Tool call",
+          createdAt: "2026-04-01T00:00:00.000Z",
+          turnId,
+          payload: {
+            itemType: "dynamic_tool_call",
+            detail: 'Skill: {"skill":"caveman:cavecrew"}',
+            presentation: {
+              surface: "skill",
+              title: "Skill: cavecrew",
+              subtitle: "review the diff",
+              state: "succeeded",
+              provenance: { origin: "plugin", pluginName: "caveman", skillName: "cavecrew" },
+              inputs: [],
+            },
+          },
+        }),
+      ],
+    });
+
+    const group = buildThreadFeed(thread).find((entry) => entry.type === "activity-group");
+    const activity = group?.type === "activity-group" ? group.activities[0] : undefined;
+
+    expect(activity).toMatchObject({
+      summary: "Skill: cavecrew",
+      detail: "review the diff",
+      icon: "zap",
+      toolLike: true,
+      status: "success",
+    });
+  });
+
+  it("falls back to the legacy derivation when an unknown surface arrives", () => {
+    const turnId = TurnId.make("turn-unknown");
+    const thread = makeThread({
+      id: ThreadId.make("thread-unknown"),
+      projectId: ProjectId.make("project-1"),
+      title: "Unknown surface row",
+      activities: [
+        makeActivity({
+          id: EventId.make("unknown-completed"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Tool call",
+          createdAt: "2026-04-01T00:00:00.000Z",
+          turnId,
+          payload: {
+            itemType: "mcp_tool_call",
+            presentation: {
+              surface: "holodeck",
+              title: "AcmeDoThing",
+              state: "succeeded",
+              provenance: { origin: "unknown" },
+              inputs: [],
+            },
+          },
+        }),
+      ],
+    });
+
+    const group = buildThreadFeed(thread).find((entry) => entry.type === "activity-group");
+    const activity = group?.type === "activity-group" ? group.activities[0] : undefined;
+
+    // Unknown surface -> generic -> icon falls through to the itemType chain.
+    expect(activity).toMatchObject({ summary: "AcmeDoThing", icon: "wrench" });
   });
 });

@@ -6,7 +6,7 @@ import T3Kit
 // noise, so the timeline shows one summary row instead. The underlying
 // timeline array is untouched — grouping is recomputed per render.
 
-public enum TimelineDisplayItem: Identifiable, Sendable {
+public enum TimelineDisplayItem: Identifiable, Equatable, Sendable {
     case single(TimelineItem)
     /// A finished run of consecutive tool/reasoning rows, condensed behind
     /// one disclosure ("Ran 6 tools · edited 3 files").
@@ -40,6 +40,37 @@ public struct ToolGroupSummary: Hashable, Sendable {
         self.toolCount = toolCount
         self.editedFileCount = editedFileCount
         self.failedCount = failedCount
+    }
+}
+
+extension Array where Element == TimelineItem {
+    /// Id of the one decision card that owns the Approve/Deny/Submit/Implement/
+    /// Wait/Dismiss keyboard shortcuts, or nil when nothing is actionable.
+    ///
+    /// Approve/Deny/Submit/Implement/Wait/Dismiss gain keyboard shortcuts
+    /// (ApprovalCard, UserInputCard, PlanCard, UsageLimitCard), but only the
+    /// single most-recent actionable card across all kinds should own them — a
+    /// scrollback full of historical cards must never let a keystroke resolve
+    /// the wrong one. Approvals and user-input requests are removed from the
+    /// timeline once resolved (AppModel.resolveInteraction), while usage-limit
+    /// notices and already-implemented plans can remain alongside newer pending
+    /// cards. Scan from the end and stop at the nearest card that still has an
+    /// action, regardless of its kind.
+    ///
+    /// Resolved once per render and handed to rows as a value, so no card row
+    /// has to observe the whole timeline to know whether it is the active one.
+    public var activeDecisionCardID: String? {
+        for item in reversed() {
+            switch item {
+            case .approval, .userInput, .usageLimit:
+                return item.id
+            case .plan(let plan) where !plan.isImplemented:
+                return item.id
+            default:
+                continue
+            }
+        }
+        return nil
     }
 }
 
@@ -335,19 +366,31 @@ enum TimelineDisplayCache {
 
         contentRefreshCount += 1
         PerfMetrics.count("grouping.contentRefresh")
+        // Rebuild only the rows whose underlying items actually changed. A
+        // streaming delta touches exactly one row; every other row keeps its
+        // cached value verbatim (same string/array storage), so the row view's
+        // `Equatable` check short-circuits and SwiftUI skips its body. Handing
+        // back freshly constructed values for all N rows instead made every
+        // realized row re-render ~30x/second for the whole run.
+        var rebuiltRows = 0
         let refreshed = zip(entry.items, entry.ranges).map { cached, range -> TimelineDisplayItem in
             switch cached {
-            case .single:
-                return .single(items[range.lowerBound])
-            case .toolGroup(let id, _, let summary):
-                return .toolGroup(
-                    id: id, items: Array(items[range]), summary: summary)
+            case .single(let cachedItem):
+                let item = items[range.lowerBound]
+                guard item != cachedItem else { return cached }
+                rebuiltRows += 1
+                return .single(item)
+            case .toolGroup(let id, let cachedItems, let summary):
+                guard !items[range].elementsEqual(cachedItems) else { return cached }
+                rebuiltRows += 1
+                return .toolGroup(id: id, items: Array(items[range]), summary: summary)
             case .daySeparator:
                 // Label freshness is guaranteed by relativeDay in the
                 // structure key; content refreshes reuse it as-is.
                 return cached
             }
         }
+        PerfMetrics.count("grouping.rowsRebuilt", by: rebuiltRows)
         storage[threadID] = Entry(
             structureKey: structureKey,
             timelineVersion: version,

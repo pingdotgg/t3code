@@ -228,7 +228,10 @@ function resolveRequestedModeId(input: {
     return undefined;
   }
 
-  if (input.interactionMode === "plan") {
+  // ACP exposes no advisor mode. Plan/architect is the closest non-mutating
+  // mode an ACP agent offers; the read-only guarantee itself comes from the
+  // runtime-mode clamp, which puts advisor turns on the approval path.
+  if (input.interactionMode === "plan" || input.interactionMode === "advisor") {
     return findModeByAliases(modeState.availableModes, ACP_PLAN_MODE_ALIASES)?.id;
   }
 

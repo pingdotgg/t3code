@@ -18,6 +18,10 @@ import {
   decodeGitHubPullRequestListJson,
 } from "./gitHubPullRequests.ts";
 import { decodeGitHubPullRequestReviewJson } from "./gitHubPullRequestReview.ts";
+import {
+  parsePullRequestReviewStatus,
+  type PullRequestReviewLifecycle,
+} from "./pullRequestReviewLifecycle.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -212,6 +216,8 @@ export interface GitHubPullRequestReviewStatus {
   readonly reviewDecision: GitHubPullRequestReviewDecision | null;
   readonly unresolvedReviewThreadCount: number | null;
   readonly actionableReviewItemCount?: number | null;
+  /** Where the PR sits in its review lifecycle; absent when unknown. */
+  readonly reviewLifecycle?: PullRequestReviewLifecycle | null;
 }
 
 export interface GitHubRepositoryCloneUrls {
@@ -332,48 +338,6 @@ function parsePullRequestNumber(reference: string): number | null {
     return Number.isFinite(number) && number > 0 ? number : null;
   }
   return null;
-}
-
-function countReviewThreads(raw: string): {
-  unresolvedReviewThreadCount: number;
-  actionableReviewItemCount: number;
-} | null {
-  try {
-    const parsed = JSON.parse(raw) as {
-      data?: {
-        repository?: {
-          pullRequest?: {
-            reviewThreads?: {
-              nodes?: ReadonlyArray<{
-                isResolved?: boolean;
-                isOutdated?: boolean;
-                comments?: { nodes?: ReadonlyArray<{ body?: string | null }> | null } | null;
-              }> | null;
-              pageInfo?: {
-                hasNextPage?: boolean;
-              } | null;
-            } | null;
-          } | null;
-        } | null;
-      } | null;
-    };
-    const reviewThreads = parsed.data?.repository?.pullRequest?.reviewThreads;
-    const nodes = reviewThreads?.nodes;
-    if (!Array.isArray(nodes) || reviewThreads?.pageInfo?.hasNextPage === true) return null;
-    const unresolved = nodes.filter(
-      (thread) => thread?.isResolved !== true && thread?.isOutdated !== true,
-    );
-    return {
-      unresolvedReviewThreadCount: unresolved.length,
-      actionableReviewItemCount: unresolved.filter((thread) =>
-        thread.comments?.nodes?.some(
-          (comment: { readonly body?: string | null }) => comment?.body?.trim().length,
-        ),
-      ).length,
-    };
-  } catch {
-    return null;
-  }
 }
 
 function normalizeRepositoryCloneUrls(
@@ -586,13 +550,16 @@ export const make = Effect.gen(function* () {
           Effect.orElseSucceed(() => null),
         );
 
+        const unknownReviewStatus = {
+          reviewDecision,
+          unresolvedReviewThreadCount: null,
+          actionableReviewItemCount: null,
+          reviewLifecycle: null,
+        };
+
         const prNumber = parsePullRequestNumber(input.reference);
         if (prNumber === null) {
-          return {
-            reviewDecision,
-            unresolvedReviewThreadCount: null,
-            actionableReviewItemCount: null,
-          };
+          return unknownReviewStatus;
         }
 
         const nameWithOwner = yield* execute({
@@ -607,24 +574,22 @@ export const make = Effect.gen(function* () {
           Effect.orElseSucceed(() => null),
         );
         if (!nameWithOwner) {
-          return {
-            reviewDecision,
-            unresolvedReviewThreadCount: null,
-            actionableReviewItemCount: null,
-          };
+          return unknownReviewStatus;
         }
 
         const [owner, name] = nameWithOwner.split("/", 2);
         if (!owner || !name) {
-          return {
-            reviewDecision,
-            unresolvedReviewThreadCount: null,
-            actionableReviewItemCount: null,
-          };
+          return unknownReviewStatus;
         }
 
+        // Review bodies are big (bot walkthroughs), and this runs on the
+        // polled status path, so only comments carry bodies: the lifecycle
+        // markers live there. Reviews are fetched for their state alone, to
+        // tell "reviewed and clean" from "not reviewed yet". A bot edits its
+        // summary comment in place, so both ends of the comment list are
+        // sampled — the summary stays first, the re-review chatter lands last.
         const graphqlQuery =
-          "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewThreads(first: 100) { nodes { isResolved isOutdated comments(first: 1) { nodes { body } } } pageInfo { hasNextPage } } } } }";
+          "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewThreads(first: 100) { nodes { isResolved isOutdated comments(first: 1) { nodes { body } } } pageInfo { hasNextPage } } reviews(last: 5) { nodes { state } } firstComments: comments(first: 5) { nodes { author { login } body } } latestComments: comments(last: 5) { nodes { author { login } body } } } } }";
 
         const reviewStatus = yield* execute({
           cwd: input.cwd,
@@ -641,15 +606,15 @@ export const make = Effect.gen(function* () {
             `number=${prNumber}`,
           ],
         }).pipe(
-          Effect.map((result) => countReviewThreads(result.stdout.trim() || "{}")),
-          Effect.orElseSucceed(() => null),
+          Effect.map((result) => parsePullRequestReviewStatus(result.stdout.trim() || "{}")),
+          Effect.orElseSucceed(() => ({
+            unresolvedReviewThreadCount: null,
+            actionableReviewItemCount: null,
+            reviewLifecycle: null,
+          })),
         );
 
-        return {
-          reviewDecision,
-          unresolvedReviewThreadCount: reviewStatus?.unresolvedReviewThreadCount ?? null,
-          actionableReviewItemCount: reviewStatus?.actionableReviewItemCount ?? null,
-        };
+        return { reviewDecision, ...reviewStatus };
       }),
     getPullRequestReview: (input) =>
       Effect.gen(function* () {
