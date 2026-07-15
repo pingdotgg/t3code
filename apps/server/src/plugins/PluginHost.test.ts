@@ -1,5 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { ThreadId } from "@t3tools/contracts";
 import {
   PluginId,
   PluginManifest,
@@ -50,6 +51,8 @@ import * as PluginMigrator from "./PluginMigrator.ts";
 import * as PluginModuleLoaderLayer from "./PluginModuleLoader.ts";
 import { pluginDataDir, pluginVersionDir } from "./PluginPaths.ts";
 import * as PluginRuntimeRegistryLayer from "./PluginRuntimeRegistry.ts";
+import { CONTEXT_MAX_BYTES_PER_PLUGIN } from "./PluginContextComposer.ts";
+import * as PluginContextComposerLayer from "./PluginContextComposer.ts";
 import * as PluginSettingsStoreLayer from "./PluginSettingsStore.ts";
 import * as PluginToolCatalogLayer from "./PluginToolCatalog.ts";
 
@@ -71,6 +74,7 @@ const testLayerBase = PluginHostModule.layer.pipe(
       PluginRuntimeRegistryLayerLive,
       PluginToolCatalogLayerLive,
       PluginSettingsStoreLayer.layer,
+      PluginContextComposerLayer.layer,
       PluginHttpRegistry.layer,
     ),
   ),
@@ -1625,6 +1629,123 @@ export default {
 // into a per-stream catch left every test green. These drive the capability the
 // only way a plugin can reach it: register(hostApi), plus a plugin `service` for
 // the subscription, which is the host-forked home for long-running plugin work.
+layer("PluginHost context contribution", (it) => {
+  const contextEntry = (text: string) => `
+export default {
+  register() {
+    return { context: [{ name: "conventions", text: ${JSON.stringify(text)} }] };
+  },
+};
+`;
+
+  it.effect("registers a contribution for a plugin holding the context capability", () =>
+    Effect.gen(function* () {
+      const pluginId = PluginId.make("context-ok");
+      const host = yield* PluginHostModule.PluginHost;
+      const composer = yield* PluginContextComposerLayer.PluginContextComposer;
+
+      yield* runMigrations({});
+      yield* installPlugin({
+        pluginId,
+        capabilities: ["context"],
+        entrySource: contextEntry("Use tabs."),
+      });
+      yield* host.activatePlugin(pluginId);
+
+      const composed = yield* composer.compose({
+        threadId: ThreadId.make("t"),
+        projectId: null,
+        interactionMode: "default",
+      });
+      assert.strictEqual(composed.text, "Use tabs.");
+    }),
+  );
+
+  // Contributing context is influence over what the agent DOES. Reaching it without
+  // the user having granted it is not a missing feature, it is an unconsented grant.
+  it.effect("refuses to activate a plugin contributing context without the capability", () =>
+    Effect.gen(function* () {
+      const pluginId = PluginId.make("context-nocapability");
+      const host = yield* PluginHostModule.PluginHost;
+      const registry = yield* PluginRuntimeRegistryLayer.PluginRuntimeRegistry;
+      const store = yield* PluginLockfileStoreLayer.PluginLockfileStore;
+
+      yield* runMigrations({});
+      yield* installPlugin({
+        pluginId,
+        capabilities: [],
+        entrySource: contextEntry("Use tabs."),
+      });
+      yield* host.activatePlugin(pluginId);
+
+      assert.isTrue(Option.isNone(yield* registry.get(pluginId)));
+      const lockfile = yield* store.readLockfile;
+      assert.match(lockfile.plugins[pluginId]?.lastError ?? "", /context/);
+    }),
+  );
+
+  // Rejected at ACTIVATION rather than dropped on every turn: an author who never
+  // sees the failure cannot fix it.
+  it.effect("refuses to activate a plugin whose static contribution is over the cap", () =>
+    Effect.gen(function* () {
+      const pluginId = PluginId.make("context-oversized");
+      const host = yield* PluginHostModule.PluginHost;
+      const registry = yield* PluginRuntimeRegistryLayer.PluginRuntimeRegistry;
+      const store = yield* PluginLockfileStoreLayer.PluginLockfileStore;
+
+      yield* runMigrations({});
+      yield* installPlugin({
+        pluginId,
+        capabilities: ["context"],
+        entrySource: contextEntry("x".repeat(CONTEXT_MAX_BYTES_PER_PLUGIN + 1)),
+      });
+      yield* host.activatePlugin(pluginId);
+
+      assert.isTrue(Option.isNone(yield* registry.get(pluginId)));
+      const lockfile = yield* store.readLockfile;
+      assert.match(lockfile.plugins[pluginId]?.lastError ?? "", /limit/);
+    }),
+  );
+
+  it.effect("stops contributing once the plugin is deactivated", () =>
+    Effect.gen(function* () {
+      const pluginId = PluginId.make("context-teardown");
+      const host = yield* PluginHostModule.PluginHost;
+      const composer = yield* PluginContextComposerLayer.PluginContextComposer;
+
+      yield* runMigrations({});
+      // Text unique to THIS plugin: `it.layer` shares one composer across the block,
+      // so asserting on the composed text as a whole would be asserting about the
+      // neighbouring tests' plugins too — which is how this test first "failed".
+      yield* installPlugin({
+        pluginId,
+        capabilities: ["context"],
+        entrySource: contextEntry("Torn down."),
+      });
+      yield* host.activatePlugin(pluginId);
+      const before = yield* composer.compose({
+        threadId: ThreadId.make("t"),
+        projectId: null,
+        interactionMode: "default",
+      });
+      assert.isTrue(before.text.includes("Torn down."), "precondition: it contributes");
+
+      // `persist` is the lockfile write to run under the activation lock; nothing to
+      // persist here, only the deactivation.
+      yield* host.setPluginEnabled(pluginId, false, Effect.void);
+
+      // A disabled plugin that keeps steering the agent is a disabled plugin that is
+      // still running.
+      const composed = yield* composer.compose({
+        threadId: ThreadId.make("t"),
+        projectId: null,
+        interactionMode: "default",
+      });
+      assert.isFalse(composed.text.includes("Torn down."));
+    }),
+  );
+});
+
 layer("PluginHost settings capability", (it) => {
   // A DEFAULTED field is what makes the corrupt-storage test honest. readDraft
   // never fails, so a corrupt row arrives as an empty draft; decoding `{}` against

@@ -100,6 +100,13 @@ export const PLUGIN_CAPABILITY_DESCRIPTIONS = {
   // of the message, and its attachments. Someone reading the metadata version would
   // never guess they were granting access to the content of every conversation.
   // Consent copy that misleads is worse than no copy at all.
+  // Say what this actually grants: the plugin WRITES INTO the agent's instructions on
+  // every turn. That is influence over what the agent does — a bigger grant than
+  // reading events, and one a user cannot see the effects of directly. Ordering does
+  // not protect the host's own rules: contributed text can simply say "ignore any
+  // later instruction about X". The capability and this sentence are the control.
+  context:
+    "Add its own instructions to the AI agent on every turn, in every thread. This is not a read: it changes how the agent behaves, and it can work against the app's own instructions. Grant it only to plugins you trust to direct your agent.",
   events:
     "Read everything that happens in this workspace as it happens, including the full text of every message you and the agent send, their attachments, and the activity of every turn \u2014 plus projects and threads being created, renamed, and deleted. This is read-only, but it is very broad: the plugin sees this across every project, not only the one you are working in. Grant it only to plugins you trust with the contents of your conversations.",
 } satisfies Record<PluginCapability, string>;

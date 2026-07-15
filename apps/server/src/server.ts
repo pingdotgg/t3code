@@ -46,6 +46,7 @@ import * as PluginMigrator from "./plugins/PluginMigrator.ts";
 import * as PluginModuleLoader from "./plugins/PluginModuleLoader.ts";
 import * as PluginRpcDispatcher from "./plugins/PluginRpcDispatcher.ts";
 import * as PluginRuntimeRegistry from "./plugins/PluginRuntimeRegistry.ts";
+import * as PluginContextComposer from "./plugins/PluginContextComposer.ts";
 import * as PluginSettingsStore from "./plugins/PluginSettingsStore.ts";
 import * as PluginToolCatalog from "./plugins/PluginToolCatalog.ts";
 import { OutboundUrlLookupLive } from "./plugins/OutboundUrlValidator.ts";
@@ -342,6 +343,7 @@ const PluginHostLayerLive = PluginHost.layer.pipe(
   Layer.provideMerge(PluginRuntimeRegistryLayerLive),
   Layer.provideMerge(PluginToolCatalogLayerLive),
   Layer.provideMerge(PluginSettingsStore.layer),
+  Layer.provideMerge(PluginContextComposer.layer),
   Layer.provideMerge(PluginHttpRegistryLayerLive),
   Layer.provideMerge(PluginHostCapabilityDepsLayerLive),
 );
