@@ -50,7 +50,11 @@ import type { GitManagerServiceError } from "@t3tools/contracts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
-import type { ChangeRequest, GitPullRequestReviewDecision } from "@t3tools/contracts";
+import type {
+  ChangeRequest,
+  GitPullRequestReviewDecision,
+  GitPullRequestReviewLifecycle,
+} from "@t3tools/contracts";
 
 export interface GitActionProgressReporter {
   readonly publish: (event: GitActionProgressEvent) => Effect.Effect<void, never>;
@@ -465,6 +469,7 @@ function toStatusPr(
   review?: {
     reviewDecision: GitPullRequestReviewDecision | null;
     unresolvedReviewThreadCount: number | null;
+    reviewLifecycle?: GitPullRequestReviewLifecycle | null;
   },
 ): {
   number: number;
@@ -475,7 +480,9 @@ function toStatusPr(
   state: "open" | "closed" | "merged";
   reviewDecision: GitPullRequestReviewDecision | null;
   unresolvedReviewThreadCount: number | null;
+  reviewLifecycle?: GitPullRequestReviewLifecycle;
 } {
+  const reviewLifecycle = review?.reviewLifecycle ?? null;
   return {
     number: pr.number,
     title: pr.title,
@@ -485,6 +492,8 @@ function toStatusPr(
     state: pr.state,
     reviewDecision: review?.reviewDecision ?? null,
     unresolvedReviewThreadCount: review?.unresolvedReviewThreadCount ?? null,
+    // Omitted rather than nulled: an absent lifecycle means unknown.
+    ...(reviewLifecycle !== null ? { reviewLifecycle } : {}),
   };
 }
 
@@ -1032,10 +1041,12 @@ export const make = Effect.gen(function* () {
         Effect.map((status) => ({
           reviewDecision: status.reviewDecision,
           unresolvedReviewThreadCount: status.unresolvedReviewThreadCount,
+          reviewLifecycle: status.reviewLifecycle ?? null,
         })),
         Effect.orElseSucceed(() => ({
           reviewDecision: null,
           unresolvedReviewThreadCount: null,
+          reviewLifecycle: null,
         })),
       );
 

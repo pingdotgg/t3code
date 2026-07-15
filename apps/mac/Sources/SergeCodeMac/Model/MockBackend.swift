@@ -843,7 +843,8 @@ private actor MockState {
         branch: String = "feat/native-mac-app",
         prState: PullRequestState? = nil,
         reviewDecision: PullRequestReviewDecision? = nil,
-        unresolvedReviewThreadCount: Int? = nil
+        unresolvedReviewThreadCount: Int? = nil,
+        reviewLifecycle: PullRequestReviewLifecycle? = nil
     ) {
         let hasOpenPR = prState == .open || prState == .merged
         emit(
@@ -861,7 +862,8 @@ private actor MockState {
                     prURL: hasOpenPR ? "https://github.com/SergeSerb2/SergeCode/pull/1" : nil,
                     prState: prState,
                     reviewDecision: reviewDecision,
-                    unresolvedReviewThreadCount: unresolvedReviewThreadCount)))
+                    unresolvedReviewThreadCount: unresolvedReviewThreadCount,
+                    reviewLifecycle: reviewLifecycle)))
     }
 
     func respondToUserInput(id: String, answers: [String: [String]]) {

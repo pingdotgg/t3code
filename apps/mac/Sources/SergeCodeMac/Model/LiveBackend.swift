@@ -2188,7 +2188,9 @@ public actor LiveBackend: BackendService {
             prState: (remote?.pr?.state).flatMap(PullRequestState.init(rawValue:)),
             reviewDecision: (remote?.pr?.reviewDecision).flatMap(
                 PullRequestReviewDecision.init(rawValue:)),
-            unresolvedReviewThreadCount: remote?.pr?.unresolvedReviewThreadCount)
+            unresolvedReviewThreadCount: remote?.pr?.unresolvedReviewThreadCount,
+            reviewLifecycle: (remote?.pr?.reviewLifecycle).flatMap(
+                PullRequestReviewLifecycle.init(rawValue:)))
     }
 
     /// The directory a thread's workspace/VCS calls operate on: its worktree

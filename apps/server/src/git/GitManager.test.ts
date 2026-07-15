@@ -1548,8 +1548,61 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(status).toEqual({
         reviewDecision: "APPROVED",
         unresolvedReviewThreadCount: null,
+        reviewLifecycle: null,
       });
       expect(ghCalls[2]?.join(" ")).toContain("pageInfo { hasNextPage }");
+    }),
+  );
+
+  it.effect("review status reports the lifecycle while a review bot is still reviewing", () =>
+    Effect.gen(function* () {
+      const ghCalls: ReadonlyArray<string>[] = [];
+      const stdoutSequence = [
+        '{"reviewDecision":null}',
+        '{"nameWithOwner":"SergeSerb2/SergeCode"}',
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        JSON.stringify({
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: { nodes: [{ isResolved: true }], pageInfo: { hasNextPage: false } },
+                reviews: { nodes: [{ state: "COMMENTED" }] },
+                firstComments: {
+                  nodes: [
+                    {
+                      author: { login: "coderabbitai[bot]" },
+                      body: "> [!NOTE]\n> Currently processing new changes in this PR.",
+                    },
+                  ],
+                },
+                latestComments: { nodes: [] },
+              },
+            },
+          },
+        }),
+      ];
+      const gitHubCliLayer = GitHubCli.layer.pipe(
+        Layer.provide(
+          Layer.mock(VcsProcess.VcsProcess)({
+            run: (input) => {
+              ghCalls.push(input.args);
+              return Effect.succeed(fakeGhOutput(stdoutSequence[ghCalls.length - 1] ?? ""));
+            },
+          }),
+        ),
+      );
+      const gitHubCli = yield* GitHubCli.GitHubCli.pipe(Effect.provide(gitHubCliLayer));
+
+      const status = yield* gitHubCli.getPullRequestReviewStatus({
+        cwd: "/repo",
+        reference: "#88",
+      });
+
+      expect(status).toEqual({
+        reviewDecision: null,
+        unresolvedReviewThreadCount: 0,
+        reviewLifecycle: "review-in-progress",
+      });
     }),
   );
 
