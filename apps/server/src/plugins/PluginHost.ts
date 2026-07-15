@@ -1241,6 +1241,10 @@ export const make = Effect.fn("PluginHost.make")(function* () {
           }
         } else {
           yield* fs.remove(pluginRoot, { recursive: true, force: true });
+          // Settings live in the host DB, not under pluginRoot, so removing the
+          // plugin directory does NOT remove them. Without this, "Remove plugin
+          // data" then reinstalling the same id silently recovered the old config.
+          yield* settingsStore.remove(pluginId);
         }
         yield* store.removePlugin(pluginId);
         return false;

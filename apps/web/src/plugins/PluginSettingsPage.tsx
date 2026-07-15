@@ -8,6 +8,7 @@ import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Button } from "~/components/ui/button";
 import { Spinner } from "~/components/ui/spinner";
 import { ProviderSettingsForm } from "~/components/settings/ProviderSettingsForm";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { getPluginSettingsCommand, setPluginSettingsCommand } from "~/state/plugins";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -79,12 +80,21 @@ export function PluginSettingsPage({ pluginId, settingsSchema }: PluginSettingsP
     });
     setSaving(false);
     if (result._tag === "Success") {
-      setDraft({ values: { ...edited }, revision: result.value.revision, incompatible: false });
+      // Re-read rather than keeping the raw client edits. The server canonicalises
+      // (decode -> re-encode, and strips keys the schema does not declare), so the
+      // stored values can legitimately differ from what was typed; showing the edits
+      // would leave the form disagreeing with storage until the next reload.
+      await load();
       return;
     }
     // Surface the server's own message: it distinguishes a schema rejection from a
-    // concurrent-edit conflict, and the user's next action differs for each.
-    const failure = result.cause;
+    // concurrent-edit conflict, and the user's next action differs for each ("fix
+    // the value" vs "reload, someone else changed this").
+    //
+    // `result.cause` is an Effect Cause, NOT the error — reading `.message` off it
+    // always missed, so every failure fell back to the generic text and the conflict
+    // path was unreachable. squashAtomCommandFailure extracts the actual failure.
+    const failure = squashAtomCommandFailure(result);
     setError(
       typeof failure === "object" && failure !== null && "message" in failure
         ? String((failure as { readonly message: unknown }).message)
