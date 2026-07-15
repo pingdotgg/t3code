@@ -8,6 +8,7 @@ import {
   buildCollapsedProposedPlanPreviewMarkdown,
   buildProposedPlanMarkdownFilename,
   downloadPlanAsTextFile,
+  extractProposedPlanTasks,
   normalizePlanMarkdownForExport,
   proposedPlanTitle,
   stripDisplayedPlanMarkdown,
@@ -32,6 +33,7 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { projectEnvironment } from "~/state/projects";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { PlanTaskList } from "../PlanTaskList";
 
 export const ProposedPlanCard = memo(function ProposedPlanCard({
   planMarkdown,
@@ -70,6 +72,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   const lineCount = planMarkdown.split("\n").length;
   const canCollapse = planMarkdown.length > 900 || lineCount > 20;
   const displayedPlanMarkdown = stripDisplayedPlanMarkdown(planMarkdown);
+  const planTasks = extractProposedPlanTasks(planMarkdown);
   const collapsedPreview = canCollapse
     ? buildCollapsedProposedPlanPreviewMarkdown(planMarkdown, { maxLines: 10 })
     : null;
@@ -170,27 +173,37 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
         </Menu>
       </div>
       <div className="mt-4">
-        <div className={cn("relative", canCollapse && !expanded && "max-h-104 overflow-hidden")}>
-          {canCollapse && !expanded ? (
-            <ChatMarkdown
-              text={collapsedPreview ?? ""}
-              cwd={cwd}
-              threadRef={threadRef}
-              isStreaming={false}
-            />
-          ) : (
-            <ChatMarkdown
-              text={displayedPlanMarkdown}
-              cwd={cwd}
-              threadRef={threadRef}
-              isStreaming={false}
-            />
-          )}
-          {canCollapse && !expanded ? (
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-linear-to-t from-card/95 via-card/80 to-transparent" />
-          ) : null}
-        </div>
-        {canCollapse ? (
+        {planTasks.length > 0 ? <PlanTaskList tasks={planTasks} /> : null}
+        {planTasks.length === 0 || expanded ? (
+          <div
+            className={cn(
+              "relative",
+              planTasks.length > 0 &&
+                "mt-4 rounded-lg border border-border/50 bg-background/50 p-3",
+              planTasks.length === 0 && canCollapse && !expanded && "max-h-104 overflow-hidden",
+            )}
+          >
+            {planTasks.length === 0 && canCollapse && !expanded ? (
+              <ChatMarkdown
+                text={collapsedPreview ?? ""}
+                cwd={cwd}
+                threadRef={threadRef}
+                isStreaming={false}
+              />
+            ) : (
+              <ChatMarkdown
+                text={displayedPlanMarkdown}
+                cwd={cwd}
+                threadRef={threadRef}
+                isStreaming={false}
+              />
+            )}
+            {planTasks.length === 0 && canCollapse && !expanded ? (
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-linear-to-t from-card/95 via-card/80 to-transparent" />
+            ) : null}
+          </div>
+        ) : null}
+        {canCollapse || planTasks.length > 0 ? (
           <div className="mt-4 flex justify-center">
             <Button
               size="sm"
@@ -198,7 +211,13 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               data-scroll-anchor-ignore
               onClick={() => setExpanded((value) => !value)}
             >
-              {expanded ? "Collapse plan" : "Expand plan"}
+              {planTasks.length > 0
+                ? expanded
+                  ? "Hide details"
+                  : "Show details"
+                : expanded
+                  ? "Collapse plan"
+                  : "Expand plan"}
             </Button>
           </div>
         ) : null}

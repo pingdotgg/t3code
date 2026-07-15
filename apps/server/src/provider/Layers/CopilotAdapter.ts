@@ -98,11 +98,6 @@ type CopilotTaskList = Awaited<ReturnType<CopilotSession["rpc"]["tasks"]["list"]
 type CopilotTaskInfo = CopilotTaskList["tasks"][number];
 type CopilotTaskStatus = CopilotTaskInfo["status"];
 
-type PlanStep = {
-  step: string;
-  status: "pending" | "inProgress" | "completed";
-};
-
 interface CopilotTaskState {
   description: string;
   status: CopilotTaskStatus;
@@ -741,19 +736,6 @@ function completedToolDiffText(
   return parseTurnDiffFilesFromUnifiedDiff(diffCandidate).length > 0 ? diffCandidate : undefined;
 }
 
-function normalizeCopilotTaskStatus(status: CopilotTaskStatus): PlanStep["status"] {
-  switch (status) {
-    case "completed":
-      return "completed";
-    case "running":
-    case "idle":
-      return "inProgress";
-    case "failed":
-    case "cancelled":
-      return "pending";
-  }
-}
-
 function completedCopilotTaskStatus(
   status: CopilotTaskStatus,
 ): "completed" | "failed" | "stopped" | undefined {
@@ -795,70 +777,6 @@ function copilotTaskCompletionSummary(task: CopilotTaskInfo): string | undefined
     return task.description;
   }
   return task.error ?? task.result ?? task.latestResponse ?? task.description;
-}
-
-function copilotTaskStatusSuffix(status: CopilotTaskStatus): string {
-  switch (status) {
-    case "failed":
-      return " (failed)";
-    case "cancelled":
-      return " (cancelled)";
-    case "running":
-    case "idle":
-    case "completed":
-      return "";
-  }
-}
-
-function planStepsFromCopilotTasks(tasks: ReadonlyArray<CopilotTaskInfo>): PlanStep[] {
-  return tasks.map((task) => {
-    const description = copilotTaskDescription(task);
-    return {
-      step: `${description}${copilotTaskStatusSuffix(task.status)}`,
-      status: normalizeCopilotTaskStatus(task.status),
-    };
-  });
-}
-
-function isTodoTool(toolName: string): boolean {
-  const normalized = toolName.toLowerCase().replace(/[^a-z0-9]+/g, "");
-  return normalized.includes("todo");
-}
-
-function normalizeTodoStatus(value: unknown): PlanStep["status"] {
-  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
-  if (normalized === "completed" || normalized === "done") {
-    return "completed";
-  }
-  if (
-    normalized === "in_progress" ||
-    normalized === "inprogress" ||
-    normalized === "running" ||
-    normalized === "active"
-  ) {
-    return "inProgress";
-  }
-  return "pending";
-}
-
-function extractPlanStepsFromTodoInput(input: Record<string, unknown>): PlanStep[] | undefined {
-  const todos = input.todos;
-  if (!Array.isArray(todos) || todos.length === 0) {
-    return undefined;
-  }
-  const steps = todos.flatMap((todo): Array<PlanStep> => {
-    if (!isStringRecord(todo)) {
-      return [];
-    }
-    const step = readString(todo.content) ?? readString(todo.title) ?? readString(todo.task);
-    return [
-      {
-        step: step ?? "Task",
-        status: normalizeTodoStatus(todo.status),
-      },
-    ];
-  });
-  return steps.length > 0 ? steps : undefined;
 }
 
 function isStringRecord(value: unknown): value is Record<string, unknown> {
@@ -2142,22 +2060,6 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           status: task.status,
         });
       }
-      const plan = planStepsFromCopilotTasks(taskList.tasks);
-      if (plan.length === 0) {
-        return;
-      }
-      yield* emit({
-        ...createBaseEvent({
-          threadId: context.threadId,
-          turnId,
-          raw,
-        }),
-        type: "turn.plan.updated",
-        payload: {
-          explanation: "Copilot Tasks",
-          plan,
-        },
-      });
     });
 
   const onPermissionRequest = (
@@ -2750,24 +2652,6 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           return;
         }
         markTurnContinuingWithTool(context, turnId);
-        const todoPlan =
-          isTodoTool(event.data.toolName) && isStringRecord(event.data.arguments)
-            ? extractPlanStepsFromTodoInput(event.data.arguments)
-            : undefined;
-        if (todoPlan && todoPlan.length > 0) {
-          await emitAsync({
-            ...createBaseEvent({
-              threadId: context.threadId,
-              turnId,
-              raw: event,
-            }),
-            type: "turn.plan.updated",
-            payload: {
-              explanation: "Copilot Todos",
-              plan: todoPlan,
-            },
-          });
-        }
         const itemId = `copilot-tool-${event.data.toolCallId}`;
         const itemType = toolItemType(
           event.data.toolName,
