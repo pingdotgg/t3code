@@ -40,6 +40,7 @@ public enum RuntimeMode: String, Codable, Sendable {
 public enum ProviderInteractionMode: String, Codable, Sendable {
     case `default`
     case plan
+    case advisor
 
     public static let wireDefault: ProviderInteractionMode = .default
 }

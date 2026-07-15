@@ -54,6 +54,7 @@ import { enforceSubAgentStandardMode } from "../../../orchestration/subAgentMode
 import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
 import { ProviderService } from "../../../provider/Services/ProviderService.ts";
 import { readTurnStallThresholdMs } from "../../../provider/turnReliabilityConfig.ts";
+import { resolveEffectiveRuntimeMode } from "../../../orchestration/InteractionModePermissions.ts";
 import type { McpInvocationScope } from "../../McpInvocationContext.ts";
 
 const WAIT_POLL_INTERVAL_MILLIS = 500;
@@ -651,6 +652,13 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
       const modelSelection = resolveSpawnModelSelection(target, model);
       const effort = resolveSpawnEffort(target, modelSelection);
       const parentTurnId = yield* readParentTurnId(scope.threadId);
+      // A sub-agent must not be an escape hatch out of the parent's permissions:
+      // an advisor parent stores its unclamped runtime mode, so inherit the mode
+      // actually in force rather than the stored one.
+      const inheritedRuntimeMode = resolveEffectiveRuntimeMode(
+        parent.runtimeMode,
+        parent.interactionMode,
+      );
 
       yield* engine
         .dispatch({
@@ -660,7 +668,7 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
           projectId: parent.projectId,
           title,
           modelSelection,
-          runtimeMode: parent.runtimeMode,
+          runtimeMode: inheritedRuntimeMode,
           interactionMode: "default",
           branch: parent.branch,
           worktreePath: parent.worktreePath,
@@ -668,7 +676,11 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
         })
         .pipe(Effect.mapError(dispatchFailed("create sub-agent thread")));
 
-      const lastTurnRequestedAt = yield* startTurn(childThreadId, input.prompt, parent.runtimeMode);
+      const lastTurnRequestedAt = yield* startTurn(
+        childThreadId,
+        input.prompt,
+        inheritedRuntimeMode,
+      );
 
       yield* emitSpawnStartedActivity({
         scope,

@@ -100,7 +100,7 @@ private struct ComposerSegmentLabel: View {
     }
 }
 
-/// Visually grouped runtime-mode menu + plan-mode toggle as a single capsule.
+/// Visually grouped runtime-mode menu + interaction-mode menu as a single capsule.
 private struct RuntimePlanModeGroup: View {
     let thread: ChatThread
     let model: AppModel
@@ -109,7 +109,7 @@ private struct RuntimePlanModeGroup: View {
         HStack(spacing: 0) {
             RuntimeModeMenu(thread: thread, model: model)
             segmentDivider
-            PlanModeToggle(thread: thread, model: model)
+            InteractionModeMenu(thread: thread, model: model)
         }
         .glassEffect(.regular, in: Capsule())
     }
@@ -235,62 +235,97 @@ private struct ServiceTierMenu: View {
 }
 
 /// Menu selecting how much the agent may do without asking.
+///
+/// The label shows the mode actually in force, which is not always the thread's
+/// stored mode: advisor clamps it to approvals-required. The checkmark stays on
+/// the stored choice, so leaving advisor restores what the user picked.
 private struct RuntimeModeMenu: View {
     let thread: ChatThread
     let model: AppModel
 
     @UIState private var isHovering = false
 
+    private var isClamped: Bool { thread.interactionMode.isNonMutating }
+
     var body: some View {
         Menu {
-            ForEach(ThreadRuntimeMode.allCases) { mode in
-                Button {
-                    Task { await model.setRuntimeMode(mode) }
-                } label: {
-                    if mode == thread.runtimeMode {
-                        Label(mode.displayName, systemImage: "checkmark")
-                    } else {
-                        Label(mode.displayName, systemImage: mode.symbolName)
-                    }
+            if isClamped {
+                Section("Advisor is read-only — approvals required") {
+                    modeButtons
                 }
+            } else {
+                modeButtons
             }
         } label: {
             ComposerSegmentLabel(
-                icon: thread.runtimeMode.symbolName,
-                title: thread.runtimeMode.displayName,
+                icon: thread.effectiveRuntimeMode.symbolName,
+                title: thread.effectiveRuntimeMode.displayName,
                 isHovering: isHovering
             )
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
+        .help(
+            isClamped
+                ? "Advisor mode holds this thread at approvals-required. Your choice applies again when you leave advisor."
+                : "How much the agent may do without asking"
+        )
         .onHover { isHovering = $0 }
+    }
+
+    private var modeButtons: some View {
+        ForEach(ThreadRuntimeMode.allCases) { mode in
+            Button {
+                Task { await model.setRuntimeMode(mode) }
+            } label: {
+                if mode == thread.runtimeMode {
+                    Label(mode.displayName, systemImage: "checkmark")
+                } else {
+                    Label(mode.displayName, systemImage: mode.symbolName)
+                }
+            }
+        }
     }
 }
 
-/// One-tap plan-mode toggle (mirrors the web client's /plan `/default`).
-private struct PlanModeToggle: View {
+/// Menu selecting how the agent engages with the request: do it (default),
+/// plan it, or advise on it. Mirrors the `/default`, `/plan` and `/advisor`
+/// slash commands.
+private struct InteractionModeMenu: View {
     let thread: ChatThread
     let model: AppModel
 
     @UIState private var isHovering = false
 
-    private var isPlan: Bool { thread.interactionMode == .plan }
+    private var mode: ThreadInteractionMode { thread.interactionMode }
 
     var body: some View {
-        Button {
-            Task { await model.setInteractionMode(isPlan ? .normal : .plan) }
+        Menu {
+            ForEach(ThreadInteractionMode.allCases) { choice in
+                Button {
+                    Task { await model.setInteractionMode(choice) }
+                } label: {
+                    if choice == mode {
+                        Label(choice.displayName, systemImage: "checkmark")
+                    } else {
+                        Label(choice.displayName, systemImage: choice.symbolName)
+                    }
+                }
+                .help(choice.helpText)
+            }
         } label: {
             ComposerSegmentLabel(
-                icon: isPlan ? "list.clipboard.fill" : "list.clipboard",
-                title: "Plan",
+                icon: mode.symbolName,
+                title: mode.displayName,
                 isHovering: isHovering,
-                isAccented: isPlan,
+                isAccented: mode != .normal,
                 animateSymbol: true
             )
         }
-        .buttonStyle(.plain)
-        .animation(Motion.feedback, value: isPlan)
-        .help(isPlan ? "Plan mode on — the agent proposes a plan instead of editing" : "Turn on plan mode")
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .animation(Motion.feedback, value: mode)
+        .help(mode.helpText)
         .onHover { isHovering = $0 }
     }
 }

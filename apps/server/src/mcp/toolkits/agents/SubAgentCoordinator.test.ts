@@ -72,7 +72,10 @@ const makeScope = (threadId: ThreadId = parentThreadId): McpInvocationScope => (
   expiresAt: Number.MAX_SAFE_INTEGER,
 });
 
-const makeThreadShell = (threadId: ThreadId): OrchestrationThreadShell =>
+const makeThreadShell = (
+  threadId: ThreadId,
+  overrides?: Partial<OrchestrationThreadShell>,
+): OrchestrationThreadShell =>
   ({
     id: threadId,
     projectId,
@@ -91,6 +94,7 @@ const makeThreadShell = (threadId: ThreadId): OrchestrationThreadShell =>
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
+    ...overrides,
   }) as OrchestrationThreadShell;
 
 const makeThreadDetail = (
@@ -133,6 +137,7 @@ interface Harness {
 
 const makeCoordinator = (options?: {
   readonly providers?: ReadonlyArray<ServerProvider>;
+  readonly parentShell?: (threadId: ThreadId) => OrchestrationThreadShell;
 }): Effect.Effect<readonly [SubAgentCoordinator["Service"], Harness], never, never> => {
   const dispatched: Array<OrchestrationCommand> = [];
   let threadDetailLookup: (threadId: ThreadId) => Option.Option<OrchestrationThread> = () =>
@@ -165,7 +170,8 @@ const makeCoordinator = (options?: {
     getFirstActiveThreadIdByProjectId: unused,
     getThreadCheckpointContext: unused,
     getFullThreadDiffContext: unused,
-    getThreadShellById: (threadId) => Effect.succeed(Option.some(makeThreadShell(threadId))),
+    getThreadShellById: (threadId) =>
+      Effect.succeed(Option.some((options?.parentShell ?? makeThreadShell)(threadId))),
     getThreadDetailById: (threadId) => Effect.sync(() => threadDetailLookup(threadId)),
   });
 
@@ -267,6 +273,36 @@ it.effect("spawns a sub-agent thread next to the caller's thread on another prov
         workflowName: "agent_spawn",
         toolUseId: result.threadId,
       });
+    }
+  }),
+);
+
+it.effect("does not let a sub-agent escape an advisor parent's read-only clamp", () =>
+  Effect.gen(function* () {
+    // An advisor thread stores the runtime mode the user picked (here
+    // full-access) and is clamped only at session start. Spawning a child must
+    // inherit the clamped mode, or delegation becomes a way to write from a
+    // thread the user believes is read-only.
+    const [coordinator, harness] = yield* makeCoordinator({
+      parentShell: (threadId) =>
+        makeThreadShell(threadId, { runtimeMode: "full-access", interactionMode: "advisor" }),
+    });
+
+    yield* coordinator.spawn(makeScope(), {
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      prompt: "Go rewrite the auth module.",
+    });
+
+    const create = harness.dispatched.find((command) => command.type === "thread.create");
+    expect(create?.type).toBe("thread.create");
+    if (create?.type === "thread.create") {
+      expect(create.runtimeMode).toBe("approval-required");
+    }
+
+    const turnStart = harness.dispatched.find((command) => command.type === "thread.turn.start");
+    expect(turnStart?.type).toBe("thread.turn.start");
+    if (turnStart?.type === "thread.turn.start") {
+      expect(turnStart.runtimeMode).toBe("approval-required");
     }
   }),
 );

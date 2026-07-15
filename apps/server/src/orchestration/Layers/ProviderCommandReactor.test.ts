@@ -960,6 +960,177 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
+  effectIt.effect(
+    "clamps an advisor turn to approval-required even when the thread asks for full access",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() => createHarness());
+        const now = "2026-01-01T00:00:00.000Z";
+
+        yield* harness.engine.dispatch({
+          type: "thread.runtime-mode.set",
+          commandId: CommandId.make("cmd-runtime-mode-set-full"),
+          threadId: ThreadId.make("thread-1"),
+          runtimeMode: "full-access",
+          createdAt: now,
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.interaction-mode.set",
+          commandId: CommandId.make("cmd-interaction-mode-set-advisor"),
+          threadId: ThreadId.make("thread-1"),
+          interactionMode: "advisor",
+          createdAt: now,
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-turn-start-advisor"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("user-message-advisor"),
+            role: "user",
+            text: "how does the reactor decide to restart a session?",
+            attachments: [],
+          },
+          interactionMode: "advisor",
+          runtimeMode: "full-access",
+          createdAt: now,
+        });
+
+        yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+
+        // The session the provider actually gets is read-only, not full-access.
+        expect(harness.startSession.mock.calls.at(-1)?.[1]).toMatchObject({
+          runtimeMode: "approval-required",
+        });
+        expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+          threadId: ThreadId.make("thread-1"),
+          interactionMode: "advisor",
+        });
+
+        const readModel = yield* Effect.promise(() => harness.readModel());
+        const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+        // The thread keeps the user's stored preference; only the session is clamped.
+        expect(thread?.runtimeMode).toBe("full-access");
+        expect(thread?.session?.runtimeMode).toBe("approval-required");
+      }),
+  );
+
+  effectIt.effect("does not restart the provider session on every advisor turn", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const now = "2026-01-01T00:00:00.000Z";
+
+      yield* harness.engine.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.make("cmd-runtime-mode-set-full-2"),
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        createdAt: now,
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.interaction-mode.set",
+        commandId: CommandId.make("cmd-interaction-mode-set-advisor-2"),
+        threadId: ThreadId.make("thread-1"),
+        interactionMode: "advisor",
+        createdAt: now,
+      });
+
+      for (const index of [1, 2]) {
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`cmd-turn-start-advisor-repeat-${index}`),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId(`user-message-advisor-repeat-${index}`),
+            role: "user",
+            text: `advisor question ${index}`,
+            attachments: [],
+          },
+          interactionMode: "advisor",
+          runtimeMode: "full-access",
+          createdAt: now,
+        });
+        yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === index));
+      }
+
+      // The clamped mode must be compared against the session's clamped mode; if
+      // it were compared against the thread's full-access mode, every advisor turn
+      // would look like a runtime-mode change and restart the session.
+      expect(harness.startSession.mock.calls.length).toBe(1);
+    }),
+  );
+
+  effectIt.effect("restores the thread's runtime mode when the thread leaves advisor", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const now = "2026-01-01T00:00:00.000Z";
+
+      yield* harness.engine.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.make("cmd-runtime-mode-set-full-3"),
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        createdAt: now,
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.interaction-mode.set",
+        commandId: CommandId.make("cmd-interaction-mode-set-advisor-3"),
+        threadId: ThreadId.make("thread-1"),
+        interactionMode: "advisor",
+        createdAt: now,
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-advisor-3"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-advisor-3"),
+          role: "user",
+          text: "advise me",
+          attachments: [],
+        },
+        interactionMode: "advisor",
+        runtimeMode: "full-access",
+        createdAt: now,
+      });
+      yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+
+      yield* harness.engine.dispatch({
+        type: "thread.interaction-mode.set",
+        commandId: CommandId.make("cmd-interaction-mode-set-default-3"),
+        threadId: ThreadId.make("thread-1"),
+        interactionMode: "default",
+        createdAt: now,
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-default-3"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-default-3"),
+          role: "user",
+          text: "now do it",
+          attachments: [],
+        },
+        interactionMode: "default",
+        runtimeMode: "full-access",
+        createdAt: now,
+      });
+      yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 2));
+
+      // Leaving advisor is a runtime-mode change, so the session restarts with the
+      // mode the user actually chose.
+      yield* Effect.promise(() => waitFor(() => harness.startSession.mock.calls.length === 2));
+      expect(harness.startSession.mock.calls.at(-1)?.[1]).toMatchObject({
+        runtimeMode: "full-access",
+      });
+
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      expect(thread?.session?.runtimeMode).toBe("full-access");
+    }),
+  );
+
   it("preserves the active session model when in-session model switching is unsupported", async () => {
     const harness = await createHarness({ sessionModelSwitch: "unsupported" });
     const now = "2026-01-01T00:00:00.000Z";
