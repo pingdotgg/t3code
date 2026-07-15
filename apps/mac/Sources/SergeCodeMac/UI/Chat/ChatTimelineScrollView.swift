@@ -89,7 +89,8 @@ struct ChatTimelineScrollView: View {
                 }
                 .padding(.horizontal, 20)
                 .padding(.vertical, 16)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: 840, alignment: .leading)
+                .frame(maxWidth: .infinity)
                 // Keyed to count, not content: new rows rise in, but
                 // per-token streaming updates never re-trigger layout
                 // animation. Suppressed mid-gesture too — a row landing while
@@ -99,8 +100,8 @@ struct ChatTimelineScrollView: View {
                 .animation(revealAnimation, value: items.count)
             }
             .defaultScrollAnchor(.bottom)
-            // Transparent: the timeline reads off ChatScreen's washed scenery
-            // wallpaper (SceneryChatBackground guarantees the contrast).
+            // The transcript sits on ChatScreen's calm work surface; only the
+            // shallow task header retains the active scenery treatment.
             .onScrollPhaseChange { _, newPhase in
                 scrollPhase = newPhase
             }

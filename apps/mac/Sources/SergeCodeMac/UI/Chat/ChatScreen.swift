@@ -31,28 +31,37 @@ public struct ChatScreen: View {
                     ChatHeaderView(
                         thread: thread, model: model, scenery: scenery, threadKey: threadKey)
                     Divider()
-                    VcsToolbar(model: model, threadID: thread.id).id(thread.id)
-                    // A LazyVStack keeps substantial layout/realization state. Give
-                    // every thread its own scroll-view identity so a selection never
-                    // inherits an empty/stale realized viewport from the prior chat.
-                    ChatTimelineScrollView(
-                        model: model, threadID: thread.id,
-                        isPinnedToBottom: $isPinnedToBottom
-                    )
-                    .id(thread.id)
-                    ChatFollowUpBar(model: model)
-                    PlanProgressStrip(model: model)
-                        .padding(.horizontal, 16)
-                        .padding(.top, 8)
-                    ComposerBar(
-                        model: model,
-                        accent: AlpineTheme.accent)
-                        // Breathing room against the window edges and sidebars —
-                        // the floating glass composer shouldn't touch chrome.
-                        .padding(.horizontal, 16)
-                        .padding(.top, 4)
-                        .padding(.bottom, 14)
-                        .transition(Motion.paneChange)
+                    VStack(spacing: 0) {
+                        VcsToolbar(model: model, threadID: thread.id).id(thread.id)
+                        // A LazyVStack keeps substantial layout/realization state. Give
+                        // every thread its own scroll-view identity so a selection never
+                        // inherits an empty/stale realized viewport from the prior chat.
+                        ChatTimelineScrollView(
+                            model: model, threadID: thread.id,
+                            isPinnedToBottom: $isPinnedToBottom
+                        )
+                        .id(thread.id)
+                        ChatFollowUpBar(model: model)
+                        if thread.status == .running || thread.status == .backgroundWork {
+                            PlanProgressStrip(model: model)
+                                .frame(maxWidth: 1040)
+                                .padding(.horizontal, 20)
+                                .padding(.top, 8)
+                        }
+                        ComposerBar(
+                            model: model,
+                            accent: AlpineTheme.accent)
+                            .frame(maxWidth: 1040)
+                            .padding(.horizontal, 20)
+                            .padding(.top, 8)
+                            .padding(.bottom, 16)
+                            .transition(Motion.paneChange)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    // Active work gets a predictable reading surface. The scene remains
+                    // atmospheric in the shallow task header instead of competing with
+                    // transcript text, controls, and diffs across the entire pane.
+                    .background(Color(nsColor: .textBackgroundColor).opacity(0.92))
                 }
             } else {
                 ChatEmptyStateView()

@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The compact control strip above the composer input: model picker,
-/// runtime-mode picker, plan-mode toggle, and the context-window meter.
+/// The compact control strip inside the composer: model picker, runtime-mode
+/// picker, plan-mode toggle, and the explicitly labelled context-window meter.
 struct ComposerControlsRow: View {
     let thread: ChatThread
     let model: AppModel
@@ -21,7 +21,7 @@ struct ComposerControlsRow: View {
     }
 }
 
-/// Visually grouped model + effort + tier controls as one compact glass bar.
+/// Visually grouped model + effort + tier controls as one compact neutral bar.
 private struct ModelEffortTierGroup: View {
     let thread: ChatThread
     let model: AppModel
@@ -55,8 +55,8 @@ private struct ModelEffortTierGroup: View {
             }
         }
         .frame(minHeight: AlpineControls.segmentHeight)
-        .glassEffect(
-            .regular,
+        .background(
+            .fill.quaternary,
             in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.control, style: .continuous))
     }
 
@@ -115,8 +115,8 @@ private struct RuntimePlanModeGroup: View {
             InteractionModeMenu(thread: thread, model: model)
         }
         .frame(minHeight: AlpineControls.segmentHeight)
-        .glassEffect(
-            .regular,
+        .background(
+            .fill.quaternary,
             in: RoundedRectangle(cornerRadius: AlpineTheme.Corners.control, style: .continuous))
     }
 
@@ -352,7 +352,7 @@ struct ContextMeterView: View {
                     .rotationEffect(.degrees(-90))
                     .background(Circle().stroke(.quaternary, lineWidth: 2.5))
                     .frame(width: 12, height: 12)
-                Text("\(Int((fraction * 100).rounded()))%")
+                Text("Context \(Int((fraction * 100).rounded()))%")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()

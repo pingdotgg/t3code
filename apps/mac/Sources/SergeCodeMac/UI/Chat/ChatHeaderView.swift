@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// Top chrome bar: thread title, provider + status badges, cancel control.
-/// Transparent — it sits directly on the thread's `SceneryChatBackground`
-/// wallpaper (which darkens toward the top for exactly this text).
+/// Single task-identity header. The task title leads; project scenery, branch,
+/// working-tree state, provider, and status remain compact supporting context.
+/// Transparent by design: this shallow band is where thread scenery remains
+/// atmospheric while the active work surface below is near-opaque.
 struct ChatHeaderView: View {
     let thread: ChatThread
     let model: AppModel
@@ -10,40 +11,43 @@ struct ChatHeaderView: View {
     let threadKey: String
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 16) {
             let names = scenery.displayNames(for: thread, threadKey: threadKey)
-            VStack(alignment: .leading, spacing: 3) {
-                Group {
-                    if let prefs = projectPrefs, prefs.showsProjectBadge {
-                        HStack(spacing: 6) {
-                            ProjectSceneryBadge(prefs: prefs, symbolSize: 12, dotSize: 6)
-                            Text(names.primary)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(thread.title.isEmpty ? names.primary : thread.title)
+                    .font(.title3.weight(.semibold))
+                    .lineLimit(1)
+
+                HStack(spacing: 8) {
+                    projectIdentity(names.primary)
+                    if let status = model.selectedVcsStatus(), status.isRepo {
+                        if let branch = status.branch {
+                            metadataDivider
+                            Label(branch, systemImage: "arrow.triangle.branch")
+                                .lineLimit(1)
                         }
-                    } else {
-                        Text(names.primary)
+                        if status.changedFileCount > 0 {
+                            metadataDivider
+                            Text(
+                                "^[\(status.changedFileCount) file](inflect: true) changed"
+                            )
+                            .monospacedDigit()
+                        }
+                    }
+                    if model.isRemote {
+                        metadataDivider
+                        Label(model.deviceName ?? "Remote Mac", systemImage: "laptopcomputer")
+                            .lineLimit(1)
                     }
                 }
-                .font(.headline)
-                .lineLimit(1)
-                if let description = names.description {
-                    Text(description)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                if model.isRemote {
-                    Text("on \(model.deviceName ?? "Remote Mac")")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                HStack(spacing: 10) {
-                    ProviderBadge(provider: thread.provider)
-                    StatusBadge(status: thread.status, stalled: thread.isStalled)
-                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
 
             Spacer()
+
+            ProviderBadge(provider: thread.provider)
+            StatusBadge(status: thread.status, stalled: thread.isStalled)
 
             if let photo = scenery.photo(for: threadKey) {
                 SceneryAttributionTag(photo: photo)
@@ -58,6 +62,24 @@ struct ChatHeaderView: View {
             return nil
         }
         return scenery.projectPrefs(for: project.path)
+    }
+
+    @ViewBuilder
+    private func projectIdentity(_ name: String) -> some View {
+        if let prefs = projectPrefs, prefs.showsProjectBadge {
+            HStack(spacing: 5) {
+                ProjectSceneryBadge(prefs: prefs, symbolSize: 10, dotSize: 5)
+                Text(name)
+            }
+        } else {
+            Text(name)
+        }
+    }
+
+    private var metadataDivider: some View {
+        Text("·")
+            .foregroundStyle(.tertiary)
+            .accessibilityHidden(true)
     }
 }
 

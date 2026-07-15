@@ -2,9 +2,9 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-// Floating glass composer — the primary text-entry surface for the selected
-// thread. Chrome-only glass; the text itself is typed over an opaque
-// TextEditor background so long drafts stay readable.
+// Stable, opaque composer — the primary text-entry surface for the selected
+// thread. Model/runtime controls and the editor share one visual container so
+// the bottom of the window reads as one persistent control, not stacked glass.
 //
 // Adornments: image attachments (wire cap: 8 files / 10 MB each),
 // `@`-mention file search backed by projects.searchEntries, and a `/`
@@ -230,8 +230,7 @@ public struct ComposerBar: View {
                 .transition(Motion.rise)
             }
 
-            GlassEffectContainer {
-                HStack(alignment: .bottom, spacing: 10) {
+            HStack(alignment: .bottom, spacing: 10) {
                     Button {
                         fileImporterThreadID = model.selectedThreadID
                         showFileImporter = true
@@ -250,9 +249,9 @@ public struct ComposerBar: View {
                         .font(.body)
                         .focused($editorFocused)
                         .scrollContentBackground(.hidden)
-                        // Keep editor transparent so composer remains one
-                        // continuous Liquid Glass surface; draft field does
-                        // not create a second light plate inside outer glass.
+                        // Keep the editor transparent so the composer remains
+                        // one continuous work surface instead of gaining a
+                        // second plate behind the draft.
                         .frame(minHeight: 22, maxHeight: 120)
                         .fixedSize(horizontal: false, vertical: true)
                         .overlay(alignment: .topLeading) {
@@ -368,12 +367,21 @@ public struct ComposerBar: View {
                     }
 
                     smartSendStopButton
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 10)
             }
-            .glassEffect(.regular, in: .rect(cornerRadius: AlpineTheme.Corners.composer))
+            .padding(.horizontal, 2)
+            .padding(.vertical, 4)
         }
+        .padding(12)
+        .background(
+            Color(nsColor: .textBackgroundColor),
+            in: RoundedRectangle(
+                cornerRadius: AlpineTheme.Corners.composer, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: AlpineTheme.Corners.composer, style: .continuous)
+                .stroke(.separator.opacity(0.65), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.08), radius: 12, y: 4)
         // Typing and suggestion filtering are deliberately unanimated. Async
         // arrivals reveal independently without moving the entire composer on
         // every keystroke.
