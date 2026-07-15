@@ -13,6 +13,7 @@ export type ThreadStatusKind =
   | "pending-approval"
   | "awaiting-input"
   | "working"
+  | "waiting"
   | "connecting"
   | "error"
   | "plan-ready";
@@ -41,6 +42,19 @@ function isLatestTurnSettled(
   if (!latestTurn.completedAt) return false;
   if (!session) return true;
   return session.status !== "running";
+}
+
+function waitingLabel(
+  waiting: NonNullable<NonNullable<EnvironmentThreadShell["session"]>["waiting"]>,
+): string {
+  if (waiting.target.kind === "event") return `Waiting for ${waiting.target.event}`;
+  const remainingMs = Date.parse(waiting.target.at) - Date.now();
+  if (remainingMs <= 0) return "Wakeup overdue";
+  const seconds = Math.ceil(remainingMs / 1_000);
+  if (seconds < 60) return `Wakes in ${seconds}s`;
+  const minutes = Math.ceil(seconds / 60);
+  if (minutes < 60) return `Wakes in ${minutes}m`;
+  return `Wakes in ${Math.ceil(minutes / 60)}h`;
 }
 
 /**
@@ -83,6 +97,18 @@ export function resolveThreadStatus(
       textClassName: "text-indigo-700 dark:text-indigo-300",
       iconColor: "#5e5ce6",
       iconBackground: "rgba(94,92,230,0.22)",
+      pulse: false,
+    };
+  }
+
+  if (thread.session?.status === "waiting" && thread.session.waiting) {
+    return {
+      kind: "waiting",
+      label: waitingLabel(thread.session.waiting),
+      pillClassName: "bg-sky-500/12 dark:bg-sky-500/16",
+      textClassName: "text-sky-700 dark:text-sky-300",
+      iconColor: "#0a84ff",
+      iconBackground: "rgba(10,132,255,0.20)",
       pulse: false,
     };
   }

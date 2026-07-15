@@ -22,6 +22,11 @@ public struct ChatScreen: View {
                 if reviewing {
                     DiffReviewView(model: model, threadID: thread.id)
                         .transition(Motion.paneChange)
+                } else if let task = model.focusedSubagentTask(threadID: thread.id) {
+                    SubagentInnerThreadView(
+                        model: model, threadID: thread.id, task: task,
+                        parentTitle: thread.title.isEmpty ? "Thread" : thread.title)
+                        .transition(Motion.paneChange)
                 } else {
                     ChatHeaderView(
                         thread: thread, model: model, scenery: scenery, threadKey: threadKey)
@@ -56,6 +61,12 @@ public struct ChatScreen: View {
             Motion.structure,
             value: model.selectedThreadID.flatMap { model.threadState($0)?.isReviewing } ?? false
         )
+        // Drilling into a subagent swaps the same real estate as review mode.
+        .animation(
+            Motion.structure,
+            value: model.selectedThreadID.flatMap {
+                model.threadState($0)?.focusedSubagentTaskID
+            })
         // The VCS strip unfolds when repo status first arrives for a thread.
         .animation(Motion.structure, value: model.selectedVcsStatus()?.isRepo ?? false)
         .background {

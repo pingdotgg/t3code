@@ -123,7 +123,7 @@ export const RuntimeMode = Schema.Literals([
 ]);
 export type RuntimeMode = typeof RuntimeMode.Type;
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
-export const ProviderInteractionMode = Schema.Literals(["default", "plan"]);
+export const ProviderInteractionMode = Schema.Literals(["default", "plan", "advisor"]);
 export type ProviderInteractionMode = typeof ProviderInteractionMode.Type;
 export const DEFAULT_PROVIDER_INTERACTION_MODE: ProviderInteractionMode = "default";
 export const ProviderRequestKind = Schema.Literals(["command", "file-read", "file-change"]);
@@ -318,12 +318,30 @@ export const OrchestrationSessionStatus = Schema.Literals([
   "idle",
   "starting",
   "running",
+  "waiting",
   "ready",
   "interrupted",
   "stopped",
   "error",
 ]);
 export type OrchestrationSessionStatus = typeof OrchestrationSessionStatus.Type;
+
+export const OrchestrationWaitingReason = Schema.Literals(["scheduled-wakeup", "dependency"]);
+export type OrchestrationWaitingReason = typeof OrchestrationWaitingReason.Type;
+
+export const OrchestrationWaitingTarget = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("time"), at: IsoDateTime }),
+  Schema.Struct({ kind: Schema.Literal("event"), event: TrimmedNonEmptyString }),
+]);
+export type OrchestrationWaitingTarget = typeof OrchestrationWaitingTarget.Type;
+
+export const OrchestrationWaitingState = Schema.Struct({
+  reason: OrchestrationWaitingReason,
+  target: OrchestrationWaitingTarget,
+  /** Set when a persisted wait was reconciled after its deadline or cancellation. */
+  outcome: Schema.optional(Schema.Literals(["missed", "cancelled"])),
+});
+export type OrchestrationWaitingState = typeof OrchestrationWaitingState.Type;
 
 export const OrchestrationSession = Schema.Struct({
   threadId: ThreadId,
@@ -332,6 +350,7 @@ export const OrchestrationSession = Schema.Struct({
   providerInstanceId: Schema.optional(ProviderInstanceId),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
   activeTurnId: Schema.NullOr(TurnId),
+  waiting: Schema.optional(OrchestrationWaitingState),
   lastError: Schema.NullOr(TrimmedNonEmptyString),
   updatedAt: IsoDateTime,
 });

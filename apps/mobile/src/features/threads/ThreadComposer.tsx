@@ -61,6 +61,7 @@ import {
 } from "../../lib/providerOptions";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
+import type { ComposerAnchorRect } from "./composerCommandPopoverLayout";
 
 /**
  * Height of the collapsed composer (pill + vertical padding, excluding safe-area inset).
@@ -254,6 +255,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const { onExpandedChange } = props;
 
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
+  const composerAnchorRef = useRef<View>(null);
+  const [composerAnchorRect, setComposerAnchorRect] = useState<ComposerAnchorRect | null>(null);
   const hasContent = props.draftMessage.trim().length > 0 || props.draftAttachments.length > 0;
   const isExpanded = isFocused;
   const canSend = hasContent;
@@ -337,6 +340,18 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }
     return detectComposerTrigger(props.draftMessage, composerSelection.end);
   }, [composerSelection, props.draftMessage]);
+  const hasComposerMenu = composerTrigger !== null;
+  useEffect(() => {
+    if (!hasComposerMenu) {
+      setComposerAnchorRect(null);
+      return;
+    }
+    requestAnimationFrame(() => {
+      composerAnchorRef.current?.measureInWindow((x, y, width, height) => {
+        setComposerAnchorRect({ x, y, width, height });
+      });
+    });
+  }, [hasComposerMenu, isExpanded, props.draftMessage.length]);
   const pathSearch = useComposerPathSearch({
     environmentId: props.environmentId,
     cwd: composerTrigger?.kind === "path" ? props.projectCwd : null,
@@ -684,26 +699,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         className="w-full"
         style={{ alignSelf: "center", maxWidth: props.contentMaxWidth, position: "relative" }}
       >
-        {composerTrigger && composerMenuItems.length > 0 ? (
-          <View
-            style={{
-              position: "absolute",
-              bottom: "100%",
-              left: 0,
-              right: 0,
-              marginBottom: 8,
-              zIndex: 10,
-            }}
-          >
-            <ComposerCommandPopover
-              items={composerMenuItems}
-              triggerKind={composerTrigger.kind}
-              isLoading={pathSearch.isPending}
-              onSelect={handleCommandSelect}
-            />
-          </View>
-        ) : null}
-
         {connectionStatus ? (
           <ComposerConnectionStatusPill
             status={connectionStatus}
@@ -711,126 +706,139 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           />
         ) : null}
 
-        <ComposerSurface
-          isDarkMode={isDarkMode}
-          style={
-            isExpanded
-              ? {
-                  borderRadius: 20,
-                  overflow: "hidden" as const,
-                  paddingHorizontal: 14,
-                  paddingVertical: 12,
-                }
-              : {
-                  borderRadius: 999,
-                  overflow: "hidden" as const,
-                  flexDirection: "row" as const,
-                  alignItems: "center" as const,
-                  paddingLeft: 18,
-                  paddingRight: 5,
-                  paddingVertical: 5,
-                }
-          }
+        <View
+          ref={composerAnchorRef}
+          onLayout={() => {
+            if (!hasComposerMenu) return;
+            composerAnchorRef.current?.measureInWindow((x, y, width, height) => {
+              setComposerAnchorRect({ x, y, width, height });
+            });
+          }}
         >
-          {/* Attachment strip — inside the card, above the text input */}
-          {isExpanded ? (
-            <View style={{ paddingBottom: props.draftAttachments.length > 0 ? 10 : 0 }}>
-              <ComposerAttachmentStrip
-                attachments={props.draftAttachments}
-                onRemove={props.onRemoveDraftImage}
-                onPressImage={onPressImage}
-              />
-            </View>
-          ) : null}
-
-          <View style={isExpanded ? undefined : { flex: 1, minWidth: 0 }}>
-            <ComposerEditor
-              ref={inputRef}
-              multiline
-              value={props.draftMessage}
-              skills={selectedProviderStatus?.skills ?? []}
-              selection={composerSelection}
-              onChangeText={props.onChangeDraftMessage}
-              onSelectionChange={handleSelectionChange}
-              onPasteImages={(uris) => void props.onNativePasteImages(uris)}
-              placeholder={props.placeholder}
-              onFocus={handleFocus}
-              onBlur={handleBlur}
-              onSubmit={handleSend}
-              scrollEnabled={isExpanded}
-              contentInsetVertical={isExpanded ? 0 : 6}
-              style={
-                isExpanded
-                  ? {
-                      minHeight: 80,
-                      maxHeight: 160,
-                      paddingHorizontal: 4,
-                      paddingVertical: 4,
-                    }
-                  : {
-                      height: 36,
-                    }
-              }
-              textStyle={{
-                ...bodyText,
-                color: foregroundColor,
-                fontFamily: "DMSans_400Regular",
-              }}
-            />
-          </View>
-          {!isExpanded && props.draftAttachments.length > 0 ? (
-            <View style={{ flexDirection: "row", gap: 4, paddingLeft: 4 }}>
-              {props.draftAttachments.slice(0, 3).map((image) =>
-                image.type === "image" ? (
-                  <Pressable key={image.id} onPress={() => onPressImage(image.previewUri)}>
-                    <Image
-                      source={{ uri: image.previewUri }}
-                      className="bg-subtle"
-                      style={{ width: 30, height: 30, borderRadius: 8 }}
-                      resizeMode="cover"
-                    />
-                  </Pressable>
-                ) : (
-                  <View
-                    key={image.id}
-                    className="bg-subtle items-center justify-center"
-                    style={{ width: 30, height: 30, borderRadius: 8 }}
-                  >
-                    <NativeText style={{ fontSize: 14 }}>▤</NativeText>
-                  </View>
-                ),
-              )}
-              {props.draftAttachments.length > 3 ? (
-                <View
-                  className="bg-subtle-strong"
-                  style={{
-                    width: 30,
-                    height: 30,
-                    borderRadius: 8,
+          <ComposerSurface
+            isDarkMode={isDarkMode}
+            style={
+              isExpanded
+                ? {
+                    borderRadius: 20,
+                    overflow: "hidden" as const,
+                    paddingHorizontal: 14,
+                    paddingVertical: 12,
+                  }
+                : {
+                    borderRadius: 999,
+                    overflow: "hidden" as const,
+                    flexDirection: "row" as const,
                     alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <Text className="text-foreground-muted text-2xs font-t3-bold">
-                    +{props.draftAttachments.length - 3}
-                  </Text>
-                </View>
-              ) : null}
-            </View>
-          ) : null}
-          {!isExpanded ? (
-            showStopAction ? (
-              <ControlPill icon="stop.fill" variant="danger" onPress={props.onStopThread} />
-            ) : (
-              <ControlPill
-                icon="arrow.up"
-                variant="primary"
-                disabled={!canSend}
-                onPress={handleSend}
+                    paddingLeft: 18,
+                    paddingRight: 5,
+                    paddingVertical: 5,
+                  }
+            }
+          >
+            {/* Attachment strip — inside the card, above the text input */}
+            {isExpanded ? (
+              <View style={{ paddingBottom: props.draftAttachments.length > 0 ? 10 : 0 }}>
+                <ComposerAttachmentStrip
+                  attachments={props.draftAttachments}
+                  onRemove={props.onRemoveDraftImage}
+                  onPressImage={onPressImage}
+                />
+              </View>
+            ) : null}
+
+            <View style={isExpanded ? undefined : { flex: 1, minWidth: 0 }}>
+              <ComposerEditor
+                ref={inputRef}
+                multiline
+                value={props.draftMessage}
+                skills={selectedProviderStatus?.skills ?? []}
+                selection={composerSelection}
+                onChangeText={props.onChangeDraftMessage}
+                onSelectionChange={handleSelectionChange}
+                onPasteImages={(uris) => void props.onNativePasteImages(uris)}
+                placeholder={props.placeholder}
+                onFocus={handleFocus}
+                onBlur={handleBlur}
+                onSubmit={handleSend}
+                scrollEnabled={isExpanded}
+                contentInsetVertical={isExpanded ? 0 : 6}
+                style={
+                  isExpanded
+                    ? {
+                        minHeight: 80,
+                        maxHeight: 160,
+                        paddingHorizontal: 4,
+                        paddingVertical: 4,
+                      }
+                    : {
+                        height: 36,
+                      }
+                }
+                textStyle={{
+                  ...bodyText,
+                  color: foregroundColor,
+                  fontFamily: "DMSans_400Regular",
+                }}
               />
-            )
-          ) : null}
-        </ComposerSurface>
+            </View>
+            {!isExpanded && props.draftAttachments.length > 0 ? (
+              <View style={{ flexDirection: "row", gap: 4, paddingLeft: 4 }}>
+                {props.draftAttachments.slice(0, 3).map((attachment) =>
+                  attachment.type === "image" ? (
+                    <Pressable
+                      key={attachment.id}
+                      onPress={() => onPressImage(attachment.previewUri)}
+                    >
+                      <Image
+                        source={{ uri: attachment.previewUri }}
+                        className="bg-subtle"
+                        style={{ width: 30, height: 30, borderRadius: 8 }}
+                        resizeMode="cover"
+                      />
+                    </Pressable>
+                  ) : (
+                    <View
+                      key={attachment.id}
+                      className="bg-subtle items-center justify-center"
+                      style={{ width: 30, height: 30, borderRadius: 8 }}
+                    >
+                      <NativeText style={{ fontSize: 14 }}>▤</NativeText>
+                    </View>
+                  ),
+                )}
+                {props.draftAttachments.length > 3 ? (
+                  <View
+                    className="bg-subtle-strong"
+                    style={{
+                      width: 30,
+                      height: 30,
+                      borderRadius: 8,
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Text className="text-foreground-muted text-2xs font-t3-bold">
+                      +{props.draftAttachments.length - 3}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
+            {!isExpanded ? (
+              showStopAction ? (
+                <ControlPill icon="stop.fill" variant="danger" onPress={props.onStopThread} />
+              ) : (
+                <ControlPill
+                  icon="arrow.up"
+                  variant="primary"
+                  disabled={!canSend}
+                  onPress={handleSend}
+                />
+              )
+            ) : null}
+          </ComposerSurface>
+        </View>
 
         {/* Toolbar row — matches draft page layout (expanded only) */}
         {isExpanded ? (
@@ -894,6 +902,16 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           </Text>
         ) : null}
       </View>
+
+      {composerTrigger && composerMenuItems.length > 0 ? (
+        <ComposerCommandPopover
+          items={composerMenuItems}
+          triggerKind={composerTrigger.kind}
+          isLoading={pathSearch.isPending}
+          anchorRect={composerAnchorRect}
+          onSelect={handleCommandSelect}
+        />
+      ) : null}
 
       <ImageViewing
         images={previewImageUri ? [{ uri: previewImageUri }] : []}

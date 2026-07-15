@@ -69,6 +69,12 @@ final class SubagentTaskAggregator {
             }
     }
 
+    /// One task by identity. Backs the inner-thread pane, which re-reads the
+    /// task on every progress event rather than holding a stale copy.
+    func task(taskId: String, threadID: String) -> SubagentTaskItem? {
+        tasksByThread[threadID]?.first { $0.taskId == taskId }
+    }
+
     func updateThread(_ thread: ChatThread) {
         let title = thread.title.isEmpty ? "Untitled thread" : thread.title
         guard threadTitles[thread.id] != title else { return }

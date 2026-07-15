@@ -10,6 +10,7 @@ import {
   RuntimeMode,
   IsoDateTime,
   OrchestrationSessionStatus,
+  OrchestrationWaitingState,
   ProviderInstanceId,
   ThreadId,
   TurnId,
@@ -28,6 +29,7 @@ export const ProjectionThreadSession = Schema.Struct({
   providerInstanceId: Schema.NullOr(ProviderInstanceId),
   runtimeMode: RuntimeMode,
   activeTurnId: Schema.NullOr(TurnId),
+  waiting: Schema.NullOr(Schema.fromJsonString(OrchestrationWaitingState)),
   lastError: Schema.NullOr(Schema.String),
   updatedAt: IsoDateTime,
 });

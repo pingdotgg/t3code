@@ -30,9 +30,15 @@
             let model = multi.local
             try? FileManager.default.createDirectory(
                 atPath: dir, withIntermediateDirectories: true)
-            if ProcessInfo.processInfo.environment["SERGECODE_UI_PROBE_SCENARIO"] == "stream-perf" {
+            switch ProcessInfo.processInfo.environment["SERGECODE_UI_PROBE_SCENARIO"] {
+            case "stream-perf":
                 await runStreamPerf(model: model, dir: dir)
                 return
+            case "glass":
+                await GlassLayeringProbe.run(multi: multi, scenery: scenery, dir: dir)
+                return
+            default:
+                break
             }
 
             // Let the mock backend load, then select a thread so the
@@ -64,6 +70,10 @@
             // synthetic session.health stall, clears on active), the delegated
             // sibling-agent roster, and the session.exited stderr disclosure.
             await probeSubagentStability(model: model, multi: multi, dir: dir)
+
+            // Subagent inner threads: drill into a running agent, then into a
+            // settled one and promote its result into the parent composer.
+            await probeSubagentInnerThread(model: model, dir: dir)
 
             if let remote = multi.remoteSessions.first {
                 await probeRemoteDevice(
@@ -477,6 +487,82 @@
             }
             print("UIProbe: session-exit row present=\(hasSessionExit)")
             snapshot("2d-session-stderr", dir: dir)
+        }
+
+        /// Drives the nested subagent pane: open a running agent's inner
+        /// thread (its progress log must render as a transcript), then a
+        /// settled agent's, and promote its result into the parent composer.
+        private static func probeSubagentInnerThread(model: AppModel, dir: String) async {
+            guard let threadID = model.selectedThreadID else {
+                print("UIProbe: subagent inner thread no selected thread")
+                return
+            }
+            guard model.subagentTaskAggregator.task(taskId: "mock-subagent-1", threadID: threadID)
+                != nil
+            else {
+                print("UIProbe: subagent inner thread skipped (live backend run)")
+                return
+            }
+
+            // The mock's demo lifecycle folds new progress onto the seeded task
+            // and may settle it mid-probe, so assert on the transcript (which
+            // survives either way), not on the task still being `running`.
+            model.openSubagent(taskId: "mock-subagent-1", threadID: threadID)
+            try? await Task.sleep(for: .seconds(1))
+            let opened = model.focusedSubagentTask(threadID: threadID)
+            let progressVisible = mainWindowText().contains("Collecting subagent task call sites")
+            print(
+                "UIProbe: subagent inner thread task=\(opened?.taskId ?? "nil") "
+                    + "state=\(opened?.state.rawValue ?? "nil") "
+                    + "progressEntries=\(opened?.progressLog.count ?? 0) "
+                    + "progressVisible=\(progressVisible)")
+            snapshot("2e-subagent-inner-progress", dir: dir)
+
+            model.openSubagent(taskId: "mock-subagent-2", threadID: threadID)
+            try? await Task.sleep(for: .seconds(1))
+            guard let settled = model.focusedSubagentTask(threadID: threadID),
+                let result = SubagentInnerThread.resultText(for: settled),
+                let promotion = SubagentInnerThread.promotionText(
+                    for: settled, modelDisplayNames: model.modelDisplayNames)
+            else {
+                print("UIProbe: FAIL settled subagent has no promotable result")
+                model.closeSubagent(threadID: threadID)
+                return
+            }
+            let resultVisible = mainWindowText().contains("Three reports share one cause")
+            snapshot("2f-subagent-inner-result", dir: dir)
+
+            model.stageComposerTextAppending(promotion)
+            model.closeSubagent(threadID: threadID)
+            try? await Task.sleep(for: .seconds(1))
+            let draft = model.composerDraft(for: threadID).text
+            let promotedToComposer =
+                draft.contains("> \(result.prefix(24))")
+                && textView(containing: "Result from the") != nil
+            let backOnTranscript = model.focusedSubagentTask(threadID: threadID) == nil
+            print(
+                "UIProbe: subagent inner thread result task=\(settled.taskId) "
+                    + "resultVisible=\(resultVisible) promotedToComposer=\(promotedToComposer) "
+                    + "backOnTranscript=\(backOnTranscript)")
+            snapshot("2g-subagent-result-promoted", dir: dir)
+            if progressVisible, resultVisible, promotedToComposer, backOnTranscript {
+                print("UIProbe: PASS subagent inner thread navigate + progress + promote")
+            } else {
+                print("UIProbe: FAIL subagent inner thread surfaces incomplete")
+            }
+
+            // Leave the composer as the later prefill/queue probes expect it.
+            model.stageComposerText("")
+            try? await Task.sleep(for: .milliseconds(300))
+        }
+
+        /// Every string the main window currently renders (text views plus the
+        /// SwiftUI accessibility tree) — enough to assert a view is on screen.
+        private static func mainWindowText() -> String {
+            guard let window = NSApp.windows.first(where: { $0.isVisible }),
+                let root = window.contentView
+            else { return "" }
+            return accessibleText(in: root)
         }
 
         private static func runStreamPerf(model: AppModel, dir: String) async {

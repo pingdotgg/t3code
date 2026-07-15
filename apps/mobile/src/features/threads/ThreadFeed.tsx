@@ -45,7 +45,6 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-import { TouchableOpacity } from "react-native-gesture-handler";
 import ImageViewing from "react-native-image-viewing";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { type SharedValue } from "react-native-reanimated";
@@ -91,10 +90,14 @@ import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { ThreadWorkGroupToggle, ThreadWorkLog } from "./thread-work-log";
 import { SubagentTaskRow } from "./SubagentTaskRow";
 import { SessionExitRow } from "./SessionExitRow";
-import { useAssetUrl } from "../../state/assets";
+import { useAssetUrlState } from "../../state/assets";
 import { resolveWorkspaceRelativeFilePath } from "../files/filePath";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+import {
+  chatAttachmentAccessibilityLabel,
+  formatChatAttachmentSize,
+} from "./chatAttachmentPresentation";
 
 const MESSAGE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
   hour: "numeric",
@@ -136,26 +139,94 @@ export interface ThreadFeedProps {
 function MessageAttachmentImage(props: {
   readonly environmentId: EnvironmentId;
   readonly attachmentId: string;
+  readonly name: string;
+  readonly sizeBytes: number;
   readonly className: string;
   readonly onPressImage: (uri: string, headers?: Record<string, string>) => void;
 }) {
-  const uri = useAssetUrl(props.environmentId, {
+  const [loadState, setLoadState] = useState<"loading" | "loaded" | "error">("loading");
+  const [retryCount, setRetryCount] = useState(0);
+  const assetUrl = useAssetUrlState(props.environmentId, {
     _tag: "attachment",
     attachmentId: props.attachmentId,
   });
+  const uri = assetUrl.url;
+  const accessibilityLabel = chatAttachmentAccessibilityLabel(props.name, props.sizeBytes);
 
-  if (uri === null) {
-    return (
-      <View className={`${props.className} items-center justify-center`}>
-        <ActivityIndicator />
-      </View>
-    );
-  }
+  useEffect(() => {
+    if (assetUrl.isPending) {
+      setLoadState("loading");
+      return;
+    }
+    if (uri === null) {
+      setLoadState("error");
+      return;
+    }
+    setLoadState("loading");
+    setRetryCount(0);
+  }, [assetUrl.isPending, uri]);
 
   return (
-    <TouchableOpacity activeOpacity={0.7} onPress={() => props.onPressImage(uri)}>
-      <Image source={{ uri }} className={props.className} resizeMode="cover" />
-    </TouchableOpacity>
+    <View className={`${props.className} overflow-hidden`}>
+      {uri !== null ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Open ${accessibilityLabel}`}
+          accessibilityState={{ disabled: loadState !== "loaded" }}
+          disabled={loadState !== "loaded"}
+          className="absolute inset-0"
+          onPress={() => props.onPressImage(uri)}
+        >
+          <Image
+            key={`${uri}:${retryCount}`}
+            accessible={false}
+            source={{ uri }}
+            className="h-full w-full"
+            resizeMode="cover"
+            onLoadStart={() => setLoadState("loading")}
+            onLoad={() => setLoadState("loaded")}
+            onError={() => setLoadState("error")}
+          />
+        </Pressable>
+      ) : null}
+
+      {loadState === "loading" ? (
+        <View className="absolute inset-0 items-center justify-center gap-2 bg-black/10 dark:bg-black/25">
+          <ActivityIndicator />
+          <Text className="text-xs text-foreground-muted">Loading image…</Text>
+        </View>
+      ) : null}
+
+      {loadState === "error" ? (
+        <View className="absolute inset-0 items-center justify-center gap-2 bg-card/95 px-4">
+          <Text className="text-center text-sm font-t3-bold text-foreground">
+            Image unavailable
+          </Text>
+          <Text className="text-center text-xs text-foreground-muted">
+            Couldn’t load {props.name}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Retry loading ${props.name}`}
+            className="rounded-full bg-subtle-strong px-3 py-1.5 active:opacity-70"
+            onPress={() => {
+              setLoadState("loading");
+              setRetryCount((count) => count + 1);
+              assetUrl.refresh();
+            }}
+          >
+            <Text className="text-xs font-t3-bold text-foreground">Try again</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
+      <View className="absolute inset-x-0 bottom-0 flex-row items-center justify-between gap-2 bg-black/55 px-3 py-2">
+        <Text className="min-w-0 flex-1 text-xs font-t3-medium text-white" numberOfLines={1}>
+          {props.name}
+        </Text>
+        <Text className="text-xs text-white/80">{formatChatAttachmentSize(props.sizeBytes)}</Text>
+      </View>
+    </View>
   );
 }
 
@@ -217,40 +288,29 @@ function CollapsibleUserMessage(props: {
   );
 }
 
-const MARKDOWN_COLORS = {
+/**
+ * The user bubble is opaque (`--color-user-bubble`), so its markdown keeps a
+ * fixed white-on-moss palette. Assistant markdown has no bubble — it renders
+ * straight onto the chat wallpaper — so its colors come from the
+ * `--color-scenery-*` tokens, which are the ones held to WCAG AA against the
+ * worst backdrop a photo can produce (see features/scenery/scenery-contrast.ts).
+ */
+const USER_MARKDOWN_COLORS = {
   light: {
-    body: "#111111",
-    strong: "#000000",
-    link: "#2563eb",
-    blockquoteBorder: "rgba(0, 0, 0, 0.08)",
-    blockquoteBackground: "rgba(0, 0, 0, 0.02)",
-    codeBackground: "rgba(0, 0, 0, 0.04)",
-    codeText: "#262626",
-    inlineCodeText: "#5f6368",
-    horizontalRule: "rgba(0, 0, 0, 0.08)",
-    userBody: "#ffffff",
-    userCodeBackground: "rgba(255, 255, 255, 0.22)",
-    userCodeText: "#ffffff",
-    userInlineCodeText: "rgba(255, 255, 255, 0.82)",
-    userFenceBackground: "rgba(0, 0, 0, 0.16)",
-    userFenceText: "#ffffff",
+    body: "#ffffff",
+    codeBackground: "rgba(255, 255, 255, 0.22)",
+    codeText: "#ffffff",
+    inlineCodeText: "rgba(255, 255, 255, 0.82)",
+    fenceBackground: "rgba(0, 0, 0, 0.16)",
+    fenceText: "#ffffff",
   },
   dark: {
-    body: "#f0f2ef",
-    strong: "#f5f5f5",
-    link: "#60a5fa",
-    blockquoteBorder: "rgba(255, 255, 255, 0.1)",
-    blockquoteBackground: "rgba(255, 255, 255, 0.03)",
-    codeBackground: "rgba(255, 255, 255, 0.06)",
-    codeText: "#e5e5e5",
-    inlineCodeText: "#b8bcc2",
-    horizontalRule: "rgba(255, 255, 255, 0.08)",
-    userBody: "#ffffff",
-    userCodeBackground: "rgba(255, 255, 255, 0.18)",
-    userCodeText: "#ffffff",
-    userInlineCodeText: "rgba(255, 255, 255, 0.82)",
-    userFenceBackground: "rgba(0, 0, 0, 0.28)",
-    userFenceText: "#ffffff",
+    body: "#ffffff",
+    codeBackground: "rgba(255, 255, 255, 0.18)",
+    codeText: "#ffffff",
+    inlineCodeText: "rgba(255, 255, 255, 0.82)",
+    fenceBackground: "rgba(0, 0, 0, 0.28)",
+    fenceText: "#ffffff",
   },
 } as const;
 
@@ -364,8 +424,47 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
     () => resolveNativeMarkdownTypography(appearance.baseFontSize),
     [appearance.baseFontSize],
   );
-  const colors = MARKDOWN_COLORS[colorScheme === "dark" ? "dark" : "light"];
-  const inlineSkillForeground = String(useThemeColor("--color-inline-skill-foreground"));
+  const userColors = USER_MARKDOWN_COLORS[colorScheme === "dark" ? "dark" : "light"];
+  // Assistant markdown sits bare on the wallpaper — only code fences get a
+  // plate under them; prose, quotes and links are read against the scrim
+  // itself, so every one of these tones is pinned for that worst case.
+  const sceneryBody = String(useThemeColor("--color-scenery-foreground"));
+  const sceneryStrong = String(useThemeColor("--color-scenery-foreground-strong"));
+  const sceneryMuted = String(useThemeColor("--color-scenery-foreground-muted"));
+  const sceneryLink = String(useThemeColor("--color-scenery-link"));
+  const sceneryIcon = String(useThemeColor("--color-scenery-icon"));
+  const sceneryPlate = String(useThemeColor("--color-scenery-plate"));
+  const sceneryCodeBg = String(useThemeColor("--color-scenery-code"));
+  const sceneryCodeText = String(useThemeColor("--color-scenery-code-foreground"));
+  const sceneryCodeMuted = String(useThemeColor("--color-scenery-code-muted"));
+  const inlineSkillForeground = String(useThemeColor("--color-scenery-skill"));
+  const colors = useMemo(
+    () => ({
+      body: sceneryBody,
+      strong: sceneryStrong,
+      // Inline code has no fill in the nitro renderer, so it is read against
+      // the wallpaper directly — it takes the bare-safe muted tone.
+      inlineCodeText: sceneryMuted,
+      link: sceneryLink,
+      blockquoteBackground: sceneryPlate,
+      blockquoteBorder: sceneryIcon,
+      codeBackground: sceneryCodeBg,
+      codeText: sceneryCodeText,
+      codeMuted: sceneryCodeMuted,
+      horizontalRule: sceneryIcon,
+    }),
+    [
+      sceneryBody,
+      sceneryCodeBg,
+      sceneryCodeMuted,
+      sceneryCodeText,
+      sceneryIcon,
+      sceneryLink,
+      sceneryMuted,
+      sceneryPlate,
+      sceneryStrong,
+    ],
+  );
 
   return useMemo(() => {
     const markdownBodyColor = colors.body;
@@ -375,14 +474,15 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
     const markdownBlockquoteBorder = colors.blockquoteBorder;
     const markdownCodeBg = colors.codeBackground;
     const markdownCodeText = colors.codeText;
+    const markdownCodeMuted = colors.codeMuted;
     const markdownInlineCodeText = colors.inlineCodeText;
     const markdownHrColor = colors.horizontalRule;
-    const markdownUserBodyColor = colors.userBody;
-    const markdownUserCodeBg = colors.userCodeBackground;
-    const markdownUserCodeText = colors.userCodeText;
-    const markdownUserInlineCodeText = colors.userInlineCodeText;
-    const markdownUserFenceBg = colors.userFenceBackground;
-    const markdownUserFenceText = colors.userFenceText;
+    const markdownUserBodyColor = userColors.body;
+    const markdownUserCodeBg = userColors.codeBackground;
+    const markdownUserCodeText = userColors.codeText;
+    const markdownUserInlineCodeText = userColors.inlineCodeText;
+    const markdownUserFenceBg = userColors.fenceBackground;
+    const markdownUserFenceText = userColors.fenceText;
 
     const baseTheme: PartialMarkdownTheme = {
       colors: {
@@ -473,6 +573,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
       inlineCodeTextColor: string,
       blockBackgroundColor: string,
       blockTextColor: string,
+      blockMutedTextColor: string,
       preserveSoftBreaks: boolean,
     ): CustomRenderers => ({
       link: ({ children, href = "" }) => {
@@ -602,10 +703,9 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
             >
               <NativeText
                 style={{
-                  color: markdownBodyColor,
+                  color: blockMutedTextColor,
                   fontFamily: "ui-monospace",
                   fontSize: markdownFontSizes.codeBlockFontSize,
-                  opacity: 0.7,
                   textTransform: "uppercase",
                 }}
               >
@@ -689,6 +789,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
           markdownUserInlineCodeText,
           markdownUserFenceBg,
           markdownUserFenceText,
+          markdownUserInlineCodeText,
           true,
         ),
         nativeTextStyle: {
@@ -716,10 +817,13 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
         theme: assistantTheme,
         styles: assistantStyles,
         renderers: createMarkdownRenderers(
-          markdownCodeText,
+          // List bullets and file chips render bare on the wallpaper, not
+          // inside the code fill — they take the body tone, not the code one.
+          markdownBodyColor,
           markdownInlineCodeText,
           markdownCodeBg,
           markdownCodeText,
+          markdownCodeMuted,
           false,
         ),
         nativeTextStyle: {
@@ -731,7 +835,8 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
           codeColor: markdownCodeText,
           codeBackgroundColor: markdownCodeBg,
           codeBlockBackgroundColor: markdownCodeBg,
-          fileTextColor: markdownCodeText,
+          // File chips render inline on the wallpaper, not inside a code fill.
+          fileTextColor: markdownBodyColor,
           skillTextColor: inlineSkillForeground,
           quoteMarkerColor: markdownBlockquoteBorder,
           dividerColor: markdownHrColor,
@@ -744,7 +849,14 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
         },
       },
     };
-  }, [colors, inlineSkillForeground, markdownFontSizes, nativeMarkdownTypography, onLinkPress]);
+  }, [
+    colors,
+    inlineSkillForeground,
+    markdownFontSizes,
+    nativeMarkdownTypography,
+    onLinkPress,
+    userColors,
+  ]);
 }
 
 function renderFeedEntry(
@@ -766,7 +878,10 @@ function renderFeedEntry(
     readonly onToggleTurnFold: (turnId: TurnId) => void;
     readonly onPressImage: (uri: string, headers?: Record<string, string>) => void;
     readonly onMarkdownLinkPress: (href: string) => void;
+    /** Icons drawn bare on the wallpaper. */
     readonly iconSubtleColor: string | import("react-native").ColorValue;
+    /** Icons drawn on a scenery plate (work log rows), which is darker/lighter. */
+    readonly iconPlateColor: string | import("react-native").ColorValue;
     readonly userBubbleColor: string | import("react-native").ColorValue;
     readonly markdownStyles: MarkdownStyleSets;
     readonly reviewCommentColors: ReviewCommentColors;
@@ -786,7 +901,7 @@ function renderFeedEntry(
         hitSlop={4}
         className="mb-3 min-h-11 flex-row items-center gap-2 border-b border-neutral-200/80 px-2 dark:border-white/[0.08]"
       >
-        <Text className="font-t3-medium text-sm tabular-nums text-foreground-muted">
+        <Text className="font-t3-medium text-sm tabular-nums text-scenery-foreground-muted">
           {entry.label}
         </Text>
         <SymbolView
@@ -804,7 +919,7 @@ function renderFeedEntry(
       <ThreadWorkGroupToggle
         expanded={entry.expanded}
         hiddenCount={entry.hiddenCount}
-        iconSubtleColor={iconSubtleColor}
+        iconSubtleColor={props.iconPlateColor}
         onlyToolActivities={entry.onlyToolActivities}
         onToggle={() => props.onToggleWorkGroup(entry.groupId)}
       />
@@ -856,6 +971,8 @@ function renderFeedEntry(
                     key={attachment.id}
                     environmentId={props.environmentId}
                     attachmentId={attachment.id}
+                    name={attachment.name}
+                    sizeBytes={attachment.sizeBytes}
                     className="aspect-[1.3] w-full rounded-[14px] bg-white/15"
                     onPressImage={props.onPressImage}
                   />
@@ -868,7 +985,7 @@ function renderFeedEntry(
               ))}
           </View>
           <View className="mt-1 flex-row items-center justify-end gap-1 pr-0.5">
-            <Text className="font-t3-medium text-xs tabular-nums text-neutral-600 dark:text-neutral-400">
+            <Text className="font-t3-medium text-xs tabular-nums text-scenery-foreground-muted">
               {timestampLabel}
             </Text>
             {message.text.trim().length > 0 ? (
@@ -918,6 +1035,8 @@ function renderFeedEntry(
               key={attachment.id}
               environmentId={props.environmentId}
               attachmentId={attachment.id}
+              name={attachment.name}
+              sizeBytes={attachment.sizeBytes}
               className="mt-1.5 aspect-[1.3] w-full rounded-[18px] bg-neutral-200 dark:bg-neutral-800"
               onPressImage={props.onPressImage}
             />
@@ -932,7 +1051,7 @@ function renderFeedEntry(
               buttonSize={28}
               iconSize={13}
             />
-            <Text className="font-t3-medium text-xs tabular-nums text-neutral-600 dark:text-neutral-400">
+            <Text className="font-t3-medium text-xs tabular-nums text-scenery-foreground-muted">
               {timestampLabel}
             </Text>
           </View>
@@ -963,7 +1082,7 @@ function renderFeedEntry(
       activities={entry.activities}
       copiedRowId={props.copiedRowId}
       expandedRows={props.expandedWorkRows}
-      iconSubtleColor={iconSubtleColor}
+      iconSubtleColor={props.iconPlateColor}
       onCopyRow={props.onCopyWorkRow}
       onToggleRow={props.onToggleWorkRow}
     />
@@ -1229,8 +1348,10 @@ function ThreadFeedPlaceholder(props: {
       }}
     >
       <View className="max-w-[320px] items-center gap-2">
-        <Text className="text-center font-t3-bold text-lg text-foreground">{props.title}</Text>
-        <Text className="text-center text-sm leading-normal text-foreground-secondary">
+        <Text className="text-center font-t3-bold text-lg text-scenery-foreground">
+          {props.title}
+        </Text>
+        <Text className="text-center text-sm leading-normal text-scenery-foreground-muted">
           {props.detail}
         </Text>
       </View>
@@ -1296,7 +1417,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const usesNativeAutomaticInsets =
     props.usesAutomaticContentInsets === true && Platform.OS === "ios";
 
-  const iconSubtleColor = useThemeColor("--color-icon-subtle");
+  const iconSubtleColor = useThemeColor("--color-scenery-icon");
+  const iconPlateColor = useThemeColor("--color-scenery-plate-icon");
   const userBubbleColor = useThemeColor("--color-user-bubble");
   const onMarkdownLinkPress = useCallback(
     (href: string) => {
@@ -1332,6 +1454,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     () => ({
       copiedRowId,
       expandedWorkRows,
+      iconPlateColor,
       iconSubtleColor,
       markdownStyles,
       reviewCommentColors,
@@ -1345,6 +1468,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     [
       copiedRowId,
       expandedWorkRows,
+      iconPlateColor,
       iconSubtleColor,
       markdownStyles,
       reviewCommentColors,
@@ -1649,6 +1773,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         onPressImage,
         onMarkdownLinkPress,
         iconSubtleColor,
+        iconPlateColor,
         userBubbleColor,
         markdownStyles,
         reviewCommentColors,
@@ -1663,6 +1788,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       unsettledTurnId,
       subagentTaskState,
       onStopSubagentTask,
+      iconPlateColor,
       iconSubtleColor,
       userBubbleColor,
       markdownStyles,

@@ -67,6 +67,14 @@
       "types": "./src/toolActivity.ts",
       "import": "./src/toolActivity.ts"
     },
+    "./toolIdentity": {
+      "types": "./src/toolIdentity.ts",
+      "import": "./src/toolIdentity.ts"
+    },
+    "./toolPresentation": {
+      "types": "./src/toolPresentation.ts",
+      "import": "./src/toolPresentation.ts"
+    },
     "./Struct": {
       "types": "./src/Struct.ts",
       "import": "./src/Struct.ts"

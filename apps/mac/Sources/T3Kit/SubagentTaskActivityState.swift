@@ -34,6 +34,8 @@ public struct T3SubagentTaskItem: Sendable, Equatable {
     public var description: String?
     public var subagentType: String?
     public var model: String?
+    /// Reasoning effort the subagent's turns run at (e.g. "high"), when known.
+    public var effort: String?
     public var workflowName: String?
     public var toolUseId: String?
     public var state: T3SubagentTaskState
@@ -63,6 +65,7 @@ public struct T3SubagentTaskItem: Sendable, Equatable {
         description: String?,
         subagentType: String? = nil,
         model: String? = nil,
+        effort: String? = nil,
         workflowName: String? = nil,
         toolUseId: String? = nil,
         state: T3SubagentTaskState,
@@ -82,6 +85,7 @@ public struct T3SubagentTaskItem: Sendable, Equatable {
         self.description = description
         self.subagentType = subagentType
         self.model = model
+        self.effort = effort
         self.workflowName = workflowName
         self.toolUseId = toolUseId
         self.state = state
@@ -144,6 +148,7 @@ public struct T3SubagentTaskActivityState: Sendable, Equatable {
                 nonEmpty(payload?.description) ?? nonEmpty(payload?.detail) ?? item.description
             item.subagentType = nonEmpty(payload?.subagentType) ?? item.subagentType
             item.model = nonEmpty(payload?.model) ?? item.model
+            item.effort = nonEmpty(payload?.effort) ?? item.effort
             item.workflowName = nonEmpty(payload?.workflowName) ?? item.workflowName
             item.toolUseId = nonEmpty(payload?.toolUseId) ?? item.toolUseId
             item.startedAt = min(item.startedAt, at)

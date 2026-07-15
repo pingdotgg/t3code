@@ -20,6 +20,7 @@ import {
   ProviderItemId,
   type ServerSettings,
   ThreadId,
+  ToolLifecycleActivityPayload,
   TurnId,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -28,6 +29,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as PubSub from "effect/PubSub";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { afterEach, describe, expect, it } from "vite-plus/test";
@@ -61,6 +63,12 @@ const asEventId = (value: string): EventId => EventId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
+
+/**
+ * Tool activity payloads travel as `Schema.Unknown`; decoding them here is what
+ * pins the wire shape clients rely on (contracts `ToolLifecycleActivityPayload`).
+ */
+const decodeToolActivityPayload = Schema.decodeUnknownSync(ToolLifecycleActivityPayload);
 
 type LegacyProviderRuntimeEvent = {
   readonly type: string;
@@ -806,6 +814,141 @@ describe("ProviderRuntimeIngestion", () => {
     expect(data?.toolCallId).toBe("tool-read-1");
     expect(data?.kind).toBe("read");
     expect(rawOutput?.content).toBe('import * as Effect from "effect/Effect"\n');
+  });
+
+  it("attaches a typed skill presentation to tool activities", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-skill-completed"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-skill"),
+      itemId: asItemId("item-skill"),
+      payload: {
+        // The Claude adapter's substring classifier cannot see that this is a
+        // skill; the presentation deriver reads the tool identity instead.
+        itemType: "dynamic_tool_call",
+        status: "completed",
+        title: "Tool call",
+        data: {
+          toolName: "Skill",
+          input: { skill: "caveman:cavecrew", args: "review the diff" },
+          result: "done",
+        },
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-skill-completed",
+      ),
+    );
+    const activity = thread.activities.find(
+      (entry: ProviderRuntimeTestActivity) => entry.id === "evt-skill-completed",
+    );
+    const payload = decodeToolActivityPayload(activity?.payload);
+
+    expect(payload.presentation).toMatchObject({
+      surface: "skill",
+      title: "Skill: cavecrew",
+      subtitle: "review the diff",
+      state: "succeeded",
+      provenance: {
+        origin: "plugin",
+        pluginName: "caveman",
+        skillName: "cavecrew",
+        provider: "claudeAgent",
+      },
+    });
+  });
+
+  it("attaches an MCP presentation carrying server and tool provenance", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-mcp-completed"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-mcp"),
+      itemId: asItemId("item-mcp"),
+      payload: {
+        itemType: "mcp_tool_call",
+        status: "completed",
+        title: "MCP tool call",
+        data: {
+          toolName: "mcp__linear__create_issue",
+          input: { title: "Fix crash" },
+          result: "created SER-1",
+        },
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-mcp-completed",
+      ),
+    );
+    const activity = thread.activities.find(
+      (entry: ProviderRuntimeTestActivity) => entry.id === "evt-mcp-completed",
+    );
+    const payload = decodeToolActivityPayload(activity?.payload);
+
+    expect(payload.presentation).toMatchObject({
+      surface: "mcp",
+      title: "linear · create_issue",
+      provenance: { origin: "mcp", serverName: "linear", displayName: "create_issue" },
+    });
+    expect(payload.presentation?.inputs).toEqual([
+      { label: "title", value: "Fix crash", kind: "text" },
+    ]);
+  });
+
+  it("falls back to a generic presentation for tools it does not recognize", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "item.started",
+      eventId: asEventId("evt-unknown-started"),
+      provider: ProviderDriverKind.make("cursor"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-unknown"),
+      itemId: asItemId("item-unknown"),
+      payload: {
+        itemType: "dynamic_tool_call",
+        status: "inProgress",
+        title: "Tool call",
+        data: { toolName: "AcmeDoThing", input: { widget: "sprocket" } },
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-unknown-started",
+      ),
+    );
+    const activity = thread.activities.find(
+      (entry: ProviderRuntimeTestActivity) => entry.id === "evt-unknown-started",
+    );
+    const payload = decodeToolActivityPayload(activity?.payload);
+
+    expect(payload.presentation).toMatchObject({
+      surface: "generic",
+      title: "AcmeDoThing",
+      state: "running",
+      provenance: { origin: "unknown" },
+    });
+    expect(payload.presentation?.inputs).toEqual([
+      { label: "widget", value: "sprocket", kind: "text" },
+    ]);
   });
 
   it("normalizes command execution activities to ran-command summaries", async () => {

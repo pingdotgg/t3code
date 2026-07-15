@@ -1215,7 +1215,11 @@ export function makeOpenCodeAdapter(
       const variant = getModelSelectionStringOptionValue(modelSelection, "variant");
 
       context.activeTurnId = turnId;
-      context.activeAgent = agent ?? (input.interactionMode === "plan" ? "plan" : undefined);
+      // OpenCode has no advisor agent; its "plan" agent is the read-only one,
+      // so advisor reuses it. Enforcement comes from the runtime-mode clamp.
+      const nonMutatingInteraction =
+        input.interactionMode === "plan" || input.interactionMode === "advisor";
+      context.activeAgent = agent ?? (nonMutatingInteraction ? "plan" : undefined);
       context.activeVariant = variant;
       yield* updateProviderSession(
         context,

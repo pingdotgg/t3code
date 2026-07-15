@@ -289,6 +289,62 @@ describe("GitHubCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("counts only actionable unresolved review threads", () =>
+    Effect.gen(function* () {
+      mockRun
+        .mockReturnValueOnce(Effect.succeed(processOutput('{"reviewDecision":"APPROVED"}')))
+        .mockReturnValueOnce(
+          Effect.succeed(processOutput('{"nameWithOwner":"SergeSerb2/SergeCode"}')),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(
+            processOutput(
+              // @effect-diagnostics-next-line preferSchemaOverJson:off
+              JSON.stringify({
+                data: {
+                  repository: {
+                    pullRequest: {
+                      reviewThreads: {
+                        nodes: [
+                          {
+                            isResolved: false,
+                            isOutdated: false,
+                            comments: { nodes: [{ body: "Please fix this" }] },
+                          },
+                          { isResolved: false, isOutdated: false, comments: { nodes: [] } },
+                          {
+                            isResolved: true,
+                            isOutdated: false,
+                            comments: { nodes: [{ body: "Already fixed" }] },
+                          },
+                          {
+                            isResolved: false,
+                            isOutdated: true,
+                            comments: { nodes: [{ body: "Old diff" }] },
+                          },
+                        ],
+                        pageInfo: { hasNextPage: false },
+                      },
+                    },
+                  },
+                },
+              }),
+            ),
+          ),
+        );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const status = yield* gh.getPullRequestReviewStatus({ cwd: "/repo", reference: "#88" });
+
+      expect(status).toEqual({
+        reviewDecision: "APPROVED",
+        unresolvedReviewThreadCount: 2,
+        actionableReviewItemCount: 1,
+        reviewLifecycle: "actionable-comments",
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("surfaces a friendly error when the pull request is not found", () =>
     Effect.gen(function* () {
       const cause = new VcsProcessExitError({

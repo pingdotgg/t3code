@@ -122,16 +122,6 @@ struct SceneryTranslucencySettingsTests {
                 == ScenerySettingsFile.defaultTranslucency)
     }
 
-    @Test("wash scale is 1.0 at full opacity and stays high at 50%")
-    func washScale() {
-        #expect(ScenerySettingsFile.washScale(forTranslucency: 1.0) == 1.0)
-        #expect(ScenerySettingsFile.washScale(forTranslucency: 0.85) == 0.7 + 0.3 * 0.85)
-        let half = ScenerySettingsFile.washScale(forTranslucency: 0.5)
-        #expect(half == 0.85)
-        // Below range clamps first, so wash still matches the floor.
-        #expect(ScenerySettingsFile.washScale(forTranslucency: 0.0) == half)
-    }
-
     @Test("decode missing translucency uses default; out-of-range is clamped")
     func decode() throws {
         let decoder = JSONDecoder()

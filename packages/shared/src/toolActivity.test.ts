@@ -54,4 +54,24 @@ describe("toolActivity", () => {
       summary: "Read file",
     });
   });
+
+  it("keeps distinct search summaries and preserves subtitles", () => {
+    expect(
+      deriveToolActivityPresentation({
+        itemType: "dynamic_tool_call",
+        title: "Grep",
+        detail: "src/**/*.ts",
+        data: { toolName: "Grep", input: { pattern: "TODO" } },
+      }),
+    ).toEqual({ summary: "Searched files", detail: "TODO" });
+
+    expect(
+      deriveToolActivityPresentation({
+        itemType: "web_search",
+        title: "Search the web",
+        detail: "latest release notes",
+        data: { input: { query: "latest release notes" } },
+      }),
+    ).toEqual({ summary: "Web search", detail: "latest release notes" });
+  });
 });

@@ -55,6 +55,17 @@ export const GitPullRequestReviewDecision = Schema.Literals([
   "REVIEW_REQUIRED",
 ]);
 export type GitPullRequestReviewDecision = typeof GitPullRequestReviewDecision.Type;
+/**
+ * Where a pull request sits in its review lifecycle. Review bots post a review
+ * in phases, so an unresolved-thread count of zero on its own cannot tell
+ * "the bot is still reviewing" from "the bot reviewed and found nothing left".
+ */
+export const GitPullRequestReviewLifecycle = Schema.Literals([
+  "review-in-progress",
+  "actionable-comments",
+  "review-complete",
+]);
+export type GitPullRequestReviewLifecycle = typeof GitPullRequestReviewLifecycle.Type;
 const GitPullRequestReference = TrimmedNonEmptyStringSchema;
 const GitPullRequestState = Schema.Literals(["open", "closed", "merged"]);
 const GitPreparePullRequestThreadMode = Schema.Literals(["local", "worktree"]);
@@ -219,6 +230,14 @@ const VcsStatusChangeRequest = Schema.Struct({
    * Nil-or-unknown must be treated as not merge-ready by clients.
    */
   unresolvedReviewThreadCount: Schema.NullOr(NonNegativeInt),
+  /** Number of unresolved, non-outdated inline review threads with content. */
+  actionableReviewItemCount: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  /**
+   * Review lifecycle phase, absent when unknown (no review activity, a
+   * non-GitHub provider, or a failed fetch). Absent is not "complete": clients
+   * must fall back to the thread count and review decision.
+   */
+  reviewLifecycle: Schema.optional(GitPullRequestReviewLifecycle),
 });
 
 const VcsStatusLocalShape = {

@@ -17,6 +17,7 @@ import {
   OrchestrationProposedPlan,
   OrchestrationSession,
   ProjectCreateCommand,
+  ProviderInteractionMode,
   ThreadMetaUpdatedPayload,
   ThreadTurnStartCommand,
   ThreadCreatedPayload,
@@ -30,6 +31,7 @@ const decodeFullThreadDiffInput = Schema.decodeUnknownEffect(OrchestrationGetFul
 const decodeThreadTurnDiff = Schema.decodeUnknownEffect(ThreadTurnDiff);
 const decodeComposerPayloadWeight = Schema.decodeUnknownEffect(ComposerPayloadWeight);
 const decodeProjectCreateCommand = Schema.decodeUnknownEffect(ProjectCreateCommand);
+const decodeProviderInteractionMode = Schema.decodeUnknownEffect(ProviderInteractionMode);
 const decodeProjectCreatedPayload = Schema.decodeUnknownEffect(ProjectCreatedPayload);
 const decodeProjectMetaUpdatedPayload = Schema.decodeUnknownEffect(ProjectMetaUpdatedPayload);
 const decodeThreadTurnStartCommand = Schema.decodeUnknownEffect(ThreadTurnStartCommand);
@@ -765,5 +767,12 @@ it.effect("decodes composer payload weight metadata", () =>
 
     assert.strictEqual(parsed.sources[0]?.kind, "terminal_context");
     assert.strictEqual(parsed.sources[0]?.trimAvailable, true);
+  }),
+);
+
+it.effect("accepts advisor as a thread interaction mode", () =>
+  Effect.gen(function* () {
+    const decoded = yield* decodeProviderInteractionMode("advisor");
+    assert.strictEqual(decoded, "advisor");
   }),
 );

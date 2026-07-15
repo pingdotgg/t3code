@@ -1,6 +1,10 @@
 import Foundation
 import Observation
 
+public enum SidebarMoveDirection: Sendable {
+    case up, down
+}
+
 @Observable
 @MainActor
 public final class AppModel {
@@ -11,9 +15,15 @@ public final class AppModel {
     public private(set) var connection: ConnectionPhase = .launchingServer
     public private(set) var projects: [Project] = []
     public private(set) var threads: [ChatThread] = []
+    public private(set) var archivedThreads: [ChatThread] = []
+    public private(set) var archivedThreadsLoading = false
+    public private(set) var archivedThreadsError: String?
     /// Thread IDs pinned locally in the macOS client. Pinning is intentionally
     /// client-local: it is sidebar organization, not server thread metadata.
     public private(set) var pinnedThreadIDs: Set<String>
+    /// Saved sidebar order keyed by project. Refreshes only merge new rows;
+    /// they never replace an existing manual arrangement.
+    public private(set) var manualThreadOrder: [String: [String]]
     public private(set) var providers: [ProviderInstance] = []
     public private(set) var models: [ModelOption] = []
     /// Server-catalog display names keyed by model slug for timeline badges.
@@ -119,6 +129,7 @@ public final class AppModel {
     private var dismissedUsageLimitIDs: Set<String> = []
 
     private static let pinnedThreadIDsKey = "SergeCode.pinnedThreadIDs"
+    private static let manualThreadOrderKey = "SergeCode.manualThreadOrder"
 
     private static let usageLimitContinuationPrompt =
         "Continue the interrupted task from where you stopped."
@@ -158,6 +169,7 @@ public final class AppModel {
     /// Monotonic settings-save counter: only the latest save's response may
     /// commit, so overlapping keystroke-driven saves can't land out of order.
     @ObservationIgnored private var settingsSaveToken = 0
+    @ObservationIgnored private var archivedThreadsRefreshToken = UUID()
     /// threadID → (messageID, index) of the actively streaming assistant
     /// message, so per-token appends skip the O(n) timeline scan. Entries
     /// are validated against the array before use — a stale index costs one
@@ -188,6 +200,14 @@ public final class AppModel {
         self.dictation = dictation ?? DictationController()
         self.pinnedThreadIDs = Set(
             UserDefaults.standard.stringArray(forKey: Self.pinnedThreadIDsKey) ?? [])
+        let orderKey = "\(Self.manualThreadOrderKey).\(deviceID.rawValue)"
+        if let data = UserDefaults.standard.data(forKey: orderKey),
+            let order = try? JSONDecoder().decode([String: [String]].self, from: data)
+        {
+            self.manualThreadOrder = order
+        } else {
+            self.manualThreadOrder = [:]
+        }
     }
 
     public var isRemote: Bool { deviceID != .local }
@@ -218,8 +238,88 @@ public final class AppModel {
             + threads.filter { !pinnedIDs.contains($0.id) }
     }
 
+    static func manuallyOrdered(_ threads: [ChatThread], order: [String]) -> [ChatThread] {
+        let byID = Dictionary(uniqueKeysWithValues: threads.map { ($0.id, $0) })
+        let saved = order.compactMap { byID[$0] }
+        let savedIDs = Set(saved.map(\.id))
+        return threads.filter { !savedIDs.contains($0.id) } + saved
+    }
+
+    public func orderedThreads(for projectID: String) -> [ChatThread] {
+        let threads = self.threads.filter {
+            $0.projectID == projectID && $0.status != .archived
+        }
+        return Self.manuallyOrdered(threads, order: manualThreadOrder[projectID] ?? [])
+    }
+
+    /// Returns the insertion bounds for moving rows without crossing the pin boundary.
+    /// The input is expected to use `pinnedFirst` ordering, as rendered by the sidebar.
+    static func reorderDestinationBounds(
+        _ threads: [ChatThread], fromOffsets: IndexSet, pinnedIDs: Set<String>
+    ) -> ClosedRange<Int>? {
+        guard let firstOffset = fromOffsets.first,
+            fromOffsets.allSatisfy({ $0 >= 0 && $0 < threads.count })
+        else { return nil }
+
+        let isPinned = pinnedIDs.contains(threads[firstOffset].id)
+        guard fromOffsets.allSatisfy({ pinnedIDs.contains(threads[$0].id) == isPinned }) else {
+            return nil
+        }
+
+        let groupOffsets = threads.indices.filter {
+            pinnedIDs.contains(threads[$0].id) == isPinned
+        }
+        guard let groupStart = groupOffsets.first, let groupEnd = groupOffsets.last else {
+            return nil
+        }
+        return groupStart...(groupEnd + 1)
+    }
+
+    public func canReorderThreads(
+        _ threads: [ChatThread], fromOffsets: IndexSet, toOffset: Int
+    ) -> Bool {
+        Self.reorderDestinationBounds(
+            threads, fromOffsets: fromOffsets, pinnedIDs: pinnedThreadIDs)?.contains(toOffset)
+            == true
+    }
+
+    public func reorderThreads(
+        _ threads: [ChatThread], fromOffsets: IndexSet, toOffset: Int, projectID: String
+    ) {
+        guard canReorderThreads(threads, fromOffsets: fromOffsets, toOffset: toOffset) else { return }
+        var reordered = threads
+        reordered.move(fromOffsets: fromOffsets, toOffset: toOffset)
+        manualThreadOrder[projectID] = reordered.map(\.id)
+        persistManualThreadOrder()
+    }
+
+    public func canMoveThread(_ thread: ChatThread, direction: SidebarMoveDirection) -> Bool {
+        let visible = Self.pinnedFirst(
+            orderedThreads(for: thread.projectID), pinnedIDs: pinnedThreadIDs)
+        guard let index = visible.firstIndex(where: { $0.id == thread.id }) else { return false }
+        let destination = direction == .up ? index - 1 : index + 2
+        return canReorderThreads(
+            visible, fromOffsets: IndexSet(integer: index), toOffset: destination)
+    }
+
+    public func moveThread(_ thread: ChatThread, direction: SidebarMoveDirection) {
+        let visible = Self.pinnedFirst(
+            orderedThreads(for: thread.projectID), pinnedIDs: pinnedThreadIDs)
+        guard let index = visible.firstIndex(where: { $0.id == thread.id }) else { return }
+        let destination = direction == .up ? index - 1 : index + 2
+        reorderThreads(
+            visible, fromOffsets: IndexSet(integer: index), toOffset: destination,
+            projectID: thread.projectID)
+    }
+
     private func persistPinnedThreadIDs() {
         UserDefaults.standard.set(Array(pinnedThreadIDs), forKey: Self.pinnedThreadIDsKey)
+    }
+
+    private func persistManualThreadOrder() {
+        let key = "\(Self.manualThreadOrderKey).\(deviceID.rawValue)"
+        guard let data = try? JSONEncoder().encode(manualThreadOrder) else { return }
+        UserDefaults.standard.set(data, forKey: key)
     }
 
     private static func makeModelDisplayNames(from models: [ModelOption]) -> [String: String] {
@@ -776,6 +876,7 @@ public final class AppModel {
             {
                 dequeueNextQueuedMessageIfNeeded(threadID: thread.id)
             }
+            await refreshArchivedThreads()
         } catch {
             lastError = String(describing: error)
         }
@@ -862,6 +963,45 @@ public final class AppModel {
             guard refreshCheckpointsTokens[threadID] == token else { return }
             lastError = String(describing: error)
         }
+    }
+
+    // MARK: - Subagent inner threads
+
+    /// Opens a subagent's inner thread in the main area, switching threads
+    /// first when the task belongs to another thread (the agents panel can
+    /// open a task on a thread that is not selected).
+    public func openSubagent(taskId: String, threadID: String) {
+        if selectedThreadID != threadID {
+            selectedThreadID = threadID
+        }
+        // Review mode owns the same real estate; a subagent drill-down leaves it.
+        closeReview(threadID: threadID)
+        state(creating: threadID).focusedSubagentTaskID = taskId
+    }
+
+    public func closeSubagent(threadID: String) {
+        threadStates[threadID]?.focusedSubagentTaskID = nil
+    }
+
+    public func closeSubagent() {
+        guard let threadID = selectedThreadID else { return }
+        closeSubagent(threadID: threadID)
+    }
+
+    /// The task behind an open inner thread, or nil once it has been pruned
+    /// (thread eviction, timeline reset) — callers fall back to the transcript.
+    public func focusedSubagentTask(threadID: String) -> SubagentTaskItem? {
+        guard let taskId = threadStates[threadID]?.focusedSubagentTaskID else { return nil }
+        return subagentTaskAggregator.task(taskId: taskId, threadID: threadID)
+    }
+
+    /// Stages `text` into the selected thread's composer, appending to any
+    /// existing draft so promoting a result never clobbers what was typed.
+    public func stageComposerTextAppending(_ text: String) {
+        guard let threadID = selectedThreadID else { return }
+        let existing = composerDraft(for: threadID).text
+        let trimmed = existing.trimmingCharacters(in: .whitespacesAndNewlines)
+        stageComposerText(trimmed.isEmpty ? text : existing + "\n\n" + text)
     }
 
     // MARK: - Diff review mode
@@ -1658,14 +1798,28 @@ public final class AppModel {
         }
     }
 
-    public var archivedThreads: [ChatThread] {
-        threads.filter { $0.status == .archived }
+    public func refreshArchivedThreads() async {
+        let token = UUID()
+        archivedThreadsRefreshToken = token
+        archivedThreadsLoading = true
+        archivedThreadsError = nil
+        do {
+            let refreshed = try await backend.archivedThreads().sorted { $0.updatedAt > $1.updatedAt }
+            guard archivedThreadsRefreshToken == token else { return }
+            archivedThreads = refreshed
+            archivedThreadsLoading = false
+        } catch {
+            guard archivedThreadsRefreshToken == token else { return }
+            archivedThreadsLoading = false
+            archivedThreadsError = String(describing: error)
+        }
     }
 
     public func archiveThread(_ thread: ChatThread) async {
         do {
             try await backend.archiveThread(id: thread.id)
             await releaseTimeline(threadID: thread.id)
+            await refreshArchivedThreads()
         } catch {
             lastError = String(describing: error)
         }
@@ -1674,6 +1828,7 @@ public final class AppModel {
     public func unarchiveThread(_ thread: ChatThread) async {
         do {
             try await backend.unarchiveThread(id: thread.id)
+            await refreshArchivedThreads()
         } catch {
             lastError = String(describing: error)
         }
@@ -1683,6 +1838,7 @@ public final class AppModel {
         do {
             try await backend.deleteThread(id: thread.id)
             await releaseTimeline(threadID: thread.id)
+            await refreshArchivedThreads()
         } catch {
             lastError = String(describing: error)
         }
