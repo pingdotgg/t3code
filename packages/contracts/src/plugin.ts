@@ -17,6 +17,7 @@ export type PluginId = typeof PluginId.Type;
 
 export const PluginCapability = Schema.Literals([
   "agents",
+  "events",
   "vcs",
   "terminals",
   "database",
