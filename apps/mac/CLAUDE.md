@@ -27,3 +27,25 @@ Hard rules (build breaks otherwise — no Xcode on this machine, CLT only):
   (T3Kit, SidecarKit, SergeCodeMac + test targets).
 - Liquid Glass: glass for chrome (toolbars, composer, sheets); never behind
   long-form text (chat bodies, diffs).
+
+## Versioning and Sparkle Releases
+
+Before changing `version.json`, tagging, generating an appcast entry, or
+starting a release, ask the user and wait for an explicit choice:
+
+> Should this work create a new app version/release, or should it be added to
+> the current rolling/pending version number?
+
+For rolling/pending work, preserve both `version` and `buildNumber` and do not
+create release artifacts. For a new release, use the user's requested semver
+bump and increase `buildNumber` monotonically. `version.json` is the source of
+truth; `sync-version.sh` maps it to `CFBundleShortVersionString` and
+`CFBundleVersion`. Sparkle orders updates by the numeric build number, while
+the semver value is display text.
+
+The normal release path is: version change in a PR to `main`, merge it, run
+`Release macOS App` manually from merged `main`, then review and merge the
+automatically opened appcast PR. Do not use `version-bump.sh` during ordinary
+PR work because it commits and tags immediately; use it only when the user
+explicitly requests that behavior. All GitHub operations must target
+`SergeSerb2/SergeCode`.
