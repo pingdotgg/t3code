@@ -1,0 +1,54 @@
+{
+  "name": "multi-model-eval",
+  "description": "Get opinions from multiple models and synthesize the best answer",
+  "version": "1.0.0",
+  "phases": [
+    {
+      "id": "gather",
+      "title": "Gather Opinions",
+      "execution": "parallel",
+      "tasks": [
+        {
+          "id": "opus-opinion",
+          "type": "spawn",
+          "provider": "claudeAgent",
+          "model": "opus-4.8",
+          "prompt": "{{question}}",
+          "timeout": 180
+        },
+        {
+          "id": "sonnet-opinion",
+          "type": "spawn",
+          "provider": "claudeAgent",
+          "model": "sonnet-5",
+          "prompt": "{{question}}",
+          "timeout": 120
+        },
+        {
+          "id": "gpt-opinion",
+          "type": "spawn",
+          "provider": "codex",
+          "model": "gpt-5.5",
+          "prompt": "{{question}}",
+          "timeout": 180
+        }
+      ]
+    },
+    {
+      "id": "synthesize",
+      "title": "Synthesize Best Answer",
+      "execution": "sequential",
+      "tasks": [
+        {
+          "id": "final",
+          "type": "spawn",
+          "provider": "claudeAgent",
+          "model": "fable-5",
+          "prompt": "Compare these answers to '{{question}}' and provide the best synthesis:\n\nOpus 4.8 Answer:\n{{opus-opinion}}\n\nSonnet 5 Answer:\n{{sonnet-opinion}}\n\nGPT 5.5 Answer:\n{{gpt-opinion}}\n\nProvide:\n1. Best synthesis incorporating strengths of each\n2. Where they agree/disagree\n3. Most confident answer with reasoning\n4. Caveats or limitations",
+          "dependencies": ["opus-opinion", "sonnet-opinion", "gpt-opinion"],
+          "timeout": 240
+        }
+      ]
+    }
+  ]
+}
