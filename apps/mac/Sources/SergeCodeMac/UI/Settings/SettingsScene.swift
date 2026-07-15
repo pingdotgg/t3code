@@ -294,7 +294,20 @@ private struct ArchiveSettingsTab: View {
     var body: some View {
         Form {
             Section("Archived threads") {
-                if model.archivedThreads.isEmpty {
+                if model.archivedThreadsLoading && model.archivedThreads.isEmpty {
+                    ProgressView("Loading archived threads…")
+                } else if let error = model.archivedThreadsError {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("Could not load archived threads", systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.red)
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button("Try Again") {
+                            Task { await model.refreshArchivedThreads() }
+                        }
+                    }
+                } else if model.archivedThreads.isEmpty {
                     Text("No archived threads.")
                         .foregroundStyle(.secondary)
                 } else {
@@ -323,6 +336,7 @@ private struct ArchiveSettingsTab: View {
         }
         .formStyle(.grouped)
         .padding()
+        .task { await model.refreshArchivedThreads() }
         .animation(Motion.structure, value: model.archivedThreads.map(\.id))
         .alert(
             "Delete Session?",

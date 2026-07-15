@@ -47,6 +47,10 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         await state.threads()
     }
 
+    public func archivedThreads() async throws -> [ChatThread] {
+        await state.threads().filter { $0.status == .archived }
+    }
+
     public func timeline(threadID: String) async throws -> [TimelineItem] {
         await state.timeline(threadID: threadID)
     }
