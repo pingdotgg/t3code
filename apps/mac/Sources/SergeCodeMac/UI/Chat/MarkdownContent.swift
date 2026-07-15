@@ -684,9 +684,12 @@ func markdownBlockAllowsHighlight(
 
 @MainActor
 struct AssistantMarkdownView: View {
-    // The mac client has no editor picker yet; Cursor is first in the shared
-    // EDITORS ordering and therefore matches the existing client default.
-    private static let defaultEditor: ExternalEditor = .cursor
+    // Default to Finder to avoid errors when Cursor is not installed
+    @AppStorage("preferredExternalEditor") private var preferredEditorRaw: String = ExternalEditor.fileManager.rawValue
+
+    private var preferredEditor: ExternalEditor {
+        ExternalEditor(rawValue: preferredEditorRaw) ?? .fileManager
+    }
 
     let markdown: String
     let isStreaming: Bool
@@ -813,12 +816,17 @@ struct AssistantMarkdownView: View {
                 // than launching an editor on the other Mac.
                 return .discarded
             }
-            // The launcher API does not accept a line yet; keep it in the URL
-            // contract so a future RPC extension can preserve the location.
-            _ = target.line
+
+            // Check if Option key is pressed to show editor menu
+            let modifiers = NSEvent.modifierFlags
+            if modifiers.contains(.option) {
+                showEditorMenu(for: target)
+                return .handled
+            }
+
+            // Regular click uses preferred editor
             Task {
-                await model.openInEditor(
-                    threadID: threadID, subpath: target.path, editor: Self.defaultEditor)
+                await openFile(path: target.path, line: target.line, with: preferredEditor)
             }
             return .handled
         })
@@ -870,6 +878,58 @@ struct AssistantMarkdownView: View {
         }
         return MarkdownTheme.gap(
             after: MarkdownTheme.kind(of: last.block), before: .paragraph)
+    }
+
+    private func openFile(path: String, line: Int?, with editor: ExternalEditor) async {
+        await model.openInEditor(threadID: threadID, subpath: path, editor: editor)
+    }
+
+    private func showEditorMenu(for target: FileLinkTarget) {
+        let menu = NSMenu()
+
+        // Add "Open in..." options
+        for editor in ExternalEditor.allCases {
+            let item = NSMenuItem(
+                title: "Open in \(editor.displayName)",
+                action: #selector(EditorMenuHandler.openInEditor(_:)),
+                keyEquivalent: ""
+            )
+            item.representedObject = EditorMenuAction(
+                editor: editor,
+                target: target,
+                model: model,
+                threadID: threadID
+            )
+            item.target = EditorMenuHandler.shared
+            if editor == preferredEditor {
+                item.state = .on
+            }
+            menu.addItem(item)
+        }
+
+        menu.addItem(.separator())
+
+        // Add "Set as Default" options
+        for editor in ExternalEditor.allCases {
+            let item = NSMenuItem(
+                title: "Set \(editor.displayName) as Default",
+                action: #selector(EditorMenuHandler.setDefaultEditor(_:)),
+                keyEquivalent: ""
+            )
+            item.representedObject = EditorMenuAction(
+                editor: editor,
+                target: target,
+                model: model,
+                threadID: threadID
+            )
+            item.target = EditorMenuHandler.shared
+            menu.addItem(item)
+        }
+
+        // Show menu at current mouse location
+        if let event = NSApp.currentEvent {
+            NSMenu.popUpContextMenu(menu, with: event, for: event.window?.contentView ?? NSView())
+        }
     }
 
     @ViewBuilder
@@ -1644,5 +1704,35 @@ private struct MarkdownTableView: View {
         case .trailing: return .trailing
         default: return .leading
         }
+    }
+}
+
+// MARK: - Editor Menu Support
+
+private struct EditorMenuAction {
+    let editor: ExternalEditor
+    let target: FileLinkTarget
+    let model: AppModel
+    let threadID: String
+}
+
+@MainActor
+private class EditorMenuHandler: NSObject {
+    static let shared = EditorMenuHandler()
+
+    @objc func openInEditor(_ sender: NSMenuItem) {
+        guard let action = sender.representedObject as? EditorMenuAction else { return }
+        Task {
+            await action.model.openInEditor(
+                threadID: action.threadID,
+                subpath: action.target.path,
+                editor: action.editor
+            )
+        }
+    }
+
+    @objc func setDefaultEditor(_ sender: NSMenuItem) {
+        guard let action = sender.representedObject as? EditorMenuAction else { return }
+        UserDefaults.standard.set(action.editor.rawValue, forKey: "preferredExternalEditor")
     }
 }
