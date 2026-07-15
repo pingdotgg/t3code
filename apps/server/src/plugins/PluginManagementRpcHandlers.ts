@@ -216,7 +216,19 @@ export const make = Effect.fn("PluginManagementRpcHandlers.make")(function* () {
         } satisfies PluginSettingsGetResult;
       }
       const draft = yield* settingsStore.readDraft(input.pluginId);
-      return { ...draft, declared: true } satisfies PluginSettingsGetResult;
+      // An upgrade can change the schema under stored values. Compare the shape
+      // that produced them against the current one and flag a mismatch, so the
+      // form can say "these need attention" and repair them. The data is NOT
+      // discarded — the user may need to read it to reconstruct the new values.
+      const currentFingerprint = fingerprintSettingsSchema(declared.value.schema);
+      const staleShape =
+        draft.schemaFingerprint !== null && draft.schemaFingerprint !== currentFingerprint;
+      return {
+        values: draft.values,
+        revision: draft.revision,
+        incompatible: draft.incompatible || staleShape,
+        declared: true,
+      } satisfies PluginSettingsGetResult;
     });
 
   const settingsSet: PluginManagementRpcHandlers["Service"]["settingsSet"] = (input) =>
