@@ -263,6 +263,83 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     }),
   );
 
+  it.effect("retains a successful model switch when later skill discovery fails", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-model-switch-before-skill-failure");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-model-skill-failure-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_REQUEST_LOG_PATH: requestLogPath }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath, {
+        listSkills: () =>
+          Effect.fail(
+            new ProviderDriverError({
+              driver: "grok",
+              instanceId: "grok",
+              detail: "inspect failed",
+            }),
+          ),
+      });
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-build" },
+      });
+      const error = yield* Effect.flip(
+        adapter.sendTurn({
+          threadId,
+          input: "$review the change",
+          attachments: [],
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("grok"),
+            model: "grok-mock-alt",
+          },
+        }),
+      );
+
+      assert.equal(error._tag, "ProviderAdapterRequestError");
+      const sessionsAfterFailure = yield* adapter.listSessions();
+      assert.equal(
+        sessionsAfterFailure.find((session) => session.threadId === threadId)?.model,
+        "grok-mock-alt",
+      );
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "continue without another model selection",
+        attachments: [],
+      });
+      const sessionsAfterFollowUp = yield* adapter.listSessions();
+      assert.equal(
+        sessionsAfterFollowUp.find((session) => session.threadId === threadId)?.model,
+        "grok-mock-alt",
+      );
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const selectedModelIds = requests
+        .filter((entry) => entry.method === "session/set_model")
+        .flatMap((entry) => {
+          const params = entry.params;
+          return typeof params === "object" &&
+            params !== null &&
+            "modelId" in params &&
+            typeof params.modelId === "string"
+            ? [params.modelId]
+            : [];
+        });
+      // The failed turn committed exactly one switch. The model-less follow-up
+      // must neither repeat that switch nor revert to the session's old model.
+      assert.deepStrictEqual(selectedModelIds, ["grok-mock-alt"]);
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("starts a session and maps mock ACP prompt flow to runtime events", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-mock-thread");
