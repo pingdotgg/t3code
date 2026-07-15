@@ -176,55 +176,40 @@ describe("deriveProviderInstanceEntries", () => {
 describe("resolveSelectableProviderInstance", () => {
   it("returns the requested instance when it is enabled and available", () => {
     const requested = ProviderInstanceId.make("claude_work");
-    const entries = deriveProviderInstanceEntries([
+    const providers = [
       provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex" }),
       provider({ provider: ProviderDriverKind.make("claudeAgent"), instanceId: requested }),
-    ]);
+    ];
 
-    expect(resolveSelectableProviderInstance(entries, requested)).toBe(requested);
+    expect(resolveSelectableProviderInstance(providers, requested)).toBe(requested);
   });
 
   it("falls back to the first enabled and available instance", () => {
     const disabled = ProviderInstanceId.make("codex");
     const fallback = ProviderInstanceId.make("claudeAgent");
-    const entries = deriveProviderInstanceEntries([
+    const providers = [
       provider({
         provider: ProviderDriverKind.make("codex"),
         instanceId: disabled,
         enabled: false,
       }),
       provider({ provider: ProviderDriverKind.make("claudeAgent"), instanceId: fallback }),
-    ]);
+    ];
 
-    expect(resolveSelectableProviderInstance(entries, disabled)).toBe(fallback);
+    expect(resolveSelectableProviderInstance(providers, disabled)).toBe(fallback);
   });
 
   it("falls back from a removed custom Copilot instance to a selectable instance", () => {
     const removed = ProviderInstanceId.make("copilot_work");
     const fallback = ProviderInstanceId.make("copilot_personal");
-    const entries = applyProviderInstanceSettings(
-      deriveProviderInstanceEntries([
-        provider({
-          provider: ProviderDriverKind.make("copilot"),
-          instanceId: removed,
-        }),
-        provider({
-          provider: ProviderDriverKind.make("copilot"),
-          instanceId: fallback,
-        }),
-      ]),
-      {
-        providerInstances: {
-          [fallback]: {
-            driver: ProviderDriverKind.make("copilot"),
-            enabled: true,
-          },
-        },
-        providers: {} as never,
-      },
-    );
+    const providers = [
+      provider({
+        provider: ProviderDriverKind.make("copilot"),
+        instanceId: fallback,
+      }),
+    ];
 
-    expect(resolveSelectableProviderInstance(entries, removed)).toBe(fallback);
+    expect(resolveSelectableProviderInstance(providers, removed)).toBe(fallback);
   });
 
   it("prefers a ready instance over an enabled one whose driver cannot start", () => {
@@ -292,7 +277,7 @@ describe("resolveSelectableProviderInstance", () => {
     const disabled = ProviderInstanceId.make("codex");
     const unavailable = ProviderInstanceId.make("claudeAgent");
     const unknown = ProviderInstanceId.make("removed_instance");
-    const entries = deriveProviderInstanceEntries([
+    const providers = [
       provider({
         provider: ProviderDriverKind.make("codex"),
         instanceId: disabled,
@@ -303,11 +288,11 @@ describe("resolveSelectableProviderInstance", () => {
         instanceId: unavailable,
         availability: "unavailable",
       }),
-    ]);
+    ];
 
-    expect(resolveSelectableProviderInstance(entries, disabled)).toBeUndefined();
-    expect(resolveSelectableProviderInstance(entries, unavailable)).toBeUndefined();
-    expect(resolveSelectableProviderInstance(entries, unknown)).toBeUndefined();
+    expect(resolveSelectableProviderInstance(providers, disabled)).toBeUndefined();
+    expect(resolveSelectableProviderInstance(providers, unavailable)).toBeUndefined();
+    expect(resolveSelectableProviderInstance(providers, unknown)).toBeUndefined();
   });
 });
 
