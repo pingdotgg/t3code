@@ -375,18 +375,57 @@ public final class SceneSetComposer {
     }
 
     nonisolated static func normalizeSceneNames(_ names: [String]) -> [String] {
-        var seen = Set<String>()
+        var nameCounts: [String: Int] = [:]
+        var nameIndices: [String: Int] = [:]
         var out: [String] = []
+
+        // First pass: count occurrences of each base name
         for raw in names {
             let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
                 .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
             guard !name.isEmpty else { continue }
             let key = name.lowercased()
-            guard seen.insert(key).inserted else { continue }
-            out.append(name.count <= 48 ? name : String(name.prefix(45)) + "...")
+            nameCounts[key, default: 0] += 1
+        }
+
+        // Second pass: assign names with feature suffixes for duplicates
+        for raw in names {
+            let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            guard !name.isEmpty else { continue }
+            let key = name.lowercased()
+
+            let finalName: String
+            if let count = nameCounts[key], count > 1 {
+                // Multiple photos from same place - add feature-based suffix
+                let index = nameIndices[key, default: 0]
+                nameIndices[key] = index + 1
+                let suffix = Self.featureSuffix(for: index)
+                finalName = "\(name) \(suffix)"
+            } else {
+                // Unique place name - use as-is
+                finalName = name
+            }
+
+            let truncated = finalName.count <= 48 ? finalName : String(finalName.prefix(45)).trimmingCharacters(in: .whitespaces) + "..."
+            out.append(truncated)
             if out.count >= 40 { break }
         }
         return out
+    }
+
+    /// Returns a feature-based suffix for differentiating photos from the same location.
+    /// Creates evocative names like "Harbor", "Sunset", "Streets", "Vista" rather than numbers.
+    private nonisolated static func featureSuffix(for index: Int) -> String {
+        let suffixes = [
+            "Harbor", "Sunset", "Streets", "Vista", "Coast",
+            "Peaks", "Valley", "Dawn", "Hills", "Beach",
+            "Village", "Market", "Square", "Gardens", "Lighthouse",
+            "Cliffs", "Bridge", "Lake", "Forest", "Ruins",
+            "Cathedral", "Castle", "Tower", "Pathway", "Waterfront"
+        ]
+        // Cycle through suffixes if we have more photos than suffix options
+        return suffixes[index % suffixes.count]
     }
 
     /// Bare place label for metadata-less pool photos (never numbered).

@@ -62,12 +62,19 @@ struct ScenerySetFallbackTests {
         #expect(fallback[0].text.contains("Patagonia"))
     }
 
-    @Test("normalizeSceneNames dedupes and trims")
+    @Test("normalizeSceneNames adds feature suffixes for duplicates")
     func normalizeNames() {
-        let names = SceneSetComposer.normalizeSceneNames([
+        // Test with duplicates - should add feature-based suffixes
+        let namesWithDupes = SceneSetComposer.normalizeSceneNames([
             " Fushimi Inari ", "fushimi inari", "Arashiyama", "",
         ])
-        #expect(names == ["Fushimi Inari", "Arashiyama"])
+        #expect(namesWithDupes == ["Fushimi Inari Harbor", "Fushimi Inari Sunset", "Arashiyama"])
+
+        // Test with unique names - should keep as-is
+        let uniqueNames = SceneSetComposer.normalizeSceneNames([
+            "Fushimi Inari", "Arashiyama", "Kinkaku-ji",
+        ])
+        #expect(uniqueNames == ["Fushimi Inari", "Arashiyama", "Kinkaku-ji"])
     }
 
     @Test("numbered names last resort (historical; new pools use bare title)")
@@ -121,6 +128,58 @@ struct UnsplashSuggestedSceneNameTests {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         return try decoder.decode(UnsplashClient.APIPhoto.self, from: Data(json.utf8))
+    }
+
+    @Test("cleans place names by removing commas and applying Title Case")
+    func cleanPlaceNames() throws {
+        // Test comma-separated location with region codes
+        let vernazza = try decodePhoto(
+            """
+            {
+              "id": "v1",
+              "color": "#112233",
+              "location": { "name": "vernazza, sp, Italy" },
+              "urls": {
+                "raw": "https://images.unsplash.com/v1-raw",
+                "regular": "https://images.unsplash.com/v1",
+                "thumb": "https://images.unsplash.com/v1-t"
+              },
+              "user": { "name": "Photog" }
+            }
+            """)
+        #expect(vernazza.suggestedSceneName == "Vernazza")
+
+        // Test city with state abbreviation
+        let newYork = try decodePhoto(
+            """
+            {
+              "id": "ny1",
+              "location": { "name": "New York, NY" },
+              "urls": {
+                "raw": "https://images.unsplash.com/ny1-raw",
+                "regular": "https://images.unsplash.com/ny1",
+                "thumb": "https://images.unsplash.com/ny1-t"
+              },
+              "user": { "name": "Photog" }
+            }
+            """)
+        #expect(newYork.suggestedSceneName == "New York")
+
+        // Test lowercase city name - should be Title Cased
+        let paris = try decodePhoto(
+            """
+            {
+              "id": "p1",
+              "location": { "city": "paris, france" },
+              "urls": {
+                "raw": "https://images.unsplash.com/p1-raw",
+                "regular": "https://images.unsplash.com/p1",
+                "thumb": "https://images.unsplash.com/p1-t"
+              },
+              "user": { "name": "Photog" }
+            }
+            """)
+        #expect(paris.suggestedSceneName == "Paris")
     }
 
     @Test("uses location name, never description or alt_description captions")
@@ -239,13 +298,6 @@ final class FixedSceneryBackend: BackendService, @unchecked Sendable {
     func renameProject(id: String, name: String) async throws {}
     func deleteProject(id: String) async throws {}
     func watchVcsStatus(threadID: String) async throws {}
-    func pullRequestReview(threadID: String, reference: String) async throws
-        -> PullRequestReviewSnapshot
-    {
-        PullRequestReviewSnapshot(
-            provider: "github", number: 0, url: "", conversation: [], threads: [],
-            unresolvedThreadCount: 0, truncated: false)
-    }
     func listBranches(threadID: String, query: String?) async throws -> [BranchRef] { [] }
     func switchBranch(threadID: String, name: String) async throws {}
     func createBranch(threadID: String, name: String) async throws {}
