@@ -2469,7 +2469,11 @@ public actor LiveBackend: BackendService {
     // MARK: - Wire -> UI mapping
 
     private func mapProject(_ shell: OrchestrationProjectShell) -> Project {
-        Project(id: shell.id, name: shell.title, path: shell.workspaceRoot)
+        Project(
+            id: shell.id,
+            name: shell.title,
+            path: shell.workspaceRoot,
+            repositoryKey: shell.repositoryIdentity?.canonicalKey)
     }
 
     /// Folded `session.health` state plus the sort key of the transition that

@@ -27,7 +27,7 @@ struct RootView: View {
             }
         )) {
             SidebarView(multi: multi, scenery: scenery, passport: passport)
-                .navigationSplitViewColumnWidth(min: 220, ideal: 280)
+                .navigationSplitViewColumnWidth(min: 230, ideal: 280, max: 360)
         } detail: {
             Group {
                 if let thread = multi.selectedThread {

@@ -62,10 +62,38 @@ struct ThreadPinningTests {
                 == true)
     }
 
-    private func makeThread(id: String, at timestamp: TimeInterval) -> ChatThread {
+    @Test("complete sidebar order persists but cannot cross the pin boundary")
+    func completeSidebarOrderRespectsPinBoundary() {
+        let suffix = UUID().uuidString
+        let projectID = "project-\(suffix)"
+        let pinned = makeThread(id: "pinned-\(suffix)", projectID: projectID, at: 3)
+        let first = makeThread(id: "first-\(suffix)", projectID: projectID, at: 2)
+        let second = makeThread(id: "second-\(suffix)", projectID: projectID, at: 1)
+        let model = AppModel(
+            backend: MockBackend(),
+            deviceID: DeviceID(rawValue: "ordering-\(suffix)"))
+        model.enqueue(.projectsChanged([Project(id: projectID, name: "Project", path: "/tmp")]))
+        [pinned, first, second].forEach { model.enqueue(.threadUpserted($0)) }
+        model.flushPendingEvents()
+
+        model.togglePinned(pinned)
+        defer { model.togglePinned(pinned) }
+
+        model.applySidebarOrder([pinned, second, first], projectID: projectID)
+        #expect(model.manualThreadOrder[projectID] == [pinned.id, second.id, first.id])
+
+        model.applySidebarOrder([second, pinned, first], projectID: projectID)
+        #expect(model.manualThreadOrder[projectID] == [pinned.id, second.id, first.id])
+    }
+
+    private func makeThread(
+        id: String,
+        projectID: String = "project",
+        at timestamp: TimeInterval
+    ) -> ChatThread {
         ChatThread(
             id: id,
-            projectID: "project",
+            projectID: projectID,
             title: id,
             provider: .codex,
             status: .idle,

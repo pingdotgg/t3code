@@ -293,6 +293,29 @@ public final class AppModel {
         persistManualThreadOrder()
     }
 
+    /// Persists a complete sidebar order after a grouped multi-device list has
+    /// translated its drag operation back to this model's project rows.
+    public func applySidebarOrder(_ orderedThreads: [ChatThread], projectID: String) {
+        let current = Self.pinnedFirst(
+            self.orderedThreads(for: projectID), pinnedIDs: pinnedThreadIDs)
+        guard orderedThreads.count == current.count,
+            Set(orderedThreads.map(\.id)) == Set(current.map(\.id)),
+            orderedThreads.allSatisfy({ $0.projectID == projectID })
+        else { return }
+
+        var encounteredUnpinned = false
+        for thread in orderedThreads {
+            if pinnedThreadIDs.contains(thread.id) {
+                guard !encounteredUnpinned else { return }
+            } else {
+                encounteredUnpinned = true
+            }
+        }
+
+        manualThreadOrder[projectID] = orderedThreads.map(\.id)
+        persistManualThreadOrder()
+    }
+
     public func canMoveThread(_ thread: ChatThread, direction: SidebarMoveDirection) -> Bool {
         let visible = Self.pinnedFirst(
             orderedThreads(for: thread.projectID), pinnedIDs: pinnedThreadIDs)
