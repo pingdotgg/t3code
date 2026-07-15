@@ -431,15 +431,41 @@ const makeHostApi = (input: {
     });
     return {
       get: read,
+      // Recover PER EVENT, not per stream.
+      //
+      // `Stream.catchCause(() => Stream.empty)` terminates the WHOLE stream on the
+      // first failed read, so one transient SQL blip (or a read during a drifted
+      // window) would silently end the subscription — later writes still reach the
+      // PubSub, but this subscriber never sees another one for the process
+      // lifetime. Dropping the failed event and continuing keeps the contract
+      // ("emits on every successful write") honest.
       changes: input.deps.settingsStore.changes(input.pluginId).pipe(
-        Stream.mapEffect(() => read),
-        Stream.catchCause(() => Stream.empty),
+        // Emit 0 or 1 values per event, then flatten: a failed read contributes
+        // nothing and the stream continues to the next write.
+        Stream.mapEffect(() =>
+          read.pipe(
+            Effect.map((value) => [value]),
+            Effect.catchCause((cause) =>
+              Effect.logDebug("plugin settings changes: read failed, skipping event", {
+                pluginId: input.pluginId,
+                cause: Cause.pretty(cause),
+              }).pipe(Effect.as([])),
+            ),
+          ),
+        ),
+        Stream.flatMap((values) => Stream.fromIterable(values)),
       ),
     };
   };
 
   const api: PluginHostApi = {
     hostApiVersion: HOST_API_VERSION,
+    // Two independent gates, deliberately. `available()` checks the manifest
+    // capability set (what the user consented to) exactly like every other
+    // capability; the `undefined` branch covers a plugin that holds the capability
+    // but declares no schema — there is nothing to bind a typed handle to. Neither
+    // gate depends on validateSettingsDescriptor having run first, so a future path
+    // that builds hostApi without it still cannot hand out unconsented settings.
     settings:
       input.settings === undefined
         ? unavailable("settings")
