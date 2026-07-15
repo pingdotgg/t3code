@@ -1123,7 +1123,7 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       const error = yield* Effect.flip(
         adapter.startSession({
           threadId,
-          provider: ProviderDriverKind.make("cursor"),
+          provider: ProviderDriverKind.make("codex"),
           cwd: process.cwd(),
           runtimeMode: "full-access",
           modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-4.5" },

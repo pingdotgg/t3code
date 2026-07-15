@@ -2,7 +2,7 @@
  * UnifiedSubAgentToolkit - Integration layer for provider adapters.
  *
  * This module provides helper functions to integrate the UnifiedSubAgentTool
- * into any provider adapter (Codex, Claude, Cursor, Grok, etc.) with minimal changes.
+ * into any provider adapter (Codex, Claude, Grok, etc.) with minimal changes.
  *
  * Usage in adapter:
  * 1. Import: import { createUnifiedSubAgentToolHandler } from '../../subagent/integration.ts'

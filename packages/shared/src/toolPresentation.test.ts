@@ -235,7 +235,7 @@ describe("deriveToolPresentation", () => {
       status: "completed",
       title: "Terminal",
       data: { kind: "execute", command: "ls -la", rawOutput: "a\nb <exited with exit code 0>" },
-      provider: driver("cursorAgent"),
+      provider: driver("grok"),
     });
 
     expect(presentation.surface).toBe("command");

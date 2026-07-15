@@ -61,7 +61,6 @@ advisor rather than merely being unable to write — is per-driver and best-effo
 | Codex, Fugu                     | `read-only` OS sandbox — a real one            | `CODEX_ADVISOR_MODE_DEVELOPER_INSTRUCTIONS`, sent on the `plan` wire mode                |
 | Claude, Claudex, ClaudeSynthero | SDK `plan` permission mode + `canUseTool` gate | `ExitPlanMode` is denied and the plan artifact suppressed, steering it back to answering |
 | OpenCode                        | Ask-everything permission ruleset              | Runs the read-only `plan` agent                                                          |
-| Cursor (ACP)                    | Per-tool permission requests                   | Switches to the `plan`/`architect` ACP mode                                              |
 | Grok (ACP)                      | Per-tool permission requests                   | **None** — Grok ignores interaction mode entirely                                        |
 | ChatGptBrowser                  | n/a (no tools)                                 | None                                                                                     |
 

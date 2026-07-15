@@ -767,7 +767,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "item.completed",
       eventId: asEventId("evt-tool-completed-with-data"),
-      provider: ProviderDriverKind.make("cursor"),
+      provider: ProviderDriverKind.make("grok"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-tool-completed"),
@@ -917,7 +917,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "item.started",
       eventId: asEventId("evt-unknown-started"),
-      provider: ProviderDriverKind.make("cursor"),
+      provider: ProviderDriverKind.make("grok"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-unknown"),
@@ -958,7 +958,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "item.completed",
       eventId: asEventId("evt-command-completed"),
-      provider: ProviderDriverKind.make("cursor"),
+      provider: ProviderDriverKind.make("grok"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-command-completed"),
@@ -1000,7 +1000,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "item.completed",
       eventId: asEventId("evt-read-path-completed"),
-      provider: ProviderDriverKind.make("cursor"),
+      provider: ProviderDriverKind.make("grok"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-read-path"),
@@ -2692,12 +2692,12 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "session.exited",
       eventId: asEventId("evt-session-exited-graceful"),
-      provider: ProviderDriverKind.make("cursor"),
+      provider: ProviderDriverKind.make("grok"),
       createdAt: "2026-01-01T00:03:15.000Z",
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-exit-graceful"),
       payload: {
-        reason: "Cursor ACP process exited.",
+        reason: "Grok ACP process exited.",
         exitKind: "graceful",
         stderrTail: "informational shutdown output\n",
       },

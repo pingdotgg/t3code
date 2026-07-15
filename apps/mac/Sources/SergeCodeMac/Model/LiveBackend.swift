@@ -1833,7 +1833,7 @@ public actor LiveBackend: BackendService {
     }
 
     /// Effort-style select descriptors go by different ids per driver
-    /// (claudeAgent: "effort"; codex: "reasoningEffort"; cursor: "reasoning").
+    /// (claudeAgent: "effort"; codex: "reasoningEffort").
     private static let effortOptionIDs: Set<String> = ["effort", "reasoningEffort", "reasoning"]
     private static let serviceTierOptionID = "serviceTier"
 
@@ -2844,10 +2844,10 @@ public actor LiveBackend: BackendService {
         if lowered.contains("synthero") { return .claudeSynthero }
         if lowered.contains("claude") { return .claude }
         if lowered.contains("codex") { return .codex }
-        if lowered.contains("cursor") { return .cursor }
         if lowered.contains("grok") { return .grok }
         if lowered.contains("fugu") { return .fugu }
         if lowered.contains("opencode") { return .opencode }
+        if lowered.contains("cursor") { return .legacyCursor }
         return nil
     }
 

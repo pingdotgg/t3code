@@ -822,9 +822,6 @@ private actor MockState {
                     EffortChoice(id: "priority", label: "Fast", isDefault: false),
                 ]),
             ModelOption(
-                instanceID: "provider-cursor", modelID: "composer-2",
-                displayName: "Composer 2", provider: .cursor, isDefault: true),
-            ModelOption(
                 instanceID: "provider-grok", modelID: "grok-4.5",
                 displayName: "Grok 4.5", provider: .grok, isDefault: true,
                 effortOptionID: "reasoningEffort",
@@ -1278,7 +1275,6 @@ private actor MockState {
             ProviderInstance(id: "provider-claude", kind: .claude, availability: .available, version: "1.4.2"),
             ProviderInstance(id: "provider-claude-synthero", kind: .claudeSynthero, availability: .authRequired, version: nil),
             ProviderInstance(id: "provider-codex", kind: .codex, availability: .available, version: "0.9.0"),
-            ProviderInstance(id: "provider-cursor", kind: .cursor, availability: .authRequired, version: nil),
             ProviderInstance(id: "provider-grok", kind: .grok, availability: .available, version: "0.2.91"),
             ProviderInstance(id: "provider-fugu", kind: .fugu, availability: .available, version: "0.1.0"),
             ProviderInstance(id: "provider-opencode", kind: .opencode, availability: .missing, version: nil),
@@ -1307,7 +1303,7 @@ private actor MockState {
             id: "thread-3",
             projectID: projectB.id,
             title: "Rewrite pricing copy",
-            provider: .cursor,
+            provider: .grok,
             status: .idle,
             updatedAt: now.addingTimeInterval(-3_600)
         )

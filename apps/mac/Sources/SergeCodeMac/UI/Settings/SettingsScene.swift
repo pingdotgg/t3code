@@ -530,10 +530,10 @@ private extension ProviderKind {
         case .claudex: "arrow.triangle.branch"
         case .claudeSynthero: "link"
         case .codex: "chevron.left.forwardslash.chevron.right"
-        case .cursor: "cursorarrow"
         case .grok: "bolt"
         case .fugu: "fish"
         case .opencode: "curlybraces"
+        case .legacyCursor: "exclamationmark.triangle"
         }
     }
 
@@ -544,10 +544,10 @@ private extension ProviderKind {
         case .claudex: "claudex"
         case .claudeSynthero: "claude"
         case .codex: "codex"
-        case .cursor: "cursor-agent"
         case .grok: "grok"
         case .fugu: "codex-fugu"
         case .opencode: "opencode"
+        case .legacyCursor: "cursor"
         }
     }
 }

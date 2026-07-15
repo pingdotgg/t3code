@@ -29,7 +29,6 @@ describe("SubAgentProviderInfo", () => {
   it("should mark other providers as subscription", () => {
     expect(getProviderCostTier("codex")).toBe("subscription");
     expect(getProviderCostTier("claudeAgent")).toBe("subscription");
-    expect(getProviderCostTier("cursor")).toBe("subscription");
   });
 
   it("should default unknown providers to subscription", () => {

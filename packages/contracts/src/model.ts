@@ -131,7 +131,6 @@ const CODEX_DRIVER_KIND = ProviderDriverKind.make("codex");
 const CLAUDE_DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CLAUDE_SYNTHERO_DRIVER_KIND = ProviderDriverKind.make("claude-synthero");
 const CLAUDEX_DRIVER_KIND = ProviderDriverKind.make("claudex");
-const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");
 const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
 const FUGU_DRIVER_KIND = ProviderDriverKind.make("fugu");
 const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
@@ -145,7 +144,6 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
   [CLAUDE_DRIVER_KIND]: "claude-sonnet-5",
   [CLAUDE_SYNTHERO_DRIVER_KIND]: "claude-sonnet-5",
   [CLAUDEX_DRIVER_KIND]: "claudex-luna",
-  [CURSOR_DRIVER_KIND]: "auto",
   [GROK_DRIVER_KIND]: "grok-4.5",
   [FUGU_DRIVER_KIND]: "fugu",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
@@ -159,7 +157,6 @@ export const DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   [CODEX_DRIVER_KIND]: DEFAULT_GIT_TEXT_GENERATION_MODEL,
   [CLAUDE_DRIVER_KIND]: "claude-haiku-4-5",
   [CLAUDE_SYNTHERO_DRIVER_KIND]: "claude-haiku-4-5",
-  [CURSOR_DRIVER_KIND]: "composer-2",
   [FUGU_DRIVER_KIND]: "fugu",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
   [CHATGPT_DRIVER_KIND]: "chatgpt",
@@ -214,17 +211,6 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
     luna: "claudex-luna",
     sol: "claudex-sol",
   },
-  [CURSOR_DRIVER_KIND]: {
-    composer: "composer-2",
-    "composer-1.5": "composer-1.5",
-    "composer-1": "composer-1.5",
-    "opus-4.6-thinking": "claude-opus-4-6",
-    "opus-4.6": "claude-opus-4-6",
-    "sonnet-4.6-thinking": "claude-sonnet-4-6",
-    "sonnet-4.6": "claude-sonnet-4-6",
-    "opus-4.5-thinking": "claude-opus-4-5",
-    "opus-4.5": "claude-opus-4-5",
-  },
   [GROK_DRIVER_KIND]: {
     "grok-4-5": "grok-4.5",
   },
@@ -242,7 +228,6 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [CODEX_DRIVER_KIND]: "Codex",
   [CLAUDE_DRIVER_KIND]: "Claude",
   [CLAUDEX_DRIVER_KIND]: "Claudex",
-  [CURSOR_DRIVER_KIND]: "Cursor",
   [GROK_DRIVER_KIND]: "Grok",
   [FUGU_DRIVER_KIND]: "Fugu",
   [OPENCODE_DRIVER_KIND]: "OpenCode",
