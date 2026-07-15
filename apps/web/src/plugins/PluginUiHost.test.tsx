@@ -340,6 +340,26 @@ describe("PluginUiHost declarative settings", () => {
     expect(snapshot.settingsPages).toEqual([]);
   });
 
+  // The two entries bundle separately, so the SERVER's validation says nothing about
+  // what the WEB copy contains. A plugin whose server declares String while its web
+  // declares Number passes server activation and would render a text box that can
+  // never be saved. The host cannot prove the copies match, but it can refuse to
+  // render one it knows is unrenderable.
+  it("does not generate a settings page when the WEB schema is not renderable", async () => {
+    const state = createPluginUiHostState();
+
+    const snapshot = await syncPluginUiHostRegistrations({
+      state,
+      plugins: [pluginInfo({ capabilities: ["settings"] })],
+      waitForHost: async () => {},
+      importWebPlugin: async () => ({
+        default: { settings: { schema: Schema.Struct({ retries: Schema.Number }) } },
+      }),
+    });
+
+    expect(snapshot.settingsPages).toEqual([]);
+  });
+
   it("does not generate a settings page for a plugin that declares none", async () => {
     const state = createPluginUiHostState();
 

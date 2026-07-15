@@ -12,6 +12,7 @@ import type {
   PluginWebRpc,
 } from "@t3tools/plugin-sdk-web";
 import { PLUGIN_ID_PATTERN_SOURCE, type PluginId, type PluginInfo } from "@t3tools/contracts";
+import { findPluginSettingsSchemaViolations } from "@t3tools/contracts/pluginSettings";
 import { Atom } from "effect/unstable/reactivity";
 import { Component, createElement, useEffect, useRef, type ErrorInfo, type ReactNode } from "react";
 
@@ -340,13 +341,29 @@ export async function syncPluginUiHostRegistrations({
         // otherwise render a form whose every write fails.
         if (plugin.capabilities.includes("settings")) {
           const settingsSchema = definition.settings.schema;
-          settingsPages.push({
-            pluginId: plugin.id,
-            id: GENERATED_SETTINGS_PAGE_ID,
-            title: "Settings",
-            component: () =>
-              createElement(PluginSettingsPage, { pluginId: plugin.id, settingsSchema }),
-          });
+          // Validate the WEB copy of the schema too, against the same vocabulary the
+          // server enforces. The two entries bundle separately, so the server's
+          // validation says nothing about what THIS copy contains: a plugin whose
+          // server declares `String` while its web declares `Number` passes server
+          // activation and then renders a text box that can never be saved. The host
+          // cannot prove the copies match, but it can refuse to render one it knows
+          // is unrenderable.
+          const violations = findPluginSettingsSchemaViolations(settingsSchema);
+          if (violations.length > 0) {
+            ctx.logger.error(
+              `web settings schema is not renderable, no settings page rendered: ${violations
+                .map((violation) => `${violation.field} ${violation.reason}`)
+                .join("; ")}`,
+            );
+          } else {
+            settingsPages.push({
+              pluginId: plugin.id,
+              id: GENERATED_SETTINGS_PAGE_ID,
+              title: "Settings",
+              component: () =>
+                createElement(PluginSettingsPage, { pluginId: plugin.id, settingsSchema }),
+            });
+          }
         } else {
           ctx.logger.error(
             "declares web settings but the plugin does not request the `settings` capability (a web-only plugin cannot); no settings page rendered",

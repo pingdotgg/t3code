@@ -298,9 +298,24 @@ const validateSettingsDescriptor = (
   pluginId: PluginId,
   settings: PluginSettingsDescriptor | undefined,
   capabilities: ReadonlyArray<PluginManifest["capabilities"][number]>,
+  hasWebEntry: boolean,
 ): Effect.Effect<void, PluginRegistrationError> => {
   if (settings === undefined) {
     return Effect.void;
+  }
+  if (!hasWebEntry) {
+    // The settings page is HOST-rendered into the plugin's web surface, so a plugin
+    // with no web entry has no way for anyone to fill its settings in. If any field
+    // is required this is immediately fatal (every read fails, unfixably); even when
+    // everything is defaulted the declaration is inert. Reject it as a mistake
+    // rather than ship a plugin whose settings can never be configured.
+    return Effect.fail(
+      new PluginRegistrationError({
+        pluginId,
+        detail:
+          "declares settings but has no `web` manifest entry, so the host has no surface on which to render the settings page and the values could never be configured",
+      }),
+    );
   }
   if (!capabilities.includes("settings")) {
     return Effect.fail(
@@ -887,7 +902,12 @@ export const make = Effect.fn("PluginHost.make")(function* () {
         // handed over via register(hostApi), which runs after the finalizers are
         // registered.
         const definition = yield* loader.loadServerEntry(pluginDir, serverEntry);
-        yield* validateSettingsDescriptor(pluginId, definition.settings, manifest.capabilities);
+        yield* validateSettingsDescriptor(
+          pluginId,
+          definition.settings,
+          manifest.capabilities,
+          manifest.entries.web !== undefined,
+        );
         const { api: hostApi, teardown: hostApiTeardown } = makeHostApiForDefinition(
           definition.settings,
         );
