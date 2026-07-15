@@ -7,6 +7,7 @@ import {
   type PluginLockfilePlugin,
   type PluginState,
 } from "@t3tools/contracts/plugin";
+import { findPluginSettingsSchemaViolations } from "@t3tools/contracts/pluginSettings";
 import type {
   PluginDefinition,
   PluginHostApi,
@@ -280,6 +281,48 @@ const unavailable = (capability: string) =>
   // Typed failure (not a defect) so a plugin that calls an undeclared capability
   // can catch/degrade gracefully instead of crashing the call as a defect.
   Effect.fail(new PluginCapabilityUnavailable({ capability }));
+
+/**
+ * Rejects a settings descriptor the host cannot honour, BEFORE any capability is
+ * reachable and before the plugin is registered.
+ *
+ * Fail-closed at registration rather than at render time: an unrenderable field
+ * would be drawn as a text box, read back as "", and produce writes that fail
+ * validation forever — a silent, permanent breakage with no obvious cause. An
+ * immediate typed error names the offending fields instead.
+ */
+const validateSettingsDescriptor = (
+  pluginId: PluginId,
+  settings: PluginSettingsDescriptor | undefined,
+  capabilities: ReadonlyArray<PluginManifest["capabilities"][number]>,
+): Effect.Effect<void, PluginRegistrationError> => {
+  if (settings === undefined) {
+    return Effect.void;
+  }
+  if (!capabilities.includes("settings")) {
+    return Effect.fail(
+      new PluginRegistrationError({
+        pluginId,
+        detail:
+          'declares settings but does not request the "settings" capability; add it to the manifest so the user consents to it',
+      }),
+    );
+  }
+  const violations = findPluginSettingsSchemaViolations(
+    settings.schema as unknown as Parameters<typeof findPluginSettingsSchemaViolations>[0],
+  );
+  if (violations.length > 0) {
+    return Effect.fail(
+      new PluginRegistrationError({
+        pluginId,
+        detail: `settings schema is not renderable: ${violations
+          .map((violation) => `${violation.field} ${violation.reason}`)
+          .join("; ")}`,
+      }),
+    );
+  }
+  return Effect.void;
+};
 
 const makeHostApi = (input: {
   readonly pluginId: PluginId;
@@ -776,6 +819,7 @@ export const make = Effect.fn("PluginHost.make")(function* () {
         // handed over via register(hostApi), which runs after the finalizers are
         // registered.
         const definition = yield* loader.loadServerEntry(pluginDir, serverEntry);
+        yield* validateSettingsDescriptor(pluginId, definition.settings, manifest.capabilities);
         const { api: hostApi, teardown: hostApiTeardown } = makeHostApiForDefinition(
           definition.settings,
         );
