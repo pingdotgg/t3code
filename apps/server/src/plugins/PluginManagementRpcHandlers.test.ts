@@ -2,6 +2,13 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { PluginId } from "@t3tools/contracts/plugin";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { fingerprintSettingsSchema } from "@t3tools/contracts/pluginSettings";
+import { runMigrations } from "../persistence/Migrations.ts";
+
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as TestClock from "effect/testing/TestClock";
@@ -173,6 +180,154 @@ managementTest("PluginManagementRpcHandlers", (it) => {
       const missing = yield* Effect.result(handlers.removeSource({ sourceId: "src-missing" }));
       assert.isTrue(Result.isFailure(missing));
       if (Result.isFailure(missing)) assert.equal(missing.failure.code, "source-not-found");
+    }),
+  );
+});
+
+// Handler-level settings tests. Sol's review found ZERO behavioural tests on this
+// path: the store tests feed already-encoded objects straight to the store, so they
+// cannot detect deleting the handler's decode/re-encode or its unknown-key stripping.
+managementTest("PluginManagementRpcHandlers settings", (it) => {
+  const schema = Schema.Struct({
+    baseUrl: Schema.String,
+    shout: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  });
+
+  const putRuntime = (id: PluginId, settings: { readonly schema: typeof schema } | undefined) =>
+    Effect.gen(function* () {
+      const registry = yield* PluginRuntimeRegistryLayer.PluginRuntimeRegistry;
+      const scope = yield* Scope.make("sequential");
+      yield* registry.put(id, {
+        manifest: {
+          id,
+          name: "Fixture",
+          version: "1.0.0",
+          hostApi: "^1.0.0",
+          capabilities: ["settings"],
+          entries: { server: "server/index.js" },
+        } as never,
+        registration: {},
+        settings: settings as never,
+        readiness: yield* Deferred.make<void>(),
+        scope,
+      });
+    });
+
+  it.effect("reports declared: false for a plugin with no settings schema", () =>
+    Effect.gen(function* () {
+      const id = PluginId.make("mgmt-nosettings");
+      const handlers = yield* PluginManagementRpcHandlers;
+      yield* runMigrations({});
+      yield* putRuntime(id, undefined);
+
+      const result = yield* handlers.settingsGet({ pluginId: id });
+      assert.equal(result.declared, false);
+    }),
+  );
+
+  it.effect("rejects a write for a plugin that declares no settings", () =>
+    Effect.gen(function* () {
+      const id = PluginId.make("mgmt-nosettings-write");
+      const handlers = yield* PluginManagementRpcHandlers;
+      yield* runMigrations({});
+      yield* putRuntime(id, undefined);
+
+      const result = yield* Effect.result(
+        handlers.settingsSet({ pluginId: id, values: { baseUrl: "x" }, expectedRevision: 0 }),
+      );
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) assert.equal(result.failure.code, "settings-not-declared");
+    }),
+  );
+
+  it.effect("rejects a write whose values do not decode", () =>
+    Effect.gen(function* () {
+      const id = PluginId.make("mgmt-baddecode");
+      const handlers = yield* PluginManagementRpcHandlers;
+      yield* runMigrations({});
+      yield* putRuntime(id, { schema });
+
+      const result = yield* Effect.result(
+        handlers.settingsSet({ pluginId: id, values: { baseUrl: 42 }, expectedRevision: 0 }),
+      );
+      assert.isTrue(Result.isFailure(result), "the client is not trusted");
+      if (Result.isFailure(result)) assert.equal(result.failure.code, "settings-invalid");
+    }),
+  );
+
+  // The guarantee must be the HOST's: a plugin can annotate its schema with
+  // onExcessProperty:"preserve" and carry arbitrary client keys through decode and
+  // re-encode. Filtering to declared field keys is what actually stops it.
+  it.effect("never persists a key the schema does not declare", () =>
+    Effect.gen(function* () {
+      const id = PluginId.make("mgmt-unknownkey");
+      const handlers = yield* PluginManagementRpcHandlers;
+      yield* runMigrations({});
+      // MUST use a preserve-annotated schema. A plain Schema.Struct already strips
+      // excess properties on decode, so testing with one asserts nothing about the
+      // host's stripping — the first version of this test passed with the stripping
+      // deleted. `parseOptions` is a schema ANNOTATION, i.e. plugin-controlled,
+      // which is exactly why the guarantee cannot live in decode.
+      const preserveSchema = Schema.Struct({
+        baseUrl: Schema.String,
+      }).pipe(Schema.annotate({ parseOptions: { onExcessProperty: "preserve" } }));
+      yield* putRuntime(id, { schema: preserveSchema as never });
+
+      yield* handlers.settingsSet({
+        pluginId: id,
+        values: { baseUrl: "https://example.com", injected: "should-not-persist" },
+        expectedRevision: 0,
+      });
+
+      const sql = yield* SqlClient.SqlClient;
+      const rows = yield* sql<{ readonly values_json: string }>`
+        SELECT values_json FROM plugin_settings WHERE plugin_id = ${id}
+      `;
+      assert.notInclude(rows[0]!.values_json, "injected");
+      assert.notInclude(rows[0]!.values_json, "should-not-persist");
+    }),
+  );
+
+  it.effect("maps a stale expectedRevision to settings-conflict", () =>
+    Effect.gen(function* () {
+      const id = PluginId.make("mgmt-conflict");
+      const handlers = yield* PluginManagementRpcHandlers;
+      yield* runMigrations({});
+      yield* putRuntime(id, { schema });
+
+      yield* handlers.settingsSet({
+        pluginId: id,
+        values: { baseUrl: "first" },
+        expectedRevision: 0,
+      });
+      const stale = yield* Effect.result(
+        handlers.settingsSet({ pluginId: id, values: { baseUrl: "stale" }, expectedRevision: 0 }),
+      );
+      assert.isTrue(Result.isFailure(stale));
+      if (Result.isFailure(stale)) assert.equal(stale.failure.code, "settings-conflict");
+    }),
+  );
+
+  // A row can carry the CURRENT fingerprint and still be invalid; reporting
+  // incompatible:false for it tells the form all is well while the plugin's own
+  // read fails.
+  it.effect("reports incompatible for a current-fingerprint row that does not decode", () =>
+    Effect.gen(function* () {
+      const id = PluginId.make("mgmt-baddata");
+      const handlers = yield* PluginManagementRpcHandlers;
+      const store = yield* PluginSettingsStoreLayer.PluginSettingsStore;
+      yield* runMigrations({});
+      yield* putRuntime(id, { schema });
+
+      yield* store.write({
+        pluginId: id,
+        values: { baseUrl: 42 },
+        schemaFingerprint: fingerprintSettingsSchema(schema as never),
+        expectedRevision: 0,
+      });
+
+      const result = yield* handlers.settingsGet({ pluginId: id });
+      assert.equal(result.incompatible, true);
     }),
   );
 });
