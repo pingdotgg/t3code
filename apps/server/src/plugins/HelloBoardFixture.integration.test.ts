@@ -448,7 +448,7 @@ layer("hello-board fixture plugin", (it) => {
               state: "active",
               hasWeb: true,
               hasStyles: false,
-              capabilities: ["database", "filesystem", "httpClient", "tools"],
+              capabilities: ["database", "filesystem", "httpClient", "tools", "settings"],
               lastError: null,
             },
           );

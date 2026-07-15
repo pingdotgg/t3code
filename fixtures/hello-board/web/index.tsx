@@ -1,4 +1,5 @@
 import { Button, defineWebPlugin, Input, type PluginWebRpc } from "@t3tools/plugin-sdk-web";
+import { HelloBoardSettings } from "../shared/settings.ts";
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useState } from "react";
 
@@ -152,6 +153,9 @@ function HelloBoardNotes({ rpc }: { readonly rpc: PluginWebRpc }) {
 }
 
 export default defineWebPlugin({
+  // SAME module as the server entry: the host renders this schema, the server
+  // validates writes against its own copy of it.
+  settings: { schema: HelloBoardSettings },
   register: (ctx) => {
     ctx.registerRoute({
       path: "notes",
