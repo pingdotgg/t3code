@@ -31,6 +31,9 @@ public struct VcsStatusChangeRequest: Decodable, Sendable {
     public var reviewDecision: String?
     /// Unresolved review thread count, or null when unavailable.
     public var unresolvedReviewThreadCount: Int?
+    /// "review-in-progress" | "actionable-comments" | "review-complete", absent
+    /// when the review lifecycle is unknown.
+    public var reviewLifecycle: String?
 }
 
 /// `VcsStatusLocalResult` — repo-local status (no network).

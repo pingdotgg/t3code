@@ -1,4 +1,4 @@
-import { ApprovalRequestId, isToolLifecycleItemType } from "@t3tools/contracts";
+import { ApprovalRequestId, isToolLifecycleItemType, ToolSurface } from "@t3tools/contracts";
 import type {
   OrchestrationLatestTurn,
   OrchestrationThread,
@@ -8,9 +8,11 @@ import type {
   UserInputQuestion,
 } from "@t3tools/contracts";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import { deriveToolIdentityFromData, type ToolIdentity } from "@t3tools/shared/toolIdentity";
 
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
+import * as Schema from "effect/Schema";
 
 import { deriveSubagentTasks, type SubagentTaskItem } from "./subagentTaskActivity";
 
@@ -45,11 +47,13 @@ export interface ThreadFeedActivity {
     | "alert"
     | "check"
     | "command"
+    | "computer"
     | "edit"
     | "eye"
     | "globe"
     | "hammer"
     | "message"
+    | "skill"
     | "warning"
     | "wrench"
     | "zap";
@@ -82,9 +86,19 @@ interface WorkLogEntry {
   tone: "thinking" | "tool" | "info" | "error";
   toolTitle?: string;
   itemType?: ToolLifecycleItemType;
+  /**
+   * Server-derived native surface (contracts `ToolPresentation.surface`). It is
+   * the only signal that distinguishes a skill or an MCP call from a generic
+   * tool — `itemType` cannot, since adapters classify both as
+   * `dynamic_tool_call`. Absent on activities persisted before the server
+   * derived a presentation.
+   */
+  surface?: ToolSurface;
   requestKind?: PendingApproval["requestKind"];
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;
   toolData?: unknown;
+  /** MCP server / skill / computer-use identity, when the call has one. */
+  toolIdentity?: ToolIdentity;
 }
 
 interface DerivedWorkLogEntry extends WorkLogEntry {
@@ -356,11 +370,14 @@ function toDerivedWorkLogEntry(
       ? payload.detail
       : null;
   const taskLabel = taskSummary || taskDetailAsLabel;
+  // The presentation is authoritative for tool rows: the activity summary is
+  // whatever the provider titled the call ("Tool call" for every skill).
+  const presentation = extractToolPresentation(payload);
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
     createdAt: activity.createdAt,
     turnId: activity.turnId,
-    label: taskLabel || activity.summary,
+    label: taskLabel || presentation?.title || activity.summary,
     tone:
       activity.kind === "task.progress"
         ? "thinking"
@@ -387,6 +404,14 @@ function toDerivedWorkLogEntry(
       entry.detail = detail;
     }
   }
+  if (presentation) {
+    entry.surface = presentation.surface;
+    // The provider detail for a non-command tool is a raw `Tool: {json}` dump;
+    // the derived subtitle is the one-liner a human wants.
+    if (presentation.subtitle) {
+      entry.detail = presentation.subtitle;
+    }
+  }
   if (commandPreview.command) {
     entry.command = commandPreview.command;
   }
@@ -404,6 +429,10 @@ function toDerivedWorkLogEntry(
     if (data?.item !== undefined) {
       entry.toolData = data.item;
     }
+  }
+  const toolIdentity = deriveToolIdentityFromData(payload?.data);
+  if (toolIdentity) {
+    entry.toolIdentity = toolIdentity;
   }
   if (itemType) {
     entry.itemType = itemType;
@@ -470,6 +499,7 @@ function mergeDerivedWorkLogEntries(
   const collapseKey = next.collapseKey ?? previous.collapseKey;
   const toolLifecycleStatus = next.toolLifecycleStatus ?? previous.toolLifecycleStatus;
   const toolData = next.toolData ?? previous.toolData;
+  const toolIdentity = next.toolIdentity ?? previous.toolIdentity;
   return {
     ...previous,
     ...next,
@@ -483,6 +513,7 @@ function mergeDerivedWorkLogEntries(
     ...(collapseKey ? { collapseKey } : {}),
     ...(toolLifecycleStatus ? { toolLifecycleStatus } : {}),
     ...(toolData !== undefined ? { toolData } : {}),
+    ...(toolIdentity ? { toolIdentity } : {}),
   };
 }
 
@@ -586,6 +617,25 @@ function workEntryStatus(entry: WorkLogEntry): ThreadFeedActivity["status"] {
   return "neutral";
 }
 
+/**
+ * Native surface -> row icon. `generic` is intentionally absent: an unknown
+ * tool falls through to the itemType/tone chain below, same as before.
+ */
+const SURFACE_ICONS: Partial<Record<ToolSurface, ThreadFeedActivity["icon"]>> = {
+  command: "command",
+  file_read: "eye",
+  file_change: "edit",
+  file_search: "eye",
+  web_search: "globe",
+  web_fetch: "globe",
+  image: "eye",
+  todo: "check",
+  skill: "zap",
+  plugin: "wrench",
+  mcp: "wrench",
+  subagent: "agent",
+};
+
 function workEntryIcon(entry: DerivedWorkLogEntry): ThreadFeedActivity["icon"] {
   if (
     entry.activityKind === "user-input.requested" ||
@@ -594,9 +644,16 @@ function workEntryIcon(entry: DerivedWorkLogEntry): ThreadFeedActivity["icon"] {
     return "message";
   }
   if (entry.activityKind === "runtime.warning") return "warning";
+  // Native tool families read off the call's identity, not its item type: a
+  // skill and an MCP call both arrive as generic tool item types.
+  if (entry.toolIdentity?.family === "skill") return "skill";
+  if (entry.toolIdentity?.family === "computer_use") return "computer";
+  if (entry.toolIdentity?.family === "mcp") return "wrench";
   if (entry.requestKind === "command") return "command";
   if (entry.requestKind === "file-read") return "eye";
   if (entry.requestKind === "file-change") return "edit";
+  const surfaceIcon = entry.surface ? SURFACE_ICONS[entry.surface] : undefined;
+  if (surfaceIcon) return surfaceIcon;
   if (entry.itemType === "command_execution" || entry.command) return "command";
   if (entry.itemType === "file_change" || (entry.changedFiles?.length ?? 0) > 0) return "edit";
   if (entry.itemType === "web_search") return "globe";
@@ -654,6 +711,11 @@ function capitalizePhrase(value: string): string {
 }
 
 function workEntryHeading(workEntry: WorkLogEntry): string {
+  // The tool's own name ("Cloudflare · Docs") beats the generic lifecycle label
+  // ("MCP tool call") the provider stamped on the activity.
+  if (workEntry.toolIdentity) {
+    return workEntry.toolIdentity.displayName;
+  }
   if (!workEntry.toolTitle) {
     return capitalizePhrase(normalizeCompactToolLabel(workEntry.label));
   }
@@ -857,6 +919,35 @@ function extractToolCommand(payload: Record<string, unknown> | null): {
 
 function extractToolTitle(payload: Record<string, unknown> | null): string | null {
   return asTrimmedString(payload?.title);
+}
+
+const isToolSurface = Schema.is(ToolSurface);
+
+interface WorkLogPresentation {
+  readonly surface: ToolSurface;
+  readonly title: string;
+  readonly subtitle: string | null;
+}
+
+/**
+ * Reads the server-derived `ToolPresentation` off a tool activity payload.
+ * An unknown surface degrades to `generic` rather than dropping the row — the
+ * contract guarantees generic rendering is always valid.
+ */
+function extractToolPresentation(
+  payload: Record<string, unknown> | null,
+): WorkLogPresentation | null {
+  const presentation = asRecord(payload?.presentation);
+  const title = asTrimmedString(presentation?.title);
+  if (!presentation || !title) {
+    return null;
+  }
+  const surface = presentation.surface;
+  return {
+    surface: isToolSurface(surface) ? surface : "generic",
+    title,
+    subtitle: asTrimmedString(presentation.subtitle),
+  };
 }
 
 function extractWorkLogToolLifecycleStatus(

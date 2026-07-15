@@ -549,6 +549,12 @@ const TaskStartedPayload = Schema.Struct({
    * clients may learn the true model later via `task.updated`.
    */
   model: Schema.optional(TrimmedNonEmptyStringSchema),
+  /**
+   * Reasoning effort the subagent's turns run at (e.g. "high"), as resolved by
+   * the provider for this task. Omitted when the provider has no effort control
+   * or the value is unknown.
+   */
+  effort: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type TaskStartedPayload = typeof TaskStartedPayload.Type;
 

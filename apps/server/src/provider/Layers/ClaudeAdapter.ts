@@ -33,6 +33,7 @@ import {
   ProviderInstanceId,
   type ModelSelection,
   ProviderItemId,
+  type ProviderInteractionMode,
   type ProviderRuntimeEvent,
   type ProviderRuntimeTurnStatus,
   type ProviderSendTurnInput,
@@ -56,6 +57,11 @@ import {
   getProviderOptionDescriptors,
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
+import {
+  isNativeToolFamily,
+  parseToolIdentity,
+  summarizeToolArguments,
+} from "@t3tools/shared/toolIdentity";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -193,6 +199,8 @@ interface ClaudeSessionContext {
   streamFiber: Fiber.Fiber<void, Error> | undefined;
   readonly startedAt: string;
   readonly basePermissionMode: PermissionMode | undefined;
+  /** Interaction mode of the most recently started turn, if the client sent one. */
+  activeInteractionMode: ProviderInteractionMode | undefined;
   currentApiModelId: string | undefined;
   resumeSessionId: string | undefined;
   /**
@@ -226,6 +234,13 @@ interface ClaudeSessionContext {
    * remains open (backgrounded subagents).
    */
   readonly taskModelByTaskId: Map<string, string>;
+  /**
+   * Reasoning effort the SDK query was started with, normalized to what the
+   * CLI actually applies. Subagent turns inherit it, so it is the effort a
+   * Task/Agent subagent runs at unless the Task tool input overrides it.
+   * Effort changes restart the session, so this stays true for the session.
+   */
+  readonly sessionEffort: string | undefined;
   /** task_id values that have started but not yet completed/stopped. */
   readonly openTaskIds: Set<string>;
   /**
@@ -819,6 +834,24 @@ function taskEntityType(
   return undefined;
 }
 
+/**
+ * Resolve the reasoning effort a subagent task runs at. A Task tool input
+ * `effort` override wins when present; otherwise the subagent inherits the
+ * effort the SDK query was started with, which is what the CLI applies to
+ * subagent turns. An agent definition may override effort in its frontmatter
+ * and the SDK exposes no per-task effort on the wire, so that case still
+ * reports the session effort. Returns undefined when the session runs without
+ * an effort level (model without effort support, or `ultrathink`, which is a
+ * prompt prefix rather than an effort the subagent inherits).
+ */
+function resolveSubagentTaskEffort(
+  context: ClaudeSessionContext,
+  toolUseId: string | undefined,
+): string | undefined {
+  const input = toolUseId ? context.taskToolInputsByUseId.get(toolUseId) : undefined;
+  return readOptionalTrimmedString(input?.effort) ?? context.sessionEffort;
+}
+
 function findTaskIdForToolUseId(
   context: ClaudeSessionContext,
   toolUseId: string,
@@ -840,14 +873,26 @@ function rememberTaskModel(context: ClaudeSessionContext, taskId: string, model:
   return true;
 }
 
-function classifyToolItemType(toolName: string): CanonicalItemType {
-  return classifyToolItemTypeWithInput(toolName, undefined);
-}
-
-function classifyToolItemTypeWithInput(
+/**
+ * Classify a tool call. Native families (MCP, skills, computer use) are
+ * resolved first: their names routinely contain substrings the heuristics below
+ * would otherwise claim (`mcp__linear__agent_session_create` is not a subagent
+ * spawn, `mcp__github__create_issue` is not a file change).
+ */
+function classifyToolItemType(
   toolName: string,
-  input: Record<string, unknown> | undefined,
+  input?: Record<string, unknown> | undefined,
 ): CanonicalItemType {
+  const identity = parseToolIdentity(toolName, input);
+  switch (identity.family) {
+    case "mcp":
+      return "mcp_tool_call";
+    case "skill":
+    case "computer_use":
+      return "dynamic_tool_call";
+    case "builtin":
+      break;
+  }
   const normalized = toolName.toLowerCase();
   // The command shape is authoritative. Some Claude runtimes expose local
   // shell execution through a tool name containing "agent"; using the name
@@ -1431,7 +1476,26 @@ function claudeTaskPlanFingerprint(plan: ReadonlyArray<PlanStep>): string {
   return JSON.stringify(plan);
 }
 
+/**
+ * Row detail for a tool call. Native families get their arguments rendered as
+ * `key=value` pairs — a raw `mcp__cloudflare__docs: {"query":"…"}` JSON blob is
+ * wire noise, not something a reader parses at a glance.
+ */
+function summarizeToolItemDetail(toolName: string, input: Record<string, unknown>): string {
+  const identity = parseToolIdentity(toolName, input);
+  if (isNativeToolFamily(identity.family)) {
+    return summarizeToolArguments(input, 400) ?? identity.displayName;
+  }
+  return summarizeToolRequest(toolName, input);
+}
+
 function summarizeToolRequest(toolName: string, input: Record<string, unknown>): string {
+  const identity = parseToolIdentity(toolName, input);
+  if (isNativeToolFamily(identity.family)) {
+    const args = summarizeToolArguments(input, 400);
+    return args ? `${identity.displayName}: ${args}` : identity.displayName;
+  }
+
   const commandValue = input.command ?? input.cmd;
   const command = typeof commandValue === "string" ? commandValue : undefined;
   if (command && command.trim().length > 0) {
@@ -1457,6 +1521,20 @@ function summarizeToolRequest(toolName: string, input: Record<string, unknown>):
     return `${toolName}: ${serialized}`;
   }
   return `${toolName}: ${serialized.slice(0, 397)}...`;
+}
+
+/**
+ * Row title for a tool call: the natural name of the thing being used
+ * ("Cloudflare · Docs", "Skill · deep-research") when we can name it, and the
+ * generic per-item-type label otherwise.
+ */
+function titleForToolCall(
+  itemType: CanonicalItemType,
+  toolName: string,
+  input: Record<string, unknown>,
+): string {
+  const identity = parseToolIdentity(toolName, input);
+  return isNativeToolFamily(identity.family) ? identity.displayName : titleForTool(itemType);
 }
 
 function titleForTool(itemType: CanonicalItemType): string {
@@ -2479,7 +2557,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   ) {
     const turnState = context.turnState;
     const planMarkdown = input.planMarkdown.trim();
-    if (!turnState || planMarkdown.length === 0) {
+    if (!turnState || context.activeInteractionMode === "advisor" || planMarkdown.length === 0) {
       return;
     }
 
@@ -2908,10 +2986,18 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
         const partialInputJson = tool.partialInputJson + event.delta.partial_json;
         const parsedInput = tryParseJsonRecord(partialInputJson);
-        const detail = parsedInput ? summarizeToolRequest(tool.toolName, parsedInput) : tool.detail;
+        const detail = parsedInput
+          ? summarizeToolItemDetail(tool.toolName, parsedInput)
+          : tool.detail;
+        // Dispatcher tools (Skill, computer) only name what they are running in
+        // their input, so the title firms up as the input streams in.
+        const title = parsedInput
+          ? titleForToolCall(tool.itemType, tool.toolName, parsedInput)
+          : tool.title;
         let nextTool: ToolInFlight = {
           ...tool,
           partialInputJson,
+          title,
           ...(parsedInput ? { input: parsedInput } : {}),
           ...(detail ? { detail } : {}),
         };
@@ -3025,9 +3111,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         typeof block.input === "object" && block.input !== null
           ? (block.input as Record<string, unknown>)
           : {};
-      const itemType = classifyToolItemTypeWithInput(toolName, toolInput);
+      const itemType = classifyToolItemType(toolName, toolInput);
       const itemId = block.id;
-      const detail = summarizeToolRequest(toolName, toolInput);
+      const detail = summarizeToolItemDetail(toolName, toolInput);
       const inputFingerprint =
         Object.keys(toolInput).length > 0 ? toolInputFingerprint(toolInput) : undefined;
 
@@ -3035,7 +3121,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         itemId,
         itemType,
         toolName,
-        title: titleForTool(itemType),
+        title: titleForToolCall(itemType, toolName, toolInput),
         detail,
         input: toolInput,
         partialInputJson: "",
@@ -3509,6 +3595,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         );
         const entityType = taskEntityType(message.task_type, subagentType);
         const model = resolveSubagentTaskModel(context, toolUseId);
+        const effort = resolveSubagentTaskEffort(context, toolUseId);
         context.openTaskIds.add(message.task_id);
         rememberTaskToolUseId(context, message.task_id, toolUseId);
         if (model) {
@@ -3522,6 +3609,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             ...(entityType ? { entityType } : {}),
             description: message.description,
             ...(model ? { model } : {}),
+            ...(effort ? { effort } : {}),
             ...(message.task_type ? { taskType: message.task_type } : {}),
             ...(subagentType ? { subagentType } : {}),
             ...(workflowName ? { workflowName } : {}),
@@ -4240,6 +4328,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         }
 
         if (toolName === "ExitPlanMode") {
+          // Advisor uses the SDK's plan permission mode to block writes, but it
+          // has no plan artifact: capturing one here would render a plan card
+          // the user never asked for. Deny and steer back to advising.
+          if (context.activeInteractionMode === "advisor") {
+            return {
+              behavior: "deny",
+              message:
+                "You are in Advisor mode, which has no plan artifact. Do not call ExitPlanMode. Answer the user's question directly in your reply instead.",
+            } satisfies PermissionResult;
+          }
+
           const planMarkdown = extractExitPlanModePlan(toolInput);
           if (planMarkdown) {
             yield* emitProposedPlanCompleted(context, {
@@ -4527,6 +4626,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         streamFiber: undefined,
         startedAt,
         basePermissionMode: permissionMode,
+        activeInteractionMode: undefined,
         currentApiModelId: apiModelId,
         resumeSessionId: sessionId,
         // Only when the SDK query was actually started with resume:.
@@ -4538,6 +4638,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         taskToolInputsByUseId: new Map(),
         taskToolUseIdByTaskId: new Map(),
         taskModelByTaskId: new Map(),
+        sessionEffort: effectiveEffort ?? undefined,
         openTaskIds: new Set(),
         syntheticallyStoppedTaskIds: new Set(),
         claudeTasks,
@@ -4662,10 +4763,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     // Apply interaction mode by switching the SDK's permission mode.
-    // "plan" maps directly to the SDK's "plan" permission mode;
-    // "default" restores the session's original permission mode.
+    // "plan" maps directly to the SDK's "plan" permission mode. "advisor" uses
+    // the same permission mode because it is the SDK's only write-blocking
+    // mode; the two are told apart by the interaction-mode checks, including
+    // the shared plan emitter. "default" restores the session's original mode.
     // When interactionMode is absent we leave the current mode unchanged.
-    if (input.interactionMode === "plan") {
+    if (input.interactionMode !== undefined) {
+      context.activeInteractionMode = input.interactionMode;
+    }
+    if (input.interactionMode === "plan" || input.interactionMode === "advisor") {
       yield* Effect.tryPromise({
         try: () => context.query.setPermissionMode("plan"),
         catch: (cause) => toRequestError(PROVIDER, input.threadId, "turn/setPermissionMode", cause),

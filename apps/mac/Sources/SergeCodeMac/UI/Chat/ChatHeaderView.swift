@@ -74,6 +74,7 @@ private struct ProviderBadge: View {
     private var icon: String {
         switch provider {
         case .claude: "sparkle"
+        case .claudeWork: "briefcase.fill"
         case .claudex: "arrow.triangle.branch"
         case .claudeSynthero: "link"
         case .codex: "chevron.left.forwardslash.chevron.right"
@@ -106,6 +107,7 @@ private struct StatusBadge: View {
         switch status {
         case .idle: return "Idle"
         case .running: return "Running"
+        case .waiting: return "Waiting"
         case .waitingApproval: return "Needs approval"
         case .backgroundWork: return "Background work"
         case .error: return "Error"
@@ -118,6 +120,7 @@ private struct StatusBadge: View {
         switch status {
         case .idle: return "circle"
         case .running: return "bolt.fill"
+        case .waiting: return "clock.fill"
         case .waitingApproval: return "exclamationmark.circle.fill"
         case .backgroundWork: return "person.2.fill"
         case .error: return "xmark.octagon.fill"
@@ -130,6 +133,7 @@ private struct StatusBadge: View {
         switch status {
         case .idle: return .secondary
         case .running: return .accentColor
+        case .waiting: return .blue
         case .waitingApproval: return .orange
         case .backgroundWork: return .green
         case .error: return .red

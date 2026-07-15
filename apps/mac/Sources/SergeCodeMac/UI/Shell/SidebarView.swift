@@ -3,9 +3,9 @@ import SwiftUI
 /// Thread list sidebar. Every project gets a section (even before its first
 /// session) so projects are manageable from here directly: the section header
 /// starts new sessions, and its context menu renames or deletes the project.
-/// Threads are listed newest-updated first (matches `AppModel.threads`'
-/// existing sort), each with its alpine scene thumbnail carrying the status
-/// dot.
+/// Threads retain the user's manual order when one exists; new rows use the
+/// newest-updated order until the user places them. Each row carries its
+/// alpine scene thumbnail and status dot.
 struct SidebarView: View {
     let multi: MultiDeviceModel
     let scenery: SceneryStore
@@ -61,7 +61,21 @@ struct SidebarView: View {
                                     deleteThreadTarget = ThreadActionTarget(
                                         model: model, thread: thread)
                                 }
+                                Divider()
+                                Button("Move Up", systemImage: "arrow.up") {
+                                    model.moveThread(thread, direction: .up)
+                                }
+                                .disabled(!model.canMoveThread(thread, direction: .up))
+                                Button("Move Down", systemImage: "arrow.down") {
+                                    model.moveThread(thread, direction: .down)
+                                }
+                                .disabled(!model.canMoveThread(thread, direction: .down))
                             }
+                    }
+                    .onMove { offsets, destination in
+                        model.reorderThreads(
+                            threadsForProject, fromOffsets: offsets, toOffset: destination,
+                            projectID: project.id)
                     }
                     if threadsForProject.isEmpty {
                         Text("No sessions yet")
@@ -189,9 +203,7 @@ struct SidebarView: View {
     }
 
     private func visibleThreads(for project: Project, in model: AppModel) -> [ChatThread] {
-        let threads = model.threads.filter { thread in
-            thread.projectID == project.id && thread.status != .archived
-        }
+        let threads = model.orderedThreads(for: project.id)
         return AppModel.pinnedFirst(threads, pinnedIDs: model.pinnedThreadIDs)
     }
 
@@ -244,6 +256,19 @@ struct SidebarView: View {
                             .disabled(session.model.connection != .ready)
                             .opacity(session.model.connection == .ready ? 1 : 0.5)
                             .contextMenu {
+                                Button("Move Up", systemImage: "arrow.up") {
+                                    session.model.moveThread(thread, direction: .up)
+                                }
+                                .disabled(
+                                    session.model.connection != .ready
+                                        || !session.model.canMoveThread(thread, direction: .up))
+                                Button("Move Down", systemImage: "arrow.down") {
+                                    session.model.moveThread(thread, direction: .down)
+                                }
+                                .disabled(
+                                    session.model.connection != .ready
+                                        || !session.model.canMoveThread(thread, direction: .down))
+                                Divider()
                                 Button("Archive") {
                                     Task { await session.model.archiveThread(thread) }
                                 }
@@ -254,6 +279,12 @@ struct SidebarView: View {
                                 }
                                 .disabled(session.model.connection != .ready)
                             }
+                    }
+                    .onMove { offsets, destination in
+                        guard session.model.connection == .ready else { return }
+                        session.model.reorderThreads(
+                            threadsForProject, fromOffsets: offsets, toOffset: destination,
+                            projectID: project.id)
                     }
                     if threadsForProject.isEmpty {
                         Text("No sessions yet")
@@ -601,6 +632,8 @@ private struct SidebarStatusDot: View {
             return "Idle"
         case .running:
             return "Running"
+        case .waiting:
+            return "Waiting"
         case .waitingApproval:
             return "Needs approval"
         case .error:
@@ -617,6 +650,7 @@ private struct SidebarStatusDot: View {
         switch thread.status {
         case .idle: return .secondary
         case .running: return .green
+        case .waiting: return .blue
         case .waitingApproval: return .yellow
         case .backgroundWork: return .green
         case .error: return .red

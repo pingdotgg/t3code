@@ -1,7 +1,7 @@
 import Foundation
 
 public enum T3ProjectedThreadStatus: Sendable, Equatable {
-    case idle, running, waitingApproval, error, archived, backgroundWork
+    case idle, running, waiting, waitingApproval, error, archived, backgroundWork
 }
 
 /// Server-authoritative liveness for a thread's active provider turn, folded
@@ -92,6 +92,7 @@ public enum ThreadStatusProjection {
         if let status = session?.status {
             switch status {
             case .running, .starting: return .running
+            case .waiting: return .waiting
             case .error: return .error
             case .idle, .ready, .interrupted, .stopped: break
             }

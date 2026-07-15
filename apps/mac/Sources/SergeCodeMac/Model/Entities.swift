@@ -4,12 +4,13 @@ import Foundation
 // them. Keep UI code independent of wire-shape churn.
 
 public enum ProviderKind: String, Codable, CaseIterable, Sendable, Identifiable {
-    case claude, claudex, claudeSynthero, codex, cursor, grok, fugu, opencode
+    case claude, claudeWork, claudex, claudeSynthero, codex, cursor, grok, fugu, opencode
     public var id: String { rawValue }
 
     public var displayName: String {
         switch self {
         case .claude: "Claude Code"
+        case .claudeWork: "Claude Work"
         case .claudex: "Claudex"
         case .claudeSynthero: "Claude Synthero"
         case .codex: "Codex"
@@ -34,12 +35,12 @@ public struct Project: Identifiable, Hashable, Sendable {
 }
 
 public enum ThreadStatus: String, Sendable {
-    case idle, running, waitingApproval, backgroundWork, error, archived
+    case idle, running, waiting, waitingApproval, backgroundWork, error, archived
 
     public var isSettled: Bool {
         switch self {
         case .idle, .archived, .error: true
-        case .running, .waitingApproval, .backgroundWork: false
+        case .running, .waiting, .waitingApproval, .backgroundWork: false
         }
     }
 }
@@ -66,17 +67,39 @@ public enum ThreadRuntimeMode: String, CaseIterable, Sendable, Identifiable {
     }
 }
 
-/// UI mirror of the wire `ProviderInteractionMode` (plan-first vs direct).
+/// UI mirror of the wire `ProviderInteractionMode` (how the agent engages with
+/// the request: do it, plan it, or advise on it).
 public enum ThreadInteractionMode: String, CaseIterable, Sendable, Identifiable {
-    case normal, plan
+    case normal, plan, advisor
     public var id: String { rawValue }
 
     public var displayName: String {
         switch self {
         case .normal: "Default"
         case .plan: "Plan"
+        case .advisor: "Advisor"
         }
     }
+
+    public var symbolName: String {
+        switch self {
+        case .normal: "text.bubble"
+        case .plan: "list.clipboard"
+        case .advisor: "lightbulb.max"
+        }
+    }
+
+    public var helpText: String {
+        switch self {
+        case .normal: "The agent does the work."
+        case .plan: "The agent proposes a plan instead of editing."
+        case .advisor: "The agent answers and recommends. It cannot edit the workspace."
+        }
+    }
+
+    /// Advisor never mutates the workspace, whatever the thread's runtime mode
+    /// says. The server enforces this; the UI must not imply otherwise.
+    public var isNonMutating: Bool { self == .advisor }
 }
 
 /// One selectable reasoning-effort level of a model (from the wire's
@@ -176,6 +199,13 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
     /// True when the server has reported this thread's active turn as stalled.
     public var isStalled: Bool { health?.stalled ?? false }
 
+    /// The runtime mode actually in force for the next turn. Advisor clamps the
+    /// permission axis server-side (`resolveEffectiveRuntimeMode` in contracts),
+    /// so the composer must not claim full access while advisor is on.
+    public var effectiveRuntimeMode: ThreadRuntimeMode {
+        interactionMode.isNonMutating ? .approvalRequired : runtimeMode
+    }
+
     public init(
         id: String, projectID: String, title: String, provider: ProviderKind,
         status: ThreadStatus, updatedAt: Date,
@@ -227,9 +257,27 @@ public enum ToolEventStatus: String, Sendable {
 /// (ProviderRuntimeIngestion.ts); drives the row icon and how the detail
 /// body renders (command line vs file diff vs plain text).
 public enum ToolEventKind: String, Sendable {
-    case command, fileChange, fileRead, webSearch, mcpCall, subagent, imageView, other
+    case command, fileChange, fileRead, webSearch, mcpCall, skill, computerUse, subagent,
+        imageView, other
 
-    public init(itemType: String?) {
+    /// `family` is the tool's identity family (`payload.data.tool.family`,
+    /// stamped by the server for every provider). It wins over `itemType`:
+    /// skills and computer-use calls arrive as generic tool item types, so
+    /// item type alone cannot tell them apart from any other dynamic call.
+    public init(itemType: String?, family: String? = nil) {
+        switch family {
+        case "skill":
+            self = .skill
+            return
+        case "computer_use":
+            self = .computerUse
+            return
+        case "mcp":
+            self = .mcpCall
+            return
+        default:
+            break
+        }
         switch itemType {
         case "command_execution": self = .command
         case "file_change": self = .fileChange
@@ -265,6 +313,8 @@ public struct SubagentTaskItem: Hashable, Sendable {
     public var description: String?
     public var subagentType: String?
     public var model: String?
+    /// Reasoning effort the subagent's turns run at (e.g. "high"), when known.
+    public var effort: String?
     public var workflowName: String?
     public var toolUseId: String?
     public var state: SubagentTaskState
@@ -288,6 +338,7 @@ public struct SubagentTaskItem: Hashable, Sendable {
         description: String?,
         subagentType: String? = nil,
         model: String? = nil,
+        effort: String? = nil,
         workflowName: String? = nil,
         toolUseId: String? = nil,
         state: SubagentTaskState,
@@ -306,6 +357,7 @@ public struct SubagentTaskItem: Hashable, Sendable {
         self.description = description
         self.subagentType = subagentType
         self.model = model
+        self.effort = effort
         self.workflowName = workflowName
         self.toolUseId = toolUseId
         self.state = state
@@ -353,7 +405,12 @@ public enum UsageLimitActionState: Equatable, Sendable {
     case failed(String)
 }
 
-public enum TimelineItem: Identifiable, Sendable {
+/// `Equatable` is load-bearing for render cost, not just convenience: the
+/// display cache uses it to reuse untouched rows across a streaming refresh,
+/// and `ChatTimelineRowView` uses it to skip re-rendering rows whose content
+/// did not change. Every payload is `Hashable`, so the conformance is
+/// synthesized.
+public enum TimelineItem: Identifiable, Equatable, Sendable {
     case userMessage(id: String, text: String, at: Date)
     case assistantMessage(id: String, markdown: String, isStreaming: Bool, at: Date)
     /// `output` is the tool's result text when available (command stdout,
@@ -414,6 +471,16 @@ public enum TimelineItem: Identifiable, Sendable {
 }
 
 extension Array where Element == TimelineItem {
+    /// True once the agent has finished at least one answer here. A chat that
+    /// has never answered is not a chat with work to follow up on, so the
+    /// follow-up suggestions stay quiet until it has.
+    public var hasCompletedAssistantMessage: Bool {
+        contains {
+            if case .assistantMessage(_, _, let isStreaming, _) = $0 { return !isStreaming }
+            return false
+        }
+    }
+
     /// Coalescing append: an item whose id already exists replaces that row
     /// in place (tool lifecycle updates, streaming reasoning text) instead of
     /// stacking a duplicate. A tool row without a correlation id still folds
@@ -949,6 +1016,18 @@ public enum PullRequestReviewDecision: String, Sendable {
     case reviewRequired = "REVIEW_REQUIRED"
 }
 
+/// Where the PR sits in its review lifecycle, from the wire's
+/// `VcsStatusChangeRequest.reviewLifecycle`. Nil means unknown — a review bot
+/// may simply not have touched this PR — and is never "complete".
+public enum PullRequestReviewLifecycle: String, Sendable {
+    /// A review bot says it is looking at the current changes right now.
+    case reviewInProgress = "review-in-progress"
+    /// A review landed and unresolved comments remain.
+    case actionableComments = "actionable-comments"
+    /// A review landed and nothing is left to fix.
+    case reviewComplete = "review-complete"
+}
+
 public struct PullRequestReviewAuthor: Hashable, Sendable {
     public var login: String
     public var avatarURL: String?
@@ -1014,6 +1093,8 @@ public struct VcsStatus: Hashable, Sendable {
     public var reviewDecision: PullRequestReviewDecision?
     /// Unresolved review thread count; nil when unknown / fetch failed.
     public var unresolvedReviewThreadCount: Int?
+    /// Review lifecycle phase; nil when unknown / non-GitHub / fetch failed.
+    public var reviewLifecycle: PullRequestReviewLifecycle?
 
     public init(
         isRepo: Bool, branch: String?, isDefaultBranch: Bool, changedFileCount: Int,
@@ -1022,7 +1103,8 @@ public struct VcsStatus: Hashable, Sendable {
         prNumber: Int? = nil, prTitle: String? = nil, prURL: String? = nil,
         prState: PullRequestState? = nil,
         reviewDecision: PullRequestReviewDecision? = nil,
-        unresolvedReviewThreadCount: Int? = nil
+        unresolvedReviewThreadCount: Int? = nil,
+        reviewLifecycle: PullRequestReviewLifecycle? = nil
     ) {
         self.isRepo = isRepo
         self.branch = branch
@@ -1041,6 +1123,7 @@ public struct VcsStatus: Hashable, Sendable {
         self.prState = prState
         self.reviewDecision = reviewDecision
         self.unresolvedReviewThreadCount = unresolvedReviewThreadCount
+        self.reviewLifecycle = reviewLifecycle
     }
 }
 

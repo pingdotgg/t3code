@@ -10,6 +10,10 @@ import {
   isToolLifecycleItemType,
   ThreadId,
   type ThreadTokenUsageSnapshot,
+  type ToolExecutionState,
+  type ToolLifecycleItemType,
+  type ToolPresentation,
+  type ProviderDriverKind,
   TurnId,
   type OrchestrationCheckpointSummary,
   type OrchestrationProposedPlan,
@@ -26,6 +30,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { deriveToolIdentityFromData } from "@t3tools/shared/toolIdentity";
+import { deriveToolPresentation } from "@t3tools/shared/toolPresentation";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { isUsageLimitDetail } from "../../provider/UsageLimit.ts";
@@ -242,6 +248,60 @@ function truncateDetail(value: string, limit = 180): string {
   return value.length > limit ? `${value.slice(0, limit - 3)}...` : value;
 }
 
+/**
+ * Attach the canonical tool identity (MCP server/tool, skill, computer use) to
+ * a tool activity's `data` so every client can render the call natively —
+ * icon and title — without re-parsing provider-shaped tool names itself.
+ * Derived here rather than per adapter so all providers get it.
+ */
+function withToolIdentity(data: unknown): Record<string, unknown> | undefined {
+  const identity = deriveToolIdentityFromData(data);
+  if (!identity) {
+    return undefined;
+  }
+  const record =
+    data !== null && typeof data === "object" && !Array.isArray(data)
+      ? (data as Record<string, unknown>)
+      : {};
+  return { ...record, tool: identity };
+}
+
+function toolActivityData(data: unknown): { data: unknown } | Record<string, never> {
+  const enriched = withToolIdentity(data);
+  if (enriched) {
+    return { data: enriched };
+  }
+  return data !== undefined ? { data } : {};
+}
+
+/**
+ * Normalizes a tool lifecycle item into the typed native presentation clients
+ * render (contracts `ToolPresentation`). Derived here, once, so skills,
+ * plugins, MCP tools, and unknown tools reach every client already typed
+ * instead of each app re-scraping the provider-specific `data` bag.
+ */
+function toolPresentationOf(
+  itemType: ToolLifecycleItemType,
+  payload: {
+    readonly status?: string | undefined;
+    readonly title?: string | undefined;
+    readonly detail?: string | undefined;
+    readonly data?: unknown;
+  },
+  provider: ProviderDriverKind,
+  fallbackState: ToolExecutionState,
+): ToolPresentation {
+  return deriveToolPresentation({
+    itemType,
+    provider,
+    fallbackState,
+    ...(payload.status !== undefined ? { status: payload.status } : {}),
+    ...(payload.title !== undefined ? { title: payload.title } : {}),
+    ...(payload.detail !== undefined ? { detail: payload.detail } : {}),
+    ...(payload.data !== undefined ? { data: payload.data } : {}),
+  });
+}
+
 function normalizeProposedPlanMarkdown(planMarkdown: string | undefined): string | undefined {
   const trimmed = planMarkdown?.trim();
   if (!trimmed) {
@@ -303,13 +363,14 @@ function normalizeRuntimeTurnState(
 
 function orchestrationSessionStatusFromRuntimeState(
   state: "starting" | "running" | "waiting" | "ready" | "interrupted" | "stopped" | "error",
-): "starting" | "running" | "ready" | "interrupted" | "stopped" | "error" {
+): "starting" | "running" | "waiting" | "ready" | "interrupted" | "stopped" | "error" {
   switch (state) {
     case "starting":
       return "starting";
     case "running":
-    case "waiting":
       return "running";
+    case "waiting":
+      return "waiting";
     case "ready":
       return "ready";
     case "interrupted":
@@ -319,6 +380,37 @@ function orchestrationSessionStatusFromRuntimeState(
     case "error":
       return "error";
   }
+}
+
+function parseWaitingState(detail: unknown):
+  | {
+      readonly reason: "scheduled-wakeup" | "dependency";
+      readonly target:
+        | { readonly kind: "time"; readonly at: string }
+        | { readonly kind: "event"; readonly event: string };
+      readonly outcome?: "missed" | "cancelled";
+    }
+  | undefined {
+  if (detail === null || typeof detail !== "object") return undefined;
+  const value = detail as Record<string, unknown>;
+  const reason = value.reason === "dependency" ? "dependency" : "scheduled-wakeup";
+  const outcome =
+    value.outcome === "cancelled" || value.status === "cancelled"
+      ? "cancelled"
+      : value.outcome === "missed" || value.status === "missed"
+        ? "missed"
+        : undefined;
+  if (typeof value.at === "string" && Number.isFinite(Date.parse(value.at))) {
+    return { reason, target: { kind: "time", at: value.at }, ...(outcome ? { outcome } : {}) };
+  }
+  if (typeof value.event === "string" && value.event.trim().length > 0) {
+    return {
+      reason,
+      target: { kind: "event", event: value.event.trim() },
+      ...(outcome ? { outcome } : {}),
+    };
+  }
+  return undefined;
 }
 
 function requestKindFromCanonicalRequestType(
@@ -628,6 +720,7 @@ function runtimeEventToActivities(
             taskId: event.payload.taskId,
             ...(event.payload.entityType ? { entityType: event.payload.entityType } : {}),
             ...(event.payload.model ? { model: event.payload.model } : {}),
+            ...(event.payload.effort ? { effort: event.payload.effort } : {}),
             ...(event.payload.taskType ? { taskType: event.payload.taskType } : {}),
             ...(event.payload.subagentType ? { subagentType: event.payload.subagentType } : {}),
             ...(event.payload.workflowName ? { workflowName: event.payload.workflowName } : {}),
@@ -799,7 +892,13 @@ function runtimeEventToActivities(
             itemType: event.payload.itemType,
             ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
-            ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
+            ...toolActivityData(event.payload.data),
+            presentation: toolPresentationOf(
+              event.payload.itemType,
+              event.payload,
+              event.provider,
+              "running",
+            ),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -821,7 +920,13 @@ function runtimeEventToActivities(
           payload: {
             itemType: event.payload.itemType,
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
-            ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
+            ...toolActivityData(event.payload.data),
+            presentation: toolPresentationOf(
+              event.payload.itemType,
+              event.payload,
+              event.provider,
+              "succeeded",
+            ),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -833,6 +938,7 @@ function runtimeEventToActivities(
       if (!isToolLifecycleItemType(event.payload.itemType)) {
         return [];
       }
+      const startedToolIdentity = deriveToolIdentityFromData(event.payload.data);
       return [
         {
           id: event.eventId,
@@ -843,6 +949,14 @@ function runtimeEventToActivities(
           payload: {
             itemType: event.payload.itemType,
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+            // Identity only: the started row needs the icon/name, not the input.
+            ...(startedToolIdentity ? { data: { tool: startedToolIdentity } } : {}),
+            presentation: toolPresentationOf(
+              event.payload.itemType,
+              event.payload,
+              event.provider,
+              "running",
+            ),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -1568,6 +1682,16 @@ const make = Effect.gen(function* () {
               return activeTurnId !== null ? "running" : "ready";
           }
         })();
+        const waiting =
+          event.type === "session.state.changed" && event.payload.state === "waiting"
+            ? parseWaitingState(event.payload.detail)
+            : undefined;
+        const effectiveStatus =
+          status === "waiting" && waiting === undefined
+            ? "running"
+            : status === "waiting" && waiting?.outcome === "cancelled"
+              ? "ready"
+              : status;
         const lastError =
           event.type === "session.state.changed" && event.payload.state === "error"
             ? (event.payload.reason ?? thread.session?.lastError ?? "Provider session error")
@@ -1605,13 +1729,14 @@ const make = Effect.gen(function* () {
             threadId: thread.id,
             session: {
               threadId: thread.id,
-              status,
+              status: effectiveStatus,
               providerName: event.provider,
               ...(event.providerInstanceId !== undefined
                 ? { providerInstanceId: event.providerInstanceId }
                 : {}),
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
               activeTurnId: nextActiveTurnId,
+              ...(waiting !== undefined ? { waiting } : {}),
               lastError,
               updatedAt: now,
             },

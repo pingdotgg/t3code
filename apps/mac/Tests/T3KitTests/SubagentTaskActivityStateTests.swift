@@ -522,6 +522,7 @@ struct SubagentTaskActivityStateTests {
                 "description": .string("Explore auth"),
                 "subagentType": .string("Explore"),
                 "model": .string("claude-opus-4-6"),
+                "effort": .string("xhigh"),
                 "workflowName": .string("spec"),
                 "toolUseId": .string("toolu-1"),
             ]))
@@ -531,6 +532,7 @@ struct SubagentTaskActivityStateTests {
 
         #expect(item?.subagentType == "Explore")
         #expect(item?.model == "claude-opus-4-6")
+        #expect(item?.effort == "xhigh")
         #expect(item?.workflowName == "spec")
         #expect(item?.toolUseId == "toolu-1")
     }
