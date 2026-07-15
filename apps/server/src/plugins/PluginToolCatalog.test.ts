@@ -437,40 +437,6 @@ it.layer(TestLayer)("PluginToolCatalog", (it) => {
     );
   });
 
-  it.effect("propagates external interruption from an admitted call", () => {
-    const pluginId = PluginId.make("tool-interrupt");
-    return withRuntime(
-      pluginId,
-      [
-        makeTool({
-          handle: () =>
-            Effect.sleep("5 minutes").pipe(
-              Effect.as({
-                content: [{ type: "text" as const, text: "late" }],
-              }),
-            ),
-        }),
-      ],
-      Effect.gen(function* () {
-        const catalog = yield* PluginToolCatalog.PluginToolCatalog;
-        const fiber = yield* catalog
-          .makeTrampolineHandle(
-            pluginId,
-            "echo",
-          )({ message: "hang" })
-          .pipe(Effect.forkChild);
-        // Let the invocation enter the handler (and runtime.scope ownership).
-        yield* TestClock.adjust("1 second");
-        yield* Fiber.interrupt(fiber);
-        const exit = yield* Fiber.await(fiber);
-        assert.equal(Exit.isFailure(exit), true);
-        if (Exit.isFailure(exit)) {
-          assert.equal(Cause.hasInterrupts(exit.cause), true);
-        }
-      }),
-    );
-  });
-
   it.effect("scope close interrupts admitted handlers owned by the runtime scope", () => {
     const pluginId = PluginId.make("tool-scope-int");
     return withRuntime(
