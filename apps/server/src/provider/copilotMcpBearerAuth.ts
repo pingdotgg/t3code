@@ -19,6 +19,9 @@ function normalizeCopilotMcpEndpoint(raw: string): string | undefined {
     if (url.pathname.length > 1) {
       url.pathname = url.pathname.replace(/\/+$/, "");
     }
+    // Query parameters may carry short-lived credentials supplied by the SDK;
+    // they are not part of the configured MCP endpoint identity.
+    url.search = "";
     return url.href;
   } catch {
     return undefined;
