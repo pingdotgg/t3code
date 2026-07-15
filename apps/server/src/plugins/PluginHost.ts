@@ -876,7 +876,13 @@ export const make = Effect.fn("PluginHost.make")(function* () {
             reason: `lifecycle state changed to ${stateBeforePut ?? "missing"} during activation`,
           });
         }
-        yield* registry.put(pluginId, { manifest, registration, readiness, scope });
+        yield* registry.put(pluginId, {
+          manifest,
+          registration,
+          settings: definition.settings,
+          readiness,
+          scope,
+        });
         // Re-check AFTER put under the activation lock. If disable already flipped
         // the lockfile, undo the put and deactivate so we do not leave a live
         // runtime for a non-active lifecycle. This does NOT alone close the

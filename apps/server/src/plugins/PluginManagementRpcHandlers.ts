@@ -13,16 +13,24 @@ import {
   type PluginSourcesRemoveInput,
   type PluginUninstallInput,
   type PluginUpgradeBeginInput,
+  type PluginSettingsGetInput,
+  type PluginSettingsGetResult,
+  type PluginSettingsSetInput,
+  type PluginSettingsSetResult,
   type PluginUpgradeConfirmResult,
 } from "@t3tools/contracts/plugin";
+import { fingerprintSettingsSchema } from "@t3tools/contracts/pluginSettings";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { PluginInstaller } from "./PluginInstaller.ts";
 import { PluginLockfileStore } from "./PluginLockfileStore.ts";
+import { PluginRuntimeRegistry } from "./PluginRuntimeRegistry.ts";
+import { PluginSettingsStore } from "./PluginSettingsStore.ts";
 import { isSameMarketplaceSource, PluginMarketplace, sourceIdForUrl } from "./PluginMarketplace.ts";
 
 const managementError = (code: PluginManagementError["code"], message: string, data?: unknown) =>
@@ -75,11 +83,19 @@ export class PluginManagementRpcHandlers extends Context.Service<
       stageToken: string,
     ) => Effect.Effect<PluginUpgradeConfirmResult, PluginManagementError>;
     readonly checkUpdates: Effect.Effect<PluginCheckUpdatesResult, PluginManagementError>;
+    readonly settingsGet: (
+      input: PluginSettingsGetInput,
+    ) => Effect.Effect<PluginSettingsGetResult, PluginManagementError>;
+    readonly settingsSet: (
+      input: PluginSettingsSetInput,
+    ) => Effect.Effect<PluginSettingsSetResult, PluginManagementError>;
   }
 >()("t3/plugins/PluginManagementRpcHandlers") {}
 
 export const make = Effect.fn("PluginManagementRpcHandlers.make")(function* () {
   const store = yield* PluginLockfileStore;
+  const registry = yield* PluginRuntimeRegistry;
+  const settingsStore = yield* PluginSettingsStore;
   const marketplace = yield* PluginMarketplace;
   const installer = yield* PluginInstaller;
 
@@ -174,11 +190,93 @@ export const make = Effect.fn("PluginManagementRpcHandlers.make")(function* () {
       );
     });
 
+  // The declared schema lives on the live runtime's definition, so settings are
+  // only readable/writable while the plugin is active. Keying off the runtime (not
+  // a client-supplied id) is also what makes cross-plugin access impossible.
+  const declaredSettings = (pluginId: PluginSettingsGetInput["pluginId"]) =>
+    registry
+      .get(pluginId)
+      .pipe(
+        Effect.map((runtime) =>
+          Option.flatMap(runtime, (value) =>
+            value.settings === undefined ? Option.none() : Option.some(value.settings),
+          ),
+        ),
+      );
+
+  const settingsGet: PluginManagementRpcHandlers["Service"]["settingsGet"] = (input) =>
+    Effect.gen(function* () {
+      const declared = yield* declaredSettings(input.pluginId);
+      if (Option.isNone(declared)) {
+        return {
+          values: {},
+          revision: 0,
+          incompatible: false,
+          declared: false,
+        } satisfies PluginSettingsGetResult;
+      }
+      const draft = yield* settingsStore.readDraft(input.pluginId);
+      return { ...draft, declared: true } satisfies PluginSettingsGetResult;
+    });
+
+  const settingsSet: PluginManagementRpcHandlers["Service"]["settingsSet"] = (input) =>
+    Effect.gen(function* () {
+      const declared = yield* declaredSettings(input.pluginId);
+      if (Option.isNone(declared)) {
+        return yield* Effect.fail(
+          managementError(
+            "settings-not-declared",
+            "This plugin does not declare settings, or is not currently enabled.",
+          ),
+        );
+      }
+
+      // Decode server-side even though the form already validated: the client is
+      // not trusted, and a bad write would land config the plugin cannot read.
+      const decoded = yield* Schema.decodeUnknownEffect(declared.value.schema)(input.values).pipe(
+        Effect.mapError(() =>
+          // Deliberately does not embed the decode error: its rendering contains the
+          // submitted values, which would put plugin configuration into logs.
+          managementError("settings-invalid", "These settings do not match the plugin's schema."),
+        ),
+      );
+
+      // Persist the ENCODED shape, canonicalised by re-encoding what we decoded —
+      // never the raw client payload (which could carry unknown keys) and never the
+      // decoded values (whose re-encode may differ, breaking the next read).
+      const encoded = yield* Schema.encodeEffect(declared.value.schema)(decoded).pipe(
+        Effect.mapError(() =>
+          managementError("settings-invalid", "These settings could not be stored."),
+        ),
+      );
+
+      const revision = yield* settingsStore
+        .write({
+          pluginId: input.pluginId,
+          values: encoded as Readonly<Record<string, unknown>>,
+          schemaFingerprint: fingerprintSettingsSchema(declared.value.schema),
+          expectedRevision: input.expectedRevision,
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            error._tag === "PluginSettingsConflictError"
+              ? managementError(
+                  "settings-conflict",
+                  "These settings changed elsewhere. Reload and reapply your edit.",
+                )
+              : managementError("lockfile", "Could not store plugin settings."),
+          ),
+        );
+      return { revision } satisfies PluginSettingsSetResult;
+    });
+
   return PluginManagementRpcHandlers.of({
     listSources,
     addSource,
     removeSource,
     catalog,
+    settingsGet,
+    settingsSet,
     beginInstall: installer.beginInstall,
     confirmInstall: installer.confirmInstall,
     abortInstall: installer.abortInstall,

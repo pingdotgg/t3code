@@ -46,6 +46,27 @@ export interface PluginSettingsSchemaViolation {
 }
 
 /**
+ * Identifies the shape that produced a stored settings payload.
+ *
+ * Stored alongside the values so an upgrade that changes the schema can be
+ * detected rather than silently misread. Derived from the JSON Schema, so it
+ * tracks exactly what affects encoding/decoding — renaming a field or changing
+ * its type changes the fingerprint, while editing a description does not.
+ *
+ * Not a security control: a fingerprint match means "same shape", not "same
+ * plugin". It exists to make incompatibility detectable and recoverable.
+ */
+export const fingerprintSettingsSchema = (schema: SettingsSchema): string => {
+  try {
+    return JSON.stringify(Schema.toJsonSchemaDocument(schema).schema);
+  } catch {
+    // Unfingerprintable schemas are already rejected by
+    // findPluginSettingsSchemaViolations; this keeps the function total.
+    return "";
+  }
+};
+
+/**
  * The field's encoded JSON type, or null when it isn't a single plain type.
  *
  * Unwraps nullable unions: `withDecodingDefault` — which providers use on nearly

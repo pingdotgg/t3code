@@ -776,6 +776,8 @@ const buildAppUnderTest = (options?: {
             confirmUpgrade: () =>
               Effect.die("PluginManagementRpcHandlers not stubbed in this test"),
             checkUpdates: Effect.succeed({ updates: [] }),
+            settingsGet: () => Effect.die("not used"),
+            settingsSet: () => Effect.die("not used"),
           }),
         ),
       ),

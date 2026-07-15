@@ -410,6 +410,12 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [PLUGINS_WS_METHODS.upgradeBegin, AuthPluginsManageScope],
   [PLUGINS_WS_METHODS.upgradeConfirm, AuthPluginsManageScope],
   [PLUGINS_WS_METHODS.checkUpdates, AuthPluginsManageScope],
+  // Settings are plugin administration: the HOST renders the settings page, so the
+  // caller is the management UI, not the plugin's own web surface. plugin:<id>:operate
+  // gates a plugin's OWN rpc methods; plugins:manage gates configuring a plugin —
+  // same class of action as install/enable/uninstall above.
+  [PLUGINS_WS_METHODS.settingsGet, AuthPluginsManageScope],
+  [PLUGINS_WS_METHODS.settingsSet, AuthPluginsManageScope],
 ]);
 
 // Plugin method invocation (call/subscribe) carries the orchestration-read
@@ -1397,6 +1403,16 @@ const makeWsRpcLayer = (
               "plugin.id": input.pluginId,
             },
           ),
+        [PLUGINS_WS_METHODS.settingsGet]: (input) =>
+          observeRpcEffect(PLUGINS_WS_METHODS.settingsGet, pluginManagement.settingsGet(input), {
+            "rpc.aggregate": "plugins",
+            "plugin.id": input.pluginId,
+          }),
+        [PLUGINS_WS_METHODS.settingsSet]: (input) =>
+          observeRpcEffect(PLUGINS_WS_METHODS.settingsSet, pluginManagement.settingsSet(input), {
+            "rpc.aggregate": "plugins",
+            "plugin.id": input.pluginId,
+          }),
         [PLUGINS_WS_METHODS.uninstall]: (input) =>
           observeRpcEffect(
             PLUGINS_WS_METHODS.uninstall,

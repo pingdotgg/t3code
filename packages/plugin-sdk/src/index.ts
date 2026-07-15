@@ -1414,13 +1414,17 @@ export interface PluginSettingsDescriptor<
   S extends Schema.Struct<Schema.Struct.Fields> = Schema.Struct<Schema.Struct.Fields>,
 > {
   /**
-   * Must be a service-free decoder (`DecodingServices = never`), like
-   * `PluginToolDescriptor.inputSchema`: the host decodes stored values with no
-   * plugin-supplied context, so a schema requiring Effect services could not be
-   * run at all. The `& Schema.Decoder<unknown, never>` intersection makes that a
-   * compile error in the plugin rather than a runtime failure in the host.
+   * Must be service-free in BOTH directions.
+   *
+   * The host decodes stored values to validate and re-encodes them to store, with
+   * no plugin-supplied context, so a schema requiring Effect services could not be
+   * run at all. `Schema.Decoder<T, RD>` is NOT sufficient here: it expands to
+   * `Codec<T, unknown, RD, unknown>`, pinning decoding services to never while
+   * leaving ENCODING services as `unknown` — which the host cannot provide.
+   * `Codec<unknown, unknown, never, never>` constrains both, making it a compile
+   * error in the plugin rather than a runtime failure in the host.
    */
-  readonly schema: S & Schema.Decoder<unknown, never>;
+  readonly schema: S & Schema.Codec<unknown, unknown, never, never>;
 }
 
 export interface PluginDefinition<
