@@ -66,36 +66,18 @@ export class CopilotProbePromiseError extends Schema.TaggedErrorClass<CopilotPro
   }
 }
 
-export class CopilotClientStopError extends Error {
-  readonly _tag = "CopilotClientStopError";
-  readonly cleanupErrors: ReadonlyArray<Error>;
-  readonly stopCause: unknown | undefined;
-  readonly forceStopCause: unknown | undefined;
-
-  constructor(input: {
-    readonly cleanupErrors?: ReadonlyArray<Error>;
-    readonly stopCause?: unknown;
-    readonly forceStopCause?: unknown;
-  }) {
-    const cleanupErrors = input.cleanupErrors ?? [];
-    const details = [
-      ...cleanupErrors.map((error) => error.message),
-      input.stopCause === undefined
-        ? undefined
-        : describeCopilotStopCause(input.stopCause, "Graceful stop rejected."),
-      input.forceStopCause === undefined
-        ? undefined
-        : describeCopilotStopCause(input.forceStopCause, "Force stop rejected."),
-    ].filter((detail): detail is string => detail !== undefined);
-    super(
-      details.length > 0
-        ? `Copilot client cleanup was incomplete: ${details.join(" ")}`
-        : "Copilot client cleanup was incomplete.",
-    );
-    this.name = "CopilotClientStopError";
-    this.cleanupErrors = cleanupErrors;
-    this.stopCause = input.stopCause;
-    this.forceStopCause = input.forceStopCause;
+export class CopilotClientStopError extends Schema.TaggedErrorClass<CopilotClientStopError>()(
+  "CopilotClientStopError",
+  {
+    cleanupErrors: Schema.Array(Schema.Defect()),
+    stopCause: Schema.optional(Schema.Defect()),
+    forceStopCause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    const gracefulStopFailures = this.stopCause === undefined ? 0 : 1;
+    const forceStopFailures = this.forceStopCause === undefined ? 0 : 1;
+    return `Copilot client cleanup was incomplete (cleanupErrors=${this.cleanupErrors.length}, gracefulStopFailures=${gracefulStopFailures}, forceStopFailures=${forceStopFailures}).`;
   }
 }
 
@@ -106,16 +88,6 @@ class CopilotClientStopPromiseError extends Schema.TaggedErrorClass<CopilotClien
     cause: Schema.Defect(),
   },
 ) {}
-
-function describeCopilotStopCause(cause: unknown, fallback: string): string {
-  if (cause instanceof Error && cause.message.trim().length > 0) {
-    return cause.message.trim();
-  }
-  if (typeof cause === "string" && cause.trim().length > 0) {
-    return cause.trim();
-  }
-  return fallback;
-}
 
 export const stopCopilotClient = Effect.fn("stopCopilotClient")(function* (
   client: Pick<CopilotClient, "stop" | "forceStop">,
@@ -154,14 +126,11 @@ export const stopCopilotClient = Effect.fn("stopCopilotClient")(function* (
     }),
   );
 
-  return yield* Effect.fail(
-    new CopilotClientStopError({
-      ...(stopAttempt._tag === "Resolved"
-        ? { cleanupErrors: stopAttempt.cleanupErrors }
-        : { stopCause: stopAttempt.cause }),
-      ...(forceStopAttempt._tag === "Rejected" ? { forceStopCause: forceStopAttempt.cause } : {}),
-    }),
-  );
+  return yield* new CopilotClientStopError({
+    cleanupErrors: stopAttempt._tag === "Resolved" ? stopAttempt.cleanupErrors : [],
+    ...(stopAttempt._tag === "Rejected" ? { stopCause: stopAttempt.cause } : {}),
+    ...(forceStopAttempt._tag === "Rejected" ? { forceStopCause: forceStopAttempt.cause } : {}),
+  });
 });
 
 class CopilotCliPathResolutionError extends Schema.TaggedErrorClass<CopilotCliPathResolutionError>()(
