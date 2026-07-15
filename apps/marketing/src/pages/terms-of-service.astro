@@ -1,0 +1,396 @@
+---
+import LegalPage from "../components/LegalPage.astro";
+
+const sections = [
+  ["introduction", "Introduction"],
+  ["accounts", "Accounts"],
+  ["content", "Your content and providers"],
+  ["rights", "T3 Code and proprietary rights"],
+  ["acceptable-use", "Acceptable use"],
+  ["availability", "Availability and changes"],
+  ["fees", "Fees"],
+  ["privacy", "Privacy"],
+  ["termination", "Suspension and termination"],
+  ["beta", "Beta services"],
+  ["disclaimers", "Disclaimers"],
+  ["liability", "Limitation of liability"],
+  ["indemnification", "Indemnification"],
+  ["copyright", "Copyright complaints"],
+  ["third-parties", "Third-party services"],
+  ["feedback", "Feedback"],
+  ["disputes", "Dispute resolution"],
+  ["miscellaneous", "Miscellaneous"],
+  ["changes", "Changes to these Terms"],
+  ["contact", "Contact us"],
+] as const;
+---
+
+<LegalPage
+  title="Terms of Service — T3 Code"
+  description="The terms that govern your use of T3 Code, app.t3.codes, T3 Connect, and t3.codes."
+  heading="T3 Code Terms of Service"
+  lede="These Terms govern your use of T3 Code, including its desktop, mobile, and hosted applications, the optional T3 Connect service, and the t3.codes website."
+  effectiveDate="2026-07-15"
+  lastUpdated="2026-07-15"
+  sections={sections}
+>
+  <section id="introduction">
+    <p class="section-number">01</p>
+    <h2>Introduction</h2>
+    <p>
+      These Terms of Service (the “Terms”) are a binding agreement between you and T3 Tools, Inc.
+      (“T3 Tools,” “we,” “us,” or “our”). They govern your access to and use of the T3 Code desktop
+      and mobile applications, the hosted T3 Code application at{" "}<a href="https://app.t3.codes"
+        >https://app.t3.codes</a
+      >, and the optional T3 Connect service (together, the “Services”), as well as the T3 Code
+      marketing website at{" "}<a href="https://t3.codes">https://t3.codes</a> (the “Site”).
+    </p>
+    <p>
+      By accessing or using the Site or Services, you agree to these Terms. If you use the Services
+      for an organization, you represent that you have authority to bind that organization, and
+      “you” includes the organization. If you do not agree to these Terms, do not use the Site or
+      Services.
+    </p>
+    <p>
+      You must be at least 13 years old to use the Site or Services. If the law where you live
+      requires a greater age to enter into these Terms, you must meet that requirement or have a
+      parent or legal guardian agree on your behalf.
+    </p>
+  </section>
+
+  <section id="accounts">
+    <p class="section-number">02</p>
+    <h2>Accounts</h2>
+    <p>
+      You can use some T3 Code features without creating a T3 account. An account may be required
+      for account-backed features, including T3 Connect. You agree to provide accurate account
+      information, keep your credentials secure, and promptly notify us if you suspect unauthorized
+      access. You are responsible for activity performed through your account and connected devices,
+      except to the extent caused by our failure to use reasonable security measures.
+    </p>
+    <p>
+      You may not share credentials in a way that compromises the Services, impersonate another
+      person, or create accounts through unauthorized automated means. We may require reasonable
+      verification before restoring access or acting on an account request.
+    </p>
+  </section>
+
+  <section id="content">
+    <p class="section-number">03</p>
+    <h2>Your Content and Providers</h2>
+    <p>
+      T3 Code can help you send prompts, source files, images, attachments, review comments, and
+      instructions to coding-agent harnesses and providers you choose, and display their responses,
+      command output, file changes, source code, and diffs (collectively, “User Content”). You retain
+      all rights you have in your User Content.
+    </p>
+    <p>
+      You bring and configure your own coding-agent harness and provider. Your User Content is
+      ordinarily processed in the environment you control and by the providers you select, not by
+      T3 Tools. When you enable a T3 Tools-operated feature that must transmit or process User
+      Content, you grant us a limited, non-exclusive license to host, transmit, reproduce, and
+      process that content only as reasonably necessary to provide, secure, and troubleshoot that
+      feature. This license ends when the content is no longer needed for those purposes, subject to
+      reasonable backup, security, and legal-retention requirements.
+    </p>
+    <p>
+      You represent that you have the rights and permissions needed to use and submit User Content
+      and to direct its processing by your selected harnesses and providers. You are responsible for
+      reviewing those providers’ terms, privacy practices, data controls, and output before using
+      them with confidential, proprietary, regulated, or personal information.
+    </p>
+  </section>
+
+  <section id="rights">
+    <p class="section-number">04</p>
+    <h2>T3 Code and Proprietary Rights</h2>
+    <p>
+      T3 Tools and its licensors own the Site, the Services, and their branding, designs, hosted
+      infrastructure, documentation, and other materials, excluding User Content and third-party
+      materials. These Terms do not transfer ownership of either party’s intellectual property.
+    </p>
+    <p>
+      Portions of T3 Code are available as open-source software. Your use, copying, modification, and
+      distribution of that source code are governed by the license included with the applicable
+      repository or component. These Terms govern your use of the hosted Services and do not limit
+      rights granted to you by an applicable open-source license.
+    </p>
+    <p>
+      Subject to these Terms, we grant you a limited, non-exclusive, non-transferable, revocable right
+      to access and use the Services for lawful personal or internal business purposes. You may not
+      use our trademarks, service marks, or trade dress without written permission.
+    </p>
+  </section>
+
+  <section id="acceptable-use">
+    <p class="section-number">05</p>
+    <h2>Acceptable Use</h2>
+    <p>You may not use the Site or Services to:</p>
+    <ul>
+      <li>Violate applicable law or another person’s rights;</li>
+      <li>Upload, transmit, or generate content you do not have the right to use;</li>
+      <li>Distribute malware, exploit code, or harmful content except in authorized security work;</li>
+      <li>Probe, attack, disrupt, or gain unauthorized access to the Services or another system;</li>
+      <li>Bypass rate limits, access controls, security measures, or usage restrictions;</li>
+      <li>Interfere with other users or place an unreasonable load on shared infrastructure;</li>
+      <li>Use the Services to facilitate fraud, harassment, abuse, or deceptive conduct; or</li>
+      <li>Misrepresent that output or activity from a third-party agent was produced or endorsed by us.</li>
+    </ul>
+    <p>
+      Authorized security research must follow our{" "}<a href="/security-policy">Security Policy</a>.
+      We may investigate suspected violations and take proportionate action to protect users and the
+      Services.
+    </p>
+  </section>
+
+  <section id="availability">
+    <p class="section-number">06</p>
+    <h2>Availability and Changes</h2>
+    <p>
+      We may add, change, suspend, or discontinue features, integrations, or supported platforms. We
+      aim to provide reasonable notice when a change materially reduces an account-backed feature,
+      but urgent security, legal, or reliability changes may take effect immediately. The Services
+      may be unavailable because of maintenance, provider outages, network conditions, or events
+      outside our control.
+    </p>
+    <p>
+      T3 Code depends on software, environments, networks, and coding-agent providers that you
+      configure or that third parties operate. We do not control their availability, compatibility,
+      pricing, or behavior.
+    </p>
+  </section>
+
+  <section id="fees">
+    <p class="section-number">07</p>
+    <h2>Fees</h2>
+    <p>
+      T3 Code is currently offered without a T3 Tools subscription fee unless we clearly state
+      otherwise for a feature. You remain responsible for charges from your coding-agent providers,
+      cloud infrastructure, network operators, app stores, and other third parties. If we introduce
+      a paid feature, we will present its price and applicable payment terms before you purchase it.
+    </p>
+  </section>
+
+  <section id="privacy">
+    <p class="section-number">08</p>
+    <h2>Privacy</h2>
+    <p>
+      Our{" "}<a href="/privacy-policy">Privacy Policy</a> explains how T3 Tools collects, uses, and
+      shares personal information when you use the Site and Services. Third-party environments,
+      harnesses, identity providers, and coding-agent providers process information under their own
+      terms and privacy policies.
+    </p>
+  </section>
+
+  <section id="termination">
+    <p class="section-number">09</p>
+    <h2>Suspension and Termination</h2>
+    <p>
+      You may stop using the Services at any time. You may disconnect environments and devices from
+      within T3 Code and may request deletion of an account as described in our Privacy Policy.
+    </p>
+    <p>
+      We may suspend or terminate access to account-backed or hosted features if we reasonably
+      believe you materially violated these Terms, created a security or legal risk, failed to pay an
+      applicable fee, or used the Services in a way that could harm other users or shared
+      infrastructure. When practicable, we will give notice and an opportunity to cure. We may act
+      immediately where needed to prevent harm or comply with law.
+    </p>
+    <p>
+      Provisions that by their nature should survive termination—including ownership, disclaimers,
+      limitations of liability, indemnification, and dispute terms—will survive.
+    </p>
+  </section>
+
+  <section id="beta">
+    <p class="section-number">10</p>
+    <h2>Beta Services</h2>
+    <p>
+      T3 Code is an early-stage product, and some or all features may be identified as alpha, beta,
+      preview, experimental, or pre-release (“Beta Services”). Beta Services may be incomplete,
+      change without notice, contain errors, or lose data. Do not rely on Beta Services as the sole
+      copy of important work, and review proposed commands and file changes before applying them.
+    </p>
+  </section>
+
+  <section id="disclaimers">
+    <p class="section-number">11</p>
+    <h2>Disclaimers</h2>
+    <p class="legal-notice">
+      TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE SITE AND SERVICES ARE PROVIDED “AS IS” AND “AS
+      AVAILABLE,” WITHOUT WARRANTIES OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING WARRANTIES OF
+      MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT.
+    </p>
+    <p>
+      Coding agents and artificial-intelligence systems can produce incorrect, insecure, incomplete,
+      or harmful output. You are responsible for reviewing output, commands, patches, and other
+      actions before relying on or executing them. We do not warrant that the Services or third-party
+      output will be uninterrupted, secure, accurate, error-free, or suitable for your purpose.
+    </p>
+    <p>
+      Some jurisdictions do not allow certain warranty exclusions, so some of the foregoing may not
+      apply to you.
+    </p>
+  </section>
+
+  <section id="liability">
+    <p class="section-number">12</p>
+    <h2>Limitation of Liability</h2>
+    <p class="legal-notice">
+      TO THE MAXIMUM EXTENT PERMITTED BY LAW, T3 TOOLS AND ITS AFFILIATES, OFFICERS, EMPLOYEES,
+      AGENTS, AND LICENSORS WILL NOT BE LIABLE FOR INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL,
+      EXEMPLARY, OR PUNITIVE DAMAGES, OR FOR LOST PROFITS, REVENUE, DATA, GOODWILL, OR BUSINESS
+      OPPORTUNITIES, ARISING FROM OR RELATED TO THE SITE, SERVICES, OR THESE TERMS.
+    </p>
+    <p>
+      To the maximum extent permitted by law, our aggregate liability for all claims arising from or
+      relating to the Site, Services, or these Terms will not exceed the greater of $100 or the amount
+      you paid directly to T3 Tools for the Services during the 12 months before the event giving rise
+      to the claim. These limitations apply regardless of the legal theory and even if a remedy fails
+      of its essential purpose. They do not limit liability that cannot lawfully be limited.
+    </p>
+  </section>
+
+  <section id="indemnification">
+    <p class="section-number">13</p>
+    <h2>Indemnification</h2>
+    <p>
+      To the extent permitted by law, you will defend, indemnify, and hold harmless T3 Tools and its
+      affiliates, officers, employees, and agents from third-party claims, damages, losses, and
+      reasonable legal fees arising from your User Content, your use of the Site or Services in
+      violation of these Terms or law, or your infringement of another person’s rights. We will
+      promptly notify you of a covered claim and reasonably cooperate in its defense. You may not
+      settle a claim in a way that admits fault by or imposes obligations on us without our written
+      consent.
+    </p>
+  </section>
+
+  <section id="copyright">
+    <p class="section-number">14</p>
+    <h2>Copyright Complaints</h2>
+    <p>
+      If you believe material available through a T3 Tools-operated part of the Site or Services
+      infringes your copyright, send a notice to{" "}<a href="mailto:legal@t3.tools">legal@t3.tools</a
+      >{" "}identifying the copyrighted work, the allegedly infringing material and its location, your
+      contact information, a statement of good-faith belief, a statement under penalty of perjury
+      that the notice is accurate and you are authorized to act, and your physical or electronic
+      signature.
+    </p>
+    <p>
+      T3 Tools does not control content stored only in a user’s environment or held by a user-selected
+      provider. Requests concerning that material should be directed to the operator that hosts it.
+    </p>
+  </section>
+
+  <section id="third-parties">
+    <p class="section-number">15</p>
+    <h2>Third-Party Services</h2>
+    <p>
+      The Services may connect to or display content from third-party coding agents, model providers,
+      identity providers, repositories, app stores, websites, and infrastructure. Your use of those
+      services is governed by their terms. We do not endorse or control third-party services and are
+      not responsible for their content, security, availability, output, or data practices.
+    </p>
+    <p>
+      Third-party and open-source software included with T3 Code is governed by its applicable
+      license notices. Where those licenses conflict with these Terms for that software, the
+      applicable open-source license controls.
+    </p>
+  </section>
+
+  <section id="feedback">
+    <p class="section-number">16</p>
+    <h2>Feedback</h2>
+    <p>
+      If you send us ideas, suggestions, or other feedback about T3 Code, you grant T3 Tools a
+      perpetual, irrevocable, worldwide, royalty-free right to use and commercialize that feedback
+      without restriction or compensation. This does not transfer ownership of your User Content.
+    </p>
+  </section>
+
+  <section id="disputes">
+    <p class="section-number">17</p>
+    <h2>Dispute Resolution</h2>
+    <p class="legal-notice">
+      PLEASE READ THIS SECTION CAREFULLY. IT REQUIRES MOST DISPUTES TO BE RESOLVED BY INDIVIDUAL
+      BINDING ARBITRATION AND WAIVES JURY TRIALS AND CLASS OR REPRESENTATIVE ACTIONS.
+    </p>
+    <h3>Informal Resolution</h3>
+    <p>
+      Before starting arbitration or a court proceeding, the party raising a dispute must send a
+      written notice describing the dispute and requested relief. Notices to us must be sent to{" "}<a
+        href="mailto:legal@t3.tools">legal@t3.tools</a
+      >. The parties will try in good faith to resolve the dispute for at least 30 days.
+    </p>
+    <h3>Binding Arbitration</h3>
+    <p>
+      Except for disputes eligible for small-claims court and requests for injunctive relief to
+      protect intellectual property or prevent unauthorized access, unresolved disputes will be
+      resolved by binding individual arbitration administered by JAMS under its applicable consumer
+      or comprehensive rules. The Federal Arbitration Act governs this agreement. Arbitration may
+      take place remotely unless the arbitrator determines that an in-person hearing is necessary.
+    </p>
+    <h3>No Class Actions</h3>
+    <p>
+      Disputes must be brought only on an individual basis. Neither party may participate in a class,
+      collective, consolidated, or representative action or arbitration to the extent permitted by
+      law.
+    </p>
+    <h3>Opt Out</h3>
+    <p>
+      You may opt out of this arbitration agreement by emailing{" "}<a href="mailto:legal@t3.tools"
+        >legal@t3.tools</a
+      > within 30 days after you first accept these Terms. Include your name, the email associated
+      with your account if any, and a clear statement that you opt out of arbitration.
+    </p>
+    <p>
+      If the arbitration agreement does not apply, exclusive jurisdiction and venue will lie in the
+      state and federal courts located in San Francisco County, California, and each party consents
+      to those courts.
+    </p>
+  </section>
+
+  <section id="miscellaneous">
+    <p class="section-number">18</p>
+    <h2>Miscellaneous</h2>
+    <p>
+      California law governs these Terms without regard to conflict-of-law principles, except that
+      the Federal Arbitration Act governs the arbitration provisions. These Terms and documents
+      incorporated by reference are the entire agreement between you and us regarding the Site and
+      Services. If a provision is unenforceable, it will be modified to the minimum extent necessary
+      or severed, and the remaining provisions will continue in effect.
+    </p>
+    <p>
+      Our failure to enforce a provision is not a waiver. You may not assign these Terms without our
+      written consent. We may assign them in connection with a merger, acquisition, reorganization,
+      or sale of assets. We are not liable for delays or failures caused by events beyond our
+      reasonable control. Headings are for convenience only, and “including” means “including without
+      limitation.”
+    </p>
+  </section>
+
+  <section id="changes">
+    <p class="section-number">19</p>
+    <h2>Changes to These Terms</h2>
+    <p>
+      We may update these Terms from time to time. We will post updated Terms at this URL and update
+      the dates above. If a change materially affects your rights, we will provide additional notice
+      when reasonably practicable or as required by law. Changes apply prospectively from their
+      effective date. Your continued use of the Site or Services after that date means you accept the
+      updated Terms.
+    </p>
+  </section>
+
+  <section id="contact">
+    <p class="section-number">20</p>
+    <h2>Contact Us</h2>
+    <p>If you have questions about these Terms, contact us at:</p>
+    <address>
+      <strong>T3 Tools, Inc.</strong><br />
+      2261 Market Street #5309<br />
+      San Francisco, CA 94114<br />
+      United States
+    </address>
+    <a class="contact-link" href="mailto:legal@t3.tools">legal@t3.tools</a>
+  </section>
+</LegalPage>

@@ -4,11 +4,13 @@ import { GITHUB_REPOSITORY_URL, MARKETING_STATS } from "../lib/site";
 interface Props {
   title?: string;
   description?: string;
+  pageClass?: string;
 }
 
 const {
   title = "T3 Code",
   description = "T3 Code — The open-source control plane for coding agents.",
+  pageClass,
 } = Astro.props;
 ---
 
@@ -30,7 +32,7 @@ const {
     <title>{title}</title>
   </head>
   <body>
-    <div class="page">
+    <div class:list={["page", pageClass]}>
       <nav class="nav">
         <div class="nav-inner">
           <a href="/" class="nav-brand" aria-label="T3 Code home">
@@ -67,6 +69,9 @@ const {
             <a href={GITHUB_REPOSITORY_URL} target="_blank" rel="noopener noreferrer">GitHub</a>
             <a href="https://discord.gg/jn4EGJjrvv" target="_blank" rel="noopener noreferrer">Discord</a>
             <a href="/download">Download</a>
+            <a href="/terms-of-service">Terms</a>
+            <a href="/privacy-policy">Privacy</a>
+            <a href="/security-policy">Security</a>
           </div>
         </div>
       </footer>
@@ -279,7 +284,7 @@ const {
     min-height: 100vh;
     display: flex;
     flex-direction: column;
-    overflow-x: hidden;
+    overflow-x: clip;
   }
 
   .nav {
@@ -402,6 +407,8 @@ const {
 
   .footer-links {
     display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
     gap: 20px;
   }
 
@@ -420,6 +427,28 @@ const {
     .footer-inner {
       padding-left: 20px;
       padding-right: 20px;
+    }
+
+    .legal-document-page .nav {
+      display: none;
+    }
+
+    .footer {
+      padding-bottom: max(32px, env(safe-area-inset-bottom));
+    }
+
+    .footer-inner {
+      align-items: flex-start;
+      flex-direction: column;
+      gap: 28px;
+    }
+
+    .footer-links {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      width: 100%;
+      gap: 14px 20px;
+      justify-content: initial;
     }
   }
 
