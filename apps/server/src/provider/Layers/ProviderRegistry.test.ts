@@ -278,7 +278,9 @@ function makeMutableServerSettingsService(
 ) {
   return Effect.gen(function* () {
     const settingsRef = yield* Ref.make(initial);
-    const changes = yield* PubSub.unbounded<ContractServerSettings>();
+    // Mirror ServerSettingsService: change events are full snapshots and the
+    // latest one is replayed to consumers that subscribe after a write.
+    const changes = yield* PubSub.unbounded<ContractServerSettings>({ replay: 1 });
 
     return {
       start: Effect.void,

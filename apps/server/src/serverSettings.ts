@@ -262,7 +262,11 @@ const make = Effect.gen(function* () {
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const writeSemaphore = yield* Semaphore.make(1);
   const cacheKey = "settings" as const;
-  const changesPubSub = yield* PubSub.unbounded<ServerSettings>();
+  // Settings events are complete snapshots, so retaining only the latest
+  // value lets late subscribers catch up without replaying obsolete writes.
+  // In particular, this closes the gap between reading the initial settings
+  // and starting a change-stream consumer.
+  const changesPubSub = yield* PubSub.unbounded<ServerSettings>({ replay: 1 });
   const startedRef = yield* Ref.make(false);
   const startedDeferred = yield* Deferred.make<void, ServerSettingsError>();
   const watcherScope = yield* Scope.make("sequential");
