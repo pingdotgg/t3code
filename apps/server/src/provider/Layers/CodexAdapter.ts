@@ -27,7 +27,6 @@ import {
   ThreadId,
   ProviderSendTurnInput,
 } from "@t3tools/contracts";
-import { mapCodexCollabAgentToUnified } from "../../subagent/integration.ts";
 import * as Effect from "effect/Effect";
 import * as Crypto from "effect/Crypto";
 import * as Exit from "effect/Exit";
@@ -470,13 +469,6 @@ function collabAgentItemId(item: Extract<CodexLifecycleItem, { type: "collabAgen
   return RuntimeItemId.make(`collab:${item.id}`);
 }
 
-/**
- * Generate summary text for Codex collabAgent tool calls.
- *
- * Note: These calls are routed through the UnifiedSubAgentTool via
- * mapCodexCollabAgentToUnified() for cross-provider support and unified
- * concurrency management. The mapping happens at the coordinator level.
- */
 function collabAgentSummary(item: Extract<CodexLifecycleItem, { type: "collabAgentToolCall" }>) {
   const targetCount = item.receiverThreadIds.length;
   switch (item.tool) {
