@@ -146,6 +146,11 @@
     @apply flex h-10 min-h-10 shrink-0 items-center border-b border-border/60 bg-background;
   }
 
+  .app-sidebar-surface,
+  .app-sidebar-surface [data-slot="sidebar-inner"] {
+    background: var(--sidebar-surface);
+  }
+
   .chat-composer-horizontal-inset {
     padding-inline-start: calc(env(safe-area-inset-left) + 0.75rem);
     padding-inline-end: calc(env(safe-area-inset-right) + 0.75rem);
@@ -167,15 +172,18 @@
     backdrop-filter: blur(16px);
   }
 
-  .dark .chat-composer-glass,
-  .dark .chat-composer-lower-chrome {
-    background: color-mix(in srgb, var(--card) 45%, transparent);
+  .dark .chat-composer-glass {
+    background: var(--composer-surface);
+    box-shadow: none;
   }
 
-  .dark .chat-composer-glass {
-    box-shadow:
-      0 18px 48px -20px rgb(0 0 0 / 60%),
-      0 4px 14px -7px rgb(0 0 0 / 40%);
+  .dark .chat-composer-lower-chrome {
+    background: var(--background);
+  }
+
+  .dark .chat-composer-shared-blur {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
 
   .chat-composer-lower-chrome {
@@ -229,6 +237,8 @@
   --radius: 0.625rem;
   --background: var(--color-white);
   --app-chrome-background: var(--background);
+  --sidebar-surface: var(--card);
+  --composer-surface: var(--card);
   --foreground: var(--color-neutral-800);
   --card: var(--color-white);
   --card-foreground: var(--color-neutral-800);
@@ -256,20 +266,22 @@
 
   @variant dark {
     color-scheme: dark;
-    --background: color-mix(in srgb, var(--color-neutral-950) 95%, var(--color-white));
+    --background: var(--color-black);
     --app-chrome-background: var(--background);
+    --sidebar-surface: color-mix(in srgb, var(--color-black) 97.5%, var(--color-white));
+    --composer-surface: color-mix(in srgb, var(--color-black) 95.5%, var(--color-white));
     --foreground: var(--color-neutral-100);
-    --card: color-mix(in srgb, var(--background) 98%, var(--color-white));
+    --card: color-mix(in srgb, var(--color-black) 97%, var(--color-white));
     --card-foreground: var(--color-neutral-100);
-    --popover: color-mix(in srgb, var(--background) 98%, var(--color-white));
+    --popover: color-mix(in srgb, var(--color-black) 93%, var(--color-white));
     --popover-foreground: var(--color-neutral-100);
     --primary: oklch(0.588 0.217 264);
     --primary-foreground: var(--color-white);
-    --secondary: --alpha(var(--color-white) / 4%);
+    --secondary: --alpha(var(--color-white) / 3%);
     --secondary-foreground: var(--color-neutral-100);
-    --muted: --alpha(var(--color-white) / 4%);
-    --muted-foreground: color-mix(in srgb, var(--color-neutral-500) 90%, var(--color-white));
-    --accent: --alpha(var(--color-white) / 4%);
+    --muted: --alpha(var(--color-white) / 3%);
+    --muted-foreground: var(--color-neutral-400);
+    --accent: --alpha(var(--color-white) / 5%);
     --accent-foreground: var(--color-neutral-100);
     --destructive: color-mix(in srgb, var(--color-red-500) 90%, var(--color-white));
     --border: --alpha(var(--color-white) / 6%);
@@ -329,6 +341,10 @@ body::after {
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   background-repeat: repeat;
   background-size: 256px 256px;
+}
+
+.dark body::after {
+  content: none;
 }
 
 pre,
