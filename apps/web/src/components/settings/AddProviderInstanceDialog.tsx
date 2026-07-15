@@ -137,7 +137,7 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
   const driverOption = DRIVER_OPTION_BY_VALUE[driver] ?? DEFAULT_DRIVER_OPTION;
   const instanceId = instanceIdOverride ?? deriveInstanceId(driver, label);
   const driverSettingsFields = useMemo(
-    () => deriveProviderSettingsFields(driverOption),
+    () => deriveProviderSettingsFields(driverOption.settingsSchema),
     [driverOption],
   );
   const instanceIdError = validateInstanceId(instanceId, existingIds);
@@ -421,7 +421,7 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
               {driverSettingsFields.length > 0 ? (
                 <div className={cn("grid gap-4", wizardStep !== 2 && "hidden")}>
                   <ProviderSettingsForm
-                    definition={driverOption}
+                    settingsSchema={driverOption.settingsSchema}
                     value={configDraft}
                     idPrefix={`add-provider-${driver}`}
                     variant="dialog"
