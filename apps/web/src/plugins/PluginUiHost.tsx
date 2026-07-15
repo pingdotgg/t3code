@@ -319,14 +319,27 @@ export async function syncPluginUiHostRegistrations({
       // plugin declaring only settings still contributes a surface (otherwise the
       // declaration would be inert).
       if (definition.settings !== undefined) {
-        const settingsSchema = definition.settings.schema;
-        settingsPages.push({
-          pluginId: plugin.id,
-          id: GENERATED_SETTINGS_PAGE_ID,
-          title: "Settings",
-          component: () =>
-            createElement(PluginSettingsPage, { pluginId: plugin.id, settingsSchema }),
-        });
+        // The SERVER validates and stores settings, so a page is only meaningful
+        // when the server side actually declares them — which requires the
+        // `settings` capability. That capability transitively requires a server
+        // entry: the manifest rejects ANY capability on a plugin without one
+        // ("web-only plugins may not declare server capabilities"). So this single
+        // check also rejects a web-only plugin declaring settings, which would
+        // otherwise render a form whose every write fails.
+        if (plugin.capabilities.includes("settings")) {
+          const settingsSchema = definition.settings.schema;
+          settingsPages.push({
+            pluginId: plugin.id,
+            id: GENERATED_SETTINGS_PAGE_ID,
+            title: "Settings",
+            component: () =>
+              createElement(PluginSettingsPage, { pluginId: plugin.id, settingsSchema }),
+          });
+        } else {
+          ctx.logger.error(
+            "declares web settings but the plugin does not request the `settings` capability (a web-only plugin cannot); no settings page rendered",
+          );
+        }
       }
       // Optional: a declarative-settings-only plugin has no imperative surface.
       if (definition.register !== undefined) {

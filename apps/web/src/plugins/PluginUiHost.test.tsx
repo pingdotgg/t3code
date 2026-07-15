@@ -284,7 +284,7 @@ describe("PluginUiHost declarative settings", () => {
 
     const snapshot = await syncPluginUiHostRegistrations({
       state,
-      plugins: [pluginInfo()],
+      plugins: [pluginInfo({ capabilities: ["settings"] })],
       waitForHost: async () => {},
       importWebPlugin: async () => ({
         default: { settings: { schema: Schema.Struct({ baseUrl: Schema.String }) } },
@@ -303,7 +303,7 @@ describe("PluginUiHost declarative settings", () => {
 
     const snapshot = await syncPluginUiHostRegistrations({
       state,
-      plugins: [pluginInfo()],
+      plugins: [pluginInfo({ capabilities: ["settings"] })],
       waitForHost: async () => {},
       importWebPlugin: async () => ({
         default: {
@@ -319,6 +319,25 @@ describe("PluginUiHost declarative settings", () => {
       GENERATED_SETTINGS_PAGE_ID,
       "custom",
     ]);
+  });
+
+  // The SERVER validates and stores settings, so a page without the capability would
+  // render a form whose every write fails. The capability also transitively requires
+  // a server entry — the manifest rejects any capability on a web-only plugin — so
+  // this is also what stops a web-only plugin declaring settings.
+  it("does not generate a settings page when the plugin lacks the settings capability", async () => {
+    const state = createPluginUiHostState();
+
+    const snapshot = await syncPluginUiHostRegistrations({
+      state,
+      plugins: [pluginInfo({ capabilities: [] })],
+      waitForHost: async () => {},
+      importWebPlugin: async () => ({
+        default: { settings: { schema: Schema.Struct({ baseUrl: Schema.String }) } },
+      }),
+    });
+
+    expect(snapshot.settingsPages).toEqual([]);
   });
 
   it("does not generate a settings page for a plugin that declares none", async () => {
