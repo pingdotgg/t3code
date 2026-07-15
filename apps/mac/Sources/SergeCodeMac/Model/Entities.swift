@@ -266,6 +266,8 @@ public struct SubagentTaskItem: Hashable, Sendable {
     public var description: String?
     public var subagentType: String?
     public var model: String?
+    /// Reasoning effort the subagent's turns run at (e.g. "high"), when known.
+    public var effort: String?
     public var workflowName: String?
     public var toolUseId: String?
     public var state: SubagentTaskState
@@ -289,6 +291,7 @@ public struct SubagentTaskItem: Hashable, Sendable {
         description: String?,
         subagentType: String? = nil,
         model: String? = nil,
+        effort: String? = nil,
         workflowName: String? = nil,
         toolUseId: String? = nil,
         state: SubagentTaskState,
@@ -307,6 +310,7 @@ public struct SubagentTaskItem: Hashable, Sendable {
         self.description = description
         self.subagentType = subagentType
         self.model = model
+        self.effort = effort
         self.workflowName = workflowName
         self.toolUseId = toolUseId
         self.state = state

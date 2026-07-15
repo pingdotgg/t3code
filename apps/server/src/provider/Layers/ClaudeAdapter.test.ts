@@ -2489,6 +2489,104 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("reports subagent reasoning effort, preferring a Task tool input override", () => {
+    const capabilities = createModelCapabilities({
+      optionDescriptors: [
+        {
+          id: "effort",
+          label: "Reasoning",
+          type: "select",
+          options: [
+            { id: "low", label: "Low" },
+            { id: "medium", label: "Medium" },
+            { id: "high", label: "High", isDefault: true },
+            { id: "xhigh", label: "Extra High" },
+          ],
+        },
+      ],
+    });
+    const harness = makeHarness({ getModelCapabilities: () => capabilities });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "task.started" && event.payload.taskId === "task-effort-2",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-opus-4-6",
+          [{ id: "effort", value: "high" }],
+        ),
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "spawn two reviewers",
+        attachments: [],
+      });
+
+      // Subagent without a per-task override inherits the session effort.
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-effort-1",
+        description: "Inherit session effort",
+        session_id: "sdk-session-task-effort",
+        uuid: "task-started-effort-1",
+      } as unknown as SDKMessage);
+
+      // Task tool input override wins over the session effort.
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-task-effort",
+        uuid: "stream-task-effort-tool",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: {
+            type: "tool_use",
+            id: "toolu-task-effort",
+            name: "Task",
+            input: {
+              description: "Cheap mechanical pass",
+              subagent_type: "Explore",
+              effort: "low",
+              prompt: "Rename the symbol",
+            },
+          },
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-effort-2",
+        tool_use_id: "toolu-task-effort",
+        description: "Cheap mechanical pass",
+        session_id: "sdk-session-task-effort",
+        uuid: "task-started-effort-2",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const started = runtimeEvents.filter((event) => event.type === "task.started");
+      const inherited = started.find((event) => event.payload.taskId === "task-effort-1");
+      const overridden = started.find((event) => event.payload.taskId === "task-effort-2");
+
+      assert.equal(inherited?.payload.effort, "high");
+      assert.equal(overridden?.payload.effort, "low");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("stopTask calls SDK stopTask and synthesizes stopped after grace if needed", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
