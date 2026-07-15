@@ -32,10 +32,15 @@ export interface RegisteredPluginSidebarSection {
 }
 
 /**
- * Page id for the host-generated settings page. Fixed so a plugin's own
- * registerSettingsPage cannot collide with it or shadow it.
+ * Page id for the host-generated settings page.
+ *
+ * Namespaced with a `__host_` prefix that plugin page ids cannot produce
+ * accidentally, and `registerSettingsPage` rejects it outright — otherwise a
+ * plugin registering `{ id: "settings" }` would produce two pages with the same
+ * id and last-wins routing. (An earlier comment claimed collision was impossible
+ * without anything actually enforcing it.)
  */
-export const GENERATED_SETTINGS_PAGE_ID = "settings";
+export const GENERATED_SETTINGS_PAGE_ID = "__host_settings";
 
 export interface RegisteredPluginSettingsPage {
   readonly pluginId: PluginId;
@@ -304,6 +309,13 @@ export async function syncPluginUiHostRegistrations({
           sidebarSections.push({ ...registration, pluginId: plugin.id });
         },
         registerSettingsPage: (registration) => {
+          // Reserve the generated id: a plugin cannot register a page that would
+          // collide with the host's own settings page.
+          if (registration.id === GENERATED_SETTINGS_PAGE_ID) {
+            throw new Error(
+              `settings page id "${GENERATED_SETTINGS_PAGE_ID}" is reserved by the host`,
+            );
+          }
           settingsPages.push({ ...registration, pluginId: plugin.id });
         },
         registerCommand: (registration) => {
