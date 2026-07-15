@@ -33,7 +33,7 @@ definePlugin({
     Effect.gen(function* () {
       const settings = yield* hostApi.settings.pipe(Effect.orDie);
       const config = yield* settings.get.pipe(Effect.orDie);
-      // @ts-expect-no-error — this is the whole point of declaring a schema.
+      // Plain typecheck: if inference regresses to `unknown`, these two lines error.
       expectString(config.baseUrl);
       expectBoolean(config.shout);
       return registration;
@@ -65,6 +65,25 @@ declare const serviceBoundSchema: Schema.Codec<
 definePlugin({
   // @ts-expect-error decoding services must be `never`
   settings: { schema: serviceBoundSchema },
+  register: () => registration,
+});
+
+// NEGATIVE: a schema whose ENCODING needs services must also be rejected.
+//
+// This half is the one that was actually broken: Schema.Decoder<T, RD> expands to
+// Codec<T, unknown, RD, unknown>, pinning DECODING services to never while leaving
+// ENCODING services as `unknown`. The host re-encodes on every write with no plugin
+// context, so an encoding-service-bound schema could not run. Probing only the
+// decoding half would have let that regress silently.
+declare const encodeBoundSchema: Schema.Codec<
+  { readonly a: string },
+  { readonly a: string },
+  never,
+  { readonly _: unique symbol }
+>;
+definePlugin({
+  // @ts-expect-error encoding services must be `never`
+  settings: { schema: encodeBoundSchema },
   register: () => registration,
 });
 

@@ -80,6 +80,11 @@ export function PluginSettingsPage({ pluginId, settingsSchema }: PluginSettingsP
     });
     setSaving(false);
     if (result._tag === "Success") {
+      // Adopt the server's new revision BEFORE re-reading. The write succeeded, so
+      // the server has advanced; if the re-read then fails we must not keep the
+      // pre-save revision, or the next save sends a stale expectedRevision and
+      // conflicts spuriously against the user's own write.
+      setDraft({ values: { ...edited }, revision: result.value.revision, incompatible: false });
       // Re-read rather than keeping the raw client edits. The server canonicalises
       // (decode -> re-encode, and strips keys the schema does not declare), so the
       // stored values can legitimately differ from what was typed; showing the edits
