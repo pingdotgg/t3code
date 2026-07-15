@@ -19,7 +19,7 @@ import {
   type PluginSettingsSetResult,
   type PluginUpgradeConfirmResult,
 } from "@t3tools/contracts/plugin";
-import { fingerprintSettingsSchema } from "@t3tools/contracts/pluginSettings";
+import { fingerprintSettingsSchema } from "@t3tools/shared/pluginSettings";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";

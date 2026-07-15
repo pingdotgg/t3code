@@ -12,7 +12,7 @@ import type {
   PluginWebRpc,
 } from "@t3tools/plugin-sdk-web";
 import { PLUGIN_ID_PATTERN_SOURCE, type PluginId, type PluginInfo } from "@t3tools/contracts";
-import { findPluginSettingsSchemaViolations } from "@t3tools/contracts/pluginSettings";
+import { findPluginSettingsSchemaViolations } from "@t3tools/shared/pluginSettings";
 import { Atom } from "effect/unstable/reactivity";
 import { Component, createElement, useEffect, useRef, type ErrorInfo, type ReactNode } from "react";
 
