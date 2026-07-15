@@ -56,6 +56,59 @@ export interface PluginSettingsSchemaViolation {
  * Not a security control: a fingerprint match means "same shape", not "same
  * plugin". It exists to make incompatibility detectable and recoverable.
  */
+/**
+ * JSON Schema keys that describe how a field is PRESENTED, not what it accepts.
+ *
+ * Changing any of these cannot invalidate stored values, so they must not affect the
+ * fingerprint — a documentation-only plugin update would otherwise mark every user's
+ * settings incompatible and brick their configuration.
+ */
+const PRESENTATION_KEYS = new Set([
+  "description",
+  "title",
+  "examples",
+  "$comment",
+  "deprecated",
+  "readOnly",
+  "writeOnly",
+]);
+
+/**
+ * Strips presentation keys and sorts remaining keys, recursively.
+ *
+ * Keeps everything that constrains what decodes — `type`, `enum`, `const`, `format`,
+ * `pattern`, bounds, `items`, nested `properties`. An earlier version projected each
+ * field to its primitive `type` alone, which was TOO aggressive in the other
+ * direction: `Schema.String`, `Literals(["a","b"])` and `Literals(["a","c"])` all
+ * fingerprinted identically despite accepting different values, so a change between
+ * them went undetected. Sorting makes key order irrelevant without discarding meaning.
+ */
+const isEmptyObject = (value: unknown): boolean =>
+  typeof value === "object" &&
+  value !== null &&
+  !Array.isArray(value) &&
+  Object.keys(value).length === 0;
+
+const canonicalizeJsonSchema = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    // Drop members that reduced to nothing: an annotation-only allOf member becomes
+    // `{}` once its presentation keys are stripped.
+    return value.map(canonicalizeJsonSchema).filter((member) => !isEmptyObject(member));
+  }
+  if (typeof value !== "object" || value === null) return value;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([key]) => !PRESENTATION_KEYS.has(key))
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+    .map(([key, nested]) => [key, canonicalizeJsonSchema(nested)] as const)
+    // Effect renders annotations as `allOf: [{ description }]`, so stripping the
+    // inner keys leaves `allOf: []` — which would still differ from a field that
+    // never carried an annotation. Drop containers that emptied out, so a
+    // description-only edit is genuinely invisible.
+    .filter(([, nested]) => !(Array.isArray(nested) && nested.length === 0))
+    .filter(([, nested]) => !isEmptyObject(nested));
+  return Object.fromEntries(entries);
+};
+
 export const fingerprintSettingsSchema = (schema: SettingsSchema): string => {
   try {
     const root = Schema.toJsonSchemaDocument(schema).schema as Record<string, unknown>;
@@ -84,7 +137,7 @@ export const fingerprintSettingsSchema = (schema: SettingsSchema): string => {
       .sort()
       .map((key) => ({
         key,
-        type: jsonTypeOf(properties[key]) ?? "unknown",
+        schema: canonicalizeJsonSchema(properties[key]),
         required: required.has(key),
       }));
     return JSON.stringify(canonical);
