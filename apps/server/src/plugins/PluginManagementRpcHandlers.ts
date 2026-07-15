@@ -223,10 +223,23 @@ export const make = Effect.fn("PluginManagementRpcHandlers.make")(function* () {
       const currentFingerprint = fingerprintSettingsSchema(declared.value.schema);
       const staleShape =
         draft.schemaFingerprint !== null && draft.schemaFingerprint !== currentFingerprint;
+
+      // Also DECODE, not just compare fingerprints. A row can carry the current
+      // fingerprint and still be invalid — e.g. `{ baseUrl: 42 }` written before a
+      // check tightened, or edited out of band. Reporting incompatible: false for it
+      // would tell the form everything is fine while the plugin's own read fails.
+      const decodes =
+        draft.revision === 0
+          ? true
+          : yield* Schema.decodeUnknownEffect(declared.value.schema)(draft.values).pipe(
+              Effect.as(true),
+              Effect.orElseSucceed(() => false),
+            );
+
       return {
         values: draft.values,
         revision: draft.revision,
-        incompatible: draft.incompatible || staleShape,
+        incompatible: draft.incompatible || staleShape || !decodes,
         declared: true,
       } satisfies PluginSettingsGetResult;
     });
@@ -262,10 +275,26 @@ export const make = Effect.fn("PluginManagementRpcHandlers.make")(function* () {
         ),
       );
 
+      // Strip anything not declared by the schema, on the HOST side.
+      //
+      // decode→re-encode is NOT sufficient on its own: `parseOptions` is a schema
+      // ANNOTATION, so a plugin can declare
+      // `{ parseOptions: { onExcessProperty: "preserve" } }` and carry arbitrary
+      // client-supplied keys straight through both operations into storage. (An
+      // earlier commit claimed unknown keys could not persist; that was wrong —
+      // a reviewer proved it with a live probe.) Filtering to the declared field
+      // keys makes the guarantee the host's, not the plugin's to opt out of.
+      const declaredKeys = new Set(Object.keys(declared.value.schema.fields));
+      const canonical = Object.fromEntries(
+        Object.entries(encoded as Readonly<Record<string, unknown>>).filter(([key]) =>
+          declaredKeys.has(key),
+        ),
+      );
+
       const revision = yield* settingsStore
         .write({
           pluginId: input.pluginId,
-          values: encoded as Readonly<Record<string, unknown>>,
+          values: canonical,
           schemaFingerprint: fingerprintSettingsSchema(declared.value.schema),
           expectedRevision: input.expectedRevision,
         })

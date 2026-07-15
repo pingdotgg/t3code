@@ -386,6 +386,22 @@ const makeHostApi = (input: {
     const read = Effect.gen(function* () {
       const draft = yield* input.deps.settingsStore.readDraft(input.pluginId);
 
+      // NEVER hand a plugin defaults derived from unreadable storage.
+      //
+      // readDraft deliberately never fails — the WEB form must open on corrupt data
+      // so the user can repair it. But that means a corrupt row, or ANY SQL read
+      // failure, arrives here as an empty draft; decoding `{}` against a schema with
+      // defaulted fields would then hand the plugin those defaults as if they were
+      // the user's configuration. A plugin acting on "defaults" during a database
+      // failure is worse than a plugin that fails loudly.
+      if (draft.incompatible) {
+        return yield* Effect.fail({
+          _tag: "PluginSettingsInvalidStored" as const,
+          pluginId: input.pluginId,
+          message: `Plugin ${input.pluginId} settings could not be read from storage.`,
+        });
+      }
+
       // Reject drift EXPLICITLY rather than relying on decode to notice.
       //
       // Decode catches an incompatible shape in the common case, but not always: a
