@@ -30,6 +30,10 @@ const runtimeMock = vi.hoisted(() => {
     clientStartGate: null as Promise<void> | null,
     clientStartError: null as Error | null,
     stopErrors: [] as Error[],
+    responseContent: {
+      subject: "Add change",
+      body: "",
+    } as Record<string, unknown>,
   };
 
   return {
@@ -41,6 +45,10 @@ const runtimeMock = vi.hoisted(() => {
       state.clientStartGate = null;
       state.clientStartError = null;
       state.stopErrors = [];
+      state.responseContent = {
+        subject: "Add change",
+        body: "",
+      };
     },
   };
 });
@@ -66,10 +74,7 @@ vi.mock("../provider/copilotRuntime.ts", async () => {
           runtimeMock.state.sessionConfigs.push(config);
           const sendAndWait = vi.fn(async () => ({
             data: {
-              content: JSON.stringify({
-                subject: "Add change",
-                body: "",
-              }),
+              content: JSON.stringify(runtimeMock.state.responseContent),
             },
           }));
           const disconnect = vi.fn(async () => undefined);
@@ -325,10 +330,13 @@ it.layer(CopilotTextGenerationTestLayer)("CopilotTextGeneration", (it) => {
     }),
   );
 
-  it.effect("generates local thread title fallbacks without starting a Copilot SDK session", () =>
+  it.effect("generates summarized thread titles through Copilot", () =>
     Effect.gen(function* () {
       const textGeneration = yield* makeCopilotTextGeneration(defaultCopilotSettings);
       const modelSelection = createModelSelection(ProviderInstanceId.make("copilot"), "gpt-4.1");
+      runtimeMock.state.responseContent = {
+        title: "Fix reconnect startup",
+      };
 
       const result = yield* textGeneration.generateThreadTitle({
         cwd: process.cwd(),
@@ -336,9 +344,17 @@ it.layer(CopilotTextGenerationTestLayer)("CopilotTextGeneration", (it) => {
         modelSelection,
       });
 
-      expect(result.title).toBe("Investigate Copilot thread startup errors after...");
-      expect(runtimeMock.state.createdClients).toHaveLength(0);
-      expect(runtimeMock.state.sessions).toHaveLength(0);
+      expect(result.title).toBe("Fix reconnect startup");
+      expect(runtimeMock.state.createdClients).toHaveLength(1);
+      expect(runtimeMock.state.sessions).toHaveLength(1);
+      expect(runtimeMock.state.sessions[0]?.sendAndWait).toHaveBeenCalledWith(
+        expect.objectContaining({
+          prompt: expect.stringContaining(
+            "Title should summarize the user's request, not restate it verbatim.",
+          ),
+        }),
+        180_000,
+      );
     }),
   );
 });

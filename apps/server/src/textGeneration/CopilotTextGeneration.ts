@@ -30,6 +30,7 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import {
@@ -46,7 +47,8 @@ const COPILOT_TEXT_GENERATION_IDLE_TTL = "30 seconds";
 type CopilotTextGenerationOperation =
   | "generateCommitMessage"
   | "generatePrContent"
-  | "generateBranchName";
+  | "generateBranchName"
+  | "generateThreadTitle";
 type CopilotReasoningEffort = NonNullable<SessionConfig["reasoningEffort"]>;
 type CopilotContextTier = NonNullable<SessionConfig["contextTier"]>;
 
@@ -104,16 +106,6 @@ function copilotTextClientKey(input: {
     binaryPath: trimOrUndefined(input.settings.binaryPath) ?? null,
     serverUrl: trimOrUndefined(input.settings.serverUrl) ?? null,
   });
-}
-
-function copilotThreadTitleFallback(input: {
-  readonly message: string;
-  readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
-}): TextGeneration.ThreadTitleGenerationResult {
-  const attachmentName = input.attachments?.[0]?.name;
-  const title =
-    input.message.trim() || (attachmentName ? `Image: ${attachmentName}` : "New thread");
-  return makeThreadTitleGenerationResult({ title });
 }
 
 export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(function* (
@@ -529,9 +521,23 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
       );
     });
 
-  const generateThreadTitle: TextGeneration.TextGeneration["Service"]["generateThreadTitle"] = (
-    input,
-  ) => Effect.succeed(copilotThreadTitleFallback(input));
+  const generateThreadTitle: TextGeneration.TextGeneration["Service"]["generateThreadTitle"] =
+    Effect.fn("CopilotTextGeneration.generateThreadTitle")(function* (input) {
+      const { prompt, outputSchema } = buildThreadTitlePrompt({
+        message: input.message,
+        attachments: input.attachments,
+      });
+      const generated = yield* runCopilotJson({
+        operation: "generateThreadTitle",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+        attachments: input.attachments,
+      });
+
+      return makeThreadTitleGenerationResult(generated);
+    });
 
   return {
     generateCommitMessage,
