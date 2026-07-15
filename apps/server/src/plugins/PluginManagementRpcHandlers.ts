@@ -204,10 +204,15 @@ export const make = Effect.fn("PluginManagementRpcHandlers.make")(function* () {
   const declaredSettings = (pluginId: PluginSettingsGetInput["pluginId"]) =>
     Effect.gen(function* () {
       const runtime = yield* registry.get(pluginId);
-      const fromRuntime = Option.flatMap(runtime, (value) =>
-        value.settings === undefined ? Option.none() : Option.some(value.settings),
-      );
-      if (Option.isSome(fromRuntime)) return fromRuntime;
+      if (Option.isSome(runtime)) {
+        // A LIVE runtime is authoritative, including when it declares no settings.
+        // Falling through to the cached declaration meant an upgrade that REMOVED
+        // settings (v1 declares them, active v2 does not) left v1's schema readable
+        // and writable from the stale map.
+        return Option.flatMap(runtime, (value) =>
+          value.settings === undefined ? Option.none() : Option.some(value.settings),
+        );
+      }
       const fromDeclaration = yield* settingsStore.declaredSchema(pluginId);
       if (Option.isNone(fromDeclaration)) return Option.none();
 
@@ -226,9 +231,14 @@ export const make = Effect.fn("PluginManagementRpcHandlers.make")(function* () {
       // the form would say the plugin has no settings, exactly when the user is
       // trying to repair one that does.
       const lockfile = yield* store.readLockfile.pipe(Effect.mapError(lockfileError));
-      const installed =
-        (lockfile.plugins as Readonly<Record<string, unknown>>)[pluginId] !== undefined;
-      if (!installed) return Option.none();
+      const entry = (
+        lockfile.plugins as Readonly<Record<string, { readonly state?: string } | undefined>>
+      )[pluginId];
+      // `pending-remove` is an uninstall in progress: the entry survives until
+      // reconcile removes it, so "any entry" would keep accepting settings for a
+      // plugin the user has already asked to delete — the same recreate the lockfile
+      // check exists to stop, just inside a narrower window.
+      if (entry === undefined || entry.state === "pending-remove") return Option.none();
       return Option.map(fromDeclaration, (schema) => ({ schema }) as never);
     });
 

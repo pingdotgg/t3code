@@ -917,15 +917,20 @@ export const make = Effect.fn("PluginHost.make")(function* () {
         // fails and no runtime is ever put — so a settings RPC that resolved the
         // schema only from live runtimes would report "no settings declared" and the
         // repair UI would be unreachable exactly when it is needed.
-        if (definition.settings !== undefined) {
-          yield* settingsStore.noteDeclaredSchema(pluginId, definition.settings.schema as never);
-        }
+        // VALIDATE before caching the declaration. Caching first meant a plugin that
+        // fails validation — no `settings` capability, or no web surface to render the
+        // form on — still populated the map and could serve settings RPCs for a schema
+        // the host had just rejected. Validation does not depend on the cache, and the
+        // repair path only needs the declaration once the schema itself is legal.
         yield* validateSettingsDescriptor(
           pluginId,
           definition.settings,
           manifest.capabilities,
           manifest.entries.web !== undefined,
         );
+        if (definition.settings !== undefined) {
+          yield* settingsStore.noteDeclaredSchema(pluginId, definition.settings.schema as never);
+        }
         const { api: hostApi, teardown: hostApiTeardown } = makeHostApiForDefinition(
           definition.settings,
         );
