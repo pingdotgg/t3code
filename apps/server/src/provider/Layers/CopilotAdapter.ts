@@ -998,7 +998,10 @@ function settlePendingPermissionHandlers(
   });
 }
 
-function settlePendingUserInputs(context: CopilotSessionContext): Effect.Effect<void, never> {
+function settlePendingUserInputs(
+  context: CopilotSessionContext,
+  onBindingSettled?: (binding: PendingUserInputBinding) => Effect.Effect<void>,
+): Effect.Effect<void, never> {
   return Effect.gen(function* () {
     for (const handlers of context.pendingUserInputHandlersBySignature.values()) {
       for (const handler of handlers) {
@@ -1008,10 +1011,13 @@ function settlePendingUserInputs(context: CopilotSessionContext): Effect.Effect<
     context.pendingUserInputHandlersBySignature.clear();
     context.pendingUserInputEventsBySignature.clear();
 
-    for (const binding of context.pendingUserInputBindings.values()) {
+    for (const [requestId, binding] of context.pendingUserInputBindings.entries()) {
+      context.pendingUserInputBindings.delete(requestId);
       yield* Deferred.succeed(binding.deferred, EMPTY_USER_INPUT_RESPONSE).pipe(Effect.ignore);
+      if (onBindingSettled) {
+        yield* onBindingSettled(binding).pipe(Effect.ignore);
+      }
     }
-    context.pendingUserInputBindings.clear();
   });
 }
 
@@ -1895,6 +1901,24 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       },
     });
   };
+
+  const emitUserInputResolved = (
+    context: CopilotSessionContext,
+    binding: PendingUserInputBinding,
+    answers: ProviderUserInputAnswers,
+    raw?: SessionEvent,
+  ): Effect.Effect<void> =>
+    emit({
+      ...createBaseEvent({
+        threadId: context.threadId,
+        requestId: binding.requestId,
+        raw,
+      }),
+      type: "user-input.resolved",
+      payload: {
+        answers,
+      },
+    });
 
   const bindPermissionRequests = (
     context: CopilotSessionContext,
@@ -2967,17 +2991,9 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           return;
         }
         context.pendingUserInputBindings.delete(event.data.requestId);
-        await emitAsync({
-          ...createBaseEvent({
-            threadId: context.threadId,
-            requestId: binding.requestId,
-            raw: event,
-          }),
-          type: "user-input.resolved",
-          payload: {
-            answers: answersFromCompletedUserInput(event.data),
-          },
-        });
+        await runWithContext(
+          emitUserInputResolved(context, binding, answersFromCompletedUserInput(event.data), event),
+        );
         return;
       }
       case "exit_plan_mode.requested": {
@@ -3310,7 +3326,6 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           yield* copilotSdk.setModel(context, modelSelection.model, reasoningEffort, contextTier);
           updateProviderSession(context, {
             model: modelSelection.model,
-            ...(reasoningEffort || contextTier ? { status: "ready" } : {}),
           });
         }
         yield* syncSessionMode(context, mode);
@@ -3505,17 +3520,8 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     }
 
     const response = answerFromUserInput(binding, answers);
-    yield* emit({
-      ...createBaseEvent({
-        threadId: context.threadId,
-        requestId: binding.requestId,
-      }),
-      type: "user-input.resolved",
-      payload: {
-        answers: {
-          answer: response.answer,
-        },
-      },
+    yield* emitUserInputResolved(context, binding, {
+      answer: response.answer,
     });
     context.pendingUserInputBindings.delete(requestId);
     yield* Deferred.succeed(binding.deferred, response);
@@ -3547,7 +3553,11 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           yield* settlePendingPermissionHandlers(context, (binding) =>
             emitPermissionRequestResolved(context, binding, "reject", DENIED_PERMISSION_RESULT),
           );
-          yield* settlePendingUserInputs(context);
+          yield* settlePendingUserInputs(context, (binding) =>
+            emitUserInputResolved(context, binding, {
+              answer: EMPTY_USER_INPUT_RESPONSE.answer,
+            }),
+          );
           yield* copilotSdk.disconnect(context).pipe(Effect.ignore);
           yield* copilotSdk.stopClient(threadId, context.client).pipe(Effect.ignore({ log: true }));
 

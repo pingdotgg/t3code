@@ -392,7 +392,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
             {
               requestId: "mcp-oauth-token",
               serverName: "t3-code",
-              serverUrl: "http://127.0.0.1:43123/mcp",
+              serverUrl: `http://127.0.0.1:43123/mcp/?credential=${urlSecret}`,
               reason: "initial",
               resourceMetadata: `{"private":"${metadataSecret}"}`,
               staticClientConfig: {
@@ -1241,6 +1241,62 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         ],
       );
 
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("keeps an active session running while configuring a queued turn", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-queued-turn-configuration-state");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+      const activeTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "keep this turn active",
+        attachments: [],
+      });
+
+      runtimeMock.state.lastSession.rpc.mode.set.mockClear();
+      let markModeSetStarted!: () => void;
+      const modeSetStarted = new Promise<void>((resolve) => {
+        markModeSetStarted = resolve;
+      });
+      let releaseModeSet!: () => void;
+      const modeSetGate = new Promise<void>((resolve) => {
+        releaseModeSet = resolve;
+      });
+      runtimeMock.state.lastSession.rpc.mode.set.mockImplementationOnce(async () => {
+        markModeSetStarted();
+        await modeSetGate;
+      });
+
+      const queuedTurnFiber = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "queue a differently configured turn",
+          attachments: [],
+          interactionMode: "plan",
+          modelSelection: {
+            instanceId: COPILOT_INSTANCE_ID,
+            model: "claude-sonnet-4.6",
+            options: [{ id: "reasoningEffort", value: "high" }],
+          },
+        })
+        .pipe(Effect.forkChild);
+      yield* Effect.promise(() => modeSetStarted);
+
+      const sessionWhileConfiguring = (yield* adapter.listSessions()).at(0);
+      NodeAssert.equal(sessionWhileConfiguring?.status, "running");
+      NodeAssert.equal(String(sessionWhileConfiguring?.activeTurnId), String(activeTurn.turnId));
+
+      releaseModeSet();
+      yield* Fiber.join(queuedTurnFiber);
       yield* adapter.stopSession(threadId);
     }),
   );
@@ -3420,6 +3476,83 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       if (resolved?.type === "request.resolved") {
         NodeAssert.equal(resolved.payload.decision, "reject");
         NodeAssert.deepStrictEqual(resolved.payload.resolution, { kind: "reject" });
+      }
+    }),
+  );
+
+  it.effect("resolves open user input requests when stopping a session", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-stop-resolves-user-input");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* waitForSdkEventQueue();
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      NodeAssert.ok(config?.onEvent);
+      NodeAssert.ok(config.onUserInputRequest);
+      const requestId = "user-input-stop-open";
+      const request = {
+        question: "Should Copilot continue?",
+        choices: ["Continue", "Stop"],
+        allowFreeform: false,
+      };
+      const responsePromise = Promise.resolve(
+        config.onUserInputRequest(request, {
+          sessionId: runtimeMock.state.lastSession.sessionId,
+        }),
+      );
+      const timestamp = yield* nowIso;
+      config.onEvent({
+        id: "evt-copilot-stop-open-user-input",
+        timestamp,
+        parentId: null,
+        type: "user_input.requested",
+        data: {
+          requestId,
+          ...request,
+        },
+      } as SessionEvent);
+
+      let requested: ProviderRuntimeEvent | undefined;
+      for (let attempt = 0; attempt < 20 && requested === undefined; attempt += 1) {
+        yield* waitForSdkEventQueue();
+        requested = runtimeEvents.find(
+          (event) => event.type === "user-input.requested" && String(event.requestId) === requestId,
+        );
+      }
+      NodeAssert.equal(requested?.type, "user-input.requested");
+
+      yield* adapter.stopSession(threadId);
+      const response = yield* Effect.promise(() => responsePromise);
+      NodeAssert.deepStrictEqual(response, {
+        answer: "",
+        wasFreeform: true,
+      });
+
+      let resolved: ProviderRuntimeEvent | undefined;
+      for (let attempt = 0; attempt < 20 && resolved === undefined; attempt += 1) {
+        yield* waitForSdkEventQueue();
+        resolved = runtimeEvents.find(
+          (event) => event.type === "user-input.resolved" && String(event.requestId) === requestId,
+        );
+      }
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+
+      NodeAssert.equal(resolved?.type, "user-input.resolved");
+      if (resolved?.type === "user-input.resolved") {
+        NodeAssert.deepStrictEqual(resolved.payload.answers, { answer: "" });
       }
     }),
   );
