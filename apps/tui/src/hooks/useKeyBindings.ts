@@ -72,6 +72,8 @@ export interface KeyBindingActions {
   readonly onSelectConfirm: () => void;
   readonly onCloseSelect: () => void;
   readonly onOpenRuntime: () => void;
+  readonly onOpenModel: () => void;
+  readonly onOpenReasoning: () => void;
   // Turn diff viewer
   readonly onDiffPrev: () => void;
   readonly onDiffNext: () => void;
@@ -233,6 +235,10 @@ export function useKeyBindings(actions: KeyBindingActions): void {
     // ── New-thread dialog ───────────────────────────────────────────────────
     if (actions.mode === "new") {
       if (key.name === "escape") return actions.onCancelNew();
+      if (key.ctrl && key.shift && key.name.toLowerCase() === "m") return actions.onOpenModel();
+      if (key.ctrl && key.shift && key.name.toLowerCase() === "e") {
+        return actions.onOpenReasoning();
+      }
       if (actions.newNavigation && key.name === "up") {
         key.preventDefault();
         return actions.onNewPrev();
@@ -272,6 +278,10 @@ export function useKeyBindings(actions: KeyBindingActions): void {
     }
 
     // ── Compose mode (default) ──────────────────────────────────────────────
+    if (key.ctrl && key.shift && key.name.toLowerCase() === "m") return actions.onOpenModel();
+    if (key.ctrl && key.shift && key.name.toLowerCase() === "e") {
+      return actions.onOpenReasoning();
+    }
     if (key.ctrl && key.name === "e") return actions.onToggleTerminal();
     if (key.ctrl && key.name === "p") return actions.onToggleFocus();
     // Alt+↑/↓ jump thread-to-thread; ^↑/^↓ resize the prompt. Unmodified arrows

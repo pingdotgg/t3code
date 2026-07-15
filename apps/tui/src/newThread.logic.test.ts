@@ -59,7 +59,7 @@ describe("new-thread parity with the web UI", () => {
       validateNewThread({
         hasProject: true,
         message: "Implement it",
-        hasDefaultModel: true,
+        hasModelSelection: true,
         workspaceMode: "new-worktree",
         branch: null,
       }),
@@ -71,7 +71,7 @@ describe("new-thread parity with the web UI", () => {
       validateNewThread({
         hasProject: true,
         message: "  ",
-        hasDefaultModel: true,
+        hasModelSelection: true,
         workspaceMode: "current",
         branch: "main",
       }),

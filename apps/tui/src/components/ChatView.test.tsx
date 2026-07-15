@@ -47,6 +47,7 @@ function thread(activities: OrchestrationThread["activities"] = []): Orchestrati
     messages: [],
     activities,
     checkpoints: [],
+    modelSelection: { instanceId: "codex", model: "gpt-5" },
     proposedPlans: [],
     hasMoreActivities: false,
   } as unknown as OrchestrationThread;
@@ -75,12 +76,23 @@ function fakeClient({
   sendReply = () => Promise.resolve(),
   respondUserInput = () => Promise.resolve(),
   createThread = async () => "t-new" as never,
+  listModels = async () =>
+    [
+      {
+        instanceId: "codex",
+        model: "gpt-5",
+        label: "GPT-5",
+        providerLabel: "Codex",
+        capabilities: null,
+      },
+    ] as never,
 }: {
   readonly detail: OrchestrationThread;
   readonly shellSnapshot?: OrchestrationShellSnapshot;
   readonly sendReply?: TuiClient["sendReply"];
   readonly respondUserInput?: TuiClient["respondUserInput"];
   readonly createThread?: TuiClient["createThread"];
+  readonly listModels?: TuiClient["listModels"];
 }): {
   readonly client: TuiClient;
   readonly connect: () => void;
@@ -105,6 +117,7 @@ function fakeClient({
     sendReply,
     respondUserInput,
     createThread,
+    listModels,
     getServerConfig: async () => ({ settings: DEFAULT_SERVER_SETTINGS }) as never,
     listRefs: async () =>
       ({
@@ -217,6 +230,125 @@ describe("ChatView tmux scrolling", () => {
 });
 
 describe("ChatView acknowledged submissions", () => {
+  it("Given model and effort are changed, when the next reply is sent, then the complete selection is dispatched", async () => {
+    const calls: Array<Parameters<TuiClient["sendReply"]>> = [];
+    const fake = fakeClient({
+      detail: thread(),
+      listModels: async () =>
+        [
+          {
+            instanceId: "codex",
+            model: "gpt-5",
+            label: "GPT-5",
+            providerLabel: "Codex",
+            capabilities: null,
+          },
+          {
+            instanceId: "codex",
+            model: "gpt-5.1",
+            label: "GPT-5.1",
+            providerLabel: "Codex",
+            capabilities: {
+              optionDescriptors: [
+                {
+                  type: "select",
+                  id: "reasoningEffort",
+                  label: "Effort",
+                  options: [
+                    { id: "low", label: "Low", isDefault: true },
+                    { id: "high", label: "High" },
+                  ],
+                },
+                {
+                  type: "boolean",
+                  id: "fastMode",
+                  label: "Fast mode",
+                  currentValue: true,
+                },
+              ],
+            },
+          },
+        ] as never,
+      sendReply: async (...args) => {
+        calls.push(args);
+      },
+    });
+    const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
+      width: 110,
+      height: 28,
+    });
+
+    await selectThread(setup, fake.connect);
+    await React.act(async () => {
+      setup.mockInput.pressKey("k", { ctrl: true });
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("Type a command"));
+    await React.act(async () => {
+      await setup.mockInput.typeText("model");
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("Change model"));
+    await React.act(async () => {
+      setup.mockInput.pressEnter();
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("GPT-5.1"));
+    await React.act(async () => {
+      setup.mockInput.pressArrow("down");
+      await setup.renderOnce();
+    });
+    await React.act(async () => {
+      setup.mockInput.pressEnter();
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("model gpt-5.1"));
+    await React.act(async () => {
+      setup.mockInput.pressKey("k", { ctrl: true });
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("Type a command"));
+    await React.act(async () => {
+      await setup.mockInput.typeText("effort");
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("Change reasoning effort"));
+    await React.act(async () => {
+      setup.mockInput.pressEnter();
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("effort ▸") && frame.includes("High"));
+    await React.act(async () => {
+      setup.mockInput.pressArrow("down");
+      await setup.renderOnce();
+    });
+    await React.act(async () => {
+      setup.mockInput.pressEnter();
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("effort high"));
+    await React.act(async () => {
+      await setup.mockInput.typeText("use the selected model");
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("use the selected model"));
+    await React.act(async () => {
+      setup.mockInput.pressEnter();
+      await setup.renderOnce();
+    });
+    await setup.waitFor(() => calls.length === 1);
+
+    expect(calls[0]?.[3]).toEqual({
+      instanceId: "codex",
+      model: "gpt-5.1",
+      options: [
+        { id: "fastMode", value: true },
+        { id: "reasoningEffort", value: "high" },
+      ],
+    } as never);
+    setup.renderer.destroy();
+  });
+
   it("Given a reply is in flight, when Enter repeats and the request fails, then one request is made and the exact draft remains", async () => {
     const request = deferred<void>();
     const calls: Array<{ readonly text: string }> = [];
@@ -356,6 +488,25 @@ describe("ChatView new-thread parity", () => {
     const calls: Array<Parameters<TuiClient["createThread"]>[0]> = [];
     const fake = fakeClient({
       detail: thread(),
+      listModels: async () =>
+        [
+          {
+            instanceId: "codex",
+            model: "gpt-5",
+            label: "GPT-5",
+            providerLabel: "Codex",
+            capabilities: {
+              optionDescriptors: [
+                {
+                  type: "select",
+                  id: "reasoningEffort",
+                  label: "Effort",
+                  options: [{ id: "medium", label: "Medium", isDefault: true }],
+                },
+              ],
+            },
+          },
+        ] as never,
       createThread: async (input) => {
         calls.push(input);
         return request.promise;
@@ -371,7 +522,9 @@ describe("ChatView new-thread parity", () => {
       setup.mockInput.pressKey("n", { ctrl: true });
       await setup.renderOnce();
     });
-    await setup.waitForFrame((frame) => frame.includes("new thread"));
+    await setup.waitForFrame(
+      (frame) => frame.includes("new thread") && frame.includes("effort ▸ medium"),
+    );
     await React.act(async () => {
       await setup.mockInput.typeText("preserve this new task");
       await setup.renderOnce();
@@ -385,6 +538,7 @@ describe("ChatView new-thread parity", () => {
     await setup.waitFor(() => calls.length > 0);
 
     expect(calls).toHaveLength(1);
+    expect(calls[0]?.modelSelection.options).toEqual([{ id: "reasoningEffort", value: "medium" }]);
     await React.act(async () => {
       request.reject(new Error("offline"));
       await Promise.resolve();

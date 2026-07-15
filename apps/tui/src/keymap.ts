@@ -34,6 +34,8 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       { keys: "^↑/^↓", description: "Resize the prompt" },
       { keys: "^B / Shift+Tab", description: "Toggle plan / build mode" },
       { keys: "^O", description: "Runtime access picker" },
+      { keys: "Ctrl+Shift+M", description: "Model picker" },
+      { keys: "Ctrl+Shift+E", description: "Effort picker" },
       { keys: "^Y", description: "Implement the proposed plan" },
       { keys: "^A / ^R", description: "Approve / decline a request" },
       { keys: "^U", description: "Reopen a pending question" },

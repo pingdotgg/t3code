@@ -45,7 +45,7 @@ function ProviderModelPicker({
   return <Chip keyHint="model" label={model ?? "—"} muted={!model} onClick={onOpen} />;
 }
 
-/** Reasoning + plan/build mode + runtime access (web ComposerFooterModeControls). */
+/** Effort + plan/build mode + runtime access (web ComposerFooterModeControls). */
 function ComposerFooterModeControls({
   controls,
   onOpenReasoning,
@@ -60,7 +60,7 @@ function ComposerFooterModeControls({
   return (
     <>
       <Chip
-        keyHint="reasoning"
+        keyHint="effort"
         label={controls.reasoning ?? "—"}
         muted={!controls.reasoning}
         onClick={onOpenReasoning}
@@ -154,7 +154,7 @@ export const ComposerFooter = React.memo(function ComposerFooter({
   readonly onSend: () => void;
   readonly onSubmitAnswer: () => void;
 }): React.ReactNode {
-  // Order mirrors the web composer footer: model → reasoning → mode → access on
+  // Order mirrors the web composer footer: model → effort → mode → access on
   // the left, the primary action pushed to the right.
   return (
     <box flexDirection="row" marginTop={1} flexShrink={0}>

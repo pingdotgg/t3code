@@ -18,6 +18,8 @@ const base = {
   projectName: "Acme",
   interactionMode: "default",
   newRuntimeMode: "full-access",
+  newModel: "gpt-5",
+  newReasoning: "high",
   newBranch: null,
   newWorkspaceMode: "current",
   newWorkspaceLabel: "Project workspace",
@@ -57,7 +59,7 @@ const base = {
 } as const;
 
 async function frameOf(node: React.ReactNode): Promise<string> {
-  const t = await testRender(node, { width: 60, height: 8 });
+  const t = await testRender(node, { width: 60, height: 12 });
   await t.renderOnce();
   const frame = t.captureCharFrame();
   t.renderer.destroy();
@@ -118,7 +120,7 @@ describe("ChatComposer", () => {
     // The controls sit on a row framed by the composer's left/right border cells.
     const controlsRow = lines.find((line) => line.includes("model gpt-5")) ?? "";
     expect(controlsRow).toContain("model gpt-5");
-    expect(controlsRow).toContain("reasoning high");
+    expect(controlsRow).toContain("effort high");
     expect(controlsRow.trimStart().startsWith("│") || controlsRow.includes("│")).toBe(true);
     // model precedes the plan/build (^B) chip — matches the web footer order.
     expect(controlsRow.indexOf("model")).toBeLessThan(controlsRow.indexOf("^B"));
@@ -191,6 +193,8 @@ describe("ChatComposer", () => {
     expect(frame).toContain("Acme");
     expect(frame).toContain("approval-required");
     expect(frame).toContain("plan");
+    expect(frame).toContain("model ▸ gpt-5");
+    expect(frame).toContain("effort ▸ high");
     expect(frame).toContain("branch");
     expect(frame).toContain("Project workspace");
   });

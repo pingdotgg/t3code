@@ -6,6 +6,7 @@ import * as NodeFS from "node:fs";
 import {
   ApprovalRequestId,
   EnvironmentId,
+  type MessageId,
   MessageId as MessageIdSchema,
   type ModelSelection,
   NonNegativeInt,
@@ -16,7 +17,6 @@ import {
   OrchestrationProposedPlanId,
   type ProjectId,
   type ProviderApprovalDecision,
-  ProviderInstanceId,
   PositiveInt,
   type ProviderInteractionMode,
   type RuntimeMode,
@@ -69,12 +69,7 @@ import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 
 import { mergeVcsStatus } from "./gitActions.logic.ts";
 
-import {
-  flattenModelOptions,
-  type ModelOption,
-  type ReasoningChoices,
-  reasoningChoicesFor,
-} from "./models.ts";
+import { flattenModelOptions, type ModelOption } from "./models.ts";
 import { EnvironmentCacheStore } from "@t3tools/client-runtime/platform";
 import {
   type EnvironmentShellState,
@@ -143,6 +138,27 @@ export interface TuiCreateThreadInput {
   readonly worktreePath: string | null;
   readonly createWorktree: boolean;
   readonly startFromOrigin: boolean;
+}
+
+export function buildThreadReplyTurn(input: {
+  readonly thread: Pick<OrchestrationThread, "id" | "runtimeMode" | "interactionMode">;
+  readonly messageId: MessageId;
+  readonly text: string;
+  readonly attachments: ReadonlyArray<UploadChatImageAttachment>;
+  readonly modelSelection?: ModelSelection;
+}) {
+  return {
+    threadId: input.thread.id,
+    message: {
+      messageId: input.messageId,
+      role: "user" as const,
+      text: input.text,
+      attachments: [...input.attachments],
+    },
+    runtimeMode: input.thread.runtimeMode,
+    interactionMode: input.thread.interactionMode,
+    ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),
+  };
 }
 
 /** Build the web-compatible, server-cleaned-up bootstrap for a thread's first turn. */
@@ -419,6 +435,7 @@ export interface TuiClient {
     thread: Pick<OrchestrationThread, "id" | "runtimeMode" | "interactionMode">,
     text: string,
     attachments?: ReadonlyArray<UploadChatImageAttachment>,
+    modelSelection?: ModelSelection,
   ) => Promise<void>;
   readonly createThread: (input: TuiCreateThreadInput) => Promise<ThreadId>;
   readonly implementPlan: (
@@ -468,17 +485,6 @@ export interface TuiClient {
   readonly getServerConfig: () => Promise<ServerConfig>;
   /** Git refs available as base branches for a project's new worktree. */
   readonly listRefs: (cwd: string) => Promise<VcsListRefsResult>;
-  readonly setModel: (threadId: ThreadId, instanceId: string, model: string) => Promise<void>;
-  /** Reasoning/effort choices for a model (null if it exposes none). */
-  readonly getReasoningChoices: (
-    instanceId: string,
-    model: string,
-  ) => Promise<ReasoningChoices | null>;
-  readonly setReasoning: (
-    thread: Pick<OrchestrationThread, "id" | "modelSelection">,
-    descriptorId: string,
-    choiceId: string,
-  ) => Promise<void>;
   readonly terminalWrite: (threadId: ThreadId, terminalId: string, data: string) => Promise<void>;
   readonly terminalResize: (
     threadId: ThreadId,
@@ -714,16 +720,25 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
       return forkUnsub(stream);
     },
 
-    sendReply: (thread, text, attachments = []) =>
+    sendReply: (thread, text, attachments = [], modelSelection) =>
       runtime.runPromise(
         Effect.gen(function* () {
           const messageId = MessageIdSchema.make(yield* newId);
-          yield* startThreadTurn({
-            threadId: thread.id,
-            message: { messageId, role: "user", text, attachments: [...attachments] },
-            runtimeMode: thread.runtimeMode,
-            interactionMode: thread.interactionMode,
-          });
+          if (modelSelection) {
+            // Keep thread metadata and the active provider session in sync. The
+            // turn-level selection is what makes an existing session actually
+            // switch models; metadata alone only updates the persisted label.
+            yield* updateThreadMetadata({ threadId: thread.id, modelSelection });
+          }
+          yield* startThreadTurn(
+            buildThreadReplyTurn({
+              thread,
+              messageId,
+              text,
+              attachments,
+              ...(modelSelection ? { modelSelection } : {}),
+            }),
+          );
         }),
       ),
 
@@ -923,41 +938,6 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
           cwd,
           limit: PositiveInt.make(100),
         }),
-      ),
-
-    setModel: (threadId, instanceId, model) =>
-      runtime.runPromise(
-        updateThreadMetadata({
-          threadId,
-          modelSelection: {
-            instanceId: ProviderInstanceId.make(instanceId),
-            model: TrimmedNonEmptyString.make(model),
-          },
-        }).pipe(Effect.asVoid),
-      ),
-
-    getReasoningChoices: (instanceId, model) =>
-      runtime.runPromise(
-        request(WS_METHODS.serverGetConfig, {}).pipe(
-          Effect.map((config) => reasoningChoicesFor(config.providers, instanceId, model)),
-        ),
-      ),
-
-    setReasoning: (thread, descriptorId, choiceId) =>
-      runtime.runPromise(
-        updateThreadMetadata({
-          threadId: thread.id,
-          modelSelection: {
-            instanceId: thread.modelSelection.instanceId,
-            model: thread.modelSelection.model,
-            options: [
-              ...(thread.modelSelection.options ?? []).filter(
-                (option) => option.id !== descriptorId,
-              ),
-              { id: TrimmedNonEmptyString.make(descriptorId), value: choiceId },
-            ],
-          },
-        }).pipe(Effect.asVoid),
       ),
 
     terminalWrite: (threadId, terminalId, data) =>

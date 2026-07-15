@@ -79,13 +79,13 @@ export type NewThreadValidationError =
 export function validateNewThread(input: {
   readonly hasProject: boolean;
   readonly message: string;
-  readonly hasDefaultModel: boolean;
+  readonly hasModelSelection: boolean;
   readonly workspaceMode: NewThreadWorkspaceMode;
   readonly branch: string | null;
 }): NewThreadValidationError | null {
   if (!input.hasProject) return "missing-project";
   if (input.message.trim().length === 0) return "missing-message";
-  if (!input.hasDefaultModel) return "missing-model";
+  if (!input.hasModelSelection) return "missing-model";
   if (input.workspaceMode === "new-worktree" && !input.branch?.trim()) {
     return "missing-base-branch";
   }
@@ -99,7 +99,7 @@ export function newThreadValidationMessage(error: NewThreadValidationError): str
     case "missing-message":
       return "Describe the task before creating the thread.";
     case "missing-model":
-      return "Project has no default model — set one in the web UI first.";
+      return "Select a model before creating the thread.";
     case "missing-base-branch":
       return "Select a base branch before creating a new worktree.";
   }

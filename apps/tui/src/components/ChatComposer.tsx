@@ -174,6 +174,8 @@ export const ChatComposer = React.memo(function ChatComposer({
   projectName,
   interactionMode,
   newRuntimeMode,
+  newModel,
+  newReasoning,
   newBranch,
   newWorkspaceMode,
   newWorkspaceLabel,
@@ -218,6 +220,8 @@ export const ChatComposer = React.memo(function ChatComposer({
   readonly interactionMode: "default" | "plan";
   /** Runtime mode the new thread will start in (shown in the new-thread dialog). */
   readonly newRuntimeMode: string;
+  readonly newModel: string | null;
+  readonly newReasoning: string | null;
   readonly newBranch: string | null;
   readonly newWorkspaceMode: NewThreadWorkspaceMode;
   readonly newWorkspaceLabel: string;
@@ -337,6 +341,21 @@ export const ChatComposer = React.memo(function ChatComposer({
           </span>
           <span fg={palette.dim}>{" (^B)"}</span>
         </text>
+        <box flexDirection="row">
+          <box onMouseDown={onOpenModel}>
+            <text>
+              <span fg={palette.accent}>model ▸ </span>
+              <span fg={palette.text}>{newModel ?? "select model"}</span>
+            </text>
+          </box>
+          <text fg={palette.dim}>{" · "}</text>
+          <box onMouseDown={onOpenReasoning}>
+            <text>
+              <span fg={palette.accent}>effort ▸ </span>
+              <span fg={palette.text}>{newReasoning ?? "—"}</span>
+            </text>
+          </box>
+        </box>
         <NewThreadTextField
           label="message"
           value={draft}

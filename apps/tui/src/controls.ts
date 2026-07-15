@@ -1,4 +1,4 @@
-import type { ProviderInteractionMode, RuntimeMode } from "@t3tools/contracts";
+import type { ModelSelection, ProviderInteractionMode, RuntimeMode } from "@t3tools/contracts";
 
 import type { OrchestrationThread } from "./connection.ts";
 
@@ -49,7 +49,7 @@ export function interactionModeLabel(mode: ProviderInteractionMode): string {
 // (apps/web TraitsPicker); read any of them.
 const REASONING_OPTION_IDS = new Set(["reasoningEffort", "effort", "reasoning"]);
 
-type ModelSelectionLike = OrchestrationThread["modelSelection"] | null | undefined;
+type ModelSelectionLike = ModelSelection | null | undefined;
 
 /** The chosen reasoning effort on a model selection, or null. */
 export function getReasoningEffort(selection: ModelSelectionLike): string | null {
@@ -69,11 +69,15 @@ export interface ComposerControls {
 }
 
 /** The current composer state to render as chips, derived from the thread. */
-export function composerControls(detail: OrchestrationThread | null): ComposerControls {
+export function composerControls(
+  detail: OrchestrationThread | null,
+  modelSelection: ModelSelectionLike = detail?.modelSelection,
+  resolvedReasoning?: string | null,
+): ComposerControls {
   return {
     interactionMode: detail?.interactionMode ?? "default",
     runtimeMode: detail?.runtimeMode ?? "full-access",
-    model: detail?.modelSelection?.model ?? null,
-    reasoning: getReasoningEffort(detail?.modelSelection),
+    model: modelSelection?.model ?? null,
+    reasoning: resolvedReasoning ?? getReasoningEffort(modelSelection),
   };
 }

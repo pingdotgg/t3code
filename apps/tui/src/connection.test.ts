@@ -1,12 +1,13 @@
 import { describe, expect, it } from "bun:test";
 
 import {
+  buildThreadReplyTurn,
   buildThreadCreationBootstrap,
   makeTuiClient,
   type TuiCreateThreadInput,
   type TuiRuntime,
 } from "./connection.ts";
-import type { ThreadId } from "@t3tools/contracts";
+import { MessageId, ProviderInstanceId, type ThreadId } from "@t3tools/contracts";
 
 // A fake runtime that just counts runFork calls. Each cold warm-thread scope does
 // one runFork(Effect.scoped(...)); reuse does none; eviction does one more
@@ -103,5 +104,28 @@ describe("new-thread bootstrap", () => {
     expect(bootstrap.createThread?.worktreePath).toBe("/workspace/current");
     expect(bootstrap.prepareWorktree).toBeUndefined();
     expect(bootstrap.runSetupScript).toBeUndefined();
+  });
+});
+
+describe("reply turn model selection", () => {
+  it("Given the composer changes model and effort, then the next turn explicitly carries both", () => {
+    const modelSelection = {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.1",
+      options: [{ id: "reasoningEffort", value: "high" }],
+    } as const;
+    const turn = buildThreadReplyTurn({
+      thread: {
+        id: tid("A"),
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      },
+      messageId: MessageId.make("message-1"),
+      text: "Use this model",
+      attachments: [],
+      modelSelection,
+    });
+
+    expect(turn.modelSelection).toEqual(modelSelection);
   });
 });

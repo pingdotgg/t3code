@@ -2,6 +2,7 @@ import { type ScrollBoxRenderable, type SelectOption, SyntaxStyle } from "@opent
 import {
   DEFAULT_SERVER_SETTINGS,
   type GitStackedAction,
+  type ModelSelection,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type ProviderInteractionMode,
   type RuntimeMode,
@@ -39,7 +40,14 @@ import { useKittyGraphicsSupport } from "../hooks/useKittyGraphicsSupport.ts";
 import { latestActionableProposedPlan } from "../proposedPlan.ts";
 import { createStore } from "../store.ts";
 import { statusGlyphColor, usePalette } from "../theme.ts";
-import { currentModelIndex } from "../models.ts";
+import {
+  currentModelIndex,
+  type ModelOption,
+  modelSelectionForOption,
+  reasoningChoicesForSelection,
+  resolveModelSelection,
+  withModelSelectionOption,
+} from "../models.ts";
 import { isWorking, revertableCheckpoints } from "../timeline.ts";
 import { buildUserInputAnswers, derivePendingUserInputs } from "../userInput.ts";
 import { buildRows, selectionEquals } from "./Sidebar.logic.ts";
@@ -59,7 +67,6 @@ import { ConfirmDeleteMenu, RevertMenu } from "./ThreadOverlays.tsx";
 import { type TerminalInfo, ThreadTerminalDrawer } from "./ThreadTerminalDrawer.tsx";
 import {
   composerControls,
-  getReasoningEffort,
   RUNTIME_MODE_META,
   RUNTIME_MODES,
   runtimeModeLabel,
@@ -105,6 +112,7 @@ export function ChatView({
   const store = React.useMemo(() => createStore(client), [client]);
   const syntaxStyle = React.useMemo(() => SyntaxStyle.create(), []);
   const state = React.useSyncExternalStore(store.subscribe, store.getState);
+  const [modelOptions, setModelOptions] = React.useState<ReadonlyArray<ModelOption>>([]);
 
   React.useEffect(() => {
     store.start();
@@ -121,6 +129,21 @@ export function ChatView({
       .catch(() => {
         // Defaults remain usable while disconnected or on an older server.
       });
+    return () => {
+      cancelled = true;
+    };
+  }, [client]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    void client.listModels().then(
+      (models) => {
+        if (!cancelled) setModelOptions(models);
+      },
+      () => {
+        // The pickers retry on demand; the rest of the TUI remains usable.
+      },
+    );
     return () => {
       cancelled = true;
     };
@@ -167,11 +190,18 @@ export function ChatView({
   // A native-<select> picker for the composer controls (model / runtime / reasoning).
   const [picker, setPicker] = React.useState<{
     readonly kind: "model" | "runtime" | "reasoning";
+    readonly target: "thread" | "new";
     readonly title: string;
     readonly status: SelectStatus;
     readonly options: ReadonlyArray<SelectOption>;
     readonly selectedIndex: number;
   } | null>(null);
+  // Model and effort are composer drafts, just like the web UI. They are sent
+  // together with the next turn instead of mutating a live session out of band.
+  const [threadModelSelections, setThreadModelSelections] = React.useState<
+    ReadonlyMap<string, ModelSelection>
+  >(() => new Map());
+  const [newModelSelection, setNewModelSelection] = React.useState<ModelSelection | null>(null);
   // Pending user-input form state.
   const [userInputDeferred, setUserInputDeferred] = React.useState(false);
   const [uiQuestionIndex, setUiQuestionIndex] = React.useState(0);
@@ -258,6 +288,23 @@ export function ChatView({
     [state.shell, state.expanded, state.loadedInFull, selectedThreadId, state.filter],
   );
   const detail = state.detail;
+  const threadModelSelection = React.useMemo(
+    () =>
+      detail
+        ? (threadModelSelections.get(detail.id) ??
+          resolveModelSelection(modelOptions, detail.modelSelection) ??
+          detail.modelSelection)
+        : null,
+    [detail, modelOptions, threadModelSelections],
+  );
+  const threadReasoning = React.useMemo(
+    () => reasoningChoicesForSelection(modelOptions, threadModelSelection),
+    [modelOptions, threadModelSelection],
+  );
+  const resolvedNewModelSelection = React.useMemo(
+    () => resolveModelSelection(modelOptions, newModelSelection) ?? newModelSelection,
+    [modelOptions, newModelSelection],
+  );
 
   React.useEffect(() => {
     if (focus !== "new") return;
@@ -303,7 +350,11 @@ export function ChatView({
           worktreePath: detail.worktreePath,
         }
       : null;
-  const controls = composerControls(detail);
+  const controls = composerControls(detail, threadModelSelection, threadReasoning?.selectedId);
+  const newReasoning = React.useMemo(
+    () => reasoningChoicesForSelection(modelOptions, resolvedNewModelSelection),
+    [modelOptions, resolvedNewModelSelection],
+  );
   // The agent is actively running a turn — show the red stop affordance (mirrors
   // the web composer swapping its send button for a stop button while running).
   const working = !!detail && isWorking(detail);
@@ -408,6 +459,12 @@ export function ChatView({
       defaultEnvironmentMode: newThreadSettings.defaultThreadEnvMode,
     });
     setProjectIndex(context.projectIndex);
+    const project = projects[context.projectIndex];
+    setNewModelSelection(
+      resolveModelSelection(modelOptions, project?.defaultModelSelection) ??
+        project?.defaultModelSelection ??
+        null,
+    );
     setNewRuntimeMode(detail?.runtimeMode ?? "full-access");
     setNewInteractionMode("default");
     setNewWorkspaceMode(context.workspaceMode);
@@ -438,6 +495,7 @@ export function ChatView({
     if (!detail) return;
     setPicker({
       kind: "runtime",
+      target: "thread",
       title: "access",
       status: "ready",
       options: RUNTIME_MODES.map((mode) => ({
@@ -450,25 +508,35 @@ export function ChatView({
   };
 
   const openModelPicker = () => {
-    if (!detail) return;
-    setPicker({ kind: "model", title: "model", status: "loading", options: [], selectedIndex: 0 });
+    const target = focus === "new" ? "new" : "thread";
+    const selection = target === "new" ? resolvedNewModelSelection : threadModelSelection;
+    if (target === "thread" && !detail) return;
+    setPicker({
+      kind: "model",
+      target,
+      title: "model",
+      status: "loading",
+      options: [],
+      selectedIndex: 0,
+    });
     void client
       .listModels()
-      .then((models) =>
+      .then((models) => {
+        setModelOptions(models);
         setPicker((current) => {
-          if (!current || current.kind !== "model") return current;
+          if (!current || current.kind !== "model" || current.target !== target) return current;
           return {
             ...current,
             status: models.length > 0 ? "ready" : "empty",
             options: models.map((model) => ({
               name: model.label,
               description: model.providerLabel,
-              value: `${model.instanceId} ${model.model}`,
+              value: JSON.stringify({ instanceId: model.instanceId, model: model.model }),
             })),
-            selectedIndex: currentModelIndex(models, detail.modelSelection ?? null),
+            selectedIndex: currentModelIndex(models, selection),
           };
-        }),
-      )
+        });
+      })
       .catch(() =>
         setPicker((current) =>
           current && current.kind === "model" ? { ...current, status: "error" } : current,
@@ -477,40 +545,44 @@ export function ChatView({
   };
 
   const openReasoningPicker = () => {
-    const selection = detail?.modelSelection;
-    if (!detail || !selection) {
+    const target = focus === "new" ? "new" : "thread";
+    const selection = target === "new" ? resolvedNewModelSelection : threadModelSelection;
+    if ((target === "thread" && !detail) || !selection) {
       store.setStatus("Select a model first.", "info");
       return;
     }
     setPicker({
       kind: "reasoning",
-      title: "reasoning",
+      target,
+      title: "effort",
       status: "loading",
       options: [],
       selectedIndex: 0,
     });
     void client
-      .getReasoningChoices(selection.instanceId, selection.model)
-      .then((result) =>
+      .listModels()
+      .then((models) => {
+        setModelOptions(models);
+        const resolvedSelection = resolveModelSelection(models, selection) ?? selection;
+        const result = reasoningChoicesForSelection(models, resolvedSelection);
         setPicker((current) => {
-          if (!current || current.kind !== "reasoning") return current;
+          if (!current || current.kind !== "reasoning" || current.target !== target) return current;
           if (!result || result.choices.length === 0) return { ...current, status: "empty" };
-          const currentEffort = getReasoningEffort(selection);
           return {
             ...current,
             status: "ready",
             options: result.choices.map((choice) => ({
               name: choice.label,
               description: choice.description ?? result.descriptorId,
-              value: `${result.descriptorId} ${choice.id}`,
+              value: JSON.stringify({ descriptorId: result.descriptorId, choiceId: choice.id }),
             })),
             selectedIndex: Math.max(
               0,
-              result.choices.findIndex((choice) => choice.id === currentEffort),
+              result.choices.findIndex((choice) => choice.id === result.selectedId),
             ),
           };
-        }),
-      )
+        });
+      })
       .catch(() =>
         setPicker((current) =>
           current && current.kind === "reasoning" ? { ...current, status: "error" } : current,
@@ -528,33 +600,55 @@ export function ChatView({
   const applyPicker = (index: number) => {
     const current = picker;
     setPicker(null);
-    if (!current || !detail) return;
+    if (!current) return;
     const option = current.options[index];
     const value = typeof option?.value === "string" ? option.value : null;
     const kind = current.kind;
     if (!value) return;
     if (kind === "runtime") {
+      if (!detail) return;
       const mode = value as RuntimeMode;
       void client
         .setRuntimeMode(detail.id, mode)
         .catch((error) => store.setStatus(`access change failed: ${String(error)}`, "error"));
       store.setStatus(`Access → ${runtimeModeLabel(mode)}`, "success");
     } else if (kind === "model") {
-      const [instanceId, model] = value.split(" ");
-      if (instanceId && model) {
-        void client
-          .setModel(detail.id, instanceId, model)
-          .catch((error) => store.setStatus(`model change failed: ${String(error)}`, "error"));
-        store.setStatus(`Model → ${model}`, "success");
+      const parsed = JSON.parse(value) as { instanceId?: string; model?: string };
+      const model = modelOptions.find(
+        (candidate) =>
+          candidate.instanceId === parsed.instanceId && candidate.model === parsed.model,
+      );
+      if (!model) return;
+      const selection = modelSelectionForOption(model);
+      if (current.target === "new") setNewModelSelection(selection);
+      else if (detail) {
+        setThreadModelSelections((previous) => {
+          const next = new Map(previous);
+          next.set(detail.id, selection);
+          return next;
+        });
       }
+      store.setStatus(`Model → ${model.model} (next turn)`, "success");
     } else if (kind === "reasoning") {
-      const [descriptorId, choiceId] = value.split(" ");
-      if (descriptorId && choiceId) {
-        void client
-          .setReasoning(detail, descriptorId, choiceId)
-          .catch((error) => store.setStatus(`reasoning change failed: ${String(error)}`, "error"));
-        store.setStatus(`Reasoning → ${choiceId}`, "success");
+      const parsed = JSON.parse(value) as { descriptorId?: string; choiceId?: string };
+      if (!parsed.descriptorId || !parsed.choiceId) return;
+      if (current.target === "new" && resolvedNewModelSelection) {
+        setNewModelSelection(
+          withModelSelectionOption(resolvedNewModelSelection, parsed.descriptorId, parsed.choiceId),
+        );
+      } else if (detail && threadModelSelection) {
+        const selection = withModelSelectionOption(
+          threadModelSelection,
+          parsed.descriptorId,
+          parsed.choiceId,
+        );
+        setThreadModelSelections((previous) => {
+          const next = new Map(previous);
+          next.set(detail.id, selection);
+          return next;
+        });
       }
+      store.setStatus(`Effort → ${parsed.choiceId} (next turn)`, "success");
     }
   };
 
@@ -607,7 +701,7 @@ export function ChatView({
   const attachmentPreviewHeight = composerImages.length === 0 ? 0 : inlineImagesSupported ? 4 : 1;
   const composerHeight =
     focus === "new"
-      ? 9
+      ? 10
       : focus === "rename" || focus === "filter" || focus === "commit"
         ? 5
         : popoverOpen
@@ -694,7 +788,7 @@ export function ChatView({
     setReplySubmissionPending(true);
     store.setStatus("Sending reply…", "busy");
     void Promise.resolve()
-      .then(() => client.sendReply(detail, text, attachments))
+      .then(() => client.sendReply(detail, text, attachments, threadModelSelection ?? undefined))
       .then(
         () => {
           replySubmissionPendingRef.current = false;
@@ -776,7 +870,7 @@ export function ChatView({
     const validationError = validateNewThread({
       hasProject: !!project,
       message,
-      hasDefaultModel: !!project?.defaultModelSelection,
+      hasModelSelection: !!resolvedNewModelSelection,
       workspaceMode: newWorkspaceMode,
       branch: newBranch,
     });
@@ -791,7 +885,7 @@ export function ChatView({
       store.setStatus(newThreadValidationMessage(validationError), "error");
       return;
     }
-    if (!project || !project.defaultModelSelection) return;
+    if (!project || !resolvedNewModelSelection) return;
 
     newSubmissionPendingRef.current = true;
     setNewSubmissionPending(true);
@@ -802,7 +896,7 @@ export function ChatView({
         projectId: project.id,
         projectCwd: project.workspaceRoot,
         title: truncate(message),
-        modelSelection: project.defaultModelSelection,
+        modelSelection: resolvedNewModelSelection,
         firstMessage: message,
         runtimeMode: newRuntimeMode,
         interactionMode: newInteractionMode,
@@ -1296,6 +1390,7 @@ export function ChatView({
     actionablePlan,
     composerImages,
     pendingUserInput,
+    threadModelSelection,
   ]);
 
   const filteredCommands = React.useMemo(
@@ -1341,7 +1436,14 @@ export function ChatView({
     if (field === "project") {
       setProjectIndex((index) => {
         const count = Math.max(projects.length, 1);
-        return (index + delta + count) % count;
+        const nextIndex = (index + delta + count) % count;
+        const project = projects[nextIndex];
+        setNewModelSelection(
+          resolveModelSelection(modelOptions, project?.defaultModelSelection) ??
+            project?.defaultModelSelection ??
+            null,
+        );
+        return nextIndex;
       });
       setNewContextWorktreePath(null);
       setNewBranch(null);
@@ -1507,6 +1609,8 @@ export function ChatView({
     onDiffToggleView: () => setDiffView((view) => (view === "unified" ? "split" : "unified")),
     onDiffClose: () => setDiffOpen(false),
     onOpenRuntime: openRuntimePicker,
+    onOpenModel: openModelPicker,
+    onOpenReasoning: openReasoningPicker,
     onSelectPrev: () => movePicker(-1),
     onSelectNext: () => movePicker(1),
     onSelectConfirm: () => {
@@ -1765,6 +1869,8 @@ export function ChatView({
           focus === "new" ? newInteractionMode : (detail?.interactionMode ?? "default")
         }
         newRuntimeMode={newRuntimeMode}
+        newModel={resolvedNewModelSelection?.model ?? null}
+        newReasoning={newReasoning?.selectedId ?? null}
         newBranch={newBranch}
         newWorkspaceMode={newWorkspaceMode}
         newWorkspaceLabel={
