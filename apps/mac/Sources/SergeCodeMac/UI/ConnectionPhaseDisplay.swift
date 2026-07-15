@@ -9,7 +9,8 @@ extension ConnectionPhase {
         case .launchingServer: "Launching Server…"
         case .connecting: "Connecting…"
         case .ready: "Connected"
-        case .reconnecting(let attempt): "Reconnecting (attempt \(attempt))…"
+        case .reconnecting(let attempt):
+            attempt >= 3 ? "Still reconnecting · attempt \(attempt)" : "Reconnecting…"
         case .unauthorized: "Re-pairing required"
         case .failed(let message): "Failed: \(message)"
         }
@@ -26,7 +27,8 @@ extension ConnectionPhase {
 
     var statusColor: Color {
         switch self {
-        case .launchingServer, .connecting, .reconnecting: .secondary
+        case .launchingServer, .connecting: .secondary
+        case .reconnecting(let attempt): attempt >= 3 ? .orange : .secondary
         case .ready: .green
         case .unauthorized: .orange
         case .failed: .red
@@ -37,6 +39,14 @@ extension ConnectionPhase {
         switch self {
         case .launchingServer, .connecting, .reconnecting: true
         case .ready, .unauthorized, .failed: false
+        }
+    }
+
+    var needsAttention: Bool {
+        switch self {
+        case .reconnecting(let attempt): attempt >= 3
+        case .unauthorized, .failed: true
+        case .launchingServer, .connecting, .ready: false
         }
     }
 

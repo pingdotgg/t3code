@@ -4,8 +4,36 @@ import T3Kit
 
 /// Settings tab identifiers — public so debug harnesses (UIProbe) can open
 /// the window on a specific tab.
-public enum SettingsTab: Hashable {
+public enum SettingsTab: Hashable, CaseIterable, Identifiable {
     case general, providers, dictation, archive, scenery, devices, remoteMacs, connection
+
+    public var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .general: "General"
+        case .providers: "Providers"
+        case .dictation: "Dictation"
+        case .archive: "Archive"
+        case .scenery: "Scenery"
+        case .devices: "Devices"
+        case .remoteMacs: "Remote Macs"
+        case .connection: "Connection"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .general: "gearshape"
+        case .providers: "puzzlepiece.extension"
+        case .dictation: "mic"
+        case .archive: "archivebox"
+        case .scenery: "photo.on.rectangle.angled"
+        case .devices: "macbook.and.iphone"
+        case .remoteMacs: "desktopcomputer"
+        case .connection: "network"
+        }
+    }
 }
 
 // Settings window content: `Settings { SettingsScene(...) }` in App.swift.
@@ -38,44 +66,72 @@ public struct SettingsScene: View {
     }
 
     public var body: some View {
-        TabView(selection: $selectedTab) {
-            GeneralSettingsTab(model: model)
-                .tabItem { Label("General", systemImage: "gearshape") }
-                .tag(SettingsTab.general)
-
-            ProvidersSettingsTab(model: model)
-                .tabItem { Label("Providers", systemImage: "puzzlepiece.extension") }
-                .tag(SettingsTab.providers)
-
-            DictationSettingsTab(model: model)
-                .tabItem { Label("Dictation", systemImage: "mic") }
-                .tag(SettingsTab.dictation)
-
-            ArchiveSettingsTab(model: model)
-                .tabItem { Label("Archive", systemImage: "archivebox") }
-                .tag(SettingsTab.archive)
-
-            ScenerySettingsTab(model: model, scenery: scenery, composer: sceneSetComposer)
-                .tabItem { Label("Scenery", systemImage: "photo.on.rectangle.angled") }
-                .tag(SettingsTab.scenery)
-
-            PhoneSettingsTab(model: model)
-                .tabItem { Label("Devices", systemImage: "macbook.and.iphone") }
-                .tag(SettingsTab.devices)
-
-            RemoteMacsSettingsTab(multi: self.multi)
-                .tabItem { Label("Remote Macs", systemImage: "network") }
-                .tag(SettingsTab.remoteMacs)
-
-            ConnectionSettingsTab(model: model)
-                .tabItem { Label("Connection", systemImage: "network") }
-                .tag(SettingsTab.connection)
+        NavigationSplitView {
+            List(selection: selectedTabBinding) {
+                Section {
+                    settingsRow(.general)
+                }
+                Section("Agents") {
+                    settingsRow(.providers)
+                    settingsRow(.dictation)
+                }
+                Section("Workspace") {
+                    settingsRow(.archive)
+                    settingsRow(.scenery)
+                }
+                Section("Devices") {
+                    settingsRow(.devices)
+                    settingsRow(.remoteMacs)
+                    settingsRow(.connection)
+                }
+            }
+            .listStyle(.sidebar)
+            .navigationSplitViewColumnWidth(min: 170, ideal: 184, max: 210)
+            .navigationTitle("Settings")
+        } detail: {
+            settingsDetail
+                .navigationTitle(selectedTab.title)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(width: 560, height: 500)
+        .frame(width: 760, height: 560)
         // Composer is owned by this scene only. Cancel in-flight create when
         // the Settings window closes so Unsplash work does not keep running
         // (and so `runCreate` can drop its self retain → deinit cancel).
         .onDisappear { sceneSetComposer.cancel() }
+    }
+
+    private var selectedTabBinding: Binding<SettingsTab?> {
+        Binding(
+            get: { selectedTab },
+            set: { if let tab = $0 { selectedTab = tab } })
+    }
+
+    private func settingsRow(_ tab: SettingsTab) -> some View {
+        Label(tab.title, systemImage: tab.symbolName)
+            .tag(tab)
+            .accessibilityAddTraits(selectedTab == tab ? .isSelected : [])
+    }
+
+    @ViewBuilder
+    private var settingsDetail: some View {
+        switch selectedTab {
+        case .general:
+            GeneralSettingsTab(model: model)
+        case .providers:
+            ProvidersSettingsTab(model: model)
+        case .dictation:
+            DictationSettingsTab(model: model)
+        case .archive:
+            ArchiveSettingsTab(model: model)
+        case .scenery:
+            ScenerySettingsTab(model: model, scenery: scenery, composer: sceneSetComposer)
+        case .devices:
+            PhoneSettingsTab(model: model)
+        case .remoteMacs:
+            RemoteMacsSettingsTab(multi: multi)
+        case .connection:
+            ConnectionSettingsTab(model: model)
+        }
     }
 }
 
@@ -290,6 +346,7 @@ struct DictationSettingsTab: View {
 private struct ArchiveSettingsTab: View {
     let model: AppModel
     @UIState private var deleteTarget: ChatThread?
+    @UIState private var searchText = ""
 
     var body: some View {
         Form {
@@ -311,7 +368,22 @@ private struct ArchiveSettingsTab: View {
                     Text("No archived threads.")
                         .foregroundStyle(.secondary)
                 } else {
-                    ForEach(model.archivedThreads) { thread in
+                    HStack(spacing: 8) {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundStyle(.secondary)
+                        TextField("Search archived threads", text: $searchText)
+                            .textFieldStyle(.plain)
+                    }
+                    .padding(.vertical, 4)
+
+                    if filteredThreads.isEmpty {
+                        ContentUnavailableView(
+                            "No Matching Threads",
+                            systemImage: "magnifyingglass",
+                            description: Text("Try a different title or provider name."))
+                    }
+
+                    ForEach(filteredThreads) { thread in
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(thread.title)
@@ -324,9 +396,17 @@ private struct ArchiveSettingsTab: View {
                             Button("Unarchive") {
                                 Task { await model.unarchiveThread(thread) }
                             }
-                            Button("Delete", role: .destructive) {
-                                deleteTarget = thread
+                            Menu {
+                                Button("Delete Permanently", role: .destructive) {
+                                    deleteTarget = thread
+                                }
+                            } label: {
+                                Image(systemName: "ellipsis.circle")
                             }
+                            .menuStyle(.borderlessButton)
+                            .menuIndicator(.hidden)
+                            .fixedSize()
+                            .accessibilityLabel("More actions for \(thread.title)")
                         }
                         .padding(.vertical, 2)
                         .transition(Motion.rise)
@@ -356,6 +436,15 @@ private struct ArchiveSettingsTab: View {
             if let target = deleteTarget {
                 Text("“\(target.title)” will be permanently deleted. This can't be undone.")
             }
+        }
+    }
+
+    private var filteredThreads: [ChatThread] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return model.archivedThreads }
+        return model.archivedThreads.filter {
+            $0.title.localizedCaseInsensitiveContains(query)
+                || $0.provider.displayName.localizedCaseInsensitiveContains(query)
         }
     }
 }
@@ -440,31 +529,35 @@ private struct ProviderRow: View {
 
             Spacer()
 
-            if provider.availability == .available {
-                Button {
-                    guard !isUpdating else { return }
-                    isUpdating = true
-                    Task {
-                        await model.updateProvider(instanceID: provider.id)
-                        isUpdating = false
-                    }
-                } label: {
-                    if isUpdating {
-                        ProgressView()
-                            .controlSize(.small)
-                            .transition(.opacity)
-                    } else {
-                        Text("Update CLI")
-                            .transition(.opacity)
-                    }
-                }
-                .controlSize(.small)
-                .disabled(isUpdating)
-                .animation(Motion.reveal, value: isUpdating)
-                .help("Run \(provider.kind.cliCommand)'s own updater")
-            }
-
             AvailabilityBadge(availability: provider.availability, kind: provider.kind)
+
+            if provider.availability == .available {
+                if isUpdating {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(width: 22)
+                        .transition(.opacity)
+                } else {
+                    Menu {
+                        Button("Run \(provider.kind.cliCommand) Updater") {
+                            guard !isUpdating else { return }
+                            isUpdating = true
+                            Task {
+                                await model.updateProvider(instanceID: provider.id)
+                                isUpdating = false
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .accessibilityLabel("Actions for \(provider.kind.displayName)")
+                    .help("Provider actions")
+                    .transition(.opacity)
+                }
+            }
         }
         .padding(.vertical, 2)
     }
@@ -491,7 +584,7 @@ private struct AvailabilityBadge: View {
 
     private var title: String {
         switch availability {
-        case .available: "Available"
+        case .available: "Ready"
         case .authRequired: "Sign-in Required"
         case .missing: "Not Installed"
         }
@@ -516,8 +609,8 @@ private struct AvailabilityBadge: View {
     private var hint: String? {
         switch availability {
         case .available: nil
-        case .authRequired: "run \(kind.cliCommand) login in Terminal"
-        case .missing: "install \(kind.cliCommand) to use this provider"
+        case .authRequired: "Run \(kind.cliCommand) login in Terminal."
+        case .missing: "Install \(kind.cliCommand) to use this provider."
         }
     }
 }
@@ -785,7 +878,7 @@ struct RemoteMacsSettingsTab: View {
                     }
                 }
 
-                Text("On the other Mac, open Settings > Devices and copy its pairing link or scan its QR code.")
+                Text("On the other Mac, open Settings ▸ Devices and copy its pairing link or scan its QR code.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -837,6 +930,12 @@ struct RemoteMacsSettingsTab: View {
                         .textSelection(.enabled)
                 }
                 Spacer(minLength: 8)
+                if session.connection != .ready {
+                    Button("Retry Now") {
+                        Task { await multi.reconnect(id: session.id) }
+                    }
+                    .controlSize(.small)
+                }
                 Button("Forget", role: .destructive) {
                     forgetTarget = session.id
                 }
@@ -862,6 +961,13 @@ struct RemoteMacsSettingsTab: View {
                 Label(
                     "Re-pair: paste a fresh link from this Mac in Add a Mac above.",
                     systemImage: "arrow.triangle.2.circlepath")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if session.connection.needsAttention {
+                Label(
+                    "This Mac is not responding. Retry now, or paste a fresh pairing link above.",
+                    systemImage: "exclamationmark.triangle.fill")
                     .font(.caption2)
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)

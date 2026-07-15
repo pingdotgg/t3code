@@ -39,13 +39,19 @@ struct EmptyStateView: View {
                     .frame(width: 44, height: 44)
                 BrandWordmark(size: 26)
                 Text("Select a session, or start a new one.")
-                    .foregroundStyle(.secondary)
-                Button("New Session", action: onNewSession)
-                    .buttonStyle(.glass)
+                    .foregroundStyle(.white.opacity(0.88))
+                Button(action: onNewSession) {
+                    Label("New Session", systemImage: "plus")
+                        .font(.headline)
+                        .foregroundStyle(AlpineTheme.forest)
+                }
+                    .buttonStyle(.borderedProminent)
+                    .tint(AlpineTheme.accent)
                     .controlSize(.large)
             }
             .padding(32)
             .glassEffect(.regular, in: .rect(cornerRadius: AlpineTheme.Corners.hero))
+            .sceneryChrome()
             // Hero card settles into place on arrival instead of popping.
             .scaleEffect(hasAppeared ? 1.0 : 0.96)
             .opacity(hasAppeared ? 1.0 : 0.0)

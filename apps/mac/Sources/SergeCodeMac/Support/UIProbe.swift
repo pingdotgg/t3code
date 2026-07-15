@@ -1040,7 +1040,7 @@
                     backend: MockBackend(),
                     initialTab: tab))
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 560, height: 420),
+                contentRect: NSRect(x: 0, y: 0, width: 760, height: 560),
                 styleMask: [.titled], backing: .buffered, defer: false)
             DarkAppearanceConfigurator.applyAppearance(to: window)
             window.contentView = hosting

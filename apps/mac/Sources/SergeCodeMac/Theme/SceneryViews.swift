@@ -52,11 +52,10 @@ struct SceneryImageView: View {
 }
 
 /// Frosted scenery band for chrome surfaces (headers, sheet strips): photo
-/// with an explicit gaussian frost and a top-down scrim so short chrome text
-/// stays legible. Deliberately NOT a SwiftUI `Material` — materials sample
+/// with an explicit gaussian frost and restrained scrim. Deliberately NOT a
+/// SwiftUI `Material` — materials sample
 /// the backdrop behind them (near-opaque gray on macOS), hiding the photo
-/// entirely. Pair with `.sceneryChrome()` on the foreground content. Long-form
-/// text never sits on this (Liquid Glass rule).
+/// entirely. Long-form text never sits on this (Liquid Glass rule).
 ///
 /// Renders at full coverage, unlike the chat wallpaper: its only surface is a
 /// preview band inside the New Session sheet, and a sheet is an opaque window
@@ -80,7 +79,7 @@ struct FrostedSceneryBackdrop: View {
             fallbackSeed: fallbackSeed)
             .overlay(
                 LinearGradient(
-                    colors: [.black.opacity(0.34), .black.opacity(0.18)],
+                    colors: [.black.opacity(0.22), .black.opacity(0.36)],
                     startPoint: .top, endPoint: .bottom))
             .clipped()
     }
@@ -179,7 +178,7 @@ struct SceneryAttributionTag: View {
             Link("Unsplash", destination: URL(string: "https://unsplash.com\(Self.utm)")!)
         }
         .font(.caption2)
-        .foregroundStyle(.secondary)
+        .foregroundStyle(.white.opacity(0.86))
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         // Solid translucent pill, not a material — see FrostedSceneryBackdrop.

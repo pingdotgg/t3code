@@ -475,19 +475,14 @@ private struct DeviceStatusDot: View {
     let phase: ConnectionPhase
 
     var body: some View {
-        ZStack {
-            if phase.isSettling {
-                Circle()
-                    .stroke(Color.secondary, lineWidth: 1.2)
-                    .opacity(0.35)
-            }
-            Circle()
-                .fill(statusTint)
-                .frame(width: 7, height: 7)
-                .overlay(Circle().strokeBorder(.background, lineWidth: 1.5))
-        }
-        .frame(width: 11, height: 11)
+        Image(systemName: phase.symbolName)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(statusTint)
+            .frame(width: 14, height: 14)
+            .contentTransition(
+                Motion.reduceMotion ? .identity : .symbolEffect(.replace))
         .accessibilityLabel(phase.accessibilityLabel)
+        .help(phase.statusText)
         .animation(Motion.ambient, value: phase)
     }
 
@@ -687,19 +682,15 @@ private struct SidebarStatusDot: View {
     }
 
     private var dot: some View {
-        Circle()
-            .fill(statusTint)
-            .frame(width: 7, height: 7)
-            .overlay(Circle().strokeBorder(.background, lineWidth: 1.5))
+        Image(systemName: statusSymbol)
+            .font(.system(size: 7.5, weight: .bold))
+            .foregroundStyle(statusTint)
+            .frame(width: 12, height: 12)
+            .background(.background, in: Circle())
     }
 
     private var backgroundWorkDot: some View {
-        ZStack {
-            Circle()
-                .stroke(Color.green, lineWidth: 1.2)
-                .opacity(0.45)
-            dot
-        }
+        dot
     }
 
     private var backgroundWorkIndicator: some View {
@@ -756,6 +747,19 @@ private struct SidebarStatusDot: View {
         case .backgroundWork: return AlpineTheme.meadow
         case .error: return .red
         case .archived: return .gray
+        }
+    }
+
+    private var statusSymbol: String {
+        if thread.isStalled { return "exclamationmark.circle.fill" }
+        switch thread.status {
+        case .backgroundWork: return "person.2.fill"
+        case .idle: return "circle.fill"
+        case .running: return "bolt.fill"
+        case .waiting: return "clock.fill"
+        case .waitingApproval: return "exclamationmark.circle.fill"
+        case .error: return "xmark.octagon.fill"
+        case .archived: return "archivebox.fill"
         }
     }
 }

@@ -13,6 +13,7 @@ struct NewSessionSheet: View {
     @UIState private var mode: Mode = .existing
     @UIState private var selectedDeviceID: DeviceID = .local
     @UIState private var selectedProjectID: String?
+    @UIState private var projectSearch = ""
     @UIState private var provider: ProviderKind = .claude
     @UIState private var newProjectPath: String = ""
     @UIState private var scenerySetOverride: String?
@@ -35,7 +36,7 @@ struct NewSessionSheet: View {
             let nextScene = scenery.peekNextScene(
                 projectPath: selectedProjectPath,
                 setIdOverride: previewSetId)
-            ZStack(alignment: .bottomLeading) {
+            VStack(alignment: .leading, spacing: 10) {
                 FrostedSceneryBackdrop(
                     scenery: scenery,
                     photo: nextScene,
@@ -44,20 +45,20 @@ struct NewSessionSheet: View {
                     .id(
                         "\(previewSetId)/\(nextScene?.id ?? "next")/\(scenery.rotationBucket.timeOfDay.rawValue)"
                     )
-                VStack(alignment: .leading, spacing: 2) {
+                    .frame(height: 68)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+
+                HStack(alignment: .firstTextBaseline) {
                     Text("New Session")
                         .font(.title2.bold())
+                    Spacer()
                     if let nextScene {
                         Text(scenery.threadTitle(for: nextScene, setId: previewSetId))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
-                .padding(12)
-                .sceneryChrome()
             }
-            .frame(height: 82)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
 
             if !multi.remoteSessions.isEmpty {
                 Picker("Device", selection: $selectedDeviceID) {
@@ -68,7 +69,9 @@ struct NewSessionSheet: View {
                 }
                 .onChange(of: selectedDeviceID) {
                     mode = .existing
-                    selectedProjectID = nil
+                    selectDefaultProject()
+                    syncProviderSelection()
+                    projectSearch = ""
                     scenerySetOverride = nil
                     clearError()
                 }
@@ -83,7 +86,12 @@ struct NewSessionSheet: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .onChange(of: mode) {
-                    selectedProjectID = nil
+                    if mode == .existing {
+                        selectDefaultProject()
+                    } else {
+                        selectedProjectID = nil
+                    }
+                    projectSearch = ""
                     scenerySetOverride = nil
                     clearError()
                 }
@@ -92,15 +100,26 @@ struct NewSessionSheet: View {
             Group {
                 switch mode {
                 case .existing:
-                    Picker("Project", selection: $selectedProjectID) {
-                        Text("Select a project").tag(String?.none)
-                        ForEach(model.projects) { project in
-                            Text(project.name).tag(Optional(project.id))
+                    if model.projects.isEmpty {
+                        ContentUnavailableView {
+                            Label("No Projects on This Mac", systemImage: "folder")
+                        } description: {
+                            Text(
+                                model.capabilities.canBrowseLocalFolders
+                                    ? "Choose New Project, then select a project folder."
+                                    : "Add a project on the remote Mac, then try again."
+                            )
                         }
-                    }
-                    .onChange(of: selectedProjectID) {
-                        scenerySetOverride = nil
-                        clearError()
+                        .frame(height: 96)
+                    } else {
+                        ProjectChoiceList(
+                            projects: model.projects,
+                            selectedProjectID: $selectedProjectID,
+                            searchText: $projectSearch)
+                        .onChange(of: selectedProjectID) {
+                            scenerySetOverride = nil
+                            clearError()
+                        }
                     }
                 case .new:
                     HStack(spacing: 8) {
@@ -169,7 +188,7 @@ struct NewSessionSheet: View {
                 Button("Cancel") { isPresented = false }
                     .buttonStyle(.glass)
                     .keyboardShortcut(.cancelAction)
-                Button("Create") {
+                Button("Create Session") {
                     Task { await create() }
                 }
                 .buttonStyle(.glass)
@@ -190,6 +209,7 @@ struct NewSessionSheet: View {
                 await model.loadSettings()
             }
             syncProviderSelection()
+            selectDefaultProject()
         }
         .onChange(of: model.configuredProviderKinds) {
             syncProviderSelection()
@@ -268,18 +288,18 @@ struct NewSessionSheet: View {
 
     private var providerReadinessMessage: String? {
         guard !configuredProviderKinds.isEmpty else {
-            return "No providers are configured yet. Refresh providers in Settings."
+            return "No providers are ready. Open Settings ▸ Providers and refresh."
         }
         guard !model.canCreateThread(with: provider) else { return nil }
         switch model.providerAvailability(for: provider) {
         case .authRequired:
-            return "\(provider.displayName) needs sign-in or an auth token. Configure it in Settings > Providers, then refresh."
+            return "\(provider.displayName) needs sign-in or an auth token. Configure it in Settings ▸ Providers, then refresh."
         case .missing:
-            return "\(provider.displayName) is not installed or is unavailable. Check Settings > Providers."
+            return "\(provider.displayName) is not installed or is unavailable. Check Settings ▸ Providers."
         case .available:
             return "\(provider.displayName) has no selectable models yet. Refresh providers and try again."
         case nil:
-            return "\(provider.displayName) is not configured. Refresh providers in Settings."
+            return "\(provider.displayName) is not configured. Refresh it in Settings ▸ Providers."
         }
     }
 
@@ -288,6 +308,16 @@ struct NewSessionSheet: View {
         if !configuredProviderKinds.contains(provider), let first = configuredProviderKinds.first {
             provider = first
         }
+    }
+
+    private func selectDefaultProject() {
+        guard mode == .existing else { return }
+        if let selectedProjectID,
+            model.projects.contains(where: { $0.id == selectedProjectID })
+        {
+            return
+        }
+        selectedProjectID = model.projects.first?.id
     }
 
     private func clearError() {
@@ -330,6 +360,86 @@ struct NewSessionSheet: View {
             errorMessage =
                 model.lastError
                 ?? "Couldn't create a new \(provider.displayName) session. Check provider settings and try again."
+        }
+    }
+}
+
+private struct ProjectChoiceList: View {
+    let projects: [Project]
+    @Binding var selectedProjectID: String?
+    @Binding var searchText: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField("Search projects", text: $searchText)
+                    .textFieldStyle(.plain)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 8))
+
+            if filteredProjects.isEmpty {
+                ContentUnavailableView(
+                    "No Matching Projects",
+                    systemImage: "magnifyingglass",
+                    description: Text("Try a different project name or path."))
+                    .frame(height: 104)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 2) {
+                        ForEach(filteredProjects) { project in
+                            Button {
+                                selectedProjectID = project.id
+                            } label: {
+                                HStack(spacing: 10) {
+                                    Image(systemName: "folder")
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 16)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(project.name)
+                                            .foregroundStyle(.primary)
+                                            .lineLimit(1)
+                                        Text(project.path)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                    }
+                                    Spacer(minLength: 8)
+                                    if selectedProjectID == project.id {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .foregroundStyle(AlpineTheme.accent)
+                                    }
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 7)
+                                .contentShape(Rectangle())
+                                .background(
+                                    selectedProjectID == project.id
+                                        ? AlpineTheme.accent.opacity(0.12) : Color.clear,
+                                    in: RoundedRectangle(cornerRadius: 8))
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("\(project.name), \(project.path)")
+                            .accessibilityAddTraits(
+                                selectedProjectID == project.id ? .isSelected : [])
+                        }
+                    }
+                }
+                .frame(height: 128)
+            }
+        }
+    }
+
+    private var filteredProjects: [Project] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return projects }
+        return projects.filter {
+            $0.name.localizedCaseInsensitiveContains(query)
+                || $0.path.localizedCaseInsensitiveContains(query)
         }
     }
 }

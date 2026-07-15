@@ -281,16 +281,19 @@ private struct PassportPlaceCell: View {
     private var unvisitedCell: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .fill(accent.opacity(0.035))
-            VStack(spacing: 8) {
-                Image(systemName: "circle.dashed")
-                    .font(.title3)
-                    .foregroundStyle(.tertiary)
+                .fill(accent.opacity(0.06))
+            VStack(spacing: 6) {
+                Image(systemName: "lock.fill")
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(accent.opacity(0.82))
                 Text(place.name)
                     .font(.system(.headline, design: .rounded))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.primary.opacity(0.86))
                     .multilineTextAlignment(.center)
                     .lineLimit(3)
+                Text("Not visited")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
             .padding(12)
         }
@@ -298,9 +301,7 @@ private struct PassportPlaceCell: View {
         .aspectRatio(1.22, contentMode: .fit)
         .overlay {
             RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .stroke(
-                    accent.opacity(0.38),
-                    style: StrokeStyle(lineWidth: 1.2, dash: [6, 5]))
+                .stroke(accent.opacity(0.28), lineWidth: 1)
         }
     }
 

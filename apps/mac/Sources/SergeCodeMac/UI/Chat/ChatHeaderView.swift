@@ -41,7 +41,7 @@ struct ChatHeaderView: View {
                     }
                 }
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.primary.opacity(0.76))
             }
 
             Spacer()
@@ -55,6 +55,7 @@ struct ChatHeaderView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+        .background(Color(nsColor: .textBackgroundColor).opacity(0.78))
     }
 
     private var projectPrefs: ProjectSceneryPrefs? {
@@ -90,7 +91,7 @@ private struct ProviderBadge: View {
         Label(provider.displayName, systemImage: icon)
             .labelStyle(.titleAndIcon)
             .font(.caption)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.primary.opacity(0.76))
     }
 
     private var icon: String {
