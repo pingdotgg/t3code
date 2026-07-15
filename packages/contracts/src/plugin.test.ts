@@ -42,11 +42,25 @@ describe("PluginManifest", () => {
       homepage: "https://example.test/plugin",
       license: "MIT",
       minAppVersion: "1.0.0",
-      capabilities: ["agents", "database", "filesystem", "httpClient"],
+      capabilities: ["agents", "database", "filesystem", "httpClient", "tools"],
       entries: { server: "dist/server.js", web: "dist/web.js" },
     });
     expect(decoded.name).toBe("Test Plugin");
-    expect(decoded.capabilities).toEqual(["agents", "database", "filesystem", "httpClient"]);
+    expect(decoded.capabilities).toEqual([
+      "agents",
+      "database",
+      "filesystem",
+      "httpClient",
+      "tools",
+    ]);
+  });
+
+  it("accepts the tools capability", () => {
+    const decoded = decodeManifest({
+      ...minimalManifest,
+      capabilities: ["tools"],
+    });
+    expect(decoded.capabilities).toEqual(["tools"]);
   });
 
   it.each(["x", "1test-plugin", "test_plugin", "Test-Plugin", "a".repeat(42)])(

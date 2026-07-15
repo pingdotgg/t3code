@@ -47,17 +47,28 @@ import * as PluginMigrator from "./PluginMigrator.ts";
 import * as PluginModuleLoaderLayer from "./PluginModuleLoader.ts";
 import { pluginDataDir, pluginVersionDir } from "./PluginPaths.ts";
 import * as PluginRuntimeRegistryLayer from "./PluginRuntimeRegistry.ts";
+import * as PluginToolCatalogLayer from "./PluginToolCatalog.ts";
 
 const encodeManifestJson = Schema.encodeEffect(Schema.fromJsonString(PluginManifest));
 const unexpectedCapabilityUse = () =>
   Effect.die(new Error("unexpected capability use in host test"));
 
+const PluginRuntimeRegistryLayerLive = PluginRuntimeRegistryLayer.layer;
+const PluginToolCatalogLayerLive = PluginToolCatalogLayer.layer.pipe(
+  Layer.provide(PluginRuntimeRegistryLayerLive),
+);
+
 const testLayerBase = PluginHostModule.layer.pipe(
   Layer.provideMerge(PluginLockfileStoreLayer.layer),
   Layer.provideMerge(PluginModuleLoaderLayer.layer),
   Layer.provideMerge(PluginMigrator.layer),
-  Layer.provideMerge(PluginRuntimeRegistryLayer.layer),
-  Layer.provideMerge(PluginHttpRegistry.layer),
+  Layer.provideMerge(
+    Layer.mergeAll(
+      PluginRuntimeRegistryLayerLive,
+      PluginToolCatalogLayerLive,
+      PluginHttpRegistry.layer,
+    ),
+  ),
   Layer.provideMerge(ServerLifecycleEvents.layer),
   Layer.provideMerge(
     Layer.mock(ServerSecretStore.ServerSecretStore)({

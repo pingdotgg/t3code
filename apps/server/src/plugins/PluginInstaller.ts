@@ -90,6 +90,8 @@ export const PLUGIN_CAPABILITY_DESCRIPTIONS = {
   httpClient: "Make requests to public external HTTPS services",
   sourceControl: "Use source control integrations",
   textGeneration: "Request text generation",
+  tools:
+    "Add tools the AI agent can call in your threads. Installing this capability is a blanket grant: the agent may invoke every tool this plugin registers, and those tools may act through the plugin's other granted capabilities.",
 } satisfies Record<PluginCapability, string>;
 
 const managementError = (code: PluginManagementError["code"], message: string, data?: unknown) =>

@@ -36,6 +36,7 @@ import type {
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Random from "effect/Random";
+import type * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
 import type * as Stream from "effect/Stream";
 
@@ -1292,6 +1293,68 @@ export interface PluginMigration {
   readonly up: Effect.Effect<void, Error, SqlClient.SqlClient>;
 }
 
+/**
+ * Text content block returned by a plugin tool. This slice supports text only;
+ * image/audio contribution is a follow-up.
+ */
+export interface PluginToolTextContent {
+  readonly type: "text";
+  readonly text: string;
+}
+
+export type PluginToolContent = PluginToolTextContent;
+
+export interface PluginToolResult {
+  readonly content: ReadonlyArray<PluginToolContent>;
+  /**
+   * Optional JSON object (plain data only). Circular values, BigInt, functions,
+   * and non-object roots are rejected by the host before constructing the MCP
+   * result.
+   */
+  readonly structuredContent?: Readonly<Record<string, unknown>> | undefined;
+  readonly isError?: boolean | undefined;
+}
+
+/**
+ * Descriptor for a tool the host contributes to the model's MCP toolbox.
+ *
+ * Installation of the `"tools"` capability is an explicit **blanket grant** for
+ * invocation: `scope` and the hint flags only populate untrusted MCP annotation
+ * hints (`readOnlyHint` / `destructiveHint` / …). They are not an authorization
+ * boundary. The host namespaces tool names as
+ * `plugin_<pluginId_with_dashes_to_underscores>__<name>`.
+ *
+ * `inputSchema` is a service-free Effect Schema decoder. The host re-decodes
+ * arguments against it on every call before invoking `handle`. The `handle`
+ * input parameter is typed loosely at the registration boundary (dynamic plugin
+ * JS) so plugins can write `handle: (input) => ...` with schema-inferred types
+ * without fighting contravariance on `PluginRegistration.tools`.
+ */
+export interface PluginToolDescriptor {
+  /** Local tool name as declared by the plugin (host applies the namespace). */
+  readonly name: string;
+  readonly description: string;
+  /**
+   * Service-free Effect Schema decoder (`DecodingServices = never`). Host derives
+   * JSON Schema via `Tool.getJsonSchemaFromSchema` and re-decodes on every call.
+   */
+  readonly inputSchema: Schema.Decoder<unknown, never>;
+  /**
+   * MCP annotation profile only — NOT an authorization boundary.
+   * `"read"` → readOnlyHint; `"operate"` → destructiveHint (unless overridden).
+   */
+  readonly scope: PluginRpcScope;
+  /** Override destructiveHint. Default: `scope === "operate"`. */
+  readonly destructive?: boolean | undefined;
+  /** Default: false. */
+  readonly idempotent?: boolean | undefined;
+  /** Default: false. */
+  readonly openWorld?: boolean | undefined;
+  readonly title?: string | undefined;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly handle: (input: any, ctx: PluginRpcContext) => Effect.Effect<PluginToolResult, Error>;
+}
+
 export interface PluginRegistration {
   readonly migrations?: ReadonlyArray<PluginMigration> | undefined;
   readonly recover?: (() => Effect.Effect<void, Error>) | undefined;
@@ -1299,6 +1362,7 @@ export interface PluginRegistration {
   readonly streams?: ReadonlyArray<PluginStreamDescriptor> | undefined;
   readonly http?: ReadonlyArray<PluginHttpDescriptor> | undefined;
   readonly services?: ReadonlyArray<PluginServiceDescriptor> | undefined;
+  readonly tools?: ReadonlyArray<PluginToolDescriptor> | undefined;
 }
 
 export interface PluginDefinition {
