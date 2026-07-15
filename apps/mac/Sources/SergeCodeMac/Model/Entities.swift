@@ -35,11 +35,16 @@ public struct Project: Identifiable, Hashable, Sendable {
     public var id: String
     public var name: String
     public var path: String
+    /// Stable repository identity supplied by the server when available.
+    /// The macOS sidebar uses this to present one project across local and
+    /// remote backends without coupling UI entities to T3Kit wire models.
+    public var repositoryKey: String?
 
-    public init(id: String, name: String, path: String) {
+    public init(id: String, name: String, path: String, repositoryKey: String? = nil) {
         self.id = id
         self.name = name
         self.path = path
+        self.repositoryKey = repositoryKey
     }
 }
 

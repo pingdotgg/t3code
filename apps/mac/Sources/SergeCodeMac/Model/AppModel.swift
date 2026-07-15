@@ -128,7 +128,8 @@ public final class AppModel {
     private var usageLimitResumeTasks: [String: Task<Void, Never>] = [:]
     private var dismissedUsageLimitIDs: Set<String> = []
 
-    private static let pinnedThreadIDsKey = "SergeCode.pinnedThreadIDs"
+    private static let legacyPinnedThreadIDsKey = "SergeCode.pinnedThreadIDs"
+    private static let pinnedThreadIDsKeyPrefix = "SergeCode.pinnedThreadIDs"
     private static let manualThreadOrderKey = "SergeCode.manualThreadOrder"
 
     private static let usageLimitContinuationPrompt =
@@ -198,8 +199,19 @@ public final class AppModel {
         self.capabilities = capabilities
         self.backend = backend
         self.dictation = dictation ?? DictationController()
-        self.pinnedThreadIDs = Set(
-            UserDefaults.standard.stringArray(forKey: Self.pinnedThreadIDsKey) ?? [])
+        let pinnedKey = Self.pinnedThreadIDsStorageKey(for: deviceID)
+        if let pinnedIDs = UserDefaults.standard.stringArray(forKey: pinnedKey) {
+            self.pinnedThreadIDs = Set(pinnedIDs)
+        } else if deviceID == .local,
+            let legacyPinnedIDs = UserDefaults.standard.stringArray(
+                forKey: Self.legacyPinnedThreadIDsKey)
+        {
+            self.pinnedThreadIDs = Set(legacyPinnedIDs)
+            UserDefaults.standard.set(legacyPinnedIDs, forKey: pinnedKey)
+            UserDefaults.standard.removeObject(forKey: Self.legacyPinnedThreadIDsKey)
+        } else {
+            self.pinnedThreadIDs = []
+        }
         let orderKey = "\(Self.manualThreadOrderKey).\(deviceID.rawValue)"
         if let data = UserDefaults.standard.data(forKey: orderKey),
             let order = try? JSONDecoder().decode([String: [String]].self, from: data)
@@ -293,6 +305,29 @@ public final class AppModel {
         persistManualThreadOrder()
     }
 
+    /// Persists a complete sidebar order after a grouped multi-device list has
+    /// translated its drag operation back to this model's project rows.
+    public func applySidebarOrder(_ orderedThreads: [ChatThread], projectID: String) {
+        let current = Self.pinnedFirst(
+            self.orderedThreads(for: projectID), pinnedIDs: pinnedThreadIDs)
+        guard orderedThreads.count == current.count,
+            Set(orderedThreads.map(\.id)) == Set(current.map(\.id)),
+            orderedThreads.allSatisfy({ $0.projectID == projectID })
+        else { return }
+
+        var encounteredUnpinned = false
+        for thread in orderedThreads {
+            if pinnedThreadIDs.contains(thread.id) {
+                guard !encounteredUnpinned else { return }
+            } else {
+                encounteredUnpinned = true
+            }
+        }
+
+        manualThreadOrder[projectID] = orderedThreads.map(\.id)
+        persistManualThreadOrder()
+    }
+
     public func canMoveThread(_ thread: ChatThread, direction: SidebarMoveDirection) -> Bool {
         let visible = Self.pinnedFirst(
             orderedThreads(for: thread.projectID), pinnedIDs: pinnedThreadIDs)
@@ -313,7 +348,13 @@ public final class AppModel {
     }
 
     private func persistPinnedThreadIDs() {
-        UserDefaults.standard.set(Array(pinnedThreadIDs), forKey: Self.pinnedThreadIDsKey)
+        UserDefaults.standard.set(
+            Array(pinnedThreadIDs),
+            forKey: Self.pinnedThreadIDsStorageKey(for: deviceID))
+    }
+
+    private static func pinnedThreadIDsStorageKey(for deviceID: DeviceID) -> String {
+        "\(pinnedThreadIDsKeyPrefix).\(deviceID.rawValue)"
     }
 
     private func persistManualThreadOrder() {
