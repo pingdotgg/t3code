@@ -13,6 +13,8 @@ import type {
   PluginLogger,
   PluginRegistration,
   PluginServiceDescriptor,
+  PluginSettingsDescriptor,
+  SettingsCapability,
 } from "@t3tools/plugin-sdk";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -29,6 +31,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as SynchronizedRef from "effect/SynchronizedRef";
@@ -78,6 +81,7 @@ import { PluginModuleLoader } from "./PluginModuleLoader.ts";
 import { makePluginLogger } from "./PluginLogger.ts";
 import { pluginDataDir, pluginManifestPath, pluginVersionDir } from "./PluginPaths.ts";
 import { PluginRuntimeRegistry } from "./PluginRuntimeRegistry.ts";
+import { PluginSettingsStore } from "./PluginSettingsStore.ts";
 import { PluginToolCatalog, PluginToolCatalogError } from "./PluginToolCatalog.ts";
 import { makePluginWorkspaceGrants, type PluginWorkspaceGrants } from "./PluginWorkspaceGrants.ts";
 
@@ -283,6 +287,8 @@ const makeHostApi = (input: {
   readonly dataDir: string;
   readonly logger: PluginLogger;
   readonly grants: PluginWorkspaceGrants;
+  /** Declared on the plugin's definition; absent when it declares no settings. */
+  readonly settings: PluginSettingsDescriptor | undefined;
   readonly deps: {
     readonly sql: SqlClient.SqlClient;
     readonly secretStore: ServerSecretStore.ServerSecretStore["Service"];
@@ -304,6 +310,7 @@ const makeHostApi = (input: {
     readonly terminals: TerminalManager.TerminalManager["Service"];
     readonly outboundLookup: OutboundUrlLookup["Service"];
     readonly httpClientTransport: PluginHttpClientTransportService["Service"];
+    readonly settingsStore: PluginSettingsStore["Service"];
   };
 }): { readonly api: PluginHostApi; readonly teardown: ReadonlyArray<Effect.Effect<void>> } => {
   const capabilities = new Set(input.capabilities);
@@ -319,8 +326,55 @@ const makeHostApi = (input: {
     teardown.push(terminalsBundle.shutdown);
   }
 
+  // Decoded reads for plugin code. Distinct from the web draft path on purpose:
+  // the browser must be able to open the form on data that will not decode (that
+  // is precisely when it needs repairing), whereas plugin code must never receive
+  // config it cannot trust — it gets a typed failure instead.
+  const settingsCapability = (
+    descriptor: PluginSettingsDescriptor,
+  ): SettingsCapability<Schema.Struct<Schema.Struct.Fields>> => {
+    const decode = Schema.decodeUnknownEffect(descriptor.schema);
+    const read = Effect.gen(function* () {
+      const draft = yield* input.deps.settingsStore.readDraft(input.pluginId);
+      return yield* decode(draft.values).pipe(
+        Effect.mapError((cause) =>
+          // Never surface the decode error's rendering: it embeds the offending
+          // values, which would put plugin configuration into logs.
+          draft.revision === 0
+            ? {
+                _tag: "PluginSettingsNotConfigured" as const,
+                pluginId: input.pluginId,
+                message: `Plugin ${input.pluginId} has no stored settings yet.`,
+              }
+            : {
+                _tag: "PluginSettingsInvalidStored" as const,
+                pluginId: input.pluginId,
+                message: `Plugin ${input.pluginId} stored settings do not match its current schema.`,
+              },
+        ),
+        Effect.tapError(() =>
+          Effect.logDebug("plugin settings decode failed", {
+            pluginId: input.pluginId,
+            revision: draft.revision,
+          }),
+        ),
+      );
+    });
+    return {
+      get: read,
+      changes: input.deps.settingsStore.changes(input.pluginId).pipe(
+        Stream.mapEffect(() => read),
+        Stream.catchCause(() => Stream.empty),
+      ),
+    };
+  };
+
   const api: PluginHostApi = {
     hostApiVersion: HOST_API_VERSION,
+    settings:
+      input.settings === undefined
+        ? unavailable("settings")
+        : available("settings", settingsCapability(input.settings)),
     config: {
       appVersion: APP_VERSION,
       hostApiVersion: HOST_API_VERSION,
@@ -488,6 +542,7 @@ export const make = Effect.fn("PluginHost.make")(function* () {
   const migrator = yield* PluginMigrator;
   const registry = yield* PluginRuntimeRegistry;
   const toolCatalog = yield* PluginToolCatalog;
+  const settingsStore = yield* PluginSettingsStore;
   const httpRegistry = yield* PluginHttpRegistry;
   const clock = yield* Clock.Clock;
   const sql = yield* SqlClient.SqlClient;
@@ -675,45 +730,63 @@ export const make = Effect.fn("PluginHost.make")(function* () {
       const logger = makePluginLogger(pluginId);
       const dataDir = pluginDataDir(config.pluginsDir, pluginId, path.join);
       const grants = yield* makePluginWorkspaceGrants;
-      const { api: hostApi, teardown: hostApiTeardown } = makeHostApi({
-        pluginId,
-        capabilities: manifest.capabilities,
-        dataDir,
-        logger,
-        grants,
-        deps: {
-          sql,
-          secretStore,
-          config,
-          fileSystem: fs,
-          path,
-          environment,
-          orchestrationEngine,
-          snapshots,
-          turns,
-          messages,
-          activities,
-          providerInstances,
-          git,
-          checkpointStore,
-          textGeneration,
-          sourceControlRegistry,
-          github,
-          terminals,
-          outboundLookup,
-          httpClientTransport,
-        },
-      });
+      const makeHostApiForDefinition = (settings: PluginSettingsDescriptor | undefined) =>
+        makeHostApi({
+          pluginId,
+          capabilities: manifest.capabilities,
+          dataDir,
+          logger,
+          grants,
+          settings,
+          deps: {
+            sql,
+            secretStore,
+            config,
+            fileSystem: fs,
+            path,
+            environment,
+            orchestrationEngine,
+            snapshots,
+            turns,
+            messages,
+            activities,
+            providerInstances,
+            git,
+            checkpointStore,
+            textGeneration,
+            sourceControlRegistry,
+            github,
+            terminals,
+            outboundLookup,
+            httpClientTransport,
+            settingsStore,
+          },
+        });
 
       const activation = Effect.gen(function* () {
+        yield* fs.makeDirectory(dataDir, { recursive: true });
+
+        // Load the module BEFORE building hostApi: settings are declared on the
+        // DEFINITION, and hostApi.settings must already be bound to that schema
+        // when it is handed to register(). (A schema declared on the value that
+        // register RETURNS could never bind the handle passed INTO it.)
+        //
+        // This does not weaken the teardown guarantee below. Module top-level is
+        // plugin code, but it cannot reach any capability: capabilities are only
+        // handed over via register(hostApi), which runs after the finalizers are
+        // registered.
+        const definition = yield* loader.loadServerEntry(pluginDir, serverEntry);
+        const { api: hostApi, teardown: hostApiTeardown } = makeHostApiForDefinition(
+          definition.settings,
+        );
+
         // Register capability teardowns (e.g. killing leaked terminals) on the
-        // plugin scope before running any plugin code, so cleanup fires on
+        // plugin scope before any capability is reachable, so cleanup fires on
         // EVERY exit path — activation failure, stop, disable, crash.
         for (const teardown of hostApiTeardown) {
           yield* Scope.addFinalizer(scope, teardown);
         }
-        yield* fs.makeDirectory(dataDir, { recursive: true });
-        const definition = yield* loader.loadServerEntry(pluginDir, serverEntry);
+
         const registration = yield* resolveRegistration(pluginId, definition, hostApi).pipe(
           Effect.timeout(registrationTimeout()),
         );

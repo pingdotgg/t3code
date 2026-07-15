@@ -14,7 +14,9 @@ import type { PluginId } from "@t3tools/contracts/plugin";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 
@@ -79,6 +81,13 @@ export class PluginSettingsStore extends Context.Service<
       readonly schemaFingerprint: string;
       readonly expectedRevision: number;
     }) => Effect.Effect<number, PluginSettingsConflictError | SqlError>;
+
+    /**
+     * Emits after every successful write for this plugin. Carries no payload:
+     * subscribers re-read, so a slow subscriber cannot observe a stale value it
+     * would otherwise have to reconcile against the row.
+     */
+    readonly changes: (pluginId: PluginId) => Stream.Stream<void>;
   }
 >()("t3/plugins/PluginSettingsStore") {}
 
@@ -98,6 +107,9 @@ const asValues = (parsed: unknown): PluginSettingsValues | null =>
 
 export const make = Effect.fn("PluginSettingsStore.make")(function* () {
   const sql = yield* SqlClient.SqlClient;
+  // Unbounded: a settings write is a rare, user-driven event, and dropping one
+  // would leave a plugin running on config the user believes they changed.
+  const writes = yield* PubSub.unbounded<PluginId>();
 
   const readRow = (pluginId: PluginId) =>
     sql<SettingsRow>`
@@ -171,10 +183,17 @@ export const make = Effect.fn("PluginSettingsStore.make")(function* () {
           actualRevision: current?.revision ?? 0,
         });
       }
+      yield* PubSub.publish(writes, input.pluginId);
       return nextRevision;
     });
 
-  return PluginSettingsStore.of({ readDraft, write });
+  const changes: PluginSettingsStore["Service"]["changes"] = (pluginId) =>
+    Stream.fromPubSub(writes).pipe(
+      Stream.filter((written) => written === pluginId),
+      Stream.map(() => undefined),
+    );
+
+  return PluginSettingsStore.of({ readDraft, write, changes });
 });
 
 export const layer = Layer.effect(PluginSettingsStore, make());
