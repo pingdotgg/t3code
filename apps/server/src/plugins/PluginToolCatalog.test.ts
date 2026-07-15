@@ -183,6 +183,59 @@ it.layer(TestLayer)("PluginToolCatalog", (it) => {
     );
   });
 
+  /**
+   * Exact disable∩activation interleaving (no sleeps):
+   *  1. activation has published runtime; catalog is active
+   *  2. disable notes intent + deactivates (still before activation-lock teardown)
+   *  3. queued put-subscriber activate runs while registry STILL has the runtime
+   *  4. without disable-intent refuse, activate would reopen; with it, stays closed
+   *     and tools/call must not be admitted while intent is pending.
+   */
+  it.effect("disable intent blocks queued activate while registry still live", () => {
+    const pluginId = PluginId.make("tool-disable-intent");
+    const finalName = "plugin_tool_disable_intent__echo";
+    return withRuntime(
+      pluginId,
+      [makeTool()],
+      Effect.gen(function* () {
+        const catalog = yield* PluginToolCatalog.PluginToolCatalog;
+        const registry = yield* PluginRuntimeRegistry.PluginRuntimeRegistry;
+        assert.equal(catalog.isActive(finalName), true);
+        assert.equal((yield* registry.get(pluginId))._tag, "Some");
+
+        // Step 2: disable's synchronous prefix (before activation lock wait).
+        yield* catalog.noteDisableIntent(pluginId);
+        yield* catalog.deactivate(pluginId);
+        assert.equal(catalog.isActive(finalName), false);
+        assert.equal(yield* catalog.hasDisableIntent(pluginId), true);
+        // Registry removal is still behind the lock — runtime remains.
+        assert.equal((yield* registry.get(pluginId))._tag, "Some");
+
+        // Step 3: put subscriber's catalog.activate (both registry checks see live).
+        yield* catalog.activate(pluginId);
+
+        // Step 4: must stay closed; calls must not be admitted.
+        assert.equal(catalog.isActive(finalName), false);
+        const admitted = yield* catalog.makeTrampolineHandle(
+          pluginId,
+          "echo",
+        )({
+          message: "forbidden",
+        });
+        assert.equal(admitted.isError, true);
+        assert.match(textOf(admitted), /not enabled/i);
+
+        // Successful enable clears intent and allows reopen.
+        yield* catalog.clearDisableIntent(pluginId);
+        yield* catalog.activate(pluginId);
+        assert.equal(catalog.isActive(finalName), true);
+        const ok = yield* catalog.makeTrampolineHandle(pluginId, "echo")({ message: "ok" });
+        assert.equal(ok.isError, false);
+        assert.deepEqual(ok.content, [{ type: "text", text: "echo:ok" }]);
+      }),
+    );
+  });
+
   it.effect("maps handler defects to isError without killing the catalog", () => {
     const pluginId = PluginId.make("tool-die");
     return withRuntime(

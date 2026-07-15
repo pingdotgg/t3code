@@ -312,11 +312,14 @@ const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
 );
 
 const PluginRuntimeRegistryLayerLive = PluginRuntimeRegistry.layer;
+const PluginLockfileStoreLayerLive = PluginLockfileStore.layer;
+// Lockfile is optional at catalog construction (serviceOption) but must be in
+// scope here so call-time can require enabled+active lifecycle state.
 const PluginToolCatalogLayerLive = PluginToolCatalog.layer.pipe(
   Layer.provide(PluginRuntimeRegistryLayerLive),
+  Layer.provideMerge(PluginLockfileStoreLayerLive),
 );
 const PluginHttpRegistryLayerLive = PluginHttpRegistry.layer;
-const PluginLockfileStoreLayerLive = PluginLockfileStore.layer;
 const PluginHostCapabilityDepsLayerLive = Layer.mergeAll(
   OrchestrationLayerLive,
   PluginProjectionReadLayerLive,

@@ -82,11 +82,12 @@ const TestPluginHttpClientTransportLive = Layer.succeed(
 );
 
 const PluginRuntimeRegistryLayerLive = PluginRuntimeRegistryLayer.layer;
+const PluginLockfileStoreLayerLive = PluginLockfileStoreLayer.layer;
 const PluginToolCatalogLayerLive = PluginToolCatalogLayer.layer.pipe(
   Layer.provide(PluginRuntimeRegistryLayerLive),
+  Layer.provideMerge(PluginLockfileStoreLayerLive),
 );
 const PluginHttpRegistryLayerLive = PluginHttpRegistry.layer;
-const PluginLockfileStoreLayerLive = PluginLockfileStoreLayer.layer;
 const PluginHostCapabilityDepsLayerLive = Layer.mergeAll(
   Layer.mock(ServerSecretStore.ServerSecretStore)({
     get: unexpectedCapabilityUse,

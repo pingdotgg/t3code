@@ -746,12 +746,12 @@ export const make = Effect.fn("PluginHost.make")(function* () {
           });
         }
         yield* registry.put(pluginId, { manifest, registration, readiness, scope });
-        // Re-check AFTER put. Disable can flip the lockfile and catalog.deactivate
-        // while we hold the activation lock (deactivate waits on this lock after its
-        // early deactivate). registry.put notifies PluginToolsRegistration, which
-        // may catalog.activate — reopening both gates — before disable acquires the
-        // lock. If lifecycle is no longer active, undo the put immediately under the
-        // lock so a late activate cannot leave tools callable.
+        // Re-check AFTER put under the activation lock. If disable already flipped
+        // the lockfile, undo the put and deactivate so we do not leave a live
+        // runtime for a non-active lifecycle. This does NOT alone close the
+        // disable∩activation race: a put subscriber can still run catalog.activate
+        // before disable acquires the lock. That race is closed by disable intent
+        // (noteDisableIntent before the lock wait; activate refuses while set).
         const stateAfterPut = yield* store.readLockfile.pipe(
           Effect.map((current) => getLockfilePlugin(current, pluginId)?.state),
           Effect.orElseSucceed(() => undefined as PluginState | undefined),
@@ -888,8 +888,6 @@ export const make = Effect.fn("PluginHost.make")(function* () {
       yield* withPluginActivationLock(
         pluginId,
         Effect.gen(function* () {
-          const active = yield* registry.get(pluginId);
-          if (Option.isSome(active)) return;
           // Propagate a lockfile read/parse failure instead of substituting an empty
           // lockfile: an empty lockfile makes getLockfilePlugin return undefined and
           // the guard below no-op, so activatePlugin would SUCCEED without loading
@@ -900,6 +898,16 @@ export const make = Effect.fn("PluginHost.make")(function* () {
           const lockfile = yield* store.readLockfile;
           const entry = getLockfilePlugin(lockfile, pluginId);
           if (!entry?.enabled || entry.state !== "active") return;
+          // Successful enable: clear disable intent even when a runtime is already
+          // present (e.g. enable races a slow disable teardown). Intent must not
+          // permanently block catalog.activate after the user re-enabled.
+          yield* toolCatalog.clearDisableIntent(pluginId);
+          const active = yield* registry.get(pluginId);
+          if (Option.isSome(active)) {
+            // Runtime survived; re-open catalog gates now that intent is cleared.
+            yield* toolCatalog.activate(pluginId);
+            return;
+          }
           yield* loader.ensureHostSingletonResolution;
           yield* loadPlugin(pluginId, entry).pipe(
             Effect.catchCause((cause) =>
@@ -916,9 +924,14 @@ export const make = Effect.fn("PluginHost.make")(function* () {
     // publish remain as defense-in-depth). Neither path calls the other while
     // holding the lock, so this cannot deadlock.
     Effect.gen(function* () {
-      // Revoke call-time + visibility bindings BEFORE waiting on the activation
-      // lock. Disable persists enabled:false first; without this, fresh tools/call
-      // would still pass both gates while a concurrent activate holds the lock.
+      // Disable intent + catalog deactivate MUST run synchronously BEFORE waiting
+      // on the activation lock. Ordering:
+      //   1. noteDisableIntent — activate refuses to reopen while this is set
+      //   2. deactivate — clears visibility/call active bindings immediately
+      //   3. wait for activation lock, then remove runtime
+      // Without (1), a registry.put subscriber queued before remove can still see
+      // a live runtime and reopen active while we wait on the lock.
+      yield* toolCatalog.noteDisableIntent(pluginId);
       yield* toolCatalog.deactivate(pluginId);
 
       yield* withPluginActivationLock(
