@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
 # Update appcast.xml with a new release entry
-# Usage: ./update-appcast.sh VERSION DOWNLOAD_URL FILE_SIZE SIGNATURE
+# Usage: ./update-appcast.sh BUILD_VERSION DISPLAY_VERSION DOWNLOAD_URL FILE_SIZE SIGNATURE
 set -euo pipefail
 
-if [[ $# -ne 4 ]]; then
-  echo "Usage: $0 VERSION DOWNLOAD_URL FILE_SIZE SIGNATURE" >&2
-  echo "Example: $0 0.1.0-alpha.1 https://github.com/.../SurgeCode.zip 12345678 MC0CF..." >&2
+if [[ $# -ne 5 ]]; then
+  echo "Usage: $0 BUILD_VERSION DISPLAY_VERSION DOWNLOAD_URL FILE_SIZE SIGNATURE" >&2
+  echo "Example: $0 3 0.1.0-alpha.3 https://github.com/.../SurgeCode.zip 12345678 MC0CF..." >&2
   exit 1
 fi
 
-VERSION="$1"
-DOWNLOAD_URL="$2"
-FILE_SIZE="$3"
-SIGNATURE="$4"
+BUILD_VERSION="$1"
+DISPLAY_VERSION="$2"
+DOWNLOAD_URL="$3"
+FILE_SIZE="$4"
+SIGNATURE="$5"
 
 MAC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APPCAST_FILE="$MAC_DIR/Support/appcast.xml"
@@ -27,13 +28,13 @@ PUB_DATE=$(date -R)
 
 # Create new item entry
 NEW_ITEM="    <item>
-      <title>Version $VERSION</title>
-      <sparkle:version>$VERSION</sparkle:version>
-      <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
+      <title>Version $DISPLAY_VERSION</title>
+      <sparkle:version>$BUILD_VERSION</sparkle:version>
+      <sparkle:shortVersionString>$DISPLAY_VERSION</sparkle:shortVersionString>
       <pubDate>$PUB_DATE</pubDate>
       <enclosure url=\"$DOWNLOAD_URL\"
-                 sparkle:version=\"$VERSION\"
-                 sparkle:shortVersionString=\"$VERSION\"
+                 sparkle:version=\"$BUILD_VERSION\"
+                 sparkle:shortVersionString=\"$DISPLAY_VERSION\"
                  length=\"$FILE_SIZE\"
                  type=\"application/octet-stream\"
                  sparkle:edSignature=\"$SIGNATURE\" />
@@ -57,4 +58,4 @@ awk -v item="$NEW_ITEM" '
 # Replace original file
 mv "$TMP_FILE" "$APPCAST_FILE"
 
-echo "Updated appcast.xml with version $VERSION"
+echo "Updated appcast.xml with build $BUILD_VERSION ($DISPLAY_VERSION)"
