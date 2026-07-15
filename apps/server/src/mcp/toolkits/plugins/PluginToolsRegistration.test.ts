@@ -120,19 +120,39 @@ const ServicesLive = Layer.mergeAll(McpServer.McpServer.layer, CatalogAndRegistr
 const LiveLayer = PluginToolsRegistrationLive.pipe(Layer.provideMerge(ServicesLive));
 
 /**
- * In-process MCP HTTP + RpcClient harness (no real socket). Shares catalog/registry
- * with PluginToolsRegistrationLive so put/remove drive registration while
- * client["tools/list"] exercises the real protocol filter (EnabledWhen).
- * Also exposes the live McpServer so permanent addTool counts can be asserted.
+ * In-process MCP HTTP + RpcClient harness (no real socket). client["tools/list"]
+ * exercises the real protocol filter (EnabledWhen). Also exposes the live McpServer
+ * so permanent addTool counts can be asserted.
+ *
+ * The registry/catalog are provided as SHARED LAYER REFERENCES, exactly as
+ * server.ts does — not as hand-built instances wired in with Layer.succeed. That
+ * matters: production correctness depends on Effect memoizing these refs so the MCP
+ * side and PluginHost observe ONE instance. Constructing instances here would let a
+ * regression that gives the MCP side its own fresh services — silently disconnecting
+ * plugin activation from MCP, i.e. deleting the feature — keep every test green.
+ * The registry driven by the tests below is resolved FROM this graph for the same
+ * reason.
  */
+const PluginRuntimeRegistryLayerLive = PluginRuntimeRegistry.layer;
+const PluginToolCatalogLayerLive = PluginToolCatalog.layer.pipe(
+  Layer.provide(PluginRuntimeRegistryLayerLive),
+);
+
 const makeProtocolClient = Effect.gen(function* () {
-  const registry = yield* PluginRuntimeRegistry.make();
-  const catalog = yield* PluginToolCatalog.make().pipe(
-    Effect.provideService(PluginRuntimeRegistry.PluginRuntimeRegistry, registry),
-  );
-  const shared = Layer.mergeAll(
-    Layer.succeed(PluginRuntimeRegistry.PluginRuntimeRegistry, registry),
-    Layer.succeed(PluginToolCatalog.PluginToolCatalog, catalog),
+  const shared = Layer.mergeAll(PluginRuntimeRegistryLayerLive, PluginToolCatalogLayerLive);
+
+  // Resolve registry/catalog from the SAME graph the MCP handler builds, so the
+  // tests drive the very instances the toolkit subscribed to.
+  const servicesRef = yield* Ref.make<{
+    readonly registry: PluginRuntimeRegistry.PluginRuntimeRegistry["Service"];
+    readonly catalog: PluginToolCatalog.PluginToolCatalog["Service"];
+  } | null>(null);
+  const captureServices = Layer.effectDiscard(
+    Effect.gen(function* () {
+      const registry = yield* PluginRuntimeRegistry.PluginRuntimeRegistry;
+      const catalog = yield* PluginToolCatalog.PluginToolCatalog;
+      yield* Ref.set(servicesRef, { registry, catalog });
+    }),
   );
 
   // Capture McpServer from the same layer graph the HTTP handler builds so
@@ -147,7 +167,7 @@ const makeProtocolClient = Effect.gen(function* () {
     }),
   );
 
-  const appLayer = Layer.mergeAll(captureServer, PluginToolsRegistrationLive).pipe(
+  const appLayer = Layer.mergeAll(captureServer, captureServices, PluginToolsRegistrationLive).pipe(
     Layer.provideMerge(shared),
     Layer.provideMerge(
       McpServer.layerHttp({
@@ -199,8 +219,14 @@ const makeProtocolClient = Effect.gen(function* () {
   if (server === null) {
     return yield* Effect.die(new Error("McpServer was not captured from the HTTP layer graph"));
   }
+  const services = yield* Ref.get(servicesRef);
+  if (services === null) {
+    return yield* Effect.die(
+      new Error("registry/catalog were not captured from the HTTP layer graph"),
+    );
+  }
 
-  return { client, catalog, registry, server } as const;
+  return { client, catalog: services.catalog, registry: services.registry, server } as const;
 });
 
 it("core tool name set includes preview_snapshot", () => {

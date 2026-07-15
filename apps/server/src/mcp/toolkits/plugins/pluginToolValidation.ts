@@ -69,6 +69,28 @@ const deriveJsonSchema = (inputSchema: Schema.Decoder<unknown, never>): unknown 
   }
 };
 
+/**
+ * MCP delivers `tools/call.arguments` as a string-keyed record, so the derived
+ * input schema must have an object root. A scalar root (Schema.String) or a
+ * union root (anyOf/oneOf) describes a payload the protocol cannot express, so
+ * the tool would be listed but permanently uncallable.
+ *
+ * Returns null when the root is acceptable, or a reason fragment otherwise.
+ */
+const objectRootSchemaError = (jsonSchema: unknown): string | null => {
+  if (typeof jsonSchema !== "object" || jsonSchema === null || Array.isArray(jsonSchema)) {
+    return "must derive to a JSON Schema object";
+  }
+  const schema = jsonSchema as Record<string, unknown>;
+  if ("anyOf" in schema || "oneOf" in schema || "allOf" in schema) {
+    return "must have a single object root (a union/intersection root cannot be expressed by tools/call arguments)";
+  }
+  if (schema["type"] !== "object") {
+    return `must have an object root, not ${JSON.stringify(schema["type"] ?? "an untyped schema")} (tools/call arguments is always a string-keyed record)`;
+  }
+  return null;
+};
+
 export const resolvePluginToolAnnotations = (
   tool: PluginToolDescriptor,
 ): PluginToolAnnotations | string => {
@@ -214,6 +236,17 @@ export const validatePluginToolDescriptors = (
           pluginId,
           `tool ${tool.name} inputSchema is not JSON-Schema-derivable`,
         ),
+      );
+    }
+
+    // MCP `tools/call.arguments` is always a string-keyed record, so a scalar or
+    // union root (e.g. Schema.String) would advertise a tool that no protocol-valid
+    // payload can ever satisfy. Reject at registration rather than shipping a tool
+    // the model can see but never successfully call.
+    const rootTypeError = objectRootSchemaError(inputJsonSchema);
+    if (rootTypeError !== null) {
+      return Effect.fail(
+        pluginToolValidationError(pluginId, `tool ${tool.name} inputSchema ${rootTypeError}`),
       );
     }
 
