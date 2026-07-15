@@ -1,4 +1,4 @@
-import { SymbolView } from "expo-symbols";
+import { SymbolView } from "../../components/AppSymbol";
 import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
