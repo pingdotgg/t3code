@@ -19,6 +19,7 @@ class TypedHandlerFailure extends Data.TaggedError("TypedHandlerFailure")<{
 }> {}
 
 import { PLUGIN_TOOL_MAX_CONCURRENT_PER_TOOL } from "../mcp/toolkits/plugins/pluginToolBounds.ts";
+import { PluginLockfileStore } from "./PluginLockfileStore.ts";
 import * as PluginRuntimeRegistry from "./PluginRuntimeRegistry.ts";
 import * as PluginToolCatalog from "./PluginToolCatalog.ts";
 
@@ -184,10 +185,11 @@ it.layer(TestLayer)("PluginToolCatalog", (it) => {
   });
 
   /**
-   * Exact disable∩activation interleaving (no sleeps):
+   * Catalog-method simulation of disable∩activation (no sleeps):
    *  1. activation has published runtime; catalog is active
    *  2. disable notes intent + deactivates (still before activation-lock teardown)
-   *  3. queued put-subscriber activate runs while registry STILL has the runtime
+   *  3. catalog.activate is invoked while registry STILL has the runtime
+   *     (same call a put-subscriber would make; not a real queued-fiber interleave)
    *  4. without disable-intent refuse, activate would reopen; with it, stays closed
    *     and tools/call must not be admitted while intent is pending.
    */
@@ -211,7 +213,7 @@ it.layer(TestLayer)("PluginToolCatalog", (it) => {
         // Registry removal is still behind the lock — runtime remains.
         assert.equal((yield* registry.get(pluginId))._tag, "Some");
 
-        // Step 3: put subscriber's catalog.activate (both registry checks see live).
+        // Step 3: direct catalog.activate (both registry checks see live).
         yield* catalog.activate(pluginId);
 
         // Step 4: must stay closed; calls must not be admitted.
@@ -289,6 +291,7 @@ it.layer(TestLayer)("PluginToolCatalog", (it) => {
 
   // Plain vitest `it` (not it.effect) so this is NOT under TestClock — concurrent
   // Deferred latches need a live scheduler/clock to make progress.
+  // Nested `it` from it.layer has no it.live, so Effect.runPromise is intentional.
   it("enforces per-tool concurrency cap", async () => {
     const pluginId = PluginId.make("tool-conc");
     const LiveLayer = PluginToolCatalog.layer.pipe(Layer.provideMerge(PluginRuntimeRegistry.layer));
@@ -531,4 +534,79 @@ it.layer(TestLayer)("PluginToolCatalog", (it) => {
       }),
     );
   });
+});
+
+/**
+ * Deletion-sensitive coverage for lifecycleAllowsCall's persisted-state check.
+ * Catalog stays ACTIVE and runtime stays PRESENT — only the lockfile is not
+ * enabled+active. If the persisted-state check were deleted, this call would
+ * succeed (other gates already pass). Do not deactivate the catalog here.
+ */
+const persistedGatePluginId = PluginId.make("tool-persisted-gate");
+const persistedGateFinalName = "plugin_tool_persisted_gate__echo";
+
+const disabledLockfileStoreLayer = Layer.succeed(
+  PluginLockfileStore,
+  PluginLockfileStore.of({
+    lockfilePath: "/tmp/plugin-tool-catalog-persisted-gate.json",
+    advisoryLockPath: "/tmp/plugin-tool-catalog-persisted-gate.lock",
+    readLockfile: Effect.succeed({
+      sources: [],
+      plugins: {
+        [persistedGatePluginId]: {
+          version: "1.0.0",
+          sha256: "test-sha",
+          sourceId: "local",
+          enabled: false,
+          state: "disabled",
+          activation: { activatingSince: null, crashCount: 0 },
+          installedAt: "2026-07-03T00:00:00.000Z",
+          lastError: null,
+        },
+      },
+    }),
+    updateSources: () => Effect.die(new Error("unused")),
+    updatePlugin: () => Effect.die(new Error("unused")),
+    removePlugin: () => Effect.die(new Error("unused")),
+    transition: () => Effect.die(new Error("unused")),
+  }),
+);
+
+const StoreBackedTestLayer = PluginToolCatalog.layer.pipe(
+  Layer.provideMerge(PluginRuntimeRegistry.layer),
+  Layer.provideMerge(disabledLockfileStoreLayer),
+  Layer.provideMerge(TestClock.layer()),
+);
+
+it.layer(StoreBackedTestLayer)("PluginToolCatalog persisted lifecycle gate", (it) => {
+  it.effect(
+    "fails closed when lockfile enabled:false while catalog active and runtime present",
+    () =>
+      withRuntime(
+        persistedGatePluginId,
+        [makeTool()],
+        Effect.gen(function* () {
+          const catalog = yield* PluginToolCatalog.PluginToolCatalog;
+          const registry = yield* PluginRuntimeRegistry.PluginRuntimeRegistry;
+
+          // Both non-lockfile gates remain open — this isolates the persisted check.
+          assert.equal(catalog.isActive(persistedGateFinalName), true);
+          assert.equal((yield* registry.get(persistedGatePluginId))._tag, "Some");
+          assert.equal(yield* catalog.hasDisableIntent(persistedGatePluginId), false);
+
+          const result = yield* catalog.makeTrampolineHandle(
+            persistedGatePluginId,
+            "echo",
+          )({
+            message: "must-not-run",
+          });
+          assert.equal(result.isError, true);
+          assert.match(textOf(result), /not enabled/i);
+
+          // Still active after the rejected call — catalog was never deactivated.
+          assert.equal(catalog.isActive(persistedGateFinalName), true);
+          assert.equal((yield* registry.get(persistedGatePluginId))._tag, "Some");
+        }),
+      ),
+  );
 });

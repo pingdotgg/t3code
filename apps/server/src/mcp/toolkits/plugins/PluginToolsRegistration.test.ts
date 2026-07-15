@@ -119,19 +119,6 @@ const ServicesLive = Layer.mergeAll(McpServer.McpServer.layer, CatalogAndRegistr
 /** Real production wiring: stream subscription registers tools on registry put/remove. */
 const LiveLayer = PluginToolsRegistrationLive.pipe(Layer.provideMerge(ServicesLive));
 
-/** Live scheduler (not it.layer/TestClock) so the registration fiber can progress. */
-const runLive = <A, E>(
-  effect: Effect.Effect<
-    A,
-    E,
-    | McpServer.McpServer
-    | McpSchema.McpServerClient
-    | PluginRuntimeRegistry.PluginRuntimeRegistry
-    | PluginToolCatalog.PluginToolCatalog
-  >,
-): Promise<A> =>
-  Effect.runPromise(effect.pipe(Effect.provide(LiveLayer), Effect.scoped) as Effect.Effect<A, E>);
-
 /**
  * In-process MCP HTTP + RpcClient harness (no real socket). Shares catalog/registry
  * with PluginToolsRegistrationLive so put/remove drive registration while
@@ -221,8 +208,10 @@ it("core tool name set includes preview_snapshot", () => {
   assert.equal(CORE_MCP_TOOL_NAMES.has(finalName), false);
 });
 
-it("live put registers once; tools/list hides when inactive; call gate independent of runtime", async () => {
-  await Effect.runPromise(
+// Live scheduler (not it.effect/TestClock) so the registration fiber can progress.
+it.live(
+  "live put registers once; tools/list hides when inactive; call gate independent of runtime",
+  () =>
     Effect.gen(function* () {
       const { client, catalog, registry, server } = yield* makeProtocolClient;
       const tool = makeTool();
@@ -237,10 +226,15 @@ it("live put registers once; tools/list hides when inactive; call gate independe
         Effect.map((result) => result.tools.map((entry) => entry.name)),
       );
       assert.include(listedActive, finalName);
-      // Permanent MCP registration is once (addTool has no remove); double put must
+      // Permanent MCP registration is once (addTool has no remove). Second put must
       // not double-register. Deletion-sensitive: title claims "registers once".
-      const permanentCount = server.tools.filter((entry) => entry.tool.name === finalName).length;
-      assert.equal(permanentCount, 1);
+      assert.equal(server.tools.filter((entry) => entry.tool.name === finalName).length, 1);
+      yield* registry.put(pluginId, yield* makeRuntime(pluginId, [tool]));
+      yield* waitFor(
+        Effect.sync(() => catalog.isActive(finalName)),
+        "still active after second put",
+      );
+      assert.equal(server.tools.filter((entry) => entry.tool.name === finalName).length, 1);
 
       const callResult = yield* client["tools/call"]({
         name: finalName,
@@ -271,121 +265,118 @@ it("live put registers once; tools/list hides when inactive; call gate independe
         Effect.sync(() => !catalog.isActive(finalName)),
         "still inactive after remove",
       );
-    }).pipe(Effect.scoped, Effect.orDie),
-  );
-});
+    }).pipe(Effect.scoped),
+);
 
-it("reactivation with a CHANGED handler uses the new descriptor (trampoline)", async () => {
-  await Effect.runPromise(
-    Effect.gen(function* () {
-      const { client, catalog, registry } = yield* makeProtocolClient;
+// Live scheduler so the registration fiber can progress.
+it.live("reactivation with a CHANGED handler uses the new descriptor (trampoline)", () =>
+  Effect.gen(function* () {
+    const { client, catalog, registry } = yield* makeProtocolClient;
 
-      const v1 = makeTool({
-        handle: () =>
-          Effect.succeed({
-            content: [{ type: "text" as const, text: "version-one" }],
-          }),
-      });
-      yield* catalog.reserve(pluginId, [v1], { hasToolsCapability: true });
-      yield* registry.put(pluginId, yield* makeRuntime(pluginId, [v1]));
-      yield* waitFor(
-        Effect.sync(() => catalog.isActive(finalName)),
-        "v1 active",
-      );
-      const first = yield* client["tools/call"]({ name: finalName, arguments: { message: "x" } });
-      assert.equal(textOf(first), "version-one");
-
-      yield* registry.remove(pluginId);
-      yield* waitFor(
-        Effect.sync(() => !catalog.isActive(finalName)),
-        "deactivated after remove",
-      );
-
-      // Same metadata (fingerprint), different handle — proves no handler capture.
-      const v2 = makeTool({
-        handle: () =>
-          Effect.succeed({
-            content: [{ type: "text" as const, text: "version-two" }],
-          }),
-      });
-      yield* catalog.reserve(pluginId, [v2], { hasToolsCapability: true });
-      yield* registry.put(pluginId, yield* makeRuntime(pluginId, [v2]));
-      yield* waitFor(
-        Effect.sync(() => catalog.isActive(finalName)),
-        "v2 active",
-      );
-
-      // tools/list uniqueness after re-enable (no duplicate final name).
-      const listed = yield* client["tools/list"]({}).pipe(
-        Effect.map((result) =>
-          result.tools.map((entry) => entry.name).filter((n) => n === finalName),
-        ),
-      );
-      assert.equal(listed.length, 1);
-
-      const second = yield* client["tools/call"]({ name: finalName, arguments: { message: "x" } });
-      assert.equal(second.isError, false);
-      assert.equal(textOf(second), "version-two");
-    }).pipe(Effect.scoped, Effect.orDie),
-  );
-});
-
-it("rejects MCP final-name collision without activating or partially adding tools", async () => {
-  await runLive(
-    Effect.gen(function* () {
-      const server = yield* McpServer.McpServer;
-      const catalog = yield* PluginToolCatalog.PluginToolCatalog;
-
-      // Occupy only the SECOND tool's final name.
-      yield* server.addTool({
-        tool: new McpSchema.Tool({
-          name: finalName,
-          description: "pre-existing occupant",
-          inputSchema: { type: "object", properties: {} },
+    const v1 = makeTool({
+      handle: () =>
+        Effect.succeed({
+          content: [{ type: "text" as const, text: "version-one" }],
         }),
-        annotations: Context.empty(),
-        handle: () =>
-          Effect.succeed(
-            new McpSchema.CallToolResult({
-              content: [{ type: "text", text: "occupant" }],
-            }),
-          ),
-      });
+    });
+    yield* catalog.reserve(pluginId, [v1], { hasToolsCapability: true });
+    yield* registry.put(pluginId, yield* makeRuntime(pluginId, [v1]));
+    yield* waitFor(
+      Effect.sync(() => catalog.isActive(finalName)),
+      "v1 active",
+    );
+    const first = yield* client["tools/call"]({ name: finalName, arguments: { message: "x" } });
+    assert.equal(textOf(first), "version-one");
 
-      // TWO pending tools: first free, second collides. Preflight must reject the
-      // whole set before any addTool — sequential registration would add the free
-      // tool then fail, leaving a permanent partial registration.
-      const freeTool = makeTool({ name: "echo_free", title: "Echo free" });
-      const collidingTool = makeTool({ name: "echo_note", title: "Echo note" });
-      yield* reserveAndPut(pluginId, [freeTool, collidingTool]);
+    yield* registry.remove(pluginId);
+    yield* waitFor(
+      Effect.sync(() => !catalog.isActive(finalName)),
+      "deactivated after remove",
+    );
 
-      // Deterministic signal: the registration fiber drains PubSub events in order.
-      // A subsequent put that activates proves the collision put was already handled
-      // (not a sleep race).
-      const signalPluginId = PluginId.make("collision-signal");
-      const signalTool = makeTool({ name: "echo_note", title: "Signal" });
-      const signalFinalName = "plugin_collision_signal__echo_note";
-      yield* reserveAndPut(signalPluginId, [signalTool]);
-      yield* waitFor(
-        Effect.sync(() => catalog.isActive(signalFinalName)),
-        "signal plugin registered after collision put",
-      );
+    // Same metadata (fingerprint), different handle — proves no handler capture.
+    const v2 = makeTool({
+      handle: () =>
+        Effect.succeed({
+          content: [{ type: "text" as const, text: "version-two" }],
+        }),
+    });
+    yield* catalog.reserve(pluginId, [v2], { hasToolsCapability: true });
+    yield* registry.put(pluginId, yield* makeRuntime(pluginId, [v2]));
+    yield* waitFor(
+      Effect.sync(() => catalog.isActive(finalName)),
+      "v2 active",
+    );
 
-      assert.equal(catalog.isActive(freeFinalName), false);
-      assert.equal(catalog.isActive(finalName), false);
+    // tools/list uniqueness after re-enable (no duplicate final name).
+    const listed = yield* client["tools/list"]({}).pipe(
+      Effect.map((result) =>
+        result.tools.map((entry) => entry.name).filter((n) => n === finalName),
+      ),
+    );
+    assert.equal(listed.length, 1);
 
-      // Free tool must never have been added (preflight aborts the whole set).
-      assert.equal(server.tools.filter((entry) => entry.tool.name === freeFinalName).length, 0);
-      // Both descriptors remain pending MCP registration (no markAddedToMcp).
-      const pending = yield* catalog.pendingMcpRegistration(pluginId);
-      assert.equal(pending.length, 2);
+    const second = yield* client["tools/call"]({ name: finalName, arguments: { message: "x" } });
+    assert.equal(second.isError, false);
+    assert.equal(textOf(second), "version-two");
+  }).pipe(Effect.scoped),
+);
 
-      // Occupant still serves the colliding final name.
-      const call = yield* server.callTool({ name: finalName, arguments: { message: "x" } });
-      assert.equal(textOf(call), "occupant");
-    }),
-  );
-});
+// Live scheduler so the registration fiber can progress.
+it.live("rejects MCP final-name collision without activating or partially adding tools", () =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const catalog = yield* PluginToolCatalog.PluginToolCatalog;
+
+    // Occupy only the SECOND tool's final name.
+    yield* server.addTool({
+      tool: new McpSchema.Tool({
+        name: finalName,
+        description: "pre-existing occupant",
+        inputSchema: { type: "object", properties: {} },
+      }),
+      annotations: Context.empty(),
+      handle: () =>
+        Effect.succeed(
+          new McpSchema.CallToolResult({
+            content: [{ type: "text", text: "occupant" }],
+          }),
+        ),
+    });
+
+    // TWO pending tools: first free, second collides. Preflight must reject the
+    // whole set before any addTool — sequential registration would add the free
+    // tool then fail, leaving a permanent partial registration.
+    const freeTool = makeTool({ name: "echo_free", title: "Echo free" });
+    const collidingTool = makeTool({ name: "echo_note", title: "Echo note" });
+    yield* reserveAndPut(pluginId, [freeTool, collidingTool]);
+
+    // Deterministic signal: the registration fiber drains PubSub events in order.
+    // A subsequent put that activates proves the collision put was already handled
+    // (not a sleep race).
+    const signalPluginId = PluginId.make("collision-signal");
+    const signalTool = makeTool({ name: "echo_note", title: "Signal" });
+    const signalFinalName = "plugin_collision_signal__echo_note";
+    yield* reserveAndPut(signalPluginId, [signalTool]);
+    yield* waitFor(
+      Effect.sync(() => catalog.isActive(signalFinalName)),
+      "signal plugin registered after collision put",
+    );
+
+    assert.equal(catalog.isActive(freeFinalName), false);
+    assert.equal(catalog.isActive(finalName), false);
+
+    // Free tool must never have been added (preflight aborts the whole set).
+    assert.equal(server.tools.filter((entry) => entry.tool.name === freeFinalName).length, 0);
+    // Both descriptors remain pending MCP registration (no markAddedToMcp).
+    const pending = yield* catalog.pendingMcpRegistration(pluginId);
+    assert.equal(pending.length, 2);
+
+    // Occupant still serves the colliding final name.
+    const call = yield* server.callTool({ name: finalName, arguments: { message: "x" } });
+    assert.equal(textOf(call), "occupant");
+  }).pipe(Effect.provide(LiveLayer), Effect.scoped),
+);
 
 /**
  * Controlled registry: `list` synchronously injects a put AFTER the snapshot is
@@ -440,8 +431,10 @@ const makeSubscribeFirstRaceRegistry = Effect.gen(function* () {
   return { registry, latePluginId, lateTool, lateFinalName };
 });
 
-it("registers a put that lands between snapshot list and stream attach (subscribe-first)", async () => {
-  await Effect.runPromise(
+// Live scheduler so the registration fiber can progress.
+it.live(
+  "registers a put that lands between snapshot list and stream attach (subscribe-first)",
+  () =>
     Effect.gen(function* () {
       const { registry, latePluginId, lateTool, lateFinalName } =
         yield* makeSubscribeFirstRaceRegistry;
@@ -467,5 +460,4 @@ it("registers a put that lands between snapshot list and stream attach (subscrib
         "late put during list registered via subscribe-first",
       );
     }).pipe(Effect.scoped),
-  );
-});
+);
