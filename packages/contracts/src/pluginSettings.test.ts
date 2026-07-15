@@ -257,3 +257,33 @@ describe("fingerprintSettingsSchema", () => {
     expect(fingerprintSettingsSchema(otherDefault)).toBe(fingerprintSettingsSchema(base));
   });
 });
+
+describe("password control", () => {
+  // `password` masks the input; it does not store securely. Plugin settings are
+  // ordinary plaintext in plugin_settings, readable by anyone with plugins:manage,
+  // so a plugin reaching for it to hold an API key would be silently wrong. Secrets
+  // are out of scope for this slice — SecretsCapability already exists for them.
+  it("rejects a password control for plugins", () => {
+    const schema = Schema.Struct({
+      token: Schema.String.pipe(
+        Schema.annotateKey({ providerSettingsForm: { control: "password" } }),
+      ),
+    }) as unknown as SettingsSchema;
+    const violations = findPluginSettingsSchemaViolations(schema, {
+      allowPasswordControl: false,
+    });
+    expect(violations.map((v) => v.field)).toEqual(["token"]);
+    expect(violations[0]?.reason).toMatch(/SecretsCapability/);
+  });
+
+  // First-party provider schemas predate this and say what they store: OpenCode's
+  // serverPassword description literally reads "Stored in plain text on disk."
+  it("permits a password control when explicitly allowed", () => {
+    const schema = Schema.Struct({
+      token: Schema.String.pipe(
+        Schema.annotateKey({ providerSettingsForm: { control: "password" } }),
+      ),
+    }) as unknown as SettingsSchema;
+    expect(findPluginSettingsSchemaViolations(schema, { allowPasswordControl: true })).toEqual([]);
+  });
+});
