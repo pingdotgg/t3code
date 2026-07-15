@@ -23,6 +23,7 @@ import type { ChatComposerHandle } from "../chat/ChatComposer";
 import { VoiceAudioController } from "./VoiceAudioController";
 import { VoiceTraceTimeline } from "./VoiceTraceTimeline";
 import { type ResizeEdge, useVoicePanelGeometry } from "./useVoicePanelGeometry";
+import { createVoiceAudioConfig, useVoiceSettingsStore } from "./voiceSettingsStore";
 import { useVoiceTraceStore, type VoiceTraceEntryKind } from "./voiceTraceStore";
 
 type VoiceStatus = "idle" | "connecting" | "listening" | "thinking" | "speaking" | "error";
@@ -207,6 +208,8 @@ export function VoiceSessionProvider({ children }: { readonly children: ReactNod
   const [currentTitle, setCurrentTitle] = useState("Current task");
   const [assistantTranscript, setAssistantTranscript] = useState("");
   const [displayTraceSessionId, setDisplayTraceSessionId] = useState<string | null>(null);
+  const voiceSpeed = useVoiceSettingsStore((state) => state.speed);
+  const voiceLanguage = useVoiceSettingsStore((state) => state.language);
   const traceSessions = useVoiceTraceStore((state) => state.sessions);
   const currentComposerRef = useRef<VoiceComposerRegistration | null>(null);
   const lastComposerRef = useRef<VoiceComposerRegistration | null>(null);
@@ -478,6 +481,7 @@ export function VoiceSessionProvider({ children }: { readonly children: ReactNod
           .find((message) => message.role === "assistant" && !message.streaming)?.text ?? null;
 
       socket.addEventListener("open", () => {
+        const voiceSettings = useVoiceSettingsStore.getState();
         sendJson(socket, {
           type: "session.update",
           session: {
@@ -488,13 +492,7 @@ export function VoiceSessionProvider({ children }: { readonly children: ReactNod
               silence_duration_ms: 700,
               prefix_padding_ms: 300,
             },
-            audio: {
-              input: {
-                format: { type: "audio/pcm", rate: audio.sampleRate },
-                transcription: { model: "grok-transcribe" },
-              },
-              output: { format: { type: "audio/pcm", rate: audio.sampleRate } },
-            },
+            audio: createVoiceAudioConfig(audio.sampleRate, voiceSettings),
             tools: VOICE_TOOLS,
           },
         });
@@ -678,6 +676,26 @@ export function VoiceSessionProvider({ children }: { readonly children: ReactNod
       return next;
     });
   }, []);
+
+  useEffect(() => {
+    const socket = socketRef.current;
+    const audio = audioRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN || !audio) return;
+
+    const timer = setTimeout(() => {
+      sendJson(socket, {
+        type: "session.update",
+        session: {
+          audio: createVoiceAudioConfig(audio.sampleRate, {
+            speed: voiceSpeed,
+            language: voiceLanguage,
+          }),
+        },
+      });
+    }, 120);
+
+    return () => clearTimeout(timer);
+  }, [voiceLanguage, voiceSpeed]);
 
   useEffect(() => end, [end]);
 

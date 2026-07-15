@@ -3,6 +3,7 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
   CheckCircle2Icon,
+  GaugeIcon,
   HistoryIcon,
   KeyRoundIcon,
   LoaderIcon,
@@ -18,7 +19,18 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { VoiceTraceTimeline } from "../voice/VoiceTraceTimeline";
+import {
+  DEFAULT_VOICE_SPEED,
+  isVoiceLanguage,
+  VOICE_LANGUAGE_OPTIONS,
+  VOICE_SPEED_MAX,
+  VOICE_SPEED_MIN,
+  VOICE_SPEED_STEP,
+  voiceLanguageLabel,
+  useVoiceSettingsStore,
+} from "../voice/voiceSettingsStore";
 import { useVoiceTraceStore } from "../voice/voiceTraceStore";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 
@@ -50,6 +62,10 @@ function VoiceSettingsContent({ environmentId }: { readonly environmentId: Envir
   const [feedback, setFeedback] = useState<string | null>(null);
   const traceSessions = useVoiceTraceStore((state) => state.sessions);
   const clearTraceHistory = useVoiceTraceStore((state) => state.clearHistory);
+  const voiceSpeed = useVoiceSettingsStore((state) => state.speed);
+  const voiceLanguage = useVoiceSettingsStore((state) => state.language);
+  const setVoiceSpeed = useVoiceSettingsStore((state) => state.setSpeed);
+  const setVoiceLanguage = useVoiceSettingsStore((state) => state.setLanguage);
 
   useEffect(() => {
     if (queriedStatus) setConfigured(queriedStatus.configured);
@@ -175,6 +191,59 @@ function VoiceSettingsContent({ environmentId }: { readonly environmentId: Envir
                 Remove
               </Button>
             </div>
+          }
+        />
+      </SettingsSection>
+
+      <SettingsSection title="Voice preferences" icon={<GaugeIcon className="size-3.5" />}>
+        <SettingsRow
+          title="Speech pace"
+          description="Adjust how quickly Grok speaks. Changes apply to the active voice session."
+          status={`${VOICE_SPEED_MIN.toFixed(1)}× minimum · ${DEFAULT_VOICE_SPEED.toFixed(1)}× recommended · ${VOICE_SPEED_MAX.toFixed(1)}× maximum`}
+          control={
+            <div className="flex w-full items-center gap-3 sm:w-64">
+              <input
+                id="voice-speech-pace"
+                className="h-5 min-w-0 flex-1 cursor-pointer accent-primary"
+                type="range"
+                min={VOICE_SPEED_MIN}
+                max={VOICE_SPEED_MAX}
+                step={VOICE_SPEED_STEP}
+                value={voiceSpeed}
+                aria-label="Grok speech pace"
+                aria-valuetext={`${voiceSpeed.toFixed(2)} times speed`}
+                onChange={(event) => setVoiceSpeed(event.currentTarget.valueAsNumber)}
+              />
+              <output
+                htmlFor="voice-speech-pace"
+                className="w-11 shrink-0 text-right font-mono text-xs font-medium tabular-nums"
+              >
+                {voiceSpeed.toFixed(2)}×
+              </output>
+            </div>
+          }
+        />
+        <SettingsRow
+          title="Spoken language"
+          description="Bias speech recognition toward a supported language. Auto detects the language and is recommended for multilingual conversations."
+          control={
+            <Select
+              value={voiceLanguage}
+              onValueChange={(value) => {
+                if (isVoiceLanguage(value)) setVoiceLanguage(value);
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-64" aria-label="Grok spoken language">
+                <SelectValue>{voiceLanguageLabel(voiceLanguage)}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {VOICE_LANGUAGE_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
           }
         />
       </SettingsSection>
