@@ -1498,8 +1498,18 @@ export function writeFileAtomic(
   });
 }
 
-export function definePlugin<const Definition extends PluginDefinition>(
-  definition: Definition,
-): Definition {
+/**
+ * Identity helper that binds the settings schema type through to `register`.
+ *
+ * The generic must be `S` (the schema), NOT the whole definition. Constraining a
+ * single `Definition extends PluginDefinition` leaves `PluginDefinition`'s own `S`
+ * at its default, so `hostApi.settings.get` resolves to the BROAD struct type and a
+ * plugin sees `unknown` for every field — which defeats the entire point of
+ * declaring a schema. Inferring `S` from `definition.settings.schema` is what makes
+ * `settings.get` return the plugin's own field types.
+ */
+export function definePlugin<S extends Schema.Struct<Schema.Struct.Fields>>(
+  definition: PluginDefinition<S>,
+): PluginDefinition<S> {
   return definition;
 }
