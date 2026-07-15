@@ -298,6 +298,79 @@ describe("PluginUiHost declarative settings", () => {
     });
   });
 
+  // Sol MUST #3: the server keeps the declaration reachable for a plugin that failed
+  // activation, but the web host loaded only `active` plugins — so the repair form
+  // was unreachable and the whole fallback was dead. Bad settings are often WHY a
+  // plugin fails: it reads hostApi.settings.get in register() and the row is
+  // unreadable.
+  it("generates the settings page for a plugin that failed to activate, so it can be repaired", async () => {
+    const state = createPluginUiHostState();
+
+    const snapshot = await syncPluginUiHostRegistrations({
+      state,
+      plugins: [pluginInfo({ state: "failed", capabilities: ["settings"] })],
+      waitForHost: async () => {},
+      importWebPlugin: async () => ({
+        default: { settings: { schema: Schema.Struct({ baseUrl: Schema.String }) } },
+      }),
+    });
+
+    expect(snapshot.settingsPages).toHaveLength(1);
+    expect(snapshot.settingsPages[0]).toMatchObject({
+      pluginId: pluginInfo().id,
+      id: GENERATED_SETTINGS_PAGE_ID,
+    });
+  });
+
+  // Importing a rejected plugin's module is only safe because its register() never
+  // runs: the module is loaded for the DECLARATIVE schema alone.
+  it("never runs register() for a plugin that failed to activate", async () => {
+    const state = createPluginUiHostState();
+    let registered = false;
+
+    const snapshot = await syncPluginUiHostRegistrations({
+      state,
+      plugins: [pluginInfo({ state: "failed", capabilities: ["settings"] })],
+      waitForHost: async () => {},
+      importWebPlugin: async () => ({
+        default: {
+          settings: { schema: Schema.Struct({ baseUrl: Schema.String }) },
+          register(ctx: PluginUiContext) {
+            registered = true;
+            ctx.registerRoute({ path: "overview", component: () => null });
+            ctx.registerSidebarSection({ id: "main", title: "Main", render: () => null });
+          },
+        },
+      }),
+    });
+
+    expect(registered).toBe(false);
+    // The surfaces of a plugin the host rejected must not go live.
+    expect(snapshot.routes).toHaveLength(0);
+    expect(snapshot.sidebarSections).toHaveLength(0);
+    // ...but the repair form is still there.
+    expect(snapshot.settingsPages).toHaveLength(1);
+  });
+
+  it("does not load a failed plugin that declares no settings capability", async () => {
+    const state = createPluginUiHostState();
+    let imported = false;
+
+    const snapshot = await syncPluginUiHostRegistrations({
+      state,
+      plugins: [pluginInfo({ state: "failed", capabilities: [] })],
+      waitForHost: async () => {},
+      importWebPlugin: async () => {
+        imported = true;
+        return { default: { register: () => {} } };
+      },
+    });
+
+    // Nothing to repair, so there is no reason to touch a broken plugin's bundle.
+    expect(imported).toBe(false);
+    expect(snapshot.settingsPages).toHaveLength(0);
+  });
+
   it("keeps the generated page alongside a plugin's own settings pages", async () => {
     const state = createPluginUiHostState();
 
