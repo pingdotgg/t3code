@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   ModelSelection as ModelSelectionSchema,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProviderInteractionMode as ProviderInteractionModeSchema,
   RuntimeMode as RuntimeModeSchema,
   type EnvironmentId,
@@ -42,6 +43,11 @@ export interface ComposerDraft {
   readonly runtimeMode?: RuntimeMode;
   readonly interactionMode?: ProviderInteractionMode;
   readonly workspaceSelection?: ComposerDraftWorkspaceSelection;
+}
+
+export interface ComposerDraftContent {
+  readonly text: string;
+  readonly attachments: ReadonlyArray<DraftComposerImageAttachment>;
 }
 
 export interface ComposerDraftWorkspaceSelection {
@@ -380,6 +386,101 @@ export function clearComposerDraftContentState(
     ...current,
     [draftKey]: draft,
   };
+}
+
+function mergeComposerDraftText(existing: string, incoming: string): string {
+  if (incoming.length === 0) {
+    return existing;
+  }
+  if (existing.length === 0) {
+    return incoming;
+  }
+  // Import retries are possible after an interrupted native handoff. Keep the
+  // operation idempotent when the same shared text is already present.
+  if (existing === incoming || existing.endsWith(`\n\n${incoming}`)) {
+    return existing;
+  }
+  return `${existing}\n\n${incoming}`;
+}
+
+export function mergeComposerDraftContentState(
+  current: Record<string, ComposerDraft>,
+  draftKey: string,
+  content: ComposerDraftContent,
+): Record<string, ComposerDraft> {
+  const existing = normalizeDraft(current[draftKey]);
+  const attachmentIds = new Set(existing.attachments.map((attachment) => attachment.id));
+  const incomingAttachments = content.attachments.filter((attachment) => {
+    if (attachmentIds.has(attachment.id)) {
+      return false;
+    }
+    attachmentIds.add(attachment.id);
+    return true;
+  });
+  const attachments = [...existing.attachments, ...incomingAttachments].slice(
+    0,
+    PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  );
+  const text = mergeComposerDraftText(existing.text, content.text);
+  if (text === existing.text && attachments.length === existing.attachments.length) {
+    return current;
+  }
+  return {
+    ...current,
+    [draftKey]: {
+      ...existing,
+      text,
+      attachments,
+    },
+  };
+}
+
+/**
+ * Atomically moves an incoming share into a project-scoped composer draft.
+ * The durable write happens before the share inbox item can be acknowledged.
+ */
+export async function mergeComposerDraftContent(
+  draftKey: string,
+  content: ComposerDraftContent,
+): Promise<{ readonly skippedAttachmentCount: number }> {
+  ensureComposerDraftsLoaded();
+  if (loadPromise !== null) {
+    await loadPromise;
+  }
+  if (persistTimer !== null) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  const current = appAtomRegistry.get(composerDraftsAtom);
+  const next = mergeComposerDraftContentState(current, draftKey, content);
+  const currentAttachmentIds = new Set(
+    normalizeDraft(current[draftKey]).attachments.map((attachment) => attachment.id),
+  );
+  const nextAttachmentIds = new Set(
+    normalizeDraft(next[draftKey]).attachments.map((attachment) => attachment.id),
+  );
+  const skippedAttachmentCount = content.attachments.filter(
+    (attachment) =>
+      !currentAttachmentIds.has(attachment.id) && !nextAttachmentIds.has(attachment.id),
+  ).length;
+  if (next === current) {
+    return { skippedAttachmentCount };
+  }
+  await writePersistedComposerDrafts(next);
+  appAtomRegistry.set(composerDraftsAtom, next);
+  return { skippedAttachmentCount };
+}
+
+export async function flushComposerDrafts(): Promise<void> {
+  ensureComposerDraftsLoaded();
+  if (loadPromise !== null) {
+    await loadPromise;
+  }
+  if (persistTimer !== null) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  await writePersistedComposerDrafts(appAtomRegistry.get(composerDraftsAtom));
 }
 
 export function clearComposerDraftContent(draftKey: string): void {

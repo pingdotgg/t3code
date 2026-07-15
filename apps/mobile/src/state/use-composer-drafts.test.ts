@@ -8,6 +8,7 @@ import {
   decodePersistedComposerDrafts,
   type ComposerDraft,
   getComposerDraftSnapshot,
+  mergeComposerDraftContentState,
   removeComposerDraftsForEnvironment,
 } from "./use-composer-drafts";
 
@@ -129,6 +130,55 @@ describe("mobile composer drafts", () => {
     appAtomRegistry.set(composerDraftsAtom, { [draftKey]: selectedDraft });
 
     expect(getComposerDraftSnapshot(draftKey)).toEqual(selectedDraft);
+  });
+
+  it("merges shared content into a project draft without duplicating retries", () => {
+    const draftKey = "new-task:environment-1:project-1";
+    const sharedAttachment = {
+      id: "share-1:image:0",
+      type: "image" as const,
+      name: "Screenshot.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+      dataUrl: "data:image/png;base64,YWJj",
+      previewUri: "data:image/png;base64,YWJj",
+    };
+    const existing: Record<string, ComposerDraft> = {
+      [draftKey]: { text: "Existing context", attachments: [] },
+    };
+    const content = { text: "Shared note", attachments: [sharedAttachment] };
+
+    const merged = mergeComposerDraftContentState(existing, draftKey, content);
+    expect(merged[draftKey]).toMatchObject({
+      text: "Existing context\n\nShared note",
+      attachments: [sharedAttachment],
+    });
+    expect(mergeComposerDraftContentState(merged, draftKey, content)).toBe(merged);
+  });
+
+  it("preserves existing images when shared content exceeds the draft attachment limit", () => {
+    const draftKey = "new-task:environment-1:project-1";
+    const image = (id: string) => ({
+      id,
+      type: "image" as const,
+      name: `${id}.png`,
+      mimeType: "image/png",
+      sizeBytes: 3,
+      dataUrl: "data:image/png;base64,YWJj",
+      previewUri: "data:image/png;base64,YWJj",
+    });
+    const existingImage = image("existing");
+    const sharedImages = Array.from({ length: 8 }, (_, index) => image(`shared-${index}`));
+
+    const merged = mergeComposerDraftContentState(
+      { [draftKey]: { text: "", attachments: [existingImage] } },
+      draftKey,
+      { text: "", attachments: sharedImages },
+    );
+
+    expect(merged[draftKey]?.attachments).toHaveLength(8);
+    expect(merged[draftKey]?.attachments[0]).toEqual(existingImage);
+    expect(merged[draftKey]?.attachments.at(-1)?.id).toBe("shared-6");
   });
 
   it("removes only drafts owned by the selected environment", () => {

@@ -1,5 +1,5 @@
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { SymbolView } from "../../components/AppSymbol";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { useMemo } from "react";
@@ -16,6 +16,11 @@ import type { WorkspaceState } from "../../state/workspaceModel";
 import { useWorkspaceState } from "../../state/workspace";
 import { groupProjectsByRepository } from "../../lib/repositoryGroups";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import { useIncomingShare } from "../sharing/IncomingShareProvider";
+
+type NewTaskRouteParams = {
+  readonly incomingShareId?: string | string[];
+};
 
 function deriveProjectEmptyState(catalogState: WorkspaceState): {
   readonly title: string;
@@ -72,7 +77,7 @@ function deriveProjectEmptyState(catalogState: WorkspaceState): {
   };
 }
 
-export function NewTaskRouteScreen() {
+export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRouteParams | undefined>) {
   const projects = useProjects();
   const threads = useThreadShells();
   const { state: catalogState } = useWorkspaceState();
@@ -81,6 +86,11 @@ export function NewTaskRouteScreen() {
   const insets = useSafeAreaInsets();
   const chevronColor = useThemeColor("--color-chevron");
   const accentColor = useThemeColor("--color-icon-muted");
+  const { pendingShare } = useIncomingShare();
+  const routeShareId = Array.isArray(route.params?.incomingShareId)
+    ? route.params.incomingShareId[0]
+    : route.params?.incomingShareId;
+  const incomingShare = pendingShare?.id === routeShareId ? pendingShare : null;
   const repositoryGroups = useMemo(
     () => groupProjectsByRepository({ projects, threads }),
     [projects, threads],
@@ -152,10 +162,22 @@ export function NewTaskRouteScreen() {
         className="flex-1"
         contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
         contentContainerStyle={{
+          gap: 12,
           paddingHorizontal: 20,
           paddingTop: 8,
         }}
       >
+        {incomingShare ? (
+          <View className="gap-1 rounded-[24px] bg-primary/10 px-5 py-4">
+            <Text className="text-base font-t3-bold text-foreground">Shared content ready</Text>
+            <Text className="text-sm leading-normal text-foreground-muted">
+              Choose a project, then send it as-is or save it as a draft for more editing.
+              {incomingShare.attachments.length > 0
+                ? ` ${incomingShare.attachments.length} shared image${incomingShare.attachments.length === 1 ? "" : "s"} will be attached.`
+                : ""}
+            </Text>
+          </View>
+        ) : null}
         {items.length === 0 ? (
           <View collapsable={false} className="items-center gap-3 rounded-[24px] bg-card px-6 py-8">
             {projectEmptyState.loading ? <ActivityIndicator color={accentColor} /> : null}
@@ -201,6 +223,7 @@ export function NewTaskRouteScreen() {
                         environmentId: item.environmentId,
                         projectId: item.id,
                         title: item.title,
+                        incomingShareId: incomingShare?.id,
                       },
                     })
                   }

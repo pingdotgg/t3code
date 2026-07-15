@@ -1,4 +1,4 @@
-import { NativeStackScreenOptions } from "../../native/StackHeader";
+import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, InteractionManager, Platform, View, useColorScheme } from "react-native";
@@ -35,7 +35,11 @@ import {
   resolveProviderOptionDescriptors,
 } from "../../lib/providerOptions";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
-import { getComposerDraftSnapshot } from "../../state/use-composer-drafts";
+import {
+  flushComposerDrafts,
+  getComposerDraftSnapshot,
+  mergeComposerDraftContent,
+} from "../../state/use-composer-drafts";
 import { useProjects } from "../../state/entities";
 import { deriveThreadTitleFromPrompt } from "../../lib/projectThreadStartTurn";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
@@ -43,6 +47,7 @@ import { enqueueThreadOutboxMessage, removeThreadOutboxMessage } from "../../sta
 import { useRemoteConnectionStatus } from "../../state/use-remote-environment-registry";
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
 import { useCreateProjectThread } from "./use-project-actions";
+import { useIncomingShare } from "../sharing/IncomingShareProvider";
 
 function formatWorkspaceLabel(input: {
   readonly workspaceMode: string;
@@ -63,11 +68,14 @@ export function NewTaskDraftScreen(props: {
   };
   /** Queued outbox message id when editing an existing pending task. */
   readonly pendingTaskId?: string;
+  /** Durable native share inbox item to merge into this project draft. */
+  readonly incomingShareId?: string;
 }) {
   const projects = useProjects();
   const createProjectThread = useCreateProjectThread();
   const flow = useNewTaskFlow();
   const navigation = useNavigation();
+  const { consumeShare, pendingShare } = useIncomingShare();
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
@@ -82,6 +90,12 @@ export function NewTaskDraftScreen(props: {
   const promptInputRef = useRef<ComposerEditorHandle>(null);
   const loadedBranchesProjectKeyRef = useRef<string | null>(null);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
+  const [isImportingShare, setIsImportingShare] = useState(false);
+  const [importedIncomingShareId, setImportedIncomingShareId] = useState<string | null>(null);
+  const [shareImportAttempt, setShareImportAttempt] = useState(0);
+  const appliedIncomingShareIdRef = useRef<string | null>(null);
+  const isIncomingShareReady =
+    !props.incomingShareId || importedIncomingShareId === props.incomingShareId;
   const appliedInitialProjectKeyRef = useRef<string | null>(null);
   useEffect(() => {
     return () => {
@@ -197,6 +211,53 @@ export function NewTaskDraftScreen(props: {
     loadedBranchesProjectKeyRef.current = projectKey;
     void flow.loadBranches();
   }, [flow.loadBranches, selectedProject]);
+
+  useEffect(() => {
+    const shareId = props.incomingShareId;
+    const draftKey = flow.draftKey;
+    if (
+      !shareId ||
+      !draftKey ||
+      pendingShare?.id !== shareId ||
+      appliedIncomingShareIdRef.current === shareId
+    ) {
+      return;
+    }
+
+    appliedIncomingShareIdRef.current = shareId;
+    setIsImportingShare(true);
+    void mergeComposerDraftContent(draftKey, {
+      text: pendingShare.text,
+      attachments: pendingShare.attachments,
+    })
+      .then(async ({ skippedAttachmentCount }) => {
+        await consumeShare(shareId);
+        setImportedIncomingShareId(shareId);
+        const warnings = [...pendingShare.warnings];
+        if (skippedAttachmentCount > 0) {
+          warnings.push(
+            `${skippedAttachmentCount} shared image${skippedAttachmentCount === 1 ? " was" : "s were"} skipped because this draft reached the attachment limit.`,
+          );
+        }
+        if (warnings.length > 0) {
+          Alert.alert("Some shared content was skipped", warnings.join("\n"));
+        }
+      })
+      .catch((error) => {
+        appliedIncomingShareIdRef.current = null;
+        Alert.alert(
+          "Could not import shared content",
+          error instanceof Error ? error.message : "The shared content could not be saved.",
+          [
+            {
+              text: "Retry",
+              onPress: () => setShareImportAttempt((attempt) => attempt + 1),
+            },
+          ],
+        );
+      })
+      .finally(() => setIsImportingShare(false));
+  }, [consumeShare, flow.draftKey, pendingShare, props.incomingShareId, shareImportAttempt]);
 
   useEffect(() => {
     // Android starts with the collapsed composer pill (like an open thread)
@@ -450,6 +511,21 @@ export function NewTaskDraftScreen(props: {
     }
   }
 
+  async function handleSaveDraft(): Promise<void> {
+    if (!flow.draftKey || !isIncomingShareReady || isImportingShare || flow.submitting) {
+      return;
+    }
+    try {
+      await flushComposerDrafts();
+      navigation.getParent()?.goBack();
+    } catch (error) {
+      Alert.alert(
+        "Could not save draft",
+        error instanceof Error ? error.message : "The task draft could not be saved.",
+      );
+    }
+  }
+
   const handleNativePasteImages = useCallback(
     async (uris: ReadonlyArray<string>) => {
       try {
@@ -620,6 +696,8 @@ export function NewTaskDraftScreen(props: {
     Boolean(flow.selectedProject) &&
     Boolean(flow.selectedModel) &&
     flow.prompt.trim().length > 0 &&
+    isIncomingShareReady &&
+    !isImportingShare &&
     !flow.submitting &&
     !(flow.workspaceMode === "worktree" && !flow.selectedBranchName);
   const promptEditor = (
@@ -724,7 +802,22 @@ export function NewTaskDraftScreen(props: {
     return (
       <View className="flex-1 bg-screen">
         <NativeStackScreenOptions options={{ headerShown: false }} />
-        <AndroidScreenHeader title="New Thread" onBack={() => navigation.goBack()} />
+        <AndroidScreenHeader
+          title="New Thread"
+          onBack={() => navigation.goBack()}
+          actions={
+            props.incomingShareId
+              ? [
+                  {
+                    accessibilityLabel: "Save task draft",
+                    icon: "archivebox",
+                    onPress: () => void handleSaveDraft(),
+                    disabled: !isIncomingShareReady || isImportingShare || flow.submitting,
+                  },
+                ]
+              : undefined
+          }
+        />
 
         <KeyboardAvoidingView automaticOffset behavior="padding" className="flex-1">
           <View className="flex-1" />
@@ -798,6 +891,17 @@ export function NewTaskDraftScreen(props: {
   return (
     <View className="flex-1 bg-sheet">
       <NativeStackScreenOptions options={{ title: selectedProject.title }} />
+      {props.incomingShareId ? (
+        <NativeHeaderToolbar placement="right">
+          <NativeHeaderToolbar.Button
+            accessibilityLabel="Save task draft"
+            disabled={!isIncomingShareReady || isImportingShare || flow.submitting}
+            label="Save draft"
+            onPress={() => void handleSaveDraft()}
+            separateBackground
+          />
+        </NativeHeaderToolbar>
+      ) : null}
 
       <KeyboardAvoidingView automaticOffset behavior="padding" className="flex-1">
         <View className="min-h-0 flex-1 px-5 pt-2">{promptEditor}</View>
