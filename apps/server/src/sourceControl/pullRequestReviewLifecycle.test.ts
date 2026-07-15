@@ -9,7 +9,11 @@ const REVIEWING_COMMENT =
   "> [!NOTE]\n> Currently processing new changes in this PR. This may take a few minutes, please wait...";
 
 function payload(input: {
-  readonly threads?: ReadonlyArray<{ isResolved: boolean }> | null;
+  readonly threads?: ReadonlyArray<{
+    isResolved: boolean;
+    isOutdated?: boolean;
+    comments?: { nodes: ReadonlyArray<{ body: string }> };
+  }> | null;
   readonly hasNextPage?: boolean;
   readonly reviews?: ReadonlyArray<{ state: string }>;
   readonly firstComments?: ReadonlyArray<{ login: string; body: string }>;
@@ -125,12 +129,19 @@ describe("parsePullRequestReviewStatus", () => {
     expect(
       parsePullRequestReviewStatus(
         payload({
-          threads: [{ isResolved: false }, { isResolved: true }],
+          threads: [
+            { isResolved: false, comments: { nodes: [{ body: "Please fix" }] } },
+            { isResolved: true, comments: { nodes: [{ body: "Fixed" }] } },
+          ],
           reviews: [{ state: "COMMENTED" }],
           firstComments: [{ login: "coderabbitai[bot]", body: "Walkthrough" }],
         }),
       ),
-    ).toEqual({ unresolvedReviewThreadCount: 1, reviewLifecycle: "actionable-comments" });
+    ).toEqual({
+      unresolvedReviewThreadCount: 1,
+      actionableReviewItemCount: 1,
+      reviewLifecycle: "actionable-comments",
+    });
   });
 
   it("sees the in-progress marker on the bot's edited summary comment", () => {
@@ -143,7 +154,11 @@ describe("parsePullRequestReviewStatus", () => {
           latestComments: [{ login: "serge", body: "thanks" }],
         }),
       ),
-    ).toEqual({ unresolvedReviewThreadCount: 0, reviewLifecycle: "review-in-progress" });
+    ).toEqual({
+      unresolvedReviewThreadCount: 0,
+      actionableReviewItemCount: 0,
+      reviewLifecycle: "review-in-progress",
+    });
   });
 
   it("reports a clean finished review", () => {
@@ -155,7 +170,11 @@ describe("parsePullRequestReviewStatus", () => {
           firstComments: [{ login: "coderabbitai[bot]", body: "Walkthrough" }],
         }),
       ),
-    ).toEqual({ unresolvedReviewThreadCount: 0, reviewLifecycle: "review-complete" });
+    ).toEqual({
+      unresolvedReviewThreadCount: 0,
+      actionableReviewItemCount: 0,
+      reviewLifecycle: "review-complete",
+    });
   });
 
   it("treats an unfinished thread page as an unknown count and unknown lifecycle", () => {
@@ -167,16 +186,22 @@ describe("parsePullRequestReviewStatus", () => {
           reviews: [{ state: "APPROVED" }],
         }),
       ),
-    ).toEqual({ unresolvedReviewThreadCount: null, reviewLifecycle: null });
+    ).toEqual({
+      unresolvedReviewThreadCount: null,
+      actionableReviewItemCount: null,
+      reviewLifecycle: null,
+    });
   });
 
   it("degrades to unknown on a payload it cannot read", () => {
     expect(parsePullRequestReviewStatus("not json")).toEqual({
       unresolvedReviewThreadCount: null,
+      actionableReviewItemCount: null,
       reviewLifecycle: null,
     });
     expect(parsePullRequestReviewStatus("{}")).toEqual({
       unresolvedReviewThreadCount: null,
+      actionableReviewItemCount: null,
       reviewLifecycle: null,
     });
   });
@@ -192,6 +217,33 @@ describe("parsePullRequestReviewStatus", () => {
           },
         }),
       ),
-    ).toEqual({ unresolvedReviewThreadCount: 1, reviewLifecycle: "actionable-comments" });
+    ).toEqual({
+      unresolvedReviewThreadCount: 1,
+      actionableReviewItemCount: 0,
+      reviewLifecycle: "actionable-comments",
+    });
+  });
+
+  it("ignores resolved, outdated, and empty review threads for actionable work", () => {
+    expect(
+      parsePullRequestReviewStatus(
+        payload({
+          threads: [
+            { isResolved: false, comments: { nodes: [{ body: "Fix this" }] } },
+            { isResolved: false, comments: { nodes: [{ body: "   " }] } },
+            { isResolved: true, comments: { nodes: [{ body: "Resolved" }] } },
+            {
+              isResolved: false,
+              isOutdated: true,
+              comments: { nodes: [{ body: "Old diff" }] },
+            },
+          ],
+        }),
+      ),
+    ).toEqual({
+      unresolvedReviewThreadCount: 2,
+      actionableReviewItemCount: 1,
+      reviewLifecycle: "actionable-comments",
+    });
   });
 });

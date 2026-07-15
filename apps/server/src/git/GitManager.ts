@@ -469,6 +469,7 @@ function toStatusPr(
   review?: {
     reviewDecision: GitPullRequestReviewDecision | null;
     unresolvedReviewThreadCount: number | null;
+    actionableReviewItemCount?: number | null;
     reviewLifecycle?: GitPullRequestReviewLifecycle | null;
   },
 ): {
@@ -480,6 +481,7 @@ function toStatusPr(
   state: "open" | "closed" | "merged";
   reviewDecision: GitPullRequestReviewDecision | null;
   unresolvedReviewThreadCount: number | null;
+  actionableReviewItemCount?: number | null;
   reviewLifecycle?: GitPullRequestReviewLifecycle;
 } {
   const reviewLifecycle = review?.reviewLifecycle ?? null;
@@ -492,6 +494,9 @@ function toStatusPr(
     state: pr.state,
     reviewDecision: review?.reviewDecision ?? null,
     unresolvedReviewThreadCount: review?.unresolvedReviewThreadCount ?? null,
+    ...(review && "actionableReviewItemCount" in review
+      ? { actionableReviewItemCount: review.actionableReviewItemCount ?? null }
+      : {}),
     // Omitted rather than nulled: an absent lifecycle means unknown.
     ...(reviewLifecycle !== null ? { reviewLifecycle } : {}),
   };
@@ -1041,11 +1046,15 @@ export const make = Effect.gen(function* () {
         Effect.map((status) => ({
           reviewDecision: status.reviewDecision,
           unresolvedReviewThreadCount: status.unresolvedReviewThreadCount,
+          ...("actionableReviewItemCount" in status
+            ? { actionableReviewItemCount: status.actionableReviewItemCount }
+            : {}),
           reviewLifecycle: status.reviewLifecycle ?? null,
         })),
         Effect.orElseSucceed(() => ({
           reviewDecision: null,
           unresolvedReviewThreadCount: null,
+          actionableReviewItemCount: null,
           reviewLifecycle: null,
         })),
       );

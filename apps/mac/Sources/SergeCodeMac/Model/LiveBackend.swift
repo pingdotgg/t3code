@@ -2220,6 +2220,7 @@ public actor LiveBackend: BackendService {
             reviewDecision: (remote?.pr?.reviewDecision).flatMap(
                 PullRequestReviewDecision.init(rawValue:)),
             unresolvedReviewThreadCount: remote?.pr?.unresolvedReviewThreadCount,
+            actionableReviewItemCount: remote?.pr?.actionableReviewItemCount,
             reviewLifecycle: (remote?.pr?.reviewLifecycle).flatMap(
                 PullRequestReviewLifecycle.init(rawValue:)))
     }

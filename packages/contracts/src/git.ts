@@ -230,6 +230,8 @@ const VcsStatusChangeRequest = Schema.Struct({
    * Nil-or-unknown must be treated as not merge-ready by clients.
    */
   unresolvedReviewThreadCount: Schema.NullOr(NonNegativeInt),
+  /** Number of unresolved, non-outdated inline review threads with content. */
+  actionableReviewItemCount: Schema.optional(Schema.NullOr(NonNegativeInt)),
   /**
    * Review lifecycle phase, absent when unknown (no review activity, a
    * non-GitHub provider, or a failed fetch). Absent is not "complete": clients

@@ -9,10 +9,8 @@ enum ReviewFollowUp: Equatable {
     case reviewInProgress
     /// The agent is running the fix turn we asked for.
     case fixesInProgress
-    /// Actionable comments are waiting. `unresolvedCount` is nil when the count
-    /// is unknown (non-GitHub provider, or a failed fetch) but feedback is
-    /// still expected — for example a CHANGES_REQUESTED review with no threads.
-    case fixReviews(unresolvedCount: Int?)
+    /// Actionable comments are waiting.
+    case fixReviews(actionableCount: Int)
 }
 
 /// Pure model of the review lifecycle of the branch's pull request, as the
@@ -58,17 +56,10 @@ enum ReviewLifecycle {
 
         if vcs.reviewLifecycle == .reviewInProgress { return .reviewInProgress }
 
-        if let unresolved = vcs.unresolvedReviewThreadCount {
-            if unresolved > 0 { return .fixReviews(unresolvedCount: unresolved) }
-            // Requested changes without an unresolved thread: the reviewer left
-            // the ask in the review body, which the thread count cannot see.
-            if vcs.reviewDecision == .changesRequested { return .fixReviews(unresolvedCount: nil) }
+        guard let actionable = vcs.actionableReviewItemCount, actionable > 0 else {
             return .none
         }
-
-        // Unknown thread count (non-GitHub provider, or the fetch failed): the
-        // agent can still read the PR itself, so keep offering the fix.
-        return .fixReviews(unresolvedCount: nil)
+        return .fixReviews(actionableCount: actionable)
     }
 
     /// True while the running turn is the fix turn we asked for — matched by the

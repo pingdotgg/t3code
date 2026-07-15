@@ -49,8 +49,8 @@ struct ChatFollowUpBar: View {
         switch ReviewLifecycle.followUp(
             threadStatus: thread.status, vcs: vcs, timeline: model.selectedTimeline())
         {
-        case .fixReviews(let unresolvedCount):
-            fixReviewCommentsSuggestion(unresolvedCount: unresolvedCount)
+        case .fixReviews(let actionableCount):
+            fixReviewCommentsSuggestion(actionableCount: actionableCount)
                 .transition(Motion.banner)
         case .reviewInProgress:
             reviewProgressStrip(text: "Review in progress", vcs: vcs)
@@ -175,14 +175,12 @@ struct ChatFollowUpBar: View {
 
     // MARK: - PR open → fix review comments
 
-    private func fixReviewCommentsSuggestion(unresolvedCount: Int?) -> some View {
+    private func fixReviewCommentsSuggestion(actionableCount: Int) -> some View {
         HStack(spacing: 8) {
-            if let unresolvedCount {
-                Text(unresolvedCount == 1 ? "1 unresolved comment" : "\(unresolvedCount) unresolved comments")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
+            Text(actionableCount == 1 ? "1 actionable comment" : "\(actionableCount) actionable comments")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
             Spacer(minLength: 8)
             Button {
                 Task { await model.send(text: ReviewLifecycle.fixReviewCommentsPrompt) }

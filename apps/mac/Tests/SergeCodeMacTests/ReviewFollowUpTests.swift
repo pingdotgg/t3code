@@ -10,6 +10,7 @@ struct ReviewFollowUpTests {
         prState: PullRequestState? = .open,
         reviewDecision: PullRequestReviewDecision? = nil,
         unresolvedReviewThreadCount: Int? = 0,
+        actionableReviewItemCount: Int? = 0,
         reviewLifecycle: PullRequestReviewLifecycle? = nil
     ) -> VcsStatus {
         VcsStatus(
@@ -21,6 +22,7 @@ struct ReviewFollowUpTests {
             prState: prState,
             reviewDecision: reviewDecision,
             unresolvedReviewThreadCount: unresolvedReviewThreadCount,
+            actionableReviewItemCount: actionableReviewItemCount,
             reviewLifecycle: reviewLifecycle)
     }
 
@@ -42,8 +44,10 @@ struct ReviewFollowUpTests {
         #expect(
             ReviewLifecycle.followUp(
                 threadStatus: .idle,
-                vcs: status(unresolvedReviewThreadCount: 3, reviewLifecycle: .actionableComments),
-                timeline: answeredTimeline()) == .fixReviews(unresolvedCount: 3))
+                vcs: status(
+                    unresolvedReviewThreadCount: 3, actionableReviewItemCount: 3,
+                    reviewLifecycle: .actionableComments),
+                timeline: answeredTimeline()) == .fixReviews(actionableCount: 3))
     }
 
     @Test("stays quiet once the review is complete with nothing left to fix")
@@ -94,24 +98,36 @@ struct ReviewFollowUpTests {
                 == ReviewFollowUp.none)
     }
 
-    @Test("offers the fix when changes were requested without an unresolved thread")
-    func offersFixOnChangesRequested() {
+    @Test("stays quiet when changes were requested without an actionable thread")
+    func quietOnChangesRequestedWithoutActionableThread() {
         #expect(
             ReviewLifecycle.followUp(
                 threadStatus: .idle,
                 vcs: status(
                     reviewDecision: .changesRequested, unresolvedReviewThreadCount: 0,
                     reviewLifecycle: .reviewComplete),
-                timeline: answeredTimeline()) == .fixReviews(unresolvedCount: nil))
+                timeline: answeredTimeline()) == ReviewFollowUp.none)
     }
 
-    @Test("offers the fix when the thread count is unknown")
-    func offersFixWhenCountUnknown() {
+    @Test("stays quiet when the actionable count is unknown")
+    func quietWhenActionableCountUnknown() {
         #expect(
             ReviewLifecycle.followUp(
                 threadStatus: .idle,
-                vcs: status(unresolvedReviewThreadCount: nil),
-                timeline: answeredTimeline()) == .fixReviews(unresolvedCount: nil))
+                vcs: status(
+                    unresolvedReviewThreadCount: nil, actionableReviewItemCount: nil),
+                timeline: answeredTimeline()) == ReviewFollowUp.none)
+    }
+
+    @Test("stays quiet when unresolved threads have no actionable content")
+    func quietWhenUnresolvedThreadsAreNotActionable() {
+        #expect(
+            ReviewLifecycle.followUp(
+                threadStatus: .idle,
+                vcs: status(
+                    unresolvedReviewThreadCount: 2, actionableReviewItemCount: 0,
+                    reviewLifecycle: .actionableComments),
+                timeline: answeredTimeline()) == ReviewFollowUp.none)
     }
 
     @Test("stays quiet without an open PR")

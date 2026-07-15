@@ -119,11 +119,13 @@ describe("VcsStatusResult pull request review fields", () => {
         state: "open",
         reviewDecision: "APPROVED",
         unresolvedReviewThreadCount: 0,
+        actionableReviewItemCount: 0,
       },
     });
 
     expect(parsed.pr?.reviewDecision).toBe("APPROVED");
     expect(parsed.pr?.unresolvedReviewThreadCount).toBe(0);
+    expect(parsed.pr?.actionableReviewItemCount).toBe(0);
   });
 
   it("accepts null review fields when status is unknown", () => {

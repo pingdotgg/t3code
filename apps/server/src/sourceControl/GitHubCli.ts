@@ -215,6 +215,7 @@ export type GitHubPullRequestReviewDecision = "APPROVED" | "CHANGES_REQUESTED" |
 export interface GitHubPullRequestReviewStatus {
   readonly reviewDecision: GitHubPullRequestReviewDecision | null;
   readonly unresolvedReviewThreadCount: number | null;
+  readonly actionableReviewItemCount?: number | null;
   /** Where the PR sits in its review lifecycle; absent when unknown. */
   readonly reviewLifecycle?: PullRequestReviewLifecycle | null;
 }
@@ -552,6 +553,7 @@ export const make = Effect.gen(function* () {
         const unknownReviewStatus = {
           reviewDecision,
           unresolvedReviewThreadCount: null,
+          actionableReviewItemCount: null,
           reviewLifecycle: null,
         };
 
@@ -587,7 +589,7 @@ export const make = Effect.gen(function* () {
         // summary comment in place, so both ends of the comment list are
         // sampled — the summary stays first, the re-review chatter lands last.
         const graphqlQuery =
-          "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewThreads(first: 100) { nodes { isResolved } pageInfo { hasNextPage } } reviews(last: 5) { nodes { state } } firstComments: comments(first: 5) { nodes { author { login } body } } latestComments: comments(last: 5) { nodes { author { login } body } } } } }";
+          "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewThreads(first: 100) { nodes { isResolved isOutdated comments(first: 1) { nodes { body } } } pageInfo { hasNextPage } } reviews(last: 5) { nodes { state } } firstComments: comments(first: 5) { nodes { author { login } body } } latestComments: comments(last: 5) { nodes { author { login } body } } } } }";
 
         const reviewStatus = yield* execute({
           cwd: input.cwd,
@@ -607,6 +609,7 @@ export const make = Effect.gen(function* () {
           Effect.map((result) => parsePullRequestReviewStatus(result.stdout.trim() || "{}")),
           Effect.orElseSucceed(() => ({
             unresolvedReviewThreadCount: null,
+            actionableReviewItemCount: null,
             reviewLifecycle: null,
           })),
         );

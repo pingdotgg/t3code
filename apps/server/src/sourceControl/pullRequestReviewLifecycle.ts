@@ -26,6 +26,7 @@ export type PullRequestReviewLifecycle =
 
 export interface PullRequestReviewStatusSnapshot {
   readonly unresolvedReviewThreadCount: number | null;
+  readonly actionableReviewItemCount: number | null;
   readonly reviewLifecycle: PullRequestReviewLifecycle | null;
 }
 
@@ -92,7 +93,11 @@ export function deriveReviewLifecycle(input: {
 }
 
 interface RawThreadConnection {
-  nodes?: ReadonlyArray<{ isResolved?: boolean } | null> | null;
+  nodes?: ReadonlyArray<{
+    isResolved?: boolean;
+    isOutdated?: boolean;
+    comments?: { nodes?: ReadonlyArray<{ body?: string | null } | null> | null } | null;
+  } | null> | null;
   pageInfo?: { hasNextPage?: boolean } | null;
 }
 
@@ -116,13 +121,24 @@ interface RawReviewStatusPayload {
   } | null;
 }
 
-function countUnresolvedReviewThreads(
+function analyzeReviewThreads(
   reviewThreads: RawThreadConnection | null | undefined,
-): number | null {
+): { unresolvedReviewThreadCount: number; actionableReviewItemCount: number } | null {
   const nodes = reviewThreads?.nodes;
   if (!Array.isArray(nodes)) return null;
   if (reviewThreads?.pageInfo?.hasNextPage === true) return null;
-  return nodes.filter((thread) => thread?.isResolved !== true).length;
+  const unresolved = nodes.filter(
+    (thread) => thread?.isResolved !== true && thread?.isOutdated !== true,
+  );
+  return {
+    unresolvedReviewThreadCount: unresolved.length,
+    actionableReviewItemCount: unresolved.filter((thread) =>
+      thread?.comments?.nodes?.some(
+        (comment: { readonly body?: string | null } | null) =>
+          (comment?.body?.trim().length ?? 0) > 0,
+      ),
+    ).length,
+  };
 }
 
 function collectComments(
@@ -151,11 +167,16 @@ export function parsePullRequestReviewStatus(raw: string): PullRequestReviewStat
   try {
     parsed = JSON.parse(raw) as RawReviewStatusPayload;
   } catch {
-    return { unresolvedReviewThreadCount: null, reviewLifecycle: null };
+    return {
+      unresolvedReviewThreadCount: null,
+      actionableReviewItemCount: null,
+      reviewLifecycle: null,
+    };
   }
 
   const pullRequest = parsed.data?.repository?.pullRequest;
-  const unresolvedReviewThreadCount = countUnresolvedReviewThreads(pullRequest?.reviewThreads);
+  const threadAnalysis = analyzeReviewThreads(pullRequest?.reviewThreads);
+  const unresolvedReviewThreadCount = threadAnalysis?.unresolvedReviewThreadCount ?? null;
   const reviewNodes = pullRequest?.reviews?.nodes;
   const hasSubmittedReview =
     Array.isArray(reviewNodes) &&
@@ -163,6 +184,7 @@ export function parsePullRequestReviewStatus(raw: string): PullRequestReviewStat
 
   return {
     unresolvedReviewThreadCount,
+    actionableReviewItemCount: threadAnalysis?.actionableReviewItemCount ?? null,
     reviewLifecycle: deriveReviewLifecycle({
       unresolvedReviewThreadCount,
       hasSubmittedReview,
