@@ -425,18 +425,33 @@ describe("stripUndeclaredSettings", () => {
     expect(result._tag).toBe("Unsupported");
   });
 
-  it("resolves a $ref into the document's definitions", () => {
+  it("resolves a $ref emitted by a real identified schema", () => {
+    // Derived, NOT hand-written. Effect emits `$ref: "#/$defs/Inner"` while keying the
+    // document map `definitions` — a resolver accepting only `#/definitions/` let this
+    // schema decode and activate, then rejected every save. Hand-writing the ref form
+    // is what hid it: the test asserted a shape Effect never emits.
+    const inner = Schema.Struct({ retries: Schema.String }).annotate({ identifier: "Inner" });
+    const schema = Schema.Struct({ one: inner, two: inner });
+    const result = stripUndeclaredSettings(
+      { one: { retries: "1", injected: "no" }, two: { retries: "2" } },
+      schema,
+    );
+    expect(result).toEqual({
+      _tag: "Stripped",
+      value: { one: { retries: "1" }, two: { retries: "2" } },
+    });
+  });
+
+  it("refuses patternProperties rather than dropping or leaking keys", () => {
     const result = stripAgainstJsonSchemaDocument({
-      value: { inner: { retries: "1", injected: "no" } },
+      value: { declared: "a", "x-1": "b" },
       schema: {
         type: "object",
-        properties: { inner: { $ref: "#/definitions/Inner" } },
-      },
-      definitions: {
-        Inner: { type: "object", properties: { retries: { type: "string" } } },
+        properties: { declared: { type: "string" } },
+        patternProperties: { "^x-": { type: "string" } },
       },
     });
-    expect(result).toEqual({ _tag: "Stripped", value: { inner: { retries: "1" } } });
+    expect(result._tag).toBe("Unsupported");
   });
 
   it("refuses a recursive $ref rather than looping or passing through", () => {
