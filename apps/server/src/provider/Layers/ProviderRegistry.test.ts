@@ -838,6 +838,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             skills: [],
           } as const satisfies ServerProvider;
           const refreshCalls = yield* Ref.make(0);
+          const listedSkillCwds = yield* Ref.make<ReadonlyArray<string>>([]);
+          const projectSkill = {
+            name: "project-review",
+            path: "/tmp/project/.codex/skills/project-review/SKILL.md",
+            enabled: true,
+            scope: "repo",
+          } as const;
           const instance = {
             instanceId: codexInstanceId,
             driverKind: codexDriver,
@@ -860,6 +867,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             },
             adapter: {} as ProviderInstance["adapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],
+            listSkills: (cwd: string) =>
+              Ref.update(listedSkillCwds, (cwds) => [...cwds, cwd]).pipe(Effect.as([projectSkill])),
           } satisfies ProviderInstance;
           const instanceRegistryLayer = Layer.succeed(
             ProviderInstanceRegistry.ProviderInstanceRegistry,
@@ -889,6 +898,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             const registry = yield* ProviderRegistry.ProviderRegistry;
             assert.deepStrictEqual(yield* registry.getProviders, [initialProvider]);
             assert.strictEqual(yield* Ref.get(refreshCalls), 0);
+            assert.deepStrictEqual(
+              yield* registry.listSkills({ instanceId: codexInstanceId, cwd: "/tmp/project" }),
+              [projectSkill],
+            );
+            assert.deepStrictEqual(yield* Ref.get(listedSkillCwds), ["/tmp/project"]);
           }).pipe(Effect.provide(runtimeServices));
         }),
       );

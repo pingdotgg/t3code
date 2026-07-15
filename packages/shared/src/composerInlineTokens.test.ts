@@ -36,6 +36,18 @@ describe("collectComposerInlineTokens", () => {
     expect(collectComposerInlineTokens("Inspect @AGENTS.md")).toEqual([]);
   });
 
+  it("collects trailing skill tokens from submitted prompts when requested", () => {
+    expect(collectComposerInlineTokens("Use $ui", { includeTrailingSkillToken: true })).toEqual([
+      {
+        type: "skill",
+        value: "ui",
+        source: "$ui",
+        start: 4,
+        end: 7,
+      },
+    ]);
+  });
+
   it("keeps the delimiter after a token outside its source range", () => {
     const text = "Inspect [package.json](package.json) next";
 

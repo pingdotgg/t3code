@@ -9,9 +9,11 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   RuntimeRequestId,
+  type ServerProviderSkill,
   type ThreadId,
   TurnId,
 } from "@t3tools/contracts";
+import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -40,6 +42,7 @@ import {
   ProviderAdapterRequestError,
   ProviderAdapterSessionNotFoundError,
   ProviderAdapterValidationError,
+  type ProviderDriverError,
 } from "../Errors.ts";
 import { mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
 import type * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
@@ -84,6 +87,36 @@ export interface GrokAdapterLiveOptions {
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
   readonly instanceId?: ProviderInstanceId;
+  readonly listSkills?: (
+    cwd: string,
+  ) => Effect.Effect<ReadonlyArray<ServerProviderSkill>, ProviderDriverError>;
+}
+
+function submittedSkillTokens(input: string) {
+  return collectComposerInlineTokens(input, { includeTrailingSkillToken: true }).filter(
+    (token) => token.type === "skill",
+  );
+}
+
+export function rewriteGrokSkillReferences(
+  input: string,
+  skills: ReadonlyArray<ServerProviderSkill>,
+): string {
+  const enabledSkillNames = new Set(
+    skills.filter((skill) => skill.enabled).map((skill) => skill.name),
+  );
+  const replacements = submittedSkillTokens(input).filter((token) =>
+    enabledSkillNames.has(token.value),
+  );
+  if (replacements.length === 0) {
+    return input;
+  }
+
+  let rewritten = input;
+  for (const token of replacements.toReversed()) {
+    rewritten = `${rewritten.slice(0, token.start)}/${token.value}${rewritten.slice(token.end)}`;
+  }
+  return rewritten;
 }
 
 interface PendingApproval {
@@ -950,7 +983,22 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
               });
 
-              const text = input.input?.trim();
+              const rawText = input.input?.trim();
+              const text =
+                rawText && options?.listSkills && submittedSkillTokens(rawText).length > 0
+                  ? yield* options.listSkills(ctx.session.cwd ?? "").pipe(
+                      Effect.map((skills) => rewriteGrokSkillReferences(rawText, skills)),
+                      Effect.mapError(
+                        (cause) =>
+                          new ProviderAdapterRequestError({
+                            provider: PROVIDER,
+                            method: "skills/list",
+                            detail: "Failed to resolve Grok skill references for this prompt.",
+                            cause,
+                          }),
+                      ),
+                    )
+                  : rawText;
               const imagePromptParts = yield* Effect.forEach(
                 input.attachments ?? [],
                 (attachment) =>
