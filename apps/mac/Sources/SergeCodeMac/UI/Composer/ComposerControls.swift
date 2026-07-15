@@ -128,51 +128,68 @@ private struct RunProfileMenu: View {
     let model: AppModel
 
     @UIState private var isHovering = false
+    @UIState private var isPresented = false
 
     var body: some View {
         if let option = currentModelOption {
-            Menu {
-                if !option.effortChoices.isEmpty {
-                    Section("Reasoning") {
-                        ForEach(option.effortChoices) { choice in
-                            Button {
-                                Task { await model.setReasoningEffort(choice.id) }
-                            } label: {
-                                if choice.id == effectiveEffort(of: option) {
-                                    Label(choice.label, systemImage: "checkmark")
-                                } else {
-                                    Text(choice.label)
-                                }
-                            }
-                        }
-                    }
-                }
-                if showsTier(option) {
-                    Section("Service Tier") {
-                        ForEach(option.serviceTierChoices) { choice in
-                            Button {
-                                Task { await model.setServiceTier(choice.id) }
-                            } label: {
-                                if choice.id == effectiveTier(of: option) {
-                                    Label(choice.label, systemImage: "checkmark")
-                                } else {
-                                    Text(choice.label)
-                                }
-                            }
-                        }
-                    }
-                }
+            Button {
+                isPresented.toggle()
             } label: {
                 ComposerSegmentLabel(
                     icon: "slider.horizontal.3",
                     title: summary(of: option),
-                    isHovering: isHovering
+                    isHovering: isHovering || isPresented
                 )
             }
-            .menuStyle(.borderlessButton)
+            .buttonStyle(.plain)
             .fixedSize()
             .help("Run profile: reasoning effort and service tier")
             .onHover { isHovering = $0 }
+            .popover(isPresented: $isPresented, arrowEdge: .top) {
+                runProfilePopover(option)
+            }
+        }
+    }
+
+    private func runProfilePopover(_ option: ModelOption) -> some View {
+        ComposerPickerSurface(width: 330) {
+            VStack(spacing: 0) {
+                ComposerPickerHeader(
+                    icon: "slider.horizontal.3",
+                    title: "Run profile",
+                    subtitle: option.displayName
+                )
+                Divider().opacity(0.55)
+                VStack(spacing: 3) {
+                    if !option.effortChoices.isEmpty {
+                        ComposerPickerSectionLabel(title: "Reasoning effort")
+                        ForEach(option.effortChoices) { choice in
+                            ComposerPickerChoiceRow(
+                                icon: "brain.head.profile",
+                                title: choice.label,
+                                detail: choice.isDefault ? "Provider default" : nil,
+                                isSelected: choice.id == effectiveEffort(of: option)
+                            ) {
+                                Task { await model.setReasoningEffort(choice.id) }
+                            }
+                        }
+                    }
+                    if showsTier(option) {
+                        ComposerPickerSectionLabel(title: "Service tier")
+                        ForEach(option.serviceTierChoices) { choice in
+                            ComposerPickerChoiceRow(
+                                icon: "speedometer",
+                                title: choice.label,
+                                detail: choice.isDefault ? "Provider default" : nil,
+                                isSelected: choice.id == effectiveTier(of: option)
+                            ) {
+                                Task { await model.setServiceTier(choice.id) }
+                            }
+                        }
+                    }
+                }
+                .padding(8)
+            }
         }
     }
 
@@ -223,26 +240,21 @@ private struct RuntimeModeMenu: View {
     let model: AppModel
 
     @UIState private var isHovering = false
+    @UIState private var isPresented = false
 
     private var isClamped: Bool { thread.interactionMode.isNonMutating }
 
     var body: some View {
-        Menu {
-            if isClamped {
-                Section("Advisor is read-only — approvals required") {
-                    modeButtons
-                }
-            } else {
-                modeButtons
-            }
+        Button {
+            isPresented.toggle()
         } label: {
             ComposerSegmentLabel(
                 icon: thread.effectiveRuntimeMode.symbolName,
                 title: thread.effectiveRuntimeMode.displayName,
-                isHovering: isHovering
+                isHovering: isHovering || isPresented
             )
         }
-        .menuStyle(.borderlessButton)
+        .buttonStyle(.plain)
         .fixedSize()
         .help(
             isClamped
@@ -250,19 +262,54 @@ private struct RuntimeModeMenu: View {
                 : "How much the agent may do without asking"
         )
         .onHover { isHovering = $0 }
+        .popover(isPresented: $isPresented, arrowEdge: .top) {
+            runtimeModePopover
+        }
     }
 
-    private var modeButtons: some View {
-        ForEach(ThreadRuntimeMode.allCases) { mode in
-            Button {
-                Task { await model.setRuntimeMode(mode) }
-            } label: {
-                if mode == thread.runtimeMode {
-                    Label(mode.displayName, systemImage: "checkmark")
-                } else {
-                    Label(mode.displayName, systemImage: mode.symbolName)
+    private var runtimeModePopover: some View {
+        ComposerPickerSurface(width: 360) {
+            VStack(spacing: 0) {
+                ComposerPickerHeader(
+                    icon: "hand.raised.fingers.spread",
+                    title: "Workspace access",
+                    subtitle: "Choose what the agent can do without asking"
+                )
+                if isClamped {
+                    HStack(spacing: 7) {
+                        Image(systemName: "lightbulb.max.fill")
+                        Text("Advisor mode always requires approval.")
+                    }
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(AlpineTheme.forest)
+                    .padding(.horizontal, 10)
+                    .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
+                    .background(AlpineTheme.accent.opacity(0.2))
                 }
+                Divider().opacity(0.55)
+                VStack(spacing: 3) {
+                    ForEach(ThreadRuntimeMode.allCases) { mode in
+                        ComposerPickerChoiceRow(
+                            icon: mode.symbolName,
+                            title: mode.displayName,
+                            detail: runtimeModeDetail(mode),
+                            isSelected: mode == thread.runtimeMode
+                        ) {
+                            Task { await model.setRuntimeMode(mode) }
+                            isPresented = false
+                        }
+                    }
+                }
+                .padding(8)
             }
+        }
+    }
+
+    private func runtimeModeDetail(_ mode: ThreadRuntimeMode) -> String {
+        switch mode {
+        case .approvalRequired: "Ask before editing files or running commands."
+        case .autoAcceptEdits: "Edit files freely; ask before broader actions."
+        case .fullAccess: "Work independently in the current environment."
         }
     }
 }
@@ -275,37 +322,57 @@ private struct InteractionModeMenu: View {
     let model: AppModel
 
     @UIState private var isHovering = false
+    @UIState private var isPresented = false
 
     private var mode: ThreadInteractionMode { thread.interactionMode }
 
     var body: some View {
-        Menu {
-            ForEach(ThreadInteractionMode.allCases) { choice in
-                Button {
-                    Task { await model.setInteractionMode(choice) }
-                } label: {
-                    if choice == mode {
-                        Label(choice.displayName, systemImage: "checkmark")
-                    } else {
-                        Label(choice.displayName, systemImage: choice.symbolName)
-                    }
-                }
-                .help(choice.helpText)
-            }
+        Button {
+            isPresented.toggle()
         } label: {
             ComposerSegmentLabel(
                 icon: mode.symbolName,
                 title: mode.displayName,
-                isHovering: isHovering,
+                isHovering: isHovering || isPresented,
                 isAccented: mode != .normal,
                 animateSymbol: true
             )
         }
-        .menuStyle(.borderlessButton)
+        .buttonStyle(.plain)
         .fixedSize()
         .animation(Motion.feedback, value: mode)
         .help(mode.helpText)
         .onHover { isHovering = $0 }
+        .popover(isPresented: $isPresented, arrowEdge: .top) {
+            interactionModePopover
+        }
+    }
+
+    private var interactionModePopover: some View {
+        ComposerPickerSurface(width: 360) {
+            VStack(spacing: 0) {
+                ComposerPickerHeader(
+                    icon: "bubble.left.and.text.bubble.right",
+                    title: "Interaction mode",
+                    subtitle: "Choose how the agent approaches this request"
+                )
+                Divider().opacity(0.55)
+                VStack(spacing: 3) {
+                    ForEach(ThreadInteractionMode.allCases) { choice in
+                        ComposerPickerChoiceRow(
+                            icon: choice.symbolName,
+                            title: choice.displayName,
+                            detail: choice.helpText,
+                            isSelected: choice == mode
+                        ) {
+                            Task { await model.setInteractionMode(choice) }
+                            isPresented = false
+                        }
+                    }
+                }
+                .padding(8)
+            }
+        }
     }
 }
 
