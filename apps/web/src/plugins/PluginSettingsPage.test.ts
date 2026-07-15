@@ -55,7 +55,7 @@ describe("performSettingsSave", () => {
       },
       reload: () => {
         order.push("reload");
-        return Promise.resolve();
+        return Promise.resolve(null);
       },
     });
 
@@ -78,7 +78,7 @@ describe("performSettingsSave", () => {
       applyDraft: () => {},
       reload: () => {
         reloads += 1;
-        return Promise.resolve();
+        return Promise.resolve(null);
       },
     });
     // The server canonicalises (decode -> re-encode, and strips undeclared keys at
@@ -97,9 +97,27 @@ describe("performSettingsSave", () => {
         return Promise.resolve(AsyncResult.success({ revision: 10 }));
       },
       applyDraft: () => {},
-      reload: () => Promise.resolve(),
+      reload: () => Promise.resolve(null),
     });
     expect(sent).toBe(9);
+  });
+
+  it("reports a failed re-read instead of showing a clean form", async () => {
+    // The save succeeded and the revision advanced, but the re-read failed — so the
+    // form is showing client-side edits that may not match storage. Returning
+    // `{ error: null }` here let the caller's setError() wipe the error the reload
+    // had just set: the user saw success while the form quietly disagreed with the
+    // server. Reporting success while lying about consistency is the worst option.
+    const outcome = await performSettingsSave({
+      pluginId,
+      draft: draft(),
+      edited: { baseUrl: "https://edited.example" },
+      save: () => Promise.resolve(AsyncResult.success({ revision: 5 })),
+      applyDraft: () => {},
+      reload: () => Promise.resolve("Could not load settings."),
+    });
+
+    expect(outcome.error).toBe("Could not load settings.");
   });
 
   it("keeps the draft and does not re-read when the save fails", async () => {
@@ -124,7 +142,7 @@ describe("performSettingsSave", () => {
       },
       reload: () => {
         reloads += 1;
-        return Promise.resolve();
+        return Promise.resolve(null);
       },
     });
 
