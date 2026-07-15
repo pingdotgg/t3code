@@ -83,6 +83,74 @@ const PRESENTATION_KEYS = new Set([
  * fingerprinted identically despite accepting different values, so a change between
  * them went undetected. Sorting makes key order irrelevant without discarding meaning.
  */
+/**
+ * Removes every property the schema does not declare, at EVERY level.
+ *
+ * `parseOptions` is a schema annotation, so `onExcessProperty: "preserve"` is the
+ * plugin's to set — meaning decode/re-encode is never a guarantee the HOST owns. A
+ * top-level filter is not enough either: a hidden field may hold a nested Struct with
+ * its own preserve annotation, which carries arbitrary client keys through decode,
+ * encode, and a root-level filter alike (a reviewer proved this with a live probe).
+ * Walking the derived JSON Schema makes the guarantee structural instead of trusting
+ * anything the plugin declared.
+ *
+ * Nodes the schema does not describe as objects/arrays are passed through: they are
+ * already constrained by decoding.
+ */
+export const stripUndeclaredProperties = (value: unknown, node: unknown): unknown => {
+  if (typeof node !== "object" || node === null) return value;
+  let schemaNode = node as Record<string, unknown>;
+
+  // Unwrap nullable unions before looking for `properties`. A field carrying a
+  // decoding default derives to `anyOf: [{...}, {type:"null"}]`, so the object shape
+  // is a UNION MEMBER, not the node itself — reading `properties` off the wrapper
+  // finds nothing and passes the value through unfiltered. That is exactly how an
+  // undeclared key survived inside a hidden, defaulted, preserve-annotated Struct.
+  const anyOf = schemaNode["anyOf"];
+  if (Array.isArray(anyOf)) {
+    const structural = anyOf.find(
+      (member): member is Record<string, unknown> =>
+        typeof member === "object" &&
+        member !== null &&
+        ((member as Record<string, unknown>)["properties"] !== undefined ||
+          (member as Record<string, unknown>)["items"] !== undefined),
+    );
+    if (structural === undefined) return value;
+    schemaNode = structural;
+  }
+
+  const items = schemaNode["items"];
+  if (Array.isArray(value) && items !== undefined) {
+    return value.map((element) => stripUndeclaredProperties(element, items));
+  }
+
+  const properties = schemaNode["properties"];
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    typeof properties === "object" &&
+    properties !== null
+  ) {
+    const declared = properties as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([key]) => Object.hasOwn(declared, key))
+        .map(([key, nested]) => [key, stripUndeclaredProperties(nested, declared[key])]),
+    );
+  }
+  return value;
+};
+
+/** The derived JSON Schema root for a settings schema, for stripUndeclaredProperties. */
+export const settingsJsonSchemaRoot = (schema: SettingsSchema): unknown => {
+  try {
+    return Schema.toJsonSchemaDocument(schema).schema;
+  } catch {
+    return null;
+  }
+};
+
 const isEmptyObject = (value: unknown): boolean =>
   typeof value === "object" &&
   value !== null &&
