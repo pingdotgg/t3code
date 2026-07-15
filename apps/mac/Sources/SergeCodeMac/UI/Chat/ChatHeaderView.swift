@@ -2,8 +2,8 @@ import SwiftUI
 
 /// Single task-identity header. The task title leads; project scenery, branch,
 /// working-tree state, provider, and status remain compact supporting context.
-/// Transparent by design: this shallow band is where thread scenery remains
-/// atmospheric while the active work surface below is near-opaque.
+/// Transparent by design: the full-page frosted scenery remains atmospheric
+/// behind this shallow identity band without adding another gray plate.
 struct ChatHeaderView: View {
     let thread: ChatThread
     let model: AppModel
@@ -55,7 +55,6 @@ struct ChatHeaderView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .background(Color(nsColor: .textBackgroundColor).opacity(0.78))
     }
 
     private var projectPrefs: ProjectSceneryPrefs? {

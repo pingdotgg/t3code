@@ -58,9 +58,10 @@ public struct ChatScreen: View {
                             .transition(Motion.paneChange)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    // Active work is fully opaque. Scenery belongs to the shallow task
-                    // header; a ghosted image under long-form work reads as visual noise.
-                    .background(Color(nsColor: .textBackgroundColor))
+                    // Keep the entire conversation on the full-bleed scenery layer.
+                    // SceneryChatBackground supplies the adaptive frost/wash for
+                    // long-form legibility; individual controls add glass only where
+                    // they need a distinct interactive surface.
                 }
             } else {
                 ChatEmptyStateView()
