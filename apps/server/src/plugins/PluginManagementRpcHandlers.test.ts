@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { PluginId } from "@t3tools/contracts/plugin";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Deferred from "effect/Deferred";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -325,6 +326,36 @@ managementTest("PluginManagementRpcHandlers settings", (it) => {
       const result = yield* handlers.settingsGet({ pluginId: id });
       assert.equal(result.declared, false, "an uninstalled plugin has no settings form");
     }),
+  );
+
+  // A transient lockfile read error must not be reported as "no settings". It would
+  // be indistinguishable from an uninstall, so the form would tell the user the
+  // plugin has no settings at the exact moment they are trying to repair one.
+  it.effect(
+    "fails loudly when the lockfile cannot be read, rather than reporting no settings",
+    () =>
+      Effect.gen(function* () {
+        const id = PluginId.make("mgmt-lockfile-unreadable");
+        const handlers = yield* PluginManagementRpcHandlers;
+        const settingsStore = yield* PluginSettingsStoreLayer.PluginSettingsStore;
+        const store = yield* PluginLockfileStore;
+        const fs = yield* FileSystem.FileSystem;
+        yield* runMigrations({});
+        yield* settingsStore.noteDeclaredSchema(id, schema as never);
+        yield* installEntry(id);
+
+        // Break the read for real rather than mocking the store.
+        const original = yield* fs.readFileString(store.lockfilePath);
+        yield* fs.writeFileString(store.lockfilePath, "{ not valid json");
+
+        const result = yield* Effect.result(handlers.settingsGet({ pluginId: id }));
+
+        yield* fs.writeFileString(store.lockfilePath, original);
+        assert.isTrue(
+          Result.isFailure(result),
+          "an unreadable lockfile must surface as an error, not as 'this plugin has no settings'",
+        );
+      }),
   );
 
   it.effect("rejects a write for a plugin that declares no settings", () =>

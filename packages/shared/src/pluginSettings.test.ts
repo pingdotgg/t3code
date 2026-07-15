@@ -450,6 +450,20 @@ describe("stripUndeclaredSettings", () => {
     expect(result._tag).toBe("Unsupported");
   });
 
+  it("refuses an object whose additionalProperties is `true`", () => {
+    // `true` permits any key. Keeping them reopens the leak; dropping them silently
+    // deletes data the schema allows. Refusing is the only defensible answer.
+    const result = stripAgainstJsonSchemaDocument({
+      value: { declared: "a", extra: "b" },
+      schema: {
+        type: "object",
+        properties: { declared: { type: "string" } },
+        additionalProperties: true,
+      },
+    });
+    expect(result._tag).toBe("Unsupported");
+  });
+
   it("refuses an object schema that declares no properties", () => {
     // A bare {"type":"object"} declares nothing, so every key is undeclared and
     // keeping them all is the exact leak this function exists to stop.

@@ -253,6 +253,13 @@ const stripNode = (
 
   const properties = schemaNode["properties"];
   const additional = schemaNode["additionalProperties"];
+  if (additional === true) {
+    // `true` means "any key is allowed". Keeping them all reopens the leak; dropping
+    // them silently deletes data the schema permits. Neither is defensible, so refuse
+    // — the consistent fail-closed choice. (Effect does not appear to emit this from
+    // a Struct; it is here so the vocabulary stays closed rather than hopeful.)
+    return unsupported(path, "an object with `additionalProperties: true` cannot be safely stored");
+  }
   const declared =
     typeof properties === "object" && properties !== null
       ? (properties as Record<string, unknown>)
