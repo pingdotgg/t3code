@@ -46,6 +46,54 @@ describe("validatePluginToolDescriptors", () => {
     }
   });
 
+  // MCP tools/call.arguments is always a string-keyed record. A scalar or union
+  // root would be advertised in tools/list but no protocol-valid payload could
+  // ever satisfy it, so the tool would be permanently uncallable.
+  it("rejects a scalar input schema root", () => {
+    const exit = Effect.runSyncExit(
+      validatePluginToolDescriptors(
+        pluginId,
+        [baseTool({ name: "echo", inputSchema: Schema.String })],
+        { hasToolsCapability: true },
+      ),
+    );
+    expect(exit._tag).toBe("Failure");
+    if (exit._tag === "Failure") {
+      expect(String(exit.cause)).toMatch(/object root/);
+    }
+  });
+
+  it("rejects a union input schema root", () => {
+    const exit = Effect.runSyncExit(
+      validatePluginToolDescriptors(
+        pluginId,
+        [
+          baseTool({
+            name: "echo",
+            inputSchema: Schema.Union([
+              Schema.Struct({ a: Schema.String }),
+              Schema.Struct({ b: Schema.String }),
+            ]),
+          }),
+        ],
+        { hasToolsCapability: true },
+      ),
+    );
+    expect(exit._tag).toBe("Failure");
+    if (exit._tag === "Failure") {
+      expect(String(exit.cause)).toMatch(/object root|union/);
+    }
+  });
+
+  it("accepts a struct input schema root", () => {
+    const exit = Effect.runSyncExit(
+      validatePluginToolDescriptors(pluginId, [baseTool({ name: "echo" })], {
+        hasToolsCapability: true,
+      }),
+    );
+    expect(exit._tag).toBe("Success");
+  });
+
   it("rejects invalid local names", () => {
     const exit = Effect.runSyncExit(
       validatePluginToolDescriptors(pluginId, [baseTool({ name: "Bad-Name" as "bad" })], {
