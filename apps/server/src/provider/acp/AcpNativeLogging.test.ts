@@ -21,7 +21,6 @@ nodeServicesIt("ACP native logging", (it) => {
       const nativeEventLogger: EventNdjsonLogger = {
         filePath: "/tmp/provider-native.ndjson",
         write: (event) => Effect.sync(() => void records.push(event)),
-        close: () => Effect.void,
       };
       const makeLogger = yield* makeAcpNativeLoggerFactory();
       const logger = makeLogger({
@@ -84,7 +83,6 @@ nodeServicesIt("ACP native logging", (it) => {
         nativeEventLogger: {
           filePath: "/tmp/provider-native.ndjson",
           write: () => Effect.die(new Error(secret)),
-          close: () => Effect.void,
         },
         provider: ProviderDriverKind.make("cursor"),
         threadId: ThreadId.make("thread-1"),
@@ -113,7 +111,6 @@ nodeServicesIt("ACP native logging", (it) => {
         nativeEventLogger: {
           filePath: "/tmp/provider-native.ndjson",
           write: () => Effect.interrupt,
-          close: () => Effect.void,
         },
         provider: ProviderDriverKind.make("cursor"),
         threadId: ThreadId.make("thread-1"),

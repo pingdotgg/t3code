@@ -433,17 +433,15 @@ export function makeOpenCodeAdapter(
     const serverConfig = yield* ServerConfig;
     const openCodeRuntime = yield* OpenCodeRuntime;
     const crypto = yield* Crypto.Crypto;
-    const nativeEventLogger =
-      options?.nativeEventLogger ??
-      (options?.nativeEventLogPath !== undefined
-        ? yield* makeEventNdjsonLogger(options.nativeEventLogPath, {
-            stream: "native",
-          })
-        : undefined);
     // Only close loggers we created. If the caller passed one in via
     // `options.nativeEventLogger`, they own its lifecycle.
     const managedNativeEventLogger =
-      options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
+      options?.nativeEventLogger === undefined && options?.nativeEventLogPath !== undefined
+        ? yield* makeEventNdjsonLogger(options.nativeEventLogPath, {
+            stream: "native",
+          })
+        : undefined;
+    const nativeEventLogger = options?.nativeEventLogger ?? managedNativeEventLogger;
     const runtimeEvents = yield* Queue.unbounded<ProviderRuntimeEvent>();
     const sessions = new Map<ThreadId, OpenCodeSessionContext>();
     const randomUUIDv4 = crypto.randomUUIDv4.pipe(
