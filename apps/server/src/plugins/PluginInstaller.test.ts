@@ -18,6 +18,7 @@ import * as NodeZlib from "node:zlib";
 
 import * as ServerConfig from "../config.ts";
 import { pluginVersionDir } from "./PluginPaths.ts";
+import { PRESERVE_DATA_MARKER } from "./PluginInstaller.ts";
 import { PluginHttpClientTransportService } from "./capabilities/HttpClientCapability.ts";
 import { OutboundUrlError, OutboundUrlLookup } from "./OutboundUrlValidator.ts";
 import { PluginCatalog } from "./PluginCatalog.ts";
@@ -664,6 +665,45 @@ it.effect("PluginInstaller stages upgrades and uninstall marks pending remove", 
     }).pipe(Effect.provide(installerLayer({ tarball: tarballForManifest(), deactivated }))),
   );
 });
+
+it.effect("PluginInstaller uninstall removeData:true clears an earlier preserve marker", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const installer = yield* PluginInstaller;
+      const store = yield* PluginLockfileStore;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfig.ServerConfig;
+      yield* seedSource;
+      const entry = {
+        version: "1.0.0",
+        sha256: "installed",
+        sourceId,
+        enabled: true,
+        state: "active" as const,
+        activation: { activatingSince: null, crashCount: 0 },
+        installedAt: "2026-07-03T00:00:00.000Z",
+        lastError: null,
+      };
+      yield* store.updatePlugin(pluginId, () => Effect.succeed(entry));
+
+      // First uninstall keeps the data: the marker is written.
+      yield* installer.uninstall({ pluginId, removeData: false });
+      const markerPath = path.join(config.pluginsDir, pluginId, PRESERVE_DATA_MARKER);
+      assert.isTrue(yield* fs.exists(markerPath), "precondition: keep-data marker exists");
+
+      // The user changes their mind and retries asking for deletion. The marker from
+      // the earlier request used to survive, so reconcile preserved data the user had
+      // just asked to delete — and a reinstall would quietly resurrect it.
+      yield* store.updatePlugin(pluginId, () => Effect.succeed(entry));
+      yield* installer.uninstall({ pluginId, removeData: true });
+      assert.isFalse(
+        yield* fs.exists(markerPath),
+        "the LATEST request must win: removeData true clears the preserve marker",
+      );
+    }).pipe(Effect.provide(installerLayer({ tarball: tarballForManifest() }))),
+  ),
+);
 
 it.effect("PluginInstaller rejects upgrading to the already-installed version", () =>
   Effect.scoped(

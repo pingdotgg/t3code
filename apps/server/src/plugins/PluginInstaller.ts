@@ -943,12 +943,26 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
 
   const uninstall: PluginInstaller["Service"]["uninstall"] = (input) =>
     Effect.gen(function* () {
+      const markerPath = path.join(config.pluginsDir, input.pluginId, PRESERVE_DATA_MARKER);
       if (!input.removeData) {
-        const markerPath = path.join(config.pluginsDir, input.pluginId, PRESERVE_DATA_MARKER);
         yield* fs.makeDirectory(path.dirname(markerPath), { recursive: true }).pipe(
           Effect.andThen(fs.writeFileString(markerPath, "")),
           Effect.mapError((cause) =>
             managementError("filesystem", "Failed to record plugin data preservation intent.", {
+              pluginId: input.pluginId,
+              cause,
+            }),
+          ),
+        );
+      } else {
+        // The LATEST request wins. A marker written by an earlier keep-my-data
+        // uninstall used to survive a retry with removeData: true, so reconcile
+        // preserved data the user had just asked to delete — and, like the settings
+        // row before it, a reinstall would quietly resurrect it. Failing loudly for
+        // the same reason remove() does: reconcile trusts what is on disk.
+        yield* fs.remove(markerPath, { force: true }).pipe(
+          Effect.mapError((cause) =>
+            managementError("filesystem", "Failed to clear plugin data preservation intent.", {
               pluginId: input.pluginId,
               cause,
             }),
