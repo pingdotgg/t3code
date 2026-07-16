@@ -1,3 +1,4 @@
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import type { HttpClientResponse } from "effect/unstable/http";
@@ -14,6 +15,11 @@ import {
 
 const MAX_REDIRECTS = 5;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+// Upper bound on draining a redirect body we do not want. A slow-drip (or
+// never-ending) body would otherwise hold a pinned socket — and this whole
+// ingestion — indefinitely, since the caller's timeoutMs is only a socket
+// inactivity timeout, not a wall-clock deadline on this path.
+const REDIRECT_DRAIN_TIMEOUT = Duration.seconds(5);
 
 /**
  * Caller headers that survive a CROSS-ORIGIN redirect.
@@ -89,8 +95,13 @@ export const guardedOutboundHttpGet = (input: {
       // caller, whose status filter rejects it as a non-OK response.
       if (location === undefined || location.length === 0) return response;
       // The redirect body is unused; drain it so a pinned socket is not left
-      // occupied until its timeout.
-      yield* response.stream.pipe(Stream.runDrain, Effect.ignore);
+      // occupied until its timeout. The drain itself is bounded so a slow or
+      // never-ending body cannot hang ingestion in place of the discarded socket.
+      yield* response.stream.pipe(
+        Stream.runDrain,
+        Effect.timeout(REDIRECT_DRAIN_TIMEOUT),
+        Effect.ignore,
+      );
       const next = yield* Effect.try({
         try: () => new URL(location, resolved.url),
         catch: () => new OutboundUrlError({ reason: "Redirect Location is malformed" }),
