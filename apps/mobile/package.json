@@ -5,7 +5,7 @@
   "main": "index.ts",
   "scripts": {
     "dev": "expo start --clear",
-    "dev:client": "APP_VARIANT=development expo start --dev-client --scheme t3code-dev --clear --localhost",
+    "dev:client": "APP_VARIANT=development expo start --dev-client --scheme t3code-dev --clear --lan",
     "dev:client:preview": "eas env:exec preview 'EXPO_NO_DOTENV=1 APP_VARIANT=preview expo start --dev-client --scheme t3code-preview --clear --lan'",
     "start": "expo start",
     "start:dev": "APP_VARIANT=development expo start",

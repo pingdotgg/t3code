@@ -10,6 +10,19 @@ export interface DraftComposerImageAttachment extends UploadChatImageAttachment 
   readonly previewUri: string;
 }
 
+/** Wire shape for startTurn: pure uploads without client draft id / previewUri. */
+export function toUploadChatImageAttachments(
+  attachments: ReadonlyArray<DraftComposerImageAttachment>,
+): ReadonlyArray<UploadChatImageAttachment> {
+  return attachments.map((attachment) => ({
+    type: attachment.type,
+    name: attachment.name,
+    mimeType: attachment.mimeType,
+    sizeBytes: attachment.sizeBytes,
+    dataUrl: attachment.dataUrl,
+  }));
+}
+
 const OWNED_PASTED_IMAGE_DIRECTORY = "t3-composer-paste";
 
 function estimateBase64ByteSize(base64: string): number {
