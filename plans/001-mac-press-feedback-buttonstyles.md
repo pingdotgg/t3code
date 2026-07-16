@@ -61,7 +61,7 @@ configuration.label
 ## Repo conventions to follow
 
 - All motion routes through `apps/mac/Sources/SergeCodeMac/Theme/Motion.swift`. Never write an inline `.spring(`/`.easeOut(`/`.timingCurve(` — use `Motion.feedback`.
-- `Motion.feedback` already handles Reduce Motion internally (collapses to a 0.12s ease-out fade), so the `.animation(...)` call needs no gating; only the *scale movement* needs the `!Motion.reduceMotion` gate.
+- `Motion.feedback` already handles Reduce Motion internally (collapses to a 0.12s ease-out fade), so the `.animation(...)` call needs no gating; only the _scale movement_ needs the `!Motion.reduceMotion` gate.
 - Exemplar of the animation pattern — hover feedback in `apps/mac/Sources/SergeCodeMac/UI/Shell/SidebarView.swift:613-614`:
   ```swift
   .onHover { isHovering = $0 }

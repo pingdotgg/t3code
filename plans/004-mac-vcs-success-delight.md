@@ -89,6 +89,6 @@ Keep `.transition(Motion.banner)` unchanged — the drop-from-edge shape is righ
 - **Feel check** (`apps/mac:verify` skill with mock backend, or live git action):
   - Create a PR / merge: the banner arrives with a soft spring settle (one gentle overshoot, ~400ms), noticeably warmer than other banners but not cartoonish.
   - Force a failed push: the banner arrives with the standard crisp reveal — no bounce anywhere. Also verify a failure arriving while a success banner is visible: the xmark must not bounce.
-  - Known limitation to confirm rather than fight: `.symbolEffect(.bounce, value:)` fires on *value change*, so the checkmark may not bounce on the banner's very first insertion (the delight spring carries that beat); it bounces when a new success replaces a visible outcome. If this reads as inconsistent in the feel check, report it — do not add workarounds like delayed state toggles.
+  - Known limitation to confirm rather than fight: `.symbolEffect(.bounce, value:)` fires on _value change_, so the checkmark may not bounce on the banner's very first insertion (the delight spring carries that beat); it bounces when a new success replaces a visible outcome. If this reads as inconsistent in the feel check, report it — do not add workarounds like delayed state toggles.
   - Reduce Motion on: banner fades in (transition collapses to opacity), no spring, no symbol bounce.
 - **Done when**: success and failure visibly diverge in motion tone, Reduce Motion shows plain fades, and the build passes.

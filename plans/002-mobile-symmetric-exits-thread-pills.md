@@ -8,7 +8,7 @@
 
 ## Problem
 
-In `ThreadDetailScreen`, the `WorkingDurationPill` enters with `bannerDrop()` and the pending approval / user-input cards enter with `materialize()` — but both are removed by a ternary flipping to `null`, so they vanish in a single frame. The pill's disappearance *is* the "turn finished" moment; the card's disappearance is the response to the user approving. Entering animated + exiting snapped is exactly the asymmetric-dismissal seam: surfaces should leave the way they arrived (or at least gracefully).
+In `ThreadDetailScreen`, the `WorkingDurationPill` enters with `bannerDrop()` and the pending approval / user-input cards enter with `materialize()` — but both are removed by a ternary flipping to `null`, so they vanish in a single frame. The pill's disappearance _is_ the "turn finished" moment; the card's disappearance is the response to the user approving. Entering animated + exiting snapped is exactly the asymmetric-dismissal seam: surfaces should leave the way they arrived (or at least gracefully).
 
 ```tsx
 // apps/mobile/src/features/threads/ThreadDetailScreen.tsx:516 — current
@@ -69,7 +69,7 @@ Both `Animated.View`s gain `exiting={FadeOut.duration(150)}`. A quick fade-out (
 ## Boundaries
 
 - Do NOT touch the entering presets, `motion.ts`, `WorkingDurationPill`, or the card components.
-- Do NOT add exit *movement* (no SlideOut/translate) — fade only, 150ms exactly.
+- Do NOT add exit _movement_ (no SlideOut/translate) — fade only, 150ms exactly.
 - Do NOT wrap anything inside `ThreadFeed`'s recycled list rows — these two wrappers live in the composer overlay area, outside the list; if you find they are inside a recycled list row, STOP and report.
 - If the code doesn't match the excerpts (drift since commit 774d2f560), STOP and report.
 
