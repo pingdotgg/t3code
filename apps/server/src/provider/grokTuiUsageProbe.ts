@@ -7,6 +7,7 @@ import * as PtyAdapter from "../terminal/PtyAdapter.ts";
 import { makeUnavailableUsageLimits, makeUsageLimitsSnapshot } from "./providerUsageLimits.ts";
 
 const GROK_USAGE_PROBE_TIMEOUT_MS = 10_000;
+const GROK_USAGE_OUTPUT_SETTLE_MS = 200;
 const ANSI_PATTERN =
   // eslint-disable-next-line no-control-regex
   /\u001B(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007]*(?:\u0007|\u001B\\))/g;
@@ -52,11 +53,13 @@ function parseGrokNextResetIso(checkedAt: string, resetLine: string): string | u
 
   const year = inferYearForGrokReset(checkedAt, trimmed);
   const withYear = /\b20\d{2}\b/.test(trimmed) ? trimmed : `${trimmed}, ${year}`;
-  const pacificSuffix = /\b(?:pt|pdt|pst)\b/i.test(withYear)
-    ? withYear.replace(/\b(?:pt|pdt|pst)\b/i, "GMT-0700")
+  const pacificTime = /\b(?:pt|pdt|pst)\b/i.test(withYear)
+    ? withYear.replace(/\b(?:pt|pdt|pst)\b/i, "")
     : withYear;
-
-  const dt = DateTime.make(pacificSuffix);
+  const dt = DateTime.makeZoned(pacificTime, {
+    timeZone: "America/Los_Angeles",
+    adjustForTimeZone: true,
+  });
   return Option.isSome(dt) ? DateTime.formatIso(dt.value) : undefined;
 }
 
@@ -110,6 +113,7 @@ function runGrokUsageProbeLoop(
   return new Promise((resolve) => {
     let rawOutput = "";
     let settled = false;
+    let settleTimer: ReturnType<typeof setTimeout> | undefined;
 
     const timeout = clock.setTimeout(() => {
       finish();
@@ -119,6 +123,9 @@ function runGrokUsageProbeLoop(
       if (settled) return;
       settled = true;
       clock.clearTimeout(timeout);
+      if (settleTimer) {
+        clock.clearTimeout(settleTimer);
+      }
       offData();
       offExit();
       try {
@@ -135,20 +142,33 @@ function runGrokUsageProbeLoop(
       });
     };
 
+    const scheduleFinishAfterUsageOutput = () => {
+      if (settleTimer) {
+        clock.clearTimeout(settleTimer);
+      }
+      settleTimer = clock.setTimeout(() => {
+        finish();
+      }, GROK_USAGE_OUTPUT_SETTLE_MS);
+    };
+
     const offData = child.onData((data) => {
       rawOutput += data;
       const parsed = parseGrokUsageLimitsOutput({
         output: rawOutput,
         checkedAt: input.checkedAt,
       });
-      if (parsed.available) {
+      if (parsed.available && parsed.windows.every((window) => window.resetsAt)) {
         finish();
+      } else if (parsed.available) {
+        scheduleFinishAfterUsageOutput();
       }
     });
 
     const offExit = child.onExit(() => {
       finish();
     });
+
+    child.write("/usage\r");
   });
 }
 
@@ -161,7 +181,7 @@ export function probeGrokUsageLimits(
     const child = yield* ptyAdapter
       .spawn({
         shell: input.binaryPath,
-        args: ["/usage"],
+        args: [],
         cwd: input.cwd,
         cols: 120,
         rows: 40,
