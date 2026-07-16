@@ -3,6 +3,7 @@ import { ProviderDriverKind, ThreadId, type ProviderRuntimeEvent } from "@t3tool
 import type { PluginProviderDriver, PluginProviderEvent } from "@t3tools/plugin-sdk";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
@@ -246,6 +247,121 @@ describe("makePluginProviderAdapter", () => {
         assert.isDefined(
           events.find((event) => event.type === "content.delta"),
           "the first turn's deltas must still flow after the second is rejected",
+        );
+      }),
+  );
+
+  it.effect(
+    "reserves the turn atomically: two concurrent sends yield exactly one active turn",
+    () =>
+      // What this pins: two concurrent same-thread dispatches resolve to exactly one
+      // active turn — one winner, one "already active" rejection, one driver fiber,
+      // the winner's deltas flowing, its turnFiber interruptible. That is the atomic
+      // reservation's guarantee, and it holds regardless of how the two fibers
+      // interleave.
+      // What it does NOT pin: it cannot force the old check-then-set to lose. The only
+      // yield in that window was `yield* publish`, and Queue.offer on an unbounded
+      // queue never suspends — so in a minimal two-fiber test the first caller runs
+      // sendTurn to completion before the second starts, and even the buggy version
+      // passes here. The window only opened under the runtime's periodic forced yield
+      // (2048-op budget), a real production risk; forcing it via MaxOpsBeforeYield=1
+      // deadlocks makeEmit's internal Effect.runSync, so it isn't unit-reproducible.
+      // The atomic Ref.modify removes the window by construction rather than narrowing
+      // it, which is why this stands as an invariant test.
+      Effect.gen(function* () {
+        const released = yield* Deferred.make<void>(); // parks the winning driver
+        const keepAlive = yield* Deferred.make<void>(); // keeps both caller fibers alive
+        const exitA = yield* Deferred.make<Exit.Exit<unknown, unknown>>();
+        const exitB = yield* Deferred.make<Exit.Exit<unknown, unknown>>();
+        const interrupted = yield* Ref.make(false);
+        const driverCalls = yield* Ref.make(0);
+        let emitter: ((event: PluginProviderEvent) => void) | null = null;
+        const adapter = yield* adapterFor({
+          startSession: (input) =>
+            Effect.sync(() => {
+              emitter = input.emit;
+            }),
+          // The winning turn emits a delta then parks until released — so it stays the
+          // single active turn while the loser's reservation is attempted. The call
+          // counter and onInterrupt let the test observe that exactly one driver turn
+          // was ever forked, and that its turnFiber is a real, reachable handle (not
+          // one lost to a racing overwrite).
+          sendTurn: () =>
+            Ref.update(driverCalls, (n) => n + 1).pipe(
+              Effect.flatMap(() =>
+                Effect.sync(() => emitter?.({ type: "assistant-delta", text: "winner" })),
+              ),
+              Effect.flatMap(() =>
+                Deferred.await(released).pipe(Effect.onInterrupt(() => Ref.set(interrupted, true))),
+              ),
+            ),
+          stopSession: () => Effect.void,
+        });
+
+        // Each caller fiber records its sendTurn exit, then PARKS on keepAlive. It must
+        // outlive the reservation: sendTurn forks the driver as a child of the caller,
+        // so a caller that terminated would reap the driver and its `ensuring(endTurn)`
+        // would clear the reservation — exactly how the reactor keeps a turn fiber
+        // alive in production. Firing two such callers at ONE thread models the
+        // concurrent dispatch the reactor produces when it forks per turn-start.
+        const caller = (label: string, slot: Deferred.Deferred<Exit.Exit<unknown, unknown>>) =>
+          Effect.exit(adapter.sendTurn({ threadId, input: label } as never)).pipe(
+            Effect.flatMap((exit) => Deferred.succeed(slot, exit)),
+            Effect.flatMap(() => Deferred.await(keepAlive)),
+          );
+
+        const { result: exits, events } = yield* collecting(
+          adapter,
+          Effect.gen(function* () {
+            yield* start(adapter);
+            const fiberA = yield* Effect.forkChild(caller("a", exitA));
+            const fiberB = yield* Effect.forkChild(caller("b", exitB));
+            const ea = yield* Deferred.await(exitA);
+            const eb = yield* Deferred.await(exitB);
+            // Prove the installed turnFiber is real and reachable BEFORE tearing down:
+            // interrupting the turn must cancel the parked driver fiber.
+            yield* adapter.interruptTurn(threadId);
+            yield* Effect.yieldNow;
+            yield* Deferred.succeed(released, undefined);
+            yield* Deferred.succeed(keepAlive, undefined);
+            yield* Fiber.join(fiberA);
+            yield* Fiber.join(fiberB);
+            return [ea, eb] as const;
+          }),
+        );
+
+        const successes = exits.filter((exit) => exit._tag === "Success");
+        const failures = exits.filter((exit) => exit._tag === "Failure");
+        assert.strictEqual(
+          successes.length,
+          1,
+          "exactly one concurrent turn may win the reservation",
+        );
+        assert.strictEqual(failures.length, 1, "the other concurrent turn must be rejected");
+        assert.isTrue(
+          String(failures[0]?._tag === "Failure" ? failures[0].cause : "").includes(
+            "already active",
+          ),
+          "the loser must fail with the single-active-turn message",
+        );
+        // Only the winner reached the driver: the loser was rejected AT the atomic
+        // reservation, before any fiber was forked. One driver call ⇒ one turnFiber.
+        assert.strictEqual(
+          yield* Ref.get(driverCalls),
+          1,
+          "exactly one turn fiber was ever started",
+        );
+        // The winner's delta reached the thread.
+        assert.isDefined(
+          events.find((event) => event.type === "content.delta"),
+          "the winner's deltas must flow",
+        );
+        // The winner's turnFiber was reachable: the interrupt cancelled its driver.
+        // Under the old check-then-set the loser could overwrite the winner's handle,
+        // and this interrupt would reach nothing.
+        assert.isTrue(
+          yield* Ref.get(interrupted),
+          "the winner's turnFiber must be interruptible after the race",
         );
       }),
   );
