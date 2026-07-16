@@ -48,7 +48,7 @@ Success outcomes animate in on `Motion.delight` (`.spring(duration: 0.40, bounce
 // target — banner icon inside outcomeBanner(_:)
             let icon = Image(systemName: outcome.success ? "checkmark.circle.fill" : "xmark.octagon.fill")
                 .foregroundStyle(outcome.success ? .green : .red)
-            if Motion.reduceMotion {
+            if Motion.reduceMotion || !outcome.success {
                 icon
             } else {
                 icon.symbolEffect(.bounce, value: outcome)
@@ -74,21 +74,21 @@ Keep `.transition(Motion.banner)` unchanged — the drop-from-edge shape is righ
 ## Steps
 
 1. `apps/mac/Sources/SergeCodeMac/UI/Shell/VcsToolbar.swift` (~line 133): replace `.animation(Motion.reveal, value: model.lastGitActionOutcome(for: threadID))` with the conditional-curve version above. Leave the adjacent `.animation(Motion.ambient, value: status)` untouched.
-2. Same file, `outcomeBanner(_:)` (~line 304): restructure the `Image` per the target — bind it to a local `let icon`, then branch on `Motion.reduceMotion`, applying `.symbolEffect(.bounce, value: outcome)` only in the non-reduced branch.
+2. Same file, `outcomeBanner(_:)` (~line 304): restructure the `Image` per the target — bind it to a local `let icon`, then branch on `Motion.reduceMotion || !outcome.success`, applying `.symbolEffect(.bounce, value: outcome)` only when motion is allowed AND the outcome succeeded. Failures always render the plain icon.
 
 ## Boundaries
 
 - Do NOT change `.transition(Motion.banner)`, the banner's layout, text, "Open PR" button, or dismiss button.
-- Do NOT make failures bouncy — `Motion.reveal` and the plain icon for `outcome.success == false` (the `.bounce` value only changes when `outcome` changes; that is acceptable).
+- Do NOT make failures bouncy — `Motion.reveal` and the plain-icon branch for `outcome.success == false`; the `.symbolEffect(.bounce, ...)` modifier must never be attached to a failure icon (otherwise a failure replacing a visible success would bounce the xmark).
 - Do NOT touch `Motion.swift`.
 - If the code doesn't match the excerpts (drift since commit 774d2f560), STOP and report.
 
 ## Verification
 
-- **Mechanical**: `swift build --package-path apps/mac` succeeds.
+- **Mechanical**: `swift build --package-path apps/mac` succeeds, then `vp check` and `vp run typecheck` pass (repository requirement before any work counts as complete).
 - **Feel check** (`apps/mac:verify` skill with mock backend, or live git action):
   - Create a PR / merge: the banner arrives with a soft spring settle (one gentle overshoot, ~400ms), noticeably warmer than other banners but not cartoonish.
-  - Force a failed push: the banner arrives with the standard crisp reveal — no bounce anywhere.
+  - Force a failed push: the banner arrives with the standard crisp reveal — no bounce anywhere. Also verify a failure arriving while a success banner is visible: the xmark must not bounce.
   - Known limitation to confirm rather than fight: `.symbolEffect(.bounce, value:)` fires on *value change*, so the checkmark may not bounce on the banner's very first insertion (the delight spring carries that beat); it bounces when a new success replaces a visible outcome. If this reads as inconsistent in the feel check, report it — do not add workarounds like delayed state toggles.
   - Reduce Motion on: banner fades in (transition collapses to opacity), no spring, no symbol bounce.
 - **Done when**: success and failure visibly diverge in motion tone, Reduce Motion shows plain fades, and the build passes.

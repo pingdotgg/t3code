@@ -86,7 +86,7 @@ Note on the transform-and-opacity-only rule: this animates `width`, which is nor
 
 ## Verification
 
-- **Mechanical**: `pnpm --dir apps/mobile typecheck` passes.
+- **Mechanical**: `pnpm --dir apps/mobile typecheck` passes, then `vp check` and `vp run typecheck` pass (repository requirement before any work counts as complete).
 - **Feel check**: trigger a determinate progress flow (git action with progress) or temporarily drive `<LoadingStrip progress={x}/>` with stepped values in a scratch screen:
   - Progress flows between steps over ~300ms instead of jumping.
   - Rapid successive updates retarget smoothly (withTiming retargets from the current value; no restart-from-zero).

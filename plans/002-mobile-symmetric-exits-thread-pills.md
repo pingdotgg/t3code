@@ -75,7 +75,7 @@ Both `Animated.View`s gain `exiting={FadeOut.duration(150)}`. A quick fade-out (
 
 ## Verification
 
-- **Mechanical**: `pnpm --dir apps/mobile typecheck` (script: `tsc --noEmit`) passes.
+- **Mechanical**: `pnpm --dir apps/mobile typecheck` (script: `tsc --noEmit`) passes, then `vp check` and `vp run typecheck` pass (repository requirement before any work counts as complete).
 - **Feel check** (simulator or device, real agent turn or mocked state):
   - Let a turn finish: the working pill fades out over ~150ms instead of blinking away; the assistant message settling underneath is not obscured.
   - Approve a pending approval: the card fades out; tapping approve twice quickly never leaves a ghost card or replays the entrance.

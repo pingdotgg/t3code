@@ -68,7 +68,7 @@ export function ErrorBanner(props: { readonly message: string }) {
 
 ## Verification
 
-- **Mechanical**: `pnpm --dir apps/mobile typecheck` passes.
+- **Mechanical**: `pnpm --dir apps/mobile typecheck` passes, then `vp check` and `vp run typecheck` pass (repository requirement before any work counts as complete).
 - **Feel check**: in the Add Project flow, submit an invalid path (or force any error state):
   - The banner drops in from 8px above with a fade — it does not shove surrounding content abruptly (the layout shift still happens; the drop+fade bridges it).
   - When the error clears, the banner fades out over 150ms.

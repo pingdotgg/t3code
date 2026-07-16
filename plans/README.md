@@ -16,9 +16,10 @@ Written by the `improve-animations` skill at commit `774d2f560` (2026-07-15), fr
 
 ## Dependencies
 
-None — all five plans are independent and touch disjoint files. They can run in parallel worktrees. 001 and 004 both edit `apps/mac/Sources/SergeCodeMac/UI/Shell/VcsToolbar.swift` (different functions: `VcsMergePillButtonStyle` vs `outcomeBanner`/animation modifier) — if run in parallel worktrees, expect a trivial merge; sequential execution avoids it.
+All five plans are behaviorally independent — none depends on another's outcome. Most can run in parallel worktrees, but 001 and 004 both edit `apps/mac/Sources/SergeCodeMac/UI/Shell/VcsToolbar.swift` (different functions: `VcsMergePillButtonStyle` vs `outcomeBanner`/animation modifier); execute those two sequentially, or coordinate the merge if parallel.
 
 ## Verification commands
 
 - mac: `swift build --package-path apps/mac`; feel checks via the `apps/mac:verify` skill (mock backend + UIProbe).
 - mobile: `pnpm --dir apps/mobile typecheck`; feel checks on simulator/device with iOS Reduce Motion toggled both ways.
+- All plans, in addition to the per-app checks above: `vp check` and `vp run typecheck` must pass before work is considered complete (repository-wide requirement, `AGENTS.md`).

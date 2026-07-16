@@ -87,9 +87,9 @@ configuration.label
 
 ## Verification
 
-- **Mechanical**: `swift build --package-path apps/mac` succeeds.
+- **Mechanical**: `swift build --package-path apps/mac` succeeds, then `vp check` and `vp run typecheck` pass (repository requirement before any work counts as complete).
 - **Feel check** (use the `apps/mac:verify` skill — mock backend + UIProbe — or run the app):
-  - Press and hold a follow-up button under a finished turn: it settles to 97% scale with a fast-then-soft ease; release springs it back. No lag before movement starts (curve is ease-out — starts fast).
+  - Press and hold a follow-up button under a finished turn: it settles to 97% scale with a fast-then-soft ease; release returns it smoothly to 100% on the same 0.14s timing curve — no spring, no overshoot. No lag before movement starts (curve is ease-out — starts fast).
   - Rapidly click several times: the scale retargets smoothly, never snapping to either end state.
   - Enable System Settings → Accessibility → Display → Reduce Motion: pressing still dims the fill (animated fade), but nothing scales.
 - **Done when**: both styles animate press state via `Motion.feedback`, scale is Reduce-Motion-gated, and the build passes.
