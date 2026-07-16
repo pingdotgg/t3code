@@ -7,19 +7,26 @@ export const MODEL_COST_TIERS: Record<string, "cheap" | "moderate" | "expensive"
   "claude-haiku-4": "cheap",
   "gpt-4o-mini": "cheap",
   "gpt-4-turbo": "cheap",
+  "gpt-5.6-luna": "cheap",
+  "claudex-luna": "cheap",
 
   // Moderate: 10 concurrent
   "claude-sonnet-5": "moderate",
   "claude-sonnet-4": "moderate",
   "gpt-4o": "moderate",
   "gpt-4": "moderate",
+  "gpt-5.6": "moderate",
+  "gpt-5.6-terra": "moderate",
 
   // Expensive: 5 concurrent
   "claude-fable-5": "expensive",
   "claude-opus-4.8": "expensive",
   "claude-opus-4": "expensive",
+  "claude-opus-4-8": "expensive",
   "gpt-5.5": "expensive",
   "gpt-5": "expensive",
+  "gpt-5.6-sol": "expensive",
+  "claudex-sol": "expensive",
 };
 
 export const CONCURRENCY_LIMITS = {

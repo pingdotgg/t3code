@@ -27,6 +27,7 @@ const successfulHandlers = (): WorkflowTaskHandlers<never> => ({
       model: input.model ?? "default-model",
       title: input.prompt,
       status: "running",
+      policyNotices: [],
     }),
   send: (_context, input) =>
     Effect.succeed({

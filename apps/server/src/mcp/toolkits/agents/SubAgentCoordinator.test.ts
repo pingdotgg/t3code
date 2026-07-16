@@ -13,6 +13,7 @@ import {
   type OrchestrationThreadShell,
   type ServerProvider,
   type SubAgentError,
+  type SubAgentSpawnResult,
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as Duration from "effect/Duration";
@@ -393,18 +394,36 @@ it.effect("advisor parent with non-spawnable executor fails without creating a t
   }),
 );
 
-it.effect("advisor parent passes a stale executor model slug through verbatim", () =>
+it.effect("advisor parent clamps a stale executor model slug", () =>
   Effect.gen(function* () {
-    // Short slug so the title suffix stays under the cap and remains assertable.
-    const staleSlug = "missing-model";
+    // The executor selection is authoritative, but sub-agent policy still clamps it.
+    const staleSlug = "gpt-5.5";
     const [coordinator, harness] = yield* makeCoordinator({
+      providers: [
+        makeProvider("claude", "claudeAgent"),
+        makeProvider("codex", "codex", {
+          models: [
+            {
+              slug: staleSlug,
+              name: "Outdated Codex",
+              isCustom: false,
+              capabilities: emptyCapabilities,
+            },
+            {
+              slug: "gpt-5.6-luna",
+              name: "GPT-5.6 Luna",
+              isCustom: false,
+              capabilities: emptyCapabilities,
+            },
+          ],
+        }),
+      ],
       parentShell: (threadId) =>
         makeThreadShell(threadId, {
           runtimeMode: "full-access",
           interactionMode: "advisor",
           executorModelSelection: {
             instanceId: ProviderInstanceId.make("codex"),
-            // Catalog only reports "default-model"; executor slug is authoritative.
             model: staleSlug,
           },
         }),
@@ -417,15 +436,18 @@ it.effect("advisor parent passes a stale executor model slug through verbatim", 
     });
 
     expect(result.providerInstanceId).toBe("codex");
-    expect(result.model).toBe(staleSlug);
-    expect(result.title).toContain(`[executor: codex/${staleSlug}]`);
+    expect(result.model).toBe("gpt-5.6-luna");
+    expect(
+      result.policyNotices.some((notice) => notice.includes("outdated Codex generation")),
+    ).toBe(true);
+    expect(result.title).toContain(`[executor: codex/gpt-5.6-luna]`);
     expect(result.title).not.toContain("fell back");
     expect(result.title.length).toBeLessThanOrEqual(__testing.DEFAULT_TITLE_MAX_LENGTH);
 
     const create = harness.dispatched.find((command) => command.type === "thread.create");
     expect(create?.type).toBe("thread.create");
     if (create?.type === "thread.create") {
-      expect(create.modelSelection.model).toBe(staleSlug);
+      expect(create.modelSelection.model).toBe("gpt-5.6-luna");
       expect(create.modelSelection.instanceId).toBe("codex");
       expect(create.title.length).toBeLessThanOrEqual(__testing.DEFAULT_TITLE_MAX_LENGTH);
     }
@@ -547,6 +569,7 @@ it.effect("reports the sub-agent's resolved reasoning effort on the parent task 
                     type: "select",
                     options: [
                       { id: "low", label: "Low" },
+                      { id: "xhigh", label: "XHigh" },
                       { id: "max", label: "Max", isDefault: true },
                       { id: "ultrathink", label: "Ultrathink" },
                     ],
@@ -570,11 +593,11 @@ it.effect("reports the sub-agent's resolved reasoning effort on the parent task 
     );
     expect(activity?.type).toBe("thread.activity.append");
     if (activity?.type === "thread.activity.append") {
-      // The child session resolves the same descriptor default, so the badge
+      // The child session uses the explicit Luna default, so the badge
       // reports what the sub-agent actually runs at.
       expect(activity.activity.payload).toMatchObject({
         model: "claudex-luna",
-        effort: "max",
+        effort: "xhigh",
       });
     }
   }),
@@ -779,6 +802,137 @@ it.effect("bounds recursive sub-agent nesting", () =>
       }),
     );
     expect(refused.reason).toBe("depth-limit-exceeded");
+  }),
+);
+
+it.effect("rate limits the fourth spawn within sixty seconds", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(0);
+    const [coordinator] = yield* makeCoordinator();
+
+    for (let index = 0; index < 3; index += 1) {
+      yield* coordinator.spawn(makeScope(), {
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        prompt: `Rate-limited task ${index}.`,
+      });
+    }
+
+    const refused = yield* expectSubAgentError(
+      coordinator.spawn(makeScope(), {
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        prompt: "The fourth task should be refused.",
+      }),
+    );
+    expect(refused.reason).toBe("rate-limit-exceeded");
+    expect(refused.description).toContain("consolidate work into fewer, larger sub-agent tasks");
+  }),
+);
+
+it.effect("rejects a sixth running child for one caller", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(0);
+    const [coordinator] = yield* makeCoordinator();
+
+    for (let index = 0; index < 5; index += 1) {
+      yield* coordinator.spawn(makeScope(), {
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        prompt: `Concurrent task ${index}.`,
+      });
+      yield* TestClock.adjust(Duration.seconds(61));
+    }
+
+    const refused = yield* expectSubAgentError(
+      coordinator.spawn(makeScope(), {
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        prompt: "The sixth task should be refused.",
+      }),
+    );
+    expect(refused.reason).toBe("concurrency-limit-exceeded");
+    expect(refused.description).toContain("agent_wait");
+  }),
+);
+
+it.effect("rejects a spawn when the root tree reaches ten running agents", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(0);
+    const [coordinator] = yield* makeCoordinator();
+    const directChildren: Array<SubAgentSpawnResult> = [];
+
+    for (let index = 0; index < 4; index += 1) {
+      directChildren.push(
+        yield* coordinator.spawn(makeScope(), {
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          prompt: `Root task ${index}.`,
+        }),
+      );
+      yield* TestClock.adjust(Duration.seconds(61));
+    }
+
+    const firstChildScope = makeScope(directChildren[0]!.threadId);
+    for (let index = 0; index < 5; index += 1) {
+      yield* coordinator.spawn(firstChildScope, {
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        prompt: `Nested task ${index}.`,
+      });
+      yield* TestClock.adjust(Duration.seconds(61));
+    }
+
+    // Four direct children plus five grandchildren are nine running agents.
+    yield* coordinator.spawn(makeScope(), {
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      prompt: "The tenth task fills the root tree.",
+    });
+
+    const refused = yield* expectSubAgentError(
+      coordinator.spawn(makeScope(directChildren[1]!.threadId), {
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        prompt: "The eleventh task should be refused.",
+      }),
+    );
+    expect(refused.reason).toBe("concurrency-limit-exceeded");
+    expect(refused.description).toContain("tree-wide cap");
+  }),
+);
+
+it.effect("clamps a banned model and returns policy notices", () =>
+  Effect.gen(function* () {
+    const [coordinator, harness] = yield* makeCoordinator({
+      providers: [
+        makeProvider("claude", "claudeAgent"),
+        makeProvider("claudex", "claudeAgent", {
+          models: [
+            {
+              slug: "claudex-sol",
+              name: "Claudex Sol",
+              isCustom: true,
+              capabilities: emptyCapabilities,
+            },
+            {
+              slug: "claudex-luna",
+              name: "Claudex Luna",
+              isCustom: true,
+              capabilities: emptyCapabilities,
+            },
+          ],
+        }),
+      ],
+    });
+
+    const result = yield* coordinator.spawn(makeScope(), {
+      providerInstanceId: ProviderInstanceId.make("claudex"),
+      model: "claudex-sol",
+      prompt: "Use the allowed child model.",
+    });
+
+    expect(result.model).toBe("claudex-luna");
+    expect(result.policyNotices).toContain(
+      "model claudex-sol → claudex-luna (banned for sub-agents)",
+    );
+    const create = harness.dispatched.find((command) => command.type === "thread.create");
+    expect(create?.type).toBe("thread.create");
+    if (create?.type === "thread.create") {
+      expect(create.modelSelection.model).toBe("claudex-luna");
+    }
   }),
 );
 
