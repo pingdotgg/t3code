@@ -93,7 +93,11 @@ import { PluginToolCatalog, PluginToolCatalogError } from "./PluginToolCatalog.t
 import { makePluginWorkspaceGrants, type PluginWorkspaceGrants } from "./PluginWorkspaceGrants.ts";
 
 const APP_VERSION = packageJson.version;
-const PRESERVE_DATA_MARKER = ".preserve-data-on-remove";
+export const PRESERVE_DATA_MARKER = ".preserve-data-on-remove";
+// Prefix for the deterministic, plugin-root-external directory that preserved data
+// is parked under while a pending-remove is reconciled. Exported so the start-time
+// orphan sweep and its tests agree on the exact name.
+export const PRESERVED_DATA_DIR_PREFIX = ".preserved-";
 const decodeManifest = Schema.decodeUnknownEffect(Schema.fromJsonString(PluginManifest));
 
 const healthyActivationDelay = () => {
@@ -310,6 +314,50 @@ function validateRegistration(
         detail: 'plugin declares policy hooks but does not include the "policy" capability',
       }),
     );
+  }
+  // HTTP routes require the dedicated "http" capability. Without this pairing check
+  // a plugin that declares routes but omits the capability has them SILENTLY dropped
+  // at the put site (which is gated on the capability), so the author sees routes
+  // that never register and no error saying why. Fail loudly here instead, mirroring
+  // the other capability-pairing checks above.
+  if ((registration.http?.length ?? 0) > 0 && !capabilities.includes("http")) {
+    return Effect.fail(
+      new PluginRegistrationError({
+        pluginId,
+        detail: 'plugin declares http routes but does not include the "http" capability',
+      }),
+    );
+  }
+  // Validate each descriptor at registration rather than letting a malformed route
+  // reach the http registry. Modules are dynamically loaded JS, so the SDK's field
+  // types are NOT enforced at runtime: `auth` gates request authentication, so an
+  // out-of-whitelist value must be rejected here rather than fall through to a weaker
+  // default; `method`/`path` are matched literally, so an empty one would silently
+  // never match; a non-function `handler` would defect on the first request.
+  for (const descriptor of registration.http ?? []) {
+    if (descriptor.auth !== "public" && descriptor.auth !== "token") {
+      return Effect.fail(
+        new PluginRegistrationError({ pluginId, detail: `invalid http auth ${descriptor.auth}` }),
+      );
+    }
+    if (typeof descriptor.method !== "string" || descriptor.method.length === 0) {
+      return Effect.fail(
+        new PluginRegistrationError({ pluginId, detail: "http descriptor has an empty method" }),
+      );
+    }
+    if (typeof descriptor.path !== "string" || descriptor.path.length === 0) {
+      return Effect.fail(
+        new PluginRegistrationError({ pluginId, detail: "http descriptor has an empty path" }),
+      );
+    }
+    if (typeof descriptor.handler !== "function") {
+      return Effect.fail(
+        new PluginRegistrationError({
+          pluginId,
+          detail: "http descriptor handler is not a function",
+        }),
+      );
+    }
   }
   for (const descriptor of registration.context ?? []) {
     // Reject an oversized STATIC contribution HERE, at activation, rather than
@@ -1062,9 +1110,16 @@ export const make = Effect.fn("PluginHost.make")(function* () {
         // HTTP registration), skips the registry.put + "active" publish, clears
         // the activating marker, and leaves the persisted state intact — while
         // staying distinguishable from a genuine host-shutdown interruption.
+        // A read/parse failure here must NOT be swallowed as `undefined`: doing so
+        // reads as "plugin missing", cancels activation via the benign sentinel, and
+        // leaves the lockfile enabled+active with NO runtime until restart. Let the
+        // error propagate to the activation-exit failure ladder, which marks the
+        // plugin "failed" (matching activatePluginLocked's deliberate propagate at the
+        // readLockfile there). readLockfile already returns an empty lockfile for a
+        // missing FILE, so only true read/parse errors reach here; a genuinely-missing
+        // ENTRY still yields `undefined` → the cancel sentinel below.
         const stateBeforePut = yield* store.readLockfile.pipe(
           Effect.map((current) => getLockfilePlugin(current, pluginId)?.state),
-          Effect.orElseSucceed(() => undefined as PluginState | undefined),
         );
         if (stateBeforePut !== "active") {
           return yield* new PluginActivationCanceled({
@@ -1085,9 +1140,10 @@ export const make = Effect.fn("PluginHost.make")(function* () {
         // disable∩activation race: a put subscriber can still run catalog.activate
         // before disable acquires the lock. That race is closed by disable intent
         // (noteDisableIntent before the lock wait; activate refuses while set).
+        // As with the pre-put read above, a read/parse failure here propagates to the
+        // failure ladder (→ "failed") instead of being misread as "plugin missing".
         const stateAfterPut = yield* store.readLockfile.pipe(
           Effect.map((current) => getLockfilePlugin(current, pluginId)?.state),
-          Effect.orElseSucceed(() => undefined as PluginState | undefined),
         );
         if (stateAfterPut !== "active") {
           yield* registry.remove(pluginId);
@@ -1372,28 +1428,46 @@ export const make = Effect.fn("PluginHost.make")(function* () {
         // rename-out and rename-back must be recoverable on the next start; a
         // per-attempt `.preserved-<id>-<millis>` path stranded the data forever
         // because a retry computed a fresh timestamp and never found the old dir.
-        const preservedDataDir = path.join(config.pluginsDir, `.preserved-${pluginId}`);
+        const preservedDataDir = path.join(
+          config.pluginsDir,
+          `${PRESERVED_DATA_DIR_PREFIX}${pluginId}`,
+        );
         // A leftover preserved dir is proof a prior reconcile of THIS plugin
         // crashed after moving data aside — adopt it as the preserve intent even
         // if the marker (which lived inside the now-removed root) is already gone.
         const preservedAlready = yield* exists(preservedDataDir);
         const preserveData = preservedAlready || (yield* exists(markerPath));
         if (preserveData) {
+          // Ordering is chosen so no crash window can lose data the user chose to
+          // keep. (A) park the data OUTSIDE the plugin root; (B) delete the root
+          // (destroying the in-root marker and version dirs); (C) recreate the empty
+          // root as the rename-back target; (E) drop the lockfile entry; (D) re-home
+          // the data LAST. removePlugin runs BEFORE the final rename-back so a crash
+          // after it leaves the data safe (still at `.preserved-<id>`) but orphaned —
+          // the start-time sweep re-homes it, since the entry is now gone. The old
+          // order (rename-back, THEN removePlugin) left a window in which the data was
+          // already back at its normal path with NO marker and NO preserved dir, so a
+          // crash there made the next reconcile take the delete-data branch below and
+          // destroy it.
           if (!preservedAlready && (yield* exists(dataDir))) {
-            yield* fs.rename(dataDir, preservedDataDir);
+            yield* fs.rename(dataDir, preservedDataDir); // A
           }
-          yield* fs.remove(pluginRoot, { recursive: true, force: true });
-          if (yield* exists(preservedDataDir)) {
-            yield* fs.makeDirectory(pluginRoot, { recursive: true });
-            yield* fs.rename(preservedDataDir, dataDir);
+          yield* fs.remove(pluginRoot, { recursive: true, force: true }); // B
+          const hasPreserved = yield* exists(preservedDataDir);
+          if (hasPreserved) {
+            yield* fs.makeDirectory(pluginRoot, { recursive: true }); // C
           }
-        } else {
-          yield* fs.remove(pluginRoot, { recursive: true, force: true });
-          // Settings live in the host DB, not under pluginRoot, so removing the
-          // plugin directory does NOT remove them. Without this, "Remove plugin
-          // data" then reinstalling the same id silently recovered the old config.
-          yield* settingsStore.remove(pluginId);
+          yield* store.removePlugin(pluginId); // E (before the rename-back)
+          if (hasPreserved) {
+            yield* fs.rename(preservedDataDir, dataDir); // D (last)
+          }
+          return false;
         }
+        yield* fs.remove(pluginRoot, { recursive: true, force: true });
+        // Settings live in the host DB, not under pluginRoot, so removing the
+        // plugin directory does NOT remove them. Without this, "Remove plugin
+        // data" then reinstalling the same id silently recovered the old config.
+        yield* settingsStore.remove(pluginId);
         yield* store.removePlugin(pluginId);
         return false;
       }
@@ -1443,6 +1517,44 @@ export const make = Effect.fn("PluginHost.make")(function* () {
       return true;
     });
 
+  // Re-home any orphaned preserved-data directory left by a crash in the narrow
+  // window between removePlugin and the final rename-back in reconcilePendingState.
+  // Such a `.preserved-<id>` holds data the user chose to keep but has NO lockfile
+  // entry pointing at it, so the per-plugin reconcile loop (which iterates lockfile
+  // entries) never visits it. Idempotent: an id that still has an entry is left for
+  // the normal reconcile path; a `.preserved-<id>` whose destination data dir already
+  // exists is left in place rather than overwritten, so no live data is clobbered.
+  const sweepOrphanedPreservedData = (lockfile: PluginLockfile) =>
+    Effect.gen(function* () {
+      const entries = yield* fs
+        .readDirectory(config.pluginsDir)
+        .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
+      for (const name of entries) {
+        if (!name.startsWith(PRESERVED_DATA_DIR_PREFIX)) continue;
+        const pluginId = name.slice(PRESERVED_DATA_DIR_PREFIX.length) as PluginId;
+        if (pluginId.length === 0) continue;
+        // A still-tracked id belongs to the pending-remove reconcile path, not the
+        // sweep — only an orphan (entry already gone) is re-homed here.
+        if (getLockfilePlugin(lockfile, pluginId) !== undefined) continue;
+        const preservedDataDir = path.join(config.pluginsDir, name);
+        const pluginRoot = path.join(config.pluginsDir, pluginId);
+        const dataDir = pluginDataDir(config.pluginsDir, pluginId, path.join);
+        const dataExists = yield* fs.exists(dataDir).pipe(Effect.orElseSucceed(() => false));
+        if (dataExists) {
+          // A data dir is already in place. Re-homing would have to overwrite it and
+          // could destroy live data, so leave the preserved copy untouched for manual
+          // recovery rather than clobber what is there.
+          yield* Effect.logWarning(
+            "Orphaned preserved plugin data left in place; a data directory already exists",
+            { pluginId, preservedDataDir },
+          );
+          continue;
+        }
+        yield* fs.makeDirectory(pluginRoot, { recursive: true });
+        yield* fs.rename(preservedDataDir, dataDir);
+      }
+    }).pipe(Effect.ignoreCause({ log: true }));
+
   const start = Effect.gen(function* () {
     if (process.env.T3_NO_PLUGINS === "1") {
       yield* Effect.logInfo("Plugin host disabled by T3_NO_PLUGINS");
@@ -1460,6 +1572,12 @@ export const make = Effect.fn("PluginHost.make")(function* () {
         }).pipe(Effect.as({ plugins: {}, sources: [] })),
       ),
     );
+
+    // Re-home orphaned preserved data BEFORE the reconcile loop. Orphans have no
+    // lockfile entry, so the loop below never touches them; and reconcile only ever
+    // REMOVES entries, so using the pre-reconcile lockfile here cannot misclassify a
+    // still-tracked plugin as an orphan.
+    yield* sweepOrphanedPreservedData(lockfile);
 
     for (const [rawPluginId, entry] of Object.entries(lockfile.plugins)) {
       const pluginId = rawPluginId as PluginId;
