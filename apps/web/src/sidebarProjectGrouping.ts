@@ -33,7 +33,7 @@ export interface SidebarProjectSnapshot extends Project {
 
 interface SidebarProjectGroupCandidate {
   readonly logicalKey: string;
-  readonly member: SidebarProjectGroupMember;
+  readonly project: Project;
 }
 
 function getProjectFreshnessTime(project: Project): number {
@@ -46,8 +46,8 @@ function getProjectFreshnessTime(project: Project): number {
 }
 
 function shouldReplaceDuplicateMember(input: {
-  existingMember: SidebarProjectGroupMember;
-  candidateMember: SidebarProjectGroupMember;
+  existingMember: Project;
+  candidateMember: Project;
   primaryEnvironmentId: EnvironmentId | null;
 }): boolean {
   if (
@@ -67,16 +67,41 @@ function shouldReplaceDuplicateMember(input: {
   return input.candidateMember.id > input.existingMember.id;
 }
 
+function collectProjectWinnersByPhysicalKey(input: {
+  projects: ReadonlyArray<Project>;
+  settings: ProjectGroupingSettings;
+  primaryEnvironmentId: EnvironmentId | null;
+}): Map<string, SidebarProjectGroupCandidate> {
+  const winnersByPhysicalKey = new Map<string, SidebarProjectGroupCandidate>();
+  for (const project of input.projects) {
+    const logicalKey = deriveLogicalProjectKeyFromSettings(project, input.settings);
+    const physicalProjectKey = derivePhysicalProjectKey(project);
+    const existing = winnersByPhysicalKey.get(physicalProjectKey);
+    if (!existing) {
+      winnersByPhysicalKey.set(physicalProjectKey, { logicalKey, project });
+      continue;
+    }
+    if (
+      shouldReplaceDuplicateMember({
+        existingMember: existing.project,
+        candidateMember: project,
+        primaryEnvironmentId: input.primaryEnvironmentId,
+      })
+    ) {
+      winnersByPhysicalKey.set(physicalProjectKey, { logicalKey, project });
+    }
+  }
+  return winnersByPhysicalKey;
+}
+
 export function buildPhysicalToLogicalProjectKeyMap(input: {
   projects: ReadonlyArray<Project>;
   settings: ProjectGroupingSettings;
+  primaryEnvironmentId: EnvironmentId | null;
 }): Map<string, string> {
   const mapping = new Map<string, string>();
-  for (const project of input.projects) {
-    mapping.set(
-      derivePhysicalProjectKey(project),
-      deriveLogicalProjectKeyFromSettings(project, input.settings),
-    );
+  for (const [physicalProjectKey, winner] of collectProjectWinnersByPhysicalKey(input)) {
+    mapping.set(physicalProjectKey, winner.logicalKey);
   }
   return mapping;
 }
@@ -92,33 +117,14 @@ export function buildSidebarProjectSnapshots(input: {
   // legacy behavior.
   isDesktopLocalEnvironment?: (environmentId: EnvironmentId) => boolean;
 }): SidebarProjectSnapshot[] {
-  const winnersByPhysicalKey = new Map<string, SidebarProjectGroupCandidate>();
-  for (const project of input.projects) {
-    const logicalKey = deriveLogicalProjectKeyFromSettings(project, input.settings);
-    const physicalProjectKey = derivePhysicalProjectKey(project);
+  const winnersByPhysicalKey = collectProjectWinnersByPhysicalKey(input);
+  const groupedMembers = new Map<string, SidebarProjectGroupMember[]>();
+  for (const { logicalKey, project } of winnersByPhysicalKey.values()) {
     const member: SidebarProjectGroupMember = {
       ...project,
-      physicalProjectKey,
+      physicalProjectKey: derivePhysicalProjectKey(project),
       environmentLabel: input.resolveEnvironmentLabel(project.environmentId),
     };
-    const existing = winnersByPhysicalKey.get(physicalProjectKey);
-    if (!existing) {
-      winnersByPhysicalKey.set(physicalProjectKey, { logicalKey, member });
-      continue;
-    }
-    if (
-      shouldReplaceDuplicateMember({
-        existingMember: existing.member,
-        candidateMember: member,
-        primaryEnvironmentId: input.primaryEnvironmentId,
-      })
-    ) {
-      winnersByPhysicalKey.set(physicalProjectKey, { logicalKey, member });
-    }
-  }
-
-  const groupedMembers = new Map<string, SidebarProjectGroupMember[]>();
-  for (const { logicalKey, member } of winnersByPhysicalKey.values()) {
     const existingMembers = groupedMembers.get(logicalKey);
     if (existingMembers) {
       existingMembers.push(member);

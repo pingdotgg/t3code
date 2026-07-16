@@ -7,7 +7,10 @@ import {
   derivePhysicalProjectKey,
   resolveProjectGroupingMode,
 } from "./logicalProject";
-import { buildSidebarProjectSnapshots } from "./sidebarProjectGrouping";
+import {
+  buildPhysicalToLogicalProjectKeyMap,
+  buildSidebarProjectSnapshots,
+} from "./sidebarProjectGrouping";
 import type { Project } from "./types";
 
 const primaryEnvironmentId = EnvironmentId.make("env-primary");
@@ -213,5 +216,28 @@ describe("environment grouping", () => {
       canonical.id,
       remote.id,
     ]);
+  });
+
+  it("routes duplicate physical project keys to the winning logical group", () => {
+    const staleWithoutRepositoryIdentity = makeProject({
+      id: ProjectId.make("project-stale"),
+      repositoryIdentity: null,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const canonical = makeProject({
+      id: ProjectId.make("project-canonical"),
+      repositoryIdentity,
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    });
+
+    const physicalToLogicalKey = buildPhysicalToLogicalProjectKeyMap({
+      projects: [staleWithoutRepositoryIdentity, canonical],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+    });
+
+    expect(physicalToLogicalKey.get(derivePhysicalProjectKey(staleWithoutRepositoryIdentity))).toBe(
+      repositoryIdentity.canonicalKey,
+    );
   });
 });
