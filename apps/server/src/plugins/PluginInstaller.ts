@@ -229,12 +229,17 @@ const validateRelativeArchivePath = (entryPath: string) => {
 // server-side importers.
 export { compareSemver };
 
-const installedEntry = (entry: PluginLockfilePlugin | undefined): PluginLockfilePlugin => {
-  if (!entry) {
-    throw managementError("plugin-not-found", "Plugin is not installed.");
-  }
-  return entry;
-};
+// Effectful, not a throw. This used to `throw managementError(...)`, but every caller
+// invoked it inside an Effect.gen body or an Effect.succeed argument, where a
+// synchronous throw is a DEFECT — it bypasses the typed failure channel entirely, so
+// the callers' `Effect.mapError(...)` never saw it and a missing lockfile entry
+// surfaced as an unhandled defect instead of "plugin-not-found".
+const installedEntry = (
+  entry: PluginLockfilePlugin | undefined,
+): Effect.Effect<PluginLockfilePlugin, PluginManagementError> =>
+  entry
+    ? Effect.succeed(entry)
+    : Effect.fail(managementError("plugin-not-found", "Plugin is not installed."));
 
 const lockfileError = (cause: unknown) =>
   managementError(
@@ -805,27 +810,37 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
           stage.version,
           path.join,
         );
-        const preexisted = yield* fs.exists(destination).pipe(Effect.orElseSucceed(() => false));
-        yield* moveStagingToVersionDir(stage);
-        if (!preexisted) orphanedVersionDir = destination;
         const installedAt = DateTime.formatIso(yield* DateTime.now);
         yield* store
           .updatePlugin(stage.pluginId, ({ lockfile }) =>
-            // Re-run the id-collision check INSIDE the lockfile single-writer:
-            // beginInstall validated against a snapshot, and a concurrent
-            // install may have committed a colliding entry since then —
-            // blindly writing here would silently overwrite it.
-            Effect.try({
-              try: () =>
-                assertNoPluginIdCollision(stage.pluginId, Object.keys(lockfile.plugins), false),
-              catch: (cause) =>
-                isPluginManagementError(cause)
-                  ? cause
-                  : managementError("manifest-invalid", "Plugin id collision check failed.", {
-                      cause,
-                    }),
-            }).pipe(
-              Effect.as({
+            // Validate AND move inside the lockfile single-writer, in that order.
+            //
+            // The move is destructive (it removes any existing version dir before
+            // renaming), so running it before this callback let two concurrent
+            // confirms for the same id+version corrupt each other: the loser wiped
+            // the winner's already-committed directory, replaced it with its own
+            // rejected archive, and then failed the collision check — leaving disk
+            // contents that no longer match the checksum the lockfile records. The
+            // orphan cleanup could not help, because the loser saw the destination
+            // as pre-existing and correctly refused to delete it. Under the
+            // single-writer the loser fails the check BEFORE touching anything.
+            Effect.gen(function* () {
+              yield* Effect.try({
+                try: () =>
+                  assertNoPluginIdCollision(stage.pluginId, Object.keys(lockfile.plugins), false),
+                catch: (cause) =>
+                  isPluginManagementError(cause)
+                    ? cause
+                    : managementError("manifest-invalid", "Plugin id collision check failed.", {
+                        cause,
+                      }),
+              });
+              const preexisted = yield* fs
+                .exists(destination)
+                .pipe(Effect.orElseSucceed(() => false));
+              yield* moveStagingToVersionDir(stage);
+              if (!preexisted) orphanedVersionDir = destination;
+              return {
                 version: stage.version,
                 sha256: stage.sha256,
                 sourceId: stage.sourceId,
@@ -834,8 +849,8 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
                 activation: { activatingSince: null, crashCount: 0 },
                 installedAt,
                 lastError: null,
-              }),
-            ),
+              };
+            }),
           )
           .pipe(
             Effect.mapError((cause) =>
@@ -883,17 +898,24 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
       // both halves under one lock acquisition; we still own the lockfile shape.
       const persist = store
         .updatePlugin(input.pluginId, ({ current }) =>
-          Effect.succeed({
-            ...installedEntry(current),
-            enabled: input.enabled,
-            state: input.enabled ? "active" : "disabled",
-            lastError: input.enabled ? null : (current?.lastError ?? null),
-            activation: input.enabled
-              ? { activatingSince: null, crashCount: 0 }
-              : (current?.activation ?? { activatingSince: null, crashCount: 0 }),
-          }),
+          installedEntry(current).pipe(
+            Effect.map((entry) => ({
+              ...entry,
+              enabled: input.enabled,
+              state: input.enabled ? ("active" as const) : ("disabled" as const),
+              lastError: input.enabled ? null : (current?.lastError ?? null),
+              activation: input.enabled
+                ? { activatingSince: null, crashCount: 0 }
+                : (current?.activation ?? { activatingSince: null, crashCount: 0 }),
+            })),
+          ),
         )
-        .pipe(Effect.mapError(lockfileError), Effect.asVoid);
+        .pipe(
+          Effect.mapError((cause) =>
+            isPluginManagementError(cause) ? cause : lockfileError(cause),
+          ),
+          Effect.asVoid,
+        );
 
       if (input.enabled) {
         yield* host.setPluginEnabled(input.pluginId, true, persist).pipe(
@@ -935,11 +957,13 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
       }
       yield* store
         .updatePlugin(input.pluginId, ({ current }) =>
-          Effect.succeed({
-            ...installedEntry(current),
-            state: "pending-remove",
-            enabled: false,
-          }),
+          installedEntry(current).pipe(
+            Effect.map((entry) => ({
+              ...entry,
+              state: "pending-remove" as const,
+              enabled: false,
+            })),
+          ),
         )
         .pipe(Effect.mapError(lockfileError));
       // Tear down the live runtime (scope, HTTP routes) now instead of leaving it
@@ -950,7 +974,7 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
   const beginUpgrade: PluginInstaller["Service"]["beginUpgrade"] = (input) =>
     Effect.gen(function* () {
       const lockfile = yield* store.readLockfile.pipe(Effect.mapError(lockfileError));
-      const current = installedEntry(lockfile.plugins[input.pluginId]);
+      const current = yield* installedEntry(lockfile.plugins[input.pluginId]);
       // Reject upgrading to the already-installed version. Staging + confirming a
       // same-version upgrade would move the new files onto the LIVE version dir
       // (moveStagingToVersionDir removes the destination first), destroying the
@@ -1001,23 +1025,35 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
           stage.version,
           path.join,
         );
-        const preexisted = yield* fs.exists(destination).pipe(Effect.orElseSucceed(() => false));
-        yield* moveStagingToVersionDir(stage);
-        if (!preexisted) orphanedVersionDir = destination;
         const stagedAt = DateTime.formatIso(yield* DateTime.now);
         yield* store
           .updatePlugin(stage.pluginId, ({ current }) =>
-            Effect.succeed({
-              ...installedEntry(current),
-              state: "pending-upgrade",
-              staged: {
-                version: stage.version,
-                sha256: stage.sha256,
-                stagedAt,
-              },
+            // Same discipline as confirmInstall: the destructive move happens under
+            // the lockfile single-writer, so two concurrent upgrade confirms cannot
+            // interleave "remove the other's committed dir" with "record my sha".
+            Effect.gen(function* () {
+              const entry = yield* installedEntry(current);
+              const preexisted = yield* fs
+                .exists(destination)
+                .pipe(Effect.orElseSucceed(() => false));
+              yield* moveStagingToVersionDir(stage);
+              if (!preexisted) orphanedVersionDir = destination;
+              return {
+                ...entry,
+                state: "pending-upgrade" as const,
+                staged: {
+                  version: stage.version,
+                  sha256: stage.sha256,
+                  stagedAt,
+                },
+              };
             }),
           )
-          .pipe(Effect.mapError(lockfileError));
+          .pipe(
+            Effect.mapError((cause) =>
+              isPluginManagementError(cause) ? cause : lockfileError(cause),
+            ),
+          );
         orphanedVersionDir = null;
         yield* dropStage(stageToken);
         return { plugin: yield* pluginInfo(stage.pluginId) };
