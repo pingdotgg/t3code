@@ -104,11 +104,78 @@ const probeHttpRegistryLayer = Layer.effect(
   ),
 );
 
+// Wrapped PluginLockfileStore that delegates to the real store but can inject
+// targeted failures for two host paths that must NOT swallow them:
+//   - `readLockfile`: once the plugin's register() has written `readLockfileFailMarker`,
+//     the first `readLockfileSkipAfterMarker` post-marker reads still delegate, then
+//     every read fails — so the failure lands precisely at the pre-put (skip 0) or
+//     post-put (skip 1) lifecycle re-check while `updatePlugin` (used by markFailure)
+//     keeps working, since the store's own mutations read the file directly, not via
+//     this service method.
+//   - `removePlugin`: fails the first `removePluginFailuresRemaining` calls, then
+//     delegates — used to reproduce a crash between removePlugin and the final
+//     rename-back in reconcile's preserve-data path.
+// A module-level holder the test resets per run; only the blocks that install this
+// layer touch it, and tests run sequentially.
+interface StoreProbeState {
+  readLockfileFailMarker?: string;
+  readLockfileSkipAfterMarker: number;
+  readLockfileSeenAfterMarker: number;
+  removePluginFailuresRemaining: number;
+}
+let storeProbe: StoreProbeState | null = null;
+
+const probeStoreLayer = Layer.effect(
+  PluginLockfileStoreLayer.PluginLockfileStore,
+  Effect.gen(function* () {
+    const real = yield* PluginLockfileStoreLayer.PluginLockfileStore;
+    const fs = yield* FileSystem.FileSystem;
+    return PluginLockfileStoreLayer.PluginLockfileStore.of({
+      ...real,
+      readLockfile: Effect.gen(function* () {
+        const probe = storeProbe;
+        if (probe !== null && probe.readLockfileFailMarker !== undefined) {
+          const markerExists = yield* fs
+            .exists(probe.readLockfileFailMarker)
+            .pipe(Effect.orElseSucceed(() => false));
+          if (markerExists) {
+            if (probe.readLockfileSeenAfterMarker >= probe.readLockfileSkipAfterMarker) {
+              return yield* Effect.fail(
+                new PluginLockfileStoreLayer.PluginLockfileReadError({
+                  path: real.lockfilePath,
+                  cause: new Error("injected readLockfile failure"),
+                }),
+              );
+            }
+            probe.readLockfileSeenAfterMarker += 1;
+          }
+        }
+        return yield* real.readLockfile;
+      }),
+      removePlugin: (id) =>
+        Effect.suspend(() => {
+          const probe = storeProbe;
+          if (probe !== null && probe.removePluginFailuresRemaining > 0) {
+            probe.removePluginFailuresRemaining -= 1;
+            return Effect.fail(
+              new PluginLockfileStoreLayer.PluginLockfileWriteError({
+                path: real.lockfilePath,
+                cause: new Error("injected removePlugin failure"),
+              }),
+            );
+          }
+          return real.removePlugin(id);
+        }),
+    });
+  }),
+).pipe(Layer.provide(PluginLockfileStoreLayer.layer));
+
 const makeTestLayerBase = (
   httpRegistryLayer: Layer.Layer<PluginHttpRegistry.PluginHttpRegistry> = PluginHttpRegistry.layer,
+  lockfileStoreLayer: typeof PluginLockfileStoreLayer.layer = PluginLockfileStoreLayer.layer,
 ) =>
   PluginHostModule.layer.pipe(
-    Layer.provideMerge(PluginLockfileStoreLayer.layer),
+    Layer.provideMerge(lockfileStoreLayer),
     Layer.provideMerge(PluginModuleLoaderLayer.layer),
     Layer.provideMerge(PluginMigrator.layer),
     Layer.provideMerge(
@@ -307,9 +374,13 @@ const withTestServices = (base: ReturnType<typeof makeTestLayerBase>) =>
 
 const testLayer = withTestServices(makeTestLayerBase());
 const probeTestLayer = withTestServices(makeTestLayerBase(probeHttpRegistryLayer));
+const probeStoreTestLayer = withTestServices(
+  makeTestLayerBase(PluginHttpRegistry.layer, probeStoreLayer),
+);
 
 const layer = it.layer(testLayer);
 const probeLayer = it.layer(probeTestLayer);
+const probeStoreLayerIt = it.layer(probeStoreTestLayer);
 
 const now = "2026-07-03T00:00:00.000Z";
 const decodeCapabilityMarker = Schema.decodeEffect(
@@ -408,7 +479,9 @@ const installPlugin = (input: {
       hostApi: input.manifestHostApi ?? "^1.0.0",
       capabilities: input.capabilities ?? [],
       entries:
-        input.webEntry === true ? { server: "server.js", web: "web.js" } : { server: "server.js" },
+        input.webEntry === true
+          ? { server: "server.js", web: "web/index.js" }
+          : { server: "server.js" },
     });
     yield* fs.writeFileString(path.join(pluginDir, "manifest.json"), encodedManifest);
     yield* fs.writeFileString(
@@ -2460,6 +2533,345 @@ probeLayer("PluginHost activation finalizer atomicity", (it) => {
       );
 
       httpProbe = null;
+    }),
+  );
+});
+
+// validateRegistration now covers HTTP descriptors. Before this, a plugin declaring
+// http routes WITHOUT the "http" capability had them silently dropped at the put
+// site, and a malformed descriptor (bad auth, empty method/path, non-function
+// handler) reached the http registry unchecked.
+layer("PluginHost http validation", (it) => {
+  const httpDescriptorEntry = (descriptorLiteral: string) => `
+import { createRequire } from "node:module";
+const require = createRequire(${JSON.stringify(NodeURL.pathToFileURL(import.meta.url).href)});
+const Effect = require("effect/Effect");
+export default {
+  register() {
+    return { http: [ ${descriptorLiteral} ] };
+  },
+};
+`;
+  const validDescriptor = `{ method: "GET", path: "/ok", auth: "public", handler: () => Effect.succeed({ status: 200, body: {} }) }`;
+
+  const rejectionCase = (input: {
+    readonly id: string;
+    readonly capabilities: ReadonlyArray<PluginCapability>;
+    readonly entrySource: string;
+    readonly errorPattern: RegExp;
+  }) =>
+    Effect.gen(function* () {
+      const pluginId = PluginId.make(input.id);
+      const registry = yield* PluginRuntimeRegistryLayer.PluginRuntimeRegistry;
+      const store = yield* PluginLockfileStoreLayer.PluginLockfileStore;
+      const host = yield* PluginHostModule.PluginHost;
+
+      yield* installPlugin({
+        pluginId,
+        capabilities: input.capabilities,
+        entrySource: input.entrySource,
+      });
+      yield* host.activatePlugin(pluginId);
+
+      assert.isTrue(
+        Option.isNone(yield* registry.get(pluginId)),
+        "a plugin with an invalid http registration must not activate",
+      );
+      const lockfile = yield* store.readLockfile;
+      assert.match(lockfile.plugins[pluginId]?.lastError ?? "", input.errorPattern);
+    });
+
+  it.effect("rejects http routes declared without the http capability", () =>
+    rejectionCase({
+      id: "http-without-capability",
+      capabilities: [],
+      entrySource: httpRouteEntrySource(),
+      errorPattern: /http/,
+    }),
+  );
+
+  it.effect("rejects a descriptor whose auth is neither public nor token", () =>
+    rejectionCase({
+      id: "http-bad-auth",
+      capabilities: ["http"],
+      entrySource: httpDescriptorEntry(
+        `{ method: "GET", path: "/x", auth: "private", handler: () => Effect.succeed({ status: 200, body: {} }) }`,
+      ),
+      errorPattern: /auth/,
+    }),
+  );
+
+  it.effect("rejects a descriptor with an empty method", () =>
+    rejectionCase({
+      id: "http-empty-method",
+      capabilities: ["http"],
+      entrySource: httpDescriptorEntry(
+        `{ method: "", path: "/x", auth: "public", handler: () => Effect.succeed({ status: 200, body: {} }) }`,
+      ),
+      errorPattern: /method/,
+    }),
+  );
+
+  it.effect("rejects a descriptor with an empty path", () =>
+    rejectionCase({
+      id: "http-empty-path",
+      capabilities: ["http"],
+      entrySource: httpDescriptorEntry(
+        `{ method: "GET", path: "", auth: "public", handler: () => Effect.succeed({ status: 200, body: {} }) }`,
+      ),
+      errorPattern: /path/,
+    }),
+  );
+
+  it.effect("rejects a descriptor whose handler is not a function", () =>
+    rejectionCase({
+      id: "http-bad-handler",
+      capabilities: ["http"],
+      entrySource: httpDescriptorEntry(
+        `{ method: "GET", path: "/x", auth: "public", handler: "nope" }`,
+      ),
+      errorPattern: /handler/,
+    }),
+  );
+
+  it.effect("activates a plugin with a valid http descriptor unchanged", () =>
+    Effect.gen(function* () {
+      const pluginId = PluginId.make("http-valid");
+      const registry = yield* PluginRuntimeRegistryLayer.PluginRuntimeRegistry;
+      const host = yield* PluginHostModule.PluginHost;
+
+      yield* installPlugin({
+        pluginId,
+        capabilities: ["http"],
+        entrySource: httpDescriptorEntry(validDescriptor),
+      });
+      yield* host.activatePlugin(pluginId);
+
+      assert.isTrue(
+        Option.isSome(yield* registry.get(pluginId)),
+        "a valid http registration must still activate",
+      );
+    }),
+  );
+});
+
+// The pre-put and post-put lifecycle re-checks in loadPlugin must NOT swallow a
+// lockfile read/parse failure as "plugin missing" (which would cancel activation
+// benignly and leave the plugin enabled+active with no runtime). A read failure now
+// propagates to the activation failure ladder, which marks the plugin "failed".
+probeStoreLayerIt("PluginHost lockfile read failures during activation", (it) => {
+  const readFailCase = (input: { readonly id: string; readonly skipAfterMarker: number }) =>
+    Effect.gen(function* () {
+      const pluginId = PluginId.make(input.id);
+      const config = yield* ServerConfig.ServerConfig;
+      const path = yield* Path.Path;
+      const registry = yield* PluginRuntimeRegistryLayer.PluginRuntimeRegistry;
+      const store = yield* PluginLockfileStoreLayer.PluginLockfileStore;
+      const host = yield* PluginHostModule.PluginHost;
+
+      // register() writes `register-count`; the wrapped store fails readLockfile from
+      // the (skipAfterMarker)-th post-marker read onward. The read at
+      // activatePluginLocked runs BEFORE register (no marker yet) and is unaffected.
+      yield* installPlugin({ pluginId, entrySource: registerCountEntrySource() });
+      const markerPath = path.join(
+        pluginDataDir(config.pluginsDir, pluginId, path.join),
+        "register-count",
+      );
+      storeProbe = {
+        readLockfileFailMarker: markerPath,
+        readLockfileSkipAfterMarker: input.skipAfterMarker,
+        readLockfileSeenAfterMarker: 0,
+        removePluginFailuresRemaining: 0,
+      };
+      try {
+        yield* host.activatePlugin(pluginId);
+      } finally {
+        // Disarm so the assertion reads below delegate to the real store.
+        storeProbe = null;
+      }
+
+      assert.isTrue(
+        Option.isNone(yield* registry.get(pluginId)),
+        "a lockfile read failure during activation must leave no runtime",
+      );
+      const entry = (yield* store.readLockfile).plugins[pluginId];
+      assert.equal(entry?.state, "failed");
+      assert.match(entry?.lastError ?? "", /lockfile/i);
+    });
+
+  it.effect("marks the plugin failed when the pre-put re-check cannot read the lockfile", () =>
+    readFailCase({ id: "preput-read-fail", skipAfterMarker: 0 }),
+  );
+
+  it.effect("marks the plugin failed when the post-put re-check cannot read the lockfile", () =>
+    // Skip 1: the pre-put read succeeds (activation proceeds to registry.put), then
+    // the post-put read fails.
+    readFailCase({ id: "postput-read-fail", skipAfterMarker: 1 }),
+  );
+});
+
+// The preserve-data path in reconcilePendingState must not lose data if a crash (or a
+// removePlugin failure) lands between dropping the lockfile entry and the final
+// rename-back. The reorder puts removePlugin BEFORE the rename-back, so a crash there
+// leaves the data safe at `.preserved-<id>` (adopted on the next reconcile), and a
+// start-time sweep re-homes any preserved dir whose entry is already gone.
+probeStoreLayerIt("PluginHost preserve-data removePlugin crash window", (it) => {
+  it.effect(
+    "keeps preserved data when removePlugin crashes between the entry drop and the rename-back",
+    () =>
+      Effect.gen(function* () {
+        const pluginId = PluginId.make("preserve-crash-window");
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const host = yield* PluginHostModule.PluginHost;
+        const store = yield* PluginLockfileStoreLayer.PluginLockfileStore;
+
+        yield* installPlugin({ pluginId, lockEntry: { state: "pending-remove" } });
+        // uninstall(removeData:false) leaves the preserve marker inside the plugin root.
+        const pluginRoot = path.join(config.pluginsDir, pluginId);
+        yield* fs.writeFileString(path.join(pluginRoot, PluginHostModule.PRESERVE_DATA_MARKER), "");
+        const dataDir = pluginDataDir(config.pluginsDir, pluginId, path.join);
+        yield* fs.makeDirectory(dataDir, { recursive: true });
+        const sentinel = path.join(dataDir, "sentinel");
+        yield* fs.writeFileString(sentinel, "precious");
+
+        // removePlugin THROWS on the first call (the E step), succeeds thereafter.
+        storeProbe = {
+          readLockfileSkipAfterMarker: 0,
+          readLockfileSeenAfterMarker: 0,
+          removePluginFailuresRemaining: 1,
+        };
+        try {
+          // First start: data parked at `.preserved-<id>`, root dropped, then
+          // removePlugin fails — the entry survives, data safe at the preserved dir.
+          yield* host.start;
+          assert.isDefined(
+            (yield* store.readLockfile).plugins[pluginId],
+            "removePlugin failed, so the pending-remove entry must still be present",
+          );
+          // Second start: removePlugin now succeeds; the adoption path re-homes the data.
+          yield* host.start;
+        } finally {
+          storeProbe = null;
+        }
+
+        assert.isUndefined(
+          (yield* store.readLockfile).plugins[pluginId],
+          "the second start completes the removal",
+        );
+        assert.isTrue(
+          yield* fs.exists(sentinel),
+          "data the user chose to preserve must survive a removePlugin crash mid-reconcile",
+        );
+        assert.equal(yield* fs.readFileString(sentinel), "precious");
+      }),
+  );
+});
+
+layer("PluginHost preserved-data reconcile", (it) => {
+  it.effect("re-homes an orphaned .preserved-<id> whose lockfile entry is gone", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const host = yield* PluginHostModule.PluginHost;
+
+      // A disabled plugin only exists to create the lockfile file (host.start returns
+      // early without one) and never activates.
+      yield* installPlugin({
+        pluginId: PluginId.make("keeper"),
+        lockEntry: { enabled: false, state: "disabled" },
+      });
+
+      // An orphan: preserved data with NO lockfile entry (a crash between removePlugin
+      // and the final rename-back).
+      const orphanId = PluginId.make("orphan-preserved");
+      const preservedDir = path.join(
+        config.pluginsDir,
+        `${PluginHostModule.PRESERVED_DATA_DIR_PREFIX}${orphanId}`,
+      );
+      yield* fs.makeDirectory(preservedDir, { recursive: true });
+      yield* fs.writeFileString(path.join(preservedDir, "sentinel"), "keep-me");
+
+      yield* host.start;
+
+      const rehomed = path.join(pluginDataDir(config.pluginsDir, orphanId, path.join), "sentinel");
+      assert.isTrue(
+        yield* fs.exists(rehomed),
+        "orphaned preserved data must be re-homed under the plugin's data dir",
+      );
+      assert.isFalse(
+        yield* fs.exists(preservedDir),
+        "the preserved dir must be consumed once re-homed",
+      );
+      assert.equal(yield* fs.readFileString(rehomed), "keep-me");
+    }),
+  );
+
+  it.effect("leaves an orphaned preserved dir in place when a data dir already exists", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const host = yield* PluginHostModule.PluginHost;
+
+      yield* installPlugin({
+        pluginId: PluginId.make("keeper-2"),
+        lockEntry: { enabled: false, state: "disabled" },
+      });
+
+      const orphanId = PluginId.make("orphan-with-data");
+      const preservedDir = path.join(
+        config.pluginsDir,
+        `${PluginHostModule.PRESERVED_DATA_DIR_PREFIX}${orphanId}`,
+      );
+      yield* fs.makeDirectory(preservedDir, { recursive: true });
+      yield* fs.writeFileString(path.join(preservedDir, "sentinel"), "preserved-copy");
+      // A data dir already exists at the destination — re-homing would overwrite it.
+      const dataDir = pluginDataDir(config.pluginsDir, orphanId, path.join);
+      yield* fs.makeDirectory(dataDir, { recursive: true });
+      yield* fs.writeFileString(path.join(dataDir, "sentinel"), "live-copy");
+
+      yield* host.start;
+
+      // The live data is untouched and the preserved copy is left in place, not merged.
+      assert.equal(
+        yield* fs.readFileString(path.join(dataDir, "sentinel")),
+        "live-copy",
+        "existing data must not be overwritten by the sweep",
+      );
+      assert.isTrue(
+        yield* fs.exists(path.join(preservedDir, "sentinel")),
+        "the preserved copy must be left in place for manual recovery",
+      );
+    }),
+  );
+
+  it.effect("removeData deletes the plugin's data dir and drops the entry", () =>
+    Effect.gen(function* () {
+      yield* runMigrations({});
+      const pluginId = PluginId.make("remove-data-plugin");
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const host = yield* PluginHostModule.PluginHost;
+      const store = yield* PluginLockfileStoreLayer.PluginLockfileStore;
+
+      // pending-remove with NO preserve marker → the delete branch runs.
+      const { pluginDir } = yield* installPlugin({
+        pluginId,
+        lockEntry: { state: "pending-remove" },
+      });
+      const dataDir = pluginDataDir(config.pluginsDir, pluginId, path.join);
+      yield* fs.makeDirectory(dataDir, { recursive: true });
+      yield* fs.writeFileString(path.join(dataDir, "sentinel"), "delete-me");
+
+      yield* host.start;
+
+      assert.isUndefined((yield* store.readLockfile).plugins[pluginId]);
+      assert.isFalse(yield* fs.exists(pluginDir), "the plugin dir must be removed");
+      assert.isFalse(yield* fs.exists(dataDir), "removeData must delete the data dir");
     }),
   );
 });
