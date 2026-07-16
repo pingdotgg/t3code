@@ -629,6 +629,43 @@ it.layer(TestLayer)("VcsCapability", (it) => {
       ),
     );
 
+    it.effect("bounds the aggregate size of untracked diffs", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const repo = yield* makeTmpDir();
+          yield* initRepoWithCommit(repo);
+          const gitDriver = yield* GitVcsDriver.GitVcsDriver;
+          const checkpointStore = yield* CheckpointStore.CheckpointStore;
+          const vcs = yield* makeVcs({
+            git: gitDriver,
+            checkpoints: checkpointStore,
+            grantedRoots: [repo],
+          });
+
+          // 60 untracked files of ~10KB: per-file diffs sum well past the 120KB
+          // budget. Before the budget existed, every file in the listing got its own
+          // 120KB-capped diff and they were ALL concatenated — tens of thousands of
+          // untracked files made one plugin call allocate gigabytes.
+          const fs = yield* FileSystem.FileSystem;
+          const filler = "x".repeat(10_000);
+          yield* Effect.forEach(
+            Array.from({ length: 60 }, (_, index) => index),
+            (index) => fs.writeFileString(NodePath.join(repo, `untracked-${index}.txt`), filler),
+            { concurrency: 8 },
+          );
+
+          const result = yield* vcs.diffRefToWorkingTree({ worktreePath: repo, baseRef: "HEAD" });
+
+          // Budget (120KB) + bounded concurrency overshoot. The exact figure is not
+          // the point — that it stops growing with the number of files is.
+          // Bounded, not proportional to file count — that is the whole property.
+          expect(result.diff.length).toBeLessThan(300_000);
+          // Dropping diffs for budget must be VISIBLE, or a gap looks like "no diff".
+          expect(result.truncated).toBe(true);
+        }),
+      ),
+    );
+
     it.effect("rejects option injection in user-supplied refs before git runs", () =>
       Effect.scoped(
         Effect.gen(function* () {

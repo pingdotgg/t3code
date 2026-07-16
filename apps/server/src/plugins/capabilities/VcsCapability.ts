@@ -4,6 +4,7 @@ import * as NodePath from "node:path";
 import { GitCommandError } from "@t3tools/contracts";
 import type { VcsCapability, VcsRef, VcsWorktreeSummary } from "@t3tools/plugin-sdk";
 import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
 import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import type * as Path from "effect/Path";
@@ -647,26 +648,43 @@ export function makeVcsCapability(input: {
               .pipe(Effect.orElseSucceed(() => ({ stdout: "", stdoutTruncated: false })))
           : { stdout: "", stdoutTruncated: false };
         const untrackedPaths = untrackedList.stdout.split("\0").filter((p) => p.length > 0);
+        // One SHARED budget across every untracked diff, matching the cap the tracked
+        // half already has. Without it each PATH in the (120KB-capped) listing spawned
+        // its own 120KB-capped diff and everything was concatenated — ~12k short
+        // paths made one plugin call allocate gigabytes and could OOM the server.
+        // `concurrency: 4` bounds simultaneous git processes, not memory. Once the
+        // budget is spent, remaining paths are skipped without spawning git at all
+        // and the result is marked truncated. (With 4 in flight the overshoot is at
+        // most 4 capped outputs — bounded, which is the property that matters.)
+        const untrackedBudget = yield* Ref.make(120_000);
         const untrackedDiffs = yield* Effect.forEach(
           untrackedPaths,
           (untrackedPath) =>
-            input.git.execute({
-              operation: "PluginVcsCapability.diffRefToWorkingTree.untracked.diff",
-              cwd,
-              args: [
-                "diff",
-                "--no-ext-diff",
-                "--no-index",
-                "--patch",
-                "--minimal",
-                ...wsArgs,
-                "--",
-                "/dev/null",
-                untrackedPath,
-              ],
-              allowNonZeroExit: true,
-              maxOutputBytes: 120_000,
-              appendTruncationMarker: true,
+            Effect.gen(function* () {
+              const remaining = yield* Ref.get(untrackedBudget);
+              if (remaining <= 0) {
+                return { stdout: "", stdoutTruncated: true };
+              }
+              const result = yield* input.git.execute({
+                operation: "PluginVcsCapability.diffRefToWorkingTree.untracked.diff",
+                cwd,
+                args: [
+                  "diff",
+                  "--no-ext-diff",
+                  "--no-index",
+                  "--patch",
+                  "--minimal",
+                  ...wsArgs,
+                  "--",
+                  "/dev/null",
+                  untrackedPath,
+                ],
+                allowNonZeroExit: true,
+                maxOutputBytes: Math.min(120_000, remaining),
+                appendTruncationMarker: true,
+              });
+              yield* Ref.update(untrackedBudget, (budget) => budget - result.stdout.length);
+              return result;
             }),
           { concurrency: 4 },
         );
