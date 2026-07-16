@@ -1,4 +1,5 @@
 import type { EnvironmentId } from "@v12/contracts";
+import { isProjectFaviconFallbackUrl } from "@v12/shared/projectFavicon";
 import { FolderIcon } from "lucide-react";
 import { useState } from "react";
 import { useAssetUrl } from "../assets/assetUrls";
@@ -15,7 +16,7 @@ export function ProjectFavicon(input: {
     cwd: input.cwd,
   });
 
-  if (!src) {
+  if (!src || isProjectFaviconFallbackUrl(src)) {
     return <ProjectFaviconFallback className={input.className} />;
   }
 

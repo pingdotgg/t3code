@@ -1,6 +1,10 @@
 import * as NodeCrypto from "node:crypto";
 
-import { RelayAgentActivityAggregateState, type RelayDeliveryKind } from "@v12/contracts/relay";
+import {
+  RelayAgentActivityAggregateState,
+  RelayAgentAwarenessPhase,
+  type RelayDeliveryKind,
+} from "@v12/contracts/relay";
 import { stableStringify } from "@v12/shared/relaySigning";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
@@ -38,6 +42,11 @@ export const ApnsNotificationPayload = Schema.Struct({
   environmentId: Schema.String,
   threadId: Schema.String,
   deepLink: Schema.String,
+  // Optional so delivery jobs queued by older relay builds still decode.
+  // New jobs use these fields to avoid delivering a stale Done/attention
+  // notification after the thread has moved to another phase.
+  phase: Schema.optional(RelayAgentAwarenessPhase),
+  updatedAt: Schema.optional(Schema.String),
 });
 export type ApnsNotificationPayload = typeof ApnsNotificationPayload.Type;
 
