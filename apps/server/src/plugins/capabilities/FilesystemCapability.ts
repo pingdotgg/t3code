@@ -523,25 +523,43 @@ function dirEntryFor(input: {
   readonly name: string;
 }): Effect.Effect<DirEntry | null, FilesystemError> {
   return Effect.gen(function* () {
+    // Skip an entry only for failures that are PROPERTIES OF THE ENTRY: it vanished
+    // between readdir and here (ENOENT — a listing race) or it is a symlink loop
+    // (ELOOP — nothing real to list). Everything else — EACCES, EIO — used to be
+    // swallowed too (`orElseSucceed(null)`), which made listDir/listDirRecursive
+    // silently return an INCOMPLETE listing as if it had succeeded. Not being able
+    // to read an entry is the caller's business; the entry not existing is not.
+    const skippable = (cause: unknown): boolean =>
+      isNodeNotFound(cause) || isNodeSymlinkLoop(cause);
     const realEntry = yield* Effect.tryPromise({
-      try: () => NodeFSP.realpath(input.absEntry),
+      // `null` in the failure channel means "skip this entry"; a FilesystemError
+      // means the LISTING failed and the caller must know.
       catch: (cause) =>
-        ioError(input.context, input.operation, "failed to resolve directory entry", {
-          resolvedPath: input.absEntry,
-          cause,
-        }),
-    }).pipe(Effect.orElseSucceed(() => null));
+        skippable(cause)
+          ? null
+          : ioError(input.context, input.operation, "failed to resolve directory entry", {
+              resolvedPath: input.absEntry,
+              cause,
+            }),
+      try: () => NodeFSP.realpath(input.absEntry),
+    }).pipe(
+      Effect.catch((failure) => (failure === null ? Effect.succeed(null) : Effect.fail(failure))),
+    );
     if (realEntry === null || !containsRealPath(input.realRoot, realEntry)) {
       return null;
     }
     const stat = yield* Effect.tryPromise({
-      try: () => NodeFSP.stat(realEntry),
       catch: (cause) =>
-        ioError(input.context, input.operation, "failed to stat directory entry", {
-          resolvedPath: realEntry,
-          cause,
-        }),
-    }).pipe(Effect.orElseSucceed(() => null));
+        skippable(cause)
+          ? null
+          : ioError(input.context, input.operation, "failed to stat directory entry", {
+              resolvedPath: realEntry,
+              cause,
+            }),
+      try: () => NodeFSP.stat(realEntry),
+    }).pipe(
+      Effect.catch((failure) => (failure === null ? Effect.succeed(null) : Effect.fail(failure))),
+    );
     if (stat === null) return null;
     return {
       name: input.name,
