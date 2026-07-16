@@ -428,6 +428,12 @@ if (loopbackAvailable) {
                   "access-control-allow-origin": "*",
                   "Clear-Site-Data": '"cookies", "storage"',
                   Refresh: "0; url=https://evil.example",
+                  // Framing / hop-by-hop headers must not survive: a plugin-set
+                  // content-length that disagrees with the body poisons the pooled
+                  // keep-alive connection.
+                  "Content-Length": "999999",
+                  "Transfer-Encoding": "chunked",
+                  Connection: "close",
                   "content-type": "text/plain",
                   "x-foo": "bar",
                 },
@@ -445,6 +451,10 @@ if (loopbackAvailable) {
         assert.equal(response.headers["access-control-allow-origin"], undefined);
         assert.equal(response.headers["clear-site-data"], undefined);
         assert.equal(response.headers["refresh"], undefined);
+        // The host's HTTP server sets its own framing; the plugin's forged
+        // content-length must not appear.
+        assert.notEqual(response.headers["content-length"], "999999");
+        assert.equal(response.headers["transfer-encoding"], undefined);
         assert.equal(response.headers["x-foo"], "bar");
         assert.isTrue((response.headers["content-type"] ?? "").includes("text/plain"));
       }),
@@ -465,6 +475,27 @@ if (loopbackAvailable) {
         const response = yield* postText("/hooks/plugins/http-plugin/bad-status", "");
 
         assert.equal(response.status, 500);
+      }),
+    );
+
+    it.effect("drops the body a plugin returns with a null-body status", () =>
+      Effect.gen(function* () {
+        const registry = yield* PluginHttpRegistry;
+        yield* registry.put(pluginId, [
+          {
+            method: "POST",
+            path: "/no-content",
+            auth: "public",
+            // A 204 with a body is malformed and desyncs the connection; the host
+            // must force it empty.
+            handler: () => Effect.succeed({ status: 204, body: "should be dropped" }),
+          },
+        ]);
+
+        const response = yield* postText("/hooks/plugins/http-plugin/no-content", "");
+
+        assert.equal(response.status, 204);
+        assert.equal(yield* response.text, "");
       }),
     );
   });

@@ -280,7 +280,12 @@ function InstalledPluginRow({
   readonly onRequestUninstall: (plugin: PluginInfo) => void;
 }) {
   const checked = plugin.state === "active" || plugin.state === "pending-upgrade";
-  const canToggle = plugin.state === "active" || plugin.state === "disabled";
+  // "failed" is toggleable ON: the server's setEnabled(true) resets state and
+  // crashCount, which is the whole point of the repair flow (fix settings on the
+  // still-reachable page, then re-enable to retry activation). Without this the
+  // failed plugin's toggle is dead and the fix can never be applied.
+  const canToggle =
+    plugin.state === "active" || plugin.state === "disabled" || plugin.state === "failed";
   const stateBadge = (
     <Badge size="sm" variant={pluginStateBadgeVariant(plugin.state)}>
       {pluginStateLabel(plugin.state)}

@@ -672,16 +672,25 @@ export function makeAgentsCapability(
       Stream.unwrap(
         Effect.gen(function* () {
           yield* requireOwnedThread(threadId);
-          // Subscribe to live thread-detail events into a bounded, back-pressured
-          // queue BEFORE reading the snapshot. The previous Stream.concat only
-          // subscribed AFTER the snapshot was emitted, so any event committed in
-          // that window was dropped. The engine commits the projection update
-          // before publishing to the domain-event PubSub, so once we are
-          // subscribed here every event committed after this point is captured in
-          // the buffer. A hard, scheduler-independent guarantee would additionally
-          // require a subscription-readiness signal from streamDomainEvents (an
-          // engine-level change); ws.ts carries the same residual assumption.
-          const buffer = yield* Queue.bounded<OrchestrationEvent>(256);
+          // Subscribe to live thread-detail events into a SLIDING queue BEFORE
+          // reading the snapshot. The previous Stream.concat only subscribed AFTER
+          // the snapshot was emitted, so any event committed in that window was
+          // dropped. The engine commits the projection update before publishing to
+          // the domain-event PubSub, so once we are subscribed here every event
+          // committed after this point is captured. A hard, scheduler-independent
+          // guarantee would additionally require a subscription-readiness signal from
+          // streamDomainEvents (an engine-level change); ws.ts carries the same
+          // residual assumption.
+          //
+          // SLIDING, not bounded+blocking: this queue is fed from the engine-wide
+          // domain-event subscription. A bounded queue whose `offer` blocks when full
+          // would stop the pump from draining that SHARED subscription the moment one
+          // plugin's consumer stalls — accumulating events unboundedly in host memory
+          // and stalling the subscription for everyone. Sliding keeps the pump
+          // draining and drops the oldest buffered events for a stalled consumer
+          // instead. (A slow consumer can therefore miss intermediate events; the
+          // ideal recovery is a "gap → re-snapshot" sentinel, tracked as follow-up.)
+          const buffer = yield* Queue.sliding<OrchestrationEvent>(256);
           yield* input.engine.streamDomainEvents.pipe(
             Stream.filter(
               (event) =>

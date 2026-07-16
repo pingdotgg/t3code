@@ -249,10 +249,7 @@ it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
             const error = yield* Effect.flip(
               textGeneration.generateBoardProposal({
                 prompt: "Metrics show WIP is too high. Propose an improved board definition.",
-                modelSelection: createModelSelection(
-                  ProviderInstanceId.make("grok"),
-                  "grok-build",
-                ),
+                modelSelection: createModelSelection(ProviderInstanceId.make("grok"), "grok-build"),
               }),
             );
             expect(error._tag).toBe("TextGenerationError");

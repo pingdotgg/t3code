@@ -157,15 +157,19 @@ export const makePluginProviderAdapter = (input: {
     ) =>
       Effect.gen(function* () {
         const threadId = startInput.threadId;
-        yield* input.driver
-          .startSession({ threadId, config: input.config, emit: makeEmit(threadId) })
-          .pipe(
-            Effect.timeoutOrElse({
-              duration: PLUGIN_LIFECYCLE_TIMEOUT,
-              orElse: () => Effect.fail(new PluginProviderError("startSession timed out")),
-            }),
-            Effect.mapError((cause) => new PluginProviderError(String(cause))),
-          );
+        // Effect.suspend so a driver that THROWS synchronously (or returns a
+        // non-Effect) from startSession becomes a typed PluginProviderError instead
+        // of a defect escaping the adapter. Driver code is dynamically loaded plugin
+        // JS, so its return contract is not runtime-enforced.
+        yield* Effect.suspend(() =>
+          input.driver.startSession({ threadId, config: input.config, emit: makeEmit(threadId) }),
+        ).pipe(
+          Effect.timeoutOrElse({
+            duration: PLUGIN_LIFECYCLE_TIMEOUT,
+            orElse: () => Effect.fail(new PluginProviderError("startSession timed out")),
+          }),
+          Effect.mapError((cause) => new PluginProviderError(String(cause))),
+        );
 
         const session: ProviderSession = {
           provider: input.driverKind,
@@ -268,7 +272,11 @@ export const makePluginProviderAdapter = (input: {
           // early deltas would have nowhere to go. (A probe caught this: the interrupt
           // test failed because there was nothing running to interrupt.)
           const fiber = yield* Effect.forkChild(
-            input.driver.sendTurn({ threadId, turnId, prompt: turnInput.input ?? "" }).pipe(
+            // Effect.suspend so a synchronous throw from the driver's sendTurn is
+            // captured as a turn failure (published terminal) rather than a defect.
+            Effect.suspend(() =>
+              input.driver.sendTurn({ threadId, turnId, prompt: turnInput.input ?? "" }),
+            ).pipe(
               Effect.timeoutOrElse({
                 duration: PLUGIN_CALL_TIMEOUT,
                 orElse: () => Effect.fail(new PluginProviderError("sendTurn timed out")),
@@ -282,6 +290,15 @@ export const makePluginProviderAdapter = (input: {
                   publish(stampTurnCompleted(threadId, turnId, Cause.pretty(cause))),
               }),
               Effect.asVoid,
+              // On INTERRUPTION (interruptTurn / stopSession / host teardown) the
+              // matchCauseEffect above does not publish a terminal, so without this the
+              // orchestration session would wait forever on a turn that already ended.
+              // Emit the single terminal explicitly on interrupt; a normal completion
+              // already published its terminal and short-circuits this. endTurn still
+              // runs in the ensuring below on every path.
+              Effect.onInterrupt(() =>
+                publish(stampTurnCompleted(threadId, turnId, "interrupted")),
+              ),
               Effect.ensuring(endTurn(threadId, turnId)),
             ),
             { startImmediately: true },
@@ -293,7 +310,12 @@ export const makePluginProviderAdapter = (input: {
           // ours). activeTurnId is already turnId from the reservation.
           const installed = yield* Ref.modify(sessions, (current) => {
             const existing = current.get(threadId);
-            if (existing === undefined || existing.activeTurnId !== turnId) {
+            // Also refuse to install once stopSession has begun (`stopping`): a turn
+            // that reserved before stop started would otherwise install its fiber
+            // mid-teardown — stopSession already interrupted whatever fiber it saw
+            // (null then), so this one would run untracked to the 10-minute timeout.
+            // Not installing here routes it to the interrupt below.
+            if (existing === undefined || existing.activeTurnId !== turnId || existing.stopping) {
               return [false as const, current];
             }
             return [
@@ -330,7 +352,10 @@ export const makePluginProviderAdapter = (input: {
           // Ask the plugin first, but do not depend on it: the host ends the turn
           // either way, so a driver that ignores interrupts cannot leave one running.
           if (input.driver.interruptTurn !== undefined) {
-            yield* input.driver.interruptTurn({ threadId, turnId: state.activeTurnId }).pipe(
+            const interrupt = input.driver.interruptTurn;
+            // Effect.suspend so a synchronously-throwing driver interruptTurn is
+            // captured by the catchCause below instead of escaping the adapter.
+            yield* Effect.suspend(() => interrupt({ threadId, turnId: state.activeTurnId! })).pipe(
               Effect.timeoutOrElse({
                 duration: PLUGIN_LIFECYCLE_TIMEOUT,
                 orElse: () => Effect.void,
@@ -362,7 +387,11 @@ export const makePluginProviderAdapter = (input: {
         });
         const state = (yield* Ref.get(sessions)).get(threadId);
         if (state?.turnFiber) yield* Fiber.interrupt(state.turnFiber).pipe(Effect.orDie);
-        yield* input.driver.stopSession(threadId).pipe(
+        // Effect.suspend so a synchronously-throwing driver stopSession is captured
+        // rather than escaping, and Effect.ensuring so the session is ALWAYS deleted
+        // from the map — otherwise a throw/interrupt would leave the session pinned
+        // `stopping: true`, permanently un-cleanable and rejecting every future turn.
+        yield* Effect.suspend(() => input.driver.stopSession(threadId)).pipe(
           Effect.timeoutOrElse({
             duration: PLUGIN_LIFECYCLE_TIMEOUT,
             orElse: () => Effect.void,
@@ -376,12 +405,14 @@ export const makePluginProviderAdapter = (input: {
               cause: Cause.pretty(cause),
             }),
           ),
+          Effect.ensuring(
+            Ref.update(sessions, (current) => {
+              const next = new Map(current);
+              next.delete(threadId);
+              return next;
+            }),
+          ),
         );
-        yield* Ref.update(sessions, (current) => {
-          const next = new Map(current);
-          next.delete(threadId);
-          return next;
-        });
       });
 
     const unsupported = (member: string) =>
