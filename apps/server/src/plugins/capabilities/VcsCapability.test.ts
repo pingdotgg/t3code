@@ -610,6 +610,77 @@ it.layer(TestLayer)("VcsCapability", (it) => {
         }),
       ),
     );
+
+    it.effect("treats an empty filePaths list as stage-nothing, not stage-all", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const repo = yield* makeTmpDir();
+          yield* initRepoWithCommit(repo);
+          const gitDriver = yield* GitVcsDriver.GitVcsDriver;
+          const checkpointStore = yield* CheckpointStore.CheckpointStore;
+          const vcs = yield* makeVcs({
+            git: gitDriver,
+            checkpoints: checkpointStore,
+            grantedRoots: [repo],
+          });
+
+          const headBefore = yield* git(repo, ["rev-parse", "HEAD"]);
+          // An unrelated dirty file: omitting filePaths would stage-all and commit
+          // it, but an explicit EMPTY selection must commit nothing.
+          yield* writeTextFile(NodePath.join(repo, "unrelated.txt"), "unrelated\n");
+
+          const result = yield* vcs.commit({
+            worktreePath: repo,
+            subject: "should not happen",
+            body: "",
+            filePaths: [],
+          });
+          expect(result.status).toBe("skipped_no_changes");
+          expect(yield* git(repo, ["rev-parse", "HEAD"])).toBe(headBefore);
+          // The dirty file is still untracked — nothing was staged or committed.
+          expect(yield* git(repo, ["status", "--porcelain"])).toContain("?? unrelated.txt");
+        }),
+      ),
+    );
+
+    it.effect("revokes the normalized worktree grant on a non-normalized remove", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const repo = yield* makeTmpDir();
+          const worktreeParent = yield* makeTmpDir("plugin-vcs-worktree-parent-");
+          yield* initRepoWithCommit(repo);
+          const gitDriver = yield* GitVcsDriver.GitVcsDriver;
+          const checkpointStore = yield* CheckpointStore.CheckpointStore;
+          const grants = yield* makePluginWorkspaceGrants;
+          const vcs = yield* makeVcs({
+            git: gitDriver,
+            checkpoints: checkpointStore,
+            grants,
+            grantedRoots: [repo],
+            worktreesDir: worktreeParent,
+          });
+
+          // A non-normalized spelling with an embedded `/./`. createWorktree
+          // normalizes before granting, so removeWorktree must normalize too or
+          // it revokes a string that never matches — leaving the grant dangling.
+          const normalizedPath = NodePath.join(worktreeParent, "wt");
+          // Build the raw string directly — NodePath.join would collapse the `/./`.
+          const nonNormalizedPath = `${worktreeParent}/./wt`;
+
+          const created = yield* vcs.createWorktree({
+            repoRoot: repo,
+            ref: "HEAD",
+            path: nonNormalizedPath,
+            newBranch: "feature/nonnormalized",
+          });
+          expect(created.worktree.path).toBe(normalizedPath);
+          expect([...(yield* grants.snapshot())]).toContain(normalizedPath);
+
+          yield* vcs.removeWorktree({ repoRoot: repo, path: nonNormalizedPath, force: true });
+          expect([...(yield* grants.snapshot())]).not.toContain(normalizedPath);
+        }),
+      ),
+    );
   });
 
   describe("untrusted-input hardening", () => {
@@ -801,6 +872,39 @@ it.layer(TestLayer)("VcsCapability", (it) => {
             PluginVcsRefError.name,
           );
 
+          // Checkpoint refs land in `git update-ref [-d] <ref> <oid>`: a real
+          // branch or HEAD passes requireSafeRef (no leading dash) but would let
+          // createCheckpoint MOVE and deleteCheckpoints DELETE it. Restrict them
+          // to the checkpoint namespace before git runs.
+          yield* expectFailureContaining(
+            vcs.createCheckpoint({
+              worktreePath: repo,
+              checkpointRef: CheckpointRef.make("refs/heads/main"),
+            }),
+            PluginVcsRefError.name,
+          );
+          yield* expectFailureContaining(
+            vcs.createCheckpoint({
+              worktreePath: repo,
+              checkpointRef: CheckpointRef.make("HEAD"),
+            }),
+            PluginVcsRefError.name,
+          );
+          yield* expectFailureContaining(
+            vcs.deleteCheckpoints({
+              worktreePath: repo,
+              checkpointRefs: [CheckpointRef.make("refs/heads/main")],
+            }),
+            PluginVcsRefError.name,
+          );
+          yield* expectFailureContaining(
+            vcs.deleteCheckpoints({
+              worktreePath: repo,
+              checkpointRefs: [CheckpointRef.make("HEAD")],
+            }),
+            PluginVcsRefError.name,
+          );
+
           // Nothing was written through the injected "ref".
           const fileSystem = yield* FileSystem.FileSystem;
           expect(yield* fileSystem.exists(NodePath.join(repo, "pwned"))).toBe(false);
@@ -855,6 +959,44 @@ it.layer(TestLayer)("VcsCapability", (it) => {
           );
           yield* expectFailureContaining(
             vcs.removePath({ worktreePath: repo, path: "with\0nul" }),
+            PluginVcsPathError.name,
+          );
+
+          // Git pathspec magic (`:(top)`, `:/`) is NOT disabled by `--` and would
+          // let `:(top)x` escape a granted root nested inside a larger repo to that
+          // repo's top. Reject any value starting with `:` before git runs.
+          yield* expectFailureContaining(
+            vcs.removePath({ worktreePath: repo, path: ":(top)deleteme" }),
+            PluginVcsPathError.name,
+          );
+          yield* expectFailureContaining(
+            vcs.removePath({ worktreePath: repo, path: ":/x" }),
+            PluginVcsPathError.name,
+          );
+          yield* expectFailureContaining(
+            vcs.clean({ worktreePath: repo, path: ":(top)deleteme" }),
+            PluginVcsPathError.name,
+          );
+          yield* expectFailureContaining(
+            vcs.clean({ worktreePath: repo, path: ":/x" }),
+            PluginVcsPathError.name,
+          );
+          yield* expectFailureContaining(
+            vcs.commit({
+              worktreePath: repo,
+              subject: "escape",
+              body: "",
+              filePaths: ["README.md", ":(top)deleteme"],
+            }),
+            PluginVcsPathError.name,
+          );
+          yield* expectFailureContaining(
+            vcs.commit({
+              worktreePath: repo,
+              subject: "escape",
+              body: "",
+              filePaths: [":/x"],
+            }),
             PluginVcsPathError.name,
           );
 

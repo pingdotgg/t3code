@@ -10,6 +10,7 @@ import * as Option from "effect/Option";
 import type * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import { CHECKPOINT_REFS_PREFIX } from "../../checkpointing/Utils.ts";
 import type { CheckpointStore } from "../../checkpointing/CheckpointStore.ts";
 import type * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import type * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
@@ -58,6 +59,22 @@ const requireSafeRef = (field: string, ref: string): Effect.Effect<string, Plugi
     ? Effect.fail(new PluginVcsRefError({ field, ref }))
     : Effect.succeed(ref);
 
+// Checkpoint refs land in `git update-ref [-d] <ref> <oid>`. requireSafeRef alone
+// still admits real refs (`refs/heads/main`, `HEAD`): createCheckpoint would MOVE
+// such a branch and deleteCheckpoints would DELETE it. Confine them to the
+// checkpoint namespace so a plugin can only touch its own checkpoint refs.
+const requireCheckpointRef = (
+  field: string,
+  ref: string,
+): Effect.Effect<string, PluginVcsRefError> =>
+  requireSafeRef(field, ref).pipe(
+    Effect.flatMap((safe) =>
+      safe.startsWith(`${CHECKPOINT_REFS_PREFIX}/`)
+        ? Effect.succeed(safe)
+        : Effect.fail(new PluginVcsRefError({ field, ref })),
+    ),
+  );
+
 const isAbsoluteLike = (value: string): boolean =>
   NodePath.isAbsolute(value) || value.startsWith("\\") || /^[a-zA-Z]:[\\/]/u.test(value);
 
@@ -73,6 +90,15 @@ const requireRepoRelative = (
   if (value.includes("\0")) {
     return Effect.fail(
       new PluginVcsPathError({ field, path: value, reason: "contains a NUL byte" }),
+    );
+  }
+  // A leading `:` is git pathspec magic (`:(top)`, `:/`, `:(top,glob)**`). It is
+  // NOT disabled by `--` (only `--literal-pathspecs` does that, which the driver
+  // never sets), so `:(top)x` would escape a granted root nested inside a larger
+  // repo up to that repo's top — the very escape the checks below exist to stop.
+  if (value.startsWith(":")) {
+    return Effect.fail(
+      new PluginVcsPathError({ field, path: value, reason: "must not use git pathspec magic" }),
     );
   }
   if (isAbsoluteLike(value)) {
@@ -355,8 +381,10 @@ export function makeVcsCapability(input: {
       Effect.gen(function* () {
         const cwd = yield* requireGrantedRoot("repoRoot", request.repoRoot);
         // The worktree being removed must itself be granted (it was granted at
-        // create time, or lives inside a project root).
-        const worktreePath = yield* requireGrantedRoot("path", request.path);
+        // create time, or lives inside a project root). Normalize to match the
+        // form createWorktree granted — otherwise `/tmp/./wt` revokes a string
+        // that never matches the granted `/tmp/wt`, leaving the grant dangling.
+        const worktreePath = path.normalize(yield* requireGrantedRoot("path", request.path));
         yield* input.git.removeWorktree({
           cwd,
           path: worktreePath,
@@ -469,6 +497,12 @@ export function makeVcsCapability(input: {
           yield* Effect.forEach(request.filePaths, (filePath) =>
             requireRepoRelative("filePaths", filePath),
           );
+          // The SDK contract stages all changes only when filePaths is OMITTED;
+          // an explicit empty selection stages nothing. The driver treats `[]`
+          // like omission (`git add -A`), so short-circuit here instead.
+          if (request.filePaths.length === 0) {
+            return { status: "skipped_no_changes" as const };
+          }
         }
         const context = yield* input.git.prepareCommitContext(cwd, request.filePaths);
         if (context === null) {
@@ -720,7 +754,7 @@ export function makeVcsCapability(input: {
     createCheckpoint: (request) =>
       Effect.gen(function* () {
         const cwd = yield* requireGrantedRoot("worktreePath", request.worktreePath);
-        yield* requireSafeRef("checkpointRef", request.checkpointRef);
+        yield* requireCheckpointRef("checkpointRef", request.checkpointRef);
         return yield* input.checkpoints.captureCheckpoint({
           cwd,
           checkpointRef: request.checkpointRef,
@@ -730,7 +764,7 @@ export function makeVcsCapability(input: {
     hasCheckpoint: (request) =>
       Effect.gen(function* () {
         const cwd = yield* requireGrantedRoot("worktreePath", request.worktreePath);
-        yield* requireSafeRef("checkpointRef", request.checkpointRef);
+        yield* requireCheckpointRef("checkpointRef", request.checkpointRef);
         return yield* input.checkpoints.hasCheckpointRef({
           cwd,
           checkpointRef: request.checkpointRef,
@@ -740,7 +774,7 @@ export function makeVcsCapability(input: {
     restoreCheckpoint: (request) =>
       Effect.gen(function* () {
         const cwd = yield* requireGrantedRoot("worktreePath", request.worktreePath);
-        yield* requireSafeRef("checkpointRef", request.checkpointRef);
+        yield* requireCheckpointRef("checkpointRef", request.checkpointRef);
         const restored = yield* input.checkpoints.restoreCheckpoint({
           cwd,
           checkpointRef: request.checkpointRef,
@@ -753,7 +787,7 @@ export function makeVcsCapability(input: {
       Effect.gen(function* () {
         const cwd = yield* requireGrantedRoot("worktreePath", request.worktreePath);
         yield* Effect.forEach(request.checkpointRefs, (checkpointRef) =>
-          requireSafeRef("checkpointRefs", checkpointRef),
+          requireCheckpointRef("checkpointRefs", checkpointRef),
         );
         return yield* input.checkpoints.deleteCheckpointRefs({
           cwd,
