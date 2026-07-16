@@ -85,6 +85,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         },
         runtimeMode: "full-access",
         interactionMode: "default",
+        executorModelSelection: null,
         branch: null,
         worktreePath: null,
         latestTurnId: null,
@@ -126,6 +127,71 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         instanceId: ProviderInstanceId.make("claudeAgent"),
         model: "claude-opus-4-6",
       });
+    }),
+  );
+
+  it.effect("round-trips thread executor_model_selection including null", () =>
+    Effect.gen(function* () {
+      const threads = yield* ProjectionThreadRepository;
+      const sql = yield* SqlClient.SqlClient;
+      const executorSelection = {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+      };
+
+      yield* threads.upsert({
+        threadId: ThreadId.make("thread-executor-model"),
+        projectId: ProjectId.make("project-executor-model"),
+        title: "Executor model thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-opus-4-6",
+        },
+        runtimeMode: "full-access",
+        interactionMode: "advisor",
+        executorModelSelection: executorSelection,
+        branch: null,
+        worktreePath: null,
+        latestTurnId: null,
+        createdAt: "2026-03-24T00:00:00.000Z",
+        updatedAt: "2026-03-24T00:00:00.000Z",
+        archivedAt: null,
+        latestUserMessageAt: null,
+        pendingApprovalCount: 0,
+        pendingUserInputCount: 0,
+        hasActionableProposedPlan: 0,
+        deletedAt: null,
+      });
+
+      const rows = yield* sql<{
+        readonly executorModelSelection: string | null;
+      }>`
+        SELECT executor_model_selection AS "executorModelSelection"
+        FROM projection_threads
+        WHERE thread_id = 'thread-executor-model'
+      `;
+      assert.strictEqual(
+        rows[0]?.executorModelSelection,
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        JSON.stringify(executorSelection),
+      );
+
+      const persisted = yield* threads.getById({
+        threadId: ThreadId.make("thread-executor-model"),
+      });
+      assert.deepStrictEqual(
+        Option.getOrNull(persisted)?.executorModelSelection,
+        executorSelection,
+      );
+
+      yield* threads.upsert({
+        ...Option.getOrThrow(persisted),
+        executorModelSelection: null,
+      });
+      const cleared = yield* threads.getById({
+        threadId: ThreadId.make("thread-executor-model"),
+      });
+      assert.strictEqual(Option.getOrNull(cleared)?.executorModelSelection, null);
     }),
   );
 });

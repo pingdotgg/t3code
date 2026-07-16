@@ -957,6 +957,7 @@ describe("ProviderCommandReactor", () => {
     expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
       threadId: ThreadId.make("thread-1"),
       interactionMode: "plan",
+      executorModelSelection: null,
     });
   });
 
@@ -1005,6 +1006,7 @@ describe("ProviderCommandReactor", () => {
         expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
           threadId: ThreadId.make("thread-1"),
           interactionMode: "advisor",
+          executorModelSelection: null,
         });
 
         const readModel = yield* Effect.promise(() => harness.readModel());
