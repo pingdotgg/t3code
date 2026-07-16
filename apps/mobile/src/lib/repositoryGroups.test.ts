@@ -24,6 +24,7 @@ function makeThread(
     Pick<EnvironmentThreadShell, "environmentId" | "id" | "projectId" | "title" | "modelSelection">,
 ): EnvironmentThreadShell {
   return {
+    executorModelSelection: null,
     runtimeMode: "full-access",
     interactionMode: "default",
     branch: null,
