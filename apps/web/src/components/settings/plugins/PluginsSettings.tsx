@@ -35,7 +35,7 @@ import type {
 } from "@t3tools/contracts";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   abortPluginInstallCommand,
@@ -772,6 +772,8 @@ export function PluginsSettingsPanel() {
   const [sourcesError, setSourcesError] = useState<string | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [consentError, setConsentError] = useState<string | null>(null);
+  // Monotonic token so an out-of-order catalog response can't overwrite a newer one.
+  const catalogGenerationRef = useRef(0);
 
   const installSourceId = useMemo(
     () => effectiveInstallSourceId(selectedSourceId, sources),
@@ -800,10 +802,18 @@ export function PluginsSettingsPanel() {
   }, [commands, selectedSourceId]);
 
   const refreshCatalog = useCallback(async () => {
+    // Generation guard: changing the selected source fires overlapping refreshes,
+    // and the requests can resolve out of order. Only the LATEST request may write
+    // state — otherwise a slow response for a previously-selected source clobbers the
+    // catalog the user is now looking at.
+    const generation = ++catalogGenerationRef.current;
     setBusyKey("catalog");
     const result = await commands.catalog(
       selectedSourceId === ALL_PLUGIN_SOURCES_VALUE ? undefined : { sourceId: selectedSourceId },
     );
+    if (generation !== catalogGenerationRef.current) {
+      return;
+    }
     setBusyKey(null);
     const failure = commandFailureMessage(result, "Could not load the plugin catalog.");
     if (failure) {
