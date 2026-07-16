@@ -9,6 +9,7 @@ export const CODEX_NATIVE_UPDATE_MINIMUM_VERSION = "0.128.0";
 export function selectCodexProviderMaintenanceCapabilities(input: {
   readonly installedVersion: string | null | undefined;
   readonly legacyCapabilities: ProviderMaintenanceCapabilities;
+  readonly executable: string;
   readonly environment?: NodeJS.ProcessEnv;
 }): ProviderMaintenanceCapabilities {
   return selectVersionGatedProviderMaintenanceCapabilities({
@@ -16,7 +17,7 @@ export function selectCodexProviderMaintenanceCapabilities(input: {
     minimumVersion: CODEX_NATIVE_UPDATE_MINIMUM_VERSION,
     legacyCapabilities: input.legacyCapabilities,
     nativeUpdate: {
-      executable: "codex",
+      executable: input.executable,
       args: ["update"],
       lockKey: "codex-native",
       ...(input.environment ? { env: input.environment } : {}),

@@ -15,11 +15,12 @@ const codexLegacyResolver = makePackageManagedProviderMaintenanceResolver({
   nativeUpdate: null,
 });
 
-function select(version: string | null | undefined, binaryPath?: string) {
+function select(version: string | null | undefined, binaryPath = "codex") {
   const legacyCapabilities = codexLegacyResolver.resolve(binaryPath ? { binaryPath } : undefined);
   return selectCodexProviderMaintenanceCapabilities({
     installedVersion: version,
     legacyCapabilities,
+    executable: binaryPath,
   });
 }
 
@@ -87,8 +88,8 @@ describe("codexMaintenance", () => {
 
   it("uses codex update for an unrecognized explicit path at the boundary", () => {
     expect(select("0.128.0", "/custom/tools/codex").update).toMatchObject({
-      command: "codex update",
-      executable: "codex",
+      command: "/custom/tools/codex update",
+      executable: "/custom/tools/codex",
       args: ["update"],
     });
   });
@@ -102,7 +103,7 @@ describe("codexMaintenance", () => {
         maintenanceCapabilities: select("0.128.0", "/custom/tools/codex"),
       }),
     ).toMatchObject({
-      updateCommand: "codex update",
+      updateCommand: "/custom/tools/codex update",
       canUpdate: true,
     });
 

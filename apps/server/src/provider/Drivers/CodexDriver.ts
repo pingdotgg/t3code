@@ -163,6 +163,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         selectCodexProviderMaintenanceCapabilities({
           installedVersion: snapshot.version,
           legacyCapabilities: legacyMaintenanceCapabilities,
+          executable: effectiveConfig.binaryPath,
           environment: maintenanceEnvironment,
         });
 
