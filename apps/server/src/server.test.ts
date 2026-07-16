@@ -4093,6 +4093,47 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("routes websocket rpc server.listProviderSkills with workspace cwd", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("codex_work");
+      const skills = [
+        {
+          name: "project-review",
+          path: "/tmp/project/.agents/skills/project-review/SKILL.md",
+          scope: "repo",
+          enabled: true,
+        },
+      ] as const;
+      let receivedInput: { readonly instanceId: ProviderInstanceId; readonly cwd: string } | null =
+        null;
+
+      yield* buildAppUnderTest({
+        layers: {
+          providerRegistry: {
+            listSkills: (input) =>
+              Effect.sync(() => {
+                receivedInput = input;
+                return skills;
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.serverListProviderSkills]({
+            instanceId,
+            cwd: "/tmp/project",
+          }),
+        ),
+      );
+
+      assert.deepEqual(receivedInput, { instanceId, cwd: "/tmp/project" });
+      assert.deepEqual(response.skills, skills);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("routes websocket rpc server.removeKeybinding", () =>
     Effect.gen(function* () {
       const rule: KeybindingRule = {

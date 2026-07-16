@@ -91,6 +91,17 @@ export const ServerProviderSkill = Schema.Struct({
 });
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
 
+export const ServerProviderListSkillsInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  cwd: TrimmedNonEmptyString,
+});
+export type ServerProviderListSkillsInput = typeof ServerProviderListSkillsInput.Type;
+
+export const ServerProviderListSkillsResult = Schema.Struct({
+  skills: Schema.Array(ServerProviderSkill),
+});
+export type ServerProviderListSkillsResult = typeof ServerProviderListSkillsResult.Type;
+
 /**
  * Availability of a configured provider instance from the runtime's POV.
  *
