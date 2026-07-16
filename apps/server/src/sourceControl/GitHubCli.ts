@@ -786,7 +786,10 @@ export const make = Effect.gen(function* () {
         }
         return yield* execute({
           cwd: input.cwd,
-          args: ["api", `repos/${input.repo}/pulls/${input.number}/comments`],
+          // --paginate: without it gh returns only the first page (30 comments), so a
+          // PR with more review comments is silently truncated. gh merges the array
+          // pages into a single JSON array the decoder below still parses.
+          args: ["api", "--paginate", `repos/${input.repo}/pulls/${input.number}/comments`],
         });
       }).pipe(
         Effect.map((result) => result.stdout.trim()),

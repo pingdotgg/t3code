@@ -107,16 +107,17 @@ const handleRuntimeChange = Effect.fn("PluginToolsRegistration.handleRuntimeChan
     return;
   }
   yield* registerPendingTools(change.pluginId).pipe(
-    Effect.catchTag("PluginToolRegistrationError", (error) =>
-      Effect.logError("Failed to register plugin MCP tools", {
-        pluginId: change.pluginId,
-        error: error.detail,
-      }).pipe(
-        // Fail-closed is correct, but a log line alone makes "active plugin with
-        // zero tools" undiagnosable. Surface it on the lockfile entry too.
-        Effect.andThen(catalog.noteRegistrationFailure(change.pluginId, error.detail)),
-      ),
-    ),
+    Effect.catchTags({
+      PluginToolRegistrationError: (error) =>
+        Effect.logError("Failed to register plugin MCP tools", {
+          pluginId: change.pluginId,
+          error: error.detail,
+        }).pipe(
+          // Fail-closed is correct, but a log line alone makes "active plugin with
+          // zero tools" undiagnosable. Surface it on the lockfile entry too.
+          Effect.andThen(catalog.noteRegistrationFailure(change.pluginId, error.detail)),
+        ),
+    }),
   );
 });
 

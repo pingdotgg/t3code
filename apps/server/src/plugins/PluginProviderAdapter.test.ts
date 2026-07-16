@@ -31,7 +31,11 @@ const adapterFor = (driver: PluginProviderDriver) =>
   });
 
 const start = (
-  adapter: Awaited<ReturnType<typeof adapterFor>> extends Effect.Effect<infer A> ? A : never,
+  // adapterFor now yields a scoped effect (the adapter registers a queue-shutdown
+  // finalizer), so match any error/requirement channel when extracting the adapter.
+  adapter: Awaited<ReturnType<typeof adapterFor>> extends Effect.Effect<infer A, unknown, unknown>
+    ? A
+    : never,
 ) => adapter.startSession({ threadId, runtimeMode: "full-access" } as never);
 
 /** Collect events emitted while `body` runs. */

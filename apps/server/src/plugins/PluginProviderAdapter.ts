@@ -72,6 +72,11 @@ export const makePluginProviderAdapter = (input: {
     // lied about its sessions (or just lost track) would break routing for everyone.
     const sessions = yield* Ref.make<ReadonlyMap<ThreadId, SessionState>>(new Map());
     const events = yield* Queue.unbounded<ProviderRuntimeEvent>();
+    // Shut the queue down when the adapter's scope closes (provider instance removed
+    // or reconfigured). Without this, `Stream.fromQueue(events)` never terminates and
+    // any downstream subscriber fiber blocks forever — one orphaned fiber leaked per
+    // removal/reconfiguration.
+    yield* Effect.addFinalizer(() => Queue.shutdown(events));
 
     const publish = (event: ProviderRuntimeEvent) => Queue.offer(events, event);
 

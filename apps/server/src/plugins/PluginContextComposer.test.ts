@@ -146,6 +146,27 @@ describe("PluginContextComposer", () => {
     }),
   );
 
+  it.effect("skips a DYNAMIC contribution that exceeds the per-plugin budget", () =>
+    Effect.gen(function* () {
+      const composer = yield* make();
+      // Dynamic text is only known at gather time, so the per-plugin cap must be
+      // enforced HERE (static text is checked at registration). Over the 8 KiB cap.
+      const oversized = "a".repeat(CONTEXT_MAX_BYTES_PER_PLUGIN + 1);
+      yield* composer.put("plugin-a", [
+        { name: "big", contribute: () => Effect.succeed(oversized) },
+      ]);
+      yield* composer.put("plugin-b", [{ name: "ok", text: "kept" }]);
+
+      const composed = yield* composer.compose(turn);
+      assert.strictEqual(composed.text, "kept");
+      assert.isDefined(
+        composed.records.find(
+          (record) => record.name === "big" && record.skipped === "over-per-plugin-budget",
+        ),
+      );
+    }),
+  );
+
   it.effect("counts the joiner's bytes, so the composed text never exceeds the budget", () =>
     Effect.gen(function* () {
       const composer = yield* make();
