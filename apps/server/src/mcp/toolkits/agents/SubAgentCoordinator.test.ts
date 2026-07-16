@@ -260,7 +260,11 @@ it.effect("spawns a sub-agent thread next to the caller's thread on another prov
       expect(create.modelSelection).toEqual({
         instanceId: "codex",
         model: "default-model",
-        options: [{ id: "serviceTier", value: "default" }],
+        options: [
+          { id: "serviceTier", value: "default" },
+          // Unverifiable provider-default effort is pinned to the child cap.
+          { id: "effort", value: "high" },
+        ],
       });
     }
     expect(turnStart?.type).toBe("thread.turn.start");
@@ -545,7 +549,10 @@ it.effect("forces fast-capable Claude-backed sub-agents into standard mode", () 
       modelSelection: {
         instanceId: "claudex",
         model: "claudex-sol",
-        options: [{ id: "fastMode", value: false }],
+        options: [
+          { id: "fastMode", value: false },
+          { id: "effort", value: "high" },
+        ],
       },
     });
   }),
@@ -891,6 +898,129 @@ it.effect("rejects a spawn when the root tree reaches ten running agents", () =>
     );
     expect(refused.reason).toBe("concurrency-limit-exceeded");
     expect(refused.description).toContain("tree-wide cap");
+  }),
+);
+
+it.effect("serializes a concurrent burst so it cannot oversubscribe the rate limit", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(0);
+    const [coordinator] = yield* makeCoordinator();
+
+    const results = yield* Effect.all(
+      Array.from({ length: 6 }, (_, index) =>
+        coordinator
+          .spawn(makeScope(), {
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            prompt: `Concurrent burst task ${index}.`,
+          })
+          .pipe(Effect.result),
+      ),
+      { concurrency: "unbounded" },
+    );
+
+    const successes = results.filter((result) => result._tag === "Success");
+    const failures = results.flatMap((result) =>
+      result._tag === "Failure" ? [result.failure] : [],
+    );
+    expect(successes).toHaveLength(3);
+    expect(failures.map((failure) => failure.reason)).toEqual([
+      "rate-limit-exceeded",
+      "rate-limit-exceeded",
+      "rate-limit-exceeded",
+    ]);
+  }),
+);
+
+it.effect("serializes a concurrent burst at the per-caller running-children cap", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(0);
+    const [coordinator] = yield* makeCoordinator();
+
+    for (let index = 0; index < 4; index += 1) {
+      yield* coordinator.spawn(makeScope(), {
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        prompt: `Warmup task ${index}.`,
+      });
+      yield* TestClock.adjust(Duration.seconds(61));
+    }
+
+    // One slot remains under the cap of five; only one of the burst may win.
+    const results = yield* Effect.all(
+      Array.from({ length: 3 }, (_, index) =>
+        coordinator
+          .spawn(makeScope(), {
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            prompt: `Cap burst task ${index}.`,
+          })
+          .pipe(Effect.result),
+      ),
+      { concurrency: "unbounded" },
+    );
+
+    const successes = results.filter((result) => result._tag === "Success");
+    const failures = results.flatMap((result) =>
+      result._tag === "Failure" ? [result.failure] : [],
+    );
+    expect(successes).toHaveLength(1);
+    expect(failures.map((failure) => failure.reason)).toEqual([
+      "concurrency-limit-exceeded",
+      "concurrency-limit-exceeded",
+    ]);
+  }),
+);
+
+it.effect("serializes a concurrent burst at the tree-wide running cap", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(0);
+    const [coordinator] = yield* makeCoordinator();
+    const directChildren: Array<SubAgentSpawnResult> = [];
+
+    for (let index = 0; index < 4; index += 1) {
+      directChildren.push(
+        yield* coordinator.spawn(makeScope(), {
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          prompt: `Root task ${index}.`,
+        }),
+      );
+      yield* TestClock.adjust(Duration.seconds(61));
+    }
+
+    const firstChildScope = makeScope(directChildren[0]!.threadId);
+    for (let index = 0; index < 5; index += 1) {
+      yield* coordinator.spawn(firstChildScope, {
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        prompt: `Nested task ${index}.`,
+      });
+      yield* TestClock.adjust(Duration.seconds(61));
+    }
+
+    // Nine agents run in the tree; two concurrent spawns race for one slot.
+    const results = yield* Effect.all(
+      [
+        coordinator
+          .spawn(makeScope(), {
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            prompt: "Root races for the last tree slot.",
+          })
+          .pipe(Effect.result),
+        coordinator
+          .spawn(makeScope(directChildren[1]!.threadId), {
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            prompt: "Sibling races for the last tree slot.",
+          })
+          .pipe(Effect.result),
+      ],
+      { concurrency: "unbounded" },
+    );
+
+    const successes = results.filter((result) => result._tag === "Success");
+    const failures = results.flatMap((result) =>
+      result._tag === "Failure" ? [result.failure] : [],
+    );
+    expect(successes).toHaveLength(1);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.reason).toBe("concurrency-limit-exceeded");
+    expect(failures[0]?.description).toContain("tree-wide cap");
   }),
 );
 

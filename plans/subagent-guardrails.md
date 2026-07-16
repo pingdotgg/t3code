@@ -24,14 +24,15 @@ Branch: `sergecode/25dc188c` (already checked out in this worktree). Do NOT touc
 (`gpt-5.4`, `gpt-5.5`, `gpt-5.3-codex`, `gpt-5.3-codex-spark`, `gpt-5-codex`, any non-5.6 gpt).
 
 **Allowed sub-agent models + effort caps:**
-| model | effort cap | default effort |
-|---|---|---|
-| `claudex-luna` | xhigh (never max/ultracode) | **xhigh** |
-| `gpt-5.6-luna` | xhigh | **xhigh** |
-| `gpt-5.6` (base), `gpt-5.6-terra` | high | provider default clamped to high |
-| `claude-sonnet-5` | high | clamped to high |
-| `claude-opus-4-8` | high | clamped to high |
-| grok / fugu / chatgpt models | high | clamped to high |
+
+| model                             | effort cap                  | default effort                   |
+| --------------------------------- | --------------------------- | -------------------------------- |
+| `claudex-luna`                    | xhigh (never max/ultracode) | **xhigh**                        |
+| `gpt-5.6-luna`                    | xhigh                       | **xhigh**                        |
+| `gpt-5.6` (base), `gpt-5.6-terra` | high                        | provider default clamped to high |
+| `claude-sonnet-5`                 | high                        | clamped to high                  |
+| `claude-opus-4-8`                 | high                        | clamped to high                  |
+| grok / fugu / chatgpt models      | high                        | clamped to high                  |
 
 Luna-class models (`claudex-luna`, `gpt-5.6-luna`) are cheap → xhigh. Everything
 else caps at high. **No sub-agent ever runs max/ultracode.**

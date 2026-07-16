@@ -91,14 +91,6 @@ const effortCapForModel = (model: string): Effort =>
 const rankedEffort = (value: unknown): value is Effort =>
   typeof value === "string" && Object.prototype.hasOwnProperty.call(EFFORT_RANK, value);
 
-const isPromptInjectedEffort = (
-  descriptor: Extract<ProviderOptionDescriptor, { type: "select" }> | undefined,
-  value: unknown,
-): boolean =>
-  typeof value === "string" &&
-  !rankedEffort(value) &&
-  descriptor?.promptInjectedValues?.includes(value) === true;
-
 const highestDescriptorValueAtOrBelowCap = (
   descriptor: Extract<ProviderOptionDescriptor, { type: "select" }> | undefined,
   cap: Effort,
@@ -139,25 +131,27 @@ const clampEffort = (input: {
     (candidate): candidate is Extract<ProviderOptionDescriptor, { type: "select" }> =>
       candidate.type === "select" && EFFORT_OPTION_IDS.has(candidate.id),
   );
-  const rawValue = rawEffort?.value;
+  const rawValue = typeof rawEffort?.value === "string" ? rawEffort.value : undefined;
   const descriptorValue = getProviderOptionCurrentValue(descriptor);
-  const promptInjected = isPromptInjectedEffort(descriptor, rawValue ?? descriptorValue);
-  const hasExplicitEffort = rawEffort !== undefined && !promptInjected;
-  const currentValue = hasExplicitEffort ? rawValue : promptInjected ? undefined : descriptorValue;
+  const currentValue =
+    rawValue ?? (typeof descriptorValue === "string" ? descriptorValue : undefined);
 
-  let nextValue: string | undefined;
-  if (LUNA_MODELS.has(normalizeModel(selection.model)) && !hasExplicitEffort && !promptInjected) {
-    nextValue = "xhigh";
-  } else if (
-    !promptInjected &&
-    rankedEffort(currentValue) &&
-    EFFORT_RANK[currentValue] > EFFORT_RANK[cap]
-  ) {
-    nextValue = highestDescriptorValueAtOrBelowCap(descriptor, cap);
-  }
+  // A sub-agent may only keep an effort that is provably at or below the cap.
+  // Anything unverifiable — missing, unranked/custom, or prompt-injected — is
+  // conservatively replaced, since it could resolve above the cap at the
+  // provider. Luna-class models additionally default to the cap (xhigh) when
+  // no explicit effort was chosen, even if the provider default sits lower.
+  const isProvenWithinCap =
+    rankedEffort(currentValue) && EFFORT_RANK[currentValue] <= EFFORT_RANK[cap];
+  const lunaWithoutExplicitEffort =
+    LUNA_MODELS.has(normalizeModel(selection.model)) && rawValue === undefined;
 
-  if (nextValue === undefined) return selection;
-  if (hasExplicitEffort && currentValue === nextValue) return selection;
+  const nextValue =
+    lunaWithoutExplicitEffort || !isProvenWithinCap
+      ? highestDescriptorValueAtOrBelowCap(descriptor, cap)
+      : undefined;
+
+  if (nextValue === undefined || currentValue === nextValue) return selection;
 
   const optionId = rawEffort?.id ?? descriptor?.id ?? "effort";
   if (notices) {

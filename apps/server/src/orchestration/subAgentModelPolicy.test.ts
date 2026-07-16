@@ -139,7 +139,7 @@ it("bans outdated gpt-5 slugs by prefix", () => {
   expect(result.notices[0]).toContain("outdated Codex generation");
 });
 
-it("leaves allowed models untouched", () => {
+it("keeps allowed models and pins an explicit effort at or below the cap", () => {
   for (const [model, driver, instanceId] of [
     ["claudex-luna", claude, "claudex"],
     ["gpt-5.6-luna", codex, "codex"],
@@ -160,10 +160,25 @@ it("leaves allowed models untouched", () => {
     if (model === "claudex-luna" || model === "gpt-5.6-luna") {
       expect(result.selection.options).toContainEqual({ id: "effort", value: "xhigh" });
     } else {
-      expect(result.selection).toEqual(original);
-      expect(result.notices).toEqual([]);
+      // Without a provable effort at or below the cap, the policy pins the
+      // cap explicitly rather than trusting the provider default.
+      expect(result.selection.options).toContainEqual({ id: "effort", value: "high" });
+      expect(result.notices).toEqual(["effort default → high (sub-agent cap)"]);
     }
   }
+});
+
+it("keeps a provable effort below the cap without forcing the cap", () => {
+  const result = applySubAgentModelPolicy({
+    driver: claude,
+    model: "claude-sonnet-5",
+    availableModels: ["claude-sonnet-5"],
+    selection: selection("claude-sonnet-5", [{ id: "effort", value: "medium" }], "claude"),
+    capabilitiesFor: () => effortCapabilities(),
+  });
+
+  expect(result.selection.options).toContainEqual({ id: "effort", value: "medium" });
+  expect(result.notices).toEqual([]);
 });
 
 it("sets Luna defaults and clamps effort above the model cap", () => {
@@ -190,7 +205,9 @@ it("sets Luna defaults and clamps effort above the model cap", () => {
   expect(other.notices).toContain("effort max → high (sub-agent cap)");
 });
 
-it("leaves non-ranked and prompt-injected effort values alone", () => {
+it("conservatively replaces unverifiable effort values", () => {
+  // Non-ranked and prompt-injected values cannot be proven at or below the
+  // cap, so they are replaced instead of trusted.
   const nonRanked = applySubAgentModelPolicy({
     driver: claude,
     model: "claude-opus-4-8",
@@ -202,8 +219,8 @@ it("leaves non-ranked and prompt-injected effort values alone", () => {
     ),
     capabilitiesFor: () => effortCapabilities(),
   });
-  expect(nonRanked.selection.options).toContainEqual({ id: "effort", value: "provider-default" });
-  expect(nonRanked.notices).toEqual([]);
+  expect(nonRanked.selection.options).toContainEqual({ id: "effort", value: "high" });
+  expect(nonRanked.notices).toContain("effort provider-default → high (sub-agent cap)");
 
   const promptInjected = applySubAgentModelPolicy({
     driver: claude,
@@ -212,8 +229,8 @@ it("leaves non-ranked and prompt-injected effort values alone", () => {
     selection: selection("claude-opus-4-8", [{ id: "effort", value: "ultrathink" }], "claude"),
     capabilitiesFor: () => effortCapabilities(),
   });
-  expect(promptInjected.selection.options).toContainEqual({ id: "effort", value: "ultrathink" });
-  expect(promptInjected.notices).toEqual([]);
+  expect(promptInjected.selection.options).toContainEqual({ id: "effort", value: "high" });
+  expect(promptInjected.notices).toContain("effort ultrathink → high (sub-agent cap)");
 });
 
 it("generates notices for effort and standard-mode clamps", () => {
@@ -275,5 +292,9 @@ it("clamps effort without model capabilities", () => {
   ).toEqual(selection("claude-opus-4-8", [{ id: "effort", value: "high" }], "claude"));
   expect(clampSubAgentEffortByModel(selection("claudex-luna", undefined, "claudex"))).toEqual(
     selection("claudex-luna", [{ id: "effort", value: "xhigh" }], "claudex"),
+  );
+  // Missing effort on a non-Luna model is unverifiable and receives the cap.
+  expect(clampSubAgentEffortByModel(selection("claude-opus-4-8", undefined, "claude"))).toEqual(
+    selection("claude-opus-4-8", [{ id: "effort", value: "high" }], "claude"),
   );
 });
