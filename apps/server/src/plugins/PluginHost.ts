@@ -480,7 +480,7 @@ const makeHostApi = (input: {
       }
 
       return yield* decode(draft.values).pipe(
-        Effect.mapError((cause) =>
+        Effect.mapError(() =>
           // Never surface the decode error's rendering: it embeds the offending
           // values, which would put plugin configuration into logs.
           draft.revision === 0
@@ -973,6 +973,12 @@ export const make = Effect.fn("PluginHost.make")(function* () {
         );
         if (definition.settings !== undefined) {
           yield* settingsStore.noteDeclaredSchema(pluginId, definition.settings.schema as never);
+        } else {
+          // The CURRENT definition declares no settings. Clear any declaration a
+          // prior (schema-declaring) version left behind: this runs BEFORE register(),
+          // so the stale entry is gone even when this reload's activation later fails —
+          // otherwise the settings RPC would fall back to the old version's schema.
+          yield* settingsStore.clearDeclaredSchema(pluginId);
         }
         const { api: hostApi, teardown: hostApiTeardown } = makeHostApiForDefinition(
           definition.settings,
@@ -1297,11 +1303,31 @@ export const make = Effect.fn("PluginHost.make")(function* () {
       return yield* withPluginActivationLock(
         pluginId,
         Effect.gen(function* () {
-          yield* persist;
           if (enabled) {
+            yield* persist;
             yield* activatePluginLocked(pluginId);
             return;
           }
+          // signalDisableIntent (pre-lock) has closed the catalog gates and set the
+          // disable intent but has NOT removed the runtime — that happens in
+          // deactivatePluginLocked, after persist. So a live runtime here means the
+          // plugin was active before this call.
+          const wasActive = Option.isSome(yield* registry.get(pluginId));
+          yield* persist.pipe(
+            Effect.tapError(() =>
+              // Persist failed, so nothing was persisted and the plugin is still
+              // enabled+active. Roll back the pre-lock signalDisableIntent, or its
+              // tools stay hidden and reactivation stays blocked. Condition on
+              // wasActive: if the plugin was NOT active, the closed gates + intent
+              // describe its real (already-disabled) state and must be left as-is —
+              // and clearing intent then would wrongly reopen a disabled plugin.
+              wasActive
+                ? toolCatalog
+                    .clearDisableIntent(pluginId)
+                    .pipe(Effect.andThen(toolCatalog.activate(pluginId)))
+                : Effect.void,
+            ),
+          );
           // Re-assert INSIDE the lock: a concurrent enable that won the lock first
           // cleared the intent and reopened the catalog, so the pre-lock signal is
           // no longer in effect. Without this, disable would remove the runtime and

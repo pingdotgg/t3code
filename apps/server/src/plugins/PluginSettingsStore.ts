@@ -139,6 +139,18 @@ export class PluginSettingsStore extends Context.Service<
       schema: SettingsSchemaLike,
     ) => Effect.Effect<void>;
 
+    /**
+     * Drops a plugin's declared schema.
+     *
+     * Called at load time when a plugin's CURRENT definition declares no settings —
+     * an upgrade from a schema-declaring version to a schema-less one. Without it the
+     * `declared` map only ever grew, so the settings RPC would fall back to the OLD
+     * version's schema whenever the schema-less reload had no live runtime (e.g. its
+     * `register()` failed): a stale settings/repair form, and writes validated against
+     * a schema the code no longer has.
+     */
+    readonly clearDeclaredSchema: (pluginId: PluginId) => Effect.Effect<void>;
+
     /** The declared schema, whether or not the plugin activated. */
     readonly declaredSchema: (
       pluginId: PluginId,
@@ -276,7 +288,6 @@ export const make = Effect.fn("PluginSettingsStore.make")(function* () {
           cause: Cause.pretty(cause),
         }),
       ),
-      Effect.map(() => undefined),
     );
 
   const noteDeclaredSchema: PluginSettingsStore["Service"]["noteDeclaredSchema"] = (
@@ -285,6 +296,11 @@ export const make = Effect.fn("PluginSettingsStore.make")(function* () {
   ) =>
     Effect.sync(() => {
       declared.set(pluginId, schema);
+    });
+
+  const clearDeclaredSchema: PluginSettingsStore["Service"]["clearDeclaredSchema"] = (pluginId) =>
+    Effect.sync(() => {
+      declared.delete(pluginId);
     });
 
   const declaredSchema: PluginSettingsStore["Service"]["declaredSchema"] = (pluginId) =>
@@ -299,6 +315,7 @@ export const make = Effect.fn("PluginSettingsStore.make")(function* () {
     changes,
     remove,
     noteDeclaredSchema,
+    clearDeclaredSchema,
     declaredSchema,
   });
 });

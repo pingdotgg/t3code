@@ -1622,6 +1622,141 @@ export default {
       );
     }),
   );
+
+  // Upgrading from a schema-declaring version to a schema-less one whose activation
+  // fails must not leave the OLD declaration behind: the declaration is cleared at
+  // load time, BEFORE register(), so the settings RPC cannot fall back to a schema
+  // the current code no longer has (stale settings/repair form, writes validated
+  // against a removed schema).
+  const schemalessFailingEntry = `
+import * as Effect from "effect/Effect";
+export default {
+  register() {
+    return Effect.fail(new Error("register boom"));
+  },
+};
+`;
+
+  it.effect(
+    "clears a stale declared schema when a reload drops settings and fails to activate",
+    () =>
+      Effect.gen(function* () {
+        const pluginId = PluginId.make("settings-downgrade-fail");
+        const registry = yield* PluginRuntimeRegistryLayer.PluginRuntimeRegistry;
+        const host = yield* PluginHostModule.PluginHost;
+        const settingsStore = yield* PluginSettingsStoreLayer.PluginSettingsStore;
+
+        yield* runMigrations({});
+        yield* installPlugin({
+          pluginId,
+          capabilities: ["settings"],
+          entrySource: renderableEntry,
+          webEntry: true,
+        });
+        yield* host.activatePlugin(pluginId);
+        assert.isTrue(
+          Option.isSome(yield* settingsStore.declaredSchema(pluginId)),
+          "precondition: the schema-declaring version records a declaration",
+        );
+
+        // Drop the runtime so the next activation actually reloads the module (a live
+        // runtime short-circuits activatePlugin before loadPlugin runs).
+        yield* host.deactivatePlugin(pluginId);
+
+        // Upgrade to a NEW version (fresh module path, no ESM cache) that declares no
+        // settings and fails during register().
+        yield* installPlugin({
+          pluginId,
+          capabilities: [],
+          entrySource: schemalessFailingEntry,
+          lockEntry: { version: "2.0.0" },
+        });
+        yield* host.activatePlugin(pluginId);
+
+        assert.isTrue(
+          Option.isNone(yield* registry.get(pluginId)),
+          "precondition: the schema-less reload's activation failed, so there is no runtime",
+        );
+        assert.isTrue(
+          Option.isNone(yield* settingsStore.declaredSchema(pluginId)),
+          "the old version's declared schema must be gone after the schema-less reload",
+        );
+      }),
+  );
+});
+
+layer("PluginHost disable rollback", (it) => {
+  // A plugin that registers one tool, so the catalog has an active final name to
+  // observe after a failed disable.
+  const toolEntry = `
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+export default {
+  register() {
+    return {
+      tools: [
+        {
+          name: "echo",
+          description: "Echo for disable-rollback tests.",
+          inputSchema: Schema.Struct({ message: Schema.String }),
+          scope: "read",
+          handle: (input) =>
+            Effect.succeed({
+              content: [{ type: "text", text: "echo:" + (input && input.message ? input.message : "") }],
+            }),
+        },
+      ],
+    };
+  },
+};
+`;
+
+  // signalDisableIntent runs before the persist (deliberately). If persist then fails,
+  // the catalog was deactivated + intent set while nothing was persisted — leaving a
+  // still-enabled plugin's tools hidden and reactivation blocked. A failed disable
+  // must roll that back.
+  it.effect("rolls back the disable intent and reactivates tools when persist fails", () =>
+    Effect.gen(function* () {
+      const pluginId = PluginId.make("disable-rollback");
+      const host = yield* PluginHostModule.PluginHost;
+      const registry = yield* PluginRuntimeRegistryLayer.PluginRuntimeRegistry;
+      const catalog = yield* PluginToolCatalogLayer.PluginToolCatalog;
+      const finalName = `plugin_${pluginId.replaceAll("-", "_")}__echo`;
+
+      yield* runMigrations({});
+      yield* installPlugin({
+        pluginId,
+        capabilities: ["tools"],
+        entrySource: toolEntry,
+      });
+      yield* host.activatePlugin(pluginId);
+      assert.isTrue(Option.isSome(yield* registry.get(pluginId)), "precondition: runtime is live");
+      // In production a registry.put subscriber calls catalog.activate to make the
+      // reserved tools visible; that subscriber is not wired in this unit layer, so
+      // mirror it explicitly to establish the "tools are active" precondition.
+      yield* catalog.activate(pluginId);
+      assert.isTrue(catalog.isActive(finalName), "precondition: the plugin's tool is active");
+
+      const persistBoom = Effect.fail("persist-failed" as const);
+      const exit = yield* Effect.exit(host.setPluginEnabled(pluginId, false, persistBoom));
+      assert.isTrue(Exit.isFailure(exit), "a failing persist must fail the disable");
+
+      // The runtime was never removed (removal happens after persist), so the plugin
+      // is still active and its tools must be visible again.
+      assert.isTrue(
+        Option.isSome(yield* registry.get(pluginId)),
+        "runtime must survive a failed disable",
+      );
+      assert.isTrue(
+        catalog.isActive(finalName),
+        "a failed disable must leave the still-enabled plugin's tools active",
+      );
+      assert.isFalse(
+        yield* catalog.hasDisableIntent(pluginId),
+        "a failed disable must clear the disable intent so reactivation is not blocked",
+      );
+    }),
+  );
 });
 
 // The settings CAPABILITY, exercised by a real plugin through a real hostApi.
