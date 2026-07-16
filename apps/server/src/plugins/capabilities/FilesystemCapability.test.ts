@@ -146,6 +146,39 @@ layer("FilesystemCapability", (it) => {
     ),
   );
 
+  it.effect("terminates and deduplicates when a symlink cycles the directory tree", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const root = yield* makeTempDir("plugin-fs-root-");
+        const grants = yield* makePluginWorkspaceGrants;
+        const filesystem = makeCapability({ projectRoots: [root], grants });
+
+        yield* filesystem.writeFileString({
+          root,
+          relativePath: "sub/file.txt",
+          contents: "real",
+        });
+        // A symlink back to its own directory. dirEntryFor follows symlinks to
+        // classify, so this reports as a directory — before visited-tracking, the
+        // walk descended into it repeatedly and filled the result with duplicates of
+        // the same cycle until the 500-entry cap "saved" it.
+        yield* Effect.tryPromise({
+          try: () =>
+            NodeFSP.symlink(NodePath.join(root, "sub"), NodePath.join(root, "sub", "loop")),
+          catch: (cause) => new Error(String(cause)),
+        });
+
+        const entries = yield* filesystem.listDirRecursive({ root, relativePath: "" });
+
+        // The real tree has 3 entries (sub, sub/file.txt, sub/loop). The exact count
+        // matters less than that it stopped being proportional to the entry cap.
+        assert.isBelow(entries.length, 10, "a cycle must not multiply the listing");
+        const names = entries.map((entry) => entry.relativePath ?? entry.name);
+        assert.equal(new Set(names).size, names.length, "no duplicate entries");
+      }),
+    ),
+  );
+
   it.effect("rejects symlink leaves and symlinked parents for sensitive operations", () =>
     Effect.scoped(
       Effect.gen(function* () {

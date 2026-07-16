@@ -799,6 +799,13 @@ function makeCapability(input: {
         const { realRoot, segments } = yield* prepare(context, operation);
         const realPath = yield* realpathExistingTarget({ context, operation, realRoot, segments });
         const results: DirEntry[] = [];
+        // Real paths already walked. dirEntryFor classifies through realpath/stat —
+        // which FOLLOW symlinks — so a link to its own directory or an ancestor is
+        // reported as a directory and the walk descended into it again. The entry cap
+        // stopped it from running forever, which made it worse: instead of hanging,
+        // it returned thousands of duplicate entries for the cycle and called that a
+        // listing. Each real directory is walked once.
+        const visited = new Set<string>();
         const walk = (absDir: string, relativeDir: string): Effect.Effect<void, FilesystemError> =>
           Effect.gen(function* () {
             if (results.length >= LIST_RECURSIVE_MAX_ENTRIES) return;
@@ -830,10 +837,13 @@ function makeCapability(input: {
                   realRoot,
                   segments: relPath.split("/").filter(Boolean),
                 });
+                if (visited.has(childRealPath)) continue;
+                visited.add(childRealPath);
                 yield* walk(childRealPath, relPath);
               }
             }
           });
+        visited.add(realPath);
         yield* walk(realPath, context.relativePath);
         return results;
       }),
