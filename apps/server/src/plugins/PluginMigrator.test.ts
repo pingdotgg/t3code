@@ -136,6 +136,125 @@ layer("PluginMigrator", (it) => {
     }),
   );
 
+  it.effect("accepts a trigger that names a core table only inside a string literal", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const migrator = yield* setup;
+      const pluginId = PluginId.make("literal-plugin");
+      const prefix = pluginPrefix(pluginId);
+      yield* sql`CREATE TABLE core_literal_ref (id TEXT PRIMARY KEY)`;
+
+      yield* migrator.run(pluginId, [
+        migration(1, "Literal", [
+          `CREATE TABLE ${prefix}items (id TEXT PRIMARY KEY)`,
+          `
+            CREATE TRIGGER ${prefix}items_guard
+            BEFORE INSERT ON ${prefix}items
+            BEGIN
+              SELECT RAISE(ABORT, 'cannot edit while core_literal_ref active');
+            END
+          `,
+        ]),
+      ]);
+
+      const rows = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM plugin_migrations WHERE plugin_id = ${pluginId}
+      `;
+      assert.equal(rows[0]?.count, 1);
+    }),
+  );
+
+  it.effect("accepts a trigger that names a core table only inside a line comment", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const migrator = yield* setup;
+      const pluginId = PluginId.make("line-comment-plugin");
+      const prefix = pluginPrefix(pluginId);
+      yield* sql`CREATE TABLE core_line_ref (id TEXT PRIMARY KEY)`;
+
+      yield* migrator.run(pluginId, [
+        migration(1, "Comment", [
+          `CREATE TABLE ${prefix}items (id TEXT PRIMARY KEY)`,
+          `
+            CREATE TRIGGER ${prefix}items_ai
+            AFTER INSERT ON ${prefix}items
+            BEGIN
+              -- mirrors the core_line_ref feed
+              SELECT 1;
+            END
+          `,
+        ]),
+      ]);
+
+      const rows = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM plugin_migrations WHERE plugin_id = ${pluginId}
+      `;
+      assert.equal(rows[0]?.count, 1);
+    }),
+  );
+
+  it.effect("accepts a trigger that names a core table only inside a block comment", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const migrator = yield* setup;
+      const pluginId = PluginId.make("block-comment-plugin");
+      const prefix = pluginPrefix(pluginId);
+      yield* sql`CREATE TABLE core_block_ref (id TEXT PRIMARY KEY)`;
+
+      yield* migrator.run(pluginId, [
+        migration(1, "BlockComment", [
+          `CREATE TABLE ${prefix}items (id TEXT PRIMARY KEY)`,
+          `
+            CREATE TRIGGER ${prefix}items_ai
+            AFTER INSERT ON ${prefix}items
+            BEGIN
+              /* mirrors the core_block_ref feed */
+              SELECT 1;
+            END
+          `,
+        ]),
+      ]);
+
+      const rows = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM plugin_migrations WHERE plugin_id = ${pluginId}
+      `;
+      assert.equal(rows[0]?.count, 1);
+    }),
+  );
+
+  it.effect("rejects a trigger that references a core table via a double-quoted identifier", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const migrator = yield* setup;
+      const pluginId = PluginId.make("quoted-ident-plugin");
+      const prefix = pluginPrefix(pluginId);
+      yield* sql`CREATE TABLE core_quoted_ref (id TEXT PRIMARY KEY)`;
+
+      // Double quotes are quoted identifiers in SQLite, so "core_quoted_ref" is a
+      // real table reference and must stay caught even though single-quoted
+      // literals and comments are stripped before the scan.
+      const result = yield* Effect.result(
+        migrator.run(pluginId, [
+          migration(1, "QuotedRef", [
+            `CREATE TABLE ${prefix}items (id TEXT PRIMARY KEY)`,
+            `
+              CREATE TRIGGER ${prefix}items_ai
+              AFTER INSERT ON ${prefix}items
+              BEGIN
+                INSERT INTO "core_quoted_ref" (id) VALUES (NEW.id);
+              END
+            `,
+          ]),
+        ]),
+      );
+
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) {
+        assert.instanceOf(result.failure, PluginMigrationViolation);
+      }
+    }),
+  );
+
   it.effect("rejects a plugin-named index anchored to a core table", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

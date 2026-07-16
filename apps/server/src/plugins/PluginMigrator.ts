@@ -113,6 +113,73 @@ const removedObjects = (
   return before.filter((entry) => !afterKeys.has(objectKey(entry)));
 };
 
+// Strip single-quoted string literals ('...', with '' as an escaped quote) and
+// comments (-- to end of line, /* */ block) from a SQL body so the core-table
+// word-scan below only sees real identifiers, not table names mentioned inside a
+// RAISE message or a `-- mirrors the users feed` comment. Double-quoted "..."
+// spans are quoted IDENTIFIERS in SQLite and CAN be genuine table references, so
+// they are copied through intact — a stray `'` inside one must not flip
+// string-literal state either. Deliberately a dumb single-pass lexer, not a SQL
+// parser: unterminated literals/comments are consumed to the end of the body.
+const stripSqlLiteralsAndComments = (sql: string): string => {
+  let out = "";
+  let index = 0;
+  const length = sql.length;
+  while (index < length) {
+    const char = sql[index];
+    if (char === "'") {
+      index++;
+      while (index < length) {
+        if (sql[index] === "'") {
+          if (sql[index + 1] === "'") {
+            index += 2;
+            continue;
+          }
+          index++;
+          break;
+        }
+        index++;
+      }
+      out += " ";
+      continue;
+    }
+    if (char === '"') {
+      out += char;
+      index++;
+      while (index < length) {
+        out += sql[index];
+        if (sql[index] === '"') {
+          if (sql[index + 1] === '"') {
+            out += sql[index + 1];
+            index += 2;
+            continue;
+          }
+          index++;
+          break;
+        }
+        index++;
+      }
+      continue;
+    }
+    if (char === "-" && sql[index + 1] === "-") {
+      index += 2;
+      while (index < length && sql[index] !== "\n") index++;
+      out += " ";
+      continue;
+    }
+    if (char === "/" && sql[index + 1] === "*") {
+      index += 2;
+      while (index < length && !(sql[index] === "*" && sql[index + 1] === "/")) index++;
+      index += 2;
+      out += " ";
+      continue;
+    }
+    out += char;
+    index++;
+  }
+  return out;
+};
+
 // This gate is SCHEMA-OBJECT confinement, not a data-mutation sandbox. It only
 // diffs sqlite_master, so it constrains which tables/indexes/triggers/views a
 // migration may create, alter, or drop (to the plugin's `p_<id>_*` namespace) —
@@ -174,7 +241,7 @@ const validateMigrationObjects = (input: {
         });
       }
       if (entry.type !== "trigger" && entry.type !== "view") continue;
-      const body = entry.sql ?? "";
+      const body = stripSqlLiteralsAndComments(entry.sql ?? "");
       for (const tableName of preMigrationCoreTables) {
         if (
           new RegExp(`\\b${tableName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(body)
