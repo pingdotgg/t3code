@@ -86,6 +86,7 @@ const makeThreadShell = (
     executorModelSelection: null,
     branch: "feature/foo",
     worktreePath: "/tmp/worktrees/foo",
+    parentThreadId: null,
     latestTurn: null,
     createdAt: "2026-04-11T00:00:00.000Z",
     updatedAt: "2026-04-11T00:00:00.000Z",
@@ -112,6 +113,7 @@ const makeThreadDetail = (
     executorModelSelection: null,
     branch: null,
     worktreePath: null,
+    parentThreadId: null,
     latestTurn: null,
     createdAt: "2026-04-11T00:00:00.000Z",
     updatedAt: "2026-04-11T00:00:00.000Z",
@@ -175,6 +177,7 @@ const makeCoordinator = (options?: {
     getThreadShellById: (threadId) =>
       Effect.succeed(Option.some((options?.parentShell ?? makeThreadShell)(threadId))),
     getThreadDetailById: (threadId) => Effect.sync(() => threadDetailLookup(threadId)),
+    listChildThreadRefs: () => Effect.succeed([]),
   });
 
   const providers = options?.providers ?? [
@@ -251,6 +254,7 @@ it.effect("spawns a sub-agent thread next to the caller's thread on another prov
       expect(create.worktreePath).toBe("/tmp/worktrees/foo");
       expect(create.branch).toBe("feature/foo");
       expect(create.runtimeMode).toBe("approval-required");
+      expect(create.parentThreadId).toBe(parentThreadId);
       expect(create.title).toBe("Agent: Review the auth module for bugs.");
       expect(create.modelSelection).toEqual({
         instanceId: "codex",
@@ -1026,7 +1030,7 @@ it.effect("reports error when the provider fails before the turn is created", ()
   }),
 );
 
-const completedTurnDetail = (threadId: ThreadId) => {
+const completedTurnDetail = (threadId: ThreadId, overrides?: Partial<OrchestrationThread>) => {
   const assistantMessageId = MessageId.make("assistant-message-completed");
   const turnId = TurnId.make("turn-completed");
   return makeThreadDetail(threadId, {
@@ -1049,6 +1053,7 @@ const completedTurnDetail = (threadId: ThreadId) => {
         updatedAt: "9999-01-01T00:00:01.000Z",
       },
     ],
+    ...overrides,
   });
 };
 
@@ -1164,8 +1169,9 @@ it.effect("refuses send while running and re-returns settled wait on a terminal 
     expect(sendWhileRunning.description).toMatch(/still running/i);
     expect(sendWhileRunning.description).toMatch(/status: running/);
 
-    // Complete the turn, wait once (records terminal). A second wait re-returns
-    // the settled result so list/lifecycle observers can still collect finalText.
+    // Complete the turn, wait once (records terminal + auto-archives). A second
+    // wait re-returns the settled result so list/lifecycle observers can still
+    // collect finalText even though the child is already archived.
     harness.setThreadDetail((threadId) =>
       threadId === spawned.threadId
         ? Option.some(completedTurnDetail(spawned.threadId))
@@ -1177,6 +1183,18 @@ it.effect("refuses send while running and re-returns settled wait on a terminal 
     });
     expect(firstWait.status).toBe("completed");
     expect(firstWait.finalText).toBe("Done.");
+    expect(harness.dispatched.some((command) => command.type === "thread.archive")).toBe(true);
+
+    // Projection would now show archivedAt; reflect that on subsequent reads.
+    harness.setThreadDetail((threadId) =>
+      threadId === spawned.threadId
+        ? Option.some(
+            completedTurnDetail(spawned.threadId, {
+              archivedAt: "9999-01-01T00:00:02.000Z",
+            }),
+          )
+        : Option.none(),
+    );
 
     const waitWhenTerminal = yield* coordinator.wait(makeScope(), {
       threadId: spawned.threadId,
@@ -1185,11 +1203,12 @@ it.effect("refuses send while running and re-returns settled wait on a terminal 
     expect(waitWhenTerminal.status).toBe("completed");
     expect(waitWhenTerminal.finalText).toBe("Done.");
 
-    // Follow-up send after terminal is allowed (starts a new turn).
+    // Follow-up send after terminal is allowed (unarchives + starts a new turn).
     const sent = yield* coordinator.send(makeScope(), {
       threadId: spawned.threadId,
       prompt: "One more thing.",
     });
     expect(sent.status).toBe("running");
+    expect(harness.dispatched.some((command) => command.type === "thread.unarchive")).toBe(true);
   }),
 );

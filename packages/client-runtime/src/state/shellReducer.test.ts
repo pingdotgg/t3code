@@ -33,6 +33,7 @@ const stubThread = {
   executorModelSelection: null,
   branch: null,
   worktreePath: null,
+  parentThreadId: null,
   latestTurn: null,
   createdAt: "2026-04-01T00:00:00.000Z",
   updatedAt: "2026-04-01T00:00:00.000Z",

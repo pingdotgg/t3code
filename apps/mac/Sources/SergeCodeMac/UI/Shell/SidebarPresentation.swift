@@ -45,9 +45,31 @@ struct SidebarThreadItem {
     let thread: ChatThread
     let vcs: VcsStatus?
     let isPinned: Bool
+    /// Nesting depth under a visible parent (0 = top-level). Children of
+    /// sub-agent parents render indented when `parentThreadId` is present.
+    let nestDepth: Int
+
+    init(
+        member: SidebarProjectMember,
+        thread: ChatThread,
+        vcs: VcsStatus?,
+        isPinned: Bool,
+        nestDepth: Int = 0
+    ) {
+        self.member = member
+        self.thread = thread
+        self.vcs = vcs
+        self.isPinned = isPinned
+        self.nestDepth = nestDepth
+    }
 
     var id: ThreadSelection {
         ThreadSelection(deviceID: member.location.id, threadID: thread.id)
+    }
+
+    func withNestDepth(_ depth: Int) -> SidebarThreadItem {
+        SidebarThreadItem(
+            member: member, thread: thread, vcs: vcs, isPinned: isPinned, nestDepth: depth)
     }
 
     var isSelectable: Bool { member.location.isReady }
@@ -199,13 +221,15 @@ enum SidebarProjection {
                         isPinned: model.isThreadPinned(thread))
                 }
             }
-            let pinned = perMemberThreads.filter(\.isPinned)
-            let unpinned = perMemberThreads.filter { !$0.isPinned }
+            // Nest the whole collection at once (pinned roots ordered first) so a
+            // pinned parent keeps its unpinned children attached and vice versa.
+            let pinnedFirst =
+                perMemberThreads.filter(\.isPinned) + perMemberThreads.filter { !$0.isPinned }
             return SidebarProjectGroup(
                 id: id,
                 name: preferred.project.name,
                 members: sortedMembers,
-                threads: pinned + unpinned)
+                threads: nestSubagentThreads(pinnedFirst))
         }
         .sorted {
             $0.name.localizedStandardCompare($1.name) == .orderedAscending
@@ -232,6 +256,74 @@ enum SidebarProjection {
     static func pinnedThreads(in groups: [SidebarProjectGroup]) -> [SidebarThreadItem] {
         groups.flatMap(\.threads)
             .filter { $0.isPinned && !$0.needsAttention && !$0.belongsInRunning }
+    }
+
+    /// Nest child threads under their parent when the parent is present in the
+    /// same visible set (same device). Children whose parent is missing stay
+    /// top-level. Sub-agents can spawn their own sub-agents, so nesting is
+    /// recursive: each level renders depth-first under its parent, ordered by
+    /// `updatedAt` descending. Indentation is capped so pathological depth
+    /// stays readable; a visited set guards against parent-id cycles.
+    static let maxNestDepth = 6
+
+    static func nestSubagentThreads(_ items: [SidebarThreadItem]) -> [SidebarThreadItem] {
+        guard !items.isEmpty else { return items }
+
+        // Repository groups can mix devices, and thread ids are only unique per
+        // device — key all nesting state by the composite (device, thread) id.
+        var byThreadID: [ThreadSelection: SidebarThreadItem] = [:]
+        byThreadID.reserveCapacity(items.count)
+        for item in items {
+            byThreadID[item.id] = item
+        }
+
+        var childrenByParent: [ThreadSelection: [SidebarThreadItem]] = [:]
+        var roots: [SidebarThreadItem] = []
+        roots.reserveCapacity(items.count)
+
+        for item in items {
+            guard
+                let parentID = item.thread.parentThreadId,
+                !parentID.isEmpty,
+                let parent = byThreadID[
+                    ThreadSelection(deviceID: item.member.location.id, threadID: parentID)
+                ]
+            else {
+                roots.append(item)
+                continue
+            }
+            childrenByParent[parent.id, default: []].append(item)
+        }
+
+        for key in childrenByParent.keys {
+            childrenByParent[key]?.sort { $0.thread.updatedAt > $1.thread.updatedAt }
+        }
+
+        var result: [SidebarThreadItem] = []
+        result.reserveCapacity(items.count)
+        var visited = Set<ThreadSelection>()
+
+        func emit(_ item: SidebarThreadItem, depth: Int) {
+            guard visited.insert(item.id).inserted else { return }
+            result.append(item.withNestDepth(depth))
+            for child in childrenByParent[item.id] ?? [] {
+                emit(child, depth: min(depth + 1, maxNestDepth))
+            }
+        }
+
+        for root in roots {
+            emit(root, depth: 0)
+        }
+
+        // A cycle in parent ids (corrupt data) can strand items with no
+        // reachable root; surface them flat rather than dropping them.
+        if result.count < items.count {
+            for item in items where !visited.contains(item.id) {
+                visited.insert(item.id)
+                result.append(item.withNestDepth(0))
+            }
+        }
+        return result
     }
 
     static func searchResults(

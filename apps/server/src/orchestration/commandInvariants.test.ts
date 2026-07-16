@@ -17,6 +17,7 @@ import {
   requireNonNegativeInteger,
   requireThread,
   requireThreadAbsent,
+  requireValidParentThread,
 } from "./commandInvariants.ts";
 
 const now = "2026-01-01T00:00:00.000Z";
@@ -66,6 +67,7 @@ const readModel: OrchestrationReadModel = {
       runtimeMode: "full-access",
       branch: null,
       worktreePath: null,
+      parentThreadId: null,
       createdAt: now,
       updatedAt: now,
       archivedAt: null,
@@ -90,6 +92,7 @@ const readModel: OrchestrationReadModel = {
       runtimeMode: "full-access",
       branch: null,
       worktreePath: null,
+      parentThreadId: null,
       createdAt: now,
       updatedAt: now,
       archivedAt: null,
@@ -167,6 +170,7 @@ describe("commandInvariants", () => {
           runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
+          parentThreadId: null,
           createdAt: now,
         },
         threadId: ThreadId.make("thread-3"),
@@ -191,12 +195,83 @@ describe("commandInvariants", () => {
             runtimeMode: "full-access",
             branch: null,
             worktreePath: null,
+            parentThreadId: null,
             createdAt: now,
           },
           threadId: ThreadId.make("thread-1"),
         }),
       ),
     ).rejects.toThrow("already exists");
+  });
+
+  it("validates parentThreadId on create flows", async () => {
+    const createCommand = (threadId: string, parentThreadId: string): OrchestrationCommand => ({
+      type: "thread.create",
+      commandId: CommandId.make("cmd-parent"),
+      threadId: ThreadId.make(threadId),
+      projectId: ProjectId.make("project-a"),
+      title: "child",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+      },
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      runtimeMode: "full-access",
+      branch: null,
+      worktreePath: null,
+      parentThreadId: ThreadId.make(parentThreadId),
+      createdAt: now,
+    });
+
+    // Existing same-project parent passes.
+    await Effect.runPromise(
+      requireValidParentThread({
+        readModel,
+        command: createCommand("thread-3", "thread-1"),
+        threadId: ThreadId.make("thread-3"),
+        projectId: ProjectId.make("project-a"),
+        parentThreadId: ThreadId.make("thread-1"),
+      }),
+    );
+
+    // Self-parent is rejected.
+    await expect(
+      Effect.runPromise(
+        requireValidParentThread({
+          readModel,
+          command: createCommand("thread-3", "thread-3"),
+          threadId: ThreadId.make("thread-3"),
+          projectId: ProjectId.make("project-a"),
+          parentThreadId: ThreadId.make("thread-3"),
+        }),
+      ),
+    ).rejects.toThrow("cannot be its own parent");
+
+    // Unknown parent is rejected.
+    await expect(
+      Effect.runPromise(
+        requireValidParentThread({
+          readModel,
+          command: createCommand("thread-3", "thread-missing"),
+          threadId: ThreadId.make("thread-3"),
+          projectId: ProjectId.make("project-a"),
+          parentThreadId: ThreadId.make("thread-missing"),
+        }),
+      ),
+    ).rejects.toThrow("does not exist");
+
+    // Cross-project parent is rejected.
+    await expect(
+      Effect.runPromise(
+        requireValidParentThread({
+          readModel,
+          command: createCommand("thread-3", "thread-2"),
+          threadId: ThreadId.make("thread-3"),
+          projectId: ProjectId.make("project-a"),
+          parentThreadId: ThreadId.make("thread-2"),
+        }),
+      ),
+    ).rejects.toThrow("belongs to project");
   });
 
   it("requires non-negative integers", async () => {

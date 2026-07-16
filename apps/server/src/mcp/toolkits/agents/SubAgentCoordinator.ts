@@ -334,7 +334,7 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
     if (Option.isNone(detail)) {
       return yield* new SubAgentError({
         reason: "thread-not-found",
-        description: `Sub-agent thread ${threadId} no longer exists (it may have been deleted or archived).`,
+        description: `Sub-agent thread ${threadId} no longer exists (it may have been deleted).`,
       });
     }
     return detail.value;
@@ -486,6 +486,75 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
   );
 
   /**
+   * Archive a completed sub-agent thread so it drops out of the active sidebar.
+   * Best-effort: failures are logged by the caller via catch. Skips when the
+   * projection already shows archivedAt.
+   */
+  const archiveCompletedSubAgent = Effect.fn("SubAgentCoordinator.archiveCompletedSubAgent")(
+    function* (input: { readonly threadId: ThreadId; readonly thread: OrchestrationThread }) {
+      if (input.thread.archivedAt !== null) {
+        return;
+      }
+      const commandUuid = yield* randomUuid;
+      yield* engine
+        .dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make(`server:sub-agent-archive:${commandUuid}`),
+          threadId: input.threadId,
+        })
+        .pipe(Effect.mapError(dispatchFailed("archive completed sub-agent thread")));
+    },
+  );
+
+  /**
+   * First observation of a terminal status for a sub-agent: write status,
+   * notify parent activity, then auto-archive the child thread. Shared by
+   * observeStatus / list / wait. The status write doubles as an atomic claim —
+   * it only succeeds while the record still describes the same turn
+   * (`lastTurnRequestedAt`) and is not already terminal, so concurrent
+   * observers and stale readers racing a follow-up turn cannot double-emit
+   * the completion activity or archive a thread that has moved on.
+   */
+  const handleFirstTerminalTransition = Effect.fn(
+    "SubAgentCoordinator.handleFirstTerminalTransition",
+  )(function* (input: {
+    readonly threadId: ThreadId;
+    readonly record: SubAgentRecord;
+    readonly status: Exclude<SubAgentStatus, "running">;
+    readonly thread: OrchestrationThread;
+    readonly finalText: string | null;
+    readonly createdAt?: string;
+  }) {
+    const claimed = yield* SynchronizedRef.modify(children, (current) => {
+      const existing = current.get(input.threadId);
+      if (
+        !existing ||
+        existing.lastTurnRequestedAt !== input.record.lastTurnRequestedAt ||
+        isTerminalStatus(existing.status)
+      ) {
+        return [false, current] as const;
+      }
+      const next = new Map(current);
+      next.set(input.threadId, { ...existing, status: input.status });
+      return [true, next] as const;
+    });
+    if (!claimed) {
+      return;
+    }
+    yield* emitCompletionActivity({
+      record: input.record,
+      threadId: input.threadId,
+      status: input.status,
+      finalText: input.finalText,
+      ...(input.createdAt !== undefined ? { createdAt: input.createdAt } : {}),
+    }).pipe(Effect.catch(() => Effect.void));
+    yield* archiveCompletedSubAgent({
+      threadId: input.threadId,
+      thread: input.thread,
+    }).pipe(Effect.catch(() => Effect.void));
+  });
+
+  /**
    * Live turn status for a child, with a best-effort record update so
    * subsequent list/send/wait see the same value without re-reading.
    */
@@ -496,14 +565,16 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
     const thread = yield* readThreadDetail(threadId);
     const status = turnStatus(thread, record.lastTurnRequestedAt);
     if (status !== record.status) {
-      yield* writeStatus(threadId, status);
       if (isTerminalStatus(status)) {
-        yield* emitCompletionActivity({
-          record,
+        yield* handleFirstTerminalTransition({
           threadId,
+          record,
           status,
+          thread,
           finalText: finalAssistantText(thread),
-        }).pipe(Effect.catch(() => Effect.void));
+        });
+      } else {
+        yield* writeStatus(threadId, status);
       }
     }
     return { thread, status } as const;
@@ -556,14 +627,16 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
         if (Option.isSome(detail)) {
           status = turnStatus(detail.value, record.lastTurnRequestedAt);
           if (status !== record.status) {
-            yield* writeStatus(threadId, status);
             if (isTerminalStatus(status)) {
-              yield* emitCompletionActivity({
-                record,
+              yield* handleFirstTerminalTransition({
                 threadId,
+                record,
                 status,
+                thread: detail.value,
                 finalText: finalAssistantText(detail.value),
-              }).pipe(Effect.catch(() => Effect.void));
+              });
+            } else {
+              yield* writeStatus(threadId, status);
             }
           }
         }
@@ -685,6 +758,7 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
           interactionMode: "default",
           branch: parent.branch,
           worktreePath: parent.worktreePath,
+          parentThreadId: scope.threadId,
           createdAt,
         })
         .pipe(Effect.mapError(dispatchFailed("create sub-agent thread")));
@@ -741,6 +815,18 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
           reason: "invalid-status",
           description: `Sub-agent ${input.threadId} is still running. Call agent_wait before sending another prompt (status: running).`,
         });
+      }
+      // Completed sub-agents are auto-archived; unarchive before a follow-up turn
+      // so the child reappears in the active sidebar while work continues.
+      if (thread.archivedAt !== null) {
+        const commandUuid = yield* randomUuid;
+        yield* engine
+          .dispatch({
+            type: "thread.unarchive",
+            commandId: CommandId.make(`server:sub-agent-unarchive:${commandUuid}`),
+            threadId: input.threadId,
+          })
+          .pipe(Effect.mapError(dispatchFailed("unarchive sub-agent thread for send")));
       }
       // Terminal (completed / interrupted / error): allow follow-up turns.
       const lastTurnRequestedAt = yield* startTurn(
@@ -834,21 +920,19 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
         const fresh = (yield* SynchronizedRef.get(children)).get(input.threadId) ?? record;
         const thread = yield* readThreadDetail(input.threadId);
         const status = turnStatus(thread, fresh.lastTurnRequestedAt);
-        if (status !== fresh.status) {
-          yield* writeStatus(input.threadId, status);
-        }
         if (isTerminalStatus(status)) {
           // First observation of terminal for this turn — return the result.
           const activityAt = lastActivityAt(thread) ?? fresh.lastTurnRequestedAt;
           const finalText = finalAssistantText(thread);
           if (status !== fresh.status) {
-            yield* emitCompletionActivity({
-              record: fresh,
+            yield* handleFirstTerminalTransition({
               threadId: input.threadId,
+              record: fresh,
               status,
+              thread,
               finalText,
               createdAt: activityAt,
-            }).pipe(Effect.catch(() => Effect.void));
+            });
           }
           return {
             threadId: input.threadId,
@@ -857,6 +941,9 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
             lastActivityAt: activityAt,
             stalled: false,
           };
+        }
+        if (status !== fresh.status) {
+          yield* writeStatus(input.threadId, status);
         }
         const snapshot = yield* runningSnapshot(thread, fresh);
         if (snapshot.stalled) {

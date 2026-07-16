@@ -53,6 +53,7 @@ const BASE_THREAD: OrchestrationThread = {
   executorModelSelection: null,
   branch: "main",
   worktreePath: null,
+  parentThreadId: null,
   latestTurn: null,
   createdAt: "2026-04-01T00:00:00.000Z",
   updatedAt: "2026-04-01T00:00:00.000Z",

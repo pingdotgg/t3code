@@ -2574,6 +2574,7 @@ public actor LiveBackend: BackendService {
             reasoningEffort: Self.effortValue(of: shell.modelSelection),
             serviceTier: Self.serviceTierValue(of: shell.modelSelection),
             backgroundAgentCount: activeSubagentCount,
+            parentThreadId: shell.parentThreadId,
             health: uiThreadHealth(for: shell.id))
     }
 

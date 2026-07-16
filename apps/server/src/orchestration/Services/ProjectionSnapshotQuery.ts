@@ -161,11 +161,26 @@ export interface ProjectionSnapshotQueryShape {
   ) => Effect.Effect<Option.Option<OrchestrationThreadShell>, ProjectionRepositoryError>;
 
   /**
-   * Read a single active thread detail snapshot by id.
+   * Read a single thread detail snapshot by id.
+   *
+   * Includes archived threads (messages/activities remain readable after
+   * auto-archive of completed sub-agents). Soft-deleted threads are omitted.
    */
   readonly getThreadDetailById: (
     threadId: ThreadId,
   ) => Effect.Effect<Option.Option<OrchestrationThread>, ProjectionRepositoryError>;
+
+  /**
+   * List non-deleted child thread refs for a parent, including archived ones
+   * (flagged) so archive-cascade traversal can pass through an auto-archived
+   * child to reach its still-active descendants.
+   */
+  readonly listChildThreadRefs: (
+    parentThreadId: ThreadId,
+  ) => Effect.Effect<
+    ReadonlyArray<{ readonly threadId: ThreadId; readonly archived: boolean }>,
+    ProjectionRepositoryError
+  >;
 }
 
 /**

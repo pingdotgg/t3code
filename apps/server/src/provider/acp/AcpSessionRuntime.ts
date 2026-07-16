@@ -941,6 +941,13 @@ const handleSessionUpdate = ({
         });
         continue;
       }
+      // Reasoning deltas must not open/attach to assistant text segments. Empty
+      // thought chunks are already filtered in parseSessionUpdateEvent; queue the rest
+      // as-is so content.delta activity reaches the turn watchdog and UI.
+      if (event._tag === "ReasoningDelta") {
+        yield* Queue.offer(queue, event);
+        continue;
+      }
       yield* Queue.offer(queue, event);
     }
   });

@@ -1,4 +1,5 @@
 import {
+  type RuntimeContentStreamKind,
   type RuntimeEventRawSource,
   RuntimeItemId,
   type CanonicalRequestType,
@@ -220,6 +221,10 @@ export function makeAcpContentDeltaEvent(input: {
   readonly turnId: TurnId | undefined;
   readonly itemId?: string;
   readonly text: string;
+  readonly streamKind?: Extract<
+    RuntimeContentStreamKind,
+    "assistant_text" | "reasoning_text" | "reasoning_summary_text"
+  >;
   readonly rawPayload: unknown;
 }): ProviderRuntimeEvent {
   return {
@@ -230,7 +235,7 @@ export function makeAcpContentDeltaEvent(input: {
     turnId: input.turnId,
     ...(input.itemId ? { itemId: RuntimeItemId.make(input.itemId) } : {}),
     payload: {
-      streamKind: "assistant_text",
+      streamKind: input.streamKind ?? "assistant_text",
       delta: input.text,
     },
     raw: {

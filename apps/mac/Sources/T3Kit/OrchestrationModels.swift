@@ -531,6 +531,8 @@ public struct OrchestrationThread: Codable, Sendable {
     public var executorModelSelection: ModelSelection?
     public var branch: String?
     public var worktreePath: String?
+    /// Parent thread when this is a nested sub-agent; nil for top-level threads.
+    public var parentThreadId: String?
     public var latestTurn: OrchestrationLatestTurn?
     public var createdAt: String
     public var updatedAt: String
@@ -544,8 +546,9 @@ public struct OrchestrationThread: Codable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case id, projectId, title, modelSelection, runtimeMode, interactionMode,
-            executorModelSelection, branch, worktreePath, latestTurn, createdAt, updatedAt,
-            archivedAt, deletedAt, messages, proposedPlans, activities, checkpoints, session
+            executorModelSelection, branch, worktreePath, parentThreadId, latestTurn, createdAt,
+            updatedAt, archivedAt, deletedAt, messages, proposedPlans, activities, checkpoints,
+            session
     }
 
     public init(from decoder: Decoder) throws {
@@ -561,6 +564,7 @@ public struct OrchestrationThread: Codable, Sendable {
             ModelSelection.self, forKey: .executorModelSelection)
         branch = try c.decode(String?.self, forKey: .branch, default: nil)
         worktreePath = try c.decode(String?.self, forKey: .worktreePath, default: nil)
+        parentThreadId = try c.decode(String?.self, forKey: .parentThreadId, default: nil)
         latestTurn = try c.decode(OrchestrationLatestTurn?.self, forKey: .latestTurn, default: nil)
         createdAt = try c.decode(String.self, forKey: .createdAt)
         updatedAt = try c.decode(String.self, forKey: .updatedAt)
@@ -618,6 +622,8 @@ public struct OrchestrationThreadShell: Codable, Sendable {
     public var executorModelSelection: ModelSelection?
     public var branch: String?
     public var worktreePath: String?
+    /// Parent thread when this is a nested sub-agent; nil for top-level threads.
+    public var parentThreadId: String?
     public var latestTurn: OrchestrationLatestTurn?
     public var createdAt: String
     public var updatedAt: String
@@ -630,9 +636,9 @@ public struct OrchestrationThreadShell: Codable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case id, projectId, title, modelSelection, runtimeMode, interactionMode,
-            executorModelSelection, branch, worktreePath, latestTurn, createdAt, updatedAt,
-            archivedAt, session, latestUserMessageAt, hasPendingApprovals, hasPendingUserInput,
-            hasActionableProposedPlan
+            executorModelSelection, branch, worktreePath, parentThreadId, latestTurn, createdAt,
+            updatedAt, archivedAt, session, latestUserMessageAt, hasPendingApprovals,
+            hasPendingUserInput, hasActionableProposedPlan
     }
 
     public init(from decoder: Decoder) throws {
@@ -648,6 +654,7 @@ public struct OrchestrationThreadShell: Codable, Sendable {
             ModelSelection.self, forKey: .executorModelSelection)
         branch = try c.decode(String?.self, forKey: .branch, default: nil)
         worktreePath = try c.decode(String?.self, forKey: .worktreePath, default: nil)
+        parentThreadId = try c.decode(String?.self, forKey: .parentThreadId, default: nil)
         latestTurn = try c.decode(OrchestrationLatestTurn?.self, forKey: .latestTurn, default: nil)
         createdAt = try c.decode(String.self, forKey: .createdAt)
         updatedAt = try c.decode(String.self, forKey: .updatedAt)
@@ -1458,12 +1465,13 @@ public struct ThreadCreatedPayload: Decodable, Sendable {
     public var executorModelSelection: ModelSelection?
     public var branch: String?
     public var worktreePath: String?
+    public var parentThreadId: String?
     public var createdAt: String
     public var updatedAt: String
 
     private enum CodingKeys: String, CodingKey {
         case threadId, projectId, title, modelSelection, runtimeMode, interactionMode,
-            executorModelSelection, branch, worktreePath, createdAt, updatedAt
+            executorModelSelection, branch, worktreePath, parentThreadId, createdAt, updatedAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -1479,6 +1487,7 @@ public struct ThreadCreatedPayload: Decodable, Sendable {
             ModelSelection.self, forKey: .executorModelSelection)
         branch = try c.decode(String?.self, forKey: .branch, default: nil)
         worktreePath = try c.decode(String?.self, forKey: .worktreePath, default: nil)
+        parentThreadId = try c.decode(String?.self, forKey: .parentThreadId, default: nil)
         createdAt = try c.decode(String.self, forKey: .createdAt)
         updatedAt = try c.decode(String.self, forKey: .updatedAt)
     }

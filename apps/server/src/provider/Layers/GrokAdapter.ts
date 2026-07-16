@@ -864,7 +864,8 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 if (
                   event._tag === "PlanUpdated" ||
                   event._tag === "ToolCallUpdated" ||
-                  event._tag === "ContentDelta"
+                  event._tag === "ContentDelta" ||
+                  event._tag === "ReasoningDelta"
                 ) {
                   yield* logNative(ctx.threadId, "session/update", event.rawPayload);
                 }
@@ -938,6 +939,22 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                         turnId: notificationTurnId,
                         ...(event.itemId ? { itemId: event.itemId } : {}),
                         text: event.text,
+                        rawPayload: event.rawPayload,
+                      }),
+                    );
+                    return;
+                  case "ReasoningDelta":
+                    // Match Codex item/reasoning/textDelta: content.delta with
+                    // streamKind reasoning_text. No reasoning item lifecycle is
+                    // required for live UI/watchdog updates (same as Codex stream path).
+                    yield* offerRuntimeEvent(
+                      makeAcpContentDeltaEvent({
+                        stamp,
+                        provider: PROVIDER,
+                        threadId: ctx.threadId,
+                        turnId: notificationTurnId,
+                        text: event.text,
+                        streamKind: "reasoning_text",
                         rawPayload: event.rawPayload,
                       }),
                     );

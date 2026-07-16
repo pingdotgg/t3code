@@ -293,6 +293,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
       executorModelSelection: null,
       branch: null,
       worktreePath: null,
+      parentThreadId: null,
       latestTurn: null,
       createdAt: now,
       updatedAt: now,
@@ -433,6 +434,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           executorModelSelection: null,
           branch: null,
           worktreePath: null,
+          parentThreadId: null,
           latestTurn: {
             turnId: "turn-1" as TurnId,
             state: "running",
@@ -590,6 +592,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           executorModelSelection: null,
           branch: null,
           worktreePath: null,
+          parentThreadId: null,
           latestTurn: {
             turnId: "turn-1" as TurnId,
             state: "running",

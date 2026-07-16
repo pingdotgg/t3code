@@ -123,6 +123,10 @@ const ProjectionProjectLookupRowSchema = ProjectionProjectDbRowSchema;
 const ProjectionThreadIdLookupRowSchema = Schema.Struct({
   threadId: ThreadId,
 });
+const ProjectionChildThreadRefRowSchema = Schema.Struct({
+  threadId: ThreadId,
+  archivedAt: Schema.NullOr(Schema.String),
+});
 const ProjectionThreadCheckpointContextThreadRowSchema = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
@@ -334,6 +338,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           executor_model_selection AS "executorModelSelection",
           branch,
           worktree_path AS "worktreePath",
+          parent_thread_id AS "parentThreadId",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -363,6 +368,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           executor_model_selection AS "executorModelSelection",
           branch,
           worktree_path AS "worktreePath",
+          parent_thread_id AS "parentThreadId",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -394,6 +400,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           executor_model_selection AS "executorModelSelection",
           branch,
           worktree_path AS "worktreePath",
+          parent_thread_id AS "parentThreadId",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -760,6 +767,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           executor_model_selection AS "executorModelSelection",
           branch,
           worktree_path AS "worktreePath",
+          parent_thread_id AS "parentThreadId",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -774,6 +782,56 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           AND deleted_at IS NULL
           AND archived_at IS NULL
         LIMIT 1
+      `,
+  });
+
+  /** Like getActiveThreadRowById but includes archived rows (not soft-deleted). */
+  const getThreadRowByIdIncludingArchived = SqlSchema.findOneOption({
+    Request: ThreadIdLookupInput,
+    Result: ProjectionThreadDbRowSchema,
+    execute: ({ threadId }) =>
+      sql`
+        SELECT
+          thread_id AS "threadId",
+          project_id AS "projectId",
+          title,
+          model_selection_json AS "modelSelection",
+          runtime_mode AS "runtimeMode",
+          interaction_mode AS "interactionMode",
+          executor_model_selection AS "executorModelSelection",
+          branch,
+          worktree_path AS "worktreePath",
+          parent_thread_id AS "parentThreadId",
+          latest_turn_id AS "latestTurnId",
+          created_at AS "createdAt",
+          updated_at AS "updatedAt",
+          archived_at AS "archivedAt",
+          latest_user_message_at AS "latestUserMessageAt",
+          pending_approval_count AS "pendingApprovalCount",
+          pending_user_input_count AS "pendingUserInputCount",
+          has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          deleted_at AS "deletedAt"
+        FROM projection_threads
+        WHERE thread_id = ${threadId}
+          AND deleted_at IS NULL
+        LIMIT 1
+      `,
+  });
+
+  // Archived children stay in the result (flagged) so cascade traversal can
+  // pass through an auto-archived child to reach its still-active descendants.
+  const listChildThreadRefRows = SqlSchema.findAll({
+    Request: ThreadIdLookupInput,
+    Result: ProjectionChildThreadRefRowSchema,
+    execute: ({ threadId }) =>
+      sql`
+        SELECT
+          thread_id AS "threadId",
+          archived_at AS "archivedAt"
+        FROM projection_threads
+        WHERE parent_thread_id = ${threadId}
+          AND deleted_at IS NULL
+        ORDER BY created_at ASC, thread_id ASC
       `,
   });
 
@@ -885,6 +943,36 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         WHERE threads.thread_id = ${threadId}
           AND threads.deleted_at IS NULL
           AND threads.archived_at IS NULL
+        LIMIT 1
+      `,
+  });
+
+  /**
+   * Like getLatestTurnRowByThread but includes archived threads, matching the
+   * archived-inclusive detail read path (auto-archived sub-agents must still
+   * report their final turn).
+   */
+  const getLatestTurnRowByThreadIncludingArchived = SqlSchema.findOneOption({
+    Request: ThreadIdLookupInput,
+    Result: ProjectionLatestTurnDbRowSchema,
+    execute: ({ threadId }) =>
+      sql`
+        SELECT
+          turns.thread_id AS "threadId",
+          turns.turn_id AS "turnId",
+          turns.state,
+          turns.requested_at AS "requestedAt",
+          turns.started_at AS "startedAt",
+          turns.completed_at AS "completedAt",
+          turns.assistant_message_id AS "assistantMessageId",
+          turns.source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
+          turns.source_proposed_plan_id AS "sourceProposedPlanId"
+        FROM projection_threads threads
+        JOIN projection_turns turns
+          ON turns.thread_id = threads.thread_id
+          AND turns.turn_id = threads.latest_turn_id
+        WHERE threads.thread_id = ${threadId}
+          AND threads.deleted_at IS NULL
         LIMIT 1
       `,
   });
@@ -1194,6 +1282,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 executorModelSelection: row.executorModelSelection,
                 branch: row.branch,
                 worktreePath: row.worktreePath,
+                parentThreadId: row.parentThreadId,
                 latestTurn: latestTurnByThread.get(row.threadId) ?? null,
                 createdAt: row.createdAt,
                 updatedAt: row.updatedAt,
@@ -1393,6 +1482,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   executorModelSelection: row.executorModelSelection,
                   branch: row.branch,
                   worktreePath: row.worktreePath,
+                  parentThreadId: row.parentThreadId,
                   latestTurn: latestTurnByThread.get(row.threadId) ?? null,
                   createdAt: row.createdAt,
                   updatedAt: row.updatedAt,
@@ -1523,6 +1613,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                       executorModelSelection: row.executorModelSelection,
                       branch: row.branch,
                       worktreePath: row.worktreePath,
+                      parentThreadId: row.parentThreadId,
                       latestTurn: latestTurnByThread.get(row.threadId) ?? null,
                       createdAt: row.createdAt,
                       updatedAt: row.updatedAt,
@@ -1658,6 +1749,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   executorModelSelection: row.executorModelSelection,
                   branch: row.branch,
                   worktreePath: row.worktreePath,
+                  parentThreadId: row.parentThreadId,
                   latestTurn: latestTurnByThread.get(row.threadId) ?? null,
                   createdAt: row.createdAt,
                   updatedAt: row.updatedAt,
@@ -1903,6 +1995,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         executorModelSelection: threadRow.value.executorModelSelection,
         branch: threadRow.value.branch,
         worktreePath: threadRow.value.worktreePath,
+        parentThreadId: threadRow.value.parentThreadId,
         latestTurn: Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
         createdAt: threadRow.value.createdAt,
         updatedAt: threadRow.value.updatedAt,
@@ -1926,7 +2019,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         latestTurnRow,
         sessionRow,
       ] = yield* Effect.all([
-        getActiveThreadRowById({ threadId }).pipe(
+        getThreadRowByIdIncludingArchived({ threadId }).pipe(
           Effect.mapError(
             toPersistenceSqlOrDecodeError(
               "ProjectionSnapshotQuery.getThreadDetailById:getThread:query",
@@ -1966,7 +2059,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             ),
           ),
         ),
-        getLatestTurnRowByThread({ threadId }).pipe(
+        getLatestTurnRowByThreadIncludingArchived({ threadId }).pipe(
           Effect.mapError(
             toPersistenceSqlOrDecodeError(
               "ProjectionSnapshotQuery.getThreadDetailById:getLatestTurn:query",
@@ -1998,6 +2091,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         executorModelSelection: threadRow.value.executorModelSelection,
         branch: threadRow.value.branch,
         worktreePath: threadRow.value.worktreePath,
+        parentThreadId: threadRow.value.parentThreadId,
         latestTurn: Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
         createdAt: threadRow.value.createdAt,
         updatedAt: threadRow.value.updatedAt,
@@ -2055,6 +2149,21 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       );
     });
 
+  const listChildThreadRefs: ProjectionSnapshotQueryShape["listChildThreadRefs"] = (
+    parentThreadId,
+  ) =>
+    listChildThreadRefRows({ threadId: parentThreadId }).pipe(
+      Effect.map((rows) =>
+        rows.map((row) => ({ threadId: row.threadId, archived: row.archivedAt !== null })),
+      ),
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.listChildThreadRefs:query",
+          "ProjectionSnapshotQuery.listChildThreadRefs:decodeRows",
+        ),
+      ),
+    );
+
   return {
     getCommandReadModel,
     getSnapshot,
@@ -2070,6 +2179,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getFullThreadDiffContext,
     getThreadShellById,
     getThreadDetailById,
+    listChildThreadRefs,
   } satisfies ProjectionSnapshotQueryShape;
 });
 

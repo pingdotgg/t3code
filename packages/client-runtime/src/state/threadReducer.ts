@@ -69,6 +69,7 @@ export function applyThreadDetailEvent(
           executorModelSelection: event.payload.executorModelSelection ?? null,
           branch: event.payload.branch,
           worktreePath: event.payload.worktreePath,
+          parentThreadId: event.payload.parentThreadId ?? null,
           latestTurn: null,
           createdAt: event.payload.createdAt,
           updatedAt: event.payload.updatedAt,

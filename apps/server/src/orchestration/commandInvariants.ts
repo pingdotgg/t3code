@@ -126,6 +126,43 @@ export function requireThreadNotArchived(input: {
   );
 }
 
+/**
+ * A non-null `parentThreadId` on thread.create must reference an existing,
+ * distinct thread in the same project, or the persisted thread graph breaks
+ * (self-loops, dangling parents, cross-project nesting).
+ */
+export function requireValidParentThread(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly threadId: ThreadId;
+  readonly projectId: ProjectId;
+  readonly parentThreadId: ThreadId;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  if (input.parentThreadId === input.threadId) {
+    return Effect.fail(
+      invariantError(input.command.type, `Thread '${input.threadId}' cannot be its own parent.`),
+    );
+  }
+  const parent = findThreadById(input.readModel, input.parentThreadId);
+  if (!parent) {
+    return Effect.fail(
+      invariantError(
+        input.command.type,
+        `Parent thread '${input.parentThreadId}' does not exist for command '${input.command.type}'.`,
+      ),
+    );
+  }
+  if (parent.projectId !== input.projectId) {
+    return Effect.fail(
+      invariantError(
+        input.command.type,
+        `Parent thread '${input.parentThreadId}' belongs to project '${parent.projectId}', not '${input.projectId}'.`,
+      ),
+    );
+  }
+  return Effect.void;
+}
+
 export function requireThreadAbsent(input: {
   readonly readModel: OrchestrationReadModel;
   readonly command: OrchestrationCommand;

@@ -116,6 +116,74 @@ describe("AcpSessionRuntime", () => {
     ),
   );
 
+  it.effect("queues agent_thought_chunk as ReasoningDelta without assistant segments", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+
+      const promptResult = yield* runtime.prompt({
+        prompt: [{ type: "text", text: "hi" }],
+      });
+      expect(promptResult).toMatchObject({ stopReason: "end_turn" });
+
+      // Collect enough events to cover plan + thoughts + assistant text, while
+      // ignoring ProcessStderr noise (Node env warnings on some runners).
+      const notes = Array.from(
+        yield* Stream.runCollect(
+          Stream.take(
+            Stream.filter(
+              runtime.getEvents(),
+              (note) => note._tag !== "ProcessStderr" && note._tag !== "ProcessExited",
+            ),
+            6,
+          ),
+        ),
+      );
+      expect(notes.map((note) => note._tag)).toEqual([
+        "PlanUpdated",
+        "ReasoningDelta",
+        "ReasoningDelta",
+        "AssistantItemStarted",
+        "ContentDelta",
+        "AssistantItemCompleted",
+      ]);
+      const reasoningText = notes
+        .filter((note) => note._tag === "ReasoningDelta")
+        .map((note) => (note._tag === "ReasoningDelta" ? note.text : ""))
+        .join("");
+      expect(reasoningText).toBe("thinking step by step then answering");
+      const contentDelta = notes.find((note) => note._tag === "ContentDelta");
+      expect(contentDelta?._tag).toBe("ContentDelta");
+      if (contentDelta?._tag === "ContentDelta") {
+        expect(contentDelta.text).toBe("hello from mock");
+        expect(contentDelta.itemId).toBeDefined();
+      }
+      // Reasoning must not attach an assistant segment itemId.
+      for (const note of notes) {
+        if (note._tag === "ReasoningDelta") {
+          expect("itemId" in note).toBe(false);
+        }
+      }
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: {
+              T3_ACP_EMIT_THOUGHT_CHUNKS: "1",
+            },
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          authMethodId: "test",
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+
   it.effect("drops session updates emitted for a child ACP session", () =>
     Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;

@@ -814,11 +814,15 @@ private struct SidebarThreadRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
+            if item.nestDepth > 0 {
+                Color.clear.frame(width: CGFloat(item.nestDepth) * 14)
+            }
             SidebarThreadStatus(item: item)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
                     Text(item.thread.title)
                         .lineLimit(1)
+                        .foregroundStyle(item.nestDepth > 0 ? .secondary : .primary)
                     if item.isPinned {
                         Image(systemName: "pin.fill")
                             .font(.system(size: 8, weight: .semibold))
@@ -828,7 +832,7 @@ private struct SidebarThreadRow: View {
                 }
                 Text(secondaryText)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(item.nestDepth > 0 ? .tertiary : .secondary)
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
