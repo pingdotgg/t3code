@@ -869,6 +869,17 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
             Effect.mapError((cause) =>
               isPluginManagementError(cause) ? cause : lockfileError(cause),
             ),
+            // The move+commit region must be atomic w.r.t. interruption. Neither
+            // the store's mutate nor this confirm otherwise masks it, and the
+            // tapError cleanup below only runs on typed failures, not interrupts.
+            // An interrupt after moveStagingToVersionDir's rename but before the
+            // lockfile write commits would strand the install: an orphaned version
+            // dir with no lockfile entry, plus a stage record pointing at a staging
+            // dir that no longer exists, so a retry with the same token fails
+            // ENOENT. The region is small (O(1) same-fs rename + atomic temp+rename
+            // lockfile write); scope uninterruptible to this call site so other
+            // mutations keep the store's default interruptibility.
+            Effect.uninterruptible,
           );
         orphanedVersionDir = null;
         yield* dropStage(stageToken);
@@ -1123,6 +1134,12 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
             Effect.mapError((cause) =>
               isPluginManagementError(cause) ? cause : lockfileError(cause),
             ),
+            // Same discipline as confirmInstall: the destructive move + lockfile
+            // commit must be atomic w.r.t. interruption. An interrupt after the
+            // rename but before the write would orphan the staged version dir with
+            // no lockfile entry and leave the stage pointing at a vanished staging
+            // dir, so a same-token retry fails ENOENT. Scoped to this call site.
+            Effect.uninterruptible,
           );
         orphanedVersionDir = null;
         yield* dropStage(stageToken);
