@@ -162,11 +162,9 @@ layer("FilesystemCapability", (it) => {
         // classify, so this reports as a directory — before visited-tracking, the
         // walk descended into it repeatedly and filled the result with duplicates of
         // the same cycle until the 500-entry cap "saved" it.
-        yield* Effect.tryPromise({
-          try: () =>
-            NodeFSP.symlink(NodePath.join(root, "sub"), NodePath.join(root, "sub", "loop")),
-          catch: (cause) => new Error(String(cause)),
-        });
+        yield* Effect.promise(() =>
+          NodeFSP.symlink(NodePath.join(root, "sub"), NodePath.join(root, "sub", "loop")),
+        );
 
         const entries = yield* filesystem.listDirRecursive({ root, relativePath: "" });
 

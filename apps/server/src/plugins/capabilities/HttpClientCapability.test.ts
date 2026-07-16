@@ -45,7 +45,7 @@ function makeClient(input: {
         Effect.sync(() => {
           input.calls?.push({
             host: request.url.hostname,
-            address: request.address.address,
+            address: request.addresses[0]!.address,
           });
           return responseFor({
             url: request.url,
@@ -365,6 +365,35 @@ describe("HttpClientCapability", () => {
         server.closeAllConnections();
         server.close();
       }
+    }),
+  );
+
+  it.effect("hands every validated address to the transport, not just the first", () =>
+    Effect.gen(function* () {
+      // The pinned transport gives these to Node's Happy Eyeballs, which falls back
+      // when the first record is unreachable but a later one works. Pinning to
+      // addresses[0] alone failed a reachable dual-stack host. All are validated by
+      // the resolver — the resolve fails if ANY is disallowed — so handing the whole
+      // set to the transport is exactly as safe as handing it one.
+      const seen: Array<ReadonlyArray<string>> = [];
+      const client = makeHttpClientCapability({
+        // A dead IPv6 first, a working IPv4 second — both public, both validated.
+        lookup: () => Effect.succeed(["2606:4700:4700::1111", "140.82.112.3"]),
+        transport: (request) =>
+          Effect.sync(() => {
+            seen.push(request.addresses.map((address) => address.address));
+            return responseFor({
+              url: request.url,
+              method: request.method,
+              headers: {},
+              body: "ok",
+            });
+          }),
+      });
+
+      yield* client.request({ method: "GET", url: "https://example.test/", timeoutMs: 1000 });
+
+      assert.deepEqual(seen, [["2606:4700:4700::1111", "140.82.112.3"]]);
     }),
   );
 
