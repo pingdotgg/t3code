@@ -3,6 +3,7 @@ import { PluginId } from "@t3tools/contracts/plugin";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
@@ -278,6 +279,48 @@ layer((it) => {
         yield* runMigrations({});
         const store = yield* PluginSettingsStore;
         yield* store.remove(nextPluginId());
+      }),
+    );
+  });
+});
+
+layer((it) => {
+  describe("PluginSettingsStore declared schema", () => {
+    // A trivial but structurally valid SettingsSchemaLike: Schema.Struct is a Codec
+    // and carries `.fields`, which is all the store's declared map requires.
+    const schema = Schema.Struct({
+      baseUrl: Schema.String,
+    }) as unknown as PluginSettingsStoreModule.SettingsSchemaLike;
+
+    // An upgrade from a schema-declaring version to a schema-less one must be able to
+    // drop the old declaration; without clear, the map only ever grew and a later
+    // read fell back to the removed schema.
+    it.effect("clear removes a previously noted declaration", () =>
+      Effect.gen(function* () {
+        const pluginId = nextPluginId();
+        const store = yield* PluginSettingsStore;
+
+        yield* store.noteDeclaredSchema(pluginId, schema);
+        assert.isTrue(
+          Option.isSome(yield* store.declaredSchema(pluginId)),
+          "precondition: schema is declared",
+        );
+
+        yield* store.clearDeclaredSchema(pluginId);
+        assert.isTrue(
+          Option.isNone(yield* store.declaredSchema(pluginId)),
+          "clear must drop the declaration",
+        );
+      }),
+    );
+
+    it.effect("clear on an id with no declaration is a no-op", () =>
+      Effect.gen(function* () {
+        const pluginId = nextPluginId();
+        const store = yield* PluginSettingsStore;
+
+        yield* store.clearDeclaredSchema(pluginId);
+        assert.isTrue(Option.isNone(yield* store.declaredSchema(pluginId)));
       }),
     );
   });
