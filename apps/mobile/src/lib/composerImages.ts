@@ -3,6 +3,7 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type UploadChatImageAttachment,
 } from "@t3tools/contracts";
+import { estimateBase64ByteSize } from "./base64";
 import { uuidv4 } from "./uuid";
 
 export interface DraftComposerImageAttachment extends UploadChatImageAttachment {
@@ -24,11 +25,6 @@ export function toUploadChatImageAttachments(
 }
 
 const OWNED_PASTED_IMAGE_DIRECTORY = "t3-composer-paste";
-
-function estimateBase64ByteSize(base64: string): number {
-  const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
-  return Math.floor((base64.length * 3) / 4) - padding;
-}
 
 async function loadImagePicker() {
   try {
