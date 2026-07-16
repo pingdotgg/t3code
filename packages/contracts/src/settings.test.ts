@@ -168,6 +168,10 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
 });
 
 describe("ServerSettings worktree defaults", () => {
+  it("enables the built-in browser for legacy configs", () => {
+    expect(decodeServerSettings({}).enableBuiltInBrowser).toBe(true);
+  });
+
   it("defaults start-from-origin on for legacy configs", () => {
     expect(decodeServerSettings({}).newWorktreesStartFromOrigin).toBe(true);
   });

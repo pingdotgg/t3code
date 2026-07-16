@@ -598,6 +598,13 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks
         ? ["Provider update checks"]
         : []),
+      ...(settings.enableBuiltInBrowser !== DEFAULT_UNIFIED_SETTINGS.enableBuiltInBrowser
+        ? ["Built-in browser"]
+        : []),
+      ...(Duration.toMillis(settings.automaticGitFetchInterval) !==
+      Duration.toMillis(DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval)
+        ? ["Automatic Git fetch interval"]
+        : []),
       ...(isBackgroundActivityDirty ? ["Background activity"] : []),
       ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
         ? ["New thread mode"]
@@ -632,6 +639,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.enableAssistantStreaming,
       settings.enableProviderUpdateChecks,
       settings.sidebarProjectGroupingMode,
+      settings.enableBuiltInBrowser,
       settings.sidebarThreadPreviewCount,
       settings.timestampFormat,
       settings.wordWrap,
@@ -663,6 +671,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
+      enableBuiltInBrowser: DEFAULT_UNIFIED_SETTINGS.enableBuiltInBrowser,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
       providerHealthRefreshInterval: DEFAULT_UNIFIED_SETTINGS.providerHealthRefreshInterval,
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
@@ -1323,6 +1332,32 @@ export function GeneralSettingsPanel() {
                 updateSettings({ enableProviderUpdateChecks: Boolean(checked) })
               }
               aria-label="Check provider versions"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Built-in browser"
+          description="Allow agents to use T3 Code's browser tools. Applies to new agent sessions."
+          resetAction={
+            settings.enableBuiltInBrowser !== DEFAULT_UNIFIED_SETTINGS.enableBuiltInBrowser ? (
+              <SettingResetButton
+                label="built-in browser"
+                onClick={() =>
+                  updateSettings({
+                    enableBuiltInBrowser: DEFAULT_UNIFIED_SETTINGS.enableBuiltInBrowser,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.enableBuiltInBrowser}
+              onCheckedChange={(checked) =>
+                updateSettings({ enableBuiltInBrowser: Boolean(checked) })
+              }
+              aria-label="Allow agents to use the built-in browser"
             />
           }
         />
