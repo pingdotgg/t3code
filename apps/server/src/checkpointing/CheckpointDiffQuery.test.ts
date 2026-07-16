@@ -107,7 +107,7 @@ describe("CheckpointDiffQuery.layer", () => {
               }),
             getThreadShellById: () => Effect.succeed(Option.none()),
             getThreadDetailById: () => Effect.succeed(Option.none()),
-            listActiveChildThreadIds: () => Effect.succeed([]),
+            listChildThreadRefs: () => Effect.succeed([]),
           }),
         ),
       );
@@ -200,7 +200,7 @@ describe("CheckpointDiffQuery.layer", () => {
             getFullThreadDiffContext: () => Effect.die("unused"),
             getThreadShellById: () => Effect.succeed(Option.none()),
             getThreadDetailById: () => Effect.succeed(Option.none()),
-            listActiveChildThreadIds: () => Effect.succeed([]),
+            listChildThreadRefs: () => Effect.succeed([]),
           }),
         ),
       );
@@ -283,7 +283,7 @@ describe("CheckpointDiffQuery.layer", () => {
             getFullThreadDiffContext: () => Effect.die("unused"),
             getThreadShellById: () => Effect.succeed(Option.none()),
             getThreadDetailById: () => Effect.succeed(Option.none()),
-            listActiveChildThreadIds: () => Effect.succeed([]),
+            listChildThreadRefs: () => Effect.succeed([]),
           }),
         ),
       );
@@ -351,7 +351,7 @@ describe("CheckpointDiffQuery.layer", () => {
             getFullThreadDiffContext: () => Effect.die("unused"),
             getThreadShellById: () => Effect.succeed(Option.none()),
             getThreadDetailById: () => Effect.succeed(Option.none()),
-            listActiveChildThreadIds: () => Effect.succeed([]),
+            listChildThreadRefs: () => Effect.succeed([]),
           }),
         ),
       );
@@ -404,7 +404,7 @@ describe("CheckpointDiffQuery.layer", () => {
             getFullThreadDiffContext: () => Effect.succeed(Option.none()),
             getThreadShellById: () => Effect.succeed(Option.none()),
             getThreadDetailById: () => Effect.succeed(Option.none()),
-            listActiveChildThreadIds: () => Effect.succeed([]),
+            listChildThreadRefs: () => Effect.succeed([]),
           }),
         ),
       );

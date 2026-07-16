@@ -18,6 +18,7 @@ import {
   requireThreadArchived,
   requireThreadAbsent,
   requireThreadNotArchived,
+  requireValidParentThread,
 } from "./commandInvariants.ts";
 import { projectEvent } from "./projector.ts";
 import {
@@ -227,6 +228,15 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      if (command.parentThreadId !== undefined && command.parentThreadId !== null) {
+        yield* requireValidParentThread({
+          readModel,
+          command,
+          threadId: command.threadId,
+          projectId: command.projectId,
+          parentThreadId: command.parentThreadId,
+        });
+      }
       const modelSelection = isSubAgentThreadTitle(command.title)
         ? enforceSubAgentStandardMode(command.modelSelection)
         : command.modelSelection;

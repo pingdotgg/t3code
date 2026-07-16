@@ -980,7 +980,32 @@ const makeWsRpcLayer = (
                         Effect.orElseSucceed(() => false),
                       )
                   : false;
-              const result = yield* dispatchNormalizedCommand(normalizedCommand);
+              // thread.archive is idempotent at this layer: when the root is
+              // already archived (e.g. a retry after a partially failed child
+              // cascade), continue with descendant reconciliation instead of
+              // failing and permanently stranding still-active children.
+              const result =
+                normalizedCommand.type === "thread.archive"
+                  ? yield* dispatchNormalizedCommand(normalizedCommand).pipe(
+                      Effect.catch((dispatchError) =>
+                        projectionSnapshotQuery
+                          .getThreadDetailById(normalizedCommand.threadId)
+                          .pipe(
+                            Effect.orElseSucceed(() => Option.none()),
+                            Effect.flatMap((detail) =>
+                              Option.isSome(detail) && detail.value.archivedAt !== null
+                                ? projectionSnapshotQuery.getSnapshotSequence().pipe(
+                                    Effect.map((sequence) => ({
+                                      sequence: sequence.snapshotSequence,
+                                    })),
+                                    Effect.mapError(() => dispatchError),
+                                  )
+                                : Effect.fail(dispatchError),
+                            ),
+                          ),
+                      ),
+                    )
+                  : yield* dispatchNormalizedCommand(normalizedCommand);
               if (normalizedCommand.type === "thread.archive") {
                 const stopSessionAndCloseTerminals = Effect.fn(
                   "ws.dispatchCommand.archiveThreadSideEffects",
@@ -1020,34 +1045,46 @@ const makeWsRpcLayer = (
                   normalizedCommand.commandId,
                 );
 
-                // Cascade archive to nested child threads (sub-agents). Breadth-first
-                // with a visited set so grandchildren are covered; a single failure
-                // does not abort the rest of the tree.
-                const ARCHIVE_CASCADE_MAX_DEPTH = 8;
+                // Cascade archive to nested child threads (sub-agents).
+                // Breadth-first until the frontier is empty — the visited set
+                // already guards against cycles, so no depth cap that could
+                // silently strand deep descendants. Already-archived children
+                // are traversed (their subtree may still hold active threads)
+                // but not re-archived, which also makes retries of a partially
+                // failed cascade converge. A single failure does not abort the
+                // rest of the tree.
                 const visited = new Set<string>([normalizedCommand.threadId]);
                 let frontier: ReadonlyArray<ThreadId> = [normalizedCommand.threadId];
-                for (
-                  let depth = 0;
-                  depth < ARCHIVE_CASCADE_MAX_DEPTH && frontier.length > 0;
-                  depth++
-                ) {
+                while (frontier.length > 0) {
                   const nextFrontier: Array<ThreadId> = [];
                   for (const parentId of frontier) {
-                    const childIds = yield* projectionSnapshotQuery
-                      .listActiveChildThreadIds(parentId)
+                    const childRefs = yield* projectionSnapshotQuery
+                      .listChildThreadRefs(parentId)
                       .pipe(
                         Effect.catchCause((cause) =>
                           Effect.logWarning("failed to list child threads for archive cascade", {
                             parentThreadId: parentId,
                             cause,
-                          }).pipe(Effect.as([] as ReadonlyArray<ThreadId>)),
+                          }).pipe(
+                            Effect.as(
+                              [] as ReadonlyArray<{
+                                readonly threadId: ThreadId;
+                                readonly archived: boolean;
+                              }>,
+                            ),
+                          ),
                         ),
                       );
-                    for (const childId of childIds) {
+                    for (const childRef of childRefs) {
+                      const childId = childRef.threadId;
                       if (visited.has(childId)) {
                         continue;
                       }
                       visited.add(childId);
+                      nextFrontier.push(childId);
+                      if (childRef.archived) {
+                        continue;
+                      }
 
                       const childShouldStop = yield* projectionSnapshotQuery
                         .getThreadShellById(childId)
@@ -1086,8 +1123,6 @@ const makeWsRpcLayer = (
                           }),
                         ),
                       );
-
-                      nextFrontier.push(childId);
                     }
                   }
                   frontier = nextFrontier;

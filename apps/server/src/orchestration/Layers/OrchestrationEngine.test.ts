@@ -202,7 +202,7 @@ describe("OrchestrationEngine", () => {
           getFullThreadDiffContext: () => Effect.succeed(Option.none()),
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
-          listActiveChildThreadIds: () => Effect.succeed([]),
+          listChildThreadRefs: () => Effect.succeed([]),
         }),
       ),
       Layer.provide(

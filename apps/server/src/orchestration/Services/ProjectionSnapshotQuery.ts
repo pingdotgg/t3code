@@ -171,12 +171,16 @@ export interface ProjectionSnapshotQueryShape {
   ) => Effect.Effect<Option.Option<OrchestrationThread>, ProjectionRepositoryError>;
 
   /**
-   * List non-deleted, non-archived child thread ids for a parent.
-   * Used by archive cascade and nested-session bookkeeping.
+   * List non-deleted child thread refs for a parent, including archived ones
+   * (flagged) so archive-cascade traversal can pass through an auto-archived
+   * child to reach its still-active descendants.
    */
-  readonly listActiveChildThreadIds: (
+  readonly listChildThreadRefs: (
     parentThreadId: ThreadId,
-  ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionRepositoryError>;
+  ) => Effect.Effect<
+    ReadonlyArray<{ readonly threadId: ThreadId; readonly archived: boolean }>,
+    ProjectionRepositoryError
+  >;
 }
 
 /**

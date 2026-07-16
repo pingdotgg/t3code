@@ -509,8 +509,11 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
   /**
    * First observation of a terminal status for a sub-agent: write status,
    * notify parent activity, then auto-archive the child thread. Shared by
-   * observeStatus / list / wait so each path cannot double-emit once status
-   * is recorded as terminal.
+   * observeStatus / list / wait. The status write doubles as an atomic claim —
+   * it only succeeds while the record still describes the same turn
+   * (`lastTurnRequestedAt`) and is not already terminal, so concurrent
+   * observers and stale readers racing a follow-up turn cannot double-emit
+   * the completion activity or archive a thread that has moved on.
    */
   const handleFirstTerminalTransition = Effect.fn(
     "SubAgentCoordinator.handleFirstTerminalTransition",
@@ -522,7 +525,22 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
     readonly finalText: string | null;
     readonly createdAt?: string;
   }) {
-    yield* writeStatus(input.threadId, input.status);
+    const claimed = yield* SynchronizedRef.modify(children, (current) => {
+      const existing = current.get(input.threadId);
+      if (
+        !existing ||
+        existing.lastTurnRequestedAt !== input.record.lastTurnRequestedAt ||
+        isTerminalStatus(existing.status)
+      ) {
+        return [false, current] as const;
+      }
+      const next = new Map(current);
+      next.set(input.threadId, { ...existing, status: input.status });
+      return [true, next] as const;
+    });
+    if (!claimed) {
+      return;
+    }
     yield* emitCompletionActivity({
       record: input.record,
       threadId: input.threadId,
