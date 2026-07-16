@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { compareSemverVersions, normalizeSemverVersion, satisfiesSemverRange } from "./semver.ts";
+import {
+  compareSemverVersions,
+  isValidSemverVersion,
+  normalizeSemverVersion,
+  satisfiesSemverRange,
+} from "./semver.ts";
 
 describe("semver helpers", () => {
   it("matches supported range groups", () => {
@@ -20,6 +25,13 @@ describe("semver helpers", () => {
 
   it("compares prerelease versions before stable versions", () => {
     expect(compareSemverVersions("2.1.111-beta.1", "2.1.111")).toBeLessThan(0);
+  });
+
+  it("validates complete semver versions including prerelease and build metadata", () => {
+    expect(isValidSemverVersion("0.128.0")).toBe(true);
+    expect(isValidSemverVersion("0.129.0-alpha.1+build.7")).toBe(true);
+    expect(isValidSemverVersion("0.128")).toBe(false);
+    expect(isValidSemverVersion("0.129.0-alpha!")).toBe(false);
   });
 
   it("falls back to lexical comparison for malformed numeric segments", () => {

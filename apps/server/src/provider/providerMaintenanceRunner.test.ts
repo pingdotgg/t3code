@@ -129,6 +129,7 @@ function mockSpawnerLayer(
   handler: (
     command: string,
     args: ReadonlyArray<string>,
+    env: NodeJS.ProcessEnv | undefined,
   ) => {
     readonly stdout?: string;
     readonly stderr?: string;
@@ -142,8 +143,11 @@ function mockSpawnerLayer(
       const childProcess = command as unknown as {
         readonly command: string;
         readonly args: ReadonlyArray<string>;
+        readonly options?: { readonly env?: NodeJS.ProcessEnv };
       };
-      return Effect.succeed(mockHandle(handler(childProcess.command, childProcess.args)));
+      return Effect.succeed(
+        mockHandle(handler(childProcess.command, childProcess.args, childProcess.options?.env)),
+      );
     }),
   );
 }
@@ -217,6 +221,55 @@ const makeTestRunner = (registry: ProviderRegistryShape) =>
   );
 
 describe("providerMaintenanceRunner", () => {
+  it.effect("runs codex update with structured arguments for a qualifying Codex version", () => {
+    const calls: Array<{
+      command: string;
+      args: ReadonlyArray<string>;
+      env: NodeJS.ProcessEnv | undefined;
+    }> = [];
+    const updateEnvironment = {
+      PATH: "/test/bin",
+      CODEX_HOME: "/test/codex-home",
+    };
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry({ ...baseProvider, version: "0.128.0" });
+      const updater = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: () =>
+          Effect.succeed(
+            makeProviderMaintenanceCapabilities({
+              provider: CODEX_DRIVER,
+              packageName: "@openai/codex",
+              updateExecutable: "codex",
+              updateArgs: ["update"],
+              updateLockKey: "codex-native",
+              updateEnv: updateEnvironment,
+            }),
+          ),
+      });
+
+      yield* updater.updateProvider(CODEX_DRIVER);
+      assert.deepStrictEqual(calls, [
+        {
+          command: "codex",
+          args: ["update"],
+          env: updateEnvironment,
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("0.128.0"),
+          mockSpawnerLayer((command, args, env) => {
+            calls.push({ command, args, env });
+            return { stdout: "updated" };
+          }),
+        ),
+      ),
+    );
+  });
+
   it.effect("runs the allowlisted provider update command and records success", () => {
     const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
     return Effect.gen(function* () {

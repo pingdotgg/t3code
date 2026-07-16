@@ -6,6 +6,12 @@ interface ParsedSemver {
 }
 
 const SEMVER_NUMBER_SEGMENT = /^\d+$/;
+const VALID_SEMVER_PATTERN =
+  /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+
+export function isValidSemverVersion(value: string): boolean {
+  return VALID_SEMVER_PATTERN.test(value.trim());
+}
 
 export function normalizeSemverVersion(version: string): string {
   const [main, prerelease] = version.trim().split("-", 2);
@@ -25,7 +31,8 @@ export function normalizeSemverVersion(version: string): string {
 }
 
 export function parseSemver(value: string): ParsedSemver | null {
-  const normalized = normalizeSemverVersion(value).replace(/^v/, "");
+  const [versionWithoutBuildMetadata = ""] = value.trim().split("+", 2);
+  const normalized = normalizeSemverVersion(versionWithoutBuildMetadata).replace(/^v/, "");
   const [main = "", prerelease] = normalized.split("-", 2);
   const segments = main.split(".");
   if (segments.length !== 3) {
