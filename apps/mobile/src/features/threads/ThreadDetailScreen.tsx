@@ -17,7 +17,7 @@ import type {
 import { formatElapsed } from "@t3tools/shared/orchestrationTiming";
 import * as Haptics from "expo-haptics";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Platform, View, type GestureResponderEvent } from "react-native";
+import { Platform, View, type GestureResponderEvent, type LayoutChangeEvent } from "react-native";
 import { KeyboardController, KeyboardStickyView } from "react-native-keyboard-controller";
 import Animated, { FadeInDown, FadeOut, LinearTransition } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -176,6 +176,10 @@ function useStreamingHaptics(threadId: ThreadId, feed: ReadonlyArray<ThreadFeedE
 // overlay). Matches the rendered pill: pt-2 + pb-2 (16) wrapping a bordered
 // px-3/py-2 row (~36), so ~52 — keep it in sync with WorkingDurationPill.
 const WORKING_INDICATOR_HEIGHT = 52;
+// Extra list end-inset so the last message rests above the floating composer
+// instead of flush against (or under) it. Applied via heightAdjustment so both
+// the pre-layout estimate and the measured overlay height pick it up.
+const THREAD_FEED_COMPOSER_GAP = 24;
 
 const WorkingDurationPill = memo(function WorkingDurationPill(props: {
   readonly startedAt: string;
@@ -248,6 +252,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const composerOverlapHeight = composerChrome + composerBottomInset;
   const activeWorkIndicatorHeight = props.activeWorkStartedAt ? WORKING_INDICATOR_HEIGHT : 0;
   const estimatedOverlayHeight = composerOverlapHeight + activeWorkIndicatorHeight;
+  const [composerOverlayHeight, setComposerOverlayHeight] = useState(estimatedOverlayHeight);
   // The overlay's measured height includes the home-indicator inset (the
   // composer pads it), but contentInsetAdjustmentBehavior="automatic" makes
   // UIKit add the safe-area bottom to the content inset AGAIN — leaving a
@@ -257,11 +262,22 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   // its end-scroll math matches the real resting position.
   const nativeInsetOvercount =
     props.usesAutomaticContentInsets === true && Platform.OS === "ios" ? insets.bottom : 0;
+  // heightAdjustment is added to measured composer height. Keep the safe-area
+  // under-report (UIKit automatic insets) and add breathing room above chrome.
+  const composerEndHeightAdjustment = THREAD_FEED_COMPOSER_GAP - nativeInsetOvercount;
   const { contentInsetEndAdjustment, onComposerLayout } = useKeyboardChatComposerInset(
     listRef,
     composerOverlayRef,
-    Math.max(0, estimatedOverlayHeight - nativeInsetOvercount),
-    -nativeInsetOvercount,
+    Math.max(0, estimatedOverlayHeight + composerEndHeightAdjustment),
+    composerEndHeightAdjustment,
+  );
+  const handleComposerLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      onComposerLayout(event);
+      const height = event.nativeEvent.layout.height;
+      setComposerOverlayHeight((current) => (Math.abs(current - height) > 1 ? height : current));
+    },
+    [onComposerLayout],
   );
   const { freeze, scrollMessageToEnd } = useKeyboardScrollToEnd({ listRef });
   const showContent = props.showContent ?? true;
@@ -408,6 +424,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             freeze={freeze}
             anchorMessageId={anchorMessageId}
             contentInsetEndAdjustment={contentInsetEndAdjustment}
+            contentInsetEndEstimate={composerOverlayHeight + THREAD_FEED_COMPOSER_GAP}
             contentTopInset={0}
             contentBottomInset={estimatedOverlayHeight}
             contentMaxWidth={contentMaxWidth}
@@ -430,7 +447,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
           {/* No paddingTop here: the overlay's measured height becomes the
               list's bottom inset, so any padding above the pill/composer
               pushes the resting content floor up by the same amount. */}
-          <View ref={composerOverlayRef} onLayout={onComposerLayout} className="w-full">
+          <View ref={composerOverlayRef} onLayout={handleComposerLayout} className="w-full">
             <Animated.View
               className="w-full self-center"
               layout={LinearTransition.duration(220)}
