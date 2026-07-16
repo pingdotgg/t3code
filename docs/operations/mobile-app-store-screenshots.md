@@ -24,7 +24,7 @@ The command:
 2. Creates T3 Code, React, and Linux Git repositories with recognizable favicons, feature branches,
    and a deterministic T3 Code review diff.
 3. Seeds each server's migrated SQLite database with playful threads, messages, activities, and
-   terminal history.
+   terminal history, then adds two persisted mobile-outbox tasks waiting to send.
 4. Starts an isolated Metro server, builds the selected native apps, and boots each device.
 5. Pairs each clean app installation with Moonbase Terminal, Suspense Station, and Kernel Cabin.
 6. Navigates to the real application route for every requested scene.
@@ -106,6 +106,11 @@ Fixture timestamps are generated relative to capture startup so every route show
 labels while the server still receives valid current data. The same deterministic three-environment
 ensemble serves iPhone, iPad, Android phone, and Android tablet captures; responsive differences
 come entirely from the production app layout.
+
+The Pending rows use the production offline outbox and point at the real T3 Code and React fixture
+projects. Showcase coordination holds those two entries in the outbox for capture, just like a task
+currently open for editing, so reconnecting the seeded environments cannot deliver and remove them
+before the screenshot is taken.
 
 ## Local prerequisites
 

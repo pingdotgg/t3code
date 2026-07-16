@@ -4,6 +4,8 @@ import { CommonActions, StackActions, useNavigation } from "@react-navigation/na
 
 import { useConnectionController } from "../connection/useConnectionController";
 import { useProjects, useThreadShells } from "../../state/entities";
+import { enqueueThreadOutboxMessage } from "../../state/thread-outbox";
+import { holdEditingQueuedMessage } from "../../state/use-thread-outbox";
 import { useWorkspaceState } from "../../state/workspace";
 import {
   getNativeShowcasePairingUrls,
@@ -11,6 +13,10 @@ import {
   markNativeShowcaseReady,
   type ShowcaseScene,
 } from "./nativeShowcaseScene";
+import {
+  buildShowcasePendingTasks,
+  SHOWCASE_PENDING_TASK_DEFINITIONS,
+} from "./showcasePendingTasks";
 
 const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
 const SHOWCASE_THREAD_ID = "remote-command-center";
@@ -34,7 +40,9 @@ export function ShowcaseCaptureCoordinator(props: { readonly pathname: string })
   const projects = useProjects();
   const threads = useThreadShells();
   const attemptedPairingRef = useRef(new Set<string>());
+  const attemptedPendingTaskSeedRef = useRef(false);
   const [pairingUrls, setPairingUrls] = useState<ReadonlyArray<string>>([]);
+  const [pendingTasksReady, setPendingTasksReady] = useState(false);
   const [requestedScene, setRequestedScene] = useState<ShowcaseScene | null>(null);
   const [readyScene, setReadyScene] = useState<ShowcaseScene | null>(null);
 
@@ -78,12 +86,29 @@ export function ShowcaseCaptureCoordinator(props: { readonly pathname: string })
   }, [connectPairingUrl, pairingUrls]);
 
   const scene = sceneFromPathname(props.pathname);
-  const hasFixture =
+  const hasServerFixture =
     workspace.state.hasReadyEnvironment &&
     workspace.environments.length >= 3 &&
     projects.length >= 3 &&
     threads.some((thread) => String(thread.id) === SHOWCASE_THREAD_ID);
+  const hasFixture = hasServerFixture && pendingTasksReady;
   const showcaseThread = threads.find((thread) => String(thread.id) === SHOWCASE_THREAD_ID);
+
+  useEffect(() => {
+    if (!SHOWCASE_ENABLED || !hasServerFixture || attemptedPendingTaskSeedRef.current) return;
+
+    const pendingTasks = buildShowcasePendingTasks(projects, Date.now());
+    if (pendingTasks.length !== SHOWCASE_PENDING_TASK_DEFINITIONS.length) return;
+
+    attemptedPendingTaskSeedRef.current = true;
+    for (const task of pendingTasks) holdEditingQueuedMessage(task.messageId);
+    void Promise.all(pendingTasks.map((task) => enqueueThreadOutboxMessage(task)))
+      .then(() => setPendingTasksReady(true))
+      .catch((error: unknown) => {
+        attemptedPendingTaskSeedRef.current = false;
+        console.warn("[showcase] failed to seed pending offline tasks", error);
+      });
+  }, [hasServerFixture, projects]);
 
   useEffect(() => {
     if (!SHOWCASE_ENABLED || requestedScene === null || !hasFixture || !showcaseThread) return;
