@@ -106,6 +106,11 @@ export function resolveTarballUrl(input: {
   const url = new URL(input.tarball, input.marketplaceUrl);
   if (url.protocol === "https:") {
     url.hash = "";
+    // Strip embedded credentials, symmetric with canonicalHttpsUrl: this URL is
+    // logged and surfaced in error payloads, so `https://user:pw@host/x.tgz` would
+    // leak the secret. Credentialed tarball URLs are not supported.
+    url.username = "";
+    url.password = "";
     return url.toString();
   }
   if (url.protocol === "file:" && process.env.T3_PLUGIN_DEV === "1") {

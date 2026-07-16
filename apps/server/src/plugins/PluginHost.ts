@@ -1,5 +1,6 @@
 import {
   HOST_API_VERSION,
+  PLUGIN_ID_PATTERN_SOURCE,
   PluginManifest,
   hostApiSatisfies,
   type PluginId,
@@ -98,6 +99,10 @@ export const PRESERVE_DATA_MARKER = ".preserve-data-on-remove";
 // is parked under while a pending-remove is reconciled. Exported so the start-time
 // orphan sweep and its tests agree on the exact name.
 export const PRESERVED_DATA_DIR_PREFIX = ".preserved-";
+
+// Anchored plugin-id shape used to reject a hostile `.preserved-<...>` directory
+// name before it is joined into a filesystem path in the orphan sweep.
+const SWEEP_PLUGIN_ID_PATTERN = new RegExp(`^${PLUGIN_ID_PATTERN_SOURCE}$`, "u");
 const decodeManifest = Schema.decodeUnknownEffect(Schema.fromJsonString(PluginManifest));
 
 const healthyActivationDelay = () => {
@@ -1576,6 +1581,17 @@ export const make = Effect.fn("PluginHost.make")(function* () {
         if (!name.startsWith(PRESERVED_DATA_DIR_PREFIX)) continue;
         const pluginId = name.slice(PRESERVED_DATA_DIR_PREFIX.length) as PluginId;
         if (pluginId.length === 0) continue;
+        // The id is derived from an on-disk directory name and then joined into a
+        // path we rename INTO. A hand-crafted dir like `.preserved-../../evil` would
+        // otherwise escape pluginsDir via path.join and let the rename write outside
+        // it. Only a syntactically valid plugin id (no separators, no `..`) can be a
+        // real orphan, so reject anything else.
+        if (!SWEEP_PLUGIN_ID_PATTERN.test(pluginId)) {
+          yield* Effect.logWarning("Skipping preserved-data dir with an invalid plugin id", {
+            name,
+          });
+          continue;
+        }
         // A still-tracked id belongs to the pending-remove reconcile path, not the
         // sweep — only an orphan (entry already gone) is re-homed here.
         if (getLockfilePlugin(lockfile, pluginId) !== undefined) continue;

@@ -737,6 +737,9 @@ it.effect("PluginInstaller uninstall removeData:true clears an earlier preserve 
         lastError: null,
       };
       yield* store.updatePlugin(pluginId, () => Effect.succeed(entry));
+      // An installed plugin has its dir on disk; the marker is only recorded when it
+      // does (writing it otherwise would create a phantom dir for nothing).
+      yield* fs.makeDirectory(path.join(config.pluginsDir, pluginId), { recursive: true });
 
       // First uninstall keeps the data: the marker is written.
       yield* installer.uninstall({ pluginId, removeData: false });

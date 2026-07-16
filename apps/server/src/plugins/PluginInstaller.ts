@@ -1048,15 +1048,22 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
     Effect.gen(function* () {
       const markerPath = path.join(config.pluginsDir, input.pluginId, PRESERVE_DATA_MARKER);
       if (!input.removeData) {
-        yield* fs.makeDirectory(path.dirname(markerPath), { recursive: true }).pipe(
-          Effect.andThen(fs.writeFileString(markerPath, "")),
-          Effect.mapError((cause) =>
-            managementError("filesystem", "Failed to record plugin data preservation intent.", {
-              pluginId: input.pluginId,
-              cause,
-            }),
-          ),
-        );
+        // Only record the marker when the plugin dir already EXISTS. The previous
+        // `makeDirectory(recursive)` created the dir just to hold the marker, leaving a
+        // phantom `<id>/` containing a lone preserve marker for a plugin that has
+        // nothing on disk to preserve — which the reconcile/sweep paths then act on.
+        const pluginRoot = path.dirname(markerPath);
+        const rootExists = yield* fs.exists(pluginRoot).pipe(Effect.orElseSucceed(() => false));
+        if (rootExists) {
+          yield* fs.writeFileString(markerPath, "").pipe(
+            Effect.mapError((cause) =>
+              managementError("filesystem", "Failed to record plugin data preservation intent.", {
+                pluginId: input.pluginId,
+                cause,
+              }),
+            ),
+          );
+        }
       } else {
         // The LATEST request wins. A marker written by an earlier keep-my-data
         // uninstall used to survive a retry with removeData: true, so reconcile
