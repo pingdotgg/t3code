@@ -319,6 +319,8 @@ assets uncacheable so a reload picks up the latest build.
   instructions), `providers` (ship an AI provider), and the chat surface extension
   points.
 - [guardrails, ollama, worklog](https://github.com/ccdwyer/t3code-plugins) — small,
-  each demonstrating a capability pairing.
+  each demonstrating a capability pairing. The `ollama` provider example installs and
+  registers its descriptor, but provider plugins are not yet instantiable or selectable
+  for chat — that driver wiring is staged follow-up work.
 - [workflow-boards-plugin](https://github.com/ccdwyer/workflow-boards-plugin) — a large
   real-world plugin (46 RPC methods) if you want to see the surface used in anger.

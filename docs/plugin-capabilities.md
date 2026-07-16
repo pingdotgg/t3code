@@ -232,7 +232,9 @@ anything that must see every event to stay correct.
 ### `context` — tell the agent something every turn
 
 Contributed text is appended to the agent's developer instructions once per user turn,
-in both plan and default modes.
+in both plan and default modes. Today this composition runs on Codex-provider turns
+only; wiring it into the other built-in providers (Claude, Grok, Cursor, OpenCode) is
+staged follow-up work.
 
 ```ts
 context: [
@@ -279,6 +281,12 @@ the host had before the plugin existed, so failure cannot escalate. The user is 
 who denied and why, in the plugin's own words.
 
 ### `providers` — ship an AI provider
+
+**Status: staged.** A `providers` plugin today validates, installs, and registers its
+descriptor, but is not yet instantiable or selectable for chat — the driver wiring that
+mounts a plugin descriptor into the provider instance registry is follow-up work. The
+example below is what a provider plugin will look like, not a driver you can pick in the
+model list right now.
 
 Every built-in provider is compiled into the app. A `providers` plugin adds one at
 runtime. The plugin implements **four methods** and a host shim implements the other
