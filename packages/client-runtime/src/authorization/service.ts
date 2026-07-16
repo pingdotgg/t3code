@@ -1,4 +1,5 @@
 import { EnvironmentId } from "@t3tools/contracts";
+import type { AdvertisedEndpoint } from "@t3tools/contracts";
 import type { RelayManagedEndpoint } from "@t3tools/contracts/relay";
 import {
   exchangeRemoteDpopAccessToken,
@@ -36,6 +37,7 @@ export interface AuthorizedRemoteEnvironment {
   readonly httpBaseUrl: string;
   readonly socketUrl: string;
   readonly httpAuthorization: PreparedHttpAuthorization;
+  readonly advertisedEndpoints?: ReadonlyArray<AdvertisedEndpoint>;
 }
 
 export class RemoteEnvironmentAuthorization extends Context.Service<
@@ -134,6 +136,9 @@ export const make = Effect.gen(function* () {
           _tag: "Bearer" as const,
           token: input.bearerToken,
         },
+        ...(descriptor.advertisedEndpoints === undefined
+          ? {}
+          : { advertisedEndpoints: descriptor.advertisedEndpoints }),
       };
     },
   );

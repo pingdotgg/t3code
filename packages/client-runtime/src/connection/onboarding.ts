@@ -10,6 +10,7 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 
 import { bootstrapRemoteBearerSession } from "../authorization/remote.ts";
 import { deriveWsBaseUrl, normalizeHttpBaseUrl } from "../environment/endpoint.ts";
+import { resolveAdoptableAdvertisedEndpoint } from "../environment/endpointAdoption.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import {
@@ -85,6 +86,19 @@ export const preparePairingRegistration = Effect.fn(
   }).pipe(Effect.mapError(mapRemoteEnvironmentError));
   const connectionId = `bearer:${descriptor.environmentId}`;
 
+  // Prefer the endpoint the server advertises as its default (e.g. the
+  // tailnet HTTPS endpoint) over the literal pairing URL, but only when this
+  // client can actually reach it — a phone without Tailscale that pairs over
+  // LAN must keep the LAN base URL.
+  const endpoint = Option.getOrElse(
+    yield* resolveAdoptableAdvertisedEndpoint({
+      advertisedEndpoints: descriptor.advertisedEndpoints,
+      currentHttpBaseUrl: target.httpBaseUrl,
+      expectedEnvironmentId: descriptor.environmentId,
+    }),
+    () => ({ httpBaseUrl: target.httpBaseUrl, wsBaseUrl: target.wsBaseUrl }),
+  );
+
   return new BearerConnectionRegistration({
     target: new BearerConnectionTarget({
       environmentId: descriptor.environmentId,
@@ -95,8 +109,8 @@ export const preparePairingRegistration = Effect.fn(
       connectionId,
       environmentId: descriptor.environmentId,
       label: descriptor.label,
-      httpBaseUrl: target.httpBaseUrl,
-      wsBaseUrl: target.wsBaseUrl,
+      httpBaseUrl: endpoint.httpBaseUrl,
+      wsBaseUrl: endpoint.wsBaseUrl,
     }),
     credential: new BearerConnectionCredential({
       token: access.access_token,

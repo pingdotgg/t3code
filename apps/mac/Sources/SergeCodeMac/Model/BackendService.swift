@@ -147,6 +147,11 @@ public protocol BackendService: Sendable {
     /// by the mobile app on the local network. False when the user enabled
     /// mobile access after this launch (the bind host is fixed per process).
     func isServerLanReachable() async -> Bool
+    /// How remote devices can currently reach this Mac's server: the LAN
+    /// bind state plus the tailnet hostname when `tailscale serve` is active
+    /// (from the server's advertised endpoints). Defaulted for conformers
+    /// that predate tailnet access.
+    func remoteAccessStatus() async -> ServerRemoteAccessStatus
     /// Mint a fresh one-time pairing credential and the QR-able pairing URL
     /// the SergeCode mobile app scans to connect to this machine.
     func mintMobilePairing(label: String) async throws -> MobilePairingInfo
@@ -176,11 +181,33 @@ public extension BackendService {
     func mintMobilePairing() async throws -> MobilePairingInfo {
         try await mintMobilePairing(label: "iPhone")
     }
+
+    /// Default for conformers without tailnet awareness (test fakes): the
+    /// LAN bind state only, no tailnet hostname.
+    func remoteAccessStatus() async -> ServerRemoteAccessStatus {
+        ServerRemoteAccessStatus(
+            lanReachable: await isServerLanReachable(), tailnetHostname: nil)
+    }
+}
+
+/// How remote devices can reach this Mac's server right now. `lanReachable`
+/// reflects the sidecar's launch-captured bind host; `tailnetHostname` is
+/// the MagicDNS name (`<machine>.<tailnet>.ts.net`) when `tailscale serve`
+/// is active, i.e. the address pairing URLs will actually use.
+public struct ServerRemoteAccessStatus: Sendable, Equatable {
+    public var lanReachable: Bool
+    public var tailnetHostname: String?
+
+    public init(lanReachable: Bool, tailnetHostname: String?) {
+        self.lanReachable = lanReachable
+        self.tailnetHostname = tailnetHostname
+    }
 }
 
 /// One freshly-minted mobile pairing handshake: the URL the iPhone scans
-/// (`http://<lan-ip>:<port>/pair#token=<code>`, the same shape the server's
-/// headless `serve` prints — apps/server/src/startupAccess.ts
+/// (`https://<magicdns>/pair#token=<code>` when Tailscale serve is active,
+/// otherwise `http://<lan-ip>:<port>/pair#token=<code>` — the same shape the
+/// server's headless `serve` prints, apps/server/src/startupAccess.ts
 /// `buildPairingUrl`), the raw code for manual entry, and its expiry.
 public struct MobilePairingInfo: Sendable, Equatable {
     public let pairingURL: URL

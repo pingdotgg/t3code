@@ -105,15 +105,33 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         await state.deleteThread(id: id)
     }
 
+    /// Fixture MagicDNS hostname the mock advertises while the Tailscale
+    /// preference is on, so the pairing/connection UI is exercisable in both
+    /// tailnet and LAN-fallback states without a real sidecar.
+    static let mockTailnetHostname = "mock-mac.tail1234.ts.net"
+
     public func isServerLanReachable() async -> Bool {
         // The mock pretends the LAN bind is active so the pairing UI is
         // fully exercisable without a real sidecar.
         MobileAccessPreference.isEnabled
     }
 
+    public func remoteAccessStatus() async -> ServerRemoteAccessStatus {
+        ServerRemoteAccessStatus(
+            lanReachable: MobileAccessPreference.isEnabled,
+            tailnetHostname: TailscaleAccessPreference.isEnabled
+                ? Self.mockTailnetHostname : nil)
+    }
+
     public func mintMobilePairing(label: String) async throws -> MobilePairingInfo {
-        MobilePairingInfo(
-            pairingURL: URL(string: "http://192.168.1.42:3773/pair#token=MOCKPAIR2345")!,
+        // Mirrors LiveBackend's preference order: tailnet URL when serve is
+        // active, LAN fallback otherwise.
+        let pairingURL =
+            TailscaleAccessPreference.isEnabled
+            ? URL(string: "https://\(Self.mockTailnetHostname)/pair#token=MOCKPAIR2345")!
+            : URL(string: "http://192.168.1.42:3773/pair#token=MOCKPAIR2345")!
+        return MobilePairingInfo(
+            pairingURL: pairingURL,
             credential: "MOCKPAIR2345",
             expiresAt: Date().addingTimeInterval(5 * 60))
     }

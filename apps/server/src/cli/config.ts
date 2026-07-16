@@ -54,7 +54,7 @@ export const logWebSocketEventsFlag = Flag.boolean("log-websocket-events").pipe(
 );
 export const tailscaleServeFlag = Flag.boolean("tailscale-serve").pipe(
   Flag.withDescription(
-    "Configure Tailscale Serve to expose this backend over HTTPS on the Tailnet.",
+    "Configure Tailscale Serve to expose this backend over HTTPS on the Tailnet (enabled by default; pass --tailscale-serve=false to disable).",
   ),
   Flag.optional,
 );
@@ -273,7 +273,9 @@ export const resolveServerConfig = (
         Option.fromUndefinedOr(env.tailscaleServeEnabled),
         Option.fromUndefinedOr(bootstrap?.tailscaleServeEnabled),
       ),
-      () => false,
+      // Auto-attempt by default: machines without Tailscale log a non-fatal
+      // warning at serve time and keep running on the direct address.
+      () => true,
     );
     const tailscaleServePort = Option.getOrElse(
       resolveOptionPrecedence(

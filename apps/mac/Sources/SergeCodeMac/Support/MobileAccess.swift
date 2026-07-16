@@ -17,6 +17,25 @@ public enum MobileAccessPreference {
     }
 }
 
+/// User preference gating whether the sidecar attempts `tailscale serve` so
+/// paired devices can reach this Mac over the internet at
+/// `https://<magicdns>/` (proxied to the loopback port — no LAN bind
+/// required). Default ON: the serve attempt is a no-op when Tailscale isn't
+/// installed or signed in. Like `MobileAccessPreference`, the value is read
+/// once at backend construction (App.swift) and sent in the bootstrap
+/// envelope, so flipping the toggle takes effect on next launch.
+public enum TailscaleAccessPreference {
+    static let defaultsKey = "allowTailscaleAccess"
+
+    public static var isEnabled: Bool {
+        UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true
+    }
+
+    public static func setEnabled(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: defaultsKey)
+    }
+}
+
 /// Resolves this Mac's primary LAN IPv4 address (the one an iPhone on the
 /// same network can reach), mirroring the server's own headless heuristic
 /// (`resolveHeadlessConnectionHost` in apps/server/src/startupAccess.ts):

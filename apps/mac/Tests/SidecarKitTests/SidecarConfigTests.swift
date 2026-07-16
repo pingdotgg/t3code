@@ -26,4 +26,18 @@ struct SidecarConfigTests {
         #expect(config.port == 54321)
         #expect(config.logDirectory == "/tmp/sergecode-test/logs/sidecar")
     }
+
+    @Test("tailscale serve defaults off and is carried through when enabled")
+    func tailscaleServePassThrough() throws {
+        let defaulted = try SidecarConfig(
+            nodePath: "/usr/local/bin/node", port: 54321, baseDir: "/tmp/sergecode-test")
+        #expect(defaulted.tailscaleServeEnabled == false)
+        #expect(defaulted.tailscaleServePort == 443)
+
+        let enabled = try SidecarConfig(
+            nodePath: "/usr/local/bin/node", port: 54321, baseDir: "/tmp/sergecode-test",
+            tailscaleServeEnabled: true, tailscaleServePort: 8443)
+        #expect(enabled.tailscaleServeEnabled == true)
+        #expect(enabled.tailscaleServePort == 8443)
+    }
 }

@@ -80,7 +80,12 @@ import {
 import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
-import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
+import {
+  disableTailscaleServe,
+  ensureTailscaleServe,
+  resolveTailscaleHttpsBaseUrl,
+} from "@t3tools/tailscale";
+import * as TailnetAccess from "./tailnetAccess.ts";
 
 // Effect's default preemptive shutdown waits 20s before finalizing request scopes.
 // T3's primary transport is long-lived WebSocket RPC, whose Effect scope finalizer
@@ -311,6 +316,7 @@ const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   Layer.provideMerge(AnalyticsService.layer),
   Layer.provideMerge(ExternalLauncher.layer),
   Layer.provideMerge(ServerLifecycleEvents.layer),
+  Layer.provideMerge(TailnetAccess.layer),
   Layer.provide(NetService.layer),
 );
 
@@ -371,9 +377,11 @@ export const makeServerLayer = Layer.unwrap(
       ? Layer.effectDiscard(
           Effect.acquireRelease(
             Effect.gen(function* () {
+              const tailnetAccess = yield* TailnetAccess.TailnetAccess;
               const server = yield* HttpServer.HttpServer;
               const address = server.address;
               if (typeof address === "string" || !("port" in address)) {
+                yield* tailnetAccess.recordTailnetHttpsBaseUrl(null);
                 return null;
               }
 
@@ -383,19 +391,32 @@ export const makeServerLayer = Layer.unwrap(
                 servePort: config.tailscaleServePort,
                 localHost: "127.0.0.1",
               }).pipe(
-                Effect.as({ localPort, servePort: config.tailscaleServePort }),
-                Effect.tap(() =>
-                  Effect.logInfo("Tailscale Serve configured", {
-                    localPort,
-                    servePort: config.tailscaleServePort,
-                  }),
+                Effect.andThen(
+                  resolveTailscaleHttpsBaseUrl({ servePort: config.tailscaleServePort }).pipe(
+                    Effect.orElseSucceed(() => null),
+                  ),
                 ),
+                Effect.tap((tailnetHttpsBaseUrl) =>
+                  tailnetAccess.recordTailnetHttpsBaseUrl(tailnetHttpsBaseUrl).pipe(
+                    Effect.andThen(
+                      Effect.logInfo("Tailscale Serve configured", {
+                        localPort,
+                        servePort: config.tailscaleServePort,
+                        tailnetHttpsBaseUrl,
+                      }),
+                    ),
+                  ),
+                ),
+                Effect.as({ localPort, servePort: config.tailscaleServePort }),
                 Effect.catch((cause) =>
                   Effect.logWarning("Failed to configure Tailscale Serve", {
                     cause,
                     localPort,
                     servePort: config.tailscaleServePort,
-                  }).pipe(Effect.as(null)),
+                  }).pipe(
+                    Effect.andThen(tailnetAccess.recordTailnetHttpsBaseUrl(null)),
+                    Effect.as(null),
+                  ),
                 ),
               );
             }),
@@ -417,7 +438,12 @@ export const makeServerLayer = Layer.unwrap(
                 : Effect.void,
           ),
         )
-      : Layer.empty;
+      : Layer.effectDiscard(
+          Effect.gen(function* () {
+            const tailnetAccess = yield* TailnetAccess.TailnetAccess;
+            yield* tailnetAccess.recordTailnetHttpsBaseUrl(null);
+          }),
+        );
     const cloudDesiredLinkReconcileLayer = Layer.effectDiscard(
       Effect.gen(function* () {
         if (!hasCloudPublicConfig) return;

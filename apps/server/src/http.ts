@@ -1,9 +1,15 @@
 import { EnvironmentHttpApi } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { HttpRouter, HttpServerResponse, HttpServerRequest } from "effect/unstable/http";
+import {
+  HttpRouter,
+  HttpServer,
+  HttpServerResponse,
+  HttpServerRequest,
+} from "effect/unstable/http";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
+import { buildServerAdvertisedEndpoints } from "./advertisedEndpoints.ts";
 import {
   ASSET_ROUTE_PREFIX,
   FALLBACK_PROJECT_FAVICON_SVG,
@@ -11,8 +17,15 @@ import {
 } from "./assets/AssetAccess.ts";
 import { traceRelayRequest } from "./cloud/traceRelayRequest.ts";
 import { annotateEnvironmentRequest } from "./auth/http.ts";
+import * as ServerConfig from "./config.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import { browserApiCorsAllowedHeaders, browserApiCorsAllowedMethods } from "./httpCors.ts";
+import {
+  isLoopbackHost,
+  resolveHeadlessConnectionString,
+  resolveListeningPort,
+} from "./startupAccess.ts";
+import * as TailnetAccess from "./tailnetAccess.ts";
 
 export const apiCorsLayer = HttpRouter.cors({
   allowedMethods: browserApiCorsAllowedMethods,
@@ -25,11 +38,26 @@ export const serverEnvironmentHttpApiLayer = HttpApiBuilder.group(
   "metadata",
   Effect.fnUntraced(function* (handlers) {
     const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+    const serverConfig = yield* ServerConfig.ServerConfig;
+    const tailnetAccess = yield* TailnetAccess.TailnetAccess;
+    const httpServer = yield* HttpServer.HttpServer;
     return handlers.handle(
       "descriptor",
       Effect.fn("environment.metadata.descriptor")(function* (args) {
         yield* annotateEnvironmentRequest(args.endpoint.name);
-        return yield* serverEnvironment.getDescriptor;
+        const descriptor = yield* serverEnvironment.getDescriptor;
+        const tailnetHttpsBaseUrl = yield* tailnetAccess.getTailnetHttpsBaseUrl;
+        return {
+          ...descriptor,
+          advertisedEndpoints: buildServerAdvertisedEndpoints({
+            tailnetHttpsBaseUrl,
+            directHttpBaseUrl: resolveHeadlessConnectionString(
+              serverConfig.host,
+              resolveListeningPort(httpServer.address, serverConfig.port),
+            ),
+            directReachability: isLoopbackHost(serverConfig.host) ? "loopback" : "lan",
+          }),
+        };
       }, traceRelayRequest),
     );
   }),

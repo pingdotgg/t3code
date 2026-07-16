@@ -69,7 +69,7 @@ import T3Kit
 //    status/files/assistantMessageId via CheckpointMapping.
 
 public enum LiveBackendMode: Sendable {
-    case localSidecar(allowLanAccess: Bool)
+    case localSidecar(allowLanAccess: Bool, tailscaleServeEnabled: Bool)
     case remote(device: RemoteDevice, keychain: any KeychainStoreProtocol)
 }
 
@@ -80,7 +80,12 @@ private extension LiveBackendMode {
     }
 
     var allowLanAccess: Bool {
-        if case let .localSidecar(allowLanAccess) = self { return allowLanAccess }
+        if case let .localSidecar(allowLanAccess, _) = self { return allowLanAccess }
+        return false
+    }
+
+    var tailscaleServeEnabled: Bool {
+        if case let .localSidecar(_, tailscaleServeEnabled) = self { return tailscaleServeEnabled }
         return false
     }
 }
@@ -239,9 +244,18 @@ public actor LiveBackend: BackendService {
         }
     }
 
-    public init(allowLanAccess: Bool = false, baseDirectory: String? = nil) {
+    /// `tailscaleServeEnabled` defaults to `false` so tests and ad-hoc
+    /// spawns never touch the machine's Tailscale state; App.swift passes
+    /// the user preference (default ON) explicitly.
+    public init(
+        allowLanAccess: Bool = false,
+        tailscaleServeEnabled: Bool = false,
+        baseDirectory: String? = nil
+    ) {
         self.init(
-            mode: .localSidecar(allowLanAccess: allowLanAccess),
+            mode: .localSidecar(
+                allowLanAccess: allowLanAccess,
+                tailscaleServeEnabled: tailscaleServeEnabled),
             baseDirectory: baseDirectory)
     }
 
@@ -339,7 +353,8 @@ public actor LiveBackend: BackendService {
             sidecarConfig = try SidecarConfig(
                 nodePath: nodePath, entryPath: entryPath,
                 host: mode.allowLanAccess ? "0.0.0.0" : "127.0.0.1",
-                baseDir: localBaseDirectory)
+                baseDir: localBaseDirectory,
+                tailscaleServeEnabled: mode.tailscaleServeEnabled)
         } catch {
             emit(.connection(.failed("Could not configure the server sidecar: \(error)")))
             return
@@ -2317,27 +2332,71 @@ public actor LiveBackend: BackendService {
         return mode.allowLanAccess && serverProcess != nil
     }
 
+    public func remoteAccessStatus() async -> ServerRemoteAccessStatus {
+        guard !mode.isRemote, serverProcess != nil else {
+            return ServerRemoteAccessStatus(lanReachable: false, tailnetHostname: nil)
+        }
+        let hostname = (await fetchTailnetEndpoint()).flatMap { URL(string: $0.httpBaseUrl)?.host }
+        return ServerRemoteAccessStatus(
+            lanReachable: mode.allowLanAccess, tailnetHostname: hostname)
+    }
+
     public func mintMobilePairing(label: String) async throws -> MobilePairingInfo {
         guard !mode.isRemote else { throw LiveBackendError.remoteModeUnsupported }
-        guard mode.allowLanAccess else { throw LiveBackendError.mobileAccessDisabled }
         guard let auth = authClient, let port = sidecarPort, currentClient != nil else {
             throw LiveBackendError.notConnected
         }
-        guard let address = LanAddressResolver.primaryIPv4() else {
-            throw LiveBackendError.noLanAddress
+        // Prefer the tailnet address when the server advertises one:
+        // `tailscale serve` proxies to loopback, so pairing works over the
+        // tailnet even with the LAN bind (mobile-access preference) off.
+        let tailnetEndpoint = await fetchTailnetEndpoint()
+        if tailnetEndpoint == nil {
+            guard mode.allowLanAccess else { throw LiveBackendError.mobileAccessDisabled }
         }
         let accessToken = try await auth.acquireAccessToken()
         let minted = try await auth.mintPairingCredential(accessToken: accessToken, label: label)
         // Same shape the server's headless `serve` QR encodes
         // (startupAccess.ts buildPairingUrl): path /pair, token in the URL
         // fragment so it never appears in request logs.
-        guard let url = URL(string: "http://\(address):\(port)/pair#token=\(minted.credential)")
-        else {
-            throw LiveBackendError.noLanAddress
+        let url: URL
+        if let tailnetEndpoint,
+            let tailnetURL = PairingEndpointSelection.pairingURL(
+                httpBaseUrl: tailnetEndpoint.httpBaseUrl, credential: minted.credential)
+        {
+            url = tailnetURL
+        } else {
+            // Re-checked here (not just before minting) so a tailnet entry
+            // with an unparseable base URL can't fall through to a LAN URL
+            // the server isn't actually bound to.
+            guard mode.allowLanAccess else { throw LiveBackendError.mobileAccessDisabled }
+            guard let address = LanAddressResolver.primaryIPv4() else {
+                throw LiveBackendError.noLanAddress
+            }
+            guard
+                let lanURL = URL(
+                    string: "http://\(address):\(port)/pair#token=\(minted.credential)")
+            else {
+                throw LiveBackendError.noLanAddress
+            }
+            url = lanURL
         }
         let expiresAt = WireDate.parse(minted.expiresAt) ?? Date().addingTimeInterval(5 * 60)
         return MobilePairingInfo(
             pairingURL: url, credential: minted.credential, expiresAt: expiresAt)
+    }
+
+    /// The default `private-network` endpoint from the running sidecar's
+    /// `/.well-known/t3/environment` descriptor, or nil when Tailscale serve
+    /// is inactive (not enabled / not installed / not recorded yet — it can
+    /// take a few seconds after boot) or the fetch fails. Always re-fetched
+    /// (never cached): serve can come up or drop at any time during the
+    /// sidecar's life, and callers re-mint every few minutes anyway.
+    private func fetchTailnetEndpoint() async -> AdvertisedEndpoint? {
+        guard let port = sidecarPort,
+            let base = URL(string: "http://127.0.0.1:\(port)/")
+        else { return nil }
+        let descriptor = try? await PairingClient.fetchDescriptor(httpBaseURL: base)
+        return PairingEndpointSelection.preferredTailnetEndpoint(descriptor?.advertisedEndpoints)
     }
 
     // MARK: - BackendService: settings + providers

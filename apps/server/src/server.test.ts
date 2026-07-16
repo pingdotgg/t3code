@@ -89,6 +89,7 @@ import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
+import * as TailnetAccess from "./tailnetAccess.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
@@ -129,6 +130,17 @@ const testEnvironmentDescriptor = {
     repositoryIdentity: true,
   },
 };
+const expectedDirectAdvertisedEndpoint = (port: number) => ({
+  id: "direct",
+  label: "Direct",
+  provider: { id: "direct", label: "Direct", kind: "core", isAddon: false },
+  httpBaseUrl: `http://127.0.0.1:${port}/`,
+  wsBaseUrl: `ws://127.0.0.1:${port}/`,
+  reachability: "loopback",
+  compatibility: { hostedHttpsApp: "mixed-content-blocked", desktopApp: "compatible" },
+  source: "server",
+  status: "available",
+});
 const makeDefaultOrchestrationReadModel = () => {
   const now = "2026-01-01T00:00:00.000Z";
   return {
@@ -234,6 +246,7 @@ const buildAppUnderTest = (options?: {
     serverLifecycleEvents?: Partial<ServerLifecycleEvents.ServerLifecycleEvents["Service"]>;
     serverRuntimeStartup?: Partial<ServerRuntimeStartup.ServerRuntimeStartup["Service"]>;
     serverEnvironment?: Partial<ServerEnvironment.ServerEnvironment["Service"]>;
+    tailnetAccess?: Partial<TailnetAccess.TailnetAccess["Service"]>;
     repositoryIdentityResolver?: Partial<
       RepositoryIdentityResolver.RepositoryIdentityResolver["Service"]
     >;
@@ -673,6 +686,14 @@ const buildAppUnderTest = (options?: {
           getEnvironmentId: Effect.succeed(testEnvironmentDescriptor.environmentId),
           getDescriptor: Effect.succeed(testEnvironmentDescriptor),
           ...options?.layers?.serverEnvironment,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(TailnetAccess.TailnetAccess)({
+          recordTailnetHttpsBaseUrl: () => Effect.void,
+          getTailnetHttpsBaseUrl: Effect.succeed(null),
+          awaitTailnetHttpsBaseUrl: Effect.succeed(null),
+          ...options?.layers?.tailnetAccess,
         }),
       ),
       Layer.provide(
@@ -1153,11 +1174,60 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       const url = yield* getHttpServerUrl("/.well-known/t3/environment");
       const response = yield* fetchEffect(url);
-      const body = yield* responseJsonEffect<typeof testEnvironmentDescriptor>(response);
+      const body = yield* responseJsonEffect<unknown>(response);
+      const server = yield* HttpServer.HttpServer;
+      const port = (server.address as HttpServer.TcpAddress).port;
 
       assert.equal(response.status, 200);
-      assert.deepEqual(body, testEnvironmentDescriptor);
+      assert.deepEqual(body, {
+        ...testEnvironmentDescriptor,
+        advertisedEndpoints: [expectedDirectAdvertisedEndpoint(port)],
+      });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect(
+    "advertises the tailscale endpoint as default when a tailnet base URL is recorded",
+    () =>
+      Effect.gen(function* () {
+        yield* buildAppUnderTest({
+          layers: {
+            tailnetAccess: {
+              getTailnetHttpsBaseUrl: Effect.succeed("https://machine.tailnet.ts.net/"),
+            },
+          },
+        });
+
+        const url = yield* getHttpServerUrl("/.well-known/t3/environment");
+        const response = yield* fetchEffect(url);
+        const body = yield* responseJsonEffect<{
+          readonly advertisedEndpoints: ReadonlyArray<Record<string, unknown>>;
+        }>(response);
+        const server = yield* HttpServer.HttpServer;
+        const port = (server.address as HttpServer.TcpAddress).port;
+
+        assert.equal(response.status, 200);
+        assert.deepEqual(body.advertisedEndpoints, [
+          {
+            id: "tailscale-serve",
+            label: "Tailscale",
+            provider: {
+              id: "tailscale",
+              label: "Tailscale",
+              kind: "private-network",
+              isAddon: false,
+            },
+            httpBaseUrl: "https://machine.tailnet.ts.net/",
+            wsBaseUrl: "wss://machine.tailnet.ts.net/",
+            reachability: "private-network",
+            compatibility: { hostedHttpsApp: "unknown", desktopApp: "compatible" },
+            source: "server",
+            status: "available",
+            isDefault: true,
+          },
+          expectedDirectAdvertisedEndpoint(port),
+        ]);
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("includes CORS headers on public environment descriptor responses", () =>
@@ -1170,11 +1240,16 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           origin: crossOriginClientOrigin,
         },
       });
-      const body = yield* responseJsonEffect<typeof testEnvironmentDescriptor>(response);
+      const body = yield* responseJsonEffect<unknown>(response);
+      const server = yield* HttpServer.HttpServer;
+      const port = (server.address as HttpServer.TcpAddress).port;
 
       assert.equal(response.status, 200);
       assertBrowserApiCorsResponseHeaders(response.headers);
-      assert.deepEqual(body, testEnvironmentDescriptor);
+      assert.deepEqual(body, {
+        ...testEnvironmentDescriptor,
+        advertisedEndpoints: [expectedDirectAdvertisedEndpoint(port)],
+      });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

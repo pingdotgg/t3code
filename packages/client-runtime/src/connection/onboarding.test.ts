@@ -1,9 +1,15 @@
-import { AuthStandardClientScopes, EnvironmentId } from "@t3tools/contracts";
+import {
+  type AdvertisedEndpoint,
+  AuthStandardClientScopes,
+  EnvironmentId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import { beforeEach } from "vite-plus/test";
 
+import { createAdvertisedEndpoint } from "../environment/endpoint.ts";
 import { remoteHttpClientLayer } from "../rpc/http.ts";
 import { ClientPresentation } from "../platform/capabilities.ts";
 import { BearerConnectionCredential, BearerConnectionProfile } from "./catalog.ts";
@@ -22,15 +28,52 @@ const CLIENT_PRESENTATION_LAYER = Layer.succeed(
   }),
 );
 
+const TAILNET_ADVERTISED = createAdvertisedEndpoint({
+  id: "tailscale-serve",
+  label: "Tailscale",
+  provider: { id: "tailscale", label: "Tailscale", kind: "private-network", isAddon: false },
+  httpBaseUrl: "https://magic.tailnet.example/",
+  reachability: "private-network",
+  source: "server",
+  isDefault: true,
+});
+const DIRECT_ADVERTISED = createAdvertisedEndpoint({
+  id: "direct",
+  label: "Direct",
+  provider: { id: "core", label: "Direct", kind: "core", isAddon: false },
+  httpBaseUrl: "https://remote.example.test/",
+  reachability: "lan",
+  source: "server",
+});
+
 function pairingHttpLayer(
   calls: Array<{ readonly url: string; readonly init: RequestInit }>,
-  options?: { readonly failDescriptor?: boolean },
+  options?: {
+    readonly failDescriptor?: boolean;
+    readonly advertisedEndpoints?: ReadonlyArray<AdvertisedEndpoint>;
+    readonly probeStatus?: number;
+  },
 ) {
   const fetchFn = ((input, init = {}) => {
     const url = String(input);
     calls.push({ url, init });
 
     if (url.endsWith("/.well-known/t3/environment")) {
+      if (!url.startsWith("https://remote.example.test/")) {
+        // Reachability probe against an advertised endpoint.
+        return Promise.resolve(
+          Response.json(
+            {
+              environmentId: "environment-paired",
+              label: "Paired environment",
+              platform: { os: "linux", arch: "x64" },
+              serverVersion: "0.0.0-test",
+              capabilities: { repositoryIdentity: true },
+            },
+            { status: options?.probeStatus ?? 200 },
+          ),
+        );
+      }
       if (options?.failDescriptor === true) {
         return Promise.resolve(
           Response.json({ message: "descriptor unavailable" }, { status: 503 }),
@@ -48,6 +91,9 @@ function pairingHttpLayer(
           capabilities: {
             repositoryIdentity: true,
           },
+          ...(options?.advertisedEndpoints === undefined
+            ? {}
+            : { advertisedEndpoints: options.advertisedEndpoints }),
         }),
       );
     }
@@ -71,9 +117,14 @@ function pairingHttpLayer(
 }
 
 describe("connection onboarding", () => {
+  const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+
+  beforeEach(() => {
+    calls.length = 0;
+  });
+
   it.effect("prepares a persisted bearer registration from pairing details", () =>
     Effect.gen(function* () {
-      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
       const registration = yield* preparePairingRegistration({
         host: "remote.example.test",
         pairingCode: "pairing-token",
@@ -114,10 +165,89 @@ describe("connection onboarding", () => {
     }),
   );
 
+  it.effect("adopts the advertised default endpoint when it is reachable", () =>
+    Effect.gen(function* () {
+      const registration = yield* preparePairingRegistration({
+        host: "remote.example.test",
+        pairingCode: "pairing-token",
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            CLIENT_PRESENTATION_LAYER,
+            pairingHttpLayer(calls, {
+              advertisedEndpoints: [TAILNET_ADVERTISED, DIRECT_ADVERTISED],
+            }),
+          ),
+        ),
+      );
+
+      expect(registration.profile).toMatchObject({
+        httpBaseUrl: "https://magic.tailnet.example/",
+        wsBaseUrl: "wss://magic.tailnet.example/",
+      });
+      expect(registration.credential.token).toBe("bearer-token");
+      expect(calls.map((call) => call.url)).toEqual([
+        "https://remote.example.test/.well-known/t3/environment",
+        "https://remote.example.test/oauth/token",
+        "https://magic.tailnet.example/.well-known/t3/environment",
+      ]);
+    }),
+  );
+
+  it.effect("keeps the pairing endpoint when the advertised default is unreachable", () =>
+    Effect.gen(function* () {
+      const registration = yield* preparePairingRegistration({
+        host: "remote.example.test",
+        pairingCode: "pairing-token",
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            CLIENT_PRESENTATION_LAYER,
+            pairingHttpLayer(calls, {
+              advertisedEndpoints: [TAILNET_ADVERTISED, DIRECT_ADVERTISED],
+              probeStatus: 503,
+            }),
+          ),
+        ),
+      );
+
+      expect(registration.profile).toMatchObject({
+        httpBaseUrl: "https://remote.example.test/",
+        wsBaseUrl: "wss://remote.example.test/",
+      });
+      expect(calls.map((call) => call.url)).toContain(
+        "https://magic.tailnet.example/.well-known/t3/environment",
+      );
+    }),
+  );
+
+  it.effect("keeps the pairing endpoint when only a direct endpoint is advertised", () =>
+    Effect.gen(function* () {
+      const registration = yield* preparePairingRegistration({
+        host: "remote.example.test",
+        pairingCode: "pairing-token",
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            CLIENT_PRESENTATION_LAYER,
+            pairingHttpLayer(calls, { advertisedEndpoints: [DIRECT_ADVERTISED] }),
+          ),
+        ),
+      );
+
+      expect(registration.profile).toMatchObject({
+        httpBaseUrl: "https://remote.example.test/",
+        wsBaseUrl: "wss://remote.example.test/",
+      });
+      expect(calls.map((call) => call.url)).toEqual([
+        "https://remote.example.test/.well-known/t3/environment",
+        "https://remote.example.test/oauth/token",
+      ]);
+    }),
+  );
+
   it.effect("does not consume a pairing credential when descriptor discovery fails", () =>
     Effect.gen(function* () {
-      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
-
       yield* preparePairingRegistration({
         host: "remote.example.test",
         pairingCode: "pairing-token",
@@ -139,7 +269,6 @@ describe("connection onboarding", () => {
 
   it.effect("rejects invalid pairing details before making a request", () =>
     Effect.gen(function* () {
-      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
       const error = yield* preparePairingRegistration({
         host: "",
         pairingCode: "",
