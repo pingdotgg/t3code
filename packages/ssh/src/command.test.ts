@@ -8,7 +8,7 @@ import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   baseSshArgs,
@@ -98,6 +98,42 @@ describe("ssh command", () => {
       );
     }),
   );
+
+  it.effect("terminates SSH options before a user-controlled destination", () => {
+    let spawnedCommand: ChildProcess.Command | null = null;
+    const spawner = ChildProcessSpawner.make((command) => {
+      spawnedCommand = command;
+      return Effect.succeed(makeFailedProcess({ stdout: "", stderr: "Host lookup failed.\n" }));
+    });
+    const processLayer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
+
+    return Effect.gen(function* () {
+      yield* runSshCommand(
+        {
+          alias: "-oProxyCommand=malicious-command",
+          hostname: "-oProxyCommand=malicious-command",
+          username: null,
+          port: null,
+        },
+        { remoteCommandArgs: ["sh", "-s"] },
+      ).pipe(Effect.flip);
+
+      assert.isNotNull(spawnedCommand);
+      if (spawnedCommand !== null && ChildProcess.isStandardCommand(spawnedCommand)) {
+        const separatorIndex = spawnedCommand.args.indexOf("--");
+        assert.isAtLeast(separatorIndex, 0);
+        assert.deepEqual(spawnedCommand.args.slice(separatorIndex), [
+          "--",
+          "-oProxyCommand=malicious-command",
+          "sh",
+          "-s",
+        ]);
+      }
+    }).pipe(Effect.provide(processLayer));
+  });
 
   it.effect("resolves the remote t3 package spec from the desktop release channel", () =>
     Effect.sync(() => {
