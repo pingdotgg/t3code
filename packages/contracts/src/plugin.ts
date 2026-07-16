@@ -73,13 +73,39 @@ const RelativeEntryPath = TrimmedNonEmptyString.check(
   }),
 );
 
+// The web pipeline does NOT honour an arbitrary web/styles path: the catalog
+// collapses these entries to hasWeb/hasStyles booleans and the web host loads
+// the bundle + stylesheet from a fixed convention path
+// (`/plugins/<id>/<version>/web/index.{js,css}`). A plugin declaring
+// `web: "assets/main.js"` would install and then 404 forever. Constrain the
+// contract to the only paths the pipeline can actually serve; the server entry
+// stays flexible.
+const CANONICAL_WEB_ENTRY = "web/index.js";
+const CANONICAL_STYLES_ENTRY = "web/index.css";
+
+const WebEntryPath = RelativeEntryPath.check(
+  Schema.makeFilter<string>((value) =>
+    value === CANONICAL_WEB_ENTRY
+      ? true
+      : `entries.web must be "${CANONICAL_WEB_ENTRY}" — the web host loads plugin bundles from a fixed path`,
+  ),
+);
+
+const StylesEntryPath = RelativeEntryPath.check(
+  Schema.makeFilter<string>((value) =>
+    value === CANONICAL_STYLES_ENTRY
+      ? true
+      : `entries.styles must be "${CANONICAL_STYLES_ENTRY}" — the web host loads plugin stylesheets from a fixed path`,
+  ),
+);
+
 const ManifestEntries = Schema.Struct({
   server: Schema.optionalKey(RelativeEntryPath),
-  web: Schema.optionalKey(RelativeEntryPath),
+  web: Schema.optionalKey(WebEntryPath),
   // Optional compiled stylesheet shipped alongside the web bundle. The host
   // injects it (as a <link>) when the plugin's web surface loads, so a plugin can
   // ship its own CSS instead of relying on the host build to emit its classes.
-  styles: Schema.optionalKey(RelativeEntryPath),
+  styles: Schema.optionalKey(StylesEntryPath),
 }).check(
   Schema.makeFilter<{ readonly server?: string; readonly web?: string; readonly styles?: string }>(
     (entries) =>
