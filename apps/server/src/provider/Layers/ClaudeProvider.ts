@@ -40,7 +40,7 @@ import {
 } from "../providerSnapshot.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import { probeClaudeUsageLimits } from "../claudeUsageProbe.ts";
-import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
+import { makeUnavailableUsageLimits, mergeProviderUsageLimits } from "../providerUsageLimits.ts";
 import * as PtyAdapter from "../../terminal/PtyAdapter.ts";
 import type { ProviderUsageStateShape } from "../Services/ProviderUsageState.ts";
 
@@ -808,24 +808,25 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         .pipe(Effect.orElseSucceed(() => undefined))
     : undefined;
 
-  const usageLimits = runtimeUsageLimits
-    ? runtimeUsageLimits
-    : ptyAdapter
-      ? yield* probeClaudeUsageLimits(
-          {
-            binaryPath: claudeSettings.binaryPath,
-            launchArgs: claudeSettings.launchArgs,
-            cwd: process.cwd(),
-            checkedAt,
-            environment: yield* makeClaudeEnvironment(claudeSettings, environment),
-          },
-          ptyAdapter,
-        ).pipe(Effect.map((result) => result.usageLimits))
-      : makeUnavailableUsageLimits({
-          source: "claudeStatusProbe",
+  const probedUsageLimits = ptyAdapter
+    ? yield* probeClaudeUsageLimits(
+        {
+          binaryPath: claudeSettings.binaryPath,
+          launchArgs: claudeSettings.launchArgs,
+          cwd: process.cwd(),
           checkedAt,
-          reason: "Usage limits unavailable for this Claude instance in the current runtime.",
-        });
+          environment: yield* makeClaudeEnvironment(claudeSettings, environment),
+        },
+        ptyAdapter,
+      ).pipe(Effect.map((result) => result.usageLimits))
+    : makeUnavailableUsageLimits({
+        source: "claudeStatusProbe",
+        checkedAt,
+        reason: "Usage limits unavailable for this Claude instance in the current runtime.",
+      });
+  const usageLimits = runtimeUsageLimits
+    ? mergeProviderUsageLimits(probedUsageLimits, runtimeUsageLimits)
+    : probedUsageLimits;
 
   const authMetadata = claudeAuthMetadata({
     subscriptionType: capabilities.subscriptionType,
