@@ -1547,7 +1547,7 @@ function ChatMarkdown({
       <ReactMarkdown
         remarkPlugins={
           lineBreaks
-            ? [remarkGfm, remarkBreaks, remarkNormalizeListItemIndentation, remarkPreserveCodeMeta]
+            ? [remarkGfm, remarkNormalizeListItemIndentation, remarkBreaks, remarkPreserveCodeMeta]
             : [remarkGfm, remarkNormalizeListItemIndentation, remarkPreserveCodeMeta]
         }
         rehypePlugins={[rehypeRaw, [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA]]}

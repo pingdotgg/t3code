@@ -16,6 +16,12 @@ interface MarkdownFile {
   readonly value?: unknown;
 }
 
+interface MarkdownParser {
+  parse(markdown: string): unknown;
+}
+
+const INLINE_PARSE_PREFIX = "t3-markdown-inline-prefix:";
+
 function isSameLineOverIndentedCode(
   node: MarkdownAstNode,
   parent: MarkdownAstNode | undefined,
@@ -45,11 +51,31 @@ function isSameLineOverIndentedCode(
   return sourceCharacter !== "`" && sourceCharacter !== "~";
 }
 
-function paragraphFromIndentedCode(node: MarkdownAstNode): MarkdownAstNode {
+function parseInlineMarkdown(value: string, parser: MarkdownParser): MarkdownAstNode[] {
+  // A text prefix forces block-looking input into a paragraph while preserving
+  // the processor's configured inline extensions (for example, GFM syntax).
+  const document = parser.parse(`${INLINE_PARSE_PREFIX}${value}`) as MarkdownAstNode;
+  const paragraph = document.children?.[0];
+  const children = paragraph?.type === "paragraph" ? paragraph.children : undefined;
+  const first = children?.[0];
+  if (
+    !children ||
+    first?.type !== "text" ||
+    typeof first.value !== "string" ||
+    !first.value.startsWith(INLINE_PARSE_PREFIX)
+  ) {
+    return [{ type: "text", value }];
+  }
+
+  const firstValue = first.value.slice(INLINE_PARSE_PREFIX.length);
+  return [...(firstValue ? [{ ...first, value: firstValue }] : []), ...children.slice(1)];
+}
+
+function paragraphFromIndentedCode(node: MarkdownAstNode, parser: MarkdownParser): MarkdownAstNode {
   const value = typeof node.value === "string" ? node.value.trim() : "";
   return {
     type: "paragraph",
-    children: [{ type: "text", value }],
+    children: parseInlineMarkdown(value, parser),
     ...(node.position ? { position: node.position } : {}),
   };
 }
@@ -62,7 +88,7 @@ function paragraphFromIndentedCode(node: MarkdownAstNode): MarkdownAstNode {
  * start on the marker's own line; explicit fences and conventional indented
  * blocks remain code.
  */
-export function remarkNormalizeListItemIndentation() {
+function attachListItemIndentationNormalizer(this: MarkdownParser) {
   return (tree: MarkdownAstNode, file: MarkdownFile) => {
     if (typeof file.value !== "string") {
       return;
@@ -75,7 +101,7 @@ export function remarkNormalizeListItemIndentation() {
       }
       node.children = node.children.map((child) => {
         if (isSameLineOverIndentedCode(child, node, markdown)) {
-          return paragraphFromIndentedCode(child);
+          return paragraphFromIndentedCode(child, this);
         }
         visit(child);
         return child;
@@ -85,3 +111,5 @@ export function remarkNormalizeListItemIndentation() {
     visit(tree);
   };
 }
+
+export const remarkNormalizeListItemIndentation = attachListItemIndentationNormalizer;
