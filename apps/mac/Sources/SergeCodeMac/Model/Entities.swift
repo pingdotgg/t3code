@@ -90,7 +90,7 @@ public enum ThreadInteractionMode: String, CaseIterable, Sendable, Identifiable 
         switch self {
         case .normal: "Default"
         case .plan: "Plan"
-        case .advisor: "Advisor"
+        case .advisor: "Advisor/Planner"
         }
     }
 
@@ -106,7 +106,8 @@ public enum ThreadInteractionMode: String, CaseIterable, Sendable, Identifiable 
         switch self {
         case .normal: "The agent does the work."
         case .plan: "The agent proposes a plan instead of editing."
-        case .advisor: "The agent answers and recommends. It cannot edit the workspace."
+        case .advisor:
+            "The agent plans and advises, and delegates implementation to executor sub-agents. It cannot edit the workspace itself."
         }
     }
 
@@ -196,6 +197,9 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
     /// modelSelection); used to mark the active row in the model picker.
     public var modelInstanceID: String?
     public var modelID: String?
+    /// Advisor/Planner executor model (instance + slug); nil means advise only.
+    public var executorModelInstanceID: String?
+    public var executorModelID: String?
     /// Explicit reasoning-effort choice id from the thread's modelSelection
     /// options; nil means the provider default applies.
     public var reasoningEffort: String?
@@ -225,6 +229,7 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
         runtimeMode: ThreadRuntimeMode = .fullAccess,
         interactionMode: ThreadInteractionMode = .normal,
         modelInstanceID: String? = nil, modelID: String? = nil,
+        executorModelInstanceID: String? = nil, executorModelID: String? = nil,
         reasoningEffort: String? = nil, serviceTier: String? = nil,
         backgroundAgentCount: Int = 0, health: ThreadHealth? = nil
     ) {
@@ -238,6 +243,8 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
         self.interactionMode = interactionMode
         self.modelInstanceID = modelInstanceID
         self.modelID = modelID
+        self.executorModelInstanceID = executorModelInstanceID
+        self.executorModelID = executorModelID
         self.reasoningEffort = reasoningEffort
         self.serviceTier = serviceTier
         self.backgroundAgentCount = backgroundAgentCount
@@ -256,6 +263,8 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
             && interactionMode == other.interactionMode
             && modelInstanceID == other.modelInstanceID
             && modelID == other.modelID
+            && executorModelInstanceID == other.executorModelInstanceID
+            && executorModelID == other.executorModelID
             && reasoningEffort == other.reasoningEffort
             && serviceTier == other.serviceTier
             && health == other.health

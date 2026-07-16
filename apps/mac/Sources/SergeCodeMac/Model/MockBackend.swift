@@ -297,6 +297,10 @@ public final class MockBackend: BackendService, @unchecked Sendable {
         await state.setInteractionMode(threadID: threadID, mode: mode)
     }
 
+    public func setExecutorModel(threadID: String, instanceID: String?, modelID: String?) async throws {
+        await state.setExecutorModel(threadID: threadID, instanceID: instanceID, modelID: modelID)
+    }
+
     public func setModel(threadID: String, model: ModelOption) async throws {
         await state.setModel(threadID: threadID, model: model)
     }
@@ -900,6 +904,14 @@ private actor MockState {
     func setInteractionMode(threadID: String, mode: ThreadInteractionMode) {
         guard var thread = threadsByID[threadID] else { return }
         thread.interactionMode = mode
+        threadsByID[threadID] = thread
+        emit(.threadUpserted(thread))
+    }
+
+    func setExecutorModel(threadID: String, instanceID: String?, modelID: String?) {
+        guard var thread = threadsByID[threadID] else { return }
+        thread.executorModelInstanceID = instanceID
+        thread.executorModelID = modelID
         threadsByID[threadID] = thread
         emit(.threadUpserted(thread))
     }

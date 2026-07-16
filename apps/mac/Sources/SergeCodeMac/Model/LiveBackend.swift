@@ -1805,6 +1805,22 @@ public actor LiveBackend: BackendService {
         updateCachedThread(threadID) { $0.interactionMode = mode }
     }
 
+    public func setExecutorModel(threadID: String, instanceID: String?, modelID: String?) async throws {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        let selection: ModelSelection?
+        if let instanceID, let modelID {
+            selection = ModelSelection(instanceId: instanceID, model: modelID)
+        } else {
+            selection = nil
+        }
+        _ = try await client.setExecutorModel(
+            threadId: threadID, executorModelSelection: selection)
+        updateCachedThread(threadID) {
+            $0.executorModelInstanceID = selection?.instanceId
+            $0.executorModelID = selection?.model
+        }
+    }
+
     public func setModel(threadID: String, model: ModelOption) async throws {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
         // Options deliberately dropped: effort choice ids are per-model, so a
@@ -2553,6 +2569,8 @@ public actor LiveBackend: BackendService {
             runtimeMode: Self.uiRuntimeMode(shell.runtimeMode),
             interactionMode: Self.uiInteractionMode(shell.interactionMode),
             modelInstanceID: shell.modelSelection.instanceId, modelID: shell.modelSelection.model,
+            executorModelInstanceID: shell.executorModelSelection?.instanceId,
+            executorModelID: shell.executorModelSelection?.model,
             reasoningEffort: Self.effortValue(of: shell.modelSelection),
             serviceTier: Self.serviceTierValue(of: shell.modelSelection),
             backgroundAgentCount: activeSubagentCount,

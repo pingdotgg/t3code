@@ -233,8 +233,10 @@ private struct RunProfileMenu: View {
 /// Menu selecting how much the agent may do without asking.
 ///
 /// The label shows the mode actually in force, which is not always the thread's
-/// stored mode: advisor clamps it to approvals-required. The checkmark stays on
-/// the stored choice, so leaving advisor restores what the user picked.
+/// stored mode: Advisor/Planner clamps the parent to approvals-required. The
+/// checkmark stays on the stored choice, so leaving advisor restores what the
+/// user picked. When an executor model is set, delegated sub-agents run with
+/// the stored runtime mode instead of the clamp.
 private struct RuntimeModeMenu: View {
     let thread: ChatThread
     let model: AppModel
@@ -243,6 +245,9 @@ private struct RuntimeModeMenu: View {
     @UIState private var isPresented = false
 
     private var isClamped: Bool { thread.interactionMode.isNonMutating }
+    private var hasExecutor: Bool {
+        thread.executorModelInstanceID != nil && thread.executorModelID != nil
+    }
 
     var body: some View {
         Button {
@@ -258,7 +263,9 @@ private struct RuntimeModeMenu: View {
         .fixedSize()
         .help(
             isClamped
-                ? "Advisor mode holds this thread at approvals-required. Your choice applies again when you leave advisor."
+                ? (hasExecutor
+                    ? "Advisor/Planner holds this thread at approvals-required. Sub-agents run with the thread's real permissions on the executor model. Your choice applies again when you leave advisor."
+                    : "Advisor/Planner holds this thread at approvals-required. Your choice applies again when you leave advisor.")
                 : "How much the agent may do without asking"
         )
         .onHover { isHovering = $0 }
@@ -278,7 +285,10 @@ private struct RuntimeModeMenu: View {
                 if isClamped {
                     HStack(spacing: 7) {
                         Image(systemName: "lightbulb.max.fill")
-                        Text("Advisor mode always requires approval.")
+                        Text(
+                            hasExecutor
+                                ? "Advisor/Planner requires approval for this thread; executor sub-agents use your stored mode."
+                                : "Advisor/Planner always requires approval for this thread.")
                     }
                     .font(.caption.weight(.medium))
                     .foregroundStyle(AlpineTheme.forest)
@@ -315,8 +325,9 @@ private struct RuntimeModeMenu: View {
 }
 
 /// Menu selecting how the agent engages with the request: do it (default),
-/// plan it, or advise on it. Mirrors the `/default`, `/plan` and `/advisor`
-/// slash commands.
+/// plan it, or advise/plan-and-delegate. Mirrors the `/default`, `/plan` and
+/// `/advisor` slash commands. When Advisor/Planner is active, also picks the
+/// per-thread executor model used for delegated sub-agents.
 private struct InteractionModeMenu: View {
     let thread: ChatThread
     let model: AppModel
@@ -325,6 +336,13 @@ private struct InteractionModeMenu: View {
     @UIState private var isPresented = false
 
     private var mode: ThreadInteractionMode { thread.interactionMode }
+
+    private var advisorDetail: String {
+        if let executorModelID = thread.executorModelID {
+            return "Executor: \(executorModelID)"
+        }
+        return ThreadInteractionMode.advisor.helpText
+    }
 
     var body: some View {
         Button {
@@ -341,7 +359,12 @@ private struct InteractionModeMenu: View {
         .buttonStyle(.plain)
         .fixedSize()
         .animation(Motion.feedback, value: mode)
-        .help(mode.helpText)
+        .help(
+            mode == .advisor
+                ? (thread.executorModelID.map { "Advisor/Planner · Executor: \($0)" }
+                    ?? mode.helpText)
+                : mode.helpText
+        )
         .onHover { isHovering = $0 }
         .popover(isPresented: $isPresented, arrowEdge: .top) {
             interactionModePopover
@@ -362,15 +385,51 @@ private struct InteractionModeMenu: View {
                         ComposerPickerChoiceRow(
                             icon: choice.symbolName,
                             title: choice.displayName,
-                            detail: choice.helpText,
+                            detail: choice == .advisor ? advisorDetail : choice.helpText,
                             isSelected: choice == mode
                         ) {
                             Task { await model.setInteractionMode(choice) }
-                            isPresented = false
+                            if choice != .advisor {
+                                isPresented = false
+                            }
                         }
                     }
                 }
                 .padding(8)
+                if mode == .advisor {
+                    Divider().opacity(0.55)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Executor model")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 10)
+                            .padding(.top, 8)
+                        ComposerPickerChoiceRow(
+                            icon: "slash.circle",
+                            title: "None — advise only",
+                            detail: "Sub-agents stay approval-clamped",
+                            isSelected: thread.executorModelID == nil
+                        ) {
+                            Task { await model.setExecutorModel(instanceID: nil, modelID: nil) }
+                        }
+                        ForEach(model.models) { option in
+                            ComposerPickerChoiceRow(
+                                icon: "cpu",
+                                title: option.displayName,
+                                detail: option.modelID,
+                                isSelected: thread.executorModelInstanceID == option.instanceID
+                                    && thread.executorModelID == option.modelID
+                            ) {
+                                Task {
+                                    await model.setExecutorModel(
+                                        instanceID: option.instanceID, modelID: option.modelID)
+                                }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 8)
+                }
             }
         }
     }

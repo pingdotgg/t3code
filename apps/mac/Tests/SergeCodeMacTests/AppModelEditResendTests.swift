@@ -298,6 +298,7 @@ private final class RecordingBackend: BackendService, @unchecked Sendable {
     func respondToUserInput(id: String, answers: [String: [String]]) async throws {}
     func setRuntimeMode(threadID: String, mode: ThreadRuntimeMode) async throws {}
     func setInteractionMode(threadID: String, mode: ThreadInteractionMode) async throws {}
+    func setExecutorModel(threadID: String, instanceID: String?, modelID: String?) async throws {}
     func setModel(threadID: String, model: ModelOption) async throws {}
     func setReasoningEffort(threadID: String, value: String) async throws {}
     func setServiceTier(threadID: String, value: String) async throws {}
