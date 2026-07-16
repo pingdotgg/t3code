@@ -428,8 +428,9 @@ export const OrchestrationThread = Schema.Struct({
   ),
   /**
    * Per-thread executor model for Advisor/Planner mode. When set, sub-agents
-   * spawned from an advisor thread run on this model with the parent's stored
-   * (unclamped) runtime mode. Null preserves consultative advisor behaviour.
+   * spawned from an advisor thread run on this model. Spawned sub-agents always
+   * inherit the parent thread's stored runtime mode. Null means advise only
+   * (no specific executor binding for spawns).
    */
   executorModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),

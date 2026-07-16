@@ -232,11 +232,8 @@ private struct RunProfileMenu: View {
 
 /// Menu selecting how much the agent may do without asking.
 ///
-/// The label shows the mode actually in force, which is not always the thread's
-/// stored mode: Advisor/Planner clamps the parent to approvals-required. The
-/// checkmark stays on the stored choice, so leaving advisor restores what the
-/// user picked. When an executor model is set, delegated sub-agents run with
-/// the stored runtime mode instead of the clamp.
+/// Interaction mode (normal / plan / advisor) is independent of this permission
+/// axis — Full Access and Auto-accept Edits remain available in Advisor/Planner.
 private struct RuntimeModeMenu: View {
     let thread: ChatThread
     let model: AppModel
@@ -244,30 +241,19 @@ private struct RuntimeModeMenu: View {
     @UIState private var isHovering = false
     @UIState private var isPresented = false
 
-    private var isClamped: Bool { thread.interactionMode.isNonMutating }
-    private var hasExecutor: Bool {
-        thread.executorModelInstanceID != nil && thread.executorModelID != nil
-    }
-
     var body: some View {
         Button {
             isPresented.toggle()
         } label: {
             ComposerSegmentLabel(
-                icon: thread.effectiveRuntimeMode.symbolName,
-                title: thread.effectiveRuntimeMode.displayName,
+                icon: thread.runtimeMode.symbolName,
+                title: thread.runtimeMode.displayName,
                 isHovering: isHovering || isPresented
             )
         }
         .buttonStyle(.plain)
         .fixedSize()
-        .help(
-            isClamped
-                ? (hasExecutor
-                    ? "Advisor/Planner holds this thread at approvals-required. Sub-agents run with the thread's real permissions on the executor model. Your choice applies again when you leave advisor."
-                    : "Advisor/Planner holds this thread at approvals-required. Your choice applies again when you leave advisor.")
-                : "How much the agent may do without asking"
-        )
+        .help("How much the agent may do without asking")
         .onHover { isHovering = $0 }
         .popover(isPresented: $isPresented, arrowEdge: .top) {
             runtimeModePopover
@@ -282,20 +268,6 @@ private struct RuntimeModeMenu: View {
                     title: "Workspace access",
                     subtitle: "Choose what the agent can do without asking"
                 )
-                if isClamped {
-                    HStack(spacing: 7) {
-                        Image(systemName: "lightbulb.max.fill")
-                        Text(
-                            hasExecutor
-                                ? "Advisor/Planner requires approval for this thread; executor sub-agents use your stored mode."
-                                : "Advisor/Planner always requires approval for this thread.")
-                    }
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(AlpineTheme.forest)
-                    .padding(.horizontal, 10)
-                    .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
-                    .background(AlpineTheme.accent.opacity(0.2))
-                }
                 Divider().opacity(0.55)
                 VStack(spacing: 3) {
                     ForEach(ThreadRuntimeMode.allCases) { mode in
@@ -334,14 +306,27 @@ private struct InteractionModeMenu: View {
 
     @UIState private var isHovering = false
     @UIState private var isPresented = false
+    @UIState private var showingExecutorPicker = false
 
     private var mode: ThreadInteractionMode { thread.interactionMode }
 
     private var advisorDetail: String {
-        if let executorModelID = thread.executorModelID {
-            return "Executor: \(executorModelID)"
+        if let name = executorDisplayName {
+            return "Executor: \(name)"
         }
         return ThreadInteractionMode.advisor.helpText
+    }
+
+    private var executorDisplayName: String? {
+        if let instanceID = thread.executorModelInstanceID,
+            let modelID = thread.executorModelID,
+            let option = model.models.first(where: {
+                $0.instanceID == instanceID && $0.modelID == modelID
+            })
+        {
+            return option.displayName
+        }
+        return thread.executorModelID
     }
 
     var body: some View {
@@ -361,7 +346,7 @@ private struct InteractionModeMenu: View {
         .animation(Motion.feedback, value: mode)
         .help(
             mode == .advisor
-                ? (thread.executorModelID.map { "Advisor/Planner · Executor: \($0)" }
+                ? (executorDisplayName.map { "Advisor/Planner · Executor: \($0)" }
                     ?? mode.helpText)
                 : mode.helpText
         )
@@ -369,9 +354,46 @@ private struct InteractionModeMenu: View {
         .popover(isPresented: $isPresented, arrowEdge: .top) {
             interactionModePopover
         }
+        .onChange(of: isPresented) { _, presented in
+            if !presented {
+                showingExecutorPicker = false
+            }
+        }
     }
 
+    @ViewBuilder
     private var interactionModePopover: some View {
+        if showingExecutorPicker {
+            ModelPickerPopoverContent(
+                models: model.models,
+                selectedInstanceID: thread.executorModelInstanceID,
+                selectedModelID: thread.executorModelID,
+                onSelect: { option in
+                    Task {
+                        await model.setExecutorModel(
+                            instanceID: option.instanceID, modelID: option.modelID)
+                    }
+                    showingExecutorPicker = false
+                },
+                title: "Executor model",
+                subtitle: "Used for delegated sub-agents",
+                clearRow: ModelPickerClearRowConfig(
+                    icon: "slash.circle",
+                    title: "None — advise only",
+                    detail: "No executor model; the agent plans and advises itself.",
+                    action: {
+                        Task { await model.setExecutorModel(instanceID: nil, modelID: nil) }
+                        showingExecutorPicker = false
+                    }
+                ),
+                onBack: { showingExecutorPicker = false }
+            )
+        } else {
+            interactionModeList
+        }
+    }
+
+    private var interactionModeList: some View {
         ComposerPickerSurface(width: 360) {
             VStack(spacing: 0) {
                 ComposerPickerHeader(
@@ -405,26 +427,12 @@ private struct InteractionModeMenu: View {
                             .padding(.horizontal, 10)
                             .padding(.top, 8)
                         ComposerPickerChoiceRow(
-                            icon: "slash.circle",
-                            title: "None — advise only",
-                            detail: "Sub-agents stay approval-clamped",
-                            isSelected: thread.executorModelID == nil
+                            icon: "cpu",
+                            title: "Executor model",
+                            detail: executorDisplayName ?? "None — advise only",
+                            isSelected: false
                         ) {
-                            Task { await model.setExecutorModel(instanceID: nil, modelID: nil) }
-                        }
-                        ForEach(model.models) { option in
-                            ComposerPickerChoiceRow(
-                                icon: "cpu",
-                                title: option.displayName,
-                                detail: option.modelID,
-                                isSelected: thread.executorModelInstanceID == option.instanceID
-                                    && thread.executorModelID == option.modelID
-                            ) {
-                                Task {
-                                    await model.setExecutorModel(
-                                        instanceID: option.instanceID, modelID: option.modelID)
-                                }
-                            }
+                            showingExecutorPicker = true
                         }
                     }
                     .padding(.horizontal, 8)

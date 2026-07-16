@@ -42,9 +42,23 @@ struct ComposerPickerHeader: View {
     let icon: String
     let title: String
     let subtitle: String
+    /// When set, shows a leading chevron that navigates back within a multi-page popover.
+    var onBack: (() -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 10) {
+            if let onBack {
+                Button(action: onBack) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Back")
+            }
+
             Image(systemName: icon)
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(AlpineTheme.forest)

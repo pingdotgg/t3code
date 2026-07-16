@@ -319,9 +319,8 @@ public actor T3Client {
     }
 
     /// Sets or clears the Advisor/Planner executor model. Pass `nil` to clear
-    /// (advise-only; sub-agents stay permission-clamped). The parent advisor
-    /// thread remains approval-clamped; executor sub-agents use the thread's
-    /// stored runtime mode (not the advisor clamp).
+    /// (advise only — sub-agents are not bound to a specific executor model).
+    /// Spawned sub-agents always inherit the parent thread's stored runtime mode.
     @discardableResult
     public func setExecutorModel(
         threadId: String, executorModelSelection: ModelSelection?

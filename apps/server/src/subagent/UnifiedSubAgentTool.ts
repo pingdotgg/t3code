@@ -70,7 +70,7 @@ export const UnifiedSubAgentTool = Tool.make("subagent", {
 
 Actions:
 - 'list': Discover available providers (models, capabilities, status) and see your spawned sub-agents.
-- 'spawn': Create a sub-agent on ANY provider, including different ones from yourself (e.g., Claude can spawn Codex/Grok, vice versa). Returns immediately with threadId. In Advisor/Planner mode with an executor model configured, spawned agents automatically run on the configured executor model and inherit the thread's stored runtime mode (not the advisor clamp); providerInstanceId/model inputs are overridden.
+- 'spawn': Create a sub-agent on ANY provider, including different ones from yourself (e.g., Claude can spawn Codex/Grok, vice versa). Returns immediately with threadId. Every spawned sub-agent inherits the parent thread's stored runtime mode. Separately, in Advisor/Planner mode with an executor model configured, providerInstanceId/model inputs are overridden by the executor selection so spawned agents run on the configured executor model.
 - 'send': Send follow-up prompt to an existing sub-agent. Use after sub-agent completes a turn.
 - 'wait': Wait for sub-agent turn to complete and get the final result. Blocks up to timeoutSeconds (default 60, max 600).
 

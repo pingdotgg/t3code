@@ -38,19 +38,16 @@ Default is `default`.
   does **not** change the sandbox, so a `full-access` plan thread can still
   write if the model ignores its instructions.
 - **`advisor`** — Advisor/Planner: the agent answers, explains, reviews,
-  recommends, and cannot write to the workspace itself. When a per-thread
+  recommends, and is steered to prefer advising over editing. When a per-thread
   executor model is configured, it may delegate implementation to sub-agents
-  that run unclamped with the thread's stored runtime mode. Unlike plan, the
-  parent clamp is enforced, not merely requested. See
+  that inherit the thread's stored runtime mode. Permissions are not forced —
+  Full Access and Auto-accept Edits remain available. See
   [advisor-mode.md](./advisor-mode.md).
 
 ## Where the two axes meet
 
-Advisor/Planner is the only place the axes interact.
-`resolveEffectiveRuntimeMode` (contracts) clamps the permission axis to
-`approval-required` whenever the interaction mode is advisor, and
-`ProviderCommandReactor` starts the provider session with that _effective_ mode
-rather than the thread's stored one. The thread keeps the user's chosen
-permission mode, so it comes back when they leave advisor. The deliberate
-exception: with an executor model set, sub-agents spawn with the stored
-(unclamped) runtime mode so delegated implementation can write.
+The two axes are independent. Interaction mode never rewrites the permission
+axis: `ProviderCommandReactor` starts the provider session with the thread's
+stored `runtimeMode` for every interaction mode. Sub-agents always inherit that
+same stored mode. Advisor "don't edit yourself" behaviour is prompt-level
+guidance only.

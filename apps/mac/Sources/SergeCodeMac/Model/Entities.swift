@@ -107,13 +107,9 @@ public enum ThreadInteractionMode: String, CaseIterable, Sendable, Identifiable 
         case .normal: "The agent does the work."
         case .plan: "The agent proposes a plan instead of editing."
         case .advisor:
-            "The agent plans and advises. With an executor model configured it delegates implementation to sub-agents; otherwise it advises only. It cannot edit the workspace itself."
+            "The agent plans and advises rather than editing itself. With an executor model configured it may delegate implementation to sub-agents; otherwise it advises only. Workspace permissions follow the access setting."
         }
     }
-
-    /// Advisor never mutates the workspace, whatever the thread's runtime mode
-    /// says. The server enforces this; the UI must not imply otherwise.
-    public var isNonMutating: Bool { self == .advisor }
 }
 
 /// One selectable reasoning-effort level of a model (from the wire's
@@ -215,13 +211,6 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
 
     /// True when the server has reported this thread's active turn as stalled.
     public var isStalled: Bool { health?.stalled ?? false }
-
-    /// The runtime mode actually in force for the next turn. Advisor clamps the
-    /// permission axis server-side (`resolveEffectiveRuntimeMode` in contracts),
-    /// so the composer must not claim full access while advisor is on.
-    public var effectiveRuntimeMode: ThreadRuntimeMode {
-        interactionMode.isNonMutating ? .approvalRequired : runtimeMode
-    }
 
     public init(
         id: String, projectID: String, title: String, provider: ProviderKind,

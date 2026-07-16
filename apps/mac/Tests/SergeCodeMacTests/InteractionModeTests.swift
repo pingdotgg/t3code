@@ -17,26 +17,14 @@ struct InteractionModeTests {
         #expect(LiveBackend.uiInteractionMode(.advisor) == .advisor)
     }
 
-    @Test("advisor holds the thread at approvals-required whatever the runtime mode says")
-    func advisorClampsEffectiveRuntimeMode() throws {
+    @Test("interaction mode does not clamp the thread's stored runtime mode")
+    func interactionModeDoesNotClampRuntimeMode() throws {
         for runtimeMode in ThreadRuntimeMode.allCases {
-            let advisor = thread(runtimeMode: runtimeMode, interactionMode: .advisor)
-            #expect(advisor.effectiveRuntimeMode == .approvalRequired)
-
-            // Only advisor clamps: plan is a prompt-level mode, so the thread's
-            // own runtime mode still applies.
-            for interactionMode in [ThreadInteractionMode.normal, .plan] {
-                let unclamped = thread(runtimeMode: runtimeMode, interactionMode: interactionMode)
-                #expect(unclamped.effectiveRuntimeMode == runtimeMode)
+            for interactionMode in ThreadInteractionMode.allCases {
+                let thread = thread(runtimeMode: runtimeMode, interactionMode: interactionMode)
+                #expect(thread.runtimeMode == runtimeMode)
             }
         }
-    }
-
-    @Test("advisor is the only non-mutating interaction mode")
-    func advisorIsTheOnlyNonMutatingMode() throws {
-        #expect(ThreadInteractionMode.advisor.isNonMutating)
-        #expect(!ThreadInteractionMode.plan.isNonMutating)
-        #expect(!ThreadInteractionMode.normal.isNonMutating)
     }
 
     @Test("advisor display name is Advisor/Planner")
@@ -55,7 +43,8 @@ struct InteractionModeTests {
         let withExecutor = try #require(await backend.threads().first { $0.id == threadID })
         #expect(withExecutor.executorModelInstanceID == "provider-codex")
         #expect(withExecutor.executorModelID == "gpt-5-codex")
-        #expect(withExecutor.effectiveRuntimeMode == .approvalRequired)
+        // Runtime mode is independent of interaction mode / executor selection.
+        #expect(withExecutor.runtimeMode == .fullAccess)
 
         try await backend.setExecutorModel(threadID: threadID, instanceID: nil, modelID: nil)
         let cleared = try #require(await backend.threads().first { $0.id == threadID })
@@ -89,7 +78,7 @@ struct InteractionModeTests {
     @Test("advisor helpText describes no-executor advise-only behavior")
     func advisorHelpTextDescribesNoExecutor() throws {
         #expect(ThreadInteractionMode.advisor.helpText.contains("otherwise it advises only"))
-        #expect(ThreadInteractionMode.advisor.helpText.contains("cannot edit the workspace itself"))
+        #expect(ThreadInteractionMode.advisor.helpText.contains("Workspace permissions follow"))
     }
 
     private func thread(
