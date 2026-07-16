@@ -43,7 +43,7 @@ describe("PluginManifest", () => {
       license: "MIT",
       minAppVersion: "1.0.0",
       capabilities: ["agents", "database", "filesystem", "httpClient", "tools"],
-      entries: { server: "dist/server.js", web: "dist/web.js" },
+      entries: { server: "dist/server.js", web: "web/index.js" },
     });
     expect(decoded.name).toBe("Test Plugin");
     expect(decoded.capabilities).toEqual([
@@ -93,9 +93,40 @@ describe("PluginManifest", () => {
       decodeManifest({
         ...minimalManifest,
         capabilities: ["agents"],
-        entries: { web: "web.js" },
+        entries: { web: "web/index.js" },
       }),
     ).toThrow();
+  });
+
+  it("rejects a non-canonical web entry path", () => {
+    expect(() =>
+      decodeManifest({ ...minimalManifest, entries: { web: "assets/main.js" } }),
+    ).toThrow(/entries\.web must be "web\/index\.js"/);
+  });
+
+  it("accepts the canonical web entry path", () => {
+    const decoded = decodeManifest({
+      ...minimalManifest,
+      entries: { server: "server.js", web: "web/index.js" },
+    });
+    expect(decoded.entries.web).toBe("web/index.js");
+  });
+
+  it("rejects a non-canonical styles entry path", () => {
+    expect(() =>
+      decodeManifest({
+        ...minimalManifest,
+        entries: { server: "server.js", web: "web/index.js", styles: "assets/main.css" },
+      }),
+    ).toThrow(/entries\.styles must be "web\/index\.css"/);
+  });
+
+  it("accepts the canonical styles entry path", () => {
+    const decoded = decodeManifest({
+      ...minimalManifest,
+      entries: { server: "server.js", web: "web/index.js", styles: "web/index.css" },
+    });
+    expect(decoded.entries.styles).toBe("web/index.css");
   });
 
   it("rejects unsafe entry paths", () => {
