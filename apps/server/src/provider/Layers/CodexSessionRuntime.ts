@@ -1,6 +1,7 @@
 import {
   ApprovalRequestId,
   DEFAULT_MODEL,
+  DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
   ProviderDriverKind,
   ProviderItemId,
@@ -343,15 +344,23 @@ function buildCodexCollaborationMode(input: {
   /** Already composed AND budgeted by PluginContextComposer. Never raw plugin text. */
   readonly pluginContext?: string;
 }): EffectCodexSchema.V2TurnStartParams__CollaborationMode | undefined {
-  if (input.interactionMode === undefined) {
+  const hasPluginContext = input.pluginContext !== undefined && input.pluginContext !== "";
+  // When no mode is explicitly supplied AND there is no plugin context to carry,
+  // send no collaboration mode so the provider applies its implicit default —
+  // preserving prior behavior for ordinary turns. But an absent mode must NOT
+  // discard composed plugin context: `interactionMode` is optional throughout the
+  // send-turn path, so a turn relying on the implicit default would otherwise
+  // never receive any plugin instructions. Fall back to the effective default
+  // mode so the context still rides along.
+  if (input.interactionMode === undefined && !hasPluginContext) {
     return undefined;
   }
+  const effectiveMode = input.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE;
   const model = normalizeCodexModelSlug(input.model) ?? DEFAULT_MODEL;
   const reasoningEffort = input.effort ?? "medium";
-  const base =
-    buildCodexDeveloperInstructions(input.interactionMode, { model, reasoningEffort });
+  const base = buildCodexDeveloperInstructions(effectiveMode, { model, reasoningEffort });
   return {
-    mode: input.interactionMode,
+    mode: effectiveMode,
     settings: {
       model,
       reasoning_effort: reasoningEffort,
@@ -1316,10 +1325,16 @@ export const makeCodexSessionRuntime = (
           // Compose for THIS turn. The composer owns the budget, the timeouts and the
           // failure isolation, so from here the worst a plugin can do is contribute
           // nothing — it cannot fail or stall the user's turn.
+          //
+          // Resolve the effective mode once: `interactionMode` is optional, and a
+          // contributor scoping its output by mode must see the mode the turn
+          // actually runs in (the implicit default), not `undefined`.
+          const effectiveInteractionMode =
+            input.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE;
           const pluginContext = yield* contextComposer.compose({
             threadId: options.threadId,
             projectId: null,
-            interactionMode: input.interactionMode,
+            interactionMode: effectiveInteractionMode,
           });
           const params = yield* buildTurnStartParams({
             threadId: providerThreadId,

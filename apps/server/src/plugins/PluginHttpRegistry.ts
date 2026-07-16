@@ -43,7 +43,10 @@ const matchPath = (pattern: string, path: string): Readonly<Record<string, strin
   const requestSegments = pathSegments(path);
   if (patternSegments.length !== requestSegments.length) return null;
 
-  const params: Record<string, string> = {};
+  // Null-prototype: a parameter named `__proto__` / `constructor` must land as an
+  // own property, not walk into an inherited setter (which drops the value or
+  // mutates the prototype).
+  const params: Record<string, string> = Object.create(null) as Record<string, string>;
   for (let index = 0; index < patternSegments.length; index++) {
     const patternSegment = patternSegments[index];
     const requestSegment = requestSegments[index];

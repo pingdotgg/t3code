@@ -682,6 +682,41 @@ it.effect("PluginInstaller stages upgrades and uninstall marks pending remove", 
   );
 });
 
+it.effect("PluginInstaller confirmUpgrade loses to an in-flight uninstall", () => {
+  const deactivated: Array<string> = [];
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const installer = yield* PluginInstaller;
+      const store = yield* PluginLockfileStore;
+      yield* seedSource;
+      yield* store.updatePlugin(pluginId, () =>
+        Effect.succeed({
+          version: "0.9.0",
+          sha256: "old",
+          sourceId,
+          enabled: true,
+          state: "active",
+          activation: { activatingSince: null, crashCount: 0 },
+          installedAt: "2026-07-03T00:00:00.000Z",
+          lastError: null,
+        }),
+      );
+
+      // Stage an upgrade, THEN uninstall (persists pending-remove). Confirming the
+      // now-stale upgrade token must lose to the in-flight uninstall rather than
+      // reviving the plugin and moving new files while teardown is running.
+      const staged = yield* installer.beginUpgrade({ pluginId, version: "1.0.0" });
+      yield* installer.uninstall({ pluginId, removeData: false });
+      assert.equal((yield* store.readLockfile).plugins[pluginId]?.state, "pending-remove");
+
+      const result = yield* Effect.result(installer.confirmUpgrade(staged.stageToken));
+      assert.isTrue(Result.isFailure(result));
+      // State stays pending-remove: the rejected confirm did not overwrite it.
+      assert.equal((yield* store.readLockfile).plugins[pluginId]?.state, "pending-remove");
+    }).pipe(Effect.provide(installerLayer({ tarball: tarballForManifest(), deactivated }))),
+  );
+});
+
 it.effect("PluginInstaller uninstall removeData:true clears an earlier preserve marker", () =>
   Effect.scoped(
     Effect.gen(function* () {

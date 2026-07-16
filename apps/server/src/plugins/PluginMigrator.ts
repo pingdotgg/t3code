@@ -188,6 +188,15 @@ const stripSqlLiteralsAndComments = (sql: string): string => {
 // and much else directly), so the prefix rule is a well-behaved-plugin
 // convention that keeps schemas from colliding, not a security boundary against
 // a malicious plugin. Do not mistake it for one.
+//
+// Because the diff compares schema DEFINITIONS and not row data, it likewise
+// does NOT detect data destruction: a migration that does
+// `DROP TABLE core_table; CREATE TABLE core_table (...)` with the identical SQL
+// leaves an unchanged sqlite_master entry (no removed object, no changed `sql`)
+// and passes, even though every row was deleted in between. This is consistent
+// with the model above — a plugin can already `DELETE FROM core_table` through
+// the SqlClient directly — so callers must NOT assume core data is protected
+// merely because a migration was accepted here.
 const validateMigrationObjects = (input: {
   readonly pluginId: PluginId;
   readonly version: number;
@@ -196,8 +205,15 @@ const validateMigrationObjects = (input: {
   readonly after: ReadonlyArray<SqliteMasterObject>;
 }) =>
   Effect.gen(function* () {
-    const preMigrationCoreTables = input.before
-      .filter((entry) => entry.type === "table" && !entry.name.startsWith(input.prefix))
+    // Include core VIEWS, not just tables: a plugin trigger/view that references
+    // a pre-existing core view can reach core tables through that view's
+    // `INSTEAD OF` trigger, so a view name in a plugin body is as dangerous as a
+    // table name and must be forbidden the same way.
+    const preMigrationCoreObjects = input.before
+      .filter(
+        (entry) =>
+          (entry.type === "table" || entry.type === "view") && !entry.name.startsWith(input.prefix),
+      )
       .map((entry) => entry.name);
 
     // Dropping (or renaming away) an object the plugin does not own is a
@@ -242,15 +258,15 @@ const validateMigrationObjects = (input: {
       }
       if (entry.type !== "trigger" && entry.type !== "view") continue;
       const body = stripSqlLiteralsAndComments(entry.sql ?? "");
-      for (const tableName of preMigrationCoreTables) {
+      for (const objectName of preMigrationCoreObjects) {
         if (
-          new RegExp(`\\b${tableName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(body)
+          new RegExp(`\\b${objectName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(body)
         ) {
           return yield* new PluginMigrationViolation({
             pluginId: input.pluginId,
             version: input.version,
             objectName: entry.name,
-            detail: `trigger/view body references core table ${tableName}`,
+            detail: `trigger/view body references core object ${objectName}`,
           });
         }
       }

@@ -136,6 +136,39 @@ layer("PluginMigrator", (it) => {
     }),
   );
 
+  it.effect("rejects triggers that reference a pre-existing core VIEW", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const migrator = yield* setup;
+      const pluginId = PluginId.make("view-ref-plugin");
+      const prefix = pluginPrefix(pluginId);
+      // A core view can carry an INSTEAD OF trigger that writes to core tables, so
+      // a plugin body naming the view is as dangerous as naming a table directly.
+      yield* sql`CREATE TABLE core_view_ref_items (id TEXT PRIMARY KEY)`;
+      yield* sql`CREATE VIEW core_view_ref_view AS SELECT id FROM core_view_ref_items`;
+
+      const result = yield* Effect.result(
+        migrator.run(pluginId, [
+          migration(1, "TriggerRefView", [
+            `CREATE TABLE ${prefix}items (id TEXT PRIMARY KEY)`,
+            `
+              CREATE TRIGGER ${prefix}items_ai
+              AFTER INSERT ON ${prefix}items
+              BEGIN
+                INSERT INTO core_view_ref_view (id) VALUES (NEW.id);
+              END
+            `,
+          ]),
+        ]),
+      );
+
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) {
+        assert.instanceOf(result.failure, PluginMigrationViolation);
+      }
+    }),
+  );
+
   it.effect("accepts a trigger that names a core table only inside a string literal", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

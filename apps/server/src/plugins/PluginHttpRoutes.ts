@@ -59,7 +59,13 @@ function parsePluginPath(pathname: string): {
 }
 
 function requestQuery(url: URL): Readonly<Record<string, string | ReadonlyArray<string>>> {
-  const query: Record<string, string | Array<string>> = {};
+  // Null-prototype: a query key named `__proto__` must be an own property, not
+  // routed through the inherited accessor (which would mutate the prototype and
+  // drop the value).
+  const query: Record<string, string | Array<string>> = Object.create(null) as Record<
+    string,
+    string | Array<string>
+  >;
   for (const [key, value] of url.searchParams.entries()) {
     const existing = query[key];
     if (existing === undefined) {
@@ -262,55 +268,59 @@ export const makePluginHttpRouteLayer = (options: PluginHttpRouteOptions = {}) =
         return HttpServerResponse.text("Payload Too Large", { status: 413 });
       }
 
-      const bodyOutcome = yield* readBodyCapped(request, maxBodyBytes).pipe(
-        Effect.map((body) => ({ kind: "ok" as const, body })),
-        Effect.catch((error) =>
-          Effect.succeed({
-            kind: "rejected" as const,
-            response:
-              (error as { readonly _tag?: string })._tag === "PluginHttpBodyTooLarge"
-                ? HttpServerResponse.text("Payload Too Large", { status: 413 })
-                : HttpServerResponse.text("Bad Request", { status: 400 }),
-          }),
-        ),
-      );
-      if (bodyOutcome.kind === "rejected") {
-        return bodyOutcome.response;
-      }
-      const body = bodyOutcome.body;
-
       const logger = makePluginLogger(parsed.pluginId);
       const handlerContext = { method: request.method, path: parsed.routePath };
-      return yield* descriptor
-        .handler(
-          {
-            method: request.method,
-            params,
-            query: requestQuery(url.value),
-            headers: request.headers,
-            body,
-          },
-          { pluginId: parsed.pluginId, logger },
-        )
-        .pipe(
-          Effect.exit,
-          Effect.flatMap((exit) => respondToPluginHandlerExit(exit, logger, handlerContext)),
-          // Bound the plugin handler by a wall-clock deadline: an inbound (often
-          // public) route must not let a hung `Effect.never` handler pin the
-          // request — and its socket — open forever. On timeout the handler fiber
-          // is interrupted and we answer 504, deliberately bypassing the 500
-          // failure mapping above.
-          Effect.timeoutOrElse({
-            duration: handlerTimeoutMs,
-            orElse: () =>
-              logger
-                .error("plugin http handler timed out", {
-                  ...handlerContext,
-                  timeoutMs: handlerTimeoutMs,
-                })
-                .pipe(Effect.as(HttpServerResponse.text("Gateway Timeout", { status: 504 }))),
-          }),
+
+      // A single wall-clock deadline spans BOTH body ingestion and handler
+      // execution. Wrapping only the handler left the pre-handler body read
+      // unbounded: a caller to a public route could drip the request body
+      // indefinitely (staying under `maxBodyBytes`) so the handler timeout never
+      // started, and the request fiber — and its socket — stayed open until the
+      // client chose to finish. Bounding the read as well closes that slow-body
+      // resource-exhaustion vector. On timeout the fiber is interrupted and we
+      // answer 504, deliberately bypassing the 500 failure mapping.
+      return yield* Effect.gen(function* () {
+        const bodyOutcome = yield* readBodyCapped(request, maxBodyBytes).pipe(
+          Effect.map((body) => ({ kind: "ok" as const, body })),
+          Effect.catch((error) =>
+            Effect.succeed({
+              kind: "rejected" as const,
+              response:
+                (error as { readonly _tag?: string })._tag === "PluginHttpBodyTooLarge"
+                  ? HttpServerResponse.text("Payload Too Large", { status: 413 })
+                  : HttpServerResponse.text("Bad Request", { status: 400 }),
+            }),
+          ),
         );
+        if (bodyOutcome.kind === "rejected") {
+          return bodyOutcome.response;
+        }
+
+        const exit = yield* descriptor
+          .handler(
+            {
+              method: request.method,
+              params,
+              query: requestQuery(url.value),
+              headers: request.headers,
+              body: bodyOutcome.body,
+            },
+            { pluginId: parsed.pluginId, logger },
+          )
+          .pipe(Effect.exit);
+        return yield* respondToPluginHandlerExit(exit, logger, handlerContext);
+      }).pipe(
+        Effect.timeoutOrElse({
+          duration: handlerTimeoutMs,
+          orElse: () =>
+            logger
+              .error("plugin http request timed out", {
+                ...handlerContext,
+                timeoutMs: handlerTimeoutMs,
+              })
+              .pipe(Effect.as(HttpServerResponse.text("Gateway Timeout", { status: 504 }))),
+        }),
+      );
     }).pipe(
       Effect.catchTags({
         EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,

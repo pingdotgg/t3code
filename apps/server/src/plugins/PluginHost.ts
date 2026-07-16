@@ -249,6 +249,18 @@ function validateRegistration(
         new PluginRegistrationError({ pluginId, detail: `invalid RPC scope ${rpc.scope}` }),
       );
     }
+    // Modules are dynamically loaded JS, so the SDK's `handler` type is NOT
+    // enforced at runtime: a descriptor with `handler: undefined` (or any
+    // non-function) would otherwise activate and only defect at `handler(...)`
+    // on the first matching call. Reject it here, mirroring the http check below.
+    if (typeof rpc.handler !== "function") {
+      return Effect.fail(
+        new PluginRegistrationError({
+          pluginId,
+          detail: `RPC handler for ${rpc.method} is not a function`,
+        }),
+      );
+    }
     if (rpcMethods.has(rpc.method)) {
       return Effect.fail(
         new PluginRegistrationError({ pluginId, detail: `duplicate RPC method ${rpc.method}` }),
@@ -261,6 +273,14 @@ function validateRegistration(
     if (stream.scope !== "read" && stream.scope !== "operate") {
       return Effect.fail(
         new PluginRegistrationError({ pluginId, detail: `invalid stream scope ${stream.scope}` }),
+      );
+    }
+    if (typeof stream.handler !== "function") {
+      return Effect.fail(
+        new PluginRegistrationError({
+          pluginId,
+          detail: `stream handler for ${stream.method} is not a function`,
+        }),
       );
     }
     if (streamMethods.has(stream.method)) {
@@ -1333,15 +1353,21 @@ export const make = Effect.fn("PluginHost.make")(function* () {
   const deactivatePluginLocked = (pluginId: PluginId) =>
     Effect.gen(function* () {
       const runtime = yield* registry.get(pluginId);
-      if (Option.isNone(runtime)) return;
-      // Drop the runtime so registry.get fails closed, then interrupt
-      // invocation fibers owned by the plugin scope (handlers forkIn that
-      // scope). Scope.close does not by itself stop work still running only
-      // on the MCP request fiber — ownership is required.
-      yield* registry.remove(pluginId);
-      yield* toolCatalog.deactivate(pluginId);
-      yield* Scope.close(runtime.value.scope, Exit.void).pipe(Effect.ignore);
-      yield* httpRegistry.remove(pluginId).pipe(Effect.ignore);
+      if (Option.isSome(runtime)) {
+        // Drop the runtime so registry.get fails closed, then interrupt
+        // invocation fibers owned by the plugin scope (handlers forkIn that
+        // scope). Scope.close does not by itself stop work still running only
+        // on the MCP request fiber — ownership is required.
+        yield* registry.remove(pluginId);
+        yield* toolCatalog.deactivate(pluginId);
+        yield* Scope.close(runtime.value.scope, Exit.void).pipe(Effect.ignore);
+        yield* httpRegistry.remove(pluginId).pipe(Effect.ignore);
+      }
+      // Publish on BOTH paths, including when no runtime was present: disabling a
+      // plugin that never activated (web-only, or one whose activation failed)
+      // still persists "disabled"/"pending-remove", and subscribers + the UI would
+      // otherwise stay stale until a later refresh or restart.
+      //
       // Announce the state that is actually persisted rather than a hardcoded
       // "disabled": uninstall sets "pending-remove" then calls this, and
       // publishing "disabled" would contradict the lockfile + list APIs.
