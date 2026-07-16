@@ -44,6 +44,27 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
     expect(decoded.providers.codex.enabled).toBe(true);
   });
 
+  it("strips a legacy opencode providers section so older settings still load", () => {
+    // Effect Schema defaults onExcessProperty to "ignore", so removed provider
+    // keys on disk must not fail decode after the OpenCode provider was deleted.
+    const decoded = decodeServerSettings({
+      providers: {
+        opencode: {
+          enabled: true,
+          binaryPath: "/opt/homebrew/bin/opencode",
+          serverUrl: "http://127.0.0.1:4096",
+          serverPassword: "secret",
+        },
+        codex: {
+          binaryPath: "/opt/homebrew/bin/codex",
+        },
+      },
+    });
+
+    expect(decoded.providers.codex.binaryPath).toBe("/opt/homebrew/bin/codex");
+    expect(decoded.providers).not.toHaveProperty("opencode");
+  });
+
   it("decodes a multi-instance map mixing first-party and fork drivers", () => {
     const decoded = decodeServerSettings({
       providerInstances: {
