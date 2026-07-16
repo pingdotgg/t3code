@@ -72,6 +72,36 @@ layer("FilesystemCapability", (it) => {
     ),
   );
 
+  it.effect("allows in-root names that merely begin with two dots", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const root = yield* makeTempDir("plugin-fs-root-");
+        const grants = yield* makePluginWorkspaceGrants;
+        const filesystem = makeCapability({ projectRoots: [root], grants });
+
+        // `..cache` is a legitimate directory INSIDE the root. The containment check
+        // used `relative.startsWith("..")`, which matches this name too — so a real
+        // in-root path failed as if it were parent traversal. Only an exact ".." or a
+        // leading "../" segment means escape.
+        yield* filesystem.writeFileString({
+          root,
+          relativePath: "..cache/body.md",
+          contents: "cached",
+        });
+        const contents = yield* filesystem.readFileString({
+          root,
+          relativePath: "..cache/body.md",
+        });
+        assert.equal(contents, "cached");
+        // The check it must NOT have loosened: actual traversal still fails.
+        yield* expectPathFailure(filesystem.readFileString({ root, relativePath: "../secret" }));
+        yield* expectPathFailure(
+          filesystem.readFileString({ root, relativePath: "..cache/../../secret" }),
+        );
+      }),
+    ),
+  );
+
   it.effect("round-trips files, directories, stats, lists, roots, and idempotent remove", () =>
     Effect.scoped(
       Effect.gen(function* () {
