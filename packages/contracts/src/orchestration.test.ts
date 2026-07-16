@@ -3,6 +3,9 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
+  ChatAttachment,
+  ChatFileAttachment,
+  ChatImageAttachment,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   ModelSelection,
@@ -738,6 +741,83 @@ it.effect("ModelSelection rejects malformed instance ids", () =>
       decodeModelSelection({
         instanceId: "1invalid", // must start with a letter
         model: "x",
+      }),
+    );
+    assert.strictEqual(result._tag, "Failure");
+  }),
+);
+
+// ── ChatAttachment: image/file union ──────────────────────────────────
+
+const decodeChatAttachment = Schema.decodeUnknownEffect(ChatAttachment);
+const decodeChatAttachmentArray = Schema.decodeUnknownEffect(Schema.Array(ChatAttachment));
+const decodeChatImageAttachment = Schema.decodeUnknownEffect(ChatImageAttachment);
+const decodeChatFileAttachment = Schema.decodeUnknownEffect(ChatFileAttachment);
+
+it.effect("ChatAttachment decodes a file attachment with a non-image mime type", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeChatAttachment({
+      type: "file",
+      id: "file-1",
+      name: "report.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 2_048,
+    });
+    assert.strictEqual(parsed.type, "file");
+    assert.strictEqual(parsed.name, "report.pdf");
+    assert.strictEqual(parsed.mimeType, "application/pdf");
+    assert.strictEqual(parsed.sizeBytes, 2_048);
+  }),
+);
+
+it.effect("ChatAttachment arrays still decode legacy image-only attachments", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeChatAttachmentArray([
+      {
+        type: "image",
+        id: "img-1",
+        name: "screenshot.png",
+        mimeType: "image/png",
+        sizeBytes: 1_024,
+      },
+      {
+        type: "image",
+        id: "img-2",
+        name: "diagram.jpeg",
+        mimeType: "image/jpeg",
+        sizeBytes: 4_096,
+      },
+    ]);
+    assert.strictEqual(parsed.length, 2);
+    assert.strictEqual(parsed[0]?.type, "image");
+    assert.strictEqual(parsed[1]?.type, "image");
+  }),
+);
+
+it.effect("ChatImageAttachment rejects non-image mime types", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.exit(
+      decodeChatImageAttachment({
+        type: "image",
+        id: "img-1",
+        name: "report.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 2_048,
+      }),
+    );
+    assert.strictEqual(result._tag, "Failure");
+  }),
+);
+
+it.effect("ChatFileAttachment rejects sizeBytes over the 10MB limit", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.exit(
+      decodeChatFileAttachment({
+        type: "file",
+        id: "file-1",
+        name: "big.bin",
+        mimeType: "application/octet-stream",
+        sizeBytes: 10 * 1024 * 1024 + 1,
       }),
     );
     assert.strictEqual(result._tag, "Failure");
