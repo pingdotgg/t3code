@@ -260,6 +260,12 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     // the composer inset.
     setComposerOverlayHeight((current) => Math.max(current, estimatedOverlayHeight));
   }, [estimatedOverlayHeight]);
+  useEffect(() => {
+    // Layout callbacks from the previous thread can arrive after navigation.
+    // Reset their larger measurement to this thread's known baseline; its own
+    // overlay layout will immediately replace it if it contains extra cards.
+    setComposerOverlayHeight(estimatedOverlayHeight);
+  }, [estimatedOverlayHeight, selectedThreadKey]);
   // The overlay's measured height includes the home-indicator inset (the
   // composer pads it), but contentInsetAdjustmentBehavior="automatic" makes
   // UIKit add the safe-area bottom to the content inset AGAIN — leaving a
