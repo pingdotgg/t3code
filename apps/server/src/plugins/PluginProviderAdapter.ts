@@ -200,81 +200,110 @@ export const makePluginProviderAdapter = (input: {
     ) =>
       Effect.gen(function* () {
         const threadId = turnInput.threadId;
-        const state = (yield* Ref.get(sessions)).get(threadId);
-        if (state === undefined) {
+        // Host-stamped, computed up front so the reservation can install it in the
+        // same atomic step it guards on. The plugin correlates against this; it never
+        // invents one.
+        const turnId = input.nextEventId() as TurnId;
+
+        // ATOMIC turn reservation. The guard AND the install are one Ref.modify, so
+        // two concurrent sendTurn fibers for one thread (upstream's reactor forks per
+        // turn-start) cannot both slip through a check-then-set gap: whichever modify
+        // runs first reserves the turn by setting activeTurnId, and the other observes
+        // it and is rejected. The previous read→guard→(yield)→update let both fibers
+        // pass the guard on a stale snapshot, both fork drivers, and the later update
+        // overwrote activeTurnId/turnFiber — orphaning the earlier fiber's handle
+        // (mixing deltas, and leaving interrupt/stop unable to reach it).
+        const reservation = yield* Ref.modify(sessions, (current) => {
+          const existing = current.get(threadId);
+          if (existing === undefined) return ["no-session" as const, current];
+          // A turn racing in while stopSession is awaiting the driver's teardown must
+          // be rejected: hasSession is still true (the delete comes last), so
+          // reserving here would install a fiber the imminent delete then orphans —
+          // dropping its deltas and losing the fiber handle.
+          if (existing.stopping) return ["stopping" as const, current];
+          // One active turn per thread. Reserving over a running turn would orphan its
+          // fiber (losing the handle interrupt/stop rely on) and its
+          // `ensuring(endTurn)` would later null the successor's state. Upstream does
+          // not serialize per thread, so the host enforces the invariant by rejecting:
+          // the engine treats a failed dispatch as a rejection, preserving the running
+          // turn rather than silently interrupting it.
+          if (existing.activeTurnId !== null || existing.turnFiber !== null) {
+            return ["busy" as const, current];
+          }
+          // Reserve by setting activeTurnId BEFORE any fork or yield. The child starts
+          // immediately, so a driver that emits its first delta synchronously finds a
+          // live activeTurnId in `makeEmit` rather than the null it would drop on.
+          return [
+            "reserved" as const,
+            new Map(current).set(threadId, { ...existing, activeTurnId: turnId }),
+          ];
+        });
+
+        if (reservation === "no-session") {
           return yield* Effect.fail(new PluginProviderError("no session for thread"));
         }
-        // A turn that races in while stopSession is awaiting the driver's teardown
-        // must be rejected: hasSession is still true (the delete comes last), so the
-        // null-state guard alone would let it install a fresh fiber that the imminent
-        // delete then orphans — dropping its deltas and losing the fiber handle.
-        if (state.stopping) {
+        if (reservation === "stopping") {
           return yield* Effect.fail(new PluginProviderError("session is stopping"));
         }
-        // One active turn per thread. Overwriting activeTurnId/turnFiber here would
-        // orphan the in-progress turn's fiber (losing the handle interrupt/stop rely
-        // on) and its `ensuring(endTurn)` would later null the successor's state,
-        // dropping the second turn's deltas. Upstream does not serialize per thread
-        // (its reactor forks), so the host enforces the invariant by rejecting: the
-        // engine treats a failed dispatch as a rejection, which preserves the
-        // running turn rather than silently interrupting it.
-        if (state.activeTurnId !== null || state.turnFiber !== null) {
+        if (reservation === "busy") {
           return yield* Effect.fail(
             new PluginProviderError("a turn is already active for this thread"),
           );
         }
-        // Host-stamped: the plugin correlates against this, it never invents one.
-        const turnId = input.nextEventId() as TurnId;
 
-        yield* publish(stampTurnStarted(threadId, turnId));
-        // Record the active turn BEFORE forking. The child starts immediately, so a
-        // driver that emits its first delta synchronously would otherwise arrive
-        // while activeTurnId is still null — and `makeEmit` would drop the very first
-        // thing the plugin said. (The probe that fixed the interrupt bug exposed this
-        // one underneath it.)
-        yield* Ref.update(sessions, (current) => {
-          const existing = current.get(threadId);
-          if (existing === undefined) return current;
-          return new Map(current).set(threadId, { ...existing, activeTurnId: turnId });
-        });
-        // The turn is over when sendTurn returns or fails — there is no completion
-        // event to race with. Run it in a fiber so interrupt/removal can cancel it.
-        // startImmediately: WITHOUT it the child does not begin until the next yield,
-        // so the plugin's sendTurn has not started when this returns — an interrupt
-        // arriving straight after would cancel a turn the driver never began, and
-        // early deltas would have nowhere to go. (A probe caught this: the interrupt
-        // test failed because there was nothing running to interrupt.)
-        const fiber = yield* Effect.forkChild(
-          input.driver.sendTurn({ threadId, turnId, prompt: turnInput.input ?? "" }).pipe(
-            Effect.timeoutOrElse({
-              duration: PLUGIN_CALL_TIMEOUT,
-              orElse: () => Effect.fail(new PluginProviderError("sendTurn timed out")),
-            }),
-            // A plugin failure becomes a provider error the thread can show. It
-            // never propagates as a host defect: partial text the user already
-            // watched arrive is kept, and the turn is marked failed.
-            Effect.matchCauseEffect({
-              onSuccess: () => publish(stampTurnCompleted(threadId, turnId)),
-              onFailure: (cause) =>
-                publish(stampTurnCompleted(threadId, turnId, Cause.pretty(cause))),
-            }),
-            Effect.asVoid,
-            Effect.ensuring(endTurn(threadId, turnId)),
-          ),
-          { startImmediately: true },
-        );
+        // The reservation is installed. From here until the turn fiber is running, any
+        // failure (or a fork that is never reached) must clear the reservation, or the
+        // thread is permanently wedged with a phantom active turn nobody can end.
+        // `onError` runs the clear on failure/defect/interruption; endTurn is keyed on
+        // turnId, so it only ever clears THIS reservation, never a successor's.
+        return yield* Effect.gen(function* () {
+          // The publish is an unbounded queue offer (infallible), but it lives inside
+          // the guarded region regardless so nothing can leak the reservation.
+          yield* publish(stampTurnStarted(threadId, turnId));
+          // The turn is over when sendTurn returns or fails — there is no completion
+          // event to race with. Run it in a fiber so interrupt/removal can cancel it.
+          // startImmediately: WITHOUT it the child does not begin until the next yield,
+          // so the plugin's sendTurn has not started when this returns — an interrupt
+          // arriving straight after would cancel a turn the driver never began, and
+          // early deltas would have nowhere to go. (A probe caught this: the interrupt
+          // test failed because there was nothing running to interrupt.)
+          const fiber = yield* Effect.forkChild(
+            input.driver.sendTurn({ threadId, turnId, prompt: turnInput.input ?? "" }).pipe(
+              Effect.timeoutOrElse({
+                duration: PLUGIN_CALL_TIMEOUT,
+                orElse: () => Effect.fail(new PluginProviderError("sendTurn timed out")),
+              }),
+              // A plugin failure becomes a provider error the thread can show. It
+              // never propagates as a host defect: partial text the user already
+              // watched arrive is kept, and the turn is marked failed.
+              Effect.matchCauseEffect({
+                onSuccess: () => publish(stampTurnCompleted(threadId, turnId)),
+                onFailure: (cause) =>
+                  publish(stampTurnCompleted(threadId, turnId, Cause.pretty(cause))),
+              }),
+              Effect.asVoid,
+              Effect.ensuring(endTurn(threadId, turnId)),
+            ),
+            { startImmediately: true },
+          );
 
-        yield* Ref.update(sessions, (current) => {
-          const existing = current.get(threadId);
-          if (existing === undefined) return current;
-          return new Map(current).set(threadId, {
-            ...existing,
-            turnFiber: fiber as Fiber.Fiber<void, never>,
-            activeTurnId: turnId,
+          // Install the fiber handle, still guarding on our reservation: skip if the
+          // session was deleted (absent-session guard, so a concurrent stop/delete is
+          // not resurrected) or the reservation was superseded (activeTurnId no longer
+          // ours). activeTurnId is already turnId from the reservation.
+          yield* Ref.update(sessions, (current) => {
+            const existing = current.get(threadId);
+            if (existing === undefined) return current;
+            if (existing.activeTurnId !== turnId) return current;
+            return new Map(current).set(threadId, {
+              ...existing,
+              turnFiber: fiber as Fiber.Fiber<void, never>,
+              activeTurnId: turnId,
+            });
           });
-        });
 
-        return { threadId, turnId } satisfies ProviderTurnStartResult;
+          return { threadId, turnId } satisfies ProviderTurnStartResult;
+        }).pipe(Effect.onError(() => endTurn(threadId, turnId)));
       });
 
     const interruptTurn: ProviderAdapterShape<PluginProviderError>["interruptTurn"] = (
