@@ -210,11 +210,28 @@ const acquireAdvisoryLock = (input: {
           // (ENOSPC/IO) or is interrupted mid-write, remove the file we just
           // created — acquire has not succeeded, so acquireRelease's release is
           // not registered, and an orphaned lock would block all lockfile
-          // mutations until STALE_LOCK_MS elapses.
+          // mutations until STALE_LOCK_MS elapses. Token-guard the removal the same
+          // way the release finalizer does: if this fiber stalled past
+          // STALE_LOCK_MS and another process reclaimed the lock (rewriting it with
+          // ITS token) before our write failed, an unconditional remove would
+          // delete that other process's valid lock and break single-writer.
           yield* file.writeAll(new TextEncoder().encode(`${ownerToken}\n`)).pipe(
             Effect.andThen(file.sync),
             Effect.onError(() =>
-              fs.remove(input.advisoryLockPath, { force: true }).pipe(Effect.ignore),
+              fs.readFileString(input.advisoryLockPath).pipe(
+                Effect.flatMap((content) => {
+                  const trimmed = content.trim();
+                  // Remove only what is OURS: our token, or an empty file (our
+                  // `wx` created it but the write failed before any token
+                  // landed). A different non-empty token means another process
+                  // reclaimed the lock and wrote its own — leave that valid lock
+                  // in place.
+                  return trimmed === "" || trimmed === ownerToken
+                    ? fs.remove(input.advisoryLockPath, { force: true })
+                    : Effect.void;
+                }),
+                Effect.ignore,
+              ),
             ),
           );
         }),

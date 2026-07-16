@@ -835,6 +835,19 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
                         cause,
                       }),
               });
+              // Re-validate the source under the lockfile writer. removeSource's
+              // in-use check only sees committed lockfile.plugins, so a source can
+              // be removed in the begin→confirm window of an install (the stage is
+              // in-memory only, invisible to that check). Committing an entry whose
+              // sourceId no longer resolves strands it from checkUpdates and
+              // beginUpgrade, so reject before writing.
+              if (!lockfile.sources.some((source) => source.id === stage.sourceId)) {
+                return yield* managementError(
+                  "source-not-found",
+                  "Plugin source was removed before the install was confirmed.",
+                  { sourceId: stage.sourceId },
+                );
+              }
               const preexisted = yield* fs
                 .exists(destination)
                 .pipe(Effect.orElseSucceed(() => false));
@@ -899,15 +912,27 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
       const persist = store
         .updatePlugin(input.pluginId, ({ current }) =>
           installedEntry(current).pipe(
-            Effect.map((entry) => ({
-              ...entry,
-              enabled: input.enabled,
-              state: input.enabled ? ("active" as const) : ("disabled" as const),
-              lastError: input.enabled ? null : (current?.lastError ?? null),
-              activation: input.enabled
-                ? { activatingSince: null, crashCount: 0 }
-                : (current?.activation ?? { activatingSince: null, crashCount: 0 }),
-            })),
+            Effect.flatMap((entry) =>
+              // A pending-remove entry is mid-uninstall (persist written, teardown
+              // in flight). Re-enabling it would resurrect a plugin the user asked
+              // to remove — final lockfile active/enabled while reconcile still
+              // deletes it. Reject the late enable so uninstall wins.
+              input.enabled && entry.state === "pending-remove"
+                ? Effect.fail(
+                    managementError("manifest-invalid", "Plugin is pending removal.", {
+                      pluginId: input.pluginId,
+                    }),
+                  )
+                : Effect.succeed({
+                    ...entry,
+                    enabled: input.enabled,
+                    state: input.enabled ? ("active" as const) : ("disabled" as const),
+                    lastError: input.enabled ? null : entry.lastError,
+                    activation: input.enabled
+                      ? { activatingSince: null, crashCount: 0 }
+                      : entry.activation,
+                  }),
+            ),
           ),
         )
         .pipe(
@@ -969,7 +994,14 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
           ),
         );
       }
-      yield* store
+      // Persist pending-remove AND tear down the live runtime under ONE
+      // activation-lock acquisition (see PluginHost.setPluginEnabled). Writing
+      // pending-remove here and calling deactivatePlugin separately let a
+      // concurrent setEnabled(true) interleave between the two — its persist only
+      // checks the entry EXISTS — leaving the lockfile active/enabled with no
+      // runtime. Routing the pending-remove write through setPluginEnabled makes
+      // uninstall's persist+teardown atomic with any concurrent enable/disable.
+      const persist = store
         .updatePlugin(input.pluginId, ({ current }) =>
           installedEntry(current).pipe(
             Effect.map((entry) => ({
@@ -979,10 +1011,21 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
             })),
           ),
         )
-        .pipe(Effect.mapError(lockfileError));
-      // Tear down the live runtime (scope, HTTP routes) now instead of leaving it
-      // running until the next server restart applies pending-remove.
-      yield* host.deactivatePlugin(input.pluginId);
+        .pipe(
+          Effect.mapError((cause) =>
+            isPluginManagementError(cause) ? cause : lockfileError(cause),
+          ),
+          Effect.asVoid,
+        );
+      yield* host
+        .setPluginEnabled(input.pluginId, false, persist)
+        .pipe(
+          Effect.mapError((error) =>
+            error._tag === "PluginLockfileReadError" || error._tag === "PluginLockfileCorruptError"
+              ? lockfileError(error)
+              : error,
+          ),
+        );
     });
 
   const beginUpgrade: PluginInstaller["Service"]["beginUpgrade"] = (input) =>
@@ -1047,6 +1090,19 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
             // interleave "remove the other's committed dir" with "record my sha".
             Effect.gen(function* () {
               const entry = yield* installedEntry(current);
+              // Reject a second confirm for the same plugin while an upgrade is
+              // already staged. Two upgrades begun from the same installed version
+              // (v1→v2 and v1→v3) both pass installedEntry — the version never
+              // changes during pending-upgrade — so without this guard the later
+              // confirm's last-writer-wins overwrite of `staged`/state orphans the
+              // earlier confirm's already-moved version dir.
+              if (entry.state === "pending-upgrade") {
+                return yield* managementError(
+                  "manifest-invalid",
+                  "An upgrade is already pending for this plugin.",
+                  { pluginId: stage.pluginId },
+                );
+              }
               const preexisted = yield* fs
                 .exists(destination)
                 .pipe(Effect.orElseSucceed(() => false));

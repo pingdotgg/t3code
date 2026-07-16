@@ -240,3 +240,62 @@ writeFailingLayer("PluginLockfileStore advisory lock cleanup", (it) => {
     }),
   );
 });
+
+// A FileSystem whose `open(..., { flag: "wx" })` returns a File whose writeAll
+// first REWRITES the lock file with a foreign owner token (simulating another
+// process reclaiming a stale lock after our `wx` created it) and then fails. The
+// acquire's onError must NOT delete that reclaimed lock — only a token match may
+// remove it — or single-writer breaks for the process that now holds it.
+const reclaimThenFailFileSystem = (base: FileSystem.FileSystem): FileSystem.FileSystem => ({
+  ...base,
+  open: (path, options) =>
+    options?.flag === "wx"
+      ? base.open(path, options).pipe(
+          Effect.map((file) => {
+            const failing = Object.create(file);
+            failing.writeAll = () =>
+              base
+                .writeFileString(path, "9999:foreign-owner-token\n")
+                .pipe(Effect.andThen(Effect.fail({ _tag: "SimulatedWriteFailure" as const })));
+            return failing as FileSystem.File;
+          }),
+        )
+      : base.open(path, options),
+});
+
+const reclaimThenFailLayer = it.layer(
+  PluginLockfileStoreModule.layer.pipe(
+    Layer.provideMerge(
+      Layer.fresh(ServerConfig.layerTest(process.cwd(), { prefix: "t3-plugin-lockfile-reclaim-" })),
+    ),
+    Layer.provideMerge(
+      Layer.effect(
+        FileSystem.FileSystem,
+        FileSystem.FileSystem.pipe(Effect.map(reclaimThenFailFileSystem)),
+      ).pipe(Layer.provideMerge(NodeServices.layer)),
+    ),
+    Layer.provideMerge(TestClock.layer()),
+  ),
+);
+
+reclaimThenFailLayer("PluginLockfileStore advisory lock reclamation", (it) => {
+  it.effect("leaves a foreign-reclaimed lock in place when the acquire write fails", () =>
+    Effect.gen(function* () {
+      const store = yield* PluginLockfileStoreModule.PluginLockfileStore;
+      const fs = yield* FileSystem.FileSystem;
+
+      const result = yield* Effect.result(
+        store.updatePlugin(pluginId, () => Effect.succeed(makePlugin())),
+      );
+      assert.isTrue(Result.isFailure(result));
+      // The foreign token was written between our `wx` create and our write
+      // failing; onError must token-guard the removal and leave the reclaimed lock
+      // untouched rather than deleting another writer's valid lock.
+      assert.isTrue(yield* fs.exists(store.advisoryLockPath));
+      const content = yield* fs.readFileString(store.advisoryLockPath);
+      assert.isTrue(content.includes("foreign-owner-token"));
+
+      yield* fs.remove(store.advisoryLockPath, { force: true });
+    }),
+  );
+});
