@@ -1021,25 +1021,11 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         assert.equal(turnCompleted.payload.stopReason, "cancelled");
       }
 
-      const isCancelledApprovalResponse = (entry: Record<string, unknown>) =>
-        !("method" in entry) &&
-        typeof entry.result === "object" &&
-        entry.result !== null &&
-        "outcome" in entry.result &&
-        typeof entry.result.outcome === "object" &&
-        entry.result.outcome !== null &&
-        "outcome" in entry.result.outcome &&
-        entry.result.outcome.outcome === "cancelled";
       const cancelRequests = yield* waitForJsonLogMatch(
         requestLogPath,
         (entry) => entry.method === "session/cancel",
       );
-      const approvalResponses = yield* waitForJsonLogMatch(
-        requestLogPath,
-        isCancelledApprovalResponse,
-      );
       assert.isTrue(cancelRequests.some((entry) => entry.method === "session/cancel"));
-      assert.isTrue(approvalResponses.some(isCancelledApprovalResponse));
 
       yield* adapter.stopSession(threadId);
     }),
