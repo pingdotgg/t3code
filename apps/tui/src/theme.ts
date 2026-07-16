@@ -1,4 +1,4 @@
-import { RGBA, type TerminalColors } from "@opentui/core";
+import { RGBA } from "@opentui/core";
 import type { OrchestrationThreadShell } from "@t3tools/contracts";
 
 /**
@@ -210,35 +210,22 @@ const ANSI_INDEX: Record<string, number> = {
   brightwhite: 15,
 };
 
-// The terminal's actual colours, detected via `renderer.getPalette()` at startup
-// (index.tsx). OpenTUI is a truecolor renderer: an indexed RGBA carries a SNAPSHOT
-// rgb used whenever it must composite (and we render on a transparent background,
-// so it always composites). Without a snapshot the indexed colours fall back to
-// OpenTUI's built-in xterm palette — which is darker/different from a customised
-// terminal theme. So once we know the real palette we pass each detected colour as
-// the snapshot, making indexed/default intents render as the USER's theme.
-let detected: TerminalColors | null = null;
-
 /**
- * An indexed-intent RGBA carrying the user's detected colour for that ANSI slot as
- * its compositing snapshot (so it renders as their theme on our transparent
- * background). Falls back to OpenTUI's built-in palette for slots we haven't
- * detected (extended 16–255). Exported so the embedded terminal themes its cells
- * the same way the rest of the UI does.
+ * An indexed-intent RGBA for an ANSI slot. We deliberately do not call
+ * `renderer.getPalette()` to add custom snapshots here: that startup probe emits
+ * dozens of OSC replies which OpenTUI 0.4 can misclassify as keyboard input when
+ * fragmented by tmux/SSH, forwarding palette data into the embedded shell.
  */
 export function indexedColor(index: number): RGBA {
-  const snapshot = detected?.palette[index];
-  return snapshot ? RGBA.fromIndex(index, snapshot) : RGBA.fromIndex(index);
+  return RGBA.fromIndex(index);
 }
 
 function defaultFg(): RGBA {
-  const snapshot = detected?.defaultForeground;
-  return snapshot ? RGBA.defaultForeground(snapshot) : RGBA.defaultForeground();
+  return RGBA.defaultForeground();
 }
 
 function defaultBg(): RGBA {
-  const snapshot = detected?.defaultBackground;
-  return snapshot ? RGBA.defaultBackground(snapshot) : RGBA.defaultBackground();
+  return RGBA.defaultBackground();
 }
 
 /** Resolve a named colour to an indexed RGBA the terminal themes itself. */
@@ -255,7 +242,7 @@ export interface Palette {
   readonly selectedBg: RGBA;
 }
 
-export const THEME: { -readonly [K in keyof Palette]: Palette[K] } = {
+export const THEME: Palette = {
   text: defaultFg(),
   bg: defaultBg(),
   dim: indexedColor(8),
@@ -263,20 +250,7 @@ export const THEME: { -readonly [K in keyof Palette]: Palette[K] } = {
   selectedBg: indexedColor(8),
 };
 
-/**
- * Apply the terminal's detected palette so every theme colour snapshots the user's
- * real colours. Called once at startup after `renderer.getPalette()` resolves.
- */
-export function applyTerminalColors(colors: TerminalColors): void {
-  detected = colors;
-  THEME.text = defaultFg();
-  THEME.bg = defaultBg();
-  THEME.dim = indexedColor(8);
-  THEME.accent = indexedColor(6);
-  THEME.selectedBg = indexedColor(8);
-}
-
-/** The active palette. Updated in place by applyTerminalColors at startup. */
+/** The active palette. */
 export const usePalette = (): Palette => THEME;
 
 /** Glyph + colour for a status-line tone (mirrors the web toast icon set). */

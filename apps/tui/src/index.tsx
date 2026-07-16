@@ -4,7 +4,6 @@ import { installKittyImageExtension } from "@t3tools/opentui-image";
 
 import { ChatView } from "./components/ChatView.tsx";
 import { buildTuiRuntime, makeTuiClient, type TuiOptions } from "./connection.ts";
-import { applyTerminalColors } from "./theme.ts";
 import { detectKittyGraphicsTerminal } from "./terminalGraphics.ts";
 import { prepareTerminalViewport, TUI_RENDERER_CONFIG } from "./terminalStartup.ts";
 
@@ -105,12 +104,6 @@ async function main(): Promise<void> {
   });
 
   try {
-    // Detect the terminal's actual palette + default fg/bg up front and feed it into
-    // the theme, so our indexed/default colour intents render with the user's REAL
-    // colours instead of OpenTUI's built-in (darker) xterm fallback. Best-effort:
-    // terminals that don't answer the OSC query keep the conventional ANSI mapping.
-    const detectedColors = await renderer.getPalette({ timeout: 1000 }).catch(() => null);
-    if (detectedColors) applyTerminalColors(detectedColors);
     let resolveDone: () => void = () => {};
     const done = new Promise<void>((resolve) => {
       resolveDone = resolve;
