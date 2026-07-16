@@ -1,6 +1,7 @@
 import { assert, expect, it } from "@effect/vitest";
 
 import {
+  buildHeadlessServeAccessInfo,
   buildPairingUrl,
   formatHeadlessServeOutput,
   renderTerminalQrCode,
@@ -65,9 +66,40 @@ it("renders terminal QR codes as a multi-line unicode block grid", () => {
   assert.isTrue(qrCode.split("\n").length > 10);
 });
 
+it("prefers the tailnet base URL for the connection string and pairing URL", () => {
+  const accessInfo = buildHeadlessServeAccessInfo({
+    directConnectionString: "http://192.168.1.42:3773",
+    tailnetHttpsBaseUrl: "https://machine.tailnet.ts.net/",
+    token: "PAIRCODE",
+  });
+
+  expect(accessInfo).toEqual({
+    connectionString: "https://machine.tailnet.ts.net",
+    directConnectionString: "http://192.168.1.42:3773",
+    token: "PAIRCODE",
+    pairingUrl: "https://machine.tailnet.ts.net/pair#token=PAIRCODE",
+  });
+});
+
+it("falls back to the direct address when no tailnet base URL is active", () => {
+  const accessInfo = buildHeadlessServeAccessInfo({
+    directConnectionString: "http://192.168.1.42:3773",
+    tailnetHttpsBaseUrl: null,
+    token: "PAIRCODE",
+  });
+
+  expect(accessInfo).toEqual({
+    connectionString: "http://192.168.1.42:3773",
+    directConnectionString: "http://192.168.1.42:3773",
+    token: "PAIRCODE",
+    pairingUrl: "http://192.168.1.42:3773/pair#token=PAIRCODE",
+  });
+});
+
 it("formats headless serve output with the connection string, token, pairing url, and qr code", () => {
   const output = formatHeadlessServeOutput({
     connectionString: "http://192.168.1.42:3773",
+    directConnectionString: "http://192.168.1.42:3773",
     token: "PAIRCODE",
     pairingUrl: "http://192.168.1.42:3773/pair#token=PAIRCODE",
   });
@@ -75,5 +107,20 @@ it("formats headless serve output with the connection string, token, pairing url
   expect(output).toContain("Connection string: http://192.168.1.42:3773");
   expect(output).toContain("Token: PAIRCODE");
   expect(output).toContain("Pairing URL: http://192.168.1.42:3773/pair#token=PAIRCODE");
+  expect(output).not.toContain("Direct address:");
   assert.isTrue(output.includes("█") || output.includes("▀") || output.includes("▄"));
+});
+
+it("keeps the direct address as a secondary line when the tailnet URL is preferred", () => {
+  const output = formatHeadlessServeOutput(
+    buildHeadlessServeAccessInfo({
+      directConnectionString: "http://192.168.1.42:3773",
+      tailnetHttpsBaseUrl: "https://machine.tailnet.ts.net/",
+      token: "PAIRCODE",
+    }),
+  );
+
+  expect(output).toContain("Connection string: https://machine.tailnet.ts.net");
+  expect(output).toContain("Direct address: http://192.168.1.42:3773");
+  expect(output).toContain("Pairing URL: https://machine.tailnet.ts.net/pair#token=PAIRCODE");
 });

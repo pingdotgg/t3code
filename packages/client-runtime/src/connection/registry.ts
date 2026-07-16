@@ -11,14 +11,17 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as HttpClient from "effect/unstable/http/HttpClient";
 
 import {
+  BearerConnectionProfile,
   type ConnectionCatalogEntry,
   type ConnectionRegistration,
   type PlatformConnectionRegistration,
   type PrimaryConnectionRegistration,
   connectionRegistrationCatalogEntry,
 } from "./catalog.ts";
+import { resolveAdoptableAdvertisedEndpoint } from "../environment/endpointAdoption.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
 import * as Connectivity from "./connectivity.ts";
@@ -121,6 +124,8 @@ interface EnvironmentServiceScope {
   readonly scope: Scope.Closeable;
 }
 
+const isBearerProfile = Schema.is(BearerConnectionProfile);
+
 export const make = Effect.gen(function* () {
   const storage = yield* Persistence.ConnectionTargetStore;
   const registrations = yield* Persistence.ConnectionRegistrationStore;
@@ -131,6 +136,7 @@ export const make = Effect.gen(function* () {
   const connectivity = yield* Connectivity.Connectivity;
   const driver = yield* ConnectionDriver.ConnectionDriver;
   const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
+  const httpClient = yield* HttpClient.HttpClient;
   const persistedTargets = yield* storage.list;
   const initialEntries = new Map(
     yield* Effect.forEach(
@@ -239,6 +245,113 @@ export const make = Effect.gen(function* () {
     yield* Scope.close(lease.scope, Exit.void);
   });
 
+  // Persist a healed bearer profile and keep the in-memory catalog aligned
+  // with it, without recycling the environment scope: the active session
+  // keeps running on its current transport, and the adopted base URLs are
+  // used the next time a supervisor is created from the catalog.
+  const adoptBearerProfileLocked = Effect.fn("EnvironmentRegistry.adoptBearerProfile")(function* (
+    profile: BearerConnectionProfile,
+  ) {
+    return yield* withLeaseLock(
+      profile.environmentId,
+      Effect.gen(function* () {
+        if ((yield* Ref.get(platformEnvironmentIds)).has(profile.environmentId)) {
+          return false;
+        }
+        const current = (yield* SubscriptionRef.get(entries)).get(profile.environmentId);
+        if (
+          current === undefined ||
+          current.target._tag !== "BearerConnectionTarget" ||
+          current.target.connectionId !== profile.connectionId
+        ) {
+          return false;
+        }
+        yield* profiles.put(profile);
+        const nextEntry: ConnectionCatalogEntry = {
+          target: current.target,
+          profile: Option.some(profile),
+        };
+        yield* SubscriptionRef.update(entries, (currentEntries) => {
+          const next = new Map(currentEntries);
+          next.set(profile.environmentId, nextEntry);
+          return next;
+        });
+        yield* SubscriptionRef.update(serviceScopes, (currentScopes) => {
+          const lease = currentScopes.get(profile.environmentId);
+          if (lease === undefined) {
+            return currentScopes;
+          }
+          const next = new Map(currentScopes);
+          next.set(profile.environmentId, { ...lease, entry: nextEntry });
+          return next;
+        });
+        return true;
+      }),
+    );
+  });
+
+  // Self-heal persisted bearer registrations: when a connect succeeds and the
+  // server advertises a default endpoint (e.g. its tailnet HTTPS endpoint)
+  // that differs from the stored base URL, probe it and adopt it on success.
+  // Runs at most one adoption attempt per connected transition and stops for
+  // the rest of the environment scope after the first successful adoption.
+  const healAdvertisedEndpointOnConnect = Effect.fnUntraced(function* (
+    entry: ConnectionCatalogEntry,
+    supervisor: EnvironmentSupervisor.EnvironmentSupervisor["Service"],
+  ) {
+    if (entry.target._tag !== "BearerConnectionTarget") {
+      return;
+    }
+    const environmentId = entry.target.environmentId;
+    const profile = Option.filter(entry.profile, isBearerProfile);
+    if (Option.isNone(profile)) {
+      return;
+    }
+    const storedProfile = profile.value;
+
+    const attemptAdoption = Effect.gen(function* () {
+      const prepared = yield* SubscriptionRef.get(supervisor.prepared);
+      if (Option.isNone(prepared)) {
+        return false;
+      }
+      const adopted = yield* resolveAdoptableAdvertisedEndpoint({
+        advertisedEndpoints: prepared.value.advertisedEndpoints,
+        currentHttpBaseUrl: storedProfile.httpBaseUrl,
+      }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
+      if (Option.isNone(adopted)) {
+        return false;
+      }
+      return yield* adoptBearerProfileLocked(
+        new BearerConnectionProfile({
+          connectionId: storedProfile.connectionId,
+          environmentId: storedProfile.environmentId,
+          label: storedProfile.label,
+          httpBaseUrl: adopted.value.httpBaseUrl,
+          wsBaseUrl: adopted.value.wsBaseUrl,
+        }),
+      );
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Could not adopt the advertised environment endpoint.", {
+          environmentId,
+          error,
+        }).pipe(Effect.as(false)),
+      ),
+    );
+
+    yield* Stream.concat(
+      Stream.fromEffect(SubscriptionRef.get(supervisor.state)),
+      SubscriptionRef.changes(supervisor.state),
+    ).pipe(
+      Stream.map((state) => state.phase),
+      Stream.changes,
+      Stream.filter((phase) => phase === "connected"),
+      Stream.mapEffect(() => attemptAdoption),
+      Stream.takeUntil((adopted) => adopted),
+      Stream.runDrain,
+    );
+  });
+
   const createServiceScope = Effect.fn("EnvironmentRegistry.createServiceScope")(
     (entry: ConnectionCatalogEntry) =>
       Effect.uninterruptible(
@@ -253,6 +366,10 @@ export const make = Effect.gen(function* () {
             Effect.provideService(ConnectionWakeups.ConnectionWakeups, wakeups),
             Scope.provide(scope),
             Effect.onError(() => Scope.close(scope, Exit.void)),
+          );
+          yield* healAdvertisedEndpointOnConnect(entry, supervisor).pipe(
+            Effect.forkScoped,
+            Scope.provide(scope),
           );
           yield* supervisor.connect;
           yield* SubscriptionRef.update(serviceScopes, (current) => {

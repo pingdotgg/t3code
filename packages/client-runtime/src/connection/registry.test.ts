@@ -1,4 +1,8 @@
-import { EnvironmentId, type OrchestrationShellSnapshot } from "@t3tools/contracts";
+import {
+  type AdvertisedEndpoint,
+  EnvironmentId,
+  type OrchestrationShellSnapshot,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -33,9 +37,11 @@ import {
   type PreparedConnection,
   type SupervisorConnectionState,
 } from "./model.ts";
+import { createAdvertisedEndpoint } from "../environment/endpoint.ts";
 import * as Persistence from "../platform/persistence.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
 import * as EnvironmentRegistry from "./registry.ts";
+import { remoteHttpClientLayer } from "../rpc/http.ts";
 import * as RpcSession from "../rpc/session.ts";
 import * as EnvironmentSupervisor from "./supervisor.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
@@ -87,6 +93,24 @@ const BEARER_CREDENTIAL = new BearerConnectionCredential({
   token: "bearer-token",
 });
 
+const TAILNET_ENDPOINT = createAdvertisedEndpoint({
+  id: "tailscale-serve",
+  label: "Tailscale",
+  provider: { id: "tailscale", label: "Tailscale", kind: "private-network", isAddon: false },
+  httpBaseUrl: "https://magic.tailnet.example/",
+  reachability: "private-network",
+  source: "server",
+  isDefault: true,
+});
+const DIRECT_ENDPOINT = createAdvertisedEndpoint({
+  id: "direct",
+  label: "Direct",
+  provider: { id: "core", label: "Direct", kind: "core", isAddon: false },
+  httpBaseUrl: BEARER_PROFILE.httpBaseUrl,
+  reachability: "lan",
+  source: "server",
+});
+
 const CACHED_SNAPSHOT: OrchestrationShellSnapshot = {
   snapshotSequence: 1,
   projects: [],
@@ -110,8 +134,11 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     readonly beforeRegistrationRemove?: (
       target: ConnectionTarget,
     ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
+    readonly advertisedEndpoints?: ReadonlyArray<AdvertisedEndpoint>;
+    readonly probeStatus?: number;
   },
 ) {
+  const probeCalls: Array<string> = [];
   const storedTargets = yield* Ref.make(
     new Map(initialTargets.map((target) => [target.environmentId, target])),
   );
@@ -219,6 +246,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     status: SubscriptionRef.get(networkStatus),
     changes: SubscriptionRef.changes(networkStatus),
   });
+  const profilePuts = yield* Ref.make<ReadonlyArray<ConnectionProfile>>([]);
   const profileStore = ConnectionProfileStore.ConnectionProfileStore.of({
     get: (connectionId) =>
       Ref.update(profileReadCount, (count) => count + 1).pipe(
@@ -226,11 +254,15 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
         Effect.map((current) => Option.fromUndefinedOr(current.get(connectionId))),
       ),
     put: (profile) =>
-      Ref.update(storedProfiles, (current) => {
-        const next = new Map(current);
-        next.set(profile.connectionId, profile);
-        return next;
-      }),
+      Ref.update(profilePuts, (current) => [...current, profile]).pipe(
+        Effect.andThen(
+          Ref.update(storedProfiles, (current) => {
+            const next = new Map(current);
+            next.set(profile.connectionId, profile);
+            return next;
+          }),
+        ),
+      ),
     remove: (connectionId) =>
       Ref.update(storedProfiles, (current) => {
         const next = new Map(current);
@@ -283,6 +315,9 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
           environmentId: target.environmentId,
           label: target.label,
           target,
+          ...(options?.advertisedEndpoints === undefined
+            ? {}
+            : { advertisedEndpoints: options.advertisedEndpoints }),
         };
         yield* reportProgress({ stage: "preparing" });
         yield* reportProgress({ stage: "opening", prepared });
@@ -305,10 +340,16 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
       }),
   });
 
+  const probeFetch = ((input) => {
+    probeCalls.push(String(input));
+    return Promise.resolve(Response.json({}, { status: options?.probeStatus ?? 200 }));
+  }) satisfies typeof fetch;
+
   const cacheLayer = Layer.succeed(Persistence.EnvironmentCacheStore, cacheStore);
   const layer = EnvironmentRegistry.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        remoteHttpClientLayer(probeFetch),
         Layer.succeed(Persistence.ConnectionTargetStore, targetStore),
         Layer.succeed(Persistence.ConnectionRegistrationStore, registrationStore),
         Layer.succeed(ConnectionProfileStore.ConnectionProfileStore, profileStore),
@@ -335,12 +376,49 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     sessions,
     releasedSessions,
     storedProfiles,
+    profilePuts,
     profileReadCount,
     storedCredentials,
     storedRemoteTokens,
     networkStatus,
+    probeCalls,
   };
 });
+
+// Tests run under the TestClock, so waiting for background fibers (and the
+// promise-based probe fetch) cannot use Effect.sleep. Yielding repeatedly
+// lets forked fibers and promise microtasks settle instead.
+const settleBackgroundWork = (isSettled: () => boolean = () => false) =>
+  Effect.gen(function* () {
+    for (let index = 0; index < 200; index++) {
+      if (isSettled()) {
+        return;
+      }
+      yield* Effect.yieldNow;
+    }
+  });
+
+function awaitStoredBearerProfile(
+  registry: EnvironmentRegistry.EnvironmentRegistry["Service"],
+  environmentId: EnvironmentId,
+  predicate: (profile: BearerConnectionProfile) => boolean,
+) {
+  return Stream.concat(
+    Stream.fromEffect(SubscriptionRef.get(registry.entries)),
+    SubscriptionRef.changes(registry.entries),
+  ).pipe(
+    Stream.filterMap((current) => {
+      const profile = current.get(environmentId)?.profile ?? Option.none();
+      return Option.isSome(profile) &&
+        profile.value._tag === "BearerConnectionProfile" &&
+        predicate(profile.value)
+        ? Result.succeed(profile.value)
+        : Result.failVoid;
+    }),
+    Stream.runHead,
+    Effect.map(Option.getOrThrow),
+  );
+}
 
 function awaitConnectionState(
   registry: EnvironmentRegistry.EnvironmentRegistry["Service"],
@@ -832,6 +910,223 @@ describe("EnvironmentRegistry", () => {
         yield* registry.registerPlatform(registration);
 
         expect(yield* Ref.get(harness.sessions)).toHaveLength(1);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("adopts the advertised default endpoint once after a bearer environment connects", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness(
+        [BEARER_TARGET],
+        [BEARER_PROFILE],
+        [[BEARER_TARGET.connectionId, BEARER_CREDENTIAL]],
+        { advertisedEndpoints: [TAILNET_ENDPOINT, DIRECT_ENDPOINT] },
+      );
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        yield* awaitConnectionState(
+          registry,
+          BEARER_TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
+
+        const healed = yield* awaitStoredBearerProfile(
+          registry,
+          BEARER_TARGET.environmentId,
+          (profile) => profile.httpBaseUrl === "https://magic.tailnet.example/",
+        );
+
+        expect(healed.wsBaseUrl).toBe("wss://magic.tailnet.example/");
+        expect(healed.label).toBe(BEARER_PROFILE.label);
+        expect(
+          (yield* Ref.get(harness.storedProfiles)).get(BEARER_TARGET.connectionId),
+        ).toMatchObject({
+          httpBaseUrl: "https://magic.tailnet.example/",
+          wsBaseUrl: "wss://magic.tailnet.example/",
+        });
+        expect((yield* Ref.get(harness.storedCredentials)).get(BEARER_TARGET.connectionId)).toEqual(
+          BEARER_CREDENTIAL,
+        );
+        expect(harness.probeCalls).toEqual([
+          "https://magic.tailnet.example/.well-known/t3/environment",
+        ]);
+        expect(yield* Ref.get(harness.releasedSessions)).toBe(0);
+
+        const controls = yield* Ref.get(harness.sessions);
+        expect(controls).toHaveLength(1);
+        yield* Deferred.fail(
+          controls[0]!.closed,
+          new ConnectionTransientError({
+            reason: "transport",
+            detail: "Disconnected.",
+          }),
+        );
+        yield* awaitConnectionState(
+          registry,
+          BEARER_TARGET.environmentId,
+          (state) => state.phase === "backoff",
+        );
+        yield* registry.retryNow(BEARER_TARGET.environmentId);
+        yield* awaitConnectionState(
+          registry,
+          BEARER_TARGET.environmentId,
+          (state) => state.phase === "connected" && state.generation === 2,
+        );
+        yield* settleBackgroundWork();
+
+        expect(harness.probeCalls).toHaveLength(1);
+        expect(yield* Ref.get(harness.profilePuts)).toHaveLength(1);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("does not adopt when the advertised default matches the stored endpoint", () =>
+    Effect.gen(function* () {
+      const sameDefault = createAdvertisedEndpoint({
+        id: "tailscale-serve",
+        label: "Tailscale",
+        provider: { id: "tailscale", label: "Tailscale", kind: "private-network", isAddon: false },
+        httpBaseUrl: BEARER_PROFILE.httpBaseUrl,
+        reachability: "private-network",
+        source: "server",
+        isDefault: true,
+      });
+      const harness = yield* makeHarness(
+        [BEARER_TARGET],
+        [BEARER_PROFILE],
+        [[BEARER_TARGET.connectionId, BEARER_CREDENTIAL]],
+        { advertisedEndpoints: [sameDefault] },
+      );
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        yield* awaitConnectionState(
+          registry,
+          BEARER_TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
+        yield* settleBackgroundWork();
+
+        expect(harness.probeCalls).toEqual([]);
+        expect(yield* Ref.get(harness.profilePuts)).toEqual([]);
+        expect((yield* Ref.get(harness.storedProfiles)).get(BEARER_TARGET.connectionId)).toEqual(
+          BEARER_PROFILE,
+        );
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("does not adopt when the server advertises no endpoints", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness(
+        [BEARER_TARGET],
+        [BEARER_PROFILE],
+        [[BEARER_TARGET.connectionId, BEARER_CREDENTIAL]],
+      );
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        yield* awaitConnectionState(
+          registry,
+          BEARER_TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
+        yield* settleBackgroundWork();
+
+        expect(harness.probeCalls).toEqual([]);
+        expect(yield* Ref.get(harness.profilePuts)).toEqual([]);
+        expect((yield* Ref.get(harness.storedProfiles)).get(BEARER_TARGET.connectionId)).toEqual(
+          BEARER_PROFILE,
+        );
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("does not adopt when only a direct endpoint is advertised", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness(
+        [BEARER_TARGET],
+        [BEARER_PROFILE],
+        [[BEARER_TARGET.connectionId, BEARER_CREDENTIAL]],
+        { advertisedEndpoints: [DIRECT_ENDPOINT] },
+      );
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        yield* awaitConnectionState(
+          registry,
+          BEARER_TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
+        yield* settleBackgroundWork();
+
+        expect(harness.probeCalls).toEqual([]);
+        expect(yield* Ref.get(harness.profilePuts)).toEqual([]);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("keeps the stored endpoint when the advertised default probe fails", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness(
+        [BEARER_TARGET],
+        [BEARER_PROFILE],
+        [[BEARER_TARGET.connectionId, BEARER_CREDENTIAL]],
+        { advertisedEndpoints: [TAILNET_ENDPOINT, DIRECT_ENDPOINT], probeStatus: 503 },
+      );
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        yield* awaitConnectionState(
+          registry,
+          BEARER_TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
+        yield* settleBackgroundWork(() => harness.probeCalls.length === 1);
+
+        expect(harness.probeCalls).toEqual([
+          "https://magic.tailnet.example/.well-known/t3/environment",
+        ]);
+        expect(yield* Ref.get(harness.profilePuts)).toEqual([]);
+        expect((yield* Ref.get(harness.storedProfiles)).get(BEARER_TARGET.connectionId)).toEqual(
+          BEARER_PROFILE,
+        );
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("does not persist an adopted endpoint for a platform-managed bearer environment", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([], [], [], {
+        advertisedEndpoints: [TAILNET_ENDPOINT, DIRECT_ENDPOINT],
+      });
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.reconcilePlatform([
+          new BearerConnectionRegistration({
+            target: BEARER_TARGET,
+            profile: BEARER_PROFILE,
+            credential: BEARER_CREDENTIAL,
+          }),
+        ]);
+        yield* awaitConnectionState(
+          registry,
+          BEARER_TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
+        yield* settleBackgroundWork(() => harness.probeCalls.length === 1);
+
+        expect(yield* Ref.get(harness.profilePuts)).toEqual([]);
+        expect((yield* Ref.get(harness.storedProfiles)).has(BEARER_TARGET.connectionId)).toBe(
+          false,
+        );
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );

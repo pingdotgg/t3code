@@ -105,6 +105,52 @@ struct PairingTargetTests {
     }
 }
 
+@Suite("EnvironmentDescriptor decoding")
+struct EnvironmentDescriptorDecodingTests {
+    @Test("decodes a descriptor without advertisedEndpoints (older servers / pre-serve boot)")
+    func decodesWithoutAdvertisedEndpoints() throws {
+        let json = """
+            {"environmentId":"env-1","label":"Serge's Mac","platform":{"os":"darwin","arch":"arm64"},"serverVersion":"1.2.3","capabilities":{"repositoryIdentity":true}}
+            """
+        let descriptor = try JSONDecoder().decode(
+            EnvironmentDescriptor.self, from: Data(json.utf8))
+
+        #expect(descriptor.environmentId == "env-1")
+        #expect(descriptor.advertisedEndpoints == nil)
+    }
+
+    // The exact wire shape apps/server/src/advertisedEndpoints.ts serves:
+    // tailscale entry first (the only one with isDefault), direct entry
+    // always present, URLs normalized with a trailing slash. The
+    // `compatibility` object is intentionally not modeled and must be
+    // ignored, not rejected.
+    @Test("decodes the server's advertised-endpoints wire shape")
+    func decodesAdvertisedEndpoints() throws {
+        let json = """
+            {"environmentId":"env-1","label":"Serge's Mac","platform":{"os":"darwin","arch":"arm64"},"serverVersion":"1.2.3","capabilities":{"repositoryIdentity":false},"advertisedEndpoints":[{"id":"tailscale-serve","label":"Tailscale","provider":{"id":"tailscale","label":"Tailscale","kind":"private-network","isAddon":false},"httpBaseUrl":"https://serges-mac.tail1234.ts.net/","wsBaseUrl":"wss://serges-mac.tail1234.ts.net/","reachability":"private-network","compatibility":{"hostedHttpsApp":"unknown","desktopApp":"compatible"},"source":"server","status":"available","isDefault":true},{"id":"direct","label":"Direct","provider":{"id":"direct","label":"Direct","kind":"core","isAddon":false},"httpBaseUrl":"http://192.168.1.42:3773/","wsBaseUrl":"ws://192.168.1.42:3773/","reachability":"lan","compatibility":{"hostedHttpsApp":"mixed-content-blocked","desktopApp":"compatible"},"source":"server","status":"available"}]}
+            """
+        let descriptor = try JSONDecoder().decode(
+            EnvironmentDescriptor.self, from: Data(json.utf8))
+
+        let endpoints = try #require(descriptor.advertisedEndpoints)
+        #expect(endpoints.count == 2)
+
+        let tailscale = try #require(endpoints.first)
+        #expect(tailscale.id == "tailscale-serve")
+        #expect(tailscale.provider.kind == "private-network")
+        #expect(tailscale.httpBaseUrl == "https://serges-mac.tail1234.ts.net/")
+        #expect(tailscale.wsBaseUrl == "wss://serges-mac.tail1234.ts.net/")
+        #expect(tailscale.isDefault == true)
+        #expect(tailscale.status == "available")
+
+        let direct = try #require(endpoints.last)
+        #expect(direct.id == "direct")
+        #expect(direct.provider.kind == "core")
+        #expect(direct.reachability == "lan")
+        #expect(direct.isDefault == nil)
+    }
+}
+
 private final class FailingPairingURLProtocol: URLProtocol, @unchecked Sendable {
     override class func canInit(with request: URLRequest) -> Bool { true }
 

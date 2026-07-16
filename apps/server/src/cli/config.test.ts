@@ -156,6 +156,63 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     }),
   );
 
+  it.effect("defaults tailscale serve on so remote access auto-attempts", () =>
+    Effect.gen(function* () {
+      const { join } = yield* Path.Path;
+      const baseDir = join(NodeOS.tmpdir(), "sergecode-cli-config-tailscale-default");
+      const resolved = yield* resolveServerConfig(emptyFlags(), Option.none()).pipe(
+        Effect.provide(configLayer({ T3CODE_HOME: baseDir })),
+      );
+
+      expect(resolved.tailscaleServeEnabled).toBe(true);
+      expect(resolved.tailscaleServePort).toBe(443);
+    }),
+  );
+
+  it.effect("disables tailscale serve via an explicit flag", () =>
+    Effect.gen(function* () {
+      const { join } = yield* Path.Path;
+      const baseDir = join(NodeOS.tmpdir(), "sergecode-cli-config-tailscale-flag");
+      const resolved = yield* resolveServerConfig(
+        { ...emptyFlags(), tailscaleServeEnabled: Option.some(false) },
+        Option.none(),
+      ).pipe(Effect.provide(configLayer({ T3CODE_HOME: baseDir, T3CODE_TAILSCALE_SERVE: "true" })));
+
+      expect(resolved.tailscaleServeEnabled).toBe(false);
+    }),
+  );
+
+  it.effect("disables tailscale serve via the environment", () =>
+    Effect.gen(function* () {
+      const { join } = yield* Path.Path;
+      const baseDir = join(NodeOS.tmpdir(), "sergecode-cli-config-tailscale-env");
+      const resolved = yield* resolveServerConfig(emptyFlags(), Option.none()).pipe(
+        Effect.provide(configLayer({ T3CODE_HOME: baseDir, T3CODE_TAILSCALE_SERVE: "false" })),
+      );
+
+      expect(resolved.tailscaleServeEnabled).toBe(false);
+    }),
+  );
+
+  it.effect("disables tailscale serve via the desktop bootstrap envelope", () =>
+    Effect.gen(function* () {
+      const fd = yield* openBootstrapFd({
+        mode: "desktop",
+        port: 4889,
+        t3Home: "/tmp/sergecode-bootstrap-tailscale-off",
+        host: "127.0.0.1",
+        desktopBootstrapToken: "desktop-token",
+        tailscaleServeEnabled: false,
+        tailscaleServePort: 443,
+      });
+      const resolved = yield* resolveServerConfig(emptyFlags(), Option.none()).pipe(
+        Effect.provide(configLayer({ T3CODE_BOOTSTRAP_FD: String(fd) })),
+      );
+
+      expect(resolved.tailscaleServeEnabled).toBe(false);
+    }),
+  );
+
   it.effect("creates the native backend's runtime directories", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

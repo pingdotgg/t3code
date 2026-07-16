@@ -21,9 +21,13 @@ struct SergeCodeApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     init() {
-        // Initialize Sparkle updater controller
+        // Initialize Sparkle updater controller. Not started for mock/probe
+        // runs: those launch the raw build product (no .app bundle, so no
+        // SUFeedURL), and Sparkle's startup failure is a modal NSAlert that
+        // blocks the UI probe before it can capture anything.
         self.updaterController = SPUStandardUpdaterController(
-            startingUpdater: true,
+            startingUpdater: !Self.shouldUseMock
+                && ProcessInfo.processInfo.environment["SERGECODE_UI_PROBE"] == nil,
             updaterDelegate: nil,
             userDriverDelegate: nil)
 
@@ -86,10 +90,12 @@ struct SergeCodeApp: App {
         if shouldUseMock {
             return MockBackend()
         }
-        // The LAN-access preference is applied at spawn (the bind host is
-        // fixed per sidecar process); toggling it in Settings ▸ iPhone
-        // takes effect on the next launch.
-        return LiveBackend(allowLanAccess: MobileAccessPreference.isEnabled)
+        // The LAN-access and Tailscale preferences are applied at spawn (the
+        // bind host and bootstrap envelope are fixed per sidecar process);
+        // toggling them in Settings ▸ Devices takes effect on the next launch.
+        return LiveBackend(
+            allowLanAccess: MobileAccessPreference.isEnabled,
+            tailscaleServeEnabled: TailscaleAccessPreference.isEnabled)
     }
 
     var body: some Scene {

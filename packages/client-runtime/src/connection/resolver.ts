@@ -130,6 +130,9 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
       socketUrl: authorized.socketUrl,
       httpAuthorization: authorized.httpAuthorization,
       target,
+      ...(authorized.advertisedEndpoints === undefined
+        ? {}
+        : { advertisedEndpoints: authorized.advertisedEndpoints }),
     } satisfies PreparedConnection;
   });
 });

@@ -87,6 +87,12 @@ public struct SidecarConfig: Sendable {
     public var host: String
     public var baseDir: String
     public var logDirectory: String
+    /// Whether the server should attempt `tailscale serve` so the machine is
+    /// reachable at `https://<magicdns>/` over the tailnet. Sent in the
+    /// bootstrap envelope, where it OVERRIDES the server's own default —
+    /// so the app must pass its preference explicitly.
+    public var tailscaleServeEnabled: Bool
+    public var tailscaleServePort: Int
 
     /// - Parameters:
     ///   - nodePath: Absolute path to a `node` binary, typically from
@@ -100,18 +106,26 @@ public struct SidecarConfig: Sendable {
     ///     other server installations' state directories.
     ///   - logDirectory: Where rotated stdout/stderr logs land. Defaults to
     ///     `<baseDir>/logs/sidecar`.
+    ///   - tailscaleServeEnabled: Ask the server to expose itself over the
+    ///     tailnet via `tailscale serve`. Defaults to `false` so tests and
+    ///     ad-hoc spawns never touch the machine's Tailscale state; the app
+    ///     passes the user preference explicitly.
     public init(
         nodePath: String,
         entryPath: String = SidecarEntryPathResolver.devDefaultEntryPath(),
         port: Int? = nil,
         host: String = "127.0.0.1",
         baseDir: String? = nil,
-        logDirectory: String? = nil
+        logDirectory: String? = nil,
+        tailscaleServeEnabled: Bool = false,
+        tailscaleServePort: Int = 443
     ) throws {
         self.nodePath = nodePath
         self.entryPath = entryPath
         self.port = try port ?? FreePortPicker.pick(host: host)
         self.host = host
+        self.tailscaleServeEnabled = tailscaleServeEnabled
+        self.tailscaleServePort = tailscaleServePort
         let resolvedBaseDir = baseDir ?? SidecarConfig.defaultBaseDir()
         self.baseDir = resolvedBaseDir
         self.logDirectory =

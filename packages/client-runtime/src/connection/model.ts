@@ -1,4 +1,5 @@
 import { EnvironmentId } from "@t3tools/contracts";
+import type { AdvertisedEndpoint } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 const ConnectionTargetBase = {
@@ -110,6 +111,7 @@ export interface PreparedConnection {
   readonly socketUrl: string;
   readonly httpAuthorization: PreparedHttpAuthorization | null;
   readonly target: ConnectionTarget;
+  readonly advertisedEndpoints?: ReadonlyArray<AdvertisedEndpoint>;
 }
 
 export type SupervisorConnectionPhase =

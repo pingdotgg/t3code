@@ -1699,6 +1699,10 @@ public final class AppModel {
         await backend.isServerLanReachable()
     }
 
+    public func remoteAccessStatus() async -> ServerRemoteAccessStatus {
+        await backend.remoteAccessStatus()
+    }
+
     /// Throws so the settings tab can render the failure inline rather than
     /// routing through the global `lastError` banner.
     public func mintMobilePairing() async throws -> MobilePairingInfo {

@@ -64,6 +64,24 @@ struct BootstrapEnvelopeTests {
         #expect(object?["port"] as? Int == 3773)
     }
 
+    @Test("always encodes the tailscale fields explicitly — the envelope value overrides the server default")
+    func encodesTailscaleFieldsExplicitly() throws {
+        let envelope = BootstrapEnvelope(
+            port: 3773,
+            host: "127.0.0.1",
+            desktopBootstrapToken: "tok"
+        )
+
+        let line = try envelope.encodeLine()
+        let object = try JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any]
+
+        // The TS schema requires both fields, and the server treats the
+        // envelope value as authoritative over its own serve-by-default —
+        // so `false` must be present on the wire, never omitted.
+        #expect(object?["tailscaleServeEnabled"] as? Bool == false)
+        #expect(object?["tailscaleServePort"] as? Int == 443)
+    }
+
     @Test("generates a 32+ byte, base64url-safe token")
     func generatesSecureToken() {
         let token = BootstrapTokenGenerator.generate()

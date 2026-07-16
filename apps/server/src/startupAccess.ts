@@ -2,13 +2,16 @@ import * as NodeOS from "node:os";
 
 import { QrCode } from "@t3tools/shared/qrCode";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import { HttpServer } from "effect/unstable/http";
 
 import { ServerConfig } from "./config.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import * as TailnetAccess from "./tailnetAccess.ts";
 
 export interface HeadlessServeAccessInfo {
   readonly connectionString: string;
+  readonly directConnectionString: string;
   readonly token: string;
   readonly pairingUrl: string;
 }
@@ -123,6 +126,9 @@ export const formatHeadlessServeOutput = (accessInfo: HeadlessServeAccessInfo): 
   [
     "T3 Code server is ready.",
     `Connection string: ${accessInfo.connectionString}`,
+    ...(accessInfo.directConnectionString === accessInfo.connectionString
+      ? []
+      : [`Direct address: ${accessInfo.directConnectionString}`]),
     `Token: ${accessInfo.token}`,
     `Pairing URL: ${accessInfo.pairingUrl}`,
     "",
@@ -130,19 +136,45 @@ export const formatHeadlessServeOutput = (accessInfo: HeadlessServeAccessInfo): 
     "",
   ].join("\n");
 
+export const buildHeadlessServeAccessInfo = (input: {
+  readonly directConnectionString: string;
+  readonly tailnetHttpsBaseUrl: string | null;
+  readonly token: string;
+}): HeadlessServeAccessInfo => {
+  const connectionString = input.tailnetHttpsBaseUrl
+    ? new URL(input.tailnetHttpsBaseUrl).origin
+    : input.directConnectionString;
+
+  return {
+    connectionString,
+    directConnectionString: input.directConnectionString,
+    token: input.token,
+    pairingUrl: buildPairingUrl(connectionString, input.token),
+  };
+};
+
+// Tailnet resolution is bounded by the tailscale command timeouts; the margin
+// here only guards startup output against a missed recording ever hanging it.
+const TAILNET_ACCESS_WAIT_TIMEOUT = "15 seconds";
+
 export const issueHeadlessServeAccessInfo = Effect.fn("issueHeadlessServeAccessInfo")(function* () {
   const serverConfig = yield* ServerConfig;
   const httpServer = yield* HttpServer.HttpServer;
   const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-  const connectionString = resolveHeadlessConnectionString(
+  const tailnetAccess = yield* TailnetAccess.TailnetAccess;
+  const directConnectionString = resolveHeadlessConnectionString(
     serverConfig.host,
     resolveListeningPort(httpServer.address, serverConfig.port),
   );
+  const tailnetHttpsBaseUrl = yield* tailnetAccess.awaitTailnetHttpsBaseUrl.pipe(
+    Effect.timeoutOption(TAILNET_ACCESS_WAIT_TIMEOUT),
+    Effect.map((resolved) => Option.getOrElse(resolved, () => null)),
+  );
   const issued = yield* serverAuth.issueStartupPairingCredential();
 
-  return {
-    connectionString,
+  return buildHeadlessServeAccessInfo({
+    directConnectionString,
+    tailnetHttpsBaseUrl,
     token: issued.credential,
-    pairingUrl: buildPairingUrl(connectionString, issued.credential),
-  } satisfies HeadlessServeAccessInfo;
+  });
 });

@@ -159,7 +159,9 @@ public actor ServerProcess {
             port: config.port,
             t3Home: config.baseDir,
             host: config.host,
-            desktopBootstrapToken: bootstrapToken
+            desktopBootstrapToken: bootstrapToken,
+            tailscaleServeEnabled: config.tailscaleServeEnabled,
+            tailscaleServePort: config.tailscaleServePort
         )
 
         let bootstrapLine: String

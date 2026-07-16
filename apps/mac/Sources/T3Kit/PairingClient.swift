@@ -123,6 +123,69 @@ public struct PairingTarget: Sendable, Equatable {
 public struct EnvironmentPlatform: Sendable, Decodable, Equatable {
     public let os: String
     public let arch: String
+
+    public init(os: String, arch: String) {
+        self.os = os
+        self.arch = arch
+    }
+}
+
+/// One way remote clients can reach a server, as advertised in its
+/// environment descriptor. Mirrors `AdvertisedEndpoint` in
+/// `packages/contracts/src/remoteAccess.ts`. Enum-like fields (`kind`,
+/// `reachability`, `source`, `status`) decode as plain strings so new server
+/// literals never break older clients; the nested `compatibility` object is
+/// intentionally not modeled — the desktop app has no use for it and
+/// `Decodable` ignores unknown keys.
+public struct AdvertisedEndpointProvider: Sendable, Decodable, Equatable {
+    public let id: String
+    public let label: String
+    public let kind: String
+    public let isAddon: Bool
+
+    public init(id: String, label: String, kind: String, isAddon: Bool) {
+        self.id = id
+        self.label = label
+        self.kind = kind
+        self.isAddon = isAddon
+    }
+}
+
+public struct AdvertisedEndpoint: Sendable, Decodable, Equatable {
+    public let id: String
+    public let label: String
+    public let provider: AdvertisedEndpointProvider
+    public let httpBaseUrl: String
+    public let wsBaseUrl: String
+    public let reachability: String
+    public let source: String
+    public let status: String
+    public let isDefault: Bool?
+    public let description: String?
+
+    public init(
+        id: String,
+        label: String,
+        provider: AdvertisedEndpointProvider,
+        httpBaseUrl: String,
+        wsBaseUrl: String,
+        reachability: String,
+        source: String,
+        status: String,
+        isDefault: Bool? = nil,
+        description: String? = nil
+    ) {
+        self.id = id
+        self.label = label
+        self.provider = provider
+        self.httpBaseUrl = httpBaseUrl
+        self.wsBaseUrl = wsBaseUrl
+        self.reachability = reachability
+        self.source = source
+        self.status = status
+        self.isDefault = isDefault
+        self.description = description
+    }
 }
 
 public struct EnvironmentDescriptor: Sendable, Decodable, Equatable {
@@ -130,6 +193,24 @@ public struct EnvironmentDescriptor: Sendable, Decodable, Equatable {
     public let label: String
     public let platform: EnvironmentPlatform
     public let serverVersion: String
+    /// Optional and absent on older servers (and for the first seconds after
+    /// sidecar boot, before `tailscale serve` has been recorded) — decodes to
+    /// `nil` either way, keeping the descriptor backward compatible.
+    public let advertisedEndpoints: [AdvertisedEndpoint]?
+
+    public init(
+        environmentId: String,
+        label: String,
+        platform: EnvironmentPlatform,
+        serverVersion: String,
+        advertisedEndpoints: [AdvertisedEndpoint]? = nil
+    ) {
+        self.environmentId = environmentId
+        self.label = label
+        self.platform = platform
+        self.serverVersion = serverVersion
+        self.advertisedEndpoints = advertisedEndpoints
+    }
 }
 
 public struct PairingRedemption: Sendable {
