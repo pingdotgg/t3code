@@ -265,12 +265,51 @@ async function maybeAwait(value: void | Promise<void>): Promise<void> {
   await value;
 }
 
+// Mirrors the server's registrationTimeout in PluginHost (30s). A plugin's
+// register() is plugin-controlled code: one that returns a never-settling
+// Promise would otherwise block every later plugin in this sync loop AND wedge
+// every future sync behind syncChainRef. Bound it so a hung plugin fails via
+// the normal per-plugin catch path instead.
+const DEFAULT_REGISTER_TIMEOUT_MS = 30_000;
+
+/**
+ * Run a plugin's `register(ctx)` bounded by a timeout. Rejects if register does
+ * not settle within `timeoutMs`; the caller's per-plugin catch then records the
+ * plugin as failed and the loop continues. The timer is always cleared on the
+ * fast path so no dangling timers survive (important for tests).
+ */
+async function registerWithTimeout(
+  register: (ctx: PluginUiContext) => void | Promise<void>,
+  ctx: PluginUiContext,
+  timeoutMs: number,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`plugin register() timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+  try {
+    await Promise.race([maybeAwait(register(ctx)), timeout]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
+}
+
 export interface SyncPluginUiHostRegistrationsInput {
   readonly state: PluginUiHostState;
   readonly plugins: ReadonlyArray<PluginInfo>;
   readonly waitForHost: () => Promise<unknown>;
   readonly importWebPlugin: (url: string) => Promise<unknown>;
   readonly createRpc?: (pluginId: PluginId) => PluginWebRpc;
+  /**
+   * Per-plugin register() timeout in ms. Defaults to
+   * {@link DEFAULT_REGISTER_TIMEOUT_MS}; injectable so tests can drive the
+   * timeout path without waiting 30s.
+   */
+  readonly registerTimeoutMs?: number;
 }
 
 export async function syncPluginUiHostRegistrations({
@@ -279,6 +318,7 @@ export async function syncPluginUiHostRegistrations({
   waitForHost,
   importWebPlugin,
   createRpc = pluginRpc,
+  registerTimeoutMs = DEFAULT_REGISTER_TIMEOUT_MS,
 }: SyncPluginUiHostRegistrationsInput): Promise<PluginUiRegistrySnapshot> {
   const activeWebPlugins = plugins.filter((plugin) => plugin.state === "active" && plugin.hasWeb);
 
@@ -422,7 +462,7 @@ export async function syncPluginUiHostRegistrations({
       // the declarative settings schema, so its routes/sidebar/commands must not go
       // live. This is what makes importing a rejected plugin's module safe.
       if (definition.register !== undefined && plugin.state === "active") {
-        await maybeAwait(definition.register(ctx));
+        await registerWithTimeout(definition.register, ctx, registerTimeoutMs);
       }
       state.loaded.set(plugin.id, {
         pluginId: plugin.id,
