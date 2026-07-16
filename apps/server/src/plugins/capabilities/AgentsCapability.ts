@@ -232,6 +232,19 @@ function isStaleRequestFailure(kind: string, payload: unknown): boolean {
 // double-submitted. Mirrors the fail-closed resolution accounting the
 // projection pipeline applies for pending-approval rows and the user-input
 // counter.
+// The request namespace a `*.resolved` event / respond failure closes. Kept
+// symmetric with the opener namespaces ("approval" / "user-input") so a resolve
+// only ever closes an entry of its own kind.
+function resolvedRequestNamespace(kind: string): "approval" | "user-input" | null {
+  if (kind === "approval.resolved" || kind === "provider.approval.respond.failed") {
+    return "approval";
+  }
+  if (kind === "user-input.resolved" || kind === "provider.user-input.respond.failed") {
+    return "user-input";
+  }
+  return null;
+}
+
 function pendingRequestsFromActivities(
   activities: ReadonlyArray<AgentsPendingRequest["activity"]>,
 ): ReadonlyArray<AgentsPendingRequest> {
@@ -239,21 +252,30 @@ function pendingRequestsFromActivities(
     (left, right) =>
       left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
   );
+  // Key by NAMESPACE + requestId, not requestId alone: approval and user-input are
+  // distinct request namespaces that can carry the same provider-supplied id. Keyed
+  // by id alone, one would overwrite the other in the map (dropping a still-open
+  // request from the result), and resolving either kind would delete the sole entry
+  // (dropping the other too). The namespace makes the two independent, and a
+  // `*.resolved` / stale failure only closes the entry in its own namespace.
   const open = new Map<string, AgentsPendingRequest>();
   for (const activity of ordered) {
     const pending = pendingRequestFromActivity(activity);
     if (pending) {
-      open.set(pending.requestId, pending);
+      const namespace = pending.kind === "approval.requested" ? "approval" : "user-input";
+      open.set(`${namespace}:${pending.requestId}`, pending);
       continue;
     }
+    const resolvedNamespace = resolvedRequestNamespace(activity.kind);
     if (
-      activity.kind === "approval.resolved" ||
-      activity.kind === "user-input.resolved" ||
-      isStaleRequestFailure(activity.kind, activity.payload)
+      resolvedNamespace !== null &&
+      (activity.kind === "approval.resolved" ||
+        activity.kind === "user-input.resolved" ||
+        isStaleRequestFailure(activity.kind, activity.payload))
     ) {
       const requestId = activityRequestId(activity.payload);
       if (requestId !== null) {
-        open.delete(requestId);
+        open.delete(`${resolvedNamespace}:${requestId}`);
       }
     }
   }
@@ -618,13 +640,26 @@ export function makeAgentsCapability(
               Effect.sync(() => turnAliases.delete(String(turnId))).pipe(
                 Effect.andThen(
                   createdThread
-                    ? input.engine
-                        .dispatch({
-                          type: "thread.delete",
-                          commandId: nextCommandId("thread-create-rollback"),
-                          threadId: request.threadId,
-                        })
-                        .pipe(Effect.ignore)
+                    ? Effect.gen(function* () {
+                        // Roll back the bootstrap thread ONLY while it is still empty.
+                        // A concurrent startTurn may have observed this plugin-owned
+                        // thread between our create and this failure and successfully
+                        // started its own turn on it; an unconditional delete would
+                        // then destroy that caller's thread and in-progress turn. Our
+                        // own turn-start failed above, so any turn present came from
+                        // another caller — leave the thread alone in that case.
+                        const turns = yield* input.turns
+                          .listByThreadId({ threadId: request.threadId })
+                          .pipe(Effect.orElseSucceed(() => []));
+                        if (turns.length > 0) return;
+                        yield* input.engine
+                          .dispatch({
+                            type: "thread.delete",
+                            commandId: nextCommandId("thread-create-rollback"),
+                            threadId: request.threadId,
+                          })
+                          .pipe(Effect.ignore);
+                      })
                     : Effect.void,
                 ),
               ),

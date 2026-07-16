@@ -491,6 +491,34 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
       return stage;
     });
 
+  // Claim a stage for a confirm: reap other expired stages, then atomically PIN
+  // this one so its TTL can no longer expire. Without pinning, a concurrent call
+  // (another getStage / beginInstall) runs cleanupExpired, which would reap this
+  // very stage — deleting its record and stagingDir — if the TTL elapses between
+  // the confirm's lookup and moveStagingToVersionDir's rename, failing a valid,
+  // timely confirm with ENOENT. The stage stays in the map under the same token,
+  // so the confirm's existing dropStage (success) / cleanupStage (error) paths are
+  // unchanged; the startup sweep reaps a pinned stage orphaned by an interrupt.
+  const claimStage = (stageToken: string, operation: StageRecord["operation"]) =>
+    Effect.gen(function* () {
+      yield* cleanupExpired;
+      const claimed = yield* Ref.modify(stages, (current) => {
+        const stage = current.get(stageToken);
+        if (!stage || stage.operation !== operation) {
+          return [null, current] as const;
+        }
+        const next = new Map(current);
+        next.set(stageToken, { ...stage, expiresAtMs: Number.POSITIVE_INFINITY });
+        return [stage, next] as const;
+      });
+      if (!claimed) {
+        return yield* managementError("stage-not-found", "Plugin staging token was not found.", {
+          stageToken,
+        });
+      }
+      return claimed;
+    });
+
   const dropStage = (stageToken: string) =>
     Ref.modify(stages, (current) => {
       const stage = current.get(stageToken);
@@ -827,7 +855,7 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
       // pre-existed the move.
       let orphanedVersionDir: string | null = null;
       return yield* Effect.gen(function* () {
-        const stage = yield* getStage(stageToken, "install");
+        const stage = yield* claimStage(stageToken, "install");
         const destination = pluginVersionDir(
           config.pluginsDir,
           stage.pluginId,
@@ -1110,7 +1138,7 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
       // version, so removing it on failure never touches the live plugin.
       let orphanedVersionDir: string | null = null;
       return yield* Effect.gen(function* () {
-        const stage = yield* getStage(stageToken, "upgrade");
+        const stage = yield* claimStage(stageToken, "upgrade");
         const destination = pluginVersionDir(
           config.pluginsDir,
           stage.pluginId,

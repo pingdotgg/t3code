@@ -94,6 +94,14 @@ export const findContextDescriptorViolation = (
   if (descriptor.text === undefined && descriptor.contribute === undefined) {
     return `context contribution "${descriptor.name}" declares neither \`text\` nor \`contribute\`, so it can never contribute anything`;
   }
+  // Reject a non-function `contribute` at registration. Descriptors are dynamically
+  // loaded JS, so a value like `contribute: "bad"` passes the SDK's compile-time
+  // type. At turn time `runOne` would call it, and the resulting synchronous throw
+  // lands BEFORE `timeoutOrElse`/`catchCause` are wired — aborting the user's turn
+  // instead of skipping the bad plugin. Fail it here instead.
+  if (descriptor.contribute !== undefined && typeof descriptor.contribute !== "function") {
+    return `context contribution "${descriptor.name}" declares a \`contribute\` that is not a function`;
+  }
   if (descriptor.text !== undefined) {
     const bytes = byteLength(descriptor.text);
     if (bytes > CONTEXT_MAX_BYTES_PER_PLUGIN) {
@@ -159,10 +167,15 @@ export const make = Effect.fn("PluginContextComposer.make")(function* () {
       );
   };
 
-  const compose: PluginContextComposer["Service"]["compose"] = (turn) =>
-    Effect.gen(function* () {
-      const records: Array<PluginContextRecord> = [];
-      const texts: Array<string> = [];
+  const compose: PluginContextComposer["Service"]["compose"] = (turn) => {
+    // Hoisted OUT of the timed effect so the gather-timeout fallback below can
+    // return what already completed. If these lived inside the gen, `orElse` (which
+    // runs after the gen fiber is interrupted) could not see them and would discard
+    // every succeeded contribution and accumulated record — defeating the whole
+    // point of PluginContextRecord being a debuggable trail.
+    const records: Array<PluginContextRecord> = [];
+    const texts: Array<string> = [];
+    return Effect.gen(function* () {
       let total = 0;
 
       for (const [pluginId, descriptors] of entries) {
@@ -206,9 +219,19 @@ export const make = Effect.fn("PluginContextComposer.make")(function* () {
       // timeout is what the user would otherwise wait through before every turn.
       Effect.timeoutOrElse({
         duration: CONTEXT_GATHER_TIMEOUT,
-        orElse: () => Effect.succeed({ text: "", records: [] } satisfies ComposedPluginContext),
+        // On the ceiling firing, return what finished before the deadline rather
+        // than an empty result — already-succeeded contributions stay in `text`,
+        // and their records (plus any per-contributor skips) remain visible. The
+        // contributor still running when the budget ran out is simply interrupted.
+        orElse: () =>
+          Effect.logWarning("plugin context gather timed out; returning partial result", {
+            gathered: texts.length,
+          }).pipe(
+            Effect.as({ text: texts.join(SEPARATOR), records } satisfies ComposedPluginContext),
+          ),
       }),
     );
+  };
 
   return PluginContextComposer.of({
     put: (pluginId, descriptors) =>

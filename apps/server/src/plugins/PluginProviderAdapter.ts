@@ -291,16 +291,31 @@ export const makePluginProviderAdapter = (input: {
           // session was deleted (absent-session guard, so a concurrent stop/delete is
           // not resurrected) or the reservation was superseded (activeTurnId no longer
           // ours). activeTurnId is already turnId from the reservation.
-          yield* Ref.update(sessions, (current) => {
+          const installed = yield* Ref.modify(sessions, (current) => {
             const existing = current.get(threadId);
-            if (existing === undefined) return current;
-            if (existing.activeTurnId !== turnId) return current;
-            return new Map(current).set(threadId, {
-              ...existing,
-              turnFiber: fiber as Fiber.Fiber<void, never>,
-              activeTurnId: turnId,
-            });
+            if (existing === undefined || existing.activeTurnId !== turnId) {
+              return [false as const, current];
+            }
+            return [
+              true as const,
+              new Map(current).set(threadId, {
+                ...existing,
+                turnFiber: fiber as Fiber.Fiber<void, never>,
+                activeTurnId: turnId,
+              }),
+            ];
           });
+
+          // The reservation set activeTurnId BEFORE the fork, but the fiber handle is
+          // stored only here — so there is a window where the turn is active with no
+          // stored fiber. If interruptTurn (or a stop/delete) ran in that window it
+          // cleared/superseded our reservation, and this install just no-op'd. The
+          // fiber we forked is therefore UNTRACKED: nothing holds its handle, so
+          // interrupt/stop can never reach it and it would run on as a phantom turn the
+          // caller believes was cancelled. Interrupt it here to close that race.
+          if (!installed) {
+            yield* Fiber.interrupt(fiber).pipe(Effect.orDie);
+          }
 
           return { threadId, turnId } satisfies ProviderTurnStartResult;
         }).pipe(Effect.onError(() => endTurn(threadId, turnId)));

@@ -50,6 +50,26 @@ describe("PluginPolicyRegistry", () => {
     }),
   );
 
+  it.effect("defers when a hook throws synchronously instead of returning an effect", () =>
+    Effect.gen(function* () {
+      const registry = yield* make();
+      yield* registry.put("plugin-a", [
+        {
+          name: "throws-sync",
+          // A real synchronous throw when the pipeline is BUILT (not Effect.fail).
+          // Evaluated eagerly it would escape catchCause and fail `evaluate` — the
+          // opposite of the "a broken hook DEFERS" contract.
+          onApprovalRequest: () => {
+            throw new HookExploded("boom");
+          },
+        },
+      ]);
+
+      const outcome = yield* registry.evaluate(request);
+      assert.deepStrictEqual(outcome, { decision: "defer", deniedBy: null, reason: null });
+    }),
+  );
+
   it.effect("stops at the first deny", () =>
     Effect.gen(function* () {
       const registry = yield* make();
