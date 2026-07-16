@@ -133,7 +133,42 @@ it.layer(PluginHttpRegistryLayer.layer)("PluginHttpRegistry", (it) => {
 
       assert.isTrue(Option.isSome(matched));
       if (Option.isSome(matched)) {
-        assert.deepEqual(matched.value.params, { name: "alice" });
+        // Spread to a plain object: params is a null-prototype map, so a direct
+        // deepEqual against an object literal would compare prototypes.
+        assert.deepEqual({ ...matched.value.params }, { name: "alice" });
+      }
+    }),
+  );
+
+  // A param literally named `__proto__` is a valid route parameter. On a plain
+  // object the assignment `params["__proto__"] = value` routes through the
+  // inherited setter and the decoded value is silently lost; the null-prototype
+  // map must instead store it as an own property.
+  it.effect("captures a param named __proto__ as an own property", () =>
+    Effect.gen(function* () {
+      const registry = yield* PluginHttpRegistry;
+      yield* registry.put(pluginId, [
+        {
+          method: "GET",
+          path: "/proto/:__proto__",
+          auth: "public",
+          handler: () => Effect.succeed({ status: 204 }),
+        },
+      ]);
+
+      const matched = yield* registry.match({
+        pluginId,
+        method: "get",
+        path: "/proto/injected",
+      });
+
+      assert.isTrue(Option.isSome(matched));
+      if (Option.isSome(matched)) {
+        const params = matched.value.params as Record<string, string>;
+        assert.isTrue(Object.prototype.hasOwnProperty.call(params, "__proto__"));
+        assert.equal(params["__proto__"], "injected");
+        // The host prototype chain must be untouched.
+        assert.equal(({} as Record<string, unknown>)["injected"], undefined);
       }
     }),
   );
@@ -259,6 +294,38 @@ if (loopbackAvailable) {
         assert.equal(response.status, 201);
         assert.equal(response.headers["x-plugin-test"], "ok");
         assert.deepEqual(body, { name: "chris", query: "1", body: "hello" });
+      }),
+    );
+
+    // A query key named `__proto__` is valid. On a plain object it would route
+    // through the inherited accessor — mutating the prototype and dropping the
+    // value — so the null-prototype query map must expose it as an own entry and
+    // leave the prototype chain intact.
+    it.effect("delivers a query key named __proto__ without polluting the prototype", () =>
+      Effect.gen(function* () {
+        const registry = yield* PluginHttpRegistry;
+        yield* registry.put(pluginId, [
+          {
+            method: "GET",
+            path: "/q",
+            auth: "public",
+            handler: (request) =>
+              Effect.succeed({
+                status: 200,
+                body: {
+                  own: Object.prototype.hasOwnProperty.call(request.query, "__proto__"),
+                  value: (request.query as Record<string, unknown>)["__proto__"] ?? null,
+                  polluted: ({} as Record<string, unknown>)["injected"] ?? null,
+                },
+              }),
+          },
+        ]);
+
+        const response = yield* getPath("/hooks/plugins/http-plugin/q?__proto__=injected");
+        const body = yield* response.json;
+
+        assert.equal(response.status, 200);
+        assert.deepEqual(body, { own: true, value: "injected", polluted: null });
       }),
     );
 

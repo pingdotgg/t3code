@@ -104,6 +104,28 @@ describe("buildTurnStartParams plugin context", () => {
     // stray separators in the agent's instructions.
     NodeAssert.strictEqual(instructions, CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS);
   });
+
+  // interactionMode is optional throughout the send-turn path. A turn relying on
+  // the provider's implicit default mode must STILL receive plugin context — an
+  // absent mode previously dropped the whole collaboration mode, silently
+  // discarding the composed contribution. Fall back to the default mode so the
+  // context rides along.
+  it("delivers plugin context under the default mode when no mode is supplied", () => {
+    const collaborationMode = Effect.runSync(
+      buildTurnStartParams({
+        threadId: "provider-thread-context",
+        runtimeMode: "full-access",
+        prompt: "hello",
+        model: "gpt-5.3-codex",
+        effort: "medium",
+        pluginContext: "PLUGIN-CONTRIBUTED-RULE",
+      }),
+    ).collaborationMode;
+    NodeAssert.strictEqual(collaborationMode?.mode, "default");
+    const instructions = collaborationMode?.settings.developer_instructions;
+    NodeAssert.ok(String(instructions ?? "").includes(CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS));
+    NodeAssert.ok(String(instructions ?? "").includes("PLUGIN-CONTRIBUTED-RULE"));
+  });
 });
 
 describe("buildTurnStartParams", () => {

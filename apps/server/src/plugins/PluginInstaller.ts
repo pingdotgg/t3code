@@ -1125,6 +1125,19 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
             // interleave "remove the other's committed dir" with "record my sha".
             Effect.gen(function* () {
               const entry = yield* installedEntry(current);
+              // Uninstall wins the race: a pending-remove entry is mid-teardown
+              // (persist written, reconciliation may already be deleting the
+              // plugin). Overwriting it with pending-upgrade here would cancel the
+              // uninstall and move new files while teardown is still in flight,
+              // leaving a half-removed plugin. setEnabled rejects late enables on
+              // pending-remove for the same reason — mirror that here.
+              if (entry.state === "pending-remove") {
+                return yield* managementError(
+                  "manifest-invalid",
+                  "This plugin is being uninstalled and can no longer be upgraded.",
+                  { pluginId: stage.pluginId },
+                );
+              }
               // Reject a second confirm for the same plugin while an upgrade is
               // already staged. Two upgrades begun from the same installed version
               // (v1→v2 and v1→v3) both pass installedEntry — the version never
