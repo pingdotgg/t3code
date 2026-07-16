@@ -67,6 +67,8 @@ export type PluginMigratorError =
 interface SqliteMasterObject {
   readonly name: string;
   readonly type: string;
+  /** For an index or trigger: the table it is anchored to. */
+  readonly tbl_name: string;
   readonly sql: string | null;
 }
 
@@ -86,7 +88,7 @@ export const pluginSqlPrefix = (pluginId: string) => `p_${pluginId.replaceAll("-
 
 const sqliteMasterSnapshot = (sql: SqlClient.SqlClient) =>
   sql<SqliteMasterObject>`
-    SELECT name, type, sql
+    SELECT name, type, tbl_name, sql
     FROM sqlite_master
     WHERE type IN ('table', 'index', 'trigger', 'view')
       AND name NOT LIKE 'sqlite_%'
@@ -152,6 +154,23 @@ const validateMigrationObjects = (input: {
           version: input.version,
           objectName: entry.name,
           detail: `object name must start with ${input.prefix}`,
+        });
+      }
+      // An index or trigger is ANCHORED to a table (sqlite_master.tbl_name), and
+      // the anchor is where the damage happens: a plugin-prefixed
+      // `CREATE UNIQUE INDEX p_<id>_x ON core_table(...)` passed the name check and
+      // then `continue`d straight past everything else — altering a core table's
+      // constraints while the migration recorded as successful. The anchor check is
+      // structural, so it does not depend on parsing the SQL body.
+      if (
+        (entry.type === "index" || entry.type === "trigger") &&
+        !entry.tbl_name.startsWith(input.prefix)
+      ) {
+        return yield* new PluginMigrationViolation({
+          pluginId: input.pluginId,
+          version: input.version,
+          objectName: entry.name,
+          detail: `${entry.type} is anchored to ${entry.tbl_name}, outside the plugin namespace`,
         });
       }
       if (entry.type !== "trigger" && entry.type !== "view") continue;
@@ -243,19 +262,23 @@ export const make = Effect.fn("PluginMigrator.make")(function* () {
             // database_list always reports "main" (and "temp" once the temp
             // schema exists); anything else is an ATTACHed database.
             const databases = yield* sql<{ readonly name: string }>`PRAGMA database_list`;
-            const attached = databases.find(
+            const attachedDatabases = databases.filter(
               (database) => database.name !== "main" && database.name !== "temp",
             );
-            if (attached) {
-              // Best-effort DETACH so a rogue attach cannot persist on the
-              // shared connection past this violation.
-              yield* sql
-                .unsafe(`DETACH DATABASE "${attached.name.replaceAll('"', '""')}"`)
-                .unprepared.pipe(Effect.ignore);
+            if (attachedDatabases.length > 0) {
+              // Best-effort DETACH of EVERY attachment, not `.find(...)`'s first: a
+              // migration that attached two databases used to leave the second one
+              // live on the SHARED connection after the violation — leaked file
+              // handles and schema visible to every later database operation.
+              yield* Effect.forEach(attachedDatabases, (database) =>
+                sql
+                  .unsafe(`DETACH DATABASE "${database.name.replaceAll('"', '""')}"`)
+                  .unprepared.pipe(Effect.ignore),
+              );
               return yield* new PluginMigrationViolation({
                 pluginId,
                 version: migration.version,
-                objectName: attached.name,
+                objectName: attachedDatabases[0]!.name,
                 detail: "ATTACH DATABASE is not permitted in plugin migrations",
               });
             }

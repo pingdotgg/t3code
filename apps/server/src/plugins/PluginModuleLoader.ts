@@ -54,6 +54,12 @@ export class PluginModuleLoader extends Context.Service<
 >()("t3/plugins/PluginModuleLoader") {}
 
 let hostResolutionHookRegistered = false;
+// MODULE scope, like the flag above, and for the same reason: the node loader hook is
+// a process-global registration. This gate lived inside make() before, so every
+// loader INSTANCE got its own semaphore — two instances registering concurrently each
+// held their own gate, both observed the shared flag as false, and both registered,
+// installing duplicate hooks. A per-instance lock cannot guard process-global state.
+const registrationGate = Semaphore.makeUnsafe(1);
 
 function isPluginDefinition(value: unknown): value is PluginDefinition {
   return (
@@ -82,9 +88,8 @@ export const make = Effect.fn("PluginModuleLoader.make")(function* () {
   // register() completed, so a racing caller imported a plugin before the resolve
   // hook existed and its `import "effect"` resolved off the host singleton (or
   // failed), sticking the plugin as persistently "failed". The hook is a
-  // PROCESS-GLOBAL node registration, so the module-level guard still keeps it to
-  // one successful registration per process even across loader instances.
-  const registrationGate = yield* Semaphore.make(1);
+  // PROCESS-GLOBAL node registration; the gate lives at module scope beside the
+  // flag it guards, so it synchronizes across loader instances too.
 
   const registerHook = Effect.gen(function* () {
     const nodeModule = yield* Effect.promise(() => import("node:module"));

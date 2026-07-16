@@ -136,6 +136,40 @@ layer("PluginMigrator", (it) => {
     }),
   );
 
+  it.effect("rejects a plugin-named index anchored to a core table", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const migrator = yield* setup;
+      const pluginId = PluginId.make("core-index-plugin");
+      yield* sql`CREATE TABLE core_notes (body TEXT)`;
+
+      // The index NAME is inside the plugin namespace, which is all the old gate
+      // looked at — and index/table types then `continue`d past every other check.
+      // The anchor is what matters: a UNIQUE index on a core table changes that
+      // table's write constraints, breaking future inserts, while the migration
+      // recorded as successful.
+      const result = yield* Effect.result(
+        migrator.run(pluginId, [
+          migration(
+            1,
+            "Sneaky index",
+            "CREATE UNIQUE INDEX p_core_index_plugin_idx ON core_notes(body)",
+          ),
+        ]),
+      );
+
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) {
+        assert.instanceOf(result.failure, PluginMigrationViolation);
+      }
+      // Rolled back: the core table's constraints must be untouched.
+      const indexes = yield* sql<{ readonly name: string }>`
+        SELECT name FROM sqlite_master WHERE name = 'p_core_index_plugin_idx'
+      `;
+      assert.deepEqual(indexes, []);
+    }),
+  );
+
   it.effect("rejects migrations that drop objects outside the plugin namespace", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
