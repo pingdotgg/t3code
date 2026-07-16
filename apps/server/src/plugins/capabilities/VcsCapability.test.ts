@@ -799,6 +799,56 @@ it.layer(TestLayer)("VcsCapability", (it) => {
       ),
     );
 
+    it.effect("fails when listing untracked files fails, instead of silently dropping them", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const repo = yield* makeTmpDir();
+          yield* initRepoWithCommit(repo);
+          const gitDriver = yield* GitVcsDriver.GitVcsDriver;
+          const checkpointStore = yield* CheckpointStore.CheckpointStore;
+          // Wrap the driver so ONLY the untracked-listing invocation fails
+          // (index error / lock contention / spawn failure) and every other
+          // git call delegates. Previously this was piped through
+          // Effect.orElseSucceed, so a systemic listing failure returned a
+          // "complete" diff with every untracked file missing and
+          // truncated:false — a silent, invisible data loss.
+          const failingListGit = {
+            ...gitDriver,
+            execute: (executeInput: GitVcsDriver.ExecuteGitInput) =>
+              executeInput.operation === "PluginVcsCapability.diffRefToWorkingTree.untracked.list"
+                ? Effect.fail(
+                    new GitCommandError({
+                      operation: executeInput.operation,
+                      command: "git",
+                      cwd: executeInput.cwd,
+                      argumentCount: executeInput.args.length,
+                      exitCode: 128,
+                      detail: "simulated ls-files listing failure",
+                    }),
+                  )
+                : gitDriver.execute(executeInput),
+          };
+          const vcs = yield* makeVcs({
+            git: failingListGit,
+            checkpoints: checkpointStore,
+            grantedRoots: [repo],
+          });
+
+          // A real untracked file exists, so a working listing WOULD have
+          // returned content — the failure is the only reason it is missing.
+          yield* writeTextFile(NodePath.join(repo, "untracked.txt"), "new file\n");
+
+          const error = yield* vcs
+            .diffRefToWorkingTree({ worktreePath: repo, baseRef: "HEAD" })
+            .pipe(Effect.flip);
+          expect(error).toBeInstanceOf(GitCommandError);
+          expect((error as GitCommandError).operation).toBe(
+            "PluginVcsCapability.diffRefToWorkingTree.untracked.list",
+          );
+        }),
+      ),
+    );
+
     it.effect("rejects option injection in user-supplied refs before git runs", () =>
       Effect.scoped(
         Effect.gen(function* () {

@@ -685,15 +685,13 @@ export function makeVcsCapability(input: {
 
         const includeUntracked = request.includeUntracked !== false;
         const untrackedList = includeUntracked
-          ? yield* input.git
-              .execute({
-                operation: "PluginVcsCapability.diffRefToWorkingTree.untracked.list",
-                cwd,
-                args: ["ls-files", "--others", "--exclude-standard", "-z"],
-                maxOutputBytes: 120_000,
-                appendTruncationMarker: true,
-              })
-              .pipe(Effect.orElseSucceed(() => ({ stdout: "", stdoutTruncated: false })))
+          ? yield* input.git.execute({
+              operation: "PluginVcsCapability.diffRefToWorkingTree.untracked.list",
+              cwd,
+              args: ["ls-files", "--others", "--exclude-standard", "-z"],
+              maxOutputBytes: 120_000,
+              appendTruncationMarker: true,
+            })
           : { stdout: "", stdoutTruncated: false };
         const untrackedPaths = untrackedList.stdout.split("\0").filter((p) => p.length > 0);
         // One SHARED budget across every untracked diff, matching the cap the tracked
