@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts/plugin";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -228,6 +229,20 @@ export const make = Effect.fn("PluginMarketplace.make")(function* () {
             }),
         }),
       ),
+      // Hard wall-clock deadline around the whole fetch + body read. The
+      // transport `timeoutMs` only bounds SOCKET INACTIVITY (it resets on every
+      // byte), so a byte-drip endpoint could hold catalog refresh open forever
+      // while staying under the byte cap. Same defense HttpClientCapability.ts
+      // (~313-364) documents for this attack.
+      Effect.timeoutOrElse({
+        duration: Duration.millis(MARKETPLACE_FETCH_TIMEOUT_MS),
+        orElse: () =>
+          managementError(
+            "catalog-fetch-failed",
+            "Plugin marketplace fetch exceeded the time limit.",
+            { url, timeoutMs: MARKETPLACE_FETCH_TIMEOUT_MS },
+          ),
+      }),
     );
 
   const readBytes = (url: string) =>

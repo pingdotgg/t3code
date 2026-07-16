@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { PluginId, type PluginSource } from "@t3tools/contracts/plugin";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -73,6 +74,35 @@ const marketplaceTest = it.layer(
     Layer.provideMerge(TestOutboundLookupLive),
     Layer.provideMerge(TestPluginHttpClientTransportLive),
   ),
+);
+
+// A response whose body stream never emits and never closes: the capped read
+// suspends forever, standing in for a byte-drip / stalled endpoint that stays
+// under the byte cap but would otherwise hold catalog refresh open indefinitely.
+const neverEndingResponse = () =>
+  new Response(
+    new ReadableStream<Uint8Array>({
+      start() {
+        // never enqueue, never close
+      },
+    }),
+    { headers: { "content-type": "application/json" } },
+  );
+
+const HangingTransportLive = Layer.succeed(PluginHttpClientTransportService, (request) =>
+  Effect.succeed(
+    HttpClientResponse.fromWeb(
+      HttpClientRequest.get(request.url.toString()),
+      neverEndingResponse(),
+    ),
+  ),
+);
+
+const marketplaceTimeoutLayer = PluginMarketplaceLayer.pipe(
+  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(TestClock.layer()),
+  Layer.provideMerge(TestOutboundLookupLive),
+  Layer.provideMerge(HangingTransportLive),
 );
 
 const withPluginDev = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -276,3 +306,34 @@ marketplaceTest("PluginMarketplace", (it) => {
     ),
   );
 });
+
+// A body-drip endpoint (response arrives, bytes never do) must not hold catalog
+// refresh open past the wall-clock deadline. The transport `timeoutMs` only
+// bounds socket inactivity, so the pipeline-level Effect.timeoutOrElse is what
+// bounds this. Driven under TestClock so the real MARKETPLACE_FETCH_TIMEOUT_MS
+// (30s) constant is exercised deterministically.
+it.effect("marketplace fetch times out when the response body never completes", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const marketplace = yield* PluginMarketplace;
+      const child = yield* Effect.forkChild(
+        Effect.result(
+          marketplace.fetchSource({
+            id: "hang",
+            url: "https://example.test/marketplace.json",
+            addedAt: "2026-07-03T00:00:00.000Z",
+          }),
+        ),
+        { startImmediately: true },
+      );
+      yield* TestClock.adjust("30 seconds");
+      const result = yield* Fiber.join(child);
+
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) {
+        assert.equal(result.failure.code, "catalog-fetch-failed");
+        assert.include(result.failure.message, "time limit");
+      }
+    }).pipe(Effect.provide(marketplaceTimeoutLayer)),
+  ),
+);

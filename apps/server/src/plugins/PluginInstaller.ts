@@ -16,6 +16,7 @@ import {
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -79,10 +80,13 @@ const isPluginManagementError = Schema.is(PluginManagementError);
 
 export const PLUGIN_CAPABILITY_DESCRIPTIONS = {
   agents: "Run AI agents",
-  vcs: "Read version control state",
-  terminals: "Create and manage terminals",
-  database: "Use plugin database tables",
-  "projections.read": "Read projected workspace data",
+  vcs: "Run git in your project and in worktrees this plugin creates \u2014 including commit, merge, push, branch switching, and deleting files, worktrees, and checkpoints. This changes and can discard work in your repositories, not just read them.",
+  terminals:
+    "Run commands in a real terminal on this machine with the host process's privileges, in any directory it can reach \u2014 not confined to your project. This is effectively a local shell; grant it only to plugins you trust to run programs on your computer.",
+  database:
+    "Read and write the app's shared database directly \u2014 including the app's own core tables and your workspace data, not only tables this plugin created. Grant it only to plugins you trust with everything the app stores.",
+  "projections.read":
+    "Read the full text and attachments of every message in every thread across all projects, plus turn and thread activity \u2014 not only this plugin's own threads. Like the events capability, this exposes the contents of your conversations; grant it only to plugins you trust with them.",
   "environments.read": "Read environment metadata",
   secrets: "Store plugin secrets",
   http: "Serve plugin HTTP routes",
@@ -109,11 +113,11 @@ export const PLUGIN_CAPABILITY_DESCRIPTIONS = {
   // the agent does" would reasonably fear the opposite too — a plugin waving things
   // through — so the copy rules that out explicitly, because the code does.
   providers:
-    "Add a new AI provider you can configure and chat with. Anything you send to a thread using that provider goes wherever the plugin sends it \u2014 the app cannot see or vouch for where that is. Grant this only to plugins you trust with the contents of those conversations.",
+    "Add a new AI provider you can configure and chat with. Anything you send to a thread using that provider goes wherever the plugin sends it \u2014 the app cannot see or vouch for where that is. Grant this only to plugins you trust with the contents of those conversations. (staged: provider plugins are not yet selectable for chat)",
   policy:
     "See what the agent asks permission for \u2014 commands it wants to run, files it wants to read or change \u2014 and block them. It can only block: it can never approve something on your behalf, so you will still be asked about anything it does not block. A broken plugin here can stop the agent working; it cannot let it do more.",
   context:
-    "Add its own instructions to the AI agent on every turn, in every thread. This is not a read: it changes how the agent behaves, and it can work against the app's own instructions. Grant it only to plugins you trust to direct your agent.",
+    "Add its own instructions to the AI agent's turns (currently applied on Codex turns). This is not a read: it changes how the agent behaves, and it can work against the app's own instructions. Grant it only to plugins you trust to direct your agent.",
   events:
     "Read everything that happens in this workspace as it happens, including the full text of every message you and the agent send, their attachments, and the activity of every turn \u2014 plus projects and threads being created, renamed, and deleted. This is read-only, but it is very broad: the plugin sees this across every project, not only the one you are working in. Grant it only to plugins you trust with the contents of your conversations.",
 } satisfies Record<PluginCapability, string>;
@@ -567,6 +571,19 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
             }),
         }),
       ),
+      // Hard wall-clock deadline around the whole download + body read. The
+      // transport `timeoutMs` only bounds SOCKET INACTIVITY (it resets on every
+      // byte), so a byte-drip endpoint could hold an install open forever while
+      // staying under the byte cap. Same defense HttpClientCapability.ts
+      // (~313-364) documents for this attack.
+      Effect.timeoutOrElse({
+        duration: Duration.millis(DOWNLOAD_TIMEOUT_MS),
+        orElse: () =>
+          managementError("download-failed", "Plugin tarball download exceeded the time limit.", {
+            url,
+            timeoutMs: DOWNLOAD_TIMEOUT_MS,
+          }),
+      }),
     );
   };
 
@@ -793,6 +810,13 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
       });
     });
 
+  // confirmInstall's success guarantees only that the tarball bytes are moved
+  // into the version dir and the lockfile entry is committed. It does NOT
+  // guarantee the plugin activated: activatePlugin swallows load failures by
+  // design (marking the plugin failed in its own state), so the durable install
+  // is already complete before activation is attempted. The "activation-failed"
+  // mapping below is therefore effectively reachable only for host lockfile
+  // read/parse errors, not for a plugin whose code failed to load.
   const confirmInstall: PluginInstaller["Service"]["confirmInstall"] = (stageToken) =>
     Effect.gen(function* () {
       // Armed only for the window between "files moved into the version dir" and

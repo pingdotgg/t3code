@@ -104,6 +104,18 @@ function tar(entries: ReadonlyArray<Parameters<typeof tarEntry>[0]>): Uint8Array
 
 const sha256 = (bytes: Uint8Array) => NodeCrypto.createHash("sha256").update(bytes).digest("hex");
 
+// A response whose body stream never emits and never closes: the capped read
+// suspends forever, standing in for a byte-drip / stalled endpoint that stays
+// under the byte cap but would otherwise hold an install open indefinitely.
+const neverEndingResponse = () =>
+  new Response(
+    new ReadableStream<Uint8Array>({
+      start() {
+        // never enqueue, never close
+      },
+    }),
+  );
+
 const tarballForManifest = (pluginManifest = manifest()) =>
   tarballForManifestJson(encodeManifestJson(pluginManifest));
 
@@ -1354,3 +1366,51 @@ it.effect(
     );
   },
 );
+
+// A tarball endpoint that answers but then drips (or never sends) the body must
+// not hold an install open past the wall-clock deadline. The transport
+// `timeoutMs` only bounds socket inactivity, so the pipeline-level
+// Effect.timeoutOrElse is what bounds this. Driven under TestClock so the real
+// DOWNLOAD_TIMEOUT_MS (120s) constant is exercised deterministically. The clock
+// is only advanced once the tarball has actually been requested — by then the
+// deadline is armed (timeoutOrElse registers its sleep before the transport
+// call) and the preceding marketplace fetch has already completed, so only the
+// download deadline is pending.
+it.effect("PluginInstaller download times out when the tarball body never completes", () => {
+  let signalRequested = () => {};
+  const tarballRequested = new Promise<void>((resolve) => {
+    signalRequested = resolve;
+  });
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const installer = yield* PluginInstaller;
+      yield* seedSource;
+
+      const child = yield* Effect.forkChild(
+        Effect.result(installer.beginInstall({ sourceId, pluginId, version: "1.0.0" })),
+        { startImmediately: true },
+      );
+      yield* Effect.promise(() => tarballRequested);
+      yield* TestClock.adjust("120 seconds");
+      const result = yield* Fiber.join(child);
+
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) {
+        assert.equal(result.failure.code, "download-failed");
+        assert.include(result.failure.message, "time limit");
+      }
+    }).pipe(
+      Effect.provide(
+        installerLayer({
+          tarball: tarballForManifest(),
+          responses: {
+            [tarballUrl]: () => {
+              signalRequested();
+              return neverEndingResponse();
+            },
+          },
+        }),
+      ),
+    ),
+  );
+});
