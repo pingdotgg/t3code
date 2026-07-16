@@ -17,6 +17,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeZlib from "node:zlib";
 
 import * as ServerConfig from "../config.ts";
+import { pluginVersionDir } from "./PluginPaths.ts";
 import { PluginHttpClientTransportService } from "./capabilities/HttpClientCapability.ts";
 import { OutboundUrlError, OutboundUrlLookup } from "./OutboundUrlValidator.ts";
 import { PluginCatalog } from "./PluginCatalog.ts";
@@ -804,6 +805,74 @@ it.effect("PluginInstaller confirmInstall re-checks id collisions under the lock
       const lockfile = yield* store.readLockfile;
       assert.equal(lockfile.plugins[pluginId]?.version, "2.0.0");
       assert.equal(lockfile.plugins[pluginId]?.sha256, "concurrent");
+    }).pipe(Effect.provide(installerLayer({ tarball: tarballForManifest() }))),
+  ),
+);
+
+it.effect("PluginInstaller confirmInstall cannot clobber a concurrent same-version install", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const installer = yield* PluginInstaller;
+      const store = yield* PluginLockfileStore;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfig.ServerConfig;
+      yield* seedSource;
+
+      const staged = yield* installer.beginInstall({ sourceId, pluginId, version: "1.0.0" });
+
+      // A concurrent install of the SAME id+version wins the race: its entry is in
+      // the lockfile and its files occupy the version directory. The sentinel stands
+      // in for those files.
+      const versionDir = pluginVersionDir(config.pluginsDir, pluginId, "1.0.0", path.join);
+      yield* fs.makeDirectory(versionDir, { recursive: true });
+      yield* fs.writeFileString(path.join(versionDir, "winner.txt"), "committed by the winner");
+      yield* store.updatePlugin(pluginId, () =>
+        Effect.succeed({
+          version: "1.0.0",
+          sha256: "winner-sha",
+          sourceId,
+          enabled: true,
+          state: "active" as const,
+          activation: { activatingSince: null, crashCount: 0 },
+          installedAt: "2026-07-03T00:00:00.000Z",
+          lastError: null,
+        }),
+      );
+
+      const result = yield* Effect.result(installer.confirmInstall(staged.stageToken));
+
+      assert.isTrue(Result.isFailure(result), "the losing confirm must fail the collision check");
+      // The half the lockfile assertion cannot see: before the destructive move ran
+      // under the lockfile writer, the loser REPLACED the winner's committed files
+      // with its own rejected archive and only then failed — leaving disk contents
+      // that no longer matched the sha256 the lockfile records. The winner's files
+      // must survive the loser losing.
+      assert.isTrue(
+        yield* fs.exists(path.join(versionDir, "winner.txt")),
+        "the losing confirm must not have touched the winner's version directory",
+      );
+      const lockfile = yield* store.readLockfile;
+      assert.equal(lockfile.plugins[pluginId]?.sha256, "winner-sha");
+    }).pipe(Effect.provide(installerLayer({ tarball: tarballForManifest() }))),
+  ),
+);
+
+it.effect("PluginInstaller fails typed, not as a defect, when the plugin is missing", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const installer = yield* PluginInstaller;
+      yield* seedSource;
+
+      // `installedEntry` used to THROW inside an Effect body — a defect that bypassed
+      // every mapError. Effect.result only captures typed failures, so before the fix
+      // this test DIED instead of returning a Failure.
+      const result = yield* Effect.result(
+        installer.setEnabled({ pluginId: PluginId.make("never-installed"), enabled: true }),
+      );
+
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) assert.equal(result.failure.code, "plugin-not-found");
     }).pipe(Effect.provide(installerLayer({ tarball: tarballForManifest() }))),
   ),
 );
