@@ -79,6 +79,12 @@ describe("OutboundUrlValidator", () => {
           ["https://x.test/y", "0:0:0:0:0:ffff:7f00:1"],
           ["https://x.test/y", "::7f00:1"],
           ["https://x.test/y", "64:ff9b::7f00:1"],
+          // RFC 8215 local-use NAT64 (64:ff9b:1::/48). The /96-style offset AND a
+          // different one: inside a /48 the operator chooses where the IPv4 embeds,
+          // so the whole prefix must be blocked, not one embedding. The first of
+          // these wraps 10.0.0.1 and passed validation before.
+          ["https://x.test/y", "64:ff9b:1::a00:1"],
+          ["https://x.test/y", "64:ff9b:1:a00:0:100::"],
           ["https://x.test/y", "2002:7f00:1::"],
           ["https://2130706433/y", "127.0.0.1"],
           ["https://0177.0.0.1/y", "127.0.0.1"],

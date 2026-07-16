@@ -175,6 +175,22 @@ const isPrivateV6 = (raw: string): boolean => {
   if (first === 0xfe && (second & 0xc0) === 0x80) return true;
   if ((first & 0xfe) === 0xfc) return true;
   if (first === 0xff) return true;
+  // RFC 8215 local-use NAT64 (64:ff9b:1::/48). Blocked WHOLESALE rather than by
+  // extracting the embedded IPv4: unlike the well-known /96 prefix, a /48 lets the
+  // operator embed the IPv4 at several offsets (RFC 6052 permits /48../96 inside
+  // it), so checking one offset would leave the others as an SSRF bypass — an
+  // address like 64:ff9b:1::a00:1 wraps 10.0.0.1 and previously passed. Nothing on
+  // this prefix is a global destination the validator can vouch for.
+  if (
+    bytes[0] === 0x00 &&
+    bytes[1] === 0x64 &&
+    bytes[2] === 0xff &&
+    bytes[3] === 0x9b &&
+    bytes[4] === 0x00 &&
+    bytes[5] === 0x01
+  ) {
+    return true;
+  }
   const v4 = embeddedV4(bytes);
   if (v4) return isDisallowedV4(v4);
   return false;
