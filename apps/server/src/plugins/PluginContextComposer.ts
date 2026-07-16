@@ -67,7 +67,13 @@ export interface PluginContextRecord {
   readonly pluginId: string;
   readonly name: string;
   readonly bytes: number;
-  readonly skipped: "over-total-budget" | "failed" | "timed-out" | "empty" | null;
+  readonly skipped:
+    | "over-per-plugin-budget"
+    | "over-total-budget"
+    | "failed"
+    | "timed-out"
+    | "empty"
+    | null;
 }
 
 export interface ComposedPluginContext {
@@ -200,6 +206,25 @@ export const make = Effect.fn("PluginContextComposer.make")(function* () {
             continue;
           }
           const bytes = byteLength(result.text);
+          // Enforce the per-plugin ceiling on DYNAMIC output. Static `text` is already
+          // size-checked at registration, but a `contribute` result is only known now
+          // — without this a dynamic plugin returning 20 KiB would sail past its
+          // promised 8 KiB cap and crowd the shared budget. Skip it whole (a cut
+          // mid-sentence changes an instruction's meaning) and record why.
+          if (descriptor.contribute !== undefined && bytes > CONTEXT_MAX_BYTES_PER_PLUGIN) {
+            yield* Effect.logWarning("plugin context skipped: over per-plugin budget", {
+              pluginId,
+              name: descriptor.name,
+              bytes,
+            });
+            records.push({
+              pluginId,
+              name: descriptor.name,
+              bytes,
+              skipped: "over-per-plugin-budget",
+            });
+            continue;
+          }
           // COUNT THE SEPARATOR. Summing only the contributions let the composed text
           // exceed the budget it promises — the joiner's bytes are just as real to the
           // model's window as the plugin's. (My own budget test caught this.)

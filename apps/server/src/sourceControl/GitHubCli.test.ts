@@ -692,7 +692,7 @@ describe("GitHubCli.layer", () => {
       expect(mockRun).toHaveBeenCalledWith({
         operation: "GitHubCli.execute",
         command: "gh",
-        args: ["api", "repos/o/r/pulls/42/comments"],
+        args: ["api", "--paginate", "repos/o/r/pulls/42/comments"],
         cwd: "/repo",
         timeoutMs: 30_000,
       });
