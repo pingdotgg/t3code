@@ -221,13 +221,15 @@ enum SidebarProjection {
                         isPinned: model.isThreadPinned(thread))
                 }
             }
-            let pinned = nestSubagentThreads(perMemberThreads.filter(\.isPinned))
-            let unpinned = nestSubagentThreads(perMemberThreads.filter { !$0.isPinned })
+            // Nest the whole collection at once (pinned roots ordered first) so a
+            // pinned parent keeps its unpinned children attached and vice versa.
+            let pinnedFirst =
+                perMemberThreads.filter(\.isPinned) + perMemberThreads.filter { !$0.isPinned }
             return SidebarProjectGroup(
                 id: id,
                 name: preferred.project.name,
                 members: sortedMembers,
-                threads: pinned + unpinned)
+                threads: nestSubagentThreads(pinnedFirst))
         }
         .sorted {
             $0.name.localizedStandardCompare($1.name) == .orderedAscending
@@ -267,13 +269,15 @@ enum SidebarProjection {
     static func nestSubagentThreads(_ items: [SidebarThreadItem]) -> [SidebarThreadItem] {
         guard !items.isEmpty else { return items }
 
-        var byThreadID: [String: SidebarThreadItem] = [:]
+        // Repository groups can mix devices, and thread ids are only unique per
+        // device — key all nesting state by the composite (device, thread) id.
+        var byThreadID: [ThreadSelection: SidebarThreadItem] = [:]
         byThreadID.reserveCapacity(items.count)
         for item in items {
-            byThreadID[item.thread.id] = item
+            byThreadID[item.id] = item
         }
 
-        var childrenByParent: [String: [SidebarThreadItem]] = [:]
+        var childrenByParent: [ThreadSelection: [SidebarThreadItem]] = [:]
         var roots: [SidebarThreadItem] = []
         roots.reserveCapacity(items.count)
 
@@ -281,13 +285,14 @@ enum SidebarProjection {
             guard
                 let parentID = item.thread.parentThreadId,
                 !parentID.isEmpty,
-                let parent = byThreadID[parentID],
-                parent.member.location.id == item.member.location.id
+                let parent = byThreadID[
+                    ThreadSelection(deviceID: item.member.location.id, threadID: parentID)
+                ]
             else {
                 roots.append(item)
                 continue
             }
-            childrenByParent[parentID, default: []].append(item)
+            childrenByParent[parent.id, default: []].append(item)
         }
 
         for key in childrenByParent.keys {
@@ -296,12 +301,12 @@ enum SidebarProjection {
 
         var result: [SidebarThreadItem] = []
         result.reserveCapacity(items.count)
-        var visited = Set<String>()
+        var visited = Set<ThreadSelection>()
 
         func emit(_ item: SidebarThreadItem, depth: Int) {
-            guard visited.insert(item.thread.id).inserted else { return }
+            guard visited.insert(item.id).inserted else { return }
             result.append(item.withNestDepth(depth))
-            for child in childrenByParent[item.thread.id] ?? [] {
+            for child in childrenByParent[item.id] ?? [] {
                 emit(child, depth: min(depth + 1, maxNestDepth))
             }
         }
@@ -313,8 +318,8 @@ enum SidebarProjection {
         // A cycle in parent ids (corrupt data) can strand items with no
         // reachable root; surface them flat rather than dropping them.
         if result.count < items.count {
-            for item in items where !visited.contains(item.thread.id) {
-                visited.insert(item.thread.id)
+            for item in items where !visited.contains(item.id) {
+                visited.insert(item.id)
                 result.append(item.withNestDepth(0))
             }
         }

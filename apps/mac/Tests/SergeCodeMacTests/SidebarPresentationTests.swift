@@ -149,6 +149,30 @@ struct SidebarPresentationTests {
         #expect(groups[0].threads.map(\.nestDepth) == [0, 1, 0])
     }
 
+    @Test("pinning only the parent keeps its children nested beneath it")
+    func pinnedParentKeepsChildrenNested() {
+        let projectID = "project-pin-nest"
+        let parent = makeThread(
+            id: "pinned-parent", projectID: projectID, title: "Main session", at: 10)
+        let child = makeThread(
+            id: "unpinned-child", projectID: projectID, title: "Agent: worker",
+            at: 9, parentThreadId: "pinned-parent")
+        let other = makeThread(
+            id: "other", projectID: projectID, title: "Other session", at: 8)
+        let local = makeModel(
+            projects: [Project(id: projectID, name: "PinNest", path: "/pin-nest")],
+            threads: [child, other, parent])
+        local.togglePinned(parent)
+        defer { local.togglePinned(parent) }
+        let groups = SidebarProjection.projectGroups(
+            in: MultiDeviceModel(local: local), scope: .all)
+
+        #expect(groups.count == 1)
+        let ids = groups[0].threads.map(\.thread.id)
+        #expect(ids == ["pinned-parent", "unpinned-child", "other"])
+        #expect(groups[0].threads.map(\.nestDepth) == [0, 1, 0])
+    }
+
     @Test("subagent nesting recurses through grandchildren and survives cycles")
     func subagentNestingRecursesAndSurvivesCycles() {
         let projectID = "project-tree"
