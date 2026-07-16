@@ -1,11 +1,7 @@
 import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contracts";
 import { memo } from "react";
 import { CheckIcon, StarIcon } from "lucide-react";
-import {
-  getDisplayModelName,
-  getTriggerDisplayModelLabel,
-  type ModelEsque,
-} from "./modelDisplayNames";
+import { getDisplayModelName, type ModelEsque } from "./modelDisplayNames";
 import { PROVIDER_ICON_BY_PROVIDER } from "./providerIconUtils";
 import { ComboboxItem } from "../ui/combobox";
 import { Button } from "../ui/button";
@@ -26,12 +22,10 @@ export const ModelListRow = memo(function ModelListRow(props: {
    * "Codex Personal" render with their user-authored label.
    */
   providerDisplayName: string;
-  providerAccentColor?: string | undefined;
   isFavorite: boolean;
   isSelected: boolean;
   showProvider: boolean;
   preferShortName?: boolean;
-  useTriggerLabel?: boolean;
   showNewBadge?: boolean;
   jumpLabel?: string | null;
   disabledReason?: string | null;
@@ -59,12 +53,10 @@ export const ModelListRow = memo(function ModelListRow(props: {
       <div className="min-w-0 flex-1 text-left">
         <div className="flex min-w-0 items-center gap-2">
           <div className="min-w-0 truncate text-sm font-medium leading-snug">
-            {props.useTriggerLabel
-              ? getTriggerDisplayModelLabel(props.model)
-              : getDisplayModelName(
-                  props.model,
-                  props.preferShortName ? { preferShortName: true } : undefined,
-                )}
+            {getDisplayModelName(
+              props.model,
+              props.preferShortName ? { preferShortName: true } : undefined,
+            )}
           </div>
           {props.isSelected ? <CheckIcon className="size-3.5 shrink-0 text-blue-400" /> : null}
           {props.showNewBadge ? (

@@ -1,13 +1,42 @@
 import { assert, it } from "@effect/vitest";
 
-import { mapCodexModelCapabilities, toCodexShortName } from "./CodexProvider.ts";
+import {
+  mapCodexModelCapabilities,
+  parseCodexModelListResponse,
+  toCodexShortName,
+} from "./CodexProvider.ts";
 
 it("derives concise names for Codex-owned GPT models", () => {
   assert.strictEqual(toCodexShortName("GPT-5.6-Sol"), "5.6 Sol");
   assert.strictEqual(toCodexShortName("GPT-5.6-Terra"), "5.6 Terra");
   assert.strictEqual(toCodexShortName("GPT-5.4-Mini"), "5.4 Mini");
   assert.strictEqual(toCodexShortName("GPT-5.5"), "5.5");
+  assert.strictEqual(toCodexShortName("GPT-4o"), "4o");
+  assert.strictEqual(toCodexShortName("GPT-4o-Mini"), "4o Mini");
   assert.strictEqual(toCodexShortName("o3"), "o3");
+});
+
+it("derives name and shortName from a raw catalog display name", () => {
+  const [model] = parseCodexModelListResponse({
+    data: [
+      {
+        additionalSpeedTiers: [],
+        defaultReasoningEffort: "medium",
+        defaultServiceTier: null,
+        description: "Test model",
+        displayName: "gpt-5.4-mini",
+        hidden: false,
+        id: "gpt-5.4-mini",
+        isDefault: false,
+        model: "gpt-5.4-mini",
+        serviceTiers: [],
+        supportedReasoningEfforts: [],
+      },
+    ],
+  });
+
+  assert.strictEqual(model?.name, "GPT-5.4-Mini");
+  assert.strictEqual(model?.shortName, "5.4 Mini");
 });
 
 it("maps current Codex model capability fields", () => {

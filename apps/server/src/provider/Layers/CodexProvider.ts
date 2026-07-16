@@ -182,7 +182,7 @@ const toDisplayName = (model: CodexSchema.V2ModelListResponse__Model): string =>
 };
 
 export const toCodexShortName = (name: string): string => {
-  const match = /^GPT-(\d+(?:\.\d+)*)(?:(?:[-\s]+)(.+))?$/iu.exec(name.trim());
+  const match = /^GPT-(\d+(?:\.\d+)*[a-z]?)(?:(?:[-\s]+)(.+))?$/iu.exec(name.trim());
   const version = match?.[1];
   if (!version) {
     return name;
@@ -191,7 +191,7 @@ export const toCodexShortName = (name: string): string => {
   return suffix ? `${version} ${suffix}` : version;
 };
 
-function parseCodexModelListResponse(
+export function parseCodexModelListResponse(
   response: CodexSchema.V2ModelListResponse,
 ): ReadonlyArray<ServerProviderModel> {
   return response.data.map((model) => {

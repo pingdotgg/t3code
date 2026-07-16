@@ -37,7 +37,6 @@ type ModelPickerItem = {
   instanceId: ProviderInstanceId;
   driverKind: ProviderDriverKind;
   instanceDisplayName: string;
-  instanceAccentColor?: string | undefined;
   continuationGroupKey?: string | undefined;
 };
 
@@ -210,7 +209,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           instanceId,
           driverKind: entry.driverKind,
           instanceDisplayName: entry.displayName,
-          ...(entry.accentColor ? { instanceAccentColor: entry.accentColor } : {}),
           ...(entry.continuationGroupKey
             ? { continuationGroupKey: entry.continuationGroupKey }
             : {}),
@@ -473,6 +471,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   }, [keybindings, modelJumpCommandByKey, modelJumpShortcutContext]);
 
   const showProviderForEveryRow = isSearching || selectedInstanceId === "favorites";
+  // Rows with a sub-provider render the taller two-line layout even in
+  // single-provider tabs, so size the estimate for them or the list
+  // mis-measures on first paint.
+  const hasSubProviderRows = useMemo(
+    () => filteredModels.some((model) => Boolean(model.subProvider)),
+    [filteredModels],
+  );
 
   useEffect(() => {
     const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -519,6 +524,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       filteredModelByKey,
       getModelDisabledReason,
       modelJumpLabelByKey,
+      toggleFavorite,
     }),
     [
       favoritesSet,
@@ -529,6 +535,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       filteredModelByKey,
       getModelDisabledReason,
       modelJumpLabelByKey,
+      toggleFavorite,
     ],
   );
 
@@ -668,9 +675,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                         instanceId={model.instanceId}
                         driverKind={model.driverKind}
                         providerDisplayName={model.instanceDisplayName}
-                        providerAccentColor={model.instanceAccentColor}
                         isFavorite={favoritesSet.has(modelKey)}
-                        isSelected={modelKey === `${props.activeInstanceId}:${props.model}`}
+                        isSelected={modelKey === listExtraData.activeModelKey}
                         showProvider={
                           // When browsing a single provider's tab the sidebar
                           // already says which provider these models belong
@@ -681,7 +687,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                           showProviderForEveryRow || Boolean(model.subProvider)
                         }
                         preferShortName
-                        useTriggerLabel={false}
                         showNewBadge={isModelPickerNewModel(model.driverKind, model.slug)}
                         jumpLabel={modelJumpLabelByKey.get(modelKey) ?? null}
                         disabledReason={disabledReason}
@@ -689,7 +694,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                       />
                     );
                   }}
-                  estimatedItemSize={showProviderForEveryRow ? 60 : 40}
+                  estimatedItemSize={showProviderForEveryRow || hasSubProviderRows ? 60 : 40}
                   drawDistance={480}
                   recycleItems
                   onLayout={updateModelListScrollFades}
