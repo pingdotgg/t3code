@@ -236,10 +236,11 @@ public struct ToolLifecycleActivityPayload: Decodable, Sendable {
 // MARK: - task.started / task.progress / task.updated / task.completed
 
 /// Activity payload for kind `task.started`:
-/// `{ taskId, description?, taskType?, subagentType?, model?, effort?, workflowName?, toolUseId? }`.
+/// `{ taskId, entityType?, description?, taskType?, subagentType?, model?, effort?, workflowName?, toolUseId? }`.
 /// All identity fields are optional so older persisted activities still decode.
 public struct TaskStartedActivityPayload: Decodable, Sendable {
     public var taskId: String?
+    public var entityType: String?
     public var taskType: String?
     public var description: String?
     public var detail: String?
@@ -252,9 +253,10 @@ public struct TaskStartedActivityPayload: Decodable, Sendable {
 }
 
 /// Activity payload for kind `task.progress`:
-/// `{ taskId, description, summary?, lastToolName?, usage?, subagentType?, toolUseId? }`.
+/// `{ taskId, entityType?, description, summary?, lastToolName?, usage?, subagentType?, toolUseId? }`.
 public struct TaskProgressActivityPayload: Decodable, Sendable {
     public var taskId: String?
+    public var entityType: String?
     public var taskType: String?
     public var description: String?
     public var detail: String?
@@ -266,9 +268,10 @@ public struct TaskProgressActivityPayload: Decodable, Sendable {
 }
 
 /// Activity payload for kind `task.updated`:
-/// `{ taskId, status?, description?, error?, isBackgrounded?, endTime?, totalPausedMs?, model? }`.
+/// `{ taskId, entityType?, status?, description?, error?, isBackgrounded?, endTime?, totalPausedMs?, model? }`.
 public struct TaskUpdatedActivityPayload: Decodable, Sendable {
     public var taskId: String?
+    public var entityType: String?
     public var status: String?
     public var description: String?
     public var detail: String?
@@ -280,9 +283,10 @@ public struct TaskUpdatedActivityPayload: Decodable, Sendable {
 }
 
 /// Activity payload for kind `task.completed`:
-/// `{ taskId, status, summary?, usage?, outputFile? }`.
+/// `{ taskId, entityType?, status, summary?, usage?, outputFile? }`.
 public struct TaskCompletedActivityPayload: Decodable, Sendable {
     public var taskId: String?
+    public var entityType: String?
     public var taskType: String?
     public var description: String?
     public var status: String?

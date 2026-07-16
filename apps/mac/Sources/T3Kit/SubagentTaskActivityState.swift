@@ -8,6 +8,37 @@ public enum T3SubagentTaskState: String, Sendable, Equatable {
     case completed, failed, stopped
 }
 
+/// The kind of entity represented by a task lifecycle row.
+public enum T3SubagentTaskEntityKind: String, Sendable, Equatable {
+    case command
+    case subagent
+    case workflow
+
+    public init(_ entityType: String?, taskType: String?) {
+        self.init(entityType: entityType, taskType: taskType)
+    }
+
+    /// Resolves the server's explicit entity kind, with a compatibility fallback
+    /// for older persisted activities that only carried `taskType`.
+    public init(entityType: String?, taskType: String?) {
+        if let entityType = entityType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+            !entityType.isEmpty
+        {
+            self = T3SubagentTaskEntityKind(rawValue: entityType) ?? .subagent
+            return
+        }
+
+        switch taskType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "local_bash", "bash", "command", "command_execution":
+            self = .command
+        case "workflow", "workflow_execution":
+            self = .workflow
+        default:
+            self = .subagent
+        }
+    }
+}
+
 /// One progress update for a subagent task. Consecutive identical
 /// (toolName, text) pairs are dropped by the aggregator.
 public struct T3SubagentTaskProgressEntry: Sendable, Equatable {
@@ -31,6 +62,7 @@ public struct T3SubagentTaskItem: Sendable, Equatable {
 
     public var taskId: String
     public var taskType: String?
+    public var entityKind: T3SubagentTaskEntityKind
     public var description: String?
     public var subagentType: String?
     public var model: String?
@@ -62,6 +94,7 @@ public struct T3SubagentTaskItem: Sendable, Equatable {
     public init(
         taskId: String,
         taskType: String?,
+        entityKind: T3SubagentTaskEntityKind = .subagent,
         description: String?,
         subagentType: String? = nil,
         model: String? = nil,
@@ -82,6 +115,7 @@ public struct T3SubagentTaskItem: Sendable, Equatable {
     ) {
         self.taskId = taskId
         self.taskType = taskType
+        self.entityKind = entityKind
         self.description = description
         self.subagentType = subagentType
         self.model = model
@@ -144,6 +178,10 @@ public struct T3SubagentTaskActivityState: Sendable, Equatable {
             var item = existingOrNew(taskId: taskId, at: at)
             startedTaskIDs.insert(taskId)
             item.taskType = nonEmpty(payload?.taskType) ?? item.taskType
+            item.entityKind = resolvedEntityKind(
+                entityType: payload?.entityType,
+                taskType: item.taskType,
+                existing: item.entityKind)
             item.description =
                 nonEmpty(payload?.description) ?? nonEmpty(payload?.detail) ?? item.description
             item.subagentType = nonEmpty(payload?.subagentType) ?? item.subagentType
@@ -168,6 +206,10 @@ public struct T3SubagentTaskActivityState: Sendable, Equatable {
             else { return nil }
             var item = existingOrNew(taskId: taskId, at: at)
             item.taskType = nonEmpty(payload?.taskType) ?? item.taskType
+            item.entityKind = resolvedEntityKind(
+                entityType: payload?.entityType,
+                taskType: item.taskType,
+                existing: item.entityKind)
             item.description = nonEmpty(payload?.description) ?? item.description
             item.subagentType = nonEmpty(payload?.subagentType) ?? item.subagentType
             item.toolUseId = nonEmpty(payload?.toolUseId) ?? item.toolUseId
@@ -199,6 +241,10 @@ public struct T3SubagentTaskActivityState: Sendable, Equatable {
                     ?? nonEmptyTaskIDFallback(activity)
             else { return nil }
             var item = existingOrNew(taskId: taskId, at: at)
+            item.entityKind = resolvedEntityKind(
+                entityType: payload?.entityType,
+                taskType: item.taskType,
+                existing: item.entityKind)
             item.description =
                 nonEmpty(payload?.description) ?? nonEmpty(payload?.detail) ?? item.description
             item.model = nonEmpty(payload?.model) ?? item.model
@@ -248,6 +294,10 @@ public struct T3SubagentTaskActivityState: Sendable, Equatable {
             else { return nil }
             var item = existingOrNew(taskId: taskId, at: at)
             item.taskType = nonEmpty(payload?.taskType) ?? item.taskType
+            item.entityKind = resolvedEntityKind(
+                entityType: payload?.entityType,
+                taskType: item.taskType,
+                existing: item.entityKind)
             item.description = nonEmpty(payload?.description) ?? item.description
             item.lastToolName = nonEmpty(payload?.lastToolName) ?? item.lastToolName
             if let usage = payload?.usage {
@@ -373,6 +423,24 @@ private func isTerminalTaskUpdatedStatus(_ status: String?) -> Bool {
 
 private func nonEmptyTaskIDFallback(_ activity: OrchestrationThreadActivity) -> String? {
     activity.kind.hasPrefix("task.") ? nonEmpty(activity.id) : nil
+}
+
+private func resolvedEntityKind(
+    entityType: String?,
+    taskType: String?,
+    existing: T3SubagentTaskEntityKind
+) -> T3SubagentTaskEntityKind {
+    if let entityType = nonEmpty(entityType) {
+        return T3SubagentTaskEntityKind(entityType, taskType: taskType)
+    }
+
+    let inferred = T3SubagentTaskEntityKind(nil, taskType: taskType)
+    switch inferred {
+    case .command, .workflow:
+        return inferred
+    case .subagent:
+        return existing
+    }
 }
 
 private func nonEmpty(_ value: String?) -> String? {

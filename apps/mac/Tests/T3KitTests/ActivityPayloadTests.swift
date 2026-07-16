@@ -132,6 +132,7 @@ struct ActivityPayloadTests {
             payloadJSON: """
                 {
                   "taskId": "task-1",
+                  "entityType": "subagent",
                   "taskType": "general-purpose",
                   "description": "Inspect timeline mapping",
                   "subagentType": "Explore",
@@ -142,6 +143,7 @@ struct ActivityPayloadTests {
                 """)
         let payload = try #require(activity.decodePayload(TaskStartedActivityPayload.self))
         #expect(payload.taskId == "task-1")
+        #expect(payload.entityType == "subagent")
         #expect(payload.taskType == "general-purpose")
         #expect(payload.description == "Inspect timeline mapping")
         #expect(payload.subagentType == "Explore")
@@ -176,6 +178,7 @@ struct ActivityPayloadTests {
             payloadJSON: """
                 {
                   "taskId": "task-1",
+                  "entityType": "command",
                   "description": "Inspect timeline mapping",
                   "summary": "Reading the mapper",
                   "lastToolName": "Read",
@@ -186,6 +189,7 @@ struct ActivityPayloadTests {
                 """)
         let payload = try #require(activity.decodePayload(TaskProgressActivityPayload.self))
         #expect(payload.taskId == "task-1")
+        #expect(payload.entityType == "command")
         #expect(payload.description == "Inspect timeline mapping")
         #expect(payload.summary == "Reading the mapper")
         #expect(payload.lastToolName == "Read")
@@ -226,6 +230,7 @@ struct ActivityPayloadTests {
             payloadJSON: """
                 {
                   "taskId": "task-1",
+                  "entityType": "command",
                   "status": "completed",
                   "summary": "Found the right mapping point",
                   "usage": {"input_tokens": 20},
@@ -234,6 +239,7 @@ struct ActivityPayloadTests {
                 """)
         let payload = try #require(activity.decodePayload(TaskCompletedActivityPayload.self))
         #expect(payload.taskId == "task-1")
+        #expect(payload.entityType == "command")
         #expect(payload.status == "completed")
         #expect(payload.summary == "Found the right mapping point")
         #expect(payload.usage?["input_tokens"]?.intValue == 20)

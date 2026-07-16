@@ -2770,6 +2770,7 @@ public actor LiveBackend: BackendService {
             SubagentTaskItem(
                 taskId: task.taskId,
                 taskType: task.taskType,
+                entityKind: Self.uiSubagentTaskEntityKind(task.entityKind),
                 description: task.description,
                 subagentType: task.subagentType,
                 model: task.model,
@@ -2814,6 +2815,16 @@ public actor LiveBackend: BackendService {
         case .completed: .completed
         case .failed: .failed
         case .stopped: .stopped
+        }
+    }
+
+    private static func uiSubagentTaskEntityKind(
+        _ kind: T3SubagentTaskEntityKind
+    ) -> SubagentTaskEntityKind {
+        switch kind {
+        case .command: .command
+        case .subagent: .subagent
+        case .workflow: .workflow
         }
     }
 

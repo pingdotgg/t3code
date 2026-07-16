@@ -726,7 +726,7 @@ private struct SubagentTaskRow: View {
 
                         VStack(alignment: .leading, spacing: 5) {
                             HStack(spacing: 7) {
-                                Image(systemName: "person.2")
+                                Image(systemName: task.entityKind == .command ? "terminal" : "person.2")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                     .frame(width: TranscriptMetrics.iconColumn)
