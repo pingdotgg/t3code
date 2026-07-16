@@ -1277,7 +1277,6 @@ private actor MockState {
             ProviderInstance(id: "provider-codex", kind: .codex, availability: .available, version: "0.9.0"),
             ProviderInstance(id: "provider-grok", kind: .grok, availability: .available, version: "0.2.91"),
             ProviderInstance(id: "provider-fugu", kind: .fugu, availability: .available, version: "0.1.0"),
-            ProviderInstance(id: "provider-opencode", kind: .opencode, availability: .missing, version: nil),
         ]
 
         let thread1 = ChatThread(
@@ -1311,7 +1310,7 @@ private actor MockState {
             id: "thread-4",
             projectID: projectB.id,
             title: "Investigate build error",
-            provider: .opencode,
+            provider: .fugu,
             status: .error,
             updatedAt: now.addingTimeInterval(-7_200)
         )
@@ -1696,7 +1695,7 @@ private actor MockState {
                 isStreaming: false,
                 at: now.addingTimeInterval(-7_350)
             ),
-            .notice(id: "t4-n1", text: "OpenCode provider became unavailable mid-session.", at: now.addingTimeInterval(-7_200)),
+            .notice(id: "t4-n1", text: "Fugu provider became unavailable mid-session.", at: now.addingTimeInterval(-7_200)),
         ]
     }
 

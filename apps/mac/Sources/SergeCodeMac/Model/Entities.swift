@@ -4,14 +4,14 @@ import Foundation
 // them. Keep UI code independent of wire-shape churn.
 
 public enum ProviderKind: String, Codable, CaseIterable, Sendable, Identifiable {
-    case claude, claudeWork, claudex, claudeSynthero, codex, grok, fugu, opencode
+    case claude, claudeWork, claudex, claudeSynthero, codex, grok, fugu
     /// Decodes persisted threads created by the removed Cursor provider. This
     /// case is intentionally excluded from `allCases` so it is never offered
     /// for new sessions.
     case legacyCursor = "cursor"
 
     public static let allCases: [ProviderKind] = [
-        .claude, .claudeWork, .claudex, .claudeSynthero, .codex, .grok, .fugu, .opencode,
+        .claude, .claudeWork, .claudex, .claudeSynthero, .codex, .grok, .fugu,
     ]
 
     public var id: String { rawValue }
@@ -25,7 +25,6 @@ public enum ProviderKind: String, Codable, CaseIterable, Sendable, Identifiable 
         case .codex: "Codex"
         case .grok: "Grok"
         case .fugu: "Fugu"
-        case .opencode: "OpenCode"
         case .legacyCursor: "Cursor (Unsupported)"
         }
     }

@@ -630,7 +630,6 @@ private extension ProviderKind {
         case .codex: "codex"
         case .grok: "grok"
         case .fugu: "codex-fugu"
-        case .opencode: "opencode"
         case .legacyCursor: "cursor"
         }
     }

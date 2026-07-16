@@ -21,7 +21,6 @@ struct ProviderIconTests {
         #expect(ProviderBrand.resolve(provider: .codex) == .codex)
         #expect(ProviderBrand.resolve(provider: .grok) == .grok)
         #expect(ProviderBrand.resolve(provider: .fugu) == .fugu)
-        #expect(ProviderBrand.resolve(provider: .opencode) == .openCode)
     }
 
     @Test("OpenAI reasoning model slugs use the OpenAI mark")
