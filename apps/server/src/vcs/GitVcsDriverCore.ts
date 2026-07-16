@@ -2217,7 +2217,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
                 name: refName.name,
                 current: false,
                 isRemote: true,
-                isDefault: false,
+                // origin/HEAD's target is the repo default even when no local
+                // copy of the default branch exists.
+                isDefault:
+                  defaultBranch !== null &&
+                  parsedRemoteRef?.remoteName === "origin" &&
+                  parsedRemoteRef.branchName === defaultBranch,
                 worktreePath: null,
               };
               if (parsedRemoteRef) {
