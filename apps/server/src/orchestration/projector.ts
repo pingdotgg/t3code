@@ -285,6 +285,7 @@ export function projectEvent(
             executorModelSelection: payload.executorModelSelection,
             branch: payload.branch,
             worktreePath: payload.worktreePath,
+            parentThreadId: payload.parentThreadId ?? null,
             latestTurn: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,

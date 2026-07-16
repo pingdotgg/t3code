@@ -33,6 +33,7 @@ export const ProjectionThread = Schema.Struct({
   executorModelSelection: Schema.NullOr(ModelSelection),
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
+  parentThreadId: Schema.NullOr(ThreadId),
   latestTurnId: Schema.NullOr(TurnId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,

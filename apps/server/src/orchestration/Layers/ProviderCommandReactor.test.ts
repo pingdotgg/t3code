@@ -416,6 +416,7 @@ describe("ProviderCommandReactor", () => {
         runtimeMode: "approval-required",
         branch: null,
         worktreePath: null,
+        parentThreadId: null,
         createdAt: now,
       }),
     );
@@ -2163,6 +2164,7 @@ describe("ProviderCommandReactor", () => {
           runtimeMode: "approval-required",
           branch: null,
           worktreePath: null,
+          parentThreadId: null,
           createdAt: now,
         }),
       );
@@ -2552,6 +2554,7 @@ describe("ProviderCommandReactor", () => {
         runtimeMode: "approval-required",
         branch: null,
         worktreePath: null,
+        parentThreadId: null,
         createdAt: now,
       }),
     );

@@ -437,6 +437,11 @@ export const OrchestrationThread = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  /**
+   * Parent thread id when this thread was spawned as a nested sub-agent.
+   * Null for top-level threads and for historical rows that predate the field.
+   */
+  parentThreadId: Schema.NullOr(ThreadId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -486,6 +491,11 @@ export const OrchestrationThreadShell = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  /**
+   * Parent thread id when this thread was spawned as a nested sub-agent.
+   * Null for top-level threads and for historical rows that predate the field.
+   */
+  parentThreadId: Schema.NullOr(ThreadId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -591,6 +601,12 @@ const ThreadCreateCommand = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  /**
+   * When set, this thread is a sub-agent (or other nested session) of the given
+   * parent thread. Optional for back-compat with older clients and top-level
+   * sessions; null/absent means top-level.
+   */
+  parentThreadId: Schema.optional(Schema.NullOr(ThreadId)),
   createdAt: IsoDateTime,
 });
 
@@ -962,6 +978,7 @@ export const ThreadCreatedPayload = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  parentThreadId: Schema.NullOr(ThreadId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });

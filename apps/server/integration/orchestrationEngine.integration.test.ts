@@ -150,6 +150,7 @@ const seedProjectAndThread = (harness: OrchestrationIntegrationHarness) =>
       runtimeMode: "approval-required",
       branch: null,
       worktreePath: harness.workspaceDir,
+      parentThreadId: null,
       createdAt,
     });
   });
@@ -300,6 +301,7 @@ it.live.skipIf(!process.env.CODEX_BINARY_PATH)(
           runtimeMode: "full-access",
           branch: null,
           worktreePath: harness.workspaceDir,
+          parentThreadId: null,
           createdAt,
         });
 
