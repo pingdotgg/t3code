@@ -4514,7 +4514,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             return {
               behavior: "deny",
               message:
-                "You are in Advisor mode, which has no plan artifact. Do not call ExitPlanMode. Answer the user's question directly in your reply instead.",
+                "You are in Advisor/Planner mode, which has no plan artifact. Plan the work and delegate implementation to executor sub-agents via the agent tools; do not call ExitPlanMode. Answer the user directly in your reply instead.",
             } satisfies PermissionResult;
           }
 
