@@ -83,6 +83,7 @@ const makeThreadShell = (
     modelSelection: { instanceId: ProviderInstanceId.make("claude"), model: "opus" },
     runtimeMode: "approval-required",
     interactionMode: "default",
+    executorModelSelection: null,
     branch: "feature/foo",
     worktreePath: "/tmp/worktrees/foo",
     latestTurn: null,
@@ -108,6 +109,7 @@ const makeThreadDetail = (
     modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "default-model" },
     runtimeMode: "approval-required",
     interactionMode: "default",
+    executorModelSelection: null,
     branch: null,
     worktreePath: null,
     latestTurn: null,
@@ -280,12 +282,17 @@ it.effect("spawns a sub-agent thread next to the caller's thread on another prov
 it.effect("does not let a sub-agent escape an advisor parent's read-only clamp", () =>
   Effect.gen(function* () {
     // An advisor thread stores the runtime mode the user picked (here
-    // full-access) and is clamped only at session start. Spawning a child must
-    // inherit the clamped mode, or delegation becomes a way to write from a
-    // thread the user believes is read-only.
+    // full-access) and is clamped only at session start. Without an executor
+    // model, spawning a child must inherit the clamped mode, or unsolicited
+    // delegation becomes a way to write from a thread the user believes is
+    // read-only.
     const [coordinator, harness] = yield* makeCoordinator({
       parentShell: (threadId) =>
-        makeThreadShell(threadId, { runtimeMode: "full-access", interactionMode: "advisor" }),
+        makeThreadShell(threadId, {
+          runtimeMode: "full-access",
+          interactionMode: "advisor",
+          executorModelSelection: null,
+        }),
     });
 
     yield* coordinator.spawn(makeScope(), {
@@ -303,6 +310,111 @@ it.effect("does not let a sub-agent escape an advisor parent's read-only clamp",
     expect(turnStart?.type).toBe("thread.turn.start");
     if (turnStart?.type === "thread.turn.start") {
       expect(turnStart.runtimeMode).toBe("approval-required");
+    }
+  }),
+);
+
+it.effect("advisor parent with executor model spawns unclamped on executor selection", () =>
+  Effect.gen(function* () {
+    const [coordinator, harness] = yield* makeCoordinator({
+      parentShell: (threadId) =>
+        makeThreadShell(threadId, {
+          runtimeMode: "full-access",
+          interactionMode: "advisor",
+          executorModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "default-model",
+          },
+        }),
+    });
+
+    const result = yield* coordinator.spawn(makeScope(), {
+      // Intentionally different from executor — must be overridden.
+      providerInstanceId: ProviderInstanceId.make("claude"),
+      model: "should-not-be-used",
+      prompt: "Implement the plan.",
+    });
+
+    expect(result.providerInstanceId).toBe("codex");
+    expect(result.model).toBe("default-model");
+    expect(result.title).toContain("[executor: codex/default-model]");
+
+    const create = harness.dispatched.find((command) => command.type === "thread.create");
+    expect(create?.type).toBe("thread.create");
+    if (create?.type === "thread.create") {
+      expect(create.runtimeMode).toBe("full-access");
+      expect(create.modelSelection.instanceId).toBe("codex");
+      expect(create.modelSelection.model).toBe("default-model");
+      expect(create.interactionMode).toBe("default");
+    }
+
+    const turnStart = harness.dispatched.find((command) => command.type === "thread.turn.start");
+    expect(turnStart?.type).toBe("thread.turn.start");
+    if (turnStart?.type === "thread.turn.start") {
+      expect(turnStart.runtimeMode).toBe("full-access");
+    }
+  }),
+);
+
+it.effect("advisor parent with non-spawnable executor fails without creating a thread", () =>
+  Effect.gen(function* () {
+    const [coordinator, harness] = yield* makeCoordinator({
+      providers: [
+        makeProvider("claude", "claudeAgent"),
+        makeProvider("codex", "codex", {
+          status: "error",
+          auth: { status: "unauthenticated" },
+        }),
+      ],
+      parentShell: (threadId) =>
+        makeThreadShell(threadId, {
+          runtimeMode: "full-access",
+          interactionMode: "advisor",
+          executorModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "default-model",
+          },
+        }),
+    });
+
+    const error = yield* expectSubAgentError(
+      coordinator.spawn(makeScope(), {
+        providerInstanceId: ProviderInstanceId.make("claude"),
+        prompt: "Implement the plan.",
+      }),
+    );
+
+    expect(error.reason).toBe("provider-not-spawnable");
+    expect(error.description).toContain("executor");
+    expect(harness.dispatched).toHaveLength(0);
+  }),
+);
+
+it.effect("non-advisor parent ignores a stale executor model selection", () =>
+  Effect.gen(function* () {
+    const [coordinator, harness] = yield* makeCoordinator({
+      parentShell: (threadId) =>
+        makeThreadShell(threadId, {
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          executorModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "default-model",
+          },
+        }),
+    });
+
+    const result = yield* coordinator.spawn(makeScope(), {
+      providerInstanceId: ProviderInstanceId.make("claude"),
+      prompt: "Do the work.",
+    });
+
+    expect(result.providerInstanceId).toBe("claude");
+    const create = harness.dispatched.find((command) => command.type === "thread.create");
+    expect(create?.type).toBe("thread.create");
+    if (create?.type === "thread.create") {
+      expect(create.runtimeMode).toBe("full-access");
+      expect(create.modelSelection.instanceId).toBe("claude");
     }
   }),
 );
