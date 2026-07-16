@@ -15,7 +15,7 @@ import { getDesktopUrl } from "../electron/ElectronProtocol.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
-import { MENU_ACTION_CHANNEL } from "../ipc/channels.ts";
+import { MENU_ACTION_CHANNEL, WINDOW_FULLSCREEN_STATE_CHANNEL } from "../ipc/channels.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 
 const TITLEBAR_HEIGHT = 40;
@@ -364,6 +364,15 @@ export const make = Effect.gen(function* () {
       event.preventDefault();
       window.setTitle(environment.displayName);
     });
+
+    if (environment.platform === "darwin") {
+      window.on("enter-full-screen", () => {
+        window.webContents.send(WINDOW_FULLSCREEN_STATE_CHANNEL, true);
+      });
+      window.on("leave-full-screen", () => {
+        window.webContents.send(WINDOW_FULLSCREEN_STATE_CHANNEL, false);
+      });
+    }
 
     let developmentLoadRetryIndex = 0;
     let developmentLoadRetryFiber: Fiber.Fiber<void, never> | undefined;
