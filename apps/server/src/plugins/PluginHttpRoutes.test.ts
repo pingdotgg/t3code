@@ -19,7 +19,11 @@ import {
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import { PluginHttpRegistry } from "./PluginHttpRegistry.ts";
 import * as PluginHttpRegistryLayer from "./PluginHttpRegistry.ts";
-import { pluginHttpRouteLayer, respondToPluginHandlerExit } from "./PluginHttpRoutes.ts";
+import {
+  makePluginHttpRouteLayer,
+  pluginHttpRouteLayer,
+  respondToPluginHandlerExit,
+} from "./PluginHttpRoutes.ts";
 import { makePluginLogger } from "./PluginLogger.ts";
 
 const pluginId = PluginId.make("http-plugin");
@@ -73,8 +77,8 @@ const unauthenticatedAuthLayer = makeAuthLayer(() =>
   Effect.fail(new EnvironmentAuth.ServerAuthMissingCredentialError()),
 );
 
-const makeRouteLayer = (authLayer = authenticatedAuthLayer) =>
-  HttpRouter.serve(pluginHttpRouteLayer, {
+const makeRouteLayer = (authLayer = authenticatedAuthLayer, routeLayer = pluginHttpRouteLayer) =>
+  HttpRouter.serve(routeLayer, {
     disableListenLog: true,
     disableLogger: true,
   }).pipe(
@@ -335,6 +339,93 @@ if (loopbackAvailable) {
         assert.equal(yield* ok.text, "ok");
       }),
     );
+
+    // A plugin response shares the host origin: it must not be able to set
+    // session/redirect/CORS headers that would hijack the host's browser
+    // security context. Strip the denylisted headers, keep benign ones.
+    it.effect("strips ambient-privilege response headers and keeps benign ones", () =>
+      Effect.gen(function* () {
+        const registry = yield* PluginHttpRegistry;
+        yield* registry.put(pluginId, [
+          {
+            method: "POST",
+            path: "/headers",
+            auth: "public",
+            handler: () =>
+              Effect.succeed({
+                status: 200,
+                headers: {
+                  "Set-Cookie": "session=stolen",
+                  Location: "https://evil.example",
+                  "WWW-Authenticate": "Basic",
+                  "access-control-allow-origin": "*",
+                  "content-type": "text/plain",
+                  "x-foo": "bar",
+                },
+                body: "ok",
+              }),
+          },
+        ]);
+
+        const response = yield* postText("/hooks/plugins/http-plugin/headers", "");
+
+        assert.equal(response.status, 200);
+        assert.equal(response.headers["set-cookie"], undefined);
+        assert.equal(response.headers["location"], undefined);
+        assert.equal(response.headers["www-authenticate"], undefined);
+        assert.equal(response.headers["access-control-allow-origin"], undefined);
+        assert.equal(response.headers["x-foo"], "bar");
+        assert.isTrue((response.headers["content-type"] ?? "").includes("text/plain"));
+      }),
+    );
+
+    it.effect("clamps an out-of-range plugin status to 500", () =>
+      Effect.gen(function* () {
+        const registry = yield* PluginHttpRegistry;
+        yield* registry.put(pluginId, [
+          {
+            method: "POST",
+            path: "/bad-status",
+            auth: "public",
+            handler: () => Effect.succeed({ status: 999, body: "ok" }),
+          },
+        ]);
+
+        const response = yield* postText("/hooks/plugins/http-plugin/bad-status", "");
+
+        assert.equal(response.status, 500);
+      }),
+    );
+  });
+
+  it.layer(
+    makeRouteLayer(authenticatedAuthLayer, makePluginHttpRouteLayer({ handlerTimeoutMs: 100 })),
+    {
+      // Real clock: the handler deadline is a wall-clock sleep, so the default
+      // TestClock (which never auto-advances) would hang the round-trip.
+      excludeTestServices: true,
+    },
+  )("plugin http handler timeout", (it) => {
+    // A hung handler (here `Effect.never`) must not pin the inbound request —
+    // and its socket — open forever. The wall-clock deadline interrupts the
+    // handler and answers 504 without routing through the 500 failure mapping.
+    it.effect("answers 504 when the handler exceeds the wall-clock deadline", () =>
+      Effect.gen(function* () {
+        const registry = yield* PluginHttpRegistry;
+        yield* registry.put(pluginId, [
+          {
+            method: "POST",
+            path: "/hang",
+            auth: "public",
+            handler: () => Effect.never,
+          },
+        ]);
+
+        const response = yield* postText("/hooks/plugins/http-plugin/hang", "");
+
+        assert.equal(response.status, 504);
+      }),
+    );
   });
 
   it.layer(makeRouteLayer(unauthenticatedAuthLayer))("plugin http token route layer", (it) => {
@@ -353,6 +444,44 @@ if (loopbackAvailable) {
         const response = yield* postText("/hooks/plugins/http-plugin/token", "");
 
         assert.equal(response.status, 401);
+      }),
+    );
+
+    // Fail closed: descriptors are dynamically loaded JS, so any `auth` value
+    // that is not the exact literal "public" must still require a token —
+    // otherwise a typo/casing mistake ("Token"), an empty string, or a missing
+    // field would silently expose the route.
+    it.effect("requires auth when descriptor.auth is not the exact literal 'public'", () =>
+      Effect.gen(function* () {
+        const registry = yield* PluginHttpRegistry;
+        yield* registry.put(pluginId, [
+          {
+            method: "POST",
+            path: "/undefined-auth",
+            auth: undefined,
+            handler: () => Effect.succeed({ status: 200 }),
+          },
+          {
+            method: "POST",
+            path: "/miscased-auth",
+            auth: "Token",
+            handler: () => Effect.succeed({ status: 200 }),
+          },
+          {
+            method: "POST",
+            path: "/empty-auth",
+            auth: "",
+            handler: () => Effect.succeed({ status: 200 }),
+          },
+        ] as unknown as ReadonlyArray<PluginHttpDescriptor>);
+
+        const undefinedAuth = yield* postText("/hooks/plugins/http-plugin/undefined-auth", "");
+        const miscasedAuth = yield* postText("/hooks/plugins/http-plugin/miscased-auth", "");
+        const emptyAuth = yield* postText("/hooks/plugins/http-plugin/empty-auth", "");
+
+        assert.equal(undefinedAuth.status, 401);
+        assert.equal(miscasedAuth.status, 401);
+        assert.equal(emptyAuth.status, 401);
       }),
     );
   });

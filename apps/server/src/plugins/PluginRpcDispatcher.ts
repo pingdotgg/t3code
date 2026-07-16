@@ -22,6 +22,19 @@ export interface PluginRpcSession {
   readonly scopes: ReadonlyArray<AuthScope>;
 }
 
+// Wall-clock ceiling for a single unary RPC handler. Aligns with the 30s
+// precedent used elsewhere in the plugin host (PluginHost registration timeout /
+// HttpClientCapability default). A hung `call` handler must not pin the WS
+// request forever. The `subscribe` stream path is intentionally NOT bounded —
+// long-lived subscriptions are legitimate.
+const PLUGIN_RPC_HANDLER_TIMEOUT_MS = 30_000;
+
+export interface PluginRpcDispatcherOptions {
+  // Injectable so tests can drive the deadline branch with a short value; the
+  // default is the 30s production ceiling.
+  readonly handlerTimeoutMs?: number;
+}
+
 export class PluginRpcDispatcher extends Context.Service<
   PluginRpcDispatcher,
   {
@@ -58,6 +71,11 @@ const internalPluginRpcError = (pluginId: PluginId, error: unknown) =>
 
 const pluginDefectError = (pluginId: PluginId) =>
   pluginRpcError(pluginId, "internal", "Plugin method failed.");
+
+// A handler that blows its wall-clock deadline surfaces as an internal-class
+// error — the same class mapPluginHandlerCause uses for an unexpected failure.
+const pluginTimeoutError = (pluginId: PluginId) =>
+  pluginRpcError(pluginId, "internal", "Plugin method timed out.");
 
 const lookupRuntime = Effect.fn("PluginRpcDispatcher.lookupRuntime")(function* (
   registry: PluginRuntimeRegistry["Service"],
@@ -152,8 +170,11 @@ const mapPluginHandlerStreamCause = (pluginId: PluginId, cause: Cause.Cause<Erro
   return Stream.fail(internalPluginRpcError(pluginId, Cause.squash(cause)));
 };
 
-export const make = Effect.fn("PluginRpcDispatcher.make")(function* () {
+export const make = Effect.fn("PluginRpcDispatcher.make")(function* (
+  options?: PluginRpcDispatcherOptions,
+) {
   const registry = yield* PluginRuntimeRegistry;
+  const handlerTimeoutMs = options?.handlerTimeoutMs ?? PLUGIN_RPC_HANDLER_TIMEOUT_MS;
 
   // Error-order disclosure, by design: callers holding the transport
   // baseline scope can distinguish invalid-method from unauthorized (method
@@ -171,6 +192,14 @@ export const make = Effect.fn("PluginRpcDispatcher.make")(function* () {
       const logger = makePluginLogger(pluginId);
       return yield* Effect.suspend(() => descriptor.handler(payload, { pluginId, logger })).pipe(
         Effect.catchCause((cause) => mapPluginHandlerCause(pluginId, cause)),
+        // Bound the unary handler by a wall-clock deadline: a hung `Effect.never`
+        // must not pin the WS call forever. On timeout the handler fiber is
+        // interrupted and we fail with a typed internal error. (The subscribe
+        // path below is deliberately left unbounded.)
+        Effect.timeoutOrElse({
+          duration: handlerTimeoutMs,
+          orElse: () => Effect.fail(pluginTimeoutError(pluginId)),
+        }),
       );
     });
 

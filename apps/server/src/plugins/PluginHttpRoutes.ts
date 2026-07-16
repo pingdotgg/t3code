@@ -26,6 +26,12 @@ import { makePluginLogger } from "./PluginLogger.ts";
 const ROUTE_PREFIX = "/hooks/plugins";
 const DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
 const MAX_BODY_BYTES = 8 * 1024 * 1024;
+// Wall-clock ceiling for a single inbound plugin HTTP handler. Aligns with the
+// 30s precedent used elsewhere in the plugin host (PluginHost registration
+// timeout / HttpClientCapability default). An inbound route — especially a
+// public webhook that remote callers can hit unauthenticated — must not let a
+// hung handler (e.g. `Effect.never`) accumulate open requests indefinitely.
+const PLUGIN_HTTP_HANDLER_TIMEOUT_MS = 30_000;
 // Derive the inbound-route id gate from the same source the `PluginId` schema
 // checks against, so the two can never drift: if they did, `HttpCapability`
 // would hand a plugin a `basePath` this router rejects, 404-ing every webhook.
@@ -124,10 +130,44 @@ const authenticatePluginRoute = (pluginId: PluginId) =>
     }
   });
 
+// Response headers a plugin must never be able to set on the host origin: they
+// carry ambient privilege over the host's browser security context (session,
+// redirect, auth challenge, CORS). A mistaken — or public — route setting any
+// of these would hijack host session/caching, so they are stripped; everything
+// else (content-type, cache-control, etag, content-disposition, x-*) passes.
+const FORBIDDEN_RESPONSE_HEADERS = new Set([
+  "set-cookie",
+  "set-cookie2",
+  "location",
+  "www-authenticate",
+  "proxy-authenticate",
+]);
+const FORBIDDEN_RESPONSE_HEADER_PREFIXES = ["access-control-"];
+
+const sanitizeResponseHeaders = (
+  headers: Readonly<Record<string, string>>,
+): Record<string, string> => {
+  const sanitized: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    const lower = key.toLowerCase();
+    if (FORBIDDEN_RESPONSE_HEADERS.has(lower)) continue;
+    if (FORBIDDEN_RESPONSE_HEADER_PREFIXES.some((prefix) => lower.startsWith(prefix))) continue;
+    sanitized[key] = value;
+  }
+  return sanitized;
+};
+
+// Clamp to the valid HTTP status range: a plugin returns an arbitrary number,
+// and an out-of-range value would otherwise become a malformed wire status.
+const clampStatus = (status: number): number =>
+  Number.isInteger(status) && status >= 200 && status <= 599 ? status : 500;
+
 function toHttpResponse(response: PluginHttpResponse): HttpServerResponse.HttpServerResponse {
   const options = {
-    status: response.status,
-    ...(response.headers === undefined ? {} : { headers: response.headers }),
+    status: clampStatus(response.status),
+    ...(response.headers === undefined
+      ? {}
+      : { headers: sanitizeResponseHeaders(response.headers) }),
   };
   const body = response.body;
   if (body === undefined || body === null) {
@@ -172,91 +212,122 @@ export const respondToPluginHandlerExit = (
     .pipe(Effect.as(HttpServerResponse.text("Internal Server Error", { status: 500 })));
 };
 
-export const pluginHttpRouteLayer = HttpRouter.add(
-  "*",
-  `${ROUTE_PREFIX}/*`,
-  Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const url = HttpServerRequest.toURL(request);
-    if (Option.isNone(url)) {
-      return HttpServerResponse.text("Not Found", { status: 404 });
-    }
+export interface PluginHttpRouteOptions {
+  // Injectable so tests can drive the deadline branch with a short value; the
+  // default is the 30s production ceiling.
+  readonly handlerTimeoutMs?: number;
+}
 
-    const parsed = parsePluginPath(url.value.pathname);
-    if (!parsed) {
-      return HttpServerResponse.text("Not Found", { status: 404 });
-    }
+export const makePluginHttpRouteLayer = (options: PluginHttpRouteOptions = {}) => {
+  const handlerTimeoutMs = options.handlerTimeoutMs ?? PLUGIN_HTTP_HANDLER_TIMEOUT_MS;
+  return HttpRouter.add(
+    "*",
+    `${ROUTE_PREFIX}/*`,
+    Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const url = HttpServerRequest.toURL(request);
+      if (Option.isNone(url)) {
+        return HttpServerResponse.text("Not Found", { status: 404 });
+      }
 
-    const registry = yield* PluginHttpRegistry;
-    const matched = yield* registry.match({
-      pluginId: parsed.pluginId,
-      method: request.method,
-      path: parsed.routePath,
-    });
-    if (Option.isNone(matched)) {
-      return HttpServerResponse.text("Not Found", { status: 404 });
-    }
+      const parsed = parsePluginPath(url.value.pathname);
+      if (!parsed) {
+        return HttpServerResponse.text("Not Found", { status: 404 });
+      }
 
-    const { descriptor, params } = matched.value;
-    if (descriptor.auth === "token") {
-      yield* authenticatePluginRoute(parsed.pluginId);
-    }
+      const registry = yield* PluginHttpRegistry;
+      const matched = yield* registry.match({
+        pluginId: parsed.pluginId,
+        method: request.method,
+        path: parsed.routePath,
+      });
+      if (Option.isNone(matched)) {
+        return HttpServerResponse.text("Not Found", { status: 404 });
+      }
 
-    const maxBodyBytes = bodyLimit(descriptor.maxBodyBytes);
-    const declaredLength = contentLength(request);
-    if (declaredLength !== null && declaredLength > maxBodyBytes) {
-      return HttpServerResponse.text("Payload Too Large", { status: 413 });
-    }
+      const { descriptor, params } = matched.value;
+      // Fail closed: authenticate UNLESS the descriptor explicitly opts out with
+      // the exact literal "public". Descriptors come from dynamically loaded plugin
+      // JS where the SDK's `"public" | "token"` type is not runtime-enforced, so an
+      // unrecognized value (undefined, a casing typo like "Token", or "") must
+      // require a token rather than serve openly — mirroring the scope handling in
+      // authorizeDescriptor (PluginRpcDispatcher.ts).
+      if (descriptor.auth !== "public") {
+        yield* authenticatePluginRoute(parsed.pluginId);
+      }
 
-    const bodyOutcome = yield* readBodyCapped(request, maxBodyBytes).pipe(
-      Effect.map((body) => ({ kind: "ok" as const, body })),
-      Effect.catch((error) =>
-        Effect.succeed({
-          kind: "rejected" as const,
-          response:
-            (error as { readonly _tag?: string })._tag === "PluginHttpBodyTooLarge"
-              ? HttpServerResponse.text("Payload Too Large", { status: 413 })
-              : HttpServerResponse.text("Bad Request", { status: 400 }),
-        }),
+      const maxBodyBytes = bodyLimit(descriptor.maxBodyBytes);
+      const declaredLength = contentLength(request);
+      if (declaredLength !== null && declaredLength > maxBodyBytes) {
+        return HttpServerResponse.text("Payload Too Large", { status: 413 });
+      }
+
+      const bodyOutcome = yield* readBodyCapped(request, maxBodyBytes).pipe(
+        Effect.map((body) => ({ kind: "ok" as const, body })),
+        Effect.catch((error) =>
+          Effect.succeed({
+            kind: "rejected" as const,
+            response:
+              (error as { readonly _tag?: string })._tag === "PluginHttpBodyTooLarge"
+                ? HttpServerResponse.text("Payload Too Large", { status: 413 })
+                : HttpServerResponse.text("Bad Request", { status: 400 }),
+          }),
+        ),
+      );
+      if (bodyOutcome.kind === "rejected") {
+        return bodyOutcome.response;
+      }
+      const body = bodyOutcome.body;
+
+      const logger = makePluginLogger(parsed.pluginId);
+      const handlerContext = { method: request.method, path: parsed.routePath };
+      return yield* descriptor
+        .handler(
+          {
+            method: request.method,
+            params,
+            query: requestQuery(url.value),
+            headers: request.headers,
+            body,
+          },
+          { pluginId: parsed.pluginId, logger },
+        )
+        .pipe(
+          Effect.exit,
+          Effect.flatMap((exit) => respondToPluginHandlerExit(exit, logger, handlerContext)),
+          // Bound the plugin handler by a wall-clock deadline: an inbound (often
+          // public) route must not let a hung `Effect.never` handler pin the
+          // request — and its socket — open forever. On timeout the handler fiber
+          // is interrupted and we answer 504, deliberately bypassing the 500
+          // failure mapping above.
+          Effect.timeoutOrElse({
+            duration: handlerTimeoutMs,
+            orElse: () =>
+              logger
+                .error("plugin http handler timed out", {
+                  ...handlerContext,
+                  timeoutMs: handlerTimeoutMs,
+                })
+                .pipe(Effect.as(HttpServerResponse.text("Gateway Timeout", { status: 504 }))),
+          }),
+        );
+    }).pipe(
+      Effect.catchTags({
+        EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
+        EnvironmentInternalError: HttpServerRespondable.toResponse,
+        EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
+      }),
+      Effect.catchCause((cause) =>
+        // A cancelled request (client disconnect / scope shutdown) interrupts the
+        // whole route: propagate it rather than logging + 500-ing a dead socket.
+        Cause.hasInterruptsOnly(cause)
+          ? propagateInterrupt(cause)
+          : Effect.logWarning("plugin http route failed", { cause: Cause.pretty(cause) }).pipe(
+              Effect.as(HttpServerResponse.text("Internal Server Error", { status: 500 })),
+            ),
       ),
-    );
-    if (bodyOutcome.kind === "rejected") {
-      return bodyOutcome.response;
-    }
-    const body = bodyOutcome.body;
-
-    const logger = makePluginLogger(parsed.pluginId);
-    const exit = yield* descriptor
-      .handler(
-        {
-          method: request.method,
-          params,
-          query: requestQuery(url.value),
-          headers: request.headers,
-          body,
-        },
-        { pluginId: parsed.pluginId, logger },
-      )
-      .pipe(Effect.exit);
-
-    return yield* respondToPluginHandlerExit(exit, logger, {
-      method: request.method,
-      path: parsed.routePath,
-    });
-  }).pipe(
-    Effect.catchTags({
-      EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
-      EnvironmentInternalError: HttpServerRespondable.toResponse,
-      EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
-    }),
-    Effect.catchCause((cause) =>
-      // A cancelled request (client disconnect / scope shutdown) interrupts the
-      // whole route: propagate it rather than logging + 500-ing a dead socket.
-      Cause.hasInterruptsOnly(cause)
-        ? propagateInterrupt(cause)
-        : Effect.logWarning("plugin http route failed", { cause: Cause.pretty(cause) }).pipe(
-            Effect.as(HttpServerResponse.text("Internal Server Error", { status: 500 })),
-          ),
     ),
-  ),
-);
+  );
+};
+
+export const pluginHttpRouteLayer = makePluginHttpRouteLayer();
