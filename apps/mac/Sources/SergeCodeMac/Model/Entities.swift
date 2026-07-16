@@ -107,7 +107,7 @@ public enum ThreadInteractionMode: String, CaseIterable, Sendable, Identifiable 
         case .normal: "The agent does the work."
         case .plan: "The agent proposes a plan instead of editing."
         case .advisor:
-            "The agent plans and advises, and delegates implementation to executor sub-agents. It cannot edit the workspace itself."
+            "The agent plans and advises. With an executor model configured it delegates implementation to sub-agents; otherwise it advises only. It cannot edit the workspace itself."
         }
     }
 

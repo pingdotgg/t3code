@@ -910,8 +910,14 @@ private actor MockState {
 
     func setExecutorModel(threadID: String, instanceID: String?, modelID: String?) {
         guard var thread = threadsByID[threadID] else { return }
-        thread.executorModelInstanceID = instanceID
-        thread.executorModelID = modelID
+        // Match LiveBackend: only a complete pair is stored; partial clears both.
+        if let instanceID, let modelID {
+            thread.executorModelInstanceID = instanceID
+            thread.executorModelID = modelID
+        } else {
+            thread.executorModelInstanceID = nil
+            thread.executorModelID = nil
+        }
         threadsByID[threadID] = thread
         emit(.threadUpserted(thread))
     }
