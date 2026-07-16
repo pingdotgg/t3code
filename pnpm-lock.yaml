@@ -359,9 +359,6 @@ importers:
       '@ff-labs/fff-node':
         specifier: 0.9.4
         version: 0.9.4(patch_hash=2b16019ce7ab61aec6478dd02f79ef468cc1d5c51e9d00764f7d2ab8167210c8)
-      '@opencode-ai/sdk':
-        specifier: ^1.3.15
-        version: 1.15.13
       '@pierre/diffs':
         specifier: 'catalog:'
         version: 1.3.0-beta.5(patch_hash=7cb6da88544119adda056b2f46f43956f99326227732da0b345081e285a6c53a)(@shikijs/themes@4.3.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
@@ -2334,9 +2331,6 @@ packages:
 
   '@open-draft/until@2.1.0':
     resolution: {integrity: sha512-U69T3ItWHvLwGg5eJ0n3I62nWuE6ilHlmz7zM0npLBRvPRd7e6NYmg54vvRtP5mZG7kZqZCFVdsTWo7BPtBujg==}
-
-  '@opencode-ai/sdk@1.15.13':
-    resolution: {integrity: sha512-4TwojIoQ8EG6/mVBuUVYZXiFcwNmiiytEnjnvyuvSJjGwFIlw2YIBFxtSVC3FbwwbwHT63teh1RHiQUUC4U5xw==}
 
   '@oxc-project/runtime@0.138.0':
     resolution: {integrity: sha512-yHhoXsN8tYxgdJCdD91PbySNjEEaBX/tH2OQRDXJpsQv5b184oC4/qVbU7qlblvfil/JP15Lh2HW7+HN5DS90Q==}
@@ -6732,6 +6726,11 @@ packages:
     resolution: {integrity: sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==}
     engines: {node: '>=16.20.0'}
 
+  playwright-core@1.60.0:
+    resolution: {integrity: sha512-9bW6zvX/m0lEbgTKJ6YppOKx8H3VOPBMOCFh2irXFOT4BbHgrx5hPjwJYLT40Lu+4qtD36qKc/Hn56StUW57IA==}
+    engines: {node: '>=18'}
+    hasBin: true
+
   plist@3.1.1:
     resolution: {integrity: sha512-ZIfcLJC+7E7FBFnDxm9MPmt7D+DidyQ26lewieO75AdhA2ayMtsJSES0iWzqJQbcVRSrTufQoy0DR94xHue0oA==}
     engines: {node: '>=10.4.0'}
@@ -10032,10 +10031,6 @@ snapshots:
 
   '@open-draft/until@2.1.0':
     optional: true
-
-  '@opencode-ai/sdk@1.15.13':
-    dependencies:
-      cross-spawn: 7.0.6
 
   '@oxc-project/runtime@0.138.0': {}
 
@@ -14562,6 +14557,8 @@ snapshots:
   picomatch@4.0.4: {}
 
   pkce-challenge@5.0.1: {}
+
+  playwright-core@1.60.0: {}
 
   plist@3.1.1:
     dependencies:
