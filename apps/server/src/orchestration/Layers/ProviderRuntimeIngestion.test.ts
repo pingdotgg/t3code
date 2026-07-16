@@ -1406,8 +1406,8 @@ describe("ProviderRuntimeIngestion", () => {
 
   it("accepts a conflicting turn.started for a pending turn start when the provider expects that turn", async () => {
     // Steering a running turn: the server requests a new turn while the old
-    // one is still active, and providers like opencode open the new turn
-    // without ever completing the superseded one. The new turn.started must
+    // one is still active, and some providers open the new turn without
+    // ever completing the superseded one. The new turn.started must
     // replace the active turn instead of being rejected as stale.
     const harness = await createHarness();
     const threadId = asThreadId("thread-1");

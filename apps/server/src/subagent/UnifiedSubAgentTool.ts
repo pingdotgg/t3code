@@ -8,7 +8,6 @@
  * - Provider discovery (list available providers and capabilities)
  * - Cross-provider spawning (e.g., Claude can spawn Codex/Grok sub-agents)
  * - Concurrency management (per-model and global limits)
- * - OpenCode exclusion (API credits protection)
  * - Workflow execution (JSON-based multi-agent orchestration)
  */
 import * as Schema from "effect/Schema";
@@ -70,7 +69,7 @@ export const UnifiedSubAgentTool = Tool.make("subagent", {
   description: `Spawn and manage sub-agents across any configured provider.
 
 Actions:
-- 'list': Discover available providers (models, capabilities, status) and see your spawned sub-agents. OpenCode is excluded (uses API credits).
+- 'list': Discover available providers (models, capabilities, status) and see your spawned sub-agents.
 - 'spawn': Create a sub-agent on ANY provider, including different ones from yourself (e.g., Claude can spawn Codex/Grok, vice versa). Returns immediately with threadId.
 - 'send': Send follow-up prompt to an existing sub-agent. Use after sub-agent completes a turn.
 - 'wait': Wait for sub-agent turn to complete and get the final result. Blocks up to timeoutSeconds (default 60, max 600).

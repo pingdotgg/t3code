@@ -1605,8 +1605,8 @@ const make = Effect.gen(function* () {
       // A turn.started that conflicts with the active turn is legitimate when
       // the server itself has a turn start pending for this thread AND the
       // provider session already tracks the event's turn as its active turn:
-      // steering a running turn makes some providers (e.g. opencode) open a
-      // new turn without ever completing the superseded one. A stale
+      // steering a running turn makes some providers open a new turn without
+      // ever completing the superseded one. A stale
       // turn.started for some other turn id still gets rejected.
       const conflictingTurnStartIsPendingTurnStart =
         event.type === "turn.started" && conflictsWithActiveTurn

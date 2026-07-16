@@ -10,7 +10,7 @@
  *
  *  2. **Many drivers, one registry** — the "all drivers slice" describe
  *     block below configures one instance of every shipped driver
- *     (`codex`, `claudeAgent`, `grok`, `fugu`, `opencode`) in a single
+ *     (`codex`, `claudeAgent`, `grok`, `fugu`) in a single
  *     `ProviderInstanceConfigMap` and asserts the registry boots them all
  *     without cross-contamination. This proves the driver SPI is uniform
  *     across every provider — any driver plugs into the registry through
@@ -18,7 +18,7 @@
  *
  * Every instance in these tests is configured with `enabled: false` so the
  * provider-status checks short-circuit to pending/disabled snapshots
- * without trying to spawn real `codex` / `claude` / `agent` / `grok` / `fugu` / `opencode`
+ * without trying to spawn real `codex` / `claude` / `agent` / `grok` / `fugu`
  * binaries. That keeps the assertions focused on registry routing
  * behaviour rather than the runtime details of each provider.
  */
@@ -29,7 +29,6 @@ import {
   type CodexSettings,
   type FuguSettings,
   type GrokSettings,
-  type OpenCodeSettings,
   ProviderDriverKind,
   type ProviderInstanceConfigMap,
   ProviderInstanceId,
@@ -44,8 +43,6 @@ import { ClaudeDriver } from "../Drivers/ClaudeDriver.ts";
 import { CodexDriver } from "../Drivers/CodexDriver.ts";
 import { FuguDriver } from "../Drivers/FuguDriver.ts";
 import { GrokDriver } from "../Drivers/GrokDriver.ts";
-import { OpenCodeDriver } from "../Drivers/OpenCodeDriver.ts";
-import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistryLive.ts";
 
@@ -85,15 +82,6 @@ const makeFuguConfig = (overrides: Partial<FuguSettings>): FuguSettings => ({
   enabled: false,
   binaryPath: "codex",
   homePath: "~/.codex/fugu-home",
-  customModels: [],
-  ...overrides,
-});
-
-const makeOpenCodeConfig = (overrides: Partial<OpenCodeSettings>): OpenCodeSettings => ({
-  enabled: false,
-  binaryPath: "opencode",
-  serverUrl: "",
-  serverPassword: "",
   customModels: [],
   ...overrides,
 });
@@ -229,23 +217,11 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
 });
 
 describe("ProviderInstanceRegistryLive — all drivers slice", () => {
-  // All drivers need `NodeServices` (ChildProcessSpawner + FileSystem +
-  // Path). `OpenCodeDriver.create` additionally yields `OpenCodeRuntime`
-  // at construction time, so we wire `OpenCodeRuntimeLive` into the stack.
-  // `OpenCodeRuntimeLive` bundles its own `NetService.layer` via
-  // `Layer.provide`, so the only external requirement it still exposes is
-  // `ChildProcessSpawner` — resolved here by piping it through
-  // `provideMerge(NodeServices.layer)`.
-  //
-  // The nested `provideMerge`s read bottom-up: `NodeServices.layer`
-  // provides `OpenCodeRuntimeLive`'s deps while keeping its own outputs
-  // surfaced; that merged layer then provides `ServerConfig.layerTest`'s
-  // `FileSystem` dep while keeping everything else surfaced to the test.
-  const infraLayer = OpenCodeRuntimeLive.pipe(Layer.provideMerge(NodeServices.layer));
+  // All drivers need `NodeServices` (ChildProcessSpawner + FileSystem + Path).
   const testLayer = ServerConfig.layerTest(process.cwd(), {
     prefix: "provider-instance-registry-all-drivers-test",
   }).pipe(
-    Layer.provideMerge(infraLayer),
+    Layer.provideMerge(NodeServices.layer),
     Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(TestHttpClientLive),
     Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
@@ -257,13 +233,11 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       const claudeId = ProviderInstanceId.make("claude_default");
       const grokId = ProviderInstanceId.make("grok_default");
       const fuguId = ProviderInstanceId.make("fugu_default");
-      const openCodeId = ProviderInstanceId.make("opencode_default");
 
       const codexDriverKind = ProviderDriverKind.make("codex");
       const claudeDriverKind = ProviderDriverKind.make("claudeAgent");
       const grokDriverKind = ProviderDriverKind.make("grok");
       const fuguDriverKind = ProviderDriverKind.make("fugu");
-      const openCodeDriverKind = ProviderDriverKind.make("opencode");
 
       const configMap: ProviderInstanceConfigMap = {
         [codexId]: {
@@ -293,16 +267,10 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
           enabled: false,
           config: makeFuguConfig({}),
         },
-        [openCodeId]: {
-          driver: openCodeDriverKind,
-          displayName: "OpenCode",
-          enabled: false,
-          config: makeOpenCodeConfig({}),
-        },
       };
 
       const { registry } = yield* makeProviderInstanceRegistry({
-        drivers: [CodexDriver, ClaudeDriver, GrokDriver, FuguDriver, OpenCodeDriver],
+        drivers: [CodexDriver, ClaudeDriver, GrokDriver, FuguDriver],
         configMap,
       });
 
@@ -312,9 +280,9 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(unavailable).toEqual([]);
 
       const instances = yield* registry.listInstances;
-      expect(instances).toHaveLength(5);
+      expect(instances).toHaveLength(4);
       expect(instances.map((instance) => instance.instanceId).toSorted()).toEqual(
-        [codexId, claudeId, grokId, fuguId, openCodeId].toSorted(),
+        [codexId, claudeId, grokId, fuguId].toSorted(),
       );
 
       // Instance lookup by id resolves each instance to its own bundle —
@@ -324,46 +292,30 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       const claude = yield* registry.getInstance(claudeId);
       const grok = yield* registry.getInstance(grokId);
       const fugu = yield* registry.getInstance(fuguId);
-      const openCode = yield* registry.getInstance(openCodeId);
       expect(codex?.driverKind).toBe(codexDriverKind);
       expect(claude?.driverKind).toBe(claudeDriverKind);
       expect(grok?.driverKind).toBe(grokDriverKind);
       expect(fugu?.driverKind).toBe(fuguDriverKind);
-      expect(openCode?.driverKind).toBe(openCodeDriverKind);
       expect(codex?.displayName).toBe("Codex");
       expect(claude?.displayName).toBe("Claude");
       expect(grok?.displayName).toBe("Grok");
       expect(fugu?.displayName).toBe("Fugu");
-      expect(openCode?.displayName).toBe("OpenCode");
 
       // Every instance owns its own set of closures — no sharing across
       // drivers. `adapter` / `textGeneration` / `snapshot` are all
       // distinct references even when two instances happen to share a
       // trait (several drivers use a stub-or-real
       // `textGeneration`; they must still be different object values).
-      const adapters = [
-        codex!.adapter,
-        claude!.adapter,
-        grok!.adapter,
-        fugu!.adapter,
-        openCode!.adapter,
-      ];
+      const adapters = [codex!.adapter, claude!.adapter, grok!.adapter, fugu!.adapter];
       expect(new Set(adapters).size).toBe(adapters.length);
       const textGenerations = [
         codex!.textGeneration,
         claude!.textGeneration,
         grok!.textGeneration,
         fugu!.textGeneration,
-        openCode!.textGeneration,
       ];
       expect(new Set(textGenerations).size).toBe(textGenerations.length);
-      const snapshots = [
-        codex!.snapshot,
-        claude!.snapshot,
-        grok!.snapshot,
-        fugu!.snapshot,
-        openCode!.snapshot,
-      ];
+      const snapshots = [codex!.snapshot, claude!.snapshot, grok!.snapshot, fugu!.snapshot];
       expect(new Set(snapshots).size).toBe(snapshots.length);
 
       // Snapshots identify themselves by `instanceId` + `driver` so
@@ -395,14 +347,6 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(fuguSnapshot.driver).toBe(fuguDriverKind);
       expect(fuguSnapshot.enabled).toBe(false);
       expect(fuguSnapshot.continuation?.groupKey).toBe(`${fuguDriverKind}:instance:${fuguId}`);
-
-      const openCodeSnapshot = yield* openCode!.snapshot.getSnapshot;
-      expect(openCodeSnapshot.instanceId).toBe(openCodeId);
-      expect(openCodeSnapshot.driver).toBe(openCodeDriverKind);
-      expect(openCodeSnapshot.enabled).toBe(false);
-      expect(openCodeSnapshot.continuation?.groupKey).toBe(
-        `${openCodeDriverKind}:instance:${openCodeId}`,
-      );
     }).pipe(Effect.provide(testLayer)),
   );
 });

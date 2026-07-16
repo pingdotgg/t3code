@@ -57,7 +57,7 @@ const unsupportedTextGeneration = (operation: string) =>
     new TextGenerationError({
       operation,
       detail:
-        "ChatGPT browser connector does not support background text generation. Select Codex, Claude, Grok, or OpenCode for commit messages, PR text, branch names, and titles.",
+        "ChatGPT browser connector does not support background text generation. Select Codex, Claude, or Grok for commit messages, PR text, branch names, and titles.",
     }),
   );
 

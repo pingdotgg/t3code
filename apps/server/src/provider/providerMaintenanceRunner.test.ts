@@ -31,10 +31,10 @@ const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
 
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const GROK_DRIVER = ProviderDriverKind.make("grok");
-const OPENCODE_DRIVER = ProviderDriverKind.make("opencode");
+const FUGU_DRIVER = ProviderDriverKind.make("fugu");
 const CODEX_INSTANCE_ID = ProviderInstanceId.make("codex");
 const GROK_INSTANCE_ID = ProviderInstanceId.make("grok");
-const OPENCODE_INSTANCE_ID = ProviderInstanceId.make("opencode");
+const FUGU_INSTANCE_ID = ProviderInstanceId.make("fugu");
 const encoder = new TextEncoder();
 
 // Pin a non-win32 platform so `resolveSpawnCommand` is a no-op and the raw
@@ -53,14 +53,20 @@ function lifecycleFor(provider: ProviderDriverKind): ProviderMaintenanceCapabili
       updateLockKey: "grok-cli",
     });
   }
+  if (provider === FUGU_DRIVER) {
+    return makeProviderMaintenanceCapabilities({
+      provider,
+      packageName: "codex-fugu",
+      updateExecutable: "npm",
+      updateArgs: ["install", "-g", "codex-fugu@latest"],
+      updateLockKey: "npm-global",
+    });
+  }
   return makeProviderMaintenanceCapabilities({
     provider,
-    packageName: provider === OPENCODE_DRIVER ? "opencode-ai" : "@openai/codex",
+    packageName: "@openai/codex",
     updateExecutable: "npm",
-    updateArgs:
-      provider === OPENCODE_DRIVER
-        ? ["install", "-g", "opencode-ai@latest"]
-        : ["install", "-g", "@openai/codex@latest"],
+    updateArgs: ["install", "-g", "@openai/codex@latest"],
     updateLockKey: "npm-global",
   });
 }
@@ -85,10 +91,10 @@ const baseGrokProvider: ServerProvider = {
   driver: GROK_DRIVER,
 };
 
-const baseOpenCodeProvider: ServerProvider = {
+const baseFuguProvider: ServerProvider = {
   ...baseProvider,
-  instanceId: OPENCODE_INSTANCE_ID,
-  driver: OPENCODE_DRIVER,
+  instanceId: FUGU_INSTANCE_ID,
+  driver: FUGU_DRIVER,
 };
 
 const latestVersionHttpClient = (version: string) =>
@@ -509,18 +515,18 @@ describe("providerMaintenanceRunner", () => {
     });
     const calls: Array<string> = [];
     return Effect.gen(function* () {
-      const { registry } = yield* makeRegistry([baseProvider, baseOpenCodeProvider]);
+      const { registry } = yield* makeRegistry([baseProvider, baseFuguProvider]);
       const updater = yield* makeTestRunner({
         ...registry,
         getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
           Effect.succeed(
             makeProviderMaintenanceCapabilities({
               provider,
-              packageName: provider === OPENCODE_DRIVER ? "opencode-ai" : "@openai/codex",
+              packageName: provider === FUGU_DRIVER ? "codex-fugu" : "@openai/codex",
               updateExecutable: "npm",
               updateArgs:
-                provider === OPENCODE_DRIVER
-                  ? ["install", "-g", "opencode-ai@latest"]
+                provider === FUGU_DRIVER
+                  ? ["install", "-g", "codex-fugu@latest"]
                   : ["install", "-g", "@openai/codex@latest"],
               updateLockKey: "npm-global",
             }),
@@ -530,12 +536,12 @@ describe("providerMaintenanceRunner", () => {
       const first = yield* updater.updateProvider(CODEX_DRIVER).pipe(Effect.forkScoped);
       yield* Effect.promise(() => firstStarted);
 
-      const second = yield* updater.updateProvider(OPENCODE_DRIVER).pipe(Effect.forkScoped);
+      const second = yield* updater.updateProvider(FUGU_DRIVER).pipe(Effect.forkScoped);
       let providersWhileQueued: ReadonlyArray<ServerProvider> = [];
       for (let attempt = 0; attempt < 20; attempt += 1) {
         providersWhileQueued = yield* registry.getProviders;
         const queuedStatus = providersWhileQueued.find(
-          (provider) => provider.instanceId === OPENCODE_INSTANCE_ID,
+          (provider) => provider.instanceId === FUGU_INSTANCE_ID,
         )?.updateState?.status;
         if (queuedStatus === "queued") {
           break;
@@ -544,7 +550,7 @@ describe("providerMaintenanceRunner", () => {
       }
       assert.deepStrictEqual(calls, ["install -g @openai/codex@latest"]);
       assert.strictEqual(
-        providersWhileQueued.find((provider) => provider.instanceId === OPENCODE_INSTANCE_ID)
+        providersWhileQueued.find((provider) => provider.instanceId === FUGU_INSTANCE_ID)
           ?.updateState?.status,
         "queued",
       );
@@ -554,7 +560,7 @@ describe("providerMaintenanceRunner", () => {
       yield* Fiber.join(second);
       assert.deepStrictEqual(calls, [
         "install -g @openai/codex@latest",
-        "install -g opencode-ai@latest",
+        "install -g codex-fugu@latest",
       ]);
     }).pipe(
       Effect.provide(

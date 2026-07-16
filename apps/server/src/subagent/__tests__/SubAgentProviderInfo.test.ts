@@ -22,11 +22,7 @@ describe("SubAgentProviderInfo", () => {
     expect(getModelCostTier("unknown-model-xyz")).toBe("moderate");
   });
 
-  it("should mark opencode as api-credits", () => {
-    expect(getProviderCostTier("opencode")).toBe("api-credits");
-  });
-
-  it("should mark other providers as subscription", () => {
+  it("should mark known providers as subscription", () => {
     expect(getProviderCostTier("codex")).toBe("subscription");
     expect(getProviderCostTier("claudeAgent")).toBe("subscription");
   });
