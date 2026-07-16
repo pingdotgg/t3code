@@ -253,6 +253,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const activeWorkIndicatorHeight = props.activeWorkStartedAt ? WORKING_INDICATOR_HEIGHT : 0;
   const estimatedOverlayHeight = composerOverlapHeight + activeWorkIndicatorHeight;
   const [composerOverlayHeight, setComposerOverlayHeight] = useState(estimatedOverlayHeight);
+  useEffect(() => {
+    setComposerOverlayHeight((current) =>
+      Math.abs(current - estimatedOverlayHeight) > 1 ? estimatedOverlayHeight : current,
+    );
+  }, [estimatedOverlayHeight]);
   // The overlay's measured height includes the home-indicator inset (the
   // composer pads it), but contentInsetAdjustmentBehavior="automatic" makes
   // UIKit add the safe-area bottom to the content inset AGAIN — leaving a
