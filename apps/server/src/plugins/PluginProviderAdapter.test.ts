@@ -250,6 +250,84 @@ describe("makePluginProviderAdapter", () => {
       }),
   );
 
+  it.effect("rejects a turn that races in while stopSession is tearing the session down", () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const releaseStop = yield* Deferred.make<void>();
+      const adapter = yield* adapterFor({
+        startSession: () => Effect.void,
+        // The first turn parks so it is the single active turn when stop begins.
+        sendTurn: () => Effect.never,
+        // stopSession blocks mid-teardown: it signals it has entered, then waits.
+        // A concurrent sendTurn arriving in this window used to pass the null-state
+        // guard, install a fresh fiber, and be orphaned by the final delete.
+        stopSession: () =>
+          Deferred.succeed(entered, undefined).pipe(
+            Effect.flatMap(() => Deferred.await(releaseStop)),
+          ),
+      });
+
+      yield* start(adapter);
+      yield* adapter.sendTurn({ threadId, input: "first" } as never);
+      yield* Effect.yieldNow;
+
+      const stopFiber = yield* Effect.forkChild(adapter.stopSession(threadId));
+      // Wait until the driver's stopSession is parked mid-teardown.
+      yield* Deferred.await(entered);
+
+      // A turn racing in now — after stopping was set, before the delete — must be
+      // rejected rather than orphaned by the imminent delete.
+      const raced = yield* Effect.exit(adapter.sendTurn({ threadId, input: "racer" } as never));
+      assert.strictEqual(raced._tag, "Failure", "a turn racing a stopping session must fail");
+      assert.isTrue(
+        String(raced._tag === "Failure" ? raced.cause : "").includes("session is stopping"),
+        "the rejection must name the stopping invariant",
+      );
+
+      yield* Deferred.succeed(releaseStop, undefined);
+      yield* Fiber.join(stopFiber);
+      assert.isFalse(
+        yield* adapter.hasSession(threadId),
+        "the session is gone once teardown completes",
+      );
+    }),
+  );
+
+  it.effect("rejects a racing turn while stopping even with no active turn at stop time", () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const releaseStop = yield* Deferred.make<void>();
+      const adapter = yield* adapterFor({
+        startSession: () => Effect.void,
+        sendTurn: () => Effect.void,
+        stopSession: () =>
+          Deferred.succeed(entered, undefined).pipe(
+            Effect.flatMap(() => Deferred.await(releaseStop)),
+          ),
+      });
+
+      // No turn is running when stop begins — but stopping must still bar a racer.
+      yield* start(adapter);
+      const stopFiber = yield* Effect.forkChild(adapter.stopSession(threadId));
+      yield* Deferred.await(entered);
+
+      const raced = yield* Effect.exit(adapter.sendTurn({ threadId, input: "racer" } as never));
+      assert.strictEqual(
+        raced._tag,
+        "Failure",
+        "a turn racing a stopping session must fail even with no active turn",
+      );
+      assert.isTrue(
+        String(raced._tag === "Failure" ? raced.cause : "").includes("session is stopping"),
+        "the rejection must name the stopping invariant",
+      );
+
+      yield* Deferred.succeed(releaseStop, undefined);
+      yield* Fiber.join(stopFiber);
+      assert.isFalse(yield* adapter.hasSession(threadId));
+    }),
+  );
+
   it.effect("keeps session bookkeeping in the host", () =>
     Effect.gen(function* () {
       const adapter = yield* adapterFor({
