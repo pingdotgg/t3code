@@ -45,7 +45,7 @@ it.effect("guardedOutboundHttpGet pins requests to the resolved address", () =>
     });
 
     assert.equal(response.status, 200);
-    assert.equal(requests[0]?.address.address, "93.184.216.34");
+    assert.equal(requests[0]?.addresses[0]?.address, "93.184.216.34");
   }),
 );
 

@@ -66,7 +66,16 @@ export interface PluginPinnedHttpRequest {
   readonly headers: Readonly<Record<string, string>>;
   readonly body: Uint8Array | null;
   readonly timeoutMs: number;
-  readonly address: ResolvedAddress;
+  /**
+   * EVERY validated address for the host, not just the first.
+   *
+   * The validator already checked all of them and failed the resolve if any was
+   * disallowed, so pinning the connection to this whole set is exactly as safe as
+   * pinning to one — and it lets Node's Happy Eyeballs fall back when the first
+   * record (say an unreachable IPv6) is down but a later one (IPv4) works. Pinning to
+   * `addresses[0]` alone turned a reachable dual-stack host into a failed request.
+   */
+  readonly addresses: ReadonlyArray<ResolvedAddress>;
 }
 
 export type PluginHttpClientTransport = (
@@ -184,9 +193,18 @@ const nodePinnedTransport: PluginHttpClientTransport = (input) =>
             // when `all` is unset.
             lookup: (_hostname, options, callback) => {
               if (options.all) {
-                callback(null, [{ address: input.address.address, family: input.address.family }]);
+                callback(
+                  null,
+                  input.addresses.map((address) => ({
+                    address: address.address,
+                    family: address.family,
+                  })),
+                );
               } else {
-                callback(null, input.address.address, input.address.family);
+                // Scalar form (autoSelectFamily off): only the first is offered, but
+                // it is still a VALIDATED address — no fallback, but no bypass.
+                const first = input.addresses[0]!;
+                callback(null, first.address, first.family);
               }
             },
           },
@@ -294,7 +312,7 @@ export function makeHttpClientCapability(input?: {
           headers,
           body: requestBody,
           timeoutMs,
-          address: resolved.addresses[0]!,
+          addresses: resolved.addresses,
         });
         // A null-body status has no body to read, and asking for one fails: the
         // Response was constructed with `null` (the constructor rejects a body for

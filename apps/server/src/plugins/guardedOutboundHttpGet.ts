@@ -81,7 +81,7 @@ export const guardedOutboundHttpGet = (input: {
         headers,
         body: null,
         timeoutMs: input.timeoutMs,
-        address: resolved.addresses[0]!,
+        addresses: resolved.addresses,
       });
       if (!REDIRECT_STATUSES.has(response.status)) return response;
       const location = response.headers["location"];
