@@ -119,6 +119,21 @@ private enum TerminalHardwareKeyEncoder {
   }
 }
 
+private enum TerminalInputSequence {
+  /// Terminal Enter is carriage return. Sending line feed instead is Ctrl+J,
+  /// which raw-mode TUIs may interpret as the literal J key.
+  static let carriageReturn = "\r"
+
+  static func normalizingReturn(_ input: String) -> String {
+    switch input {
+    case "\n", "\r\n":
+      return carriageReturn
+    default:
+      return input
+    }
+  }
+}
+
 private final class TerminalInputField: UITextField {
   var onDeleteBackward: (() -> Void)?
   var onInsert: ((String) -> Void)?
@@ -352,7 +367,9 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
 
   public func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
     if !string.isEmpty {
-      emitInput(string)
+      // Some software keyboards deliver Return through this delegate instead of
+      // textFieldShouldReturn, so normalize that path too.
+      emitInput(TerminalInputSequence.normalizingReturn(string))
       return false
     }
 
@@ -360,7 +377,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   }
 
   public func textFieldShouldReturn(_ textField: UITextField) -> Bool {
-    emitInput("\n")
+    emitInput(TerminalInputSequence.carriageReturn)
     textField.text = ""
     return false
   }
