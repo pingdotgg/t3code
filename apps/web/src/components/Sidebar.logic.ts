@@ -1,5 +1,6 @@
 import * as React from "react";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   getThreadSortTimestamp,
   sortThreads,
@@ -488,6 +489,18 @@ export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input:
     hiddenThreads: threads.filter((thread) => !visibleThreadIds.has(thread.id)),
     visibleThreads: threads.filter((thread) => visibleThreadIds.has(thread.id)),
   };
+}
+
+export function filterVisibleSidebarThreads<
+  T extends Pick<SidebarThreadSummary, "archivedAt" | "environmentId" | "id">,
+>(threads: readonly T[], optimisticallyArchivedThreadKeys: ReadonlySet<string>): T[] {
+  return threads.filter(
+    (thread) =>
+      thread.archivedAt === null &&
+      !optimisticallyArchivedThreadKeys.has(
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      ),
+  );
 }
 
 export function getFallbackThreadIdAfterDelete<

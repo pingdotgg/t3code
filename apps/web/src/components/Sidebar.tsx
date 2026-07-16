@@ -185,6 +185,7 @@ import {
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useOpenAddProjectCommandPalette } from "../commandPaletteContext";
 import {
+  filterVisibleSidebarThreads,
   getSidebarThreadIdsToPrewarm,
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
@@ -1177,6 +1178,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   });
   const openPrLink = useOpenPrLink();
   const sidebarThreads = useThreadShellsForProjectRefs(project.memberProjectRefs);
+  const optimisticallyArchivedThreadKeys = useOptimisticThreadArchiveStore(
+    (state) => state.threadKeys,
+  );
   const sidebarThreadByKey = useMemo(
     () =>
       new Map(
@@ -1267,7 +1271,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       });
     };
     const visibleProjectThreads = sortThreads(
-      projectThreads.filter((thread) => thread.archivedAt === null),
+      filterVisibleSidebarThreads(projectThreads, optimisticallyArchivedThreadKeys),
       threadSortOrder,
     );
     const projectStatus = resolveProjectStatusIndicator(
@@ -1280,7 +1284,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       projectStatus,
       visibleProjectThreads,
     };
-  }, [projectThreads, threadLastVisitedAts, threadSortOrder]);
+  }, [optimisticallyArchivedThreadKeys, projectThreads, threadLastVisitedAts, threadSortOrder]);
   const pinnedCollapsedThread = useMemo(() => {
     const activeThreadKey = activeRouteThreadKey ?? undefined;
     if (!activeThreadKey || projectExpanded) {
@@ -3373,14 +3377,7 @@ export default function Sidebar() {
   }, []);
 
   const visibleThreads = useMemo(
-    () =>
-      sidebarThreads.filter(
-        (thread) =>
-          thread.archivedAt === null &&
-          !optimisticallyArchivedThreadKeys.has(
-            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-          ),
-      ),
+    () => filterVisibleSidebarThreads(sidebarThreads, optimisticallyArchivedThreadKeys),
     [optimisticallyArchivedThreadKeys, sidebarThreads],
   );
   const sortedProjects = useMemo(() => {
@@ -3419,8 +3416,9 @@ export default function Sidebar() {
     () =>
       sortedProjects.flatMap((project) => {
         const projectThreads = sortThreads(
-          (threadsByProjectKey.get(project.projectKey) ?? []).filter(
-            (thread) => thread.archivedAt === null,
+          filterVisibleSidebarThreads(
+            threadsByProjectKey.get(project.projectKey) ?? [],
+            optimisticallyArchivedThreadKeys,
           ),
           sidebarThreadSortOrder,
         );
@@ -3456,6 +3454,7 @@ export default function Sidebar() {
       sidebarThreadSortOrder,
       sidebarThreadPreviewCount,
       expandedThreadListsByProject,
+      optimisticallyArchivedThreadKeys,
       projectExpandedById,
       routeThreadKey,
       sortedProjects,

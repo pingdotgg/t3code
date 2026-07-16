@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   createThreadJumpHintVisibilityController,
+  filterVisibleSidebarThreads,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
@@ -28,6 +29,7 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
@@ -840,6 +842,27 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     ...overrides,
   };
 }
+
+describe("filterVisibleSidebarThreads", () => {
+  it("excludes archived shells and optimistically archived threads", () => {
+    const visibleThread = makeThread({ id: ThreadId.make("thread-visible") });
+    const optimisticThread = makeThread({ id: ThreadId.make("thread-optimistic") });
+    const archivedThread = makeThread({
+      id: ThreadId.make("thread-archived"),
+      archivedAt: "2026-03-09T10:05:00.000Z",
+    });
+    const optimisticThreadKey = scopedThreadKey(
+      scopeThreadRef(optimisticThread.environmentId, optimisticThread.id),
+    );
+
+    expect(
+      filterVisibleSidebarThreads(
+        [visibleThread, optimisticThread, archivedThread],
+        new Set([optimisticThreadKey]),
+      ).map((thread) => thread.id),
+    ).toEqual([visibleThread.id]);
+  });
+});
 
 describe("getFallbackThreadIdAfterDelete", () => {
   it("returns the top remaining thread in the deleted thread's project sidebar order", () => {
