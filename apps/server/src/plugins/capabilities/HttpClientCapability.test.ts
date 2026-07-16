@@ -368,6 +368,45 @@ describe("HttpClientCapability", () => {
     }),
   );
 
+  // Like the 204 test, this needs a real server and the real transport: the crash
+  // lived in makeResponse running inside Node's response callback. The Response
+  // constructor throws a RangeError for a status outside 200-599 (here 600), and
+  // before the guard that throw escaped the Promise and took the process down.
+  it.live("fails with HttpClientError rather than crashing on an out-of-range status", () =>
+    Effect.gen(function* () {
+      const server = NodeHttp.createServer((_request, response) => {
+        response.statusCode = 600;
+        response.end("nope");
+      });
+      const port = yield* Effect.callback<number>((resume) => {
+        server.listen(0, "127.0.0.1", () => {
+          const address = server.address();
+          resume(
+            Effect.succeed(typeof address === "object" && address !== null ? address.port : 0),
+          );
+        });
+      });
+      const previous = process.env.T3_PLUGIN_DEV;
+      process.env.T3_PLUGIN_DEV = "1";
+      try {
+        const client = makeHttpClientCapability({ lookup: () => Effect.succeed(["127.0.0.1"]) });
+        const error = yield* client
+          .request({ method: "GET", url: `http://127.0.0.1:${port}/`, timeoutMs: 2000 })
+          .pipe(Effect.flip);
+
+        assert.instanceOf(error, HttpClientError);
+      } finally {
+        if (previous === undefined) {
+          delete process.env.T3_PLUGIN_DEV;
+        } else {
+          process.env.T3_PLUGIN_DEV = previous;
+        }
+        server.closeAllConnections();
+        server.close();
+      }
+    }),
+  );
+
   it.effect("hands every validated address to the transport, not just the first", () =>
     Effect.gen(function* () {
       // The pinned transport gives these to Node's Happy Eyeballs, which falls back

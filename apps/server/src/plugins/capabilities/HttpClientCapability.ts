@@ -209,7 +209,18 @@ const nodePinnedTransport: PluginHttpClientTransport = (input) =>
             },
           },
           (response) => {
-            resolve(makeResponse({ url: input.url, method: input.method, response }));
+            // makeResponse's `new Response(body, { status })` throws a RangeError
+            // for a status outside 200-599 (e.g. an upstream returning 600). This
+            // runs in Node's response callback, AFTER the Promise executor returned,
+            // so an unguarded throw is uncaught and crashes the process instead of
+            // failing the request. Release the pinned socket (as the null-body path
+            // does) and reject so it surfaces as an HttpClientError.
+            try {
+              resolve(makeResponse({ url: input.url, method: input.method, response }));
+            } catch (cause) {
+              response.resume();
+              reject(cause);
+            }
           },
         );
         // Fiber interruption (e.g. the caller's wall-clock deadline in
