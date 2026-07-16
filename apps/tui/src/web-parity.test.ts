@@ -1,11 +1,10 @@
 import { describe, expect, it } from "bun:test";
 
-// Web ⇄ TUI parity, expressed as a living BDD batch. Each dimension that already
-// matches the web is asserted as a real spec (here or in the relevant component
-// test); each remaining gap is a `describe.skip` documenting the target Given/
-// When/Then. Whole unported capabilities live in features.backlog.test.ts,
-// whose source-backed catalog makes `bun test`'s skipped count track the parity
-// backlog without duplicating the component-level specs here.
+// Web keymap ⇄ TUI parity, expressed as a living BDD batch. Each dimension that
+// already matches the web is asserted as a real spec (here or in the relevant
+// component test). Whole unported server-backed web/mobile capabilities live in
+// features.backlog.test.ts, whose source-backed catalog makes `bun test`'s
+// skipped count track the parity backlog without duplicating component specs.
 //
 // Real parity specs live with their subjects:
 //   - composer controls in the box, model-first → ChatComposer.test / ControlsRow.test
@@ -72,5 +71,5 @@ describe("keyboard parity", () => {
 
 // Thread navigation, changed-file actions, commit-message entry, file browsing,
 // source-control actions, and the read-only settings reference are covered by
-// their component/logic specs. Remaining whole-feature gaps are cataloged once
-// in features.backlog.test.ts.
+// their component/logic specs. Remaining user-facing server feature gaps from
+// web or mobile are cataloged once in features.backlog.test.ts.
