@@ -30,11 +30,14 @@ struct SubagentTaskPresentationTests {
         #expect(!SubagentTaskPresentation.isRunningSilently(task: task, at: now))
     }
 
-    @Test("agent roster requires the exact tool title prefix")
+    @Test("agent roster requires the exact tool title prefix or parentThreadId")
     func agentRosterUsesExactTitlePrefix() {
         #expect(AgentsPanel.isSiblingAgentThread(thread(title: "Agent: reviewer")))
         #expect(!AgentsPanel.isSiblingAgentThread(thread(title: "agent: reviewer")))
         #expect(!AgentsPanel.isSiblingAgentThread(thread(title: "Agent:\treviewer")))
+        #expect(
+            AgentsPanel.isSiblingAgentThread(
+                thread(title: "Custom title", parentThreadId: "parent-1")))
     }
 
     @Test("identity badge shows reasoning effort after the model name")
@@ -72,13 +75,14 @@ struct SubagentTaskPresentationTests {
             duration: nil)
     }
 
-    private func thread(title: String) -> ChatThread {
+    private func thread(title: String, parentThreadId: String? = nil) -> ChatThread {
         ChatThread(
             id: "thread-1",
             projectID: "project-1",
             title: title,
             provider: .codex,
             status: .running,
-            updatedAt: now)
+            updatedAt: now,
+            parentThreadId: parentThreadId)
     }
 }

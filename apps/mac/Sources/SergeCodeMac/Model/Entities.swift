@@ -205,6 +205,9 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
     /// Active delegated/background task count. Used for sidebar accessibility
     /// when `status == .backgroundWork`; zero for ordinary thread states.
     public var backgroundAgentCount: Int
+    /// Parent thread id when this is a nested sub-agent session; nil for
+    /// top-level threads (and for historical rows that predate the field).
+    public var parentThreadId: String?
     /// Server turn liveness (`session.health`); `nil` until the server reports
     /// it. Stalled and fresh-active signals override the client-side heuristic.
     public var health: ThreadHealth?
@@ -220,7 +223,8 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
         modelInstanceID: String? = nil, modelID: String? = nil,
         executorModelInstanceID: String? = nil, executorModelID: String? = nil,
         reasoningEffort: String? = nil, serviceTier: String? = nil,
-        backgroundAgentCount: Int = 0, health: ThreadHealth? = nil
+        backgroundAgentCount: Int = 0, parentThreadId: String? = nil,
+        health: ThreadHealth? = nil
     ) {
         self.id = id
         self.projectID = projectID
@@ -237,6 +241,7 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
         self.reasoningEffort = reasoningEffort
         self.serviceTier = serviceTier
         self.backgroundAgentCount = backgroundAgentCount
+        self.parentThreadId = parentThreadId
         self.health = health
     }
 
@@ -256,6 +261,8 @@ public struct ChatThread: Identifiable, Hashable, Sendable {
             && executorModelID == other.executorModelID
             && reasoningEffort == other.reasoningEffort
             && serviceTier == other.serviceTier
+            && backgroundAgentCount == other.backgroundAgentCount
+            && parentThreadId == other.parentThreadId
             && health == other.health
     }
 }

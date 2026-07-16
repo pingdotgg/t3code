@@ -120,12 +120,13 @@ struct AgentsPanel: View {
         .frame(minWidth: 380, idealWidth: 420, maxWidth: 480, maxHeight: 620)
     }
 
-    /// The MCP `agent_*` toolkit titles spawned threads `Agent: <name>` "for
-    /// easy identification in the UI" (agents/tools.ts) — there is no persisted
-    /// parent/child marker on the wire, so that convention is the client signal.
+    /// Sibling sub-agent threads: prefer persisted `parentThreadId` when present,
+    /// fall back to the historical `Agent: ` title prefix for older rows.
     static func isSiblingAgentThread(_ thread: ChatThread) -> Bool {
-        // No wire parent/child marker exists, so the exact tool-written title prefix is required.
-        thread.title.trimmingCharacters(in: .whitespaces).hasPrefix("Agent: ")
+        if let parent = thread.parentThreadId, !parent.isEmpty {
+            return true
+        }
+        return thread.title.trimmingCharacters(in: .whitespaces).hasPrefix("Agent: ")
     }
 
     /// A sibling agent is "working" while its turn runs (or is stalled — a
