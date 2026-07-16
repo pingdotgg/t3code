@@ -172,7 +172,10 @@ const isPrivateV6 = (raw: string): boolean => {
   }
   const first = bytes[0] ?? 0;
   const second = bytes[1] ?? 0;
-  if (first === 0xfe && (second & 0xc0) === 0x80) return true;
+  // fe80::/10 link-local AND the deprecated fec0::/10 site-local (RFC 3879): any
+  // fe.. address whose second byte has a non-zero top two bits (0x80/0xc0) lands
+  // in one of those two blocks. The ULA check below (0xfc/0xfd) misses fe..
+  if (first === 0xfe && (second & 0xc0) !== 0x00) return true;
   if ((first & 0xfe) === 0xfc) return true;
   if (first === 0xff) return true;
   // RFC 8215 local-use NAT64 (64:ff9b:1::/48). Blocked WHOLESALE rather than by
@@ -244,9 +247,15 @@ export const OutboundUrlValidator = {
         return yield* new OutboundUrlError({ reason: "Only https:// targets are allowed" });
       }
 
-      const addresses = yield* deps.lookup(parsed.hostname).pipe(
+      // URL.hostname keeps the surrounding brackets for an IPv6 literal
+      // ([2606:...]); dns.lookup only short-circuits the bare literal, so pass it
+      // the unbracketed host. The parsed URL/transport keep the bracketed form.
+      const lookupHost = parsed.hostname.startsWith("[")
+        ? parsed.hostname.slice(1, -1)
+        : parsed.hostname;
+      const addresses = yield* deps.lookup(lookupHost).pipe(
         Effect.map((records) => records.map(normalizeResolvedAddress)),
-        Effect.mapError((error) => mapLookupError(parsed.hostname, error)),
+        Effect.mapError((error) => mapLookupError(lookupHost, error)),
       );
       if (addresses.length === 0) {
         return yield* new OutboundUrlError({ reason: "Host did not resolve" });
