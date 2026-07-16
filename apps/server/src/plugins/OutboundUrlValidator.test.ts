@@ -38,6 +38,8 @@ describe("OutboundUrlValidator", () => {
         "100.127.255.255",
         "::1",
         "fe80::1",
+        "fec0::1",
+        "feff::1",
         "fc00::1",
         "fdff::1",
       ]) {
@@ -96,6 +98,25 @@ describe("OutboundUrlValidator", () => {
           "Failure",
         );
       }),
+  );
+
+  it.effect("resolves IPv6-literal URLs through the unbracketed lookup host", () =>
+    Effect.gen(function* () {
+      // URL.hostname keeps the brackets for an IPv6 literal ([2606:...]), but
+      // dns.lookup only short-circuits the bare literal — so without stripping
+      // them defaultLookup fails closed on every IPv6-literal target.
+      const publicLiteral = yield* Effect.exit(
+        OutboundUrlValidator.validate("https://[2606:4700:4700::1111]/x"),
+      );
+      assert.equal(publicLiteral._tag, "Success");
+
+      // The literal still gets validated: a loopback literal is blocked, not merely
+      // unreachable — so the failure names a disallowed address, not a DNS error.
+      const loopbackError = yield* OutboundUrlValidator.validate("https://[::1]/x").pipe(
+        Effect.flip,
+      );
+      assert.include(loopbackError.reason, "disallowed");
+    }),
   );
 
   it.effect("allows http only for loopback when explicitly enabled for plugin development", () =>
