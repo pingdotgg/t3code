@@ -982,36 +982,116 @@ const makeWsRpcLayer = (
                   : false;
               const result = yield* dispatchNormalizedCommand(normalizedCommand);
               if (normalizedCommand.type === "thread.archive") {
-                if (shouldStopSessionAfterArchive) {
-                  yield* Effect.gen(function* () {
-                    const stopCommand = yield* normalizeDispatchCommand({
-                      type: "thread.session.stop",
-                      commandId: CommandId.make(
-                        `session-stop-for-archive:${normalizedCommand.commandId}`,
+                const stopSessionAndCloseTerminals = Effect.fn(
+                  "ws.dispatchCommand.archiveThreadSideEffects",
+                )(function* (threadId: ThreadId, stopSession: boolean, archiveCommandId: string) {
+                  if (stopSession) {
+                    yield* Effect.gen(function* () {
+                      const stopCommand = yield* normalizeDispatchCommand({
+                        type: "thread.session.stop",
+                        commandId: CommandId.make(`session-stop-for-archive:${archiveCommandId}`),
+                        threadId,
+                        createdAt: yield* nowIso,
+                      });
+                      yield* dispatchNormalizedCommand(stopCommand);
+                    }).pipe(
+                      Effect.catchCause((cause) =>
+                        Effect.logWarning("failed to stop provider session during archive", {
+                          threadId,
+                          cause,
+                        }),
                       ),
-                      threadId: normalizedCommand.threadId,
-                      createdAt: yield* nowIso,
-                    });
+                    );
+                  }
 
-                    yield* dispatchNormalizedCommand(stopCommand);
-                  }).pipe(
-                    Effect.catchCause((cause) =>
-                      Effect.logWarning("failed to stop provider session during archive", {
-                        threadId: normalizedCommand.threadId,
-                        cause,
+                  yield* terminalManager.close({ threadId }).pipe(
+                    Effect.catch((error) =>
+                      Effect.logWarning("failed to close thread terminals after archive", {
+                        threadId,
+                        error: error.message,
                       }),
                     ),
                   );
-                }
+                });
 
-                yield* terminalManager.close({ threadId: normalizedCommand.threadId }).pipe(
-                  Effect.catch((error) =>
-                    Effect.logWarning("failed to close thread terminals after archive", {
-                      threadId: normalizedCommand.threadId,
-                      error: error.message,
-                    }),
-                  ),
+                yield* stopSessionAndCloseTerminals(
+                  normalizedCommand.threadId,
+                  shouldStopSessionAfterArchive,
+                  normalizedCommand.commandId,
                 );
+
+                // Cascade archive to nested child threads (sub-agents). Breadth-first
+                // with a visited set so grandchildren are covered; a single failure
+                // does not abort the rest of the tree.
+                const ARCHIVE_CASCADE_MAX_DEPTH = 8;
+                const visited = new Set<string>([normalizedCommand.threadId]);
+                let frontier: ReadonlyArray<ThreadId> = [normalizedCommand.threadId];
+                for (
+                  let depth = 0;
+                  depth < ARCHIVE_CASCADE_MAX_DEPTH && frontier.length > 0;
+                  depth++
+                ) {
+                  const nextFrontier: Array<ThreadId> = [];
+                  for (const parentId of frontier) {
+                    const childIds = yield* projectionSnapshotQuery
+                      .listActiveChildThreadIds(parentId)
+                      .pipe(
+                        Effect.catchCause((cause) =>
+                          Effect.logWarning("failed to list child threads for archive cascade", {
+                            parentThreadId: parentId,
+                            cause,
+                          }).pipe(Effect.as([] as ReadonlyArray<ThreadId>)),
+                        ),
+                      );
+                    for (const childId of childIds) {
+                      if (visited.has(childId)) {
+                        continue;
+                      }
+                      visited.add(childId);
+
+                      const childShouldStop = yield* projectionSnapshotQuery
+                        .getThreadShellById(childId)
+                        .pipe(
+                          Effect.map(
+                            Option.match({
+                              onNone: () => false,
+                              onSome: (thread) =>
+                                thread.session !== null && thread.session.status !== "stopped",
+                            }),
+                          ),
+                          Effect.orElseSucceed(() => false),
+                        );
+
+                      const childArchiveCommandId = CommandId.make(
+                        `archive-cascade:${normalizedCommand.commandId}:${childId}`,
+                      );
+                      yield* Effect.gen(function* () {
+                        const childArchive = yield* normalizeDispatchCommand({
+                          type: "thread.archive",
+                          commandId: childArchiveCommandId,
+                          threadId: childId,
+                        });
+                        yield* dispatchNormalizedCommand(childArchive);
+                        yield* stopSessionAndCloseTerminals(
+                          childId,
+                          childShouldStop,
+                          childArchiveCommandId,
+                        );
+                      }).pipe(
+                        Effect.catchCause((cause) =>
+                          Effect.logWarning("failed to archive child thread during cascade", {
+                            parentThreadId: parentId,
+                            childThreadId: childId,
+                            cause,
+                          }),
+                        ),
+                      );
+
+                      nextFrontier.push(childId);
+                    }
+                  }
+                  frontier = nextFrontier;
+                }
               }
               return result;
             }).pipe(
