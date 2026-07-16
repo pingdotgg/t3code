@@ -17,12 +17,12 @@ how that axis relates to permissions.
 They look similar and are easy to conflate, so the distinction is worth stating
 plainly.
 
-|             | Plan                                                  | Advisor/Planner                                                      |
-| ----------- | ----------------------------------------------------- | -------------------------------------------------------------------- |
-| Goal        | A decision-complete spec another agent can implement  | An answer, a plan of action, and optionally delegated implementation |
-| Output      | A `<proposed_plan>` artifact, rendered as a plan card | An ordinary chat reply (and optional sub-agent results)              |
-| Ends when   | You accept the plan and implement it                  | You stop asking                                                      |
-| Enforcement | Prompt-level only — the sandbox is unchanged          | Prompt-level guidance — permissions follow the thread's runtime mode |
+|             | Plan                                                  | Advisor/Planner                                                         |
+| ----------- | ----------------------------------------------------- | ----------------------------------------------------------------------- |
+| Goal        | A decision-complete spec another agent can implement  | An answer, a plan of action, and optionally delegated implementation    |
+| Output      | A `<proposed_plan>` artifact, rendered as a plan card | An ordinary chat reply (and optional sub-agent results)                 |
+| Ends when   | You accept the plan and implement it                  | You switch interaction mode — stopping a request only ends the exchange |
+| Enforcement | Prompt-level only — the sandbox is unchanged          | Prompt-level guidance — permissions follow the thread's runtime mode    |
 
 Plan mode is a phase of doing the work that produces a handoff artifact.
 Advisor/Planner is consultative: the parent is steered to advise rather than

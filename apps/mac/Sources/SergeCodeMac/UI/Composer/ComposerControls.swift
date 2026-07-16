@@ -380,7 +380,7 @@ private struct InteractionModeMenu: View {
                 clearRow: ModelPickerClearRowConfig(
                     icon: "slash.circle",
                     title: "None — advise only",
-                    detail: "Sub-agents will not be spawned with a specific executor",
+                    detail: "No executor model; the agent plans and advises itself.",
                     action: {
                         Task { await model.setExecutorModel(instanceID: nil, modelID: nil) }
                         showingExecutorPicker = false
