@@ -214,6 +214,87 @@ describe("PluginUiHost", () => {
     expect(attempts).toBe(2);
   });
 
+  it("times out a hung plugin register() and still registers later plugins", async () => {
+    const state = createPluginUiHostState();
+    const hungPluginId = PluginId.make("hung-plugin");
+    const okPluginId = PluginId.make("ok-plugin");
+
+    const snapshot = await syncPluginUiHostRegistrations({
+      state,
+      plugins: [
+        pluginInfo({ id: hungPluginId, name: "Hung" }),
+        pluginInfo({ id: okPluginId, name: "OK", version: "1.0.0" }),
+      ],
+      waitForHost: async () => {},
+      registerTimeoutMs: 20,
+      importWebPlugin: async (url) =>
+        url.includes("hung-plugin")
+          ? {
+              default: defineWebPlugin({
+                // Never settles — must not block the rest of the sync.
+                register: () => new Promise<void>(() => {}),
+              }),
+            }
+          : {
+              default: defineWebPlugin({
+                register(ctx) {
+                  ctx.registerRoute({ path: "overview", component: () => null });
+                },
+              }),
+            },
+    });
+
+    expect(snapshot.failures[hungPluginId]).toContain("timed out");
+    expect(snapshot.routes).toHaveLength(1);
+    expect(snapshot.routes[0]?.pluginId).toBe(okPluginId);
+  });
+
+  it("does not wedge later syncs after a register() timeout", async () => {
+    const state = createPluginUiHostState();
+    const hungPluginId = PluginId.make("hung-plugin");
+    const okPluginId = PluginId.make("ok-plugin");
+    const importWebPlugin = async (url: string) =>
+      url.includes("hung-plugin")
+        ? {
+            default: defineWebPlugin({
+              register: () => new Promise<void>(() => {}),
+            }),
+          }
+        : {
+            default: defineWebPlugin({
+              register(ctx) {
+                ctx.registerRoute({ path: "overview", component: () => null });
+              },
+            }),
+          };
+
+    const first = await syncPluginUiHostRegistrations({
+      state,
+      plugins: [
+        pluginInfo({ id: hungPluginId, name: "Hung" }),
+        pluginInfo({ id: okPluginId, name: "OK", version: "1.0.0" }),
+      ],
+      waitForHost: async () => {},
+      registerTimeoutMs: 20,
+      importWebPlugin,
+    });
+    expect(first.routes).toHaveLength(1);
+
+    // A later sync (here: disabling plugin 2) must still apply — the timeout
+    // resolved the sync, so nothing is wedged behind the previous run.
+    const second = await syncPluginUiHostRegistrations({
+      state,
+      plugins: [
+        pluginInfo({ id: hungPluginId, name: "Hung" }),
+        pluginInfo({ id: okPluginId, name: "OK", version: "1.0.0", state: "disabled" }),
+      ],
+      waitForHost: async () => {},
+      registerTimeoutMs: 20,
+      importWebPlugin,
+    });
+    expect(second.routes).toHaveLength(0);
+  });
+
   it("parses valid plugin id route params and rejects invalid ones without throwing", () => {
     expect(parsePluginIdParam("fixture-plugin")).toBe("fixture-plugin");
     expect(parsePluginIdParam("NOT_VALID!!")).toBeNull();
