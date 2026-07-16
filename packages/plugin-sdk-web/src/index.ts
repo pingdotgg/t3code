@@ -184,17 +184,3 @@ export function defineWebPlugin<const Definition extends PluginWebDefinition>(
 ): Definition {
   return definition;
 }
-
-/**
- * Tailwind v4 caveat: host builds emit utilities by scanning host source.
- * Separately-built plugins should use host CSS variables and these exported
- * host components, or ship their own compiled CSS for plugin-local classes.
- */
-export interface PluginWebRegistration {
-  readonly routes?: ReadonlyArray<PluginRouteRegistration>;
-  readonly sidebarSections?: ReadonlyArray<PluginSidebarSectionRegistration>;
-  readonly settingsPages?: ReadonlyArray<PluginSettingsPageRegistration>;
-  readonly commands?: ReadonlyArray<PluginCommandRegistration>;
-  readonly projectActions?: ReadonlyArray<PluginProjectActionRegistration>;
-  readonly providers?: (context: PluginUiContext) => unknown;
-}

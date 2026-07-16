@@ -335,7 +335,12 @@ agentsIt("AgentsCapability", (it) => {
       expect(callerResult.messageId).toBe(callerMessageId);
       expect(turnStarts[0]?.type).toBe("thread.turn.start");
       if (turnStarts[0]?.type === "thread.turn.start") {
-        expect(turnStarts[0].commandId).toBe(callerCommandId);
+        // The caller commandId is NOT forwarded verbatim: engine command receipts are
+        // keyed by a GLOBAL command_id PRIMARY KEY, so the same caller commandId on a
+        // different thread would collide. It is namespaced per (commandId, threadId)
+        // instead — deterministic, so a same-thread retry still dedups.
+        expect(turnStarts[0].commandId).not.toBe(callerCommandId);
+        expect(String(turnStarts[0].commandId)).toMatch(/^plugin:turn-start:/);
         expect(turnStarts[0].message.messageId).toBe(callerMessageId);
       }
       expect(generatedResult.messageId).not.toBe(callerMessageId);

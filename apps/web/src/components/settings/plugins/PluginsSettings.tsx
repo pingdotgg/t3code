@@ -52,6 +52,7 @@ import {
   setPluginEnabledCommand,
   uninstallPluginCommand,
 } from "~/state/plugins";
+import { pluginUiRegistryAtom } from "~/plugins/PluginUiHost";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { Alert, AlertDescription, AlertTitle } from "../../ui/alert";
 import {
@@ -279,6 +280,11 @@ function InstalledPluginRow({
   readonly onBeginUpgrade: (plugin: PluginInfo, version: string) => void;
   readonly onRequestUninstall: (plugin: PluginInfo) => void;
 }) {
+  // Client-side web load/register failure for this plugin. The server can report a
+  // plugin "active" (its server-side activation succeeded) while its web bundle 404s
+  // or its register() throws in the browser — leaving none of its UI present with no
+  // visible reason. Surface that here so "active but no UI" is explained, not silent.
+  const webFailure = useAtomValue(pluginUiRegistryAtom).failures[plugin.id];
   const checked = plugin.state === "active" || plugin.state === "pending-upgrade";
   // "failed" is toggleable ON: the server's setEnabled(true) resets state and
   // crashCount, which is the whole point of the repair flow (fix settings on the
@@ -342,6 +348,13 @@ function InstalledPluginRow({
           <AlertTriangleIcon />
           <AlertTitle>Activation failed</AlertTitle>
           <AlertDescription>{plugin.lastError}</AlertDescription>
+        </Alert>
+      ) : null}
+      {webFailure !== undefined ? (
+        <Alert className="mt-3" variant="error">
+          <AlertTriangleIcon />
+          <AlertTitle>Web UI failed to load</AlertTitle>
+          <AlertDescription>{webFailure}</AlertDescription>
         </Alert>
       ) : null}
       {pluginRequiresRelaunch(plugin) ? <RelaunchBanner state={plugin.state} /> : null}

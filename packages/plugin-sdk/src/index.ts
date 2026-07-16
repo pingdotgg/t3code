@@ -1434,9 +1434,12 @@ export interface PluginProviderDriver {
     readonly config: unknown;
     /**
      * Emit streaming output. CLOSED by the host over this session's provider and
-     * thread — it is not a bus you can address elsewhere. Live from a successful
-     * `startSession` until `stopSession`; calls outside that window are dropped and
-     * logged rather than crashing anything.
+     * thread — it is not a bus you can address elsewhere. Output is only produced
+     * while a TURN is active (i.e. during a `sendTurn` call for this thread); the
+     * host stamps each event with the active turn's id. Emits made outside an active
+     * turn — between turns, or after `stopSession` — are dropped and logged rather
+     * than crashing anything. Emit from within your `sendTurn`, not from background
+     * work that outlives it.
      */
     readonly emit: (event: PluginProviderEvent) => void;
   }) => Effect.Effect<void, Error>;

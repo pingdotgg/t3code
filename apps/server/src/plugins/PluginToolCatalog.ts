@@ -450,88 +450,97 @@ export const make = Effect.fn("PluginToolCatalog.make")(function* () {
             );
           }
 
-          const logger = makePluginLogger(pluginId);
+          // Release the concurrency slot on the REQUEST fiber, guaranteed after a
+          // successful acquire. The release previously lived inside `invoke`, which
+          // runs on the forked plugin-scope fiber — so a disable that closed
+          // runtime.scope between this acquire and the forkIn below interrupted the
+          // fiber before `invoke` ever ran, leaking the slot for the process lifetime.
+          // An outer ensuring runs on every path (fork ran or not, join, interrupt).
+          return yield* Effect.gen(function* () {
+            const logger = makePluginLogger(pluginId);
 
-          // Decode + handle + result validation share one per-invocation timeout
-          // (effectful decoders must not hold a concurrency slot forever).
-          const invoke = Effect.gen(function* () {
-            const decoded = yield* Schema.decodeUnknownEffect(descriptor.inputSchema)(payload).pipe(
-              Effect.mapError(
-                (error) =>
+            // Decode + handle + result validation share one per-invocation timeout
+            // (effectful decoders must not hold a concurrency slot forever).
+            const invoke = Effect.gen(function* () {
+              const decoded = yield* Schema.decodeUnknownEffect(descriptor.inputSchema)(
+                payload,
+              ).pipe(
+                Effect.mapError(
+                  (error) =>
+                    new PluginToolInvokeError({
+                      message: `Invalid arguments for tool ${localName}: ${
+                        error instanceof Error ? error.message : String(error)
+                      }`,
+                    }),
+                ),
+              );
+
+              const rawResult = yield* Effect.suspend(() =>
+                descriptor.handle(decoded, { pluginId, logger }),
+              ).pipe(
+                Effect.mapError(
+                  (error) =>
+                    new PluginToolInvokeError({
+                      message: error instanceof Error ? error.message : String(error),
+                    }),
+                ),
+              );
+
+              const validated = validatePluginToolResult(rawResult);
+              if (!validated.ok) {
+                return errorResult(validated.detail);
+              }
+
+              const callResult = new McpSchema.CallToolResult({
+                isError: validated.value.isError ?? false,
+                content: validated.value.content.map((item) => ({
+                  type: "text" as const,
+                  text: item.text,
+                })),
+                ...(validated.value.structuredContent === undefined
+                  ? {}
+                  : { structuredContent: validated.value.structuredContent }),
+              });
+
+              const size = serializedResultSize(callResult);
+              if (size === null || size > PLUGIN_TOOL_RESULT_MAX_UTF8_BYTES) {
+                return errorResult(
+                  `Plugin ${pluginId} tool ${localName} result exceeded ${PLUGIN_TOOL_RESULT_MAX_UTF8_BYTES} bytes.`,
+                );
+              }
+              return callResult;
+            }).pipe(
+              Effect.timeoutOrElse({
+                duration: PLUGIN_TOOL_TIMEOUT,
+                orElse: () =>
                   new PluginToolInvokeError({
-                    message: `Invalid arguments for tool ${localName}: ${
-                      error instanceof Error ? error.message : String(error)
-                    }`,
+                    message: `Plugin ${pluginId} tool ${localName} timed out after ${Duration.toMillis(PLUGIN_TOOL_TIMEOUT)}ms.`,
                   }),
+              }),
+              Effect.catchCause((cause) =>
+                mapHandlerCause(pluginId, localName, cause as Cause.Cause<Error>),
               ),
             );
 
-            const rawResult = yield* Effect.suspend(() =>
-              descriptor.handle(decoded, { pluginId, logger }),
-            ).pipe(
-              Effect.mapError(
-                (error) =>
-                  new PluginToolInvokeError({
-                    message: error instanceof Error ? error.message : String(error),
-                  }),
-              ),
+            // Own the invocation fiber with the plugin runtime scope so disable /
+            // Scope.close interrupts admitted handlers (they do not run on the
+            // MCP request fiber alone).
+            const fiber = yield* Effect.forkIn(invoke, runtime.scope);
+            const result = yield* Fiber.join(fiber).pipe(
+              Effect.onInterrupt(() => Fiber.interrupt(fiber).pipe(Effect.asVoid)),
             );
 
-            const validated = validatePluginToolResult(rawResult);
-            if (!validated.ok) {
-              return errorResult(validated.detail);
-            }
-
-            const callResult = new McpSchema.CallToolResult({
-              isError: validated.value.isError ?? false,
-              content: validated.value.content.map((item) => ({
-                type: "text" as const,
-                text: item.text,
-              })),
-              ...(validated.value.structuredContent === undefined
-                ? {}
-                : { structuredContent: validated.value.structuredContent }),
+            const finishedAt = yield* Effect.clockWith((clock) => clock.currentTimeMillis);
+            yield* Effect.logInfo("plugin tool invocation", {
+              pluginId,
+              tool: localName,
+              finalName,
+              durationMs: finishedAt - startedAt,
+              outcome: result.isError === true ? "error" : "ok",
             });
 
-            const size = serializedResultSize(callResult);
-            if (size === null || size > PLUGIN_TOOL_RESULT_MAX_UTF8_BYTES) {
-              return errorResult(
-                `Plugin ${pluginId} tool ${localName} result exceeded ${PLUGIN_TOOL_RESULT_MAX_UTF8_BYTES} bytes.`,
-              );
-            }
-            return callResult;
-          }).pipe(
-            Effect.timeoutOrElse({
-              duration: PLUGIN_TOOL_TIMEOUT,
-              orElse: () =>
-                new PluginToolInvokeError({
-                  message: `Plugin ${pluginId} tool ${localName} timed out after ${Duration.toMillis(PLUGIN_TOOL_TIMEOUT)}ms.`,
-                }),
-            }),
-            Effect.catchCause((cause) =>
-              mapHandlerCause(pluginId, localName, cause as Cause.Cause<Error>),
-            ),
-            Effect.ensuring(releaseInFlight(finalName)),
-          );
-
-          // Own the invocation fiber with the plugin runtime scope so disable /
-          // Scope.close interrupts admitted handlers (they do not run on the
-          // MCP request fiber alone).
-          const fiber = yield* Effect.forkIn(invoke, runtime.scope);
-          const result = yield* Fiber.join(fiber).pipe(
-            Effect.onInterrupt(() => Fiber.interrupt(fiber).pipe(Effect.asVoid)),
-          );
-
-          const finishedAt = yield* Effect.clockWith((clock) => clock.currentTimeMillis);
-          yield* Effect.logInfo("plugin tool invocation", {
-            pluginId,
-            tool: localName,
-            finalName,
-            durationMs: finishedAt - startedAt,
-            outcome: result.isError === true ? "error" : "ok",
-          });
-
-          return result;
+            return result;
+          }).pipe(Effect.ensuring(releaseInFlight(finalName)));
         }),
       ).pipe(
         Effect.catchCause((cause) => {

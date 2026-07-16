@@ -186,11 +186,19 @@ export function getPluginStylesUrl(
 }
 
 const PLUGIN_STYLE_LINK_ATTR = "data-t3-plugin-styles";
+const PLUGIN_STYLE_HREF_ATTR = "data-t3-plugin-styles-href";
 
 /**
- * Reconcile the `<link rel="stylesheet">` elements for active web plugins that
- * ship styles: inject one per plugin (keyed by id), drop links for plugins that
- * are no longer active or whose version (href) changed. Idempotent.
+ * Reconcile the plugin stylesheet elements for active web plugins that ship
+ * styles: inject one per plugin (keyed by id), drop entries for plugins that are
+ * no longer active or whose version (href) changed. Idempotent.
+ *
+ * Each stylesheet is injected as `<style>@import "<url>" layer(plugins)</style>`
+ * rather than a bare `<link rel="stylesheet">`. A bare link serves the plugin's
+ * raw bytes UNLAYERED, so they beat every host style (which lives in cascade
+ * layers) — a plugin shipping a Tailwind preflight would restyle the whole app.
+ * `@import ... layer(plugins)` places the plugin's rules into the lowest-priority
+ * `plugins` layer declared in the document head, so host styles always win.
  */
 function reconcilePluginStyleLinks(activeWebPlugins: ReadonlyArray<PluginInfo>): void {
   if (typeof document === "undefined") {
@@ -204,22 +212,24 @@ function reconcilePluginStyleLinks(activeWebPlugins: ReadonlyArray<PluginInfo>):
     }
   }
   for (const element of Array.from(
-    document.head.querySelectorAll(`link[${PLUGIN_STYLE_LINK_ATTR}]`),
+    document.head.querySelectorAll(`style[${PLUGIN_STYLE_LINK_ATTR}]`),
   )) {
     const id = element.getAttribute(PLUGIN_STYLE_LINK_ATTR);
-    if (id === null || desired.get(id) !== element.getAttribute("href")) {
+    if (id === null || desired.get(id) !== element.getAttribute(PLUGIN_STYLE_HREF_ATTR)) {
       element.remove();
     }
   }
   for (const [id, url] of desired) {
     if (
-      document.head.querySelector(`link[${PLUGIN_STYLE_LINK_ATTR}="${CSS.escape(id)}"]`) === null
+      document.head.querySelector(`style[${PLUGIN_STYLE_LINK_ATTR}="${CSS.escape(id)}"]`) === null
     ) {
-      const link = document.createElement("link");
-      link.rel = "stylesheet";
-      link.setAttribute("href", url);
-      link.setAttribute(PLUGIN_STYLE_LINK_ATTR, id);
-      document.head.appendChild(link);
+      const style = document.createElement("style");
+      style.setAttribute(PLUGIN_STYLE_LINK_ATTR, id);
+      style.setAttribute(PLUGIN_STYLE_HREF_ATTR, url);
+      // JSON.stringify yields a valid double-quoted CSS string; the url is built
+      // from encodeURIComponent'd id/version so it carries no quotes/backslashes.
+      style.textContent = `@import ${JSON.stringify(url)} layer(plugins);`;
+      document.head.appendChild(style);
     }
   }
 }
