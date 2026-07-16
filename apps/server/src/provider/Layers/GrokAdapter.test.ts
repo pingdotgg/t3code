@@ -182,7 +182,85 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       assert.isDefined(delta);
       if (delta?.type === "content.delta") {
         assert.equal(delta.payload.delta, "hello from mock");
+        assert.equal(delta.payload.streamKind, "assistant_text");
       }
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("streams agent_thought_chunk as reasoning_text content deltas", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-thought-chunk-thread");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({
+          T3_ACP_EMIT_THOUGHT_CHUNKS: "1",
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const turnCompleted = yield* Deferred.make<void>();
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }).pipe(
+          Effect.andThen(
+            event.type === "turn.completed"
+              ? Deferred.succeed(turnCompleted, undefined)
+              : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-4.5" },
+      });
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "think then answer",
+        attachments: [],
+      });
+
+      yield* Deferred.await(turnCompleted);
+      yield* Fiber.interrupt(runtimeEventsFiber);
+
+      const contentDeltas = runtimeEvents.filter((event) => event.type === "content.delta");
+      const reasoningDeltas = contentDeltas.filter(
+        (event) => event.type === "content.delta" && event.payload.streamKind === "reasoning_text",
+      );
+      const assistantDeltas = contentDeltas.filter(
+        (event) => event.type === "content.delta" && event.payload.streamKind === "assistant_text",
+      );
+
+      assert.isAtLeast(reasoningDeltas.length, 2);
+      assert.equal(
+        reasoningDeltas
+          .map((event) => (event.type === "content.delta" ? event.payload.delta : ""))
+          .join(""),
+        "thinking step by step then answering",
+      );
+      assert.isAtLeast(assistantDeltas.length, 1);
+      assert.equal(
+        assistantDeltas
+          .map((event) => (event.type === "content.delta" ? event.payload.delta : ""))
+          .join(""),
+        "hello from mock",
+      );
+
+      // Assistant item lifecycle still opens for message text; reasoning does not
+      // require its own item.started/item.completed (Codex stream parity).
+      const assistantItems = runtimeEvents.filter(
+        (event) =>
+          (event.type === "item.started" || event.type === "item.completed") &&
+          event.payload.itemType === "assistant_message",
+      );
+      assert.isAtLeast(assistantItems.length, 1);
 
       yield* adapter.stopSession(threadId);
     }),

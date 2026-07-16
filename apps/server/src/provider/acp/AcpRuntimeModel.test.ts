@@ -334,6 +334,46 @@ describe("AcpRuntimeModel", () => {
         },
       },
     ]);
+
+    const thoughtResult = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_thought_chunk",
+        content: {
+          type: "text",
+          text: "thinking about the approach",
+        },
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+
+    expect(thoughtResult.events).toEqual([
+      {
+        _tag: "ReasoningDelta",
+        text: "thinking about the approach",
+        rawPayload: {
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "agent_thought_chunk",
+            content: {
+              type: "text",
+              text: "thinking about the approach",
+            },
+          },
+        },
+      },
+    ]);
+
+    const emptyThoughtResult = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_thought_chunk",
+        content: {
+          type: "text",
+          text: "",
+        },
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+    expect(emptyThoughtResult.events).toEqual([]);
   });
 
   it("keeps permission request parsing compatible with loose extension payloads", () => {

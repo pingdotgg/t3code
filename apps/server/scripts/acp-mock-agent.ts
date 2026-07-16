@@ -22,6 +22,7 @@ const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
 const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION === "1";
 const emitXAiPromptCompleteThenHang = process.env.T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG === "1";
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
+const emitThoughtChunks = process.env.T3_ACP_EMIT_THOUGHT_CHUNKS === "1";
 const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
 const hangFirstPromptForever = process.env.T3_ACP_HANG_FIRST_PROMPT_FOREVER === "1";
 const emitLateUpdateAfterCancel = process.env.T3_ACP_EMIT_LATE_UPDATE_AFTER_CANCEL === "1";
@@ -932,6 +933,23 @@ const program = Effect.gen(function* () {
           ],
         },
       });
+
+      if (emitThoughtChunks) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_thought_chunk",
+            content: { type: "text", text: "thinking step by step" },
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_thought_chunk",
+            content: { type: "text", text: " then answering" },
+          },
+        });
+      }
 
       yield* agent.client.sessionUpdate({
         sessionId: requestedSessionId,
