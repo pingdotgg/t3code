@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { testRender } from "@opentui/react/test-utils";
 import * as React from "react";
 
-import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, type VcsStatusResult } from "@t3tools/contracts";
 
 import type { OrchestrationShellSnapshot, OrchestrationThread, TuiClient } from "../connection.ts";
 import { ChatView } from "./ChatView.tsx";
@@ -78,6 +78,8 @@ function fakeClient({
   createThread = async () => "t-new" as never,
   terminalClear = async () => {},
   terminalRestart = async () => {},
+  vcsStatus,
+  runGitPull = async () => {},
   listModels = async () =>
     [
       {
@@ -96,6 +98,8 @@ function fakeClient({
   readonly createThread?: TuiClient["createThread"];
   readonly terminalClear?: TuiClient["terminalClear"];
   readonly terminalRestart?: TuiClient["terminalRestart"];
+  readonly vcsStatus?: VcsStatusResult;
+  readonly runGitPull?: TuiClient["runGitPull"];
   readonly listModels?: TuiClient["listModels"];
 }): {
   readonly client: TuiClient;
@@ -116,7 +120,10 @@ function fakeClient({
       return () => {};
     },
     peekThread: () => detail,
-    subscribeVcsStatus: () => () => {},
+    subscribeVcsStatus: (_cwd: string, onStatus: (status: VcsStatusResult) => void) => {
+      if (vcsStatus) onStatus(vcsStatus);
+      return () => {};
+    },
     subscribeTerminalMetadata: () => () => {},
     sendReply,
     respondUserInput,
@@ -148,7 +155,7 @@ function fakeClient({
     getAttachmentUrl: async () => null,
     getAttachmentImage: async () => null,
     runGitStackedAction: async () => {},
-    runGitPull: async () => {},
+    runGitPull,
   } as unknown as TuiClient;
   return { client, connect: () => shellSubscriber?.(shellSnapshot), subscribedThreadIds };
 }
@@ -176,6 +183,86 @@ async function selectThread(
     (frame) => frame.includes("Thread one") && !frame.includes("Enter to expand"),
   );
 }
+
+describe("ChatView source-control panel", () => {
+  it("Given a narrow terminal, when the user opens the panel and presses Enter, then it replaces the main pane and runs the selected action", async () => {
+    const pulls: string[] = [];
+    const vcsStatus = {
+      isRepo: true,
+      hasPrimaryRemote: true,
+      isDefaultRef: false,
+      refName: "feature/panel",
+      hasWorkingTreeChanges: false,
+      workingTree: { files: [], insertions: 0, deletions: 0 },
+      hasUpstream: true,
+      aheadCount: 0,
+      behindCount: 2,
+      pr: null,
+    } as unknown as VcsStatusResult;
+    const fake = fakeClient({
+      detail: thread(),
+      vcsStatus,
+      runGitPull: async (cwd) => {
+        pulls.push(cwd);
+      },
+    });
+    const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
+      width: 84,
+      height: 28,
+    });
+
+    await selectThread(setup, fake.connect);
+    await React.act(async () => {
+      setup.mockInput.pressKey("l", { ctrl: true });
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame(
+      (frame) => frame.includes("Source Control") && frame.includes("feature/panel"),
+    );
+    expect(setup.captureCharFrame()).not.toContain("Type a reply");
+
+    await React.act(async () => {
+      setup.mockInput.pressEnter();
+      await setup.renderOnce();
+    });
+    expect(pulls).toEqual(["/workspace/project-one"]);
+    setup.renderer.destroy();
+  });
+
+  it("Given the panel is focused, when the user moves down, then the disabled action reason is shown", async () => {
+    const vcsStatus = {
+      isRepo: true,
+      hasPrimaryRemote: true,
+      isDefaultRef: false,
+      refName: "feature/panel",
+      hasWorkingTreeChanges: false,
+      workingTree: { files: [], insertions: 0, deletions: 0 },
+      hasUpstream: true,
+      aheadCount: 0,
+      behindCount: 2,
+      pr: null,
+    } as unknown as VcsStatusResult;
+    const fake = fakeClient({ detail: thread(), vcsStatus });
+    const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
+      width: 112,
+      height: 28,
+    });
+
+    await selectThread(setup, fake.connect);
+    await React.act(async () => {
+      setup.mockInput.pressKey("l", { ctrl: true });
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("Source Control"));
+    await React.act(async () => {
+      setup.mockInput.pressArrow("down");
+      setup.mockInput.pressArrow("down");
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("Pull or rebase before"));
+    setup.renderer.destroy();
+  });
+});
 
 describe("ChatView tmux scrolling", () => {
   it("Given an image is visible, when tmux delivers a scroll fallback as an arrow key, then the selected thread does not change", async () => {

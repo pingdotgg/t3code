@@ -50,6 +50,42 @@ export interface GitMenuItem {
   readonly openUrl?: string;
 }
 
+export type GitPanelAction =
+  | {
+      readonly id: string;
+      readonly label: string;
+      readonly primary: boolean;
+      readonly disabled: boolean;
+      readonly hint?: string;
+      readonly kind: "git";
+      readonly action: GitStackedAction;
+    }
+  | {
+      readonly id: string;
+      readonly label: string;
+      readonly primary: boolean;
+      readonly disabled: boolean;
+      readonly hint?: string;
+      readonly kind: "pull";
+    }
+  | {
+      readonly id: string;
+      readonly label: string;
+      readonly primary: boolean;
+      readonly disabled: boolean;
+      readonly hint?: string;
+      readonly kind: "url";
+      readonly url: string;
+    }
+  | {
+      readonly id: string;
+      readonly label: string;
+      readonly primary: boolean;
+      readonly disabled: true;
+      readonly hint: string;
+      readonly kind: "unavailable";
+    };
+
 const COMMIT_BEARING = new Set<GitStackedAction>(["commit", "commit_push", "commit_push_pr"]);
 
 /** Whether a stacked action creates a commit and therefore needs a message. */
@@ -67,6 +103,14 @@ export function resolveGitQuickAction(
   }
   if (!status) {
     return { kind: "show_hint", label: "Commit", disabled: true, hint: "Git status is unavailable." };
+  }
+  if (!status.isRepo) {
+    return {
+      kind: "show_hint",
+      label: "Initialize repository",
+      disabled: true,
+      hint: "Repository initialization is not available in the TUI yet.",
+    };
   }
 
   const hasBranch = status.refName !== null;
@@ -197,4 +241,121 @@ export function buildGitMenuItems(
     { id: "push", label: "Push", disabled: !canPush, action: "push" },
     prItem,
   ];
+}
+
+function menuItemDisabledHint(
+  item: GitMenuItem,
+  status: VcsStatusResult,
+  isBusy: boolean,
+): string | undefined {
+  if (!item.disabled) return undefined;
+  if (isBusy) return "A git action is already in progress.";
+  if (item.id === "commit") return "No uncommitted changes.";
+  if (item.id === "push") {
+    if (status.behindCount > 0) return "Pull or rebase before pushing.";
+    if (status.refName === null) return "Checkout a branch before pushing.";
+    if (!status.hasPrimaryRemote) return "Publish the repository before pushing.";
+    return "No local commits to push.";
+  }
+  if (status.behindCount > 0) return "Pull or rebase before creating a PR.";
+  if (status.hasWorkingTreeChanges) return "Commit changes before creating a PR.";
+  return "No commits are ready for a PR.";
+}
+
+/**
+ * Build the complete, keyboard-navigable source-control panel action list.
+ * This keeps mouse and keyboard activation on the same action model.
+ */
+export function buildGitPanelActions(
+  status: VcsStatusResult | null,
+  isBusy: boolean,
+): GitPanelAction[] {
+  const quick = resolveGitQuickAction(status, isBusy);
+  const actions: GitPanelAction[] = [];
+
+  if (quick.kind === "run_action") {
+    actions.push({
+      id: "quick",
+      label: quick.label,
+      primary: true,
+      disabled: false,
+      kind: "git",
+      action: quick.action,
+    });
+  } else if (quick.kind === "run_pull") {
+    actions.push({
+      id: "quick",
+      label: quick.label,
+      primary: true,
+      disabled: false,
+      kind: "pull",
+    });
+  } else if (quick.kind === "open_pr" && status?.pr) {
+    actions.push({
+      id: "quick",
+      label: quick.label,
+      primary: true,
+      disabled: false,
+      kind: "url",
+      url: status.pr.url,
+      hint: "Ctrl-click the link, or press Enter to copy it.",
+    });
+  } else if (quick.kind === "open_publish") {
+    actions.push({
+      id: "quick",
+      label: quick.label,
+      primary: true,
+      disabled: true,
+      kind: "unavailable",
+      hint: "Repository publishing is not available in the TUI yet.",
+    });
+  } else if (quick.kind === "show_hint") {
+    actions.push({
+      id: "quick",
+      label: quick.label,
+      primary: true,
+      disabled: true,
+      kind: "unavailable",
+      hint: quick.hint,
+    });
+  } else {
+    actions.push({
+      id: "quick",
+      label: quick.label,
+      primary: true,
+      disabled: true,
+      kind: "unavailable",
+      hint: "Pull request link is unavailable.",
+    });
+  }
+
+  if (!status || !status.isRepo) return actions;
+  for (const item of buildGitMenuItems(status, isBusy)) {
+    if (item.openUrl) {
+      const hint = item.disabled
+        ? menuItemDisabledHint(item, status, isBusy)
+        : "Ctrl-click the link, or press Enter to copy it.";
+      actions.push({
+        id: `menu-${item.id}`,
+        label: item.label,
+        primary: false,
+        disabled: item.disabled,
+        kind: "url",
+        url: item.openUrl,
+        ...(hint === undefined ? {} : { hint }),
+      });
+    } else if (item.action) {
+      const hint = menuItemDisabledHint(item, status, isBusy);
+      actions.push({
+        id: `menu-${item.id}`,
+        label: item.label,
+        primary: false,
+        disabled: item.disabled,
+        kind: "git",
+        action: item.action,
+        ...(hint === undefined ? {} : { hint }),
+      });
+    }
+  }
+  return actions;
 }

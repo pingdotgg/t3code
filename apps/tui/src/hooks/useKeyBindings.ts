@@ -28,6 +28,7 @@ export type KeyBindingMode =
   | "rename"
   | "filter"
   | "commit"
+  | "panel"
   | "compose";
 
 export interface KeyBindingActions {
@@ -123,6 +124,10 @@ export interface KeyBindingActions {
   readonly onNewThread: () => void;
   readonly onTogglePlanMode: () => void;
   readonly onToggleRightPanel: () => void;
+  readonly onPanelPrev: () => void;
+  readonly onPanelNext: () => void;
+  readonly onPanelActivate: () => void;
+  readonly onPanelClose: () => void;
   /** Alt+↑ / Alt+↓ — move to the prev/next thread (skipping project headers). */
   readonly onThreadPrev: () => void;
   readonly onThreadNext: () => void;
@@ -229,6 +234,14 @@ export function useKeyBindings(actions: KeyBindingActions): void {
       if (key.name === "space" && !actions.answerTyping) return actions.onUserInputToggle();
       if (key.name === "return" || key.name === "enter") return actions.onUserInputConfirm();
       if (key.name === "escape") return actions.onUserInputDefer();
+      return;
+    }
+    if (actions.mode === "panel") {
+      if (key.name === "up") return actions.onPanelPrev();
+      if (key.name === "down") return actions.onPanelNext();
+      if (key.name === "return" || key.name === "enter") return actions.onPanelActivate();
+      if (key.name === "escape") return actions.onPanelClose();
+      if (key.ctrl && key.name === "l") return actions.onToggleRightPanel();
       return;
     }
 

@@ -71,7 +71,11 @@ import {
   RUNTIME_MODES,
   runtimeModeLabel,
 } from "../controls.ts";
-import { gitActionNeedsCommitMessage } from "../gitActions.logic.ts";
+import {
+  buildGitPanelActions,
+  gitActionNeedsCommitMessage,
+  type GitPanelAction,
+} from "../gitActions.logic.ts";
 import {
   addTab,
   closeTab,
@@ -84,7 +88,7 @@ import {
 
 /** Default width of the thread-list pane. */
 const LIST_PANE_WIDTH = 34;
-/** Width of the source-control panel, and the terminal width below which it auto-hides. */
+/** Width of the docked source-control panel. Narrow terminals show it in the main pane. */
 const RIGHT_PANEL_WIDTH = 32;
 const RIGHT_PANEL_MIN_TERMINAL_WIDTH = 100;
 /** Conversation lines scrolled per page key. */
@@ -247,8 +251,10 @@ export function ChatView({
   const [newThreadSettings, setNewThreadSettings] = React.useState(DEFAULT_SERVER_SETTINGS);
   // Which pending approval ^A/^R act on; ↑/↓ move it while an approval is up.
   const [approvalIndex, setApprovalIndex] = React.useState(0);
-  // The right-side source-control panel (^L), auto-hidden on narrow terminals.
+  // The source-control panel (^L): docked when wide, main-pane when narrow.
   const [rightPanelOpen, setRightPanelOpen] = React.useState(false);
+  const [rightPanelFocused, setRightPanelFocused] = React.useState(false);
+  const [rightPanelIndex, setRightPanelIndex] = React.useState(0);
   // User-set prompt height in editor rows; null = auto-grow with content.
   const [promptHeight, setPromptHeight] = React.useState<number | null>(null);
   // Multiple terminals per thread (the TUI form of the web's terminal groups):
@@ -450,6 +456,50 @@ export function ChatView({
       return;
     }
     store.runGitAction(action);
+  };
+
+  const rightPanelActions = React.useMemo(
+    () => buildGitPanelActions(state.vcsStatus, state.gitBusy),
+    [state.vcsStatus, state.gitBusy],
+  );
+  const safeRightPanelIndex = Math.min(rightPanelIndex, Math.max(0, rightPanelActions.length - 1));
+
+  const toggleRightPanel = () => {
+    if (rightPanelOpen) {
+      setRightPanelOpen(false);
+      setRightPanelFocused(false);
+      return;
+    }
+    setTerminalFocused(false);
+    setRightPanelIndex(0);
+    setRightPanelOpen(true);
+    setRightPanelFocused(true);
+  };
+
+  const activateRightPanelAction = (action: GitPanelAction) => {
+    if (action.disabled) {
+      if (action.hint) store.setStatus(action.hint, "info");
+      return;
+    }
+    setRightPanelFocused(false);
+    if (action.kind === "git") {
+      onRunGitAction(action.action);
+      return;
+    }
+    if (action.kind === "pull") {
+      store.pullGit();
+      return;
+    }
+    if (action.kind === "url") {
+      renderer.copyToClipboardOSC52(action.url);
+      const copied = renderer.isOsc52Supported();
+      store.setStatus(
+        copied
+          ? "PR link copied. Ctrl-click the underlined link to open it."
+          : `Open PR: ${action.url}`,
+        copied ? "success" : "info",
+      );
+    }
   };
 
   const openNewThread = () => {
@@ -731,14 +781,10 @@ export function ChatView({
   // header + tab bar + frame + border(2) = frame rows + 4.
   const termRows = Math.max(2, terminalDrawerHeight - 4);
   const rightPanelVisible =
-    rightPanelOpen &&
-    width >= RIGHT_PANEL_MIN_TERMINAL_WIDTH &&
-    !diffOpen &&
-    !filesOpen &&
-    !settingsOpen &&
-    !expandedImage;
-  const rightWidth = rightPanelVisible ? RIGHT_PANEL_WIDTH : 0;
-  const chatWidth = Math.max(20, width - listWidth - rightWidth - 4);
+    rightPanelOpen && !diffOpen && !filesOpen && !settingsOpen && !expandedImage;
+  const rightPanelAsMain = rightPanelVisible && width < RIGHT_PANEL_MIN_TERMINAL_WIDTH;
+  const rightWidth = rightPanelVisible && !rightPanelAsMain ? RIGHT_PANEL_WIDTH : 0;
+  const chatWidth = Math.max(20, width - listWidth - rightWidth);
 
   // Window the list around the selection so the highlighted row stays on screen.
   const selectedIndex = Math.max(
@@ -1375,7 +1421,7 @@ export function ChatView({
       title: rightPanelOpen ? "Hide source-control panel" : "Show source-control panel",
       hint: "^L",
       keywords: "git",
-      run: () => runCommand(() => setRightPanelOpen((open) => !open)),
+      run: () => runCommand(toggleRightPanel),
     });
     list.push({
       id: "filter",
@@ -1467,9 +1513,11 @@ export function ChatView({
                           ? "filter"
                           : focus === "commit"
                             ? "commit"
-                            : userInputActive
-                              ? "userInput"
-                              : "compose";
+                            : rightPanelVisible && rightPanelFocused
+                              ? "panel"
+                              : userInputActive
+                                ? "userInput"
+                                : "compose";
 
   const navigateNewThreadControl = (field: NewThreadField, delta: 1 | -1) => {
     if (field === "project") {
@@ -1561,7 +1609,25 @@ export function ChatView({
     onShrinkPrompt: () => resizePrompt(-2),
     onEditInEditor: editInEditor,
     onTogglePlanMode: togglePlanMode,
-    onToggleRightPanel: () => setRightPanelOpen((open) => !open),
+    onToggleRightPanel: toggleRightPanel,
+    onPanelPrev: () =>
+      setRightPanelIndex((index) =>
+        rightPanelActions.length === 0
+          ? 0
+          : (index - 1 + rightPanelActions.length) % rightPanelActions.length,
+      ),
+    onPanelNext: () =>
+      setRightPanelIndex((index) =>
+        rightPanelActions.length === 0 ? 0 : (index + 1) % rightPanelActions.length,
+      ),
+    onPanelActivate: () => {
+      const action = rightPanelActions[safeRightPanelIndex];
+      if (action) activateRightPanelAction(action);
+    },
+    onPanelClose: () => {
+      setRightPanelFocused(false);
+      if (rightPanelAsMain) setRightPanelOpen(false);
+    },
     onThreadPrev: () => store.moveThreadSelection(-1),
     onThreadNext: () => store.moveThreadSelection(1),
     onThreadJump: (index) => store.selectThreadByIndex(index),
@@ -1743,7 +1809,7 @@ export function ChatView({
       : []),
     "^K commands",
     "^F find",
-    ...(width >= RIGHT_PANEL_MIN_TERMINAL_WIDTH ? [`^L panel ${rightPanelOpen ? "▾" : "▸"}`] : []),
+    `^L panel ${rightPanelOpen ? "▾" : "▸"}`,
     ...(working ? ["Esc stop"] : []),
     "^C quit",
   ].join(" · ");
@@ -1756,6 +1822,21 @@ export function ChatView({
         : composeHint;
 
   const statusStyle = statusGlyphColor(state.statusKind);
+  const selectRightPanelAction = (index: number) => {
+    setTerminalFocused(false);
+    setRightPanelIndex(index);
+    setRightPanelFocused(true);
+  };
+  const rightPanelProps = {
+    status: state.vcsStatus,
+    busy: state.gitBusy,
+    actions: rightPanelActions,
+    selectedIndex: safeRightPanelIndex,
+    focused: rightPanelFocused,
+    height: panesHeight,
+    onSelect: selectRightPanelAction,
+    onActivate: activateRightPanelAction,
+  } as const;
 
   return (
     <box flexDirection="column" width={width} height={height}>
@@ -1773,75 +1854,71 @@ export function ChatView({
           onSearchInput={store.setFilter}
           onFocusSearch={() => setFocus("filter")}
         />
-        {settingsOpen ? (
-          <SettingsView
-            controls={controls}
-            vcsStatus={state.vcsStatus}
-            width={chatWidth}
-            height={panesHeight}
-            scrollRef={settingsScrollRef}
-          />
-        ) : filesOpen ? (
-          <FilesView
-            cwdLabel={terminalCwd}
-            status={filesStatus}
-            rows={fileRows}
-            selectedIndex={filesIndex}
-            viewing={viewingFile}
-            width={chatWidth}
-            height={panesHeight}
-            syntaxStyle={syntaxStyle}
-            scrollRef={filesScrollRef}
-            purpose={filesPurpose}
-          />
-        ) : diffOpen ? (
-          <DiffViewer
-            scopeLabel={diffScopeLabel}
-            status={diffStatus}
-            diff={diffText}
-            view={diffView}
-            height={panesHeight}
-            syntaxStyle={syntaxStyle}
-            scrollRef={diffScrollRef}
-            {...(diffFocusPath ? { focusPath: diffFocusPath } : {})}
-          />
-        ) : expandedImage ? (
-          <ImageLightbox
-            preview={expandedImage}
-            width={chatWidth}
-            height={panesHeight}
-            onClose={() => setExpandedImage(null)}
-          />
-        ) : (
-          <MessagesTimeline
-            detail={detail}
-            approvals={approvals}
-            approvalIndex={activeApprovalIndex}
-            projectHint={selectedProjectTitle}
-            width={chatWidth}
-            height={panesHeight}
-            syntaxStyle={syntaxStyle}
-            scrollRef={scrollRef}
-            onOpenDiff={openDiffAtTurn}
-            getAttachmentUrl={client.getAttachmentUrl}
-            getAttachmentImage={client.getAttachmentImage}
-            onOpenUrl={(url) => store.setStatus(url, "info")}
-            onOpenImage={(preview) => {
-              setTerminalFocused(false);
-              setExpandedImage(preview);
-            }}
-          />
-        )}
-        {rightPanelVisible ? (
-          <RightPanel
-            status={state.vcsStatus}
-            busy={state.gitBusy}
-            width={rightWidth}
-            height={panesHeight}
-            onRunAction={onRunGitAction}
-            onPull={store.pullGit}
-            onOpenUrl={(url) => store.setStatus(url, "info")}
-          />
+        <box width={chatWidth} height={panesHeight} flexShrink={0}>
+          {rightPanelAsMain ? (
+            <RightPanel {...rightPanelProps} width={chatWidth} />
+          ) : settingsOpen ? (
+            <SettingsView
+              controls={controls}
+              vcsStatus={state.vcsStatus}
+              width={chatWidth}
+              height={panesHeight}
+              scrollRef={settingsScrollRef}
+            />
+          ) : filesOpen ? (
+            <FilesView
+              cwdLabel={terminalCwd}
+              status={filesStatus}
+              rows={fileRows}
+              selectedIndex={filesIndex}
+              viewing={viewingFile}
+              width={chatWidth}
+              height={panesHeight}
+              syntaxStyle={syntaxStyle}
+              scrollRef={filesScrollRef}
+              purpose={filesPurpose}
+            />
+          ) : diffOpen ? (
+            <DiffViewer
+              scopeLabel={diffScopeLabel}
+              status={diffStatus}
+              diff={diffText}
+              view={diffView}
+              height={panesHeight}
+              syntaxStyle={syntaxStyle}
+              scrollRef={diffScrollRef}
+              {...(diffFocusPath ? { focusPath: diffFocusPath } : {})}
+            />
+          ) : expandedImage ? (
+            <ImageLightbox
+              preview={expandedImage}
+              width={chatWidth}
+              height={panesHeight}
+              onClose={() => setExpandedImage(null)}
+            />
+          ) : (
+            <MessagesTimeline
+              detail={detail}
+              approvals={approvals}
+              approvalIndex={activeApprovalIndex}
+              projectHint={selectedProjectTitle}
+              width={chatWidth}
+              height={panesHeight}
+              syntaxStyle={syntaxStyle}
+              scrollRef={scrollRef}
+              onOpenDiff={openDiffAtTurn}
+              getAttachmentUrl={client.getAttachmentUrl}
+              getAttachmentImage={client.getAttachmentImage}
+              onOpenUrl={(url) => store.setStatus(url, "info")}
+              onOpenImage={(preview) => {
+                setTerminalFocused(false);
+                setExpandedImage(preview);
+              }}
+            />
+          )}
+        </box>
+        {rightPanelVisible && !rightPanelAsMain ? (
+          <RightPanel {...rightPanelProps} width={rightWidth} />
         ) : null}
       </box>
 
@@ -1931,6 +2008,7 @@ export function ChatView({
           !settingsOpen &&
           !expandedImage &&
           !popoverOpen &&
+          !rightPanelFocused &&
           focus !== "filter"
         }
         composerEpoch={composerEpoch}

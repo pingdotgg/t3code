@@ -1,7 +1,12 @@
 import { describe, expect, it } from "bun:test";
 
 import type { VcsStatusResult } from "@t3tools/contracts";
-import { buildGitMenuItems, mergeVcsStatus, resolveGitQuickAction } from "./gitActions.logic.ts";
+import {
+  buildGitMenuItems,
+  buildGitPanelActions,
+  mergeVcsStatus,
+  resolveGitQuickAction,
+} from "./gitActions.logic.ts";
 
 const status = (over: Partial<VcsStatusResult>): VcsStatusResult =>
   ({
@@ -102,5 +107,28 @@ describe("buildGitMenuItems", () => {
   it("Given a busy state, then every actionable item is disabled", () => {
     const items = buildGitMenuItems(status({ hasWorkingTreeChanges: true, aheadCount: 2 }), true);
     expect(items.every((i) => i.disabled)).toBe(true);
+  });
+});
+
+describe("buildGitPanelActions", () => {
+  it("Given a workspace is not a repository, then it offers an honest initialization hint", () => {
+    expect(buildGitPanelActions(status({ isRepo: false }), false)).toEqual([
+      {
+        id: "quick",
+        label: "Initialize repository",
+        primary: true,
+        disabled: true,
+        kind: "unavailable",
+        hint: "Repository initialization is not available in the TUI yet.",
+      },
+    ]);
+  });
+
+  it("Given an open PR, then keyboard activation receives the exact PR URL", () => {
+    expect(buildGitPanelActions(status({ pr: openPr as never }), false)[0]).toMatchObject({
+      kind: "url",
+      url: "https://example/pr/7",
+      disabled: false,
+    });
   });
 });

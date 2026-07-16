@@ -1,14 +1,10 @@
-import type { GitStackedAction, VcsStatusResult } from "@t3tools/contracts";
+import type { VcsStatusResult } from "@t3tools/contracts";
 import * as React from "react";
 
 import { clip } from "../format.ts";
-import { buildGitMenuItems, resolveGitQuickAction } from "../gitActions.logic.ts";
+import type { GitPanelAction } from "../gitActions.logic.ts";
+import { deferMouseAction } from "../mouse.ts";
 import { ansi, type Palette, usePalette } from "../theme.ts";
-
-// The right-side source-control panel, mirroring the web's GitActionsControl +
-// ThreadStatusIndicators: branch + PR status, a prominent quick action
-// (Commit / Push / Push & create PR / View PR), and the contextual actions list.
-// Driven by the live VcsStatusResult; clicking an action runs it via the store.
 
 function prColor(state: string | undefined, palette: Palette): ReturnType<typeof ansi> {
   if (state === "open") return ansi("green");
@@ -19,35 +15,29 @@ function prColor(state: string | undefined, palette: Palette): ReturnType<typeof
 export function RightPanel({
   status,
   busy,
+  actions,
+  selectedIndex,
+  focused,
   width,
   height,
-  onRunAction,
-  onPull,
-  onOpenUrl,
+  onSelect,
+  onActivate,
 }: {
   readonly status: VcsStatusResult | null;
   readonly busy: boolean;
+  readonly actions: ReadonlyArray<GitPanelAction>;
+  readonly selectedIndex: number;
+  readonly focused: boolean;
   readonly width: number;
   readonly height: number;
-  readonly onRunAction: (action: GitStackedAction) => void;
-  readonly onPull: () => void;
-  readonly onOpenUrl: (url: string) => void;
+  readonly onSelect: (index: number) => void;
+  readonly onActivate: (action: GitPanelAction) => void;
 }): React.ReactNode {
   const palette = usePalette();
   const room = Math.max(6, width - 4);
-  const quick = resolveGitQuickAction(status, busy);
-  const items = buildGitMenuItems(status, busy);
   const pr = status?.pr ?? null;
-
-  const runQuick = () => {
-    if (quick.kind === "run_action") onRunAction(quick.action);
-    else if (quick.kind === "open_pr" && pr) onOpenUrl(pr.url);
-    else if (quick.kind === "run_pull") onPull();
-  };
-  // Publishing a repo needs a provider/visibility dialog the TUI doesn't host, so
-  // it's surfaced as a hint rather than a runnable action.
-  const quickActionable =
-    quick.kind === "run_action" || quick.kind === "open_pr" || quick.kind === "run_pull";
+  const selectedAction = actions[selectedIndex] ?? null;
+  const fileCount = status?.workingTree.files.length ?? 0;
 
   return (
     <box
@@ -57,68 +47,98 @@ export function RightPanel({
       flexShrink={0}
       border
       borderStyle="rounded"
-      borderColor={palette.dim}
+      borderColor={focused ? palette.accent : palette.dim}
       paddingLeft={1}
       paddingRight={1}
     >
       <text>
         <strong>Source Control</strong>
+        {busy ? <span fg={ansi("yellow")}>{" · working…"}</span> : null}
+      </text>
+      <text fg={palette.dim}>
+        {focused ? "↑/↓ select · Enter activate · Esc back" : "^L focus panel"}
       </text>
 
       {status === null ? (
-        <text fg={palette.dim}>{busy ? "  working…" : "  no git status"}</text>
+        <text fg={palette.dim}>{busy ? "  loading git status…" : "  no git status"}</text>
       ) : (
         <box flexDirection="column">
           <text>
             <span fg={palette.dim}>{"on "}</span>
             <span fg={palette.text}>{clip(status.refName ?? "(detached)", room)}</span>
           </text>
+          {status.aheadCount > 0 || status.behindCount > 0 ? (
+            <text fg={palette.dim}>
+              {`${status.aheadCount > 0 ? `↑${status.aheadCount}` : ""}${
+                status.aheadCount > 0 && status.behindCount > 0 ? " " : ""
+              }${status.behindCount > 0 ? `↓${status.behindCount}` : ""} upstream`}
+            </text>
+          ) : status.hasUpstream ? (
+            <text fg={palette.dim}>up to date with upstream</text>
+          ) : null}
           {pr ? (
             <text>
-              <span fg={prColor(pr.state, palette)}>{`◰ PR #${pr.number} `}</span>
-              <span fg={palette.dim}>{pr.state}</span>
+              <a href={pr.url}>
+                <span fg={prColor(pr.state, palette)}>{`◰ PR #${pr.number} `}</span>
+                <span fg={palette.dim}>{`${pr.state} ↗`}</span>
+              </a>
             </text>
           ) : null}
           {status.hasWorkingTreeChanges ? (
-            <text fg={palette.dim}>{"  uncommitted changes"}</text>
-          ) : null}
-
-          {/* Prominent quick action. */}
-          <box marginTop={1} {...(quickActionable ? { onMouseDown: runQuick } : {})}>
-            <text>
-              <span fg={quick.disabled ? palette.dim : palette.accent}>{"▸ "}</span>
-              <span fg={quick.disabled ? palette.dim : palette.text}>{clip(quick.label, room)}</span>
+            <text fg={palette.dim}>
+              {clip(
+                `${fileCount} ${fileCount === 1 ? "file" : "files"} · +${status.workingTree.insertions} -${status.workingTree.deletions}`,
+                room,
+              )}
             </text>
-          </box>
-          {quick.kind === "show_hint" ? <text fg={palette.dim}>{`  ${clip(quick.hint, room)}`}</text> : null}
-          {quick.kind === "open_publish" ? (
-            <text fg={palette.dim}>{"  publish from the terminal (^E)"}</text>
-          ) : null}
-
-          {/* Contextual actions menu. */}
-          {items.length > 0 ? (
-            <box flexDirection="column" marginTop={1}>
-              <text fg={palette.dim}>{"actions"}</text>
-              {items.map((item) => {
-                const onClick = item.disabled
-                  ? undefined
-                  : item.action
-                    ? () => onRunAction(item.action as GitStackedAction)
-                    : item.openUrl
-                      ? () => onOpenUrl(item.openUrl as string)
-                      : undefined;
-                return (
-                  <box key={item.id} {...(onClick ? { onMouseDown: onClick } : {})}>
-                    <text fg={item.disabled ? palette.dim : palette.text}>
-                      {`  ${item.label}${item.openUrl ? " ↗" : ""}`}
-                    </text>
-                  </box>
-                );
-              })}
-            </box>
-          ) : null}
+          ) : (
+            <text fg={palette.dim}>working tree clean</text>
+          )}
         </box>
       )}
+
+      <box flexDirection="column" marginTop={1}>
+        <text fg={palette.dim}>actions</text>
+        {actions.map((action, index) => {
+          const selected = index === selectedIndex;
+          const color = action.disabled
+            ? palette.dim
+            : selected && focused
+              ? palette.accent
+              : action.primary
+                ? palette.accent
+                : palette.text;
+          const activateFromMouse = deferMouseAction(() => {
+            onSelect(index);
+            if (!action.disabled) onActivate(action);
+          });
+          const label = clip(`${action.label}${action.kind === "url" ? " ↗" : ""}`, room - 2);
+          return (
+            <box
+              key={action.id}
+              onMouseDown={activateFromMouse}
+              marginBottom={action.primary ? 1 : 0}
+            >
+              <text>
+                <span fg={selected ? palette.accent : palette.dim}>{selected ? "▸ " : "  "}</span>
+                {action.kind === "url" ? (
+                  <a href={action.url}>
+                    <span fg={color}>{label}</span>
+                  </a>
+                ) : (
+                  <span fg={color}>{label}</span>
+                )}
+              </text>
+            </box>
+          );
+        })}
+      </box>
+
+      {selectedAction?.hint ? (
+        <text fg={selectedAction.disabled ? ansi("yellow") : palette.dim}>
+          {clip(`  ${selectedAction.hint}`, room)}
+        </text>
+      ) : null}
     </box>
   );
 }
