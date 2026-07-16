@@ -146,6 +146,36 @@ layer("FilesystemCapability", (it) => {
     ),
   );
 
+  it.effect("fails the listing on an I/O error instead of returning it incomplete", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        // Permission checks do not apply to root (some CI containers), so the EACCES
+        // this test depends on would never fire there.
+        if (process.getuid?.() === 0) return;
+        const root = yield* makeTempDir("plugin-fs-root-");
+        const grants = yield* makePluginWorkspaceGrants;
+        const filesystem = makeCapability({ projectRoots: [root], grants });
+
+        yield* filesystem.writeFileString({
+          root,
+          relativePath: "locked/inner.txt",
+          contents: "x",
+        });
+        // Readable but NOT traversable: readdir(locked) works, realpath of anything
+        // inside it fails EACCES. dirEntryFor used to swallow that and skip the
+        // entry, so the caller got a smaller listing with no hint anything failed —
+        // an EACCES is about OUR access, not about the entry, and pretending the
+        // entry does not exist is the one wrong answer.
+        yield* Effect.promise(() => NodeFSP.chmod(NodePath.join(root, "locked"), 0o444));
+
+        const exit = yield* Effect.exit(filesystem.listDirRecursive({ root, relativePath: "" }));
+
+        yield* Effect.promise(() => NodeFSP.chmod(NodePath.join(root, "locked"), 0o755));
+        assert.equal(exit._tag, "Failure");
+      }),
+    ),
+  );
+
   it.effect("terminates and deduplicates when a symlink cycles the directory tree", () =>
     Effect.scoped(
       Effect.gen(function* () {
