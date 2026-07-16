@@ -47,6 +47,15 @@ describe("findContextDescriptorViolation", () => {
   it("rejects a descriptor that can never contribute anything", () => {
     assert.isNotNull(findContextDescriptorViolation({ name: "empty" }));
   });
+
+  it("rejects a contribute that is not a function", () => {
+    // Descriptors are dynamically loaded JS: a non-function `contribute` would
+    // throw synchronously at turn time, before the composer's isolation is wired,
+    // and abort the user's turn. It must be rejected at registration instead.
+    assert.isNotNull(
+      findContextDescriptorViolation({ name: "bad", contribute: "not a function" } as never),
+    );
+  });
 });
 
 describe("PluginContextComposer", () => {

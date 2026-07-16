@@ -91,7 +91,7 @@ const sqliteMasterSnapshot = (sql: SqlClient.SqlClient) =>
     SELECT name, type, tbl_name, sql
     FROM sqlite_master
     WHERE type IN ('table', 'index', 'trigger', 'view')
-      AND name NOT LIKE 'sqlite_%'
+      AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\'
     ORDER BY type, name
   `;
 
@@ -324,8 +324,8 @@ export const make = Effect.fn("PluginMigrator.make")(function* () {
         yield* sql.withTransaction(
           Effect.gen(function* () {
             const before = yield* sqliteMasterSnapshot(sql);
-            const tempBefore = yield* sql<{ readonly name: string }>`
-              SELECT name FROM sqlite_temp_master
+            const tempBefore = yield* sql<{ readonly name: string; readonly sql: string | null }>`
+              SELECT name, sql FROM sqlite_temp_master
             `.pipe(Effect.orElseSucceed(() => []));
             yield* migration.up.pipe(
               Effect.provideService(SqlClient.SqlClient, sql),
@@ -365,16 +365,26 @@ export const make = Effect.fn("PluginMigrator.make")(function* () {
                 detail: "ATTACH DATABASE is not permitted in plugin migrations",
               });
             }
-            const tempAfter = yield* sql<{ readonly name: string }>`
-              SELECT name FROM sqlite_temp_master
+            const tempAfter = yield* sql<{ readonly name: string; readonly sql: string | null }>`
+              SELECT name, sql FROM sqlite_temp_master
             `.pipe(Effect.orElseSucceed(() => []));
-            const tempBeforeNames = new Set(tempBefore.map((row) => row.name));
-            const newTempObject = tempAfter.find((row) => !tempBeforeNames.has(row.name));
-            if (newTempObject) {
+            // The TEMP schema is connection-scoped and this SqlClient is SHARED, so
+            // a migration must not touch it AT ALL — not just refrain from adding.
+            // Dropping or altering a pre-existing temp table/index/trigger would
+            // silently corrupt temporary state other code on the connection relies
+            // on, so reject additions, removals, AND redefinitions alike.
+            const tempBeforeByName = new Map(tempBefore.map((row) => [row.name, row.sql]));
+            const tempAfterByName = new Map(tempAfter.map((row) => [row.name, row.sql]));
+            const changedTempObject =
+              tempAfter.find(
+                (row) =>
+                  !tempBeforeByName.has(row.name) || tempBeforeByName.get(row.name) !== row.sql,
+              ) ?? tempBefore.find((row) => !tempAfterByName.has(row.name));
+            if (changedTempObject) {
               return yield* new PluginMigrationViolation({
                 pluginId,
                 version: migration.version,
-                objectName: newTempObject.name,
+                objectName: changedTempObject.name,
                 detail: "TEMP objects are not permitted in plugin migrations",
               });
             }

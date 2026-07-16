@@ -63,7 +63,9 @@ describe("validatePluginToolDescriptors", () => {
     }
   });
 
-  it("rejects a union input schema root", () => {
+  it("accepts a union of object schemas as the input root", () => {
+    // Every branch constrains the same tools/call.arguments to an object, so the
+    // instance is always a string-keyed record the protocol can deliver.
     const exit = Effect.runSyncExit(
       validatePluginToolDescriptors(
         pluginId,
@@ -74,6 +76,22 @@ describe("validatePluginToolDescriptors", () => {
               Schema.Struct({ a: Schema.String }),
               Schema.Struct({ b: Schema.String }),
             ]),
+          }),
+        ],
+        { hasToolsCapability: true },
+      ),
+    );
+    expect(exit._tag).toBe("Success");
+  });
+
+  it("rejects a union whose branches are not all objects", () => {
+    const exit = Effect.runSyncExit(
+      validatePluginToolDescriptors(
+        pluginId,
+        [
+          baseTool({
+            name: "echo",
+            inputSchema: Schema.Union([Schema.Struct({ a: Schema.String }), Schema.String]),
           }),
         ],
         { hasToolsCapability: true },

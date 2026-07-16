@@ -147,6 +147,12 @@ const FORBIDDEN_RESPONSE_HEADERS = new Set([
   "location",
   "www-authenticate",
   "proxy-authenticate",
+  // `clear-site-data` wipes host-origin cookies/storage/cache; `refresh` drives a
+  // client-side navigation the same way `location` does. Both carry the same
+  // ambient-privilege boundary as the rest of the list, so a plugin route must
+  // not be able to set them either.
+  "clear-site-data",
+  "refresh",
 ]);
 const FORBIDDEN_RESPONSE_HEADER_PREFIXES = ["access-control-"];
 

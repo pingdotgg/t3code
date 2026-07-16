@@ -220,8 +220,11 @@ const resolveRegistration = (
     Effect.catchCause((cause) =>
       // A clean host shutdown interrupts the activation fiber mid-register();
       // let that interruption propagate instead of persisting a spurious
-      // "failed" registration error.
-      Cause.hasInterruptsOnly(cause)
+      // "failed" registration error. Use causeContainsInterrupt (hasInterrupts),
+      // not hasInterruptsOnly: when the interrupt races a failing finalizer the
+      // cause carries BOTH an interrupt and a defect, and hasInterruptsOnly would
+      // return false — swallowing the shutdown signal into a persisted failure.
+      causeContainsInterrupt(cause)
         ? Effect.failCause(cause as Cause.Cause<never>)
         : Effect.fail(
             new PluginRegistrationError({
@@ -958,25 +961,36 @@ export const make = Effect.fn("PluginHost.make")(function* () {
       }
 
       const activatingSince = DateTime.formatIso(yield* DateTime.now);
-      yield* store.updatePlugin(pluginId, ({ current }) =>
-        Effect.succeed(
-          current
-            ? {
-                ...current,
-                activation: {
-                  ...current.activation,
-                  activatingSince,
-                },
-              }
-            : undefined,
-        ),
-      );
-
-      const scope = yield* Scope.make("sequential");
-      const readiness = yield* Deferred.make<void>();
+      // Persist the activating marker and acquire the interruptible setup resources
+      // under ONE interrupt guard. An external shutdown interrupt landing between the
+      // marker write and the uninterruptibleMask below (during Scope.make /
+      // Deferred.make / makePluginWorkspaceGrants, all interruptible) re-raises via
+      // handleLoadFailureCause WITHOUT the mask's exit ladder ever running — stranding
+      // `activatingSince` so the next start miscounts a clean shutdown as an activation
+      // crash and eventually forces the plugin to "failed". onInterrupt clears the
+      // marker on any such pre-ladder interrupt (idempotent with the ladder's own
+      // clear once activation is actually running).
+      const { scope, readiness, grants } = yield* Effect.gen(function* () {
+        yield* store.updatePlugin(pluginId, ({ current }) =>
+          Effect.succeed(
+            current
+              ? {
+                  ...current,
+                  activation: {
+                    ...current.activation,
+                    activatingSince,
+                  },
+                }
+              : undefined,
+          ),
+        );
+        const scope = yield* Scope.make("sequential");
+        const readiness = yield* Deferred.make<void>();
+        const grants = yield* makePluginWorkspaceGrants;
+        return { scope, readiness, grants };
+      }).pipe(Effect.onInterrupt(() => clearActivatingMarker(pluginId)));
       const logger = makePluginLogger(pluginId);
       const dataDir = pluginDataDir(config.pluginsDir, pluginId, path.join);
-      const grants = yield* makePluginWorkspaceGrants;
       const makeHostApiForDefinition = (settings: PluginSettingsDescriptor | undefined) =>
         makeHostApi({
           pluginId,
@@ -1590,20 +1604,35 @@ export const make = Effect.fn("PluginHost.make")(function* () {
       return;
     }
     yield* loader.ensureHostSingletonResolution;
-    const lockfile = yield* store.readLockfile.pipe(
+    const lockfileResult = yield* store.readLockfile.pipe(
+      Effect.map((lockfile) => ({ read: true as const, lockfile })),
       Effect.catch((error) =>
         Effect.logWarning("Plugin host could not read lockfile", {
           path: store.lockfilePath,
           error: error.message,
-        }).pipe(Effect.as({ plugins: {}, sources: [] })),
+        }).pipe(
+          Effect.as({
+            read: false as const,
+            lockfile: { plugins: {}, sources: [] } as PluginLockfile,
+          }),
+        ),
       ),
     );
+    const lockfile = lockfileResult.lockfile;
 
     // Re-home orphaned preserved data BEFORE the reconcile loop. Orphans have no
     // lockfile entry, so the loop below never touches them; and reconcile only ever
     // REMOVES entries, so using the pre-reconcile lockfile here cannot misclassify a
     // still-tracked plugin as an orphan.
-    yield* sweepOrphanedPreservedData(lockfile);
+    //
+    // But ONLY when the lockfile was actually read. On a read failure the substitute
+    // empty lockfile has no entries, so a `.preserved-<id>` dir belonging to a real
+    // pending-remove entry would look orphaned and get re-homed to `<id>/data` — then
+    // the next start, seeing neither preserve marker nor preserved dir, takes the
+    // delete-data branch and permanently destroys data the user chose to keep.
+    if (lockfileResult.read) {
+      yield* sweepOrphanedPreservedData(lockfile);
+    }
 
     for (const [rawPluginId, entry] of Object.entries(lockfile.plugins)) {
       const pluginId = rawPluginId as PluginId;

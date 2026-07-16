@@ -426,6 +426,8 @@ if (loopbackAvailable) {
                   Location: "https://evil.example",
                   "WWW-Authenticate": "Basic",
                   "access-control-allow-origin": "*",
+                  "Clear-Site-Data": '"cookies", "storage"',
+                  Refresh: "0; url=https://evil.example",
                   "content-type": "text/plain",
                   "x-foo": "bar",
                 },
@@ -441,6 +443,8 @@ if (loopbackAvailable) {
         assert.equal(response.headers["location"], undefined);
         assert.equal(response.headers["www-authenticate"], undefined);
         assert.equal(response.headers["access-control-allow-origin"], undefined);
+        assert.equal(response.headers["clear-site-data"], undefined);
+        assert.equal(response.headers["refresh"], undefined);
         assert.equal(response.headers["x-foo"], "bar");
         assert.isTrue((response.headers["content-type"] ?? "").includes("text/plain"));
       }),

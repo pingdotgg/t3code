@@ -70,10 +70,38 @@ const deriveJsonSchema = (inputSchema: Schema.Decoder<unknown, never>): unknown 
 };
 
 /**
+ * True when a JSON Schema constrains its instance to a string-keyed object —
+ * either a plain `type: "object"` root, or a `anyOf`/`oneOf`/`allOf` combinator
+ * whose branches are ALL themselves object-root schemas. The combinators
+ * constrain the same `tools/call.arguments` instance, so a union/intersection of
+ * object schemas (e.g. `Schema.Union([Schema.Struct(...), Schema.Struct(...)])`)
+ * still always yields an object the protocol can deliver.
+ */
+const isObjectRootJsonSchema = (value: unknown): boolean => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const schema = value as Record<string, unknown>;
+  const combinatorKeys = (["anyOf", "oneOf", "allOf"] as const).filter((key) => key in schema);
+  if (combinatorKeys.length > 0) {
+    // Every present combinator's branches must all be object-root; a single
+    // non-object branch means the instance could be a value the protocol cannot
+    // express as a string-keyed record.
+    return combinatorKeys.every((key) => {
+      const branches = schema[key];
+      return (
+        Array.isArray(branches) && branches.length > 0 && branches.every(isObjectRootJsonSchema)
+      );
+    });
+  }
+  return schema["type"] === "object";
+};
+
+/**
  * MCP delivers `tools/call.arguments` as a string-keyed record, so the derived
- * input schema must have an object root. A scalar root (Schema.String) or a
- * union root (anyOf/oneOf) describes a payload the protocol cannot express, so
- * the tool would be listed but permanently uncallable.
+ * input schema must constrain the arguments to an object. A scalar root
+ * (Schema.String) — or a combinator any of whose branches is non-object —
+ * describes a payload the protocol cannot express, so the tool would be listed
+ * but permanently uncallable. A union/intersection whose branches are ALL object
+ * schemas is fine and is accepted.
  *
  * Returns null when the root is acceptable, or a reason fragment otherwise.
  */
@@ -81,14 +109,12 @@ const objectRootSchemaError = (jsonSchema: unknown): string | null => {
   if (typeof jsonSchema !== "object" || jsonSchema === null || Array.isArray(jsonSchema)) {
     return "must derive to a JSON Schema object";
   }
+  if (isObjectRootJsonSchema(jsonSchema)) return null;
   const schema = jsonSchema as Record<string, unknown>;
   if ("anyOf" in schema || "oneOf" in schema || "allOf" in schema) {
-    return "must have a single object root (a union/intersection root cannot be expressed by tools/call arguments)";
+    return "must have an object root: a union/intersection root is only acceptable when every branch is itself an object schema (tools/call arguments is always a string-keyed record)";
   }
-  if (schema["type"] !== "object") {
-    return `must have an object root, not ${JSON.stringify(schema["type"] ?? "an untyped schema")} (tools/call arguments is always a string-keyed record)`;
-  }
-  return null;
+  return `must have an object root, not ${JSON.stringify(schema["type"] ?? "an untyped schema")} (tools/call arguments is always a string-keyed record)`;
 };
 
 export const resolvePluginToolAnnotations = (

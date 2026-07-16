@@ -84,7 +84,13 @@ export const make = Effect.fn("PluginPolicyRegistry.make")(function* () {
     descriptor: PluginPolicyDescriptor,
     request: PluginPolicyRequest,
   ): Effect.Effect<PluginPolicyDecision | null> =>
-    descriptor.onApprovalRequest(request).pipe(
+    // Effect.suspend so the plugin-supplied `onApprovalRequest` is INVOKED inside
+    // the effect. Called eagerly (`descriptor.onApprovalRequest(request).pipe(...)`),
+    // a synchronous throw would escape before `catchCause` is wired and fail
+    // `evaluate` outright — the opposite of the "a broken hook DEFERS" contract.
+    // Suspending turns that throw into a captured defect the catchCause below folds
+    // into a defer.
+    Effect.suspend(() => descriptor.onApprovalRequest(request)).pipe(
       Effect.timeoutOrElse({
         duration: HOOK_TIMEOUT,
         // Timing out DEFERS. The user is waiting on a prompt that has not appeared;
