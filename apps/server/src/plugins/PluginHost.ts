@@ -1013,22 +1013,44 @@ export const make = Effect.fn("PluginHost.make")(function* () {
           yield* registration.recover().pipe(Effect.timeout(registrationTimeout()));
         }
         if (manifest.capabilities.includes("http") && (registration.http?.length ?? 0) > 0) {
-          yield* httpRegistry.put(pluginId, registration.http ?? []);
-          yield* Scope.addFinalizer(scope, httpRegistry.remove(pluginId));
+          // put + addFinalizer must be ATOMIC. Activation runs interruptible (inside
+          // restore(...) below, by design), so a host-shutdown interrupt landing
+          // BETWEEN the put and its finalizer would close the scope without ever
+          // registering the removal — leaving this plugin's HTTP route live in the
+          // host though the plugin never finished activating. The outer failure
+          // ladder unconditionally clears registry/toolCatalog but NOT these three,
+          // so the pairing is the only thing keeping them symmetric. uninterruptible
+          // guarantees the finalizer is registered whenever the put took effect; the
+          // interrupt stays pending and is delivered once the region is left.
+          yield* Effect.uninterruptible(
+            httpRegistry
+              .put(pluginId, registration.http ?? [])
+              .pipe(Effect.andThen(Scope.addFinalizer(scope, httpRegistry.remove(pluginId)))),
+          );
         }
         if ((registration.policy?.length ?? 0) > 0) {
           // Removed on every exit path via the plugin scope. A disabled plugin that
           // kept blocking the agent would be a disabled plugin that is still running
           // — and the user would have no way to tell what was stopping their work.
-          yield* policyRegistry.put(pluginId, registration.policy ?? []);
-          yield* Scope.addFinalizer(scope, policyRegistry.remove(pluginId));
+          // Atomic with its finalizer (see the http pairing above) so an interrupt
+          // in the window cannot leave the deny-policy hook live in the host.
+          yield* Effect.uninterruptible(
+            policyRegistry
+              .put(pluginId, registration.policy ?? [])
+              .pipe(Effect.andThen(Scope.addFinalizer(scope, policyRegistry.remove(pluginId)))),
+          );
         }
         if ((registration.context?.length ?? 0) > 0) {
           // Removed on EVERY exit path via the plugin scope — disable, uninstall,
           // crash. A disabled plugin must stop steering the agent immediately;
           // leaving its instructions in place would be the plugin still running.
-          yield* contextComposer.put(pluginId, registration.context ?? []);
-          yield* Scope.addFinalizer(scope, contextComposer.remove(pluginId));
+          // Atomic with its finalizer (see the http pairing above) so an interrupt
+          // in the window cannot leave the context contribution live in the host.
+          yield* Effect.uninterruptible(
+            contextComposer
+              .put(pluginId, registration.context ?? [])
+              .pipe(Effect.andThen(Scope.addFinalizer(scope, contextComposer.remove(pluginId)))),
+          );
         }
         // Re-check lifecycle state right before publishing the runtime. A
         // concurrent disable/uninstall flips the lockfile and runs

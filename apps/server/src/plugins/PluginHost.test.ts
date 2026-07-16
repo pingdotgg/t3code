@@ -67,204 +67,249 @@ const PluginToolCatalogLayerLive = PluginToolCatalogLayer.layer.pipe(
   Layer.provide(PluginRuntimeRegistryLayerLive),
 );
 
-const testLayerBase = PluginHostModule.layer.pipe(
-  Layer.provideMerge(PluginLockfileStoreLayer.layer),
-  Layer.provideMerge(PluginModuleLoaderLayer.layer),
-  Layer.provideMerge(PluginMigrator.layer),
-  Layer.provideMerge(
-    Layer.mergeAll(
-      PluginRuntimeRegistryLayerLive,
-      PluginToolCatalogLayerLive,
-      PluginSettingsStoreLayer.layer,
-      PluginContextComposerLayer.layer,
-      PluginPolicyRegistryLayer.layer,
-      PluginHttpRegistry.layer,
-    ),
-  ),
-  Layer.provideMerge(ServerLifecycleEvents.layer),
-  Layer.provideMerge(
-    Layer.mock(ServerSecretStore.ServerSecretStore)({
-      get: unexpectedCapabilityUse,
-      set: unexpectedCapabilityUse,
-      create: unexpectedCapabilityUse,
-      getOrCreateRandom: unexpectedCapabilityUse,
-      remove: unexpectedCapabilityUse,
+// Probe PluginHttpRegistry that lets a test park activation INSIDE `put`, exactly
+// in the put→addFinalizer window the atomicity fix protects. `put` records the
+// route, signals `putEntered`, then blocks on `release`; `remove` records that the
+// finalizer ran. Control state is a module-level holder the test resets per run —
+// only the one atomicity test installs this layer, and tests run sequentially.
+interface HttpProbeState {
+  readonly putEntered: Deferred.Deferred<void>;
+  readonly release: Deferred.Deferred<void>;
+  readonly entries: Set<PluginId>;
+  readonly removed: Set<PluginId>;
+}
+let httpProbe: HttpProbeState | null = null;
+
+const probeHttpRegistryLayer = Layer.effect(
+  PluginHttpRegistry.PluginHttpRegistry,
+  Effect.sync(() =>
+    PluginHttpRegistry.PluginHttpRegistry.of({
+      put: (pluginId) =>
+        Effect.gen(function* () {
+          const probe = httpProbe;
+          if (probe === null) return;
+          probe.entries.add(pluginId);
+          yield* Deferred.succeed(probe.putEntered, undefined);
+          yield* Deferred.await(probe.release);
+        }),
+      remove: (pluginId) =>
+        Effect.sync(() => {
+          const probe = httpProbe;
+          if (probe === null) return;
+          probe.entries.delete(pluginId);
+          probe.removed.add(pluginId);
+        }),
+      match: () => Effect.succeed(Option.none()),
     }),
-  ),
-  Layer.provideMerge(
-    Layer.mock(ServerEnvironment.ServerEnvironment)({
-      getEnvironmentId: unexpectedCapabilityUse(),
-      getDescriptor: unexpectedCapabilityUse(),
-    }),
-  ),
-  Layer.provideMerge(
-    Layer.mock(OrchestrationEngine.OrchestrationEngineService)({
-      readEvents: () => Stream.empty,
-      dispatch: unexpectedCapabilityUse,
-      streamDomainEvents: Stream.empty,
-    }),
-  ),
-  Layer.provideMerge(
-    Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
-      getCommandReadModel: unexpectedCapabilityUse,
-      getSnapshot: unexpectedCapabilityUse,
-      getShellSnapshot: unexpectedCapabilityUse,
-      getArchivedShellSnapshot: unexpectedCapabilityUse,
-      getSnapshotSequence: unexpectedCapabilityUse,
-      getCounts: unexpectedCapabilityUse,
-      getActiveProjectByWorkspaceRoot: unexpectedCapabilityUse,
-      getProjectShellById: unexpectedCapabilityUse,
-      getFirstActiveThreadIdByProjectId: unexpectedCapabilityUse,
-      getThreadOwnerById: unexpectedCapabilityUse,
-      getThreadCheckpointContext: unexpectedCapabilityUse,
-      getFullThreadDiffContext: unexpectedCapabilityUse,
-      getThreadShellById: unexpectedCapabilityUse,
-      getThreadDetailById: unexpectedCapabilityUse,
-    }),
-  ),
-  Layer.provideMerge(
-    Layer.mock(ProjectionTurns.ProjectionTurnRepository)({
-      upsertByTurnId: unexpectedCapabilityUse,
-      replacePendingTurnStart: unexpectedCapabilityUse,
-      getPendingTurnStartByThreadId: unexpectedCapabilityUse,
-      deletePendingTurnStartByThreadId: unexpectedCapabilityUse,
-      listByThreadId: unexpectedCapabilityUse,
-      getByTurnId: unexpectedCapabilityUse,
-      clearCheckpointTurnConflict: unexpectedCapabilityUse,
-      deleteByThreadId: unexpectedCapabilityUse,
-    }),
-  ),
-  Layer.provideMerge(
-    Layer.mock(ProjectionThreadMessages.ProjectionThreadMessageRepository)({
-      upsert: unexpectedCapabilityUse,
-      getByMessageId: unexpectedCapabilityUse,
-      listByThreadId: unexpectedCapabilityUse,
-      deleteByThreadId: unexpectedCapabilityUse,
-    }),
-  ),
-  Layer.provideMerge(
-    Layer.mock(ProjectionThreadActivities.ProjectionThreadActivityRepository)({
-      upsert: unexpectedCapabilityUse,
-      listByThreadId: unexpectedCapabilityUse,
-      deleteByThreadId: unexpectedCapabilityUse,
-    }),
-  ),
-  Layer.provideMerge(
-    Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-      getInstance: unexpectedCapabilityUse,
-      listInstances: unexpectedCapabilityUse(),
-      listUnavailable: unexpectedCapabilityUse(),
-      streamChanges: Stream.empty,
-      subscribeChanges: unexpectedCapabilityUse(),
-    }),
-  ),
-  Layer.provideMerge(
-    Layer.mock(GitVcsDriver.GitVcsDriver)({
-      execute: unexpectedCapabilityUse,
-      status: unexpectedCapabilityUse,
-      statusDetails: unexpectedCapabilityUse,
-      statusDetailsLocal: unexpectedCapabilityUse,
-      statusDetailsRemote: unexpectedCapabilityUse,
-      prepareCommitContext: unexpectedCapabilityUse,
-      commit: unexpectedCapabilityUse,
-      pushCurrentBranch: unexpectedCapabilityUse,
-      readRangeContext: unexpectedCapabilityUse,
-      getReviewDiffPreview: unexpectedCapabilityUse,
-      readConfigValue: unexpectedCapabilityUse,
-      listRefs: unexpectedCapabilityUse,
-      pullCurrentBranch: unexpectedCapabilityUse,
-      createWorktree: unexpectedCapabilityUse,
-      fetchPullRequestBranch: unexpectedCapabilityUse,
-      ensureRemote: unexpectedCapabilityUse,
-      resolvePrimaryRemoteName: unexpectedCapabilityUse,
-      fetchRemote: unexpectedCapabilityUse,
-      resolveRemoteTrackingCommit: unexpectedCapabilityUse,
-      fetchRemoteBranch: unexpectedCapabilityUse,
-      fetchRemoteTrackingBranch: unexpectedCapabilityUse,
-      setBranchUpstream: unexpectedCapabilityUse,
-      removeWorktree: unexpectedCapabilityUse,
-      renameBranch: unexpectedCapabilityUse,
-      createRef: unexpectedCapabilityUse,
-      switchRef: unexpectedCapabilityUse,
-      initRepo: unexpectedCapabilityUse,
-      listLocalBranchNames: unexpectedCapabilityUse,
-    }),
-  ),
-  Layer.provideMerge(
-    Layer.mock(CheckpointStore.CheckpointStore)({
-      isGitRepository: unexpectedCapabilityUse,
-      captureCheckpoint: unexpectedCapabilityUse,
-      hasCheckpointRef: unexpectedCapabilityUse,
-      restoreCheckpoint: unexpectedCapabilityUse,
-      diffCheckpoints: unexpectedCapabilityUse,
-      deleteCheckpointRefs: unexpectedCapabilityUse,
-    }),
-  ),
-  Layer.provideMerge(
-    Layer.mock(TextGeneration.TextGeneration)({
-      generateCommitMessage: unexpectedCapabilityUse,
-      generatePrContent: unexpectedCapabilityUse,
-      generateBranchName: unexpectedCapabilityUse,
-      generateThreadTitle: unexpectedCapabilityUse,
-    }),
-  ),
-  Layer.provideMerge(
-    Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
-      get: unexpectedCapabilityUse,
-      resolveHandle: unexpectedCapabilityUse,
-      resolve: unexpectedCapabilityUse,
-      discover: unexpectedCapabilityUse(),
-    }),
-  ),
-  Layer.provideMerge(
-    Layer.mock(GitHubCli.GitHubCli)({
-      execute: unexpectedCapabilityUse,
-      listOpenPullRequests: unexpectedCapabilityUse,
-      getPullRequest: unexpectedCapabilityUse,
-      getRepositoryCloneUrls: unexpectedCapabilityUse,
-      createRepository: unexpectedCapabilityUse,
-      createPullRequest: unexpectedCapabilityUse,
-      mergePullRequest: unexpectedCapabilityUse,
-      getPullRequestDetail: unexpectedCapabilityUse,
-      listPullRequestChecks: unexpectedCapabilityUse,
-      listPullRequestReviews: unexpectedCapabilityUse,
-      listPullRequestReviewComments: unexpectedCapabilityUse,
-      getDefaultBranch: unexpectedCapabilityUse,
-      checkoutPullRequest: unexpectedCapabilityUse,
-    }),
-  ),
-  Layer.provideMerge(
-    Layer.mergeAll(
-      Layer.mock(TerminalManager.TerminalManager)({
-        open: unexpectedCapabilityUse,
-        attachStream: unexpectedCapabilityUse,
-        write: unexpectedCapabilityUse,
-        resize: unexpectedCapabilityUse,
-        clear: unexpectedCapabilityUse,
-        restart: unexpectedCapabilityUse,
-        close: unexpectedCapabilityUse,
-        subscribe: unexpectedCapabilityUse,
-        subscribeMetadata: unexpectedCapabilityUse,
-      }),
-      Layer.succeed(OutboundUrlLookup, () =>
-        Effect.die(new Error("unexpected outbound lookup in host test")),
-      ),
-      Layer.succeed(PluginHttpClientTransportService, () =>
-        Effect.die(new Error("unexpected http client transport in host test")),
-      ),
-    ),
   ),
 );
 
-const testLayer = testLayerBase.pipe(
-  Layer.provideMerge(NodeSqliteClient.layerMemory()),
-  Layer.provideMerge(
-    Layer.fresh(ServerConfig.layerTest(process.cwd(), { prefix: "t3-plugin-host-" })),
-  ),
-  Layer.provideMerge(NodeServices.layer),
-);
+const makeTestLayerBase = (
+  httpRegistryLayer: Layer.Layer<PluginHttpRegistry.PluginHttpRegistry> = PluginHttpRegistry.layer,
+) =>
+  PluginHostModule.layer.pipe(
+    Layer.provideMerge(PluginLockfileStoreLayer.layer),
+    Layer.provideMerge(PluginModuleLoaderLayer.layer),
+    Layer.provideMerge(PluginMigrator.layer),
+    Layer.provideMerge(
+      Layer.mergeAll(
+        PluginRuntimeRegistryLayerLive,
+        PluginToolCatalogLayerLive,
+        PluginSettingsStoreLayer.layer,
+        PluginContextComposerLayer.layer,
+        PluginPolicyRegistryLayer.layer,
+        httpRegistryLayer,
+      ),
+    ),
+    Layer.provideMerge(ServerLifecycleEvents.layer),
+    Layer.provideMerge(
+      Layer.mock(ServerSecretStore.ServerSecretStore)({
+        get: unexpectedCapabilityUse,
+        set: unexpectedCapabilityUse,
+        create: unexpectedCapabilityUse,
+        getOrCreateRandom: unexpectedCapabilityUse,
+        remove: unexpectedCapabilityUse,
+      }),
+    ),
+    Layer.provideMerge(
+      Layer.mock(ServerEnvironment.ServerEnvironment)({
+        getEnvironmentId: unexpectedCapabilityUse(),
+        getDescriptor: unexpectedCapabilityUse(),
+      }),
+    ),
+    Layer.provideMerge(
+      Layer.mock(OrchestrationEngine.OrchestrationEngineService)({
+        readEvents: () => Stream.empty,
+        dispatch: unexpectedCapabilityUse,
+        streamDomainEvents: Stream.empty,
+      }),
+    ),
+    Layer.provideMerge(
+      Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+        getCommandReadModel: unexpectedCapabilityUse,
+        getSnapshot: unexpectedCapabilityUse,
+        getShellSnapshot: unexpectedCapabilityUse,
+        getArchivedShellSnapshot: unexpectedCapabilityUse,
+        getSnapshotSequence: unexpectedCapabilityUse,
+        getCounts: unexpectedCapabilityUse,
+        getActiveProjectByWorkspaceRoot: unexpectedCapabilityUse,
+        getProjectShellById: unexpectedCapabilityUse,
+        getFirstActiveThreadIdByProjectId: unexpectedCapabilityUse,
+        getThreadOwnerById: unexpectedCapabilityUse,
+        getThreadCheckpointContext: unexpectedCapabilityUse,
+        getFullThreadDiffContext: unexpectedCapabilityUse,
+        getThreadShellById: unexpectedCapabilityUse,
+        getThreadDetailById: unexpectedCapabilityUse,
+      }),
+    ),
+    Layer.provideMerge(
+      Layer.mock(ProjectionTurns.ProjectionTurnRepository)({
+        upsertByTurnId: unexpectedCapabilityUse,
+        replacePendingTurnStart: unexpectedCapabilityUse,
+        getPendingTurnStartByThreadId: unexpectedCapabilityUse,
+        deletePendingTurnStartByThreadId: unexpectedCapabilityUse,
+        listByThreadId: unexpectedCapabilityUse,
+        getByTurnId: unexpectedCapabilityUse,
+        clearCheckpointTurnConflict: unexpectedCapabilityUse,
+        deleteByThreadId: unexpectedCapabilityUse,
+      }),
+    ),
+    Layer.provideMerge(
+      Layer.mock(ProjectionThreadMessages.ProjectionThreadMessageRepository)({
+        upsert: unexpectedCapabilityUse,
+        getByMessageId: unexpectedCapabilityUse,
+        listByThreadId: unexpectedCapabilityUse,
+        deleteByThreadId: unexpectedCapabilityUse,
+      }),
+    ),
+    Layer.provideMerge(
+      Layer.mock(ProjectionThreadActivities.ProjectionThreadActivityRepository)({
+        upsert: unexpectedCapabilityUse,
+        listByThreadId: unexpectedCapabilityUse,
+        deleteByThreadId: unexpectedCapabilityUse,
+      }),
+    ),
+    Layer.provideMerge(
+      Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+        getInstance: unexpectedCapabilityUse,
+        listInstances: unexpectedCapabilityUse(),
+        listUnavailable: unexpectedCapabilityUse(),
+        streamChanges: Stream.empty,
+        subscribeChanges: unexpectedCapabilityUse(),
+      }),
+    ),
+    Layer.provideMerge(
+      Layer.mock(GitVcsDriver.GitVcsDriver)({
+        execute: unexpectedCapabilityUse,
+        status: unexpectedCapabilityUse,
+        statusDetails: unexpectedCapabilityUse,
+        statusDetailsLocal: unexpectedCapabilityUse,
+        statusDetailsRemote: unexpectedCapabilityUse,
+        prepareCommitContext: unexpectedCapabilityUse,
+        commit: unexpectedCapabilityUse,
+        pushCurrentBranch: unexpectedCapabilityUse,
+        readRangeContext: unexpectedCapabilityUse,
+        getReviewDiffPreview: unexpectedCapabilityUse,
+        readConfigValue: unexpectedCapabilityUse,
+        listRefs: unexpectedCapabilityUse,
+        pullCurrentBranch: unexpectedCapabilityUse,
+        createWorktree: unexpectedCapabilityUse,
+        fetchPullRequestBranch: unexpectedCapabilityUse,
+        ensureRemote: unexpectedCapabilityUse,
+        resolvePrimaryRemoteName: unexpectedCapabilityUse,
+        fetchRemote: unexpectedCapabilityUse,
+        resolveRemoteTrackingCommit: unexpectedCapabilityUse,
+        fetchRemoteBranch: unexpectedCapabilityUse,
+        fetchRemoteTrackingBranch: unexpectedCapabilityUse,
+        setBranchUpstream: unexpectedCapabilityUse,
+        removeWorktree: unexpectedCapabilityUse,
+        renameBranch: unexpectedCapabilityUse,
+        createRef: unexpectedCapabilityUse,
+        switchRef: unexpectedCapabilityUse,
+        initRepo: unexpectedCapabilityUse,
+        listLocalBranchNames: unexpectedCapabilityUse,
+      }),
+    ),
+    Layer.provideMerge(
+      Layer.mock(CheckpointStore.CheckpointStore)({
+        isGitRepository: unexpectedCapabilityUse,
+        captureCheckpoint: unexpectedCapabilityUse,
+        hasCheckpointRef: unexpectedCapabilityUse,
+        restoreCheckpoint: unexpectedCapabilityUse,
+        diffCheckpoints: unexpectedCapabilityUse,
+        deleteCheckpointRefs: unexpectedCapabilityUse,
+      }),
+    ),
+    Layer.provideMerge(
+      Layer.mock(TextGeneration.TextGeneration)({
+        generateCommitMessage: unexpectedCapabilityUse,
+        generatePrContent: unexpectedCapabilityUse,
+        generateBranchName: unexpectedCapabilityUse,
+        generateThreadTitle: unexpectedCapabilityUse,
+      }),
+    ),
+    Layer.provideMerge(
+      Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+        get: unexpectedCapabilityUse,
+        resolveHandle: unexpectedCapabilityUse,
+        resolve: unexpectedCapabilityUse,
+        discover: unexpectedCapabilityUse(),
+      }),
+    ),
+    Layer.provideMerge(
+      Layer.mock(GitHubCli.GitHubCli)({
+        execute: unexpectedCapabilityUse,
+        listOpenPullRequests: unexpectedCapabilityUse,
+        getPullRequest: unexpectedCapabilityUse,
+        getRepositoryCloneUrls: unexpectedCapabilityUse,
+        createRepository: unexpectedCapabilityUse,
+        createPullRequest: unexpectedCapabilityUse,
+        mergePullRequest: unexpectedCapabilityUse,
+        getPullRequestDetail: unexpectedCapabilityUse,
+        listPullRequestChecks: unexpectedCapabilityUse,
+        listPullRequestReviews: unexpectedCapabilityUse,
+        listPullRequestReviewComments: unexpectedCapabilityUse,
+        getDefaultBranch: unexpectedCapabilityUse,
+        checkoutPullRequest: unexpectedCapabilityUse,
+      }),
+    ),
+    Layer.provideMerge(
+      Layer.mergeAll(
+        Layer.mock(TerminalManager.TerminalManager)({
+          open: unexpectedCapabilityUse,
+          attachStream: unexpectedCapabilityUse,
+          write: unexpectedCapabilityUse,
+          resize: unexpectedCapabilityUse,
+          clear: unexpectedCapabilityUse,
+          restart: unexpectedCapabilityUse,
+          close: unexpectedCapabilityUse,
+          subscribe: unexpectedCapabilityUse,
+          subscribeMetadata: unexpectedCapabilityUse,
+        }),
+        Layer.succeed(OutboundUrlLookup, () =>
+          Effect.die(new Error("unexpected outbound lookup in host test")),
+        ),
+        Layer.succeed(PluginHttpClientTransportService, () =>
+          Effect.die(new Error("unexpected http client transport in host test")),
+        ),
+      ),
+    ),
+  );
+
+const withTestServices = (base: ReturnType<typeof makeTestLayerBase>) =>
+  base.pipe(
+    Layer.provideMerge(NodeSqliteClient.layerMemory()),
+    Layer.provideMerge(
+      Layer.fresh(ServerConfig.layerTest(process.cwd(), { prefix: "t3-plugin-host-" })),
+    ),
+    Layer.provideMerge(NodeServices.layer),
+  );
+
+const testLayer = withTestServices(makeTestLayerBase());
+const probeTestLayer = withTestServices(makeTestLayerBase(probeHttpRegistryLayer));
 
 const layer = it.layer(testLayer);
+const probeLayer = it.layer(probeTestLayer);
 
 const now = "2026-07-03T00:00:00.000Z";
 const decodeCapabilityMarker = Schema.decodeEffect(
@@ -438,6 +483,27 @@ export default {
       NodeFs.writeFileSync(hostApi.config.dataDir + "/new-capabilities.json", JSON.stringify(marker));
       return {};
     });
+  },
+};
+`;
+
+const httpRouteEntrySource = () => `
+import { createRequire } from "node:module";
+const require = createRequire(${JSON.stringify(NodeURL.pathToFileURL(import.meta.url).href)});
+const Effect = require("effect/Effect");
+
+export default {
+  register() {
+    return {
+      http: [
+        {
+          method: "GET",
+          path: "/ping",
+          auth: "public",
+          handler: () => Effect.succeed({ status: 200, body: {} }),
+        },
+      ],
+    };
   },
 };
 `;
@@ -2317,6 +2383,83 @@ export default {
         ["https://two.example", "https://three.example"],
         "the unreadable event must be skipped, and the write AFTER it must still arrive",
       );
+    }),
+  );
+});
+
+probeLayer("PluginHost activation finalizer atomicity", (it) => {
+  // Activation runs interruptible by design (inside `restore(...)`). Each capability
+  // registration is a `registry.put` FOLLOWED BY a `Scope.addFinalizer` that removes
+  // it. If an interrupt lands BETWEEN the two, the scope closes without the finalizer
+  // and the plugin's route/hook/contribution stays live in the host though the plugin
+  // never activated — the outer failure ladder clears registry/toolCatalog but NOT
+  // these three. The fix wraps each put+addFinalizer in `Effect.uninterruptible`, so
+  // the finalizer is registered whenever the put took effect.
+  //
+  // The probe http registry parks activation INSIDE `put` (route recorded, finalizer
+  // not yet reached). We arm the interrupt, then release the park:
+  //   - fixed: the pair is uninterruptible, so `put` completes and the finalizer is
+  //     registered before the (still-pending) interrupt is delivered → scope close
+  //     runs it → route removed.
+  //   - buggy: the interrupt cuts the interruptible park, `put` fails before
+  //     addFinalizer → scope close finds no finalizer → route leaks.
+  it.effect("an interrupt in the put→addFinalizer window still removes the http route", () =>
+    Effect.gen(function* () {
+      const pluginId = PluginId.make("http-finalizer-atomic");
+      const host = yield* PluginHostModule.PluginHost;
+
+      const putEntered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      httpProbe = { putEntered, release, entries: new Set(), removed: new Set() };
+
+      yield* installPlugin({
+        pluginId,
+        capabilities: ["http"],
+        entrySource: httpRouteEntrySource(),
+      });
+
+      // Fork activation; it parks inside the probe's `put`.
+      const activationFiber = yield* host
+        .activatePlugin(pluginId)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+
+      yield* Deferred.await(putEntered);
+      assert.isTrue(httpProbe.entries.has(pluginId), "precondition: put recorded the route");
+      assert.isFalse(httpProbe.removed.has(pluginId), "precondition: finalizer has not run yet");
+
+      // Register the interrupt, then release the park. `Fiber.interrupt` calls
+      // `interruptUnsafe` synchronously before it suspends, so forking it (which runs
+      // that synchronous step immediately) leaves the interrupt already PENDING on the
+      // activation fiber when `put` unblocks. Forking it also keeps the test fiber
+      // free to release and then await the outcome rather than blocking on the death.
+      const interruptFiber = yield* Fiber.interrupt(activationFiber).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.succeed(release, undefined);
+
+      // The interrupted activation must unwind and close its scope. A bounded wait
+      // keeps a regression that strands activation from hanging the whole suite.
+      const settled = yield* Fiber.await(activationFiber).pipe(
+        Effect.as(true),
+        Effect.timeout("5 seconds"),
+        Effect.orElseSucceed(() => false),
+      );
+      yield* Fiber.interrupt(interruptFiber);
+      assert.isTrue(settled, "the interrupted activation must settle (scope close must run)");
+
+      // The removal finalizer must have run — proving put and addFinalizer were
+      // atomic. On the un-atomic code the interrupt cuts the park before addFinalizer,
+      // so the finalizer is never registered and the route stays live in the host.
+      assert.isTrue(
+        httpProbe.removed.has(pluginId),
+        "httpRegistry.remove finalizer must run on an interrupt in the put→addFinalizer window",
+      );
+      assert.isFalse(
+        httpProbe.entries.has(pluginId),
+        "no plugin http route may stay live in the host after an interrupted activation",
+      );
+
+      httpProbe = null;
     }),
   );
 });
