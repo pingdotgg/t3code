@@ -2,6 +2,7 @@ import { createFileRoute, retainSearchParams, useNavigate } from "@tanstack/reac
 import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react";
 
 import { ChatSplitArea } from "../components/ChatSplitArea";
+import { AgentRunChatView } from "../components/chat/AgentRunChatView";
 import { threadHasStarted } from "../components/ChatView.logic";
 import { DiffWorkerPoolProvider } from "../components/DiffWorkerPoolProvider";
 import {
@@ -18,6 +19,7 @@ import {
   parseDiffRouteSearch,
   stripDiffSearchParams,
 } from "../diffRouteSearch";
+import { deriveAgentRuns } from "../session-logic";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import { selectEnvironmentState, selectThreadExistsByRef, useStore } from "../store";
@@ -25,6 +27,8 @@ import { createThreadSelectorByRef } from "../storeSelectors";
 import {
   resolveThreadRouteRef,
   buildThreadRouteParams,
+  parseAgentRunRouteSearch,
+  type AgentRunRouteSearch,
   type ThreadRouteTarget,
 } from "../threadRoutes";
 import { RightPanelSheet } from "../components/RightPanelSheet";
@@ -184,6 +188,15 @@ function ChatThreadRouteView() {
   const serverThreadStarted = threadHasStarted(serverThread);
   const environmentHasAnyThreads = environmentHasServerThreads || environmentHasDraftThreads;
   const diffOpen = search.diff === "1";
+  const agentRun = useMemo(
+    () =>
+      search.agent
+        ? deriveAgentRuns(serverThread?.activities ?? [], undefined).find(
+            (run) => run.taskId === search.agent,
+          )
+        : undefined,
+    [search.agent, serverThread?.activities],
+  );
   const shouldUseDiffSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   const currentThreadKey = threadRef ? `${threadRef.environmentId}:${threadRef.threadId}` : null;
   const [diffPanelMountState, setDiffPanelMountState] = useState(() => ({
@@ -251,6 +264,19 @@ function ChatThreadRouteView() {
     return null;
   }
 
+  if (agentRun && serverThread) {
+    return (
+      <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground md:h-dvh">
+        <AgentRunChatView
+          agentRun={agentRun}
+          environmentId={threadRef.environmentId}
+          threadId={threadRef.threadId}
+          workspaceRoot={serverThread.worktreePath ?? undefined}
+        />
+      </SidebarInset>
+    );
+  }
+
   const shouldRenderDiffContent = diffOpen || hasOpenedDiff;
 
   const splitArea = (
@@ -291,9 +317,12 @@ function ChatThreadRouteView() {
 }
 
 export const Route = createFileRoute("/_chat/$environmentId/$threadId")({
-  validateSearch: (search) => parseDiffRouteSearch(search),
+  validateSearch: (search): DiffRouteSearch & AgentRunRouteSearch => ({
+    ...parseDiffRouteSearch(search),
+    ...parseAgentRunRouteSearch(search),
+  }),
   search: {
-    middlewares: [retainSearchParams<DiffRouteSearch>(["diff"])],
+    middlewares: [retainSearchParams<DiffRouteSearch & AgentRunRouteSearch>(["diff"])],
   },
   component: ChatThreadRouteView,
 });

@@ -15,6 +15,7 @@ import {
   type ProviderSession,
   type ProviderUserInputAnswers,
   RuntimeRequestId,
+  RuntimeTaskId,
   ProviderDriverKind,
   type ThreadId,
   TurnId,
@@ -51,7 +52,10 @@ import {
   ProviderAdapterValidationError,
 } from "../Errors.ts";
 import { mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
-import { collectSessionConfigOptionValues } from "../acp/AcpRuntimeModel.ts";
+import {
+  collectSessionConfigOptionValues,
+  type AcpParsedSessionEvent,
+} from "../acp/AcpRuntimeModel.ts";
 import {
   type AcpSessionRuntimeShape,
   type AcpSessionRuntimeStartResult,
@@ -77,6 +81,7 @@ import {
   extractCopilotPlanUpdate,
   normalizeCopilotParsedSessionEvent,
   normalizeCopilotPermissionRequest,
+  parseCopilotBackgroundAgentUpdate,
 } from "../acp/CopilotAcpRuntimeModel.ts";
 import {
   hasConcreteCopilotCurrentModel,
@@ -138,6 +143,14 @@ interface CopilotSessionContext {
   inFlightTurnId: TurnId | undefined;
   cancelRequestedTurnId: TurnId | undefined;
   readonly fatalErrorByTurnId: Map<TurnId, string>;
+  readonly backgroundAgents: Map<
+    string,
+    {
+      readonly taskId: RuntimeTaskId;
+      status: "running" | "completed" | "failed" | "stopped";
+    }
+  >;
+  backgroundActivitySignal: Deferred.Deferred<void> | undefined;
   stopped: boolean;
 }
 
@@ -638,6 +651,128 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
         });
       });
 
+    const processBackgroundAgentEvent = (
+      ctx: CopilotSessionContext,
+      event: AcpParsedSessionEvent,
+    ): Effect.Effect<AcpParsedSessionEvent> =>
+      Effect.gen(function* () {
+        const previousSignal = ctx.backgroundActivitySignal;
+        ctx.backgroundActivitySignal = yield* Deferred.make<void>();
+        if (event._tag !== "ToolCallUpdated") {
+          if (previousSignal) {
+            yield* Deferred.succeed(previousSignal, undefined).pipe(Effect.ignore);
+          }
+          return event;
+        }
+
+        const update = parseCopilotBackgroundAgentUpdate(event.toolCall);
+        if (update?._tag === "started") {
+          const taskId = RuntimeTaskId.make(update.taskId);
+          if (!ctx.backgroundAgents.has(update.taskId)) {
+            ctx.backgroundAgents.set(update.taskId, { taskId, status: "running" });
+            yield* offerRuntimeEvent({
+              type: "task.started",
+              ...(yield* makeEventStamp()),
+              provider: PROVIDER,
+              threadId: ctx.threadId,
+              turnId: ctx.activeTurnId,
+              payload: {
+                taskId,
+                taskType: "background-agent",
+                name: update.name,
+                description: update.description,
+                agentType: update.agentType,
+                prompt: update.prompt,
+                ...(update.model ? { model: update.model } : {}),
+                ...(update.reasoningEffort ? { reasoningEffort: update.reasoningEffort } : {}),
+                launchToolCallId: update.launchToolCallId,
+              },
+            });
+          }
+        } else if (update?._tag === "completed") {
+          const existing = ctx.backgroundAgents.get(update.taskId);
+          if (existing?.status === "running") {
+            existing.status = update.status;
+            yield* offerRuntimeEvent({
+              type: "task.completed",
+              ...(yield* makeEventStamp()),
+              provider: PROVIDER,
+              threadId: ctx.threadId,
+              turnId: ctx.activeTurnId,
+              payload: {
+                taskId: existing.taskId,
+                status: update.status,
+                ...(update.summary ? { summary: update.summary } : {}),
+              },
+            });
+          }
+        }
+
+        const activeAgents = [...ctx.backgroundAgents.values()].filter(
+          (agent) => agent.status === "running",
+        );
+        const rawInput = isRecord(event.toolCall.data.rawInput)
+          ? event.toolCall.data.rawInput
+          : undefined;
+        const explicitAgentId =
+          typeof rawInput?.agent_id === "string" ? rawInput.agent_id : undefined;
+        const attributedAgent = update
+          ? ctx.backgroundAgents.get(update.taskId)
+          : explicitAgentId
+            ? ctx.backgroundAgents.get(explicitAgentId)
+            : activeAgents.length === 1
+              ? activeAgents[0]
+              : undefined;
+        const attributedEvent = attributedAgent
+          ? {
+              ...event,
+              toolCall: {
+                ...event.toolCall,
+                data: {
+                  ...event.toolCall.data,
+                  agentRunId: attributedAgent.taskId,
+                },
+              },
+            }
+          : activeAgents.length > 1
+            ? {
+                ...event,
+                toolCall: {
+                  ...event.toolCall,
+                  data: {
+                    ...event.toolCall.data,
+                    agentAttribution: "ambiguous",
+                    candidateAgentRunIds: activeAgents.map((agent) => agent.taskId),
+                  },
+                },
+              }
+            : event;
+        if (previousSignal) {
+          yield* Deferred.succeed(previousSignal, undefined).pipe(Effect.ignore);
+        }
+        return attributedEvent;
+      });
+
+    const awaitBackgroundTurnSettlement = (
+      ctx: CopilotSessionContext,
+      turnId: TurnId,
+      pendingTaskIds: ReadonlySet<string>,
+    ) =>
+      Effect.gen(function* () {
+        while (ctx.activeTurnId === turnId && ctx.cancelRequestedTurnId !== turnId) {
+          const hasPendingTasks = [...pendingTaskIds].some(
+            (taskId) =>
+              ctx.backgroundAgents.get(taskId)?.status !== "completed" &&
+              ctx.backgroundAgents.get(taskId)?.status !== "failed" &&
+              ctx.backgroundAgents.get(taskId)?.status !== "stopped",
+          );
+          if (!hasPendingTasks) return;
+          const signal = ctx.backgroundActivitySignal;
+          if (!signal) return;
+          yield* Deferred.await(signal);
+        }
+      });
+
     const stopSessionInternal = (ctx: CopilotSessionContext) =>
       Effect.gen(function* () {
         if (ctx.stopped) return;
@@ -645,6 +780,10 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
         ctx.inFlightTurnId = undefined;
         ctx.cancelRequestedTurnId = undefined;
         ctx.activeTurnId = undefined;
+        if (ctx.backgroundActivitySignal) {
+          yield* Deferred.succeed(ctx.backgroundActivitySignal, undefined).pipe(Effect.ignore);
+          ctx.backgroundActivitySignal = undefined;
+        }
         yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
         yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
         ctx.turns.length = 0;
@@ -668,6 +807,9 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
       readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
       readonly fullAccessWarningKeys: Set<string>;
       readonly getCurrentTurnId: () => TurnId | undefined;
+      readonly onSessionEvent?: (
+        event: AcpParsedSessionEvent,
+      ) => Effect.Effect<AcpParsedSessionEvent>;
       readonly onFatalCopilotError?: (turnId: TurnId, message: string) => void;
       readonly resumeSessionId?: string;
       readonly resumeFallback?: "create" | "fail";
@@ -896,7 +1038,10 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
           Stream.mapEffect(acp.getEvents(), (rawEvent) =>
             Effect.gen(function* () {
               const normalizedEvents = normalizeCopilotParsedSessionEvent(rawEvent);
-              for (const event of normalizedEvents) {
+              for (const rawNormalizedEvent of normalizedEvents) {
+                const event = input.onSessionEvent
+                  ? yield* input.onSessionEvent(rawNormalizedEvent)
+                  : rawNormalizedEvent;
                 const activeTurnId = input.getCurrentTurnId();
                 switch (event._tag) {
                   case "ModeChanged":
@@ -1075,6 +1220,7 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
           fullAccessWarningKeys: ctx.fullAccessWarningKeys,
           resumeSessionId,
           getCurrentTurnId: () => ctx.activeTurnId,
+          onSessionEvent: (event) => processBackgroundAgentEvent(ctx, event),
           onFatalCopilotError: (turnId, message) => {
             ctx.fatalErrorByTurnId.set(turnId, message);
             if (ctx.cancelRequestedTurnId !== turnId) {
@@ -1251,6 +1397,8 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
             ...(resumeSessionId ? { resumeSessionId } : {}),
             ...(input.resumeFallback ? { resumeFallback: input.resumeFallback } : {}),
             getCurrentTurnId: () => ctx?.activeTurnId,
+            onSessionEvent: (event) =>
+              ctx ? processBackgroundAgentEvent(ctx, event) : Effect.succeed(event),
             onFatalCopilotError: (turnId, message) => {
               if (!ctx) return;
               ctx.fatalErrorByTurnId.set(turnId, message);
@@ -1292,6 +1440,8 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
               inFlightTurnId: undefined,
               cancelRequestedTurnId: undefined,
               fatalErrorByTurnId: new Map<TurnId, string>(),
+              backgroundAgents: new Map(),
+              backgroundActivitySignal: undefined,
               stopped: false,
             };
 
@@ -1510,6 +1660,8 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
         ctx.activeTurnId = turnId;
         ctx.inFlightTurnId = turnId;
         ctx.cancelRequestedTurnId = undefined;
+        ctx.backgroundAgents.clear();
+        ctx.backgroundActivitySignal = yield* Deferred.make<void>();
         ctx.session = {
           ...ctx.session,
           status: "running",
@@ -1542,8 +1694,17 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
                   : Effect.fail(toProcessError(input.threadId, error));
               },
             }),
-            Effect.ensuring(Effect.sync(() => clearTurnState(ctx, turnId))),
+            Effect.onError(() => Effect.sync(() => clearTurnState(ctx, turnId))),
           );
+
+        const pendingTaskIds = new Set(
+          [...ctx.backgroundAgents.entries()]
+            .filter(([, agent]) => agent.status === "running")
+            .map(([taskId]) => taskId),
+        );
+        yield* awaitBackgroundTurnSettlement(ctx, turnId, pendingTaskIds);
+        clearTurnState(ctx, turnId);
+        ctx.backgroundActivitySignal = undefined;
 
         const stopReason =
           promptOutcome._tag === "completed" ? promptOutcome.result.stopReason : "cancelled";
@@ -1614,6 +1775,21 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
         }
 
         ctx.cancelRequestedTurnId = turnId;
+        for (const agent of ctx.backgroundAgents.values()) {
+          if (agent.status !== "running") continue;
+          agent.status = "stopped";
+          yield* offerRuntimeEvent({
+            type: "task.completed",
+            ...(yield* makeEventStamp()),
+            provider: PROVIDER,
+            threadId,
+            turnId,
+            payload: { taskId: agent.taskId, status: "stopped" },
+          });
+        }
+        if (ctx.backgroundActivitySignal) {
+          yield* Deferred.succeed(ctx.backgroundActivitySignal, undefined).pipe(Effect.ignore);
+        }
         if (ctx.stopped) {
           return;
         }

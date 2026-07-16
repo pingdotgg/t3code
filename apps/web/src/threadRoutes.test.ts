@@ -6,6 +6,8 @@ import { DraftId } from "./composerDraftStore";
 import {
   buildDraftThreadRouteParams,
   buildThreadRouteParams,
+  clearAgentRunRouteSearch,
+  parseAgentRunRouteSearch,
   resolveThreadRouteRef,
   resolveThreadRouteTarget,
 } from "./threadRoutes";
@@ -62,6 +64,19 @@ describe("threadRoutes", () => {
     ).toEqual({
       kind: "draft",
       draftId: "draft-1",
+    });
+  });
+
+  it("normalizes virtual agent route search", () => {
+    expect(parseAgentRunRouteSearch({ agent: " agent-1 " })).toEqual({ agent: "agent-1" });
+    expect(parseAgentRunRouteSearch({ agent: "" })).toEqual({});
+    expect(parseAgentRunRouteSearch({ agent: 1 })).toEqual({});
+  });
+
+  it("clears a nested agent selection when navigating to its parent", () => {
+    expect(clearAgentRunRouteSearch({ agent: "agent-1", diff: "1" })).toEqual({
+      agent: undefined,
+      diff: "1",
     });
   });
 });

@@ -2979,6 +2979,9 @@ function ChatViewBody(
                 ? {
                     createThread: {
                       projectId: activeProject.id,
+                      ...(draftThread?.parentThreadId
+                        ? { parentThreadId: draftThread.parentThreadId }
+                        : {}),
                       title,
                       modelSelection: threadCreateModelSelection,
                       runtimeMode,

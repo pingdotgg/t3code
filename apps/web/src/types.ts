@@ -2,6 +2,7 @@ import type {
   EnvironmentId,
   ModelSelection,
   OrchestrationLatestTurn,
+  OrchestrationBackgroundAgentRunShell,
   OrchestrationQueuedTurn,
   OrchestrationProposedPlanId,
   RepositoryIdentity,
@@ -165,6 +166,12 @@ export interface SidebarThreadSummary {
   hasPendingApprovals: boolean;
   hasPendingUserInput: boolean;
   hasActionableProposedPlan: boolean;
+  backgroundAgentRuns?: readonly OrchestrationBackgroundAgentRunShell[];
+  virtualAgentRun?: {
+    parentThreadId: ThreadId;
+    taskId: string;
+    status: "running" | "completed" | "failed" | "stopped";
+  };
 }
 
 export interface ThreadSession {

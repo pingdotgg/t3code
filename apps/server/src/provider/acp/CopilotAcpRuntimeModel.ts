@@ -25,6 +25,90 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return isRecord(value) ? value : undefined;
 }
 
+export type CopilotBackgroundAgentUpdate =
+  | {
+      readonly _tag: "started";
+      readonly taskId: string;
+      readonly launchToolCallId: string;
+      readonly name: string;
+      readonly description: string;
+      readonly agentType: string;
+      readonly model?: string;
+      readonly reasoningEffort?: string;
+      readonly prompt: string;
+    }
+  | {
+      readonly _tag: "completed";
+      readonly taskId: string;
+      readonly status: "completed" | "failed" | "stopped";
+      readonly summary?: string;
+    };
+
+function rawOutputText(value: unknown): string | undefined {
+  const direct = asString(value);
+  if (direct) return direct;
+  const record = asRecord(value);
+  return asString(record?.content) ?? asString(record?.detailedContent);
+}
+
+function backgroundAgentIdFromLaunchOutput(output: string): string | undefined {
+  const match = /\bagent_id:\s*([^\s,.]+)/u.exec(output);
+  return asString(match?.[1]);
+}
+
+export function parseCopilotBackgroundAgentUpdate(
+  toolCall: AcpToolCallState,
+): CopilotBackgroundAgentUpdate | undefined {
+  const rawInput = asRecord(toolCall.data.rawInput);
+  if (rawInput?.mode === "background") {
+    if (toolCall.status !== "completed") return undefined;
+    const name = asString(rawInput.name);
+    const description = asString(rawInput.description);
+    const agentType = asString(rawInput.agent_type);
+    const prompt = asString(rawInput.prompt);
+    const model = asString(rawInput.model);
+    const reasoningEffort = asString(rawInput.reasoning_effort);
+    const output = rawOutputText(toolCall.data.rawOutput);
+    const taskId = output ? backgroundAgentIdFromLaunchOutput(output) : undefined;
+    if (!taskId || !name || !description || !agentType || !prompt) return undefined;
+    return {
+      _tag: "started",
+      taskId,
+      launchToolCallId: toolCall.toolCallId,
+      name,
+      description,
+      agentType,
+      ...(model ? { model } : {}),
+      ...(reasoningEffort ? { reasoningEffort } : {}),
+      prompt,
+    };
+  }
+
+  const agentId = asString(rawInput?.agent_id);
+  if (!agentId || toolCall.status !== "completed") return undefined;
+  const output = rawOutputText(toolCall.data.rawOutput);
+  if (!output?.startsWith("Agent ")) return undefined;
+  const statusMatch = /\bstatus:\s*(completed|failed|cancelled|stopped|idle)\b/u.exec(output);
+  if (!statusMatch) return undefined;
+  const summary =
+    output
+      .split(/\r?\n\r?\n/u)
+      .slice(1)
+      .join("\n\n")
+      .trim() || undefined;
+  return {
+    _tag: "completed",
+    taskId: agentId,
+    status:
+      statusMatch[1] === "cancelled"
+        ? "stopped"
+        : statusMatch[1] === "idle"
+          ? "completed"
+          : (statusMatch[1] as "completed" | "failed" | "stopped"),
+    ...(summary ? { summary } : {}),
+  };
+}
+
 function getPath(value: unknown, path: ReadonlyArray<string>): unknown {
   let current = value;
   for (const key of path) {

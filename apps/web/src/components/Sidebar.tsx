@@ -49,6 +49,7 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   type ContextMenuItem,
   type DesktopUpdateState,
+  type OrchestrationThreadActivity,
   ProjectId,
   type ScopedThreadRef,
   type SidebarProjectGroupingMode,
@@ -70,7 +71,7 @@ import {
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import { isElectron } from "../env";
 import { isTerminalFocused } from "../lib/terminalFocus";
-import { isMacPlatform, newCommandId } from "../lib/utils";
+import { isMacPlatform, newCommandId, newDraftId, newThreadId } from "../lib/utils";
 import {
   selectProjectsAcrossEnvironments,
   selectSidebarThreadsForProjectRefs,
@@ -92,14 +93,15 @@ import { useModelPickerOpen } from "../modelPickerOpenState";
 import { useShortcutModifierState } from "../shortcutModifierState";
 import { useGitStatus } from "../lib/gitStatusState";
 import { readLocalApi } from "../localApi";
-import { useComposerDraftStore } from "../composerDraftStore";
+import { type DraftThreadEnvMode, useComposerDraftStore } from "../composerDraftStore";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { retainThreadDetailSubscription } from "../environments/runtime/service";
-import { isThreadActivelyWorking } from "../session-logic";
+import { deriveAgentRuns, isThreadActivelyWorking } from "../session-logic";
 
 import { useThreadActions } from "../hooks/useThreadActions";
 import {
   buildThreadRouteParams,
+  clearAgentRunRouteSearch,
   resolveThreadRouteRef,
   resolveThreadRouteTarget,
 } from "../threadRoutes";
@@ -186,6 +188,7 @@ import {
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
 import {
+  expandSidebarThreadsWithAgentRuns,
   buildSidebarThreadRows,
   selectVisibleThreadRows,
   type SidebarThreadRowView,
@@ -205,6 +208,7 @@ const SIDEBAR_LIST_ANIMATION_OPTIONS = {
   easing: "ease-out",
 } as const;
 const EMPTY_THREAD_JUMP_LABELS = new Map<string, string>();
+const EMPTY_THREAD_ACTIVITIES: readonly OrchestrationThreadActivity[] = [];
 type ContextMenuPosition = { x: number; y: number };
 
 function resolveContextMenuPosition(event: React.MouseEvent): ContextMenuPosition | undefined {
@@ -344,7 +348,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     thread,
     threadProjectCwd,
   } = props;
-  const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+  const navigate = useNavigate();
+  const virtualAgentRun = thread.virtualAgentRun;
+  const threadRef = scopeThreadRef(
+    thread.environmentId,
+    virtualAgentRun?.parentThreadId ?? thread.id,
+  );
   const threadKey = scopedThreadKey(threadRef);
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
@@ -411,6 +420,16 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   );
   const handleRowClick = useCallback(
     (event: React.MouseEvent) => {
+      if (virtualAgentRun) {
+        event.preventDefault();
+        clearSelection();
+        void navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(threadRef),
+          search: (previous) => ({ ...previous, agent: virtualAgentRun.taskId }),
+        });
+        return;
+      }
       const isMac = isMacPlatform(navigator.platform);
       const isModKey = isMac ? event.metaKey : event.ctrlKey;
 
@@ -425,25 +444,37 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     },
     [
       handleThreadClick,
+      clearSelection,
       isPinned,
+      navigate,
       orderedProjectThreadKeys,
       projectKey,
       setThreadPinned,
       threadKey,
       threadRef,
+      virtualAgentRun,
     ],
   );
   const handleRowKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
+      if (virtualAgentRun) {
+        void navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(threadRef),
+          search: (previous) => ({ ...previous, agent: virtualAgentRun.taskId }),
+        });
+        return;
+      }
       navigateToThread(threadRef);
     },
-    [navigateToThread, threadRef],
+    [navigate, navigateToThread, threadRef, virtualAgentRun],
   );
   const handleRowContextMenu = useCallback(
     (event: React.MouseEvent) => {
       event.preventDefault();
+      if (virtualAgentRun) return;
       if (hasSelection && isSelected) {
         void handleMultiSelectContextMenu(resolveContextMenuPosition(event));
         return;
@@ -461,6 +492,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       hasSelection,
       isSelected,
       threadRef,
+      virtualAgentRun,
     ],
   );
   const handlePrClick = useCallback(
@@ -686,7 +718,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               isRemoteThread ? "max-sm:min-w-24" : "max-sm:min-w-20"
             }`}
           >
-            {isConfirmingArchive ? (
+            {virtualAgentRun ? null : isConfirmingArchive ? (
               <button
                 ref={handleConfirmArchiveRef}
                 type="button"
@@ -946,6 +978,12 @@ const VisibleSidebarProjectThreadList = memo(function VisibleSidebarProjectThrea
   } = props;
   const showMoreButtonRender = useMemo(() => <button type="button" />, []);
   const showLessButtonRender = useMemo(() => <button type="button" />, []);
+  const activeAgentId = useLocation({
+    select: (location) => {
+      const search = location.search as Record<string, unknown>;
+      return typeof search.agent === "string" ? search.agent : null;
+    },
+  });
   const pinnedThreadKeySet = useMemo(() => new Set(pinnedThreadKeys), [pinnedThreadKeys]);
   const sortablePinnedThreadKeys = useMemo(
     () =>
@@ -962,6 +1000,10 @@ const VisibleSidebarProjectThreadList = memo(function VisibleSidebarProjectThrea
       const threadProjectKey = scopedProjectKey(
         scopeProjectRef(thread.environmentId, thread.projectId),
       );
+      const virtualAgentRun = thread.virtualAgentRun;
+      const routeThreadKey = virtualAgentRun
+        ? scopedThreadKey(scopeThreadRef(thread.environmentId, virtualAgentRun.parentThreadId))
+        : threadKey;
       const rowProps: SidebarThreadRowProps = {
         thread,
         depth: row.depth,
@@ -971,7 +1013,9 @@ const VisibleSidebarProjectThreadList = memo(function VisibleSidebarProjectThrea
         projectCwd,
         threadProjectCwd: memberProjectByScopedKey.get(threadProjectKey)?.cwd ?? null,
         orderedProjectThreadKeys,
-        isActive: activeRouteThreadKey === threadKey,
+        isActive:
+          activeRouteThreadKey === routeThreadKey &&
+          (virtualAgentRun ? activeAgentId === virtualAgentRun.taskId : !activeAgentId),
         jumpLabel: threadJumpLabelByKey.get(threadKey) ?? null,
         appSettingsConfirmThreadArchive,
         isPinned: row.depth === 0 && pinnedThreadKeySet.has(threadKey),
@@ -1005,6 +1049,7 @@ const VisibleSidebarProjectThreadList = memo(function VisibleSidebarProjectThrea
     },
     [
       activeRouteThreadKey,
+      activeAgentId,
       appSettingsConfirmThreadArchive,
       attemptArchiveThread,
       cancelRename,
@@ -1311,7 +1356,35 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   useLayoutEffect(() => {
     sidebarThreadByKeyRef.current = sidebarThreadByKey;
   }, [sidebarThreadByKey]);
-  const projectThreads = sidebarThreads;
+  const sidebarThreadActivities = useStore(
+    useShallow(
+      useMemo(
+        () => (state: import("../store").AppState) =>
+          sidebarThreads.map(
+            (thread) =>
+              selectThreadByRef(state, scopeThreadRef(thread.environmentId, thread.id))
+                ?.activities ?? EMPTY_THREAD_ACTIVITIES,
+          ),
+        [sidebarThreads],
+      ),
+    ),
+  );
+  const projectThreads = useMemo(() => {
+    const agentRunsByThreadKey = new Map<string, ReturnType<typeof deriveAgentRuns>>();
+    for (const [index, thread] of sidebarThreads.entries()) {
+      const agentRuns = deriveAgentRuns(
+        sidebarThreadActivities[index] ?? EMPTY_THREAD_ACTIVITIES,
+        undefined,
+      );
+      if (agentRuns.length > 0) {
+        agentRunsByThreadKey.set(
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+          agentRuns,
+        );
+      }
+    }
+    return expandSidebarThreadsWithAgentRuns({ threads: sidebarThreads, agentRunsByThreadKey });
+  }, [sidebarThreadActivities, sidebarThreads]);
   const projectExpanded = useUiStateStore(
     (state) => state.projectExpandedById[project.projectKey] ?? true,
   );
@@ -1388,6 +1461,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       ]),
     );
     const resolveProjectThreadStatus = (thread: SidebarThreadSummary) => {
+      if (thread.virtualAgentRun?.status === "running") {
+        return {
+          label: "Working",
+          colorClass: "text-sky-600 dark:text-sky-300/80",
+          dotClass: "bg-sky-500 dark:bg-sky-300/80",
+          pulse: true,
+        } as const;
+      }
       const lastVisitedAt = lastVisitedAtByThreadKey.get(
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
       );
@@ -1828,6 +1909,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       void router.navigate({
         to: "/$environmentId/$threadId",
         params: buildThreadRouteParams(threadRef),
+        search: clearAgentRunRouteSearch,
       });
     },
     [clearSelection, isMobile, router, setOpenMobile, setSelectionAnchor],
@@ -1873,6 +1955,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       void router.navigate({
         to: "/$environmentId/$threadId",
         params: buildThreadRouteParams(threadRef),
+        search: clearAgentRunRouteSearch,
       });
     },
     [
@@ -2189,6 +2272,36 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     updateSettings,
   ]);
 
+  const createSubchatForThread = useCallback(
+    (threadRef: ScopedThreadRef) => {
+      const sourceThread = selectThreadByRef(useStore.getState(), threadRef);
+      if (!sourceThread) {
+        return;
+      }
+      const draftStore = useComposerDraftStore.getState();
+      const draftId = newDraftId();
+      const envMode: DraftThreadEnvMode = sourceThread.worktreePath ? "worktree" : "local";
+      draftStore.createDetachedDraftSession(
+        scopeProjectRef(sourceThread.environmentId, sourceThread.projectId),
+        draftId,
+        {
+          threadId: newThreadId(),
+          parentThreadId: sourceThread.id,
+          branch: sourceThread.branch,
+          worktreePath: sourceThread.worktreePath,
+          envMode,
+        },
+      );
+      draftStore.applyStickyState(draftId);
+      draftStore.setModelSelection(draftId, sourceThread.modelSelection);
+      if (isMobile) {
+        setOpenMobile(false);
+      }
+      void router.navigate({ to: "/draft/$draftId", params: { draftId } });
+    },
+    [isMobile, router, setOpenMobile],
+  );
+
   const handleThreadContextMenu = useCallback(
     async (threadRef: ScopedThreadRef, position?: ContextMenuPosition) => {
       const api = readLocalApi();
@@ -2202,6 +2315,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       const threadWorkspacePath = thread.worktreePath ?? threadProject?.cwd ?? project.cwd ?? null;
       const clicked = await api.contextMenu.show(
         [
+          { id: "new-subchat", label: "New subchat" },
           { id: "rename", label: "Rename thread" },
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-path", label: "Copy Path" },
@@ -2210,6 +2324,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         ],
         position,
       );
+
+      if (clicked === "new-subchat") {
+        createSubchatForThread(threadRef);
+        return;
+      }
 
       if (clicked === "rename") {
         setRenamingThreadKey(threadKey);
@@ -2258,6 +2377,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       appSettingsConfirmThreadDelete,
       copyPathToClipboard,
       copyThreadIdToClipboard,
+      createSubchatForThread,
       deleteThread,
       markThreadUnread,
       memberProjectByScopedKey,
@@ -3117,6 +3237,7 @@ export default function Sidebar() {
       void navigate({
         to: "/$environmentId/$threadId",
         params: buildThreadRouteParams(threadRef),
+        search: clearAgentRunRouteSearch,
       });
     },
     [clearSelection, isMobile, navigate, setOpenMobile, setSelectionAnchor],

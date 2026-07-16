@@ -1,8 +1,51 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
+import { ThreadId } from "@t3tools/contracts";
 import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import { sortThreads } from "./lib/threadSort";
 import { resolveProjectStatusIndicator, type ThreadStatusPill } from "./components/Sidebar.logic";
+import type { AgentRun } from "./session-logic";
 import type { SidebarThreadSummary } from "./types";
+
+export function expandSidebarThreadsWithAgentRuns(input: {
+  threads: readonly SidebarThreadSummary[];
+  agentRunsByThreadKey: ReadonlyMap<string, readonly AgentRun[]>;
+}): SidebarThreadSummary[] {
+  return input.threads.flatMap((thread) => {
+    const threadKey = getThreadKey(thread);
+    const agentRuns = input.agentRunsByThreadKey.get(threadKey) ?? thread.backgroundAgentRuns;
+    if (!agentRuns?.length) return [thread];
+
+    return [
+      thread,
+      ...agentRuns.map(
+        (agentRun): SidebarThreadSummary => ({
+          id: ThreadId.make(`agent-run:${thread.id}:${agentRun.taskId}`),
+          environmentId: thread.environmentId,
+          projectId: thread.projectId,
+          parentThreadId: thread.id,
+          title: agentRun.name,
+          interactionMode: thread.interactionMode,
+          session: null,
+          createdAt: agentRun.startedAt,
+          archivedAt: null,
+          updatedAt: agentRun.completedAt ?? agentRun.startedAt,
+          latestTurn: null,
+          branch: thread.branch,
+          worktreePath: thread.worktreePath,
+          latestUserMessageAt: null,
+          hasPendingApprovals: false,
+          hasPendingUserInput: false,
+          hasActionableProposedPlan: false,
+          virtualAgentRun: {
+            parentThreadId: thread.id,
+            taskId: agentRun.taskId,
+            status: agentRun.status,
+          },
+        }),
+      ),
+    ];
+  });
+}
 
 export interface SidebarThreadRowView {
   thread: SidebarThreadSummary;

@@ -401,6 +401,19 @@ function runtimeEventToActivities(
           payload: {
             taskId: event.payload.taskId,
             ...(event.payload.taskType ? { taskType: event.payload.taskType } : {}),
+            ...(event.payload.name ? { name: event.payload.name } : {}),
+            ...(event.payload.agentType ? { agentType: event.payload.agentType } : {}),
+            ...(event.payload.prompt ? { prompt: event.payload.prompt } : {}),
+            ...(event.payload.model ? { model: event.payload.model } : {}),
+            ...(event.payload.reasoningEffort
+              ? { reasoningEffort: event.payload.reasoningEffort }
+              : {}),
+            ...(event.payload.launchToolCallId
+              ? { launchToolCallId: event.payload.launchToolCallId }
+              : {}),
+            ...(event.payload.description
+              ? { description: truncateDetail(event.payload.description) }
+              : {}),
             ...(event.payload.description
               ? { detail: truncateDetail(event.payload.description) }
               : {}),

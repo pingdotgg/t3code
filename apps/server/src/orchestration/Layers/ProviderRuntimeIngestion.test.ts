@@ -41,6 +41,7 @@ import {
   type OrchestrationEngineShape,
 } from "../Services/OrchestrationEngine.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
+import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -186,7 +187,7 @@ type ProviderRuntimeTestCheckpoint = ProviderRuntimeTestThread["checkpoints"][nu
 
 describe("ProviderRuntimeIngestion", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
-    OrchestrationEngineService | ProviderRuntimeIngestionService,
+    OrchestrationEngineService | ProviderRuntimeIngestionService | ProjectionSnapshotQuery,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -224,7 +225,7 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provide(RepositoryIdentityResolverLive),
       Layer.provide(SqlitePersistenceMemory),
     );
-    const layer = ProviderRuntimeIngestionLive.pipe(
+    const ingestionLayer = ProviderRuntimeIngestionLive.pipe(
       Layer.provideMerge(orchestrationLayer),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
@@ -232,9 +233,15 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
       Layer.provideMerge(NodeServices.layer),
     );
+    const snapshotQueryLayer = OrchestrationProjectionSnapshotQueryLive.pipe(
+      Layer.provideMerge(RepositoryIdentityResolverLive),
+      Layer.provideMerge(SqlitePersistenceMemory),
+    );
+    const layer = Layer.merge(ingestionLayer, snapshotQueryLayer);
     runtime = ManagedRuntime.make(layer);
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const ingestion = await runtime.runPromise(Effect.service(ProviderRuntimeIngestionService));
+    const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(ingestion.start().pipe(Scope.provide(scope)));
     const drain = () => Effect.runPromise(ingestion.drain);
@@ -303,6 +310,7 @@ describe("ProviderRuntimeIngestion", () => {
       emit: provider.emit,
       setProviderSession: provider.setSession,
       drain,
+      snapshotQuery,
     };
   }
 
@@ -3049,6 +3057,13 @@ describe("ProviderRuntimeIngestion", () => {
       payload: {
         taskId: "turn-task-1",
         taskType: "plan",
+        name: "repository-reviewer",
+        description: "Review repository changes",
+        agentType: "explore",
+        prompt: "Inspect the repository.",
+        model: "mock-model",
+        reasoningEffort: "high",
+        launchToolCallId: "launch-1",
       },
     });
 
@@ -3117,6 +3132,10 @@ describe("ProviderRuntimeIngestion", () => {
       progress?.payload && typeof progress.payload === "object"
         ? (progress.payload as Record<string, unknown>)
         : undefined;
+    const startedPayload =
+      started?.payload && typeof started.payload === "object"
+        ? (started.payload as Record<string, unknown>)
+        : undefined;
     const completedPayload =
       completed?.payload && typeof completed.payload === "object"
         ? (completed.payload as Record<string, unknown>)
@@ -3124,6 +3143,15 @@ describe("ProviderRuntimeIngestion", () => {
 
     expect(started?.kind).toBe("task.started");
     expect(started?.summary).toBe("Plan task started");
+    expect(startedPayload).toMatchObject({
+      name: "repository-reviewer",
+      description: "Review repository changes",
+      agentType: "explore",
+      prompt: "Inspect the repository.",
+      model: "mock-model",
+      reasoningEffort: "high",
+      launchToolCallId: "launch-1",
+    });
     expect(progress?.kind).toBe("task.progress");
     expect(progressPayload?.detail).toBe("Code reviewer is validating the desktop rollout chunks.");
     expect(progressPayload?.summary).toBe(
@@ -3136,6 +3164,56 @@ describe("ProviderRuntimeIngestion", () => {
         (entry: ProviderRuntimeTestProposedPlan) => entry.id === "plan:thread-1:turn:turn-task-1",
       )?.planMarkdown,
     ).toBe("# Plan title");
+  });
+
+  it("includes background agent runs in inactive thread shell snapshots", async () => {
+    const harness = await createHarness();
+    const startedAt = "2026-07-16T10:00:00.000Z";
+    const completedAt = "2026-07-16T10:00:01.000Z";
+
+    harness.emit({
+      type: "task.started",
+      eventId: asEventId("evt-agent-started"),
+      provider: ProviderDriverKind.make("copilot"),
+      createdAt: startedAt,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-agent-1"),
+      payload: {
+        taskId: "agent-1",
+        taskType: "background-agent",
+        name: "Repository explorer",
+        description: "Inspect the repository",
+        agentType: "explore",
+        prompt: "Inspect the repository.",
+        launchToolCallId: "launch-1",
+      },
+    });
+    harness.emit({
+      type: "task.completed",
+      eventId: asEventId("evt-agent-completed"),
+      provider: ProviderDriverKind.make("copilot"),
+      createdAt: completedAt,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-agent-1"),
+      payload: {
+        taskId: "agent-1",
+        status: "completed",
+        summary: "Repository inspected.",
+      },
+    });
+    await harness.drain();
+
+    const snapshot = await Effect.runPromise(harness.snapshotQuery.getShellSnapshot());
+
+    expect(snapshot.threads[0]?.backgroundAgentRuns).toEqual([
+      {
+        taskId: "agent-1",
+        name: "Repository explorer",
+        status: "completed",
+        startedAt,
+        completedAt,
+      },
+    ]);
   });
 
   it("projects structured user input request and resolution as thread activities", async () => {

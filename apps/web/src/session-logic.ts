@@ -4,6 +4,7 @@ import { extractNormalizedChangedFilePathsFromToolPayload } from "@t3tools/share
 import {
   ApprovalRequestId,
   isToolLifecycleItemType,
+  MessageId,
   type OrchestrationLatestTurn,
   type OrchestrationThreadActivity,
   type OrchestrationProposedPlanId,
@@ -62,6 +63,22 @@ export interface WorkLogEntry {
   itemType?: ToolLifecycleItemType;
   requestKind?: PendingApproval["requestKind"];
   isComplete?: boolean;
+  agentRun?: AgentRun;
+}
+
+export interface AgentRun {
+  taskId: string;
+  name: string;
+  description?: string;
+  agentType?: string;
+  prompt?: string;
+  model?: string;
+  reasoningEffort?: string;
+  startedAt: string;
+  completedAt?: string;
+  status: "running" | "completed" | "failed" | "stopped";
+  summary?: string;
+  entries: WorkLogEntry[];
 }
 
 interface DerivedWorkLogEntry extends WorkLogEntry {
@@ -123,6 +140,51 @@ export type TimelineEntry =
       createdAt: string;
       entry: WorkLogEntry;
     };
+
+export function deriveAgentRunTimelineEntries(agentRun: AgentRun): TimelineEntry[] {
+  const entries: TimelineEntry[] = [];
+  if (agentRun.prompt) {
+    entries.push({
+      id: `agent-run:${agentRun.taskId}:prompt`,
+      kind: "message",
+      createdAt: agentRun.startedAt,
+      message: {
+        id: MessageId.make(`agent-run:${agentRun.taskId}:prompt`),
+        role: "user",
+        text: agentRun.prompt,
+        createdAt: agentRun.startedAt,
+        streaming: false,
+      },
+    });
+  }
+
+  entries.push(
+    ...agentRun.entries.map((entry) => ({
+      id: `agent-run:${agentRun.taskId}:work:${entry.id}`,
+      kind: "work" as const,
+      createdAt: entry.createdAt,
+      entry,
+    })),
+  );
+
+  if (agentRun.summary) {
+    entries.push({
+      id: `agent-run:${agentRun.taskId}:summary`,
+      kind: "message",
+      createdAt: agentRun.completedAt ?? agentRun.entries.at(-1)?.createdAt ?? agentRun.startedAt,
+      message: {
+        id: MessageId.make(`agent-run:${agentRun.taskId}:summary`),
+        role: "assistant",
+        text: agentRun.summary,
+        createdAt: agentRun.completedAt ?? agentRun.entries.at(-1)?.createdAt ?? agentRun.startedAt,
+        completedAt: agentRun.completedAt,
+        streaming: false,
+      },
+    });
+  }
+
+  return entries;
+}
 
 export function formatDuration(durationMs: number): string {
   if (!Number.isFinite(durationMs) || durationMs < 0) return "0ms";
@@ -534,17 +596,117 @@ export function deriveWorkLogEntries(
   latestTurnId: TurnId | undefined,
 ): WorkLogEntry[] {
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
+  const agentRuns = deriveAgentRuns(ordered, latestTurnId);
+  const agentActivityIds = new Set(agentRuns.flatMap((run) => run.activityIds));
   const entries = ordered
     .filter((activity) => (latestTurnId ? activity.turnId === latestTurnId : true))
+    .filter((activity) => !agentActivityIds.has(activity.id))
     .filter((activity) => activity.kind !== "tool.started")
     .filter((activity) => activity.kind !== "task.started")
     .filter((activity) => activity.kind !== "context-window.updated")
     .filter((activity) => activity.summary !== "Checkpoint captured")
     .filter((activity) => !isPlanBoundaryToolActivity(activity))
     .map(toDerivedWorkLogEntry);
-  return collapseDerivedWorkLogEntries(entries).map(
+  const workEntries = collapseDerivedWorkLogEntries(entries).map(
     ({ activityKind: _activityKind, collapseKey: _collapseKey, ...entry }) => entry,
   );
+  const activityOrder = new Map<string, number>(
+    ordered.map((activity, index) => [activity.id, index]),
+  );
+  const agentOrder = new Map<string, number | undefined>(
+    agentRuns.map((run) => [
+      `agent-run:${run.taskId}`,
+      activityOrder.get(run.activityIds[0] ?? ""),
+    ]),
+  );
+  return [
+    ...workEntries,
+    ...agentRuns.map(({ activityIds: _activityIds, ...agentRun }) => ({
+      id: `agent-run:${agentRun.taskId}`,
+      createdAt: agentRun.startedAt,
+      label: agentRun.name,
+      tone: agentRun.status === "failed" ? ("error" as const) : ("info" as const),
+      isComplete: agentRun.status !== "running",
+      agentRun,
+    })),
+  ].toSorted(
+    (left, right) =>
+      (activityOrder.get(left.id) ?? agentOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
+      (activityOrder.get(right.id) ?? agentOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER),
+  );
+}
+
+type DerivedAgentRun = AgentRun & { activityIds: string[] };
+
+export function deriveAgentRuns(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+  latestTurnId: TurnId | undefined,
+): DerivedAgentRun[] {
+  const runs = new Map<string, DerivedAgentRun>();
+  for (const activity of activities) {
+    if (latestTurnId && activity.turnId !== latestTurnId) continue;
+    const payload =
+      activity.payload && typeof activity.payload === "object"
+        ? (activity.payload as Record<string, unknown>)
+        : null;
+    const taskId = typeof payload?.taskId === "string" ? payload.taskId : undefined;
+    if (activity.kind === "task.started" && taskId && payload?.taskType === "background-agent") {
+      runs.set(taskId, {
+        taskId,
+        name: typeof payload.name === "string" ? payload.name : activity.summary,
+        ...(typeof payload.description === "string" ? { description: payload.description } : {}),
+        ...(typeof payload.agentType === "string" ? { agentType: payload.agentType } : {}),
+        ...(typeof payload.prompt === "string" ? { prompt: payload.prompt } : {}),
+        ...(typeof payload.model === "string" ? { model: payload.model } : {}),
+        ...(typeof payload.reasoningEffort === "string"
+          ? { reasoningEffort: payload.reasoningEffort }
+          : {}),
+        status: "running",
+        entries: [],
+        activityIds: [activity.id],
+        startedAt: activity.createdAt,
+      });
+      continue;
+    }
+    if (taskId && runs.has(taskId) && activity.kind === "task.completed") {
+      const run = runs.get(taskId)!;
+      run.status =
+        payload?.status === "failed" || payload?.status === "stopped"
+          ? payload.status
+          : "completed";
+      const summary =
+        typeof payload?.summary === "string"
+          ? payload.summary
+          : typeof payload?.detail === "string"
+            ? payload.detail
+            : undefined;
+      if (summary) run.summary = summary;
+      run.completedAt = activity.createdAt;
+      run.activityIds.push(activity.id);
+      continue;
+    }
+    const data =
+      payload?.data && typeof payload.data === "object"
+        ? (payload.data as Record<string, unknown>)
+        : undefined;
+    const agentRunId =
+      typeof payload?.agentRunId === "string"
+        ? payload.agentRunId
+        : typeof data?.agentRunId === "string"
+          ? data.agentRunId
+          : undefined;
+    const run = agentRunId ? runs.get(agentRunId) : undefined;
+    if (run && activity.kind !== "tool.started") {
+      const {
+        activityKind: _activityKind,
+        collapseKey: _collapseKey,
+        ...entry
+      } = toDerivedWorkLogEntry(activity);
+      run.entries.push(entry);
+      run.activityIds.push(activity.id);
+    }
+  }
+  return [...runs.values()];
 }
 
 function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): boolean {

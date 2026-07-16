@@ -18,7 +18,7 @@ import {
   type ReactNode,
 } from "react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
-import { deriveTimelineEntries, formatElapsed } from "../../session-logic";
+import { deriveTimelineEntries, formatElapsed, type AgentRun } from "../../session-logic";
 import { type TurnDiffSummary } from "../../types";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
 import ChatMarkdown from "../ChatMarkdown";
@@ -1148,6 +1148,9 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   workspaceRoot: string | undefined;
 }) {
   const { workEntry, workspaceRoot } = props;
+  if (workEntry.agentRun) {
+    return <AgentRunRow agentRun={workEntry.agentRun} workspaceRoot={workspaceRoot} />;
+  }
   const iconConfig = workToneIcon(workEntry.tone);
   const entryIcon = createElement(workEntryIcon(workEntry), { className: "size-3" });
   const heading = toolWorkEntryHeading(workEntry);
@@ -1260,6 +1263,92 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
           )}
         </div>
       )}
+    </div>
+  );
+});
+
+const AgentRunRow = memo(function AgentRunRow({
+  agentRun,
+  workspaceRoot,
+}: {
+  agentRun: AgentRun;
+  workspaceRoot: string | undefined;
+}) {
+  const [isExpanded, setIsExpanded] = useState(agentRun.status === "running");
+  const ToggleIcon = isExpanded ? ChevronDownIcon : ChevronRightIcon;
+  const status =
+    agentRun.status === "running"
+      ? "Running"
+      : agentRun.status === "completed"
+        ? "Completed"
+        : agentRun.status === "stopped"
+          ? "Stopped"
+          : "Failed";
+
+  return (
+    <div className="rounded-lg border border-border/50 bg-background/45 px-2 py-1.5">
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 text-left"
+        onClick={() => setIsExpanded((value) => !value)}
+        aria-expanded={isExpanded}
+      >
+        <ToggleIcon className="size-3 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate text-foreground/85">{agentRun.name}</span>
+        <span className="text-[0.8em] text-muted-foreground/65">{status}</span>
+      </button>
+      {isExpanded && (
+        <AgentRunTranscript agentRun={agentRun} workspaceRoot={workspaceRoot} compact />
+      )}
+    </div>
+  );
+});
+
+const AgentRunTranscript = memo(function AgentRunTranscript({
+  agentRun,
+  workspaceRoot,
+  compact = false,
+}: {
+  agentRun: AgentRun;
+  workspaceRoot: string | undefined;
+  compact?: boolean;
+}) {
+  return (
+    <div className={compact ? "mt-2 border-l border-border/50 pl-3" : "space-y-3"}>
+      {agentRun.prompt ? (
+        compact ? (
+          <div className="rounded-md bg-muted/35 px-3 py-2 whitespace-pre-wrap text-muted-foreground">
+            {agentRun.prompt}
+          </div>
+        ) : (
+          <div className="flex justify-end">
+            <div className="max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3 whitespace-pre-wrap">
+              {agentRun.prompt}
+            </div>
+          </div>
+        )
+      ) : null}
+      {agentRun.entries.map((entry) => (
+        <SimpleWorkEntryRow
+          key={`agent-entry:${entry.id}`}
+          workEntry={entry}
+          workspaceRoot={workspaceRoot}
+        />
+      ))}
+      {agentRun.summary ? (
+        compact ? (
+          <div className="whitespace-pre-wrap text-muted-foreground/80">{agentRun.summary}</div>
+        ) : (
+          <div className="min-w-0 px-1 py-0.5">
+            <ChatMarkdown text={agentRun.summary} cwd={workspaceRoot} isStreaming={false} />
+          </div>
+        )
+      ) : null}
+      <div className="text-[0.75em] tracking-wide text-muted-foreground/50">
+        Background{agentRun.agentType ? ` ${agentRun.agentType}` : ""} agent
+        {agentRun.model ? ` · ${agentRun.model}` : ""}
+        {agentRun.reasoningEffort ? ` · ${agentRun.reasoningEffort}` : ""}
+      </div>
     </div>
   );
 });

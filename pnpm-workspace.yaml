@@ -48,15 +48,16 @@ catalog:
   vitest: ^4.0.0
   yaml: ^2.9.0
 
-ignoredBuiltDependencies:
-  - msw
-
-onlyBuiltDependencies:
-  - electron
-  - esbuild
-  - msgpackr-extract
-  - node-pty
-  - sharp
+allowBuilds:
+  browser-tabs-lock: false
+  core-js: false
+  electron: true
+  electron-winstaller: false
+  esbuild: true
+  msgpackr-extract: true
+  msw: false
+  node-pty: true
+  sharp: true
 
 overrides:
   "@clerk/backend": "catalog:"

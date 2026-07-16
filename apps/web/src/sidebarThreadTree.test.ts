@@ -2,7 +2,8 @@ import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
 import type { ThreadStatusPill } from "./components/Sidebar.logic";
-import { buildSidebarThreadRows } from "./sidebarThreadTree";
+import { buildSidebarThreadRows, expandSidebarThreadsWithAgentRuns } from "./sidebarThreadTree";
+import type { AgentRun } from "./session-logic";
 import type { SidebarThreadSummary } from "./types";
 
 const environmentId = EnvironmentId.make("env-a");
@@ -44,6 +45,40 @@ const workingStatus: ThreadStatusPill = {
 };
 
 describe("buildSidebarThreadRows", () => {
+  it("renders inactive background agents through the normal nested-chat tree", () => {
+    const parent = thread("thread-1");
+    const agentRun: AgentRun = {
+      taskId: "agent-1",
+      name: "Repository explorer",
+      startedAt: "2026-01-01T00:00:02.000Z",
+      status: "completed",
+      entries: [],
+    };
+    const threads = expandSidebarThreadsWithAgentRuns({
+      threads: [parent],
+      agentRunsByThreadKey: new Map([[key(parent.id), [agentRun]]]),
+    });
+
+    const result = buildSidebarThreadRows({
+      threads,
+      pinnedThreadKeys: [],
+      collapsedThreadKeys: new Set(),
+      sortOrder: "created_at",
+      resolveThreadStatus: () => null,
+    });
+
+    expect(result.rowViews.map((row) => [row.thread.title, row.depth])).toEqual([
+      [parent.title, 0],
+      [agentRun.name, 1],
+    ]);
+    expect(result.rowViews[0]).toMatchObject({ hasChildren: true, childCount: 1 });
+    expect(result.rowViews[1]?.thread.virtualAgentRun).toEqual({
+      parentThreadId: parent.id,
+      taskId: agentRun.taskId,
+      status: "completed",
+    });
+  });
+
   it("renders child chats indented directly below expanded parents", () => {
     const parent = thread("thread-1");
     const child = thread("thread-2", { parentThreadId: parent.id });

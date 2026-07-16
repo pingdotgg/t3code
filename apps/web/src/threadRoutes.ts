@@ -12,6 +12,23 @@ export type ThreadRouteTarget =
       draftId: DraftId;
     };
 
+export interface AgentRunRouteSearch {
+  agent?: string | undefined;
+}
+
+export function parseAgentRunRouteSearch(search: Record<string, unknown>): AgentRunRouteSearch {
+  if (typeof search.agent !== "string") return {};
+  const agent = search.agent.trim();
+  return agent ? { agent } : {};
+}
+
+export function clearAgentRunRouteSearch<T extends Record<string, unknown>>(
+  search: T,
+): Omit<T, "agent"> & AgentRunRouteSearch {
+  const { agent: _agent, ...rest } = search;
+  return { ...rest, agent: undefined };
+}
+
 export function buildThreadRouteParams(ref: ScopedThreadRef): {
   environmentId: EnvironmentId;
   threadId: ThreadId;

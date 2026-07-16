@@ -356,6 +356,7 @@ function mapThreadShell(
     hasPendingApprovals: thread.hasPendingApprovals,
     hasPendingUserInput: thread.hasPendingUserInput,
     hasActionableProposedPlan: thread.hasActionableProposedPlan,
+    backgroundAgentRuns: thread.backgroundAgentRuns ?? [],
   };
   return {
     shell,
@@ -485,8 +486,28 @@ function sidebarThreadSummariesEqual(
     left.latestUserMessageAt === right.latestUserMessageAt &&
     left.hasPendingApprovals === right.hasPendingApprovals &&
     left.hasPendingUserInput === right.hasPendingUserInput &&
-    left.hasActionableProposedPlan === right.hasActionableProposedPlan
+    left.hasActionableProposedPlan === right.hasActionableProposedPlan &&
+    backgroundAgentRunsEqual(left.backgroundAgentRuns, right.backgroundAgentRuns)
   );
+}
+
+function backgroundAgentRunsEqual(
+  left: SidebarThreadSummary["backgroundAgentRuns"],
+  right: SidebarThreadSummary["backgroundAgentRuns"],
+): boolean {
+  if (left === right) return true;
+  if (!left || !right || left.length !== right.length) return false;
+  return left.every((run, index) => {
+    const candidate = right[index];
+    return (
+      candidate !== undefined &&
+      run.taskId === candidate.taskId &&
+      run.name === candidate.name &&
+      run.status === candidate.status &&
+      run.startedAt === candidate.startedAt &&
+      run.completedAt === candidate.completedAt
+    );
+  });
 }
 
 function threadShellsEqual(left: ThreadShell | undefined, right: ThreadShell): boolean {

@@ -424,6 +424,15 @@ export const OrchestrationProjectShell = Schema.Struct({
 });
 export type OrchestrationProjectShell = typeof OrchestrationProjectShell.Type;
 
+export const OrchestrationBackgroundAgentRunShell = Schema.Struct({
+  taskId: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  status: Schema.Literals(["running", "completed", "failed", "stopped"]),
+  startedAt: IsoDateTime,
+  completedAt: Schema.optionalKey(IsoDateTime),
+});
+export type OrchestrationBackgroundAgentRunShell = typeof OrchestrationBackgroundAgentRunShell.Type;
+
 export const OrchestrationThreadShell = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -446,6 +455,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   hasPendingApprovals: Schema.Boolean,
   hasPendingUserInput: Schema.Boolean,
   hasActionableProposedPlan: Schema.Boolean,
+  backgroundAgentRuns: Schema.optionalKey(Schema.Array(OrchestrationBackgroundAgentRunShell)),
 });
 export type OrchestrationThreadShell = typeof OrchestrationThreadShell.Type;
 

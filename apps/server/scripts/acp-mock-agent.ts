@@ -20,6 +20,13 @@ const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHO
 const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
 const emitElicitation = process.env.T3_ACP_EMIT_ELICITATION === "1";
 const emitThoughtChunk = process.env.T3_ACP_EMIT_THOUGHT_CHUNK === "1";
+const emitBackgroundAgentFlow = process.env.T3_ACP_EMIT_BACKGROUND_AGENT_FLOW === "1";
+const backgroundAgentCompletionDelayMs = Number.parseInt(
+  process.env.T3_ACP_BACKGROUND_AGENT_COMPLETION_DELAY_MS ?? "100",
+  10,
+);
+const emitDelayedContinuationFlow = process.env.T3_ACP_EMIT_DELAYED_CONTINUATION_FLOW === "1";
+const failBackgroundAgentLaunch = process.env.T3_ACP_FAIL_BACKGROUND_AGENT_LAUNCH === "1";
 const clientToolRequest = process.env.T3_ACP_CLIENT_TOOL_REQUEST;
 const permissionRequestCount = Number.parseInt(
   process.env.T3_ACP_PERMISSION_REQUEST_COUNT ?? "0",
@@ -300,6 +307,7 @@ function modeState(): AcpSchema.SessionModeState {
 
 const program = Effect.gen(function* () {
   const agent = yield* EffectAcpAgent.AcpAgent;
+  const programScope = yield* Effect.scope;
 
   yield* agent.handleInitialize((request) =>
     Effect.sync(() => {
@@ -465,6 +473,136 @@ const program = Effect.gen(function* () {
 
       if (Number.isFinite(promptDelayMs) && promptDelayMs > 0) {
         yield* Effect.sleep(`${promptDelayMs} millis`);
+      }
+
+      if (emitBackgroundAgentFlow) {
+        const launchToolCallId = "background-launch-1";
+        const agentId = "background-agent-1";
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: launchToolCallId,
+            title: "Explore repository",
+            kind: "other",
+            status: "pending",
+            rawInput: {
+              name: "requested-background-agent",
+              description: "Explore repository",
+              agent_type: "explore",
+              model: "mock-model",
+              mode: "background",
+              prompt: "Inspect the repository.",
+            },
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: launchToolCallId,
+            status: failBackgroundAgentLaunch ? "failed" : "completed",
+            rawOutput: {
+              content: failBackgroundAgentLaunch
+                ? "Agent launch failed."
+                : `Agent started in background with agent_id: ${agentId}.`,
+            },
+          },
+        });
+        if (failBackgroundAgentLaunch) {
+          return { stopReason: "end_turn" };
+        }
+        yield* Effect.gen(function* () {
+          if (
+            Number.isFinite(backgroundAgentCompletionDelayMs) &&
+            backgroundAgentCompletionDelayMs > 0
+          ) {
+            yield* Effect.sleep(`${backgroundAgentCompletionDelayMs} millis`);
+          }
+          yield* agent.client.sessionUpdate({
+            sessionId: requestedSessionId,
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: "background-command-1",
+              title: "Inspect repository",
+              kind: "execute",
+              status: "pending",
+              rawInput: { command: "git status --short" },
+            },
+          });
+          yield* agent.client.sessionUpdate({
+            sessionId: requestedSessionId,
+            update: {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "background-command-1",
+              status: "completed",
+              rawOutput: { exitCode: 0, stdout: "", stderr: "" },
+            },
+          });
+          yield* agent.client.sessionUpdate({
+            sessionId: requestedSessionId,
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: "background-read-1",
+              title: "read_agent",
+              kind: "read",
+              status: "pending",
+              rawInput: { agent_id: agentId, wait: true },
+            },
+          });
+          yield* agent.client.sessionUpdate({
+            sessionId: requestedSessionId,
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: "background-read-1",
+              title: "read_agent",
+              kind: "read",
+              status: "completed",
+              rawInput: { agent_id: agentId, wait: true },
+              rawOutput: {
+                content:
+                  `Agent completed. agent_id: ${agentId}, agent_type: explore, ` +
+                  "status: completed, description: Explore repository\n\nRepository inspected.",
+              },
+            },
+          });
+        }).pipe(Effect.forkIn(programScope));
+        return { stopReason: "end_turn" };
+      }
+
+      if (emitDelayedContinuationFlow) {
+        yield* Effect.gen(function* () {
+          yield* Effect.sleep("100 millis");
+          yield* agent.client.sessionUpdate({
+            sessionId: requestedSessionId,
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: "delayed-command-1",
+              title: "Delayed command",
+              kind: "execute",
+              status: "pending",
+              rawInput: { command: "git status --short" },
+            },
+          });
+          yield* Effect.sleep("100 millis");
+          yield* agent.client.sessionUpdate({
+            sessionId: requestedSessionId,
+            update: {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "delayed-command-1",
+              status: "completed",
+              rawOutput: { exitCode: 0, stdout: "", stderr: "" },
+            },
+          });
+          yield* agent.client.sessionUpdate({
+            sessionId: requestedSessionId,
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "Delayed continuation complete." },
+            },
+          });
+        }).pipe(Effect.forkIn(programScope));
+        return { stopReason: "end_turn" };
       }
 
       if (emitInterleavedAssistantToolCalls) {

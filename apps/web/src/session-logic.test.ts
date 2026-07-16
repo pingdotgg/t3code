@@ -6,11 +6,13 @@ import {
   type OrchestrationThreadActivity,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
+import { deriveMessagesTimelineRows } from "./components/chat/MessagesTimeline.logic";
 
 import {
   deriveCompletionDividerBeforeEntryId,
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
+  deriveAgentRunTimelineEntries,
   derivePendingApprovals,
   derivePendingUserInputs,
   deriveTimelineEntries,
@@ -22,6 +24,59 @@ import {
   isThreadActivelyWorking,
   isLatestTurnSettled,
 } from "./session-logic";
+
+describe("deriveAgentRunTimelineEntries", () => {
+  it("maps an agent run into the normal prompt, work, and completed response sequence", () => {
+    const entries = deriveAgentRunTimelineEntries({
+      taskId: "agent-1",
+      name: "Research agent",
+      prompt: "Inspect the authentication flow",
+      startedAt: "2026-02-23T00:00:00.000Z",
+      completedAt: "2026-02-23T00:00:10.000Z",
+      status: "completed",
+      summary: "Authentication flow inspected.",
+      entries: [
+        {
+          id: "tool-1",
+          createdAt: "2026-02-23T00:00:02.000Z",
+          label: "Searching files",
+          tone: "tool",
+        },
+      ],
+    });
+
+    expect(entries).toMatchObject([
+      {
+        kind: "message",
+        message: { role: "user", text: "Inspect the authentication flow" },
+      },
+      { kind: "work", entry: { id: "tool-1" } },
+      {
+        kind: "message",
+        message: {
+          role: "assistant",
+          text: "Authentication flow inspected.",
+          completedAt: "2026-02-23T00:00:10.000Z",
+        },
+      },
+    ]);
+
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: entries,
+      completionDividerBeforeEntryId: null,
+      isWorking: false,
+      activeTurnId: null,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+    expect(rows).toMatchObject([
+      { kind: "message", message: { role: "user" } },
+      { kind: "reasoning", rows: [{ kind: "work" }] },
+      { kind: "message", message: { role: "assistant" } },
+    ]);
+  });
+});
 
 function makeActivity(overrides: {
   id?: string;
@@ -619,6 +674,88 @@ describe("deriveWorkLogEntries", () => {
 
     const entries = deriveWorkLogEntries(activities, undefined);
     expect(entries.map((entry) => entry.id)).toEqual(["task-progress", "task-complete"]);
+  });
+
+  it("groups background-agent tasks and attributed tools into one read-only run", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "agent-start",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "task.started",
+        summary: "Explore repository",
+        payload: {
+          taskId: "agent-1",
+          taskType: "background-agent",
+          name: "repo-explorer",
+          agentType: "explore",
+          prompt: "Inspect the repository",
+        },
+      }),
+      makeActivity({
+        id: "agent-tool",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Read package.json",
+        payload: { data: { agentRunId: "agent-1" }, detail: "package.json" },
+      }),
+      makeActivity({
+        id: "agent-complete",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "task.completed",
+        summary: "Agent completed",
+        payload: { taskId: "agent-1", status: "completed", detail: "Repository inspected" },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities, undefined);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.agentRun).toMatchObject({
+      taskId: "agent-1",
+      name: "repo-explorer",
+      agentType: "explore",
+      prompt: "Inspect the repository",
+      startedAt: "2026-02-23T00:00:01.000Z",
+      completedAt: "2026-02-23T00:00:03.000Z",
+      status: "completed",
+      summary: "Repository inspected",
+    });
+    expect(entries[0]?.agentRun?.entries.map((entry) => entry.id)).toEqual(["agent-tool"]);
+  });
+
+  it("keeps ambiguously attributed concurrent work at the parent level", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "agent-1-start",
+        kind: "task.started",
+        payload: { taskId: "agent-1", taskType: "background-agent", name: "agent-1" },
+      }),
+      makeActivity({
+        id: "agent-2-start",
+        kind: "task.started",
+        payload: { taskId: "agent-2", taskType: "background-agent", name: "agent-2" },
+      }),
+      makeActivity({
+        id: "ambiguous-tool",
+        kind: "tool.completed",
+        summary: "Inspected repository",
+        payload: {
+          data: {
+            agentAttribution: "ambiguous",
+            candidateAgentRunIds: ["agent-1", "agent-2"],
+          },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities, undefined);
+
+    expect(entries.find((entry) => entry.id === "ambiguous-tool")).toBeDefined();
+    expect(
+      entries
+        .filter((entry) => entry.agentRun)
+        .every((entry) => entry.agentRun?.entries.length === 0),
+    ).toBe(true);
   });
 
   it("uses payload summary as label for task entries when available", () => {

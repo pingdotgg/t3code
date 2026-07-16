@@ -86,7 +86,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       arch: "arm64" as const,
       target: "dir",
       lockfile: "lockfile-v1",
-      packageManager: "pnpm@10.24.0",
+      packageManager: "pnpm@11.10.0",
       dependencies: { effect: "1.0.0" },
       devDependencies: { electron: "40.6.0", "electron-builder": "26.15.3" },
       overrides: {},

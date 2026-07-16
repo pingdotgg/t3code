@@ -6,6 +6,7 @@ import {
   copilotFatalToolCallErrorMessage,
   detectCopilotFatalToolCallError,
   extractCopilotPlanUpdate,
+  parseCopilotBackgroundAgentUpdate,
   normalizeCopilotParsedSessionEvent,
   normalizeCopilotPermissionRequest,
   normalizeCopilotToolCallState,
@@ -206,6 +207,103 @@ describe("CopilotAcpRuntimeModel", () => {
     expect(normalized.itemType).toBe("dynamic_tool_call");
     expect(normalized.title).toBe("Tool");
     expect(normalized.data.itemType).toBe("dynamic_tool_call");
+  });
+
+  it("normalizes background agent launches and read results", () => {
+    const launch = parseCopilotBackgroundAgentUpdate({
+      toolCallId: "launch-1",
+      status: "completed",
+      data: {
+        rawInput: {
+          name: "requested-inventory",
+          description: "Inventory upstream features",
+          agent_type: "explore",
+          model: "gpt-5.6-terra",
+          reasoning_effort: "high",
+          mode: "background",
+          prompt: "Inspect upstream changes.",
+        },
+        rawOutput: {
+          content: "Agent started in background with agent_id: upstream-inventory.",
+        },
+      },
+    });
+
+    expect(launch).toEqual({
+      _tag: "started",
+      taskId: "upstream-inventory",
+      launchToolCallId: "launch-1",
+      name: "requested-inventory",
+      description: "Inventory upstream features",
+      agentType: "explore",
+      model: "gpt-5.6-terra",
+      reasoningEffort: "high",
+      prompt: "Inspect upstream changes.",
+    });
+
+    const result = parseCopilotBackgroundAgentUpdate({
+      toolCallId: "read-1",
+      status: "completed",
+      data: {
+        rawInput: { agent_id: "upstream-inventory", wait: true },
+        rawOutput: {
+          content:
+            "Agent completed. agent_id: upstream-inventory, agent_type: explore, status: completed, description: Inventory upstream features, elapsed: 50s\n\nFinal report",
+        },
+      },
+    });
+    expect(result).toEqual({
+      _tag: "completed",
+      taskId: "upstream-inventory",
+      status: "completed",
+      summary: "Final report",
+    });
+  });
+
+  it("treats an idle background agent as completed", () => {
+    const result = parseCopilotBackgroundAgentUpdate({
+      toolCallId: "read-idle",
+      status: "completed",
+      data: {
+        rawInput: { agent_id: "backend-perf-audit", wait: true },
+        rawOutput: {
+          content:
+            "Agent is idle (waiting for messages). agent_id: backend-perf-audit, agent_type: general-purpose, status: idle, description: Audit backend performance, elapsed: 106s, total_turns: 1\n\nFinal report",
+        },
+      },
+    });
+
+    expect(result).toEqual({
+      _tag: "completed",
+      taskId: "backend-perf-audit",
+      status: "completed",
+      summary: "Final report",
+    });
+  });
+
+  it("does not start a background agent before a successful launch result", () => {
+    const rawInput = {
+      name: "upstream-inventory",
+      description: "Inventory upstream features",
+      agent_type: "explore",
+      mode: "background",
+      prompt: "Inspect upstream changes.",
+    };
+
+    expect(
+      parseCopilotBackgroundAgentUpdate({
+        toolCallId: "launch-pending",
+        status: "pending",
+        data: { rawInput },
+      }),
+    ).toBeUndefined();
+    expect(
+      parseCopilotBackgroundAgentUpdate({
+        toolCallId: "launch-failed",
+        status: "failed",
+        data: { rawInput, rawOutput: { content: "Agent launch failed." } },
+      }),
+    ).toBeUndefined();
   });
 
   describe("detectCopilotFatalToolCallError", () => {
