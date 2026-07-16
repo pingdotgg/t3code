@@ -101,6 +101,30 @@ describe("PluginContextComposer", () => {
     }),
   );
 
+  it.effect("skips (does not fail the turn on) a contributor that throws synchronously", () =>
+    Effect.gen(function* () {
+      const composer = yield* make();
+      yield* composer.put("plugin-a", [
+        {
+          name: "boom",
+          // A function that THROWS when called (not Effect.fail). Invoked eagerly this
+          // would defect the whole compose — which its "cannot fail" caller yields
+          // unguarded. compose must skip it and keep going.
+          contribute: () => {
+            throw new Error("kaboom");
+          },
+        },
+        { name: "ok", text: "survivor" },
+      ]);
+
+      const composed = yield* composer.compose(turn);
+      assert.strictEqual(composed.text, "survivor");
+      assert.isDefined(
+        composed.records.find((record) => record.name === "boom" && record.skipped === "failed"),
+      );
+    }),
+  );
+
   it.effect("skips the contributions that do not fit the total budget", () =>
     Effect.gen(function* () {
       const composer = yield* make();

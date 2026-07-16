@@ -139,32 +139,41 @@ export const make = Effect.fn("PluginContextComposer.make")(function* () {
     if (descriptor.contribute === undefined) {
       return Effect.succeed({ text: descriptor.text ?? null, skipped: null });
     }
-    return descriptor
-      .contribute({
+    // Effect.suspend so `contribute` is INVOKED inside the effect. Called eagerly
+    // (`descriptor.contribute({...}).pipe(...)`), a synchronous throw — or a
+    // non-Effect return from dynamically loaded plugin JS — would land BEFORE
+    // timeoutOrElse/catchCause exist and become a defect of the whole compose,
+    // which the "cannot fail" caller (CodexSessionRuntime) yields unguarded.
+    // Suspending routes that throw through the catchCause below (skipped:"failed"),
+    // so one bad contributor is dropped instead of failing the user's turn. The
+    // registration-time typeof guard still rejects a non-function up front; this
+    // covers a function that throws only when called.
+    return Effect.suspend(() =>
+      descriptor.contribute!({
         threadId: turn.threadId,
         projectId: turn.projectId,
         interactionMode: turn.interactionMode,
-      })
-      .pipe(
-        Effect.map((text) => ({ text, skipped: null as "failed" | "timed-out" | null })),
-        // A hung contributor must not hold up the user's turn. It is dropped, not
-        // waited on — and recorded, because a silent drop looks like "my rule does
-        // nothing" with no way to find out why.
-        Effect.timeoutOrElse({
-          duration: CONTEXT_CONTRIBUTOR_TIMEOUT,
-          orElse: () =>
-            Effect.succeed({ text: null, skipped: "timed-out" as "failed" | "timed-out" | null }),
-        }),
-        Effect.catchCause((cause) =>
-          // A plugin's failure must never fail the USER's turn. Theirs is the work
-          // that matters; the contribution is an extra.
-          Effect.logWarning("plugin context contributor failed", {
-            pluginId,
-            name: descriptor.name,
-            cause: Cause.pretty(cause),
-          }).pipe(Effect.as({ text: null, skipped: "failed" as "failed" | "timed-out" | null })),
-        ),
-      );
+      }),
+    ).pipe(
+      Effect.map((text) => ({ text, skipped: null as "failed" | "timed-out" | null })),
+      // A hung contributor must not hold up the user's turn. It is dropped, not
+      // waited on — and recorded, because a silent drop looks like "my rule does
+      // nothing" with no way to find out why.
+      Effect.timeoutOrElse({
+        duration: CONTEXT_CONTRIBUTOR_TIMEOUT,
+        orElse: () =>
+          Effect.succeed({ text: null, skipped: "timed-out" as "failed" | "timed-out" | null }),
+      }),
+      Effect.catchCause((cause) =>
+        // A plugin's failure must never fail the USER's turn. Theirs is the work
+        // that matters; the contribution is an extra.
+        Effect.logWarning("plugin context contributor failed", {
+          pluginId,
+          name: descriptor.name,
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.as({ text: null, skipped: "failed" as "failed" | "timed-out" | null })),
+      ),
+    );
   };
 
   const compose: PluginContextComposer["Service"]["compose"] = (turn) => {

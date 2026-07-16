@@ -121,17 +121,25 @@ describe("web plugin state", () => {
     const env = "env-1";
 
     // No cache yet + a non-success (Initial) result -> empty.
-    expect(resolvePluginListWithCache(env, AsyncResult.initial<ReadonlyArray<PluginInfo>>(), cache)).toEqual([]);
+    expect(
+      resolvePluginListWithCache(env, AsyncResult.initial<ReadonlyArray<PluginInfo>>(), cache),
+    ).toEqual([]);
     // A successful load returns the list and seeds the cache.
-    expect(resolvePluginListWithCache(env, AsyncResult.success<ReadonlyArray<PluginInfo>>(listA), cache)).toEqual(listA);
+    expect(
+      resolvePluginListWithCache(env, AsyncResult.success<ReadonlyArray<PluginInfo>>(listA), cache),
+    ).toEqual(listA);
     // A transient blip (result reset to Initial) keeps the last known list.
-    expect(resolvePluginListWithCache(env, AsyncResult.initial<ReadonlyArray<PluginInfo>>(), cache)).toEqual(listA);
+    expect(
+      resolvePluginListWithCache(env, AsyncResult.initial<ReadonlyArray<PluginInfo>>(), cache),
+    ).toEqual(listA);
     // A genuine empty (successful) load clears it.
     expect(
       resolvePluginListWithCache(env, AsyncResult.success<ReadonlyArray<PluginInfo>>([]), cache),
     ).toEqual([]);
     // ...and a subsequent blip keeps the (now empty) last known list.
-    expect(resolvePluginListWithCache(env, AsyncResult.initial<ReadonlyArray<PluginInfo>>(), cache)).toEqual([]);
+    expect(
+      resolvePluginListWithCache(env, AsyncResult.initial<ReadonlyArray<PluginInfo>>(), cache),
+    ).toEqual([]);
   });
 
   it("binds plugin RPC helpers to one plugin id", () => {

@@ -101,9 +101,10 @@ describe("GitHubCli.layer", () => {
         args: [
           "pr",
           "view",
-          "#42",
           "--json",
           "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
+          "--",
+          "#42",
         ],
         cwd: "/repo",
         timeoutMs: 30_000,
@@ -263,7 +264,7 @@ describe("GitHubCli.layer", () => {
       expect(mockRun).toHaveBeenNthCalledWith(1, {
         operation: "GitHubCli.execute",
         command: "gh",
-        args: ["repo", "create", "octocat/codething-mvp", "--private"],
+        args: ["repo", "create", "--private", "--", "octocat/codething-mvp"],
         cwd: "/repo",
         timeoutMs: 30_000,
       });
@@ -339,7 +340,31 @@ describe("GitHubCli.layer", () => {
       expect(mockRun).toHaveBeenCalledWith({
         operation: "GitHubCli.execute",
         command: "gh",
-        args: ["pr", "merge", "42", "--rebase"],
+        args: ["pr", "merge", "--rebase", "--", "42"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("keeps an option-shaped PR number a positional (no gh flag injection)", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      // A dynamically-loaded plugin can supply a value the TS `number` type does not
+      // enforce at runtime. Without the `--` terminator, "--admin" would parse as a
+      // gh flag (branch-protection bypass). It must land AFTER `--`, as a positional.
+      yield* gh.mergePullRequest({
+        cwd: "/repo",
+        number: "--admin" as unknown as number,
+        strategy: "squash",
+      });
+
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["pr", "merge", "--squash", "--", "--admin"],
         cwd: "/repo",
         timeoutMs: 30_000,
       });
@@ -413,7 +438,7 @@ describe("GitHubCli.layer", () => {
       expect(mockRun).toHaveBeenCalledWith({
         operation: "GitHubCli.execute",
         command: "gh",
-        args: ["pr", "view", "42", "--json", "state,mergedAt,reviewDecision,headRefOid,url"],
+        args: ["pr", "view", "--json", "state,mergedAt,reviewDecision,headRefOid,url", "--", "42"],
         cwd: "/repo",
         timeoutMs: 30_000,
       });
@@ -465,7 +490,7 @@ describe("GitHubCli.layer", () => {
       expect(mockRun).toHaveBeenCalledWith({
         operation: "GitHubCli.execute",
         command: "gh",
-        args: ["pr", "checks", "42", "--json", "name,state,bucket,link"],
+        args: ["pr", "checks", "--json", "name,state,bucket,link", "--", "42"],
         cwd: "/repo",
         timeoutMs: 30_000,
         allowNonZeroExit: true,
@@ -608,7 +633,7 @@ describe("GitHubCli.layer", () => {
       expect(mockRun).toHaveBeenCalledWith({
         operation: "GitHubCli.execute",
         command: "gh",
-        args: ["pr", "view", "42", "--json", "reviews"],
+        args: ["pr", "view", "--json", "reviews", "--", "42"],
         cwd: "/repo",
         timeoutMs: 30_000,
       });

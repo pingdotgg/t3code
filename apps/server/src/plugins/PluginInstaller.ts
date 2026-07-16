@@ -479,18 +479,6 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
     });
   });
 
-  const getStage = (stageToken: string, operation: StageRecord["operation"]) =>
-    Effect.gen(function* () {
-      yield* cleanupExpired;
-      const stage = (yield* Ref.get(stages)).get(stageToken);
-      if (!stage || stage.operation !== operation) {
-        return yield* managementError("stage-not-found", "Plugin staging token was not found.", {
-          stageToken,
-        });
-      }
-      return stage;
-    });
-
   // Claim a stage for a confirm: reap other expired stages, then atomically PIN
   // this one so its TTL can no longer expire. Without pinning, a concurrent call
   // (another getStage / beginInstall) runs cleanupExpired, which would reap this
@@ -958,7 +946,20 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
 
   const abortInstall: PluginInstaller["Service"]["abortInstall"] = (stageToken) =>
     Effect.gen(function* () {
-      const stage = yield* dropStage(stageToken);
+      const stage = yield* Ref.modify(stages, (current) => {
+        const existing = current.get(stageToken);
+        // A PINNED stage is mid-confirm — claimStage transferred ownership to an
+        // in-flight confirmInstall/confirmUpgrade. Abort must NOT drop its record or
+        // delete its stagingDir: doing so in the confirm's rename window fails a
+        // valid confirm with ENOENT, and doing so after the move "cancels" a plugin
+        // that is already live. Leave a pinned stage to the confirm; abort no-ops.
+        if (!existing || existing.expiresAtMs === Number.POSITIVE_INFINITY) {
+          return [null, current];
+        }
+        const next = new Map(current);
+        next.delete(stageToken);
+        return [existing, next];
+      });
       if (stage) {
         yield* removePath(stage.stagingDir);
       }
@@ -976,25 +977,39 @@ export const make = Effect.fn("PluginInstaller.make")(function* () {
         .updatePlugin(input.pluginId, ({ current }) =>
           installedEntry(current).pipe(
             Effect.flatMap((entry) =>
-              // A pending-remove entry is mid-uninstall (persist written, teardown
-              // in flight). Re-enabling it would resurrect a plugin the user asked
-              // to remove — final lockfile active/enabled while reconcile still
-              // deletes it. Reject the late enable so uninstall wins.
-              input.enabled && entry.state === "pending-remove"
+              // A pending-upgrade entry is a CONFIRMED upgrade awaiting the next
+              // start's reconcile to promote `staged`. Forcing state to
+              // active/disabled here keeps the now-dangling `staged` field but makes
+              // reconcile (which only promotes when state === "pending-upgrade")
+              // skip it — silently dropping the confirmed upgrade and orphaning its
+              // staged dir. Reject the toggle; it applies on the next restart.
+              entry.state === "pending-upgrade"
                 ? Effect.fail(
-                    managementError("manifest-invalid", "Plugin is pending removal.", {
-                      pluginId: input.pluginId,
-                    }),
+                    managementError(
+                      "manifest-invalid",
+                      "An upgrade is pending for this plugin; it applies on the next restart.",
+                      { pluginId: input.pluginId },
+                    ),
                   )
-                : Effect.succeed({
-                    ...entry,
-                    enabled: input.enabled,
-                    state: input.enabled ? ("active" as const) : ("disabled" as const),
-                    lastError: input.enabled ? null : entry.lastError,
-                    activation: input.enabled
-                      ? { activatingSince: null, crashCount: 0 }
-                      : entry.activation,
-                  }),
+                : // A pending-remove entry is mid-uninstall (persist written, teardown
+                  // in flight). Re-enabling it would resurrect a plugin the user asked
+                  // to remove — final lockfile active/enabled while reconcile still
+                  // deletes it. Reject the late enable so uninstall wins.
+                  input.enabled && entry.state === "pending-remove"
+                  ? Effect.fail(
+                      managementError("manifest-invalid", "Plugin is pending removal.", {
+                        pluginId: input.pluginId,
+                      }),
+                    )
+                  : Effect.succeed({
+                      ...entry,
+                      enabled: input.enabled,
+                      state: input.enabled ? ("active" as const) : ("disabled" as const),
+                      lastError: input.enabled ? null : entry.lastError,
+                      activation: input.enabled
+                        ? { activatingSince: null, crashCount: 0 }
+                        : entry.activation,
+                    }),
             ),
           ),
         )

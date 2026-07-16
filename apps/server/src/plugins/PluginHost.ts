@@ -723,7 +723,10 @@ const upgradeLockfileEntry = (
   sha256: staged.sha256,
   sourceId: entry.sourceId,
   enabled: entry.enabled,
-  state: "active",
+  // Match state to enabled: upgrading a DISABLED plugin must not resurrect it as
+  // "active" (the UI would show Active with no runtime, and RPCs would 404). Only
+  // an enabled plugin becomes active on promotion.
+  state: entry.enabled ? "active" : "disabled",
   // Reset activation health for the new build. Carrying over the old version's
   // crashCount could immediately trip the repeated-crash safe mode on the first
   // startup of the upgrade, and its lastError would surface a stale failure the

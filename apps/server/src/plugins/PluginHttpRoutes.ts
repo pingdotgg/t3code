@@ -153,8 +153,25 @@ const FORBIDDEN_RESPONSE_HEADERS = new Set([
   // not be able to set them either.
   "clear-site-data",
   "refresh",
+  // Message-framing and hop-by-hop headers: the host's HTTP server owns framing on
+  // the shared keep-alive connection. A plugin-set `content-length` /
+  // `transfer-encoding` that disagrees with the actual body desyncs the parser and
+  // poisons subsequent responses on the pooled host-origin connection; `connection`
+  // / `keep-alive` / `trailer` / `te` / `upgrade` are per-hop and never a plugin's
+  // to dictate.
+  "content-length",
+  "transfer-encoding",
+  "connection",
+  "keep-alive",
+  "trailer",
+  "te",
+  "upgrade",
 ]);
 const FORBIDDEN_RESPONSE_HEADER_PREFIXES = ["access-control-"];
+
+// Statuses that MUST NOT carry a message body (RFC 9110). A plugin returning a body
+// with one of these would emit a malformed response that desyncs the connection.
+const NULL_BODY_STATUSES = new Set([204, 205, 304]);
 
 const sanitizeResponseHeaders = (
   headers: Readonly<Record<string, string>>,
@@ -175,14 +192,17 @@ const clampStatus = (status: number): number =>
   Number.isInteger(status) && status >= 200 && status <= 599 ? status : 500;
 
 function toHttpResponse(response: PluginHttpResponse): HttpServerResponse.HttpServerResponse {
+  const status = clampStatus(response.status);
   const options = {
-    status: clampStatus(response.status),
+    status,
     ...(response.headers === undefined
       ? {}
       : { headers: sanitizeResponseHeaders(response.headers) }),
   };
   const body = response.body;
-  if (body === undefined || body === null) {
+  // Force an empty body for null-body statuses regardless of what the plugin
+  // returned: a 204/205/304 with a body is malformed and desyncs the connection.
+  if (body === undefined || body === null || NULL_BODY_STATUSES.has(status)) {
     return HttpServerResponse.empty(options);
   }
   if (body instanceof Uint8Array) {

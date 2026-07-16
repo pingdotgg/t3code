@@ -547,9 +547,10 @@ export const make = Effect.gen(function* () {
         args: [
           "pr",
           "view",
-          input.reference,
           "--json",
           "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
+          "--",
+          input.reference,
         ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
@@ -576,7 +577,7 @@ export const make = Effect.gen(function* () {
     getRepositoryCloneUrls: (input) =>
       execute({
         cwd: input.cwd,
-        args: ["repo", "view", input.repository, "--json", "nameWithOwner,url,sshUrl"],
+        args: ["repo", "view", "--json", "nameWithOwner,url,sshUrl", "--", input.repository],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
@@ -596,7 +597,7 @@ export const make = Effect.gen(function* () {
     createRepository: (input) =>
       execute({
         cwd: input.cwd,
-        args: ["repo", "create", input.repository, `--${input.visibility}`],
+        args: ["repo", "create", `--${input.visibility}`, "--", input.repository],
       }).pipe(
         Effect.map((result) =>
           deriveRepositoryCloneUrlsFromCreateOutput(result.stdout, input.repository),
@@ -622,15 +623,20 @@ export const make = Effect.gen(function* () {
     mergePullRequest: (input) =>
       execute({
         cwd: input.cwd,
+        // `--` end-of-options BEFORE the user-controlled number: without it a value
+        // like "--admin" is parsed as a flag (pflag interspersed parsing), turning
+        // `gh pr merge --admin --squash` into a branch-protection-bypass merge. All
+        // flags go before `--`; the selector after it is always positional.
         args: [
           "pr",
           "merge",
-          String(input.number),
           input.strategy === "merge"
             ? "--merge"
             : input.strategy === "rebase"
               ? "--rebase"
               : "--squash",
+          "--",
+          String(input.number),
         ],
       }).pipe(Effect.asVoid),
     getPullRequestDetail: (input) =>
@@ -639,9 +645,10 @@ export const make = Effect.gen(function* () {
         args: [
           "pr",
           "view",
-          String(input.number),
           "--json",
           "state,mergedAt,reviewDecision,headRefOid,url",
+          "--",
+          String(input.number),
         ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
@@ -666,7 +673,7 @@ export const make = Effect.gen(function* () {
         })),
       ),
     listPullRequestChecks: (input) => {
-      const args = ["pr", "checks", String(input.number), "--json", "name,state,bucket,link"];
+      const args = ["pr", "checks", "--json", "name,state,bucket,link", "--", String(input.number)];
       // Build a failure whose raw stderr stays a server-side-only property
       // (VcsProcessExitError keeps it off the wire) with a stable message.
       const checksFailure = (result: VcsProcess.VcsProcessOutput) =>
@@ -743,7 +750,7 @@ export const make = Effect.gen(function* () {
     listPullRequestReviews: (input) =>
       execute({
         cwd: input.cwd,
-        args: ["pr", "view", String(input.number), "--json", "reviews"],
+        args: ["pr", "view", "--json", "reviews", "--", String(input.number)],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
@@ -818,7 +825,7 @@ export const make = Effect.gen(function* () {
     checkoutPullRequest: (input) =>
       execute({
         cwd: input.cwd,
-        args: ["pr", "checkout", input.reference, ...(input.force ? ["--force"] : [])],
+        args: ["pr", "checkout", ...(input.force ? ["--force"] : []), "--", input.reference],
       }).pipe(Effect.asVoid),
   });
 });

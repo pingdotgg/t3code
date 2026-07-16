@@ -215,7 +215,7 @@ register: (hostApi) =>
           name: "watch",
           run: (ctx) =>
             events.subscribe({
-              types: ["thread.created", "turn.completed"],
+              types: ["thread.created", "thread.message-sent"],
               handler: (event) => ctx.logger.info("saw", { type: event.type }),
             }),
         },
