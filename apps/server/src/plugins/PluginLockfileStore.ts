@@ -409,6 +409,26 @@ export const make = Effect.fn("PluginLockfileStore.make")(function* () {
                   lockfilePath,
                   lockfile: next,
                 });
+                // Post-write ownership read-back. The pre-write check narrows the
+                // reclaim window but cannot close it: a reclaimer can still
+                // interleave between that check and writeLockfileToPath's rename
+                // after a >STALE_LOCK_MS holder stall. The write itself is atomic
+                // (temp+rename, no corruption), but silently winning that race is
+                // last-writer-wins — our write would clobber the reclaimer's update
+                // with no signal. Re-read the lock; if it is no longer ours, fail
+                // so the caller's retry re-reads and re-applies over the other
+                // writer's committed state instead of losing it. Cheap: one read,
+                // orElseSucceed("") like the pre-check.
+                const ownerAfter = yield* fs.readFileString(lock.path).pipe(
+                  Effect.map((content) => content.trim()),
+                  Effect.orElseSucceed(() => ""),
+                );
+                if (ownerAfter !== lock.token) {
+                  return yield* new PluginLockfileLockError({
+                    path: lock.path,
+                    cause: new Error("lock ownership lost during write"),
+                  });
+                }
                 return next;
               }),
             ),

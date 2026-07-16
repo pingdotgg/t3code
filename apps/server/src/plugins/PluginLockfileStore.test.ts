@@ -299,3 +299,76 @@ reclaimThenFailLayer("PluginLockfileStore advisory lock reclamation", (it) => {
     }),
   );
 });
+
+// A FileSystem whose `rename` of the lockfile temp file (into place, i.e. any
+// rename whose destination is the `plugins.json` lockfile) FIRST overwrites the
+// advisory lock file with a foreign owner token — simulating another process
+// reclaiming the lock in the window between mutate's pre-write ownership check
+// and this atomic rename — and THEN performs the real rename so the write still
+// lands on disk. The post-write ownership read-back must catch the lost
+// ownership and fail, rather than silently winning a last-writer-wins race.
+const reclaimDuringWriteFileSystem = (base: FileSystem.FileSystem): FileSystem.FileSystem => {
+  let swapped = false;
+  return {
+    ...base,
+    rename: (oldPath, newPath) =>
+      !swapped && newPath.endsWith("plugins.json")
+        ? Effect.gen(function* () {
+            swapped = true;
+            yield* base.writeFileString(`${newPath}.lock`, "9999:foreign-owner-token\n");
+            return yield* base.rename(oldPath, newPath);
+          })
+        : base.rename(oldPath, newPath),
+  };
+};
+
+const reclaimDuringWriteLayer = it.layer(
+  PluginLockfileStoreModule.layer.pipe(
+    Layer.provideMerge(
+      Layer.fresh(
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-plugin-lockfile-write-reclaim-" }),
+      ),
+    ),
+    Layer.provideMerge(
+      Layer.effect(
+        FileSystem.FileSystem,
+        FileSystem.FileSystem.pipe(Effect.map(reclaimDuringWriteFileSystem)),
+      ).pipe(Layer.provideMerge(NodeServices.layer)),
+    ),
+    Layer.provideMerge(TestClock.layer()),
+  ),
+);
+
+reclaimDuringWriteLayer("PluginLockfileStore post-write ownership read-back", (it) => {
+  it.effect("fails when the advisory lock is reclaimed during the lockfile write", () =>
+    Effect.gen(function* () {
+      const store = yield* PluginLockfileStoreModule.PluginLockfileStore;
+      const fs = yield* FileSystem.FileSystem;
+
+      // The pre-write ownership check still passes (the lock is ours right up to
+      // the rename); the reclaim happens DURING writeLockfileToPath. Without the
+      // post-write read-back this returns success — a silent lost update.
+      const result = yield* Effect.result(
+        store.updatePlugin(pluginId, () =>
+          Effect.succeed(makePlugin({ sha256: "written-then-ownership-lost" })),
+        ),
+      );
+
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) {
+        assert.instanceOf(result.failure, PluginLockfileLockError);
+        // The error names the advisory lock path and carries the "during write"
+        // cause so the caller knows to re-read and re-apply, not that the write
+        // never happened.
+        assert.include(result.failure.message, store.advisoryLockPath);
+      }
+      // The finalizer must token-guard removal: the lock now carries the foreign
+      // token, so ours-only cleanup leaves that reclaimed lock in place.
+      assert.isTrue(yield* fs.exists(store.advisoryLockPath));
+      const content = yield* fs.readFileString(store.advisoryLockPath);
+      assert.isTrue(content.includes("foreign-owner-token"));
+
+      yield* fs.remove(store.advisoryLockPath, { force: true });
+    }),
+  );
+});

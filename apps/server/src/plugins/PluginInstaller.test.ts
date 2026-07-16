@@ -5,7 +5,9 @@ import {
   PluginManifest,
   type PluginManifest as PluginManifestType,
 } from "@t3tools/contracts/plugin";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -153,8 +155,10 @@ interface InstallerLayerInput {
   readonly transportLog?: Array<string>;
 }
 
-function installerDeps(input: InstallerLayerInput) {
-  const platform = NodeServices.layer;
+function installerDeps(
+  input: InstallerLayerInput,
+  platform: typeof NodeServices.layer = NodeServices.layer,
+) {
   const config = ServerConfig.layerTest(process.cwd(), { prefix: "t3-installer-" }).pipe(
     Layer.provide(platform),
   );
@@ -242,8 +246,8 @@ function installerDeps(input: InstallerLayerInput) {
   );
 }
 
-function installerLayer(input: InstallerLayerInput) {
-  return PluginInstallerModule.layer.pipe(Layer.provideMerge(installerDeps(input)));
+function installerLayer(input: InstallerLayerInput, platform?: typeof NodeServices.layer) {
+  return PluginInstallerModule.layer.pipe(Layer.provideMerge(installerDeps(input, platform)));
 }
 
 const seedSource = Effect.gen(function* () {
@@ -1254,4 +1258,99 @@ it.effect("PluginInstaller confirmInstall rejects a source removed before confir
       assert.isUndefined(lockfile.plugins[pluginId]);
     }).pipe(Effect.provide(installerLayer({ tarball: tarballForManifest() }))),
   ),
+);
+
+// A mutable holder shared between the test body and a FileSystem wrapper, letting
+// the test PARK a confirm exactly inside the move+commit region: once armed, the
+// wrapper suspends the rename that puts the lockfile into place (destination ends
+// with `plugins.json`) — which only happens AFTER moveStagingToVersionDir has
+// already renamed the staging dir onto the version dir — signalling `reached` and
+// waiting on `proceed`. So while parked, the files are moved but the lockfile
+// entry is not yet written: the exact interruption window FIX 1 must make atomic.
+interface RegionLatch {
+  armed: boolean;
+  reached: Deferred.Deferred<void> | null;
+  proceed: Deferred.Deferred<void> | null;
+}
+
+const parkAtLockfileCommitFileSystem =
+  (latch: RegionLatch) =>
+  (base: FileSystem.FileSystem): FileSystem.FileSystem => ({
+    ...base,
+    rename: (oldPath, newPath) => {
+      const reached = latch.reached;
+      const proceed = latch.proceed;
+      return latch.armed && reached && proceed && newPath.endsWith("plugins.json")
+        ? Effect.gen(function* () {
+            latch.armed = false;
+            yield* Deferred.succeed(reached, void 0);
+            yield* Deferred.await(proceed);
+            return yield* base.rename(oldPath, newPath);
+          })
+        : base.rename(oldPath, newPath);
+    },
+  });
+
+const parkAtLockfileCommitPlatform = (latch: RegionLatch) =>
+  Layer.effect(
+    FileSystem.FileSystem,
+    FileSystem.FileSystem.pipe(Effect.map(parkAtLockfileCommitFileSystem(latch))),
+  ).pipe(Layer.provideMerge(NodeServices.layer)) as typeof NodeServices.layer;
+
+it.effect(
+  "PluginInstaller confirmInstall commits atomically when interrupted mid move+commit region",
+  () => {
+    const latch: RegionLatch = { armed: false, reached: null, proceed: null };
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const installer = yield* PluginInstaller;
+        const store = yield* PluginLockfileStore;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const config = yield* ServerConfig.ServerConfig;
+        yield* seedSource;
+
+        const staged = yield* installer.beginInstall({ sourceId, pluginId, version: "1.0.0" });
+
+        latch.reached = yield* Deferred.make<void>();
+        latch.proceed = yield* Deferred.make<void>();
+        latch.armed = true;
+
+        const child = yield* Effect.forkChild(installer.confirmInstall(staged.stageToken), {
+          startImmediately: true,
+        });
+        // Wait until the confirm has moved the staging dir onto the version dir and
+        // is parked at the lockfile commit — i.e. INSIDE the move+commit region.
+        yield* Deferred.await(latch.reached);
+        // Request interruption while parked in the region. Send it SYNCHRONOUSLY
+        // (before releasing the park) so that, without the fix, it is guaranteed to
+        // abort the interruptible park BEFORE the lockfile rename. Effect.uninterruptible
+        // (FIX 1) makes the park uninterruptible: the interrupt is recorded as
+        // pending and applies only AFTER the region commits. Without it, the
+        // interrupt strands the install — version dir on disk, no lockfile entry,
+        // and a stage pointing at a staging dir the move already consumed.
+        yield* Effect.sync(() => child.interruptUnsafe());
+        yield* Deferred.succeed(latch.proceed, void 0);
+        yield* Fiber.awaitAll([child]);
+
+        // The region committed atomically despite the interrupt: the lockfile entry
+        // is present AND the moved files are in place. (The interrupt still takes
+        // effect after the region, so activation is skipped — but the durable
+        // install state is intact, i.e. not stranded.)
+        const lockfile = yield* store.readLockfile;
+        assert.equal(lockfile.plugins[pluginId]?.state, "active");
+        assert.equal(lockfile.plugins[pluginId]?.version, "1.0.0");
+        assert.equal(lockfile.plugins[pluginId]?.sha256, sha256(tarballForManifest()));
+        const versionDir = pluginVersionDir(config.pluginsDir, pluginId, "1.0.0", path.join);
+        assert.isTrue(
+          yield* fs.exists(path.join(versionDir, "manifest.json")),
+          "the moved plugin files must remain in the version directory",
+        );
+      }).pipe(
+        Effect.provide(
+          installerLayer({ tarball: tarballForManifest() }, parkAtLockfileCommitPlatform(latch)),
+        ),
+      ),
+    );
+  },
 );
