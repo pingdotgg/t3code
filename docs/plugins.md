@@ -4,6 +4,10 @@ T3 plugins are full-trust local extensions packaged as a tarball with a `manifes
 optional server and web entry bundles. Users add marketplace sources, review requested
 capabilities, and install plugins through Settings -> Plugins.
 
+> This page is the packaging + manifest reference. For what a plugin can DO, see the
+> [capabilities reference](./plugin-capabilities.md); to build one, see the
+> [developer tutorial](./plugin-tutorial.md).
+
 ## Manifest
 
 ```json

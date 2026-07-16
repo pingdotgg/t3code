@@ -15,5 +15,6 @@
 - [Integrations](./integrations/source-control-providers.md)
 - [Mobile](./mobile/app.md)
 - [Operations](./operations/ci.md)
+- [Plugins](./plugin-capabilities.md) — [capabilities reference](./plugin-capabilities.md), [developer tutorial](./plugin-tutorial.md), [packaging](./plugins.md)
 - [Providers](./providers/codex.md)
 - [Reference](./reference/encyclopedia.md)
