@@ -321,16 +321,23 @@ export function makeVcsCapability(input: {
         const worktreesRealRoot = yield* input.fileSystem
           .realPath(input.worktreesDir)
           .pipe(Effect.option);
-        const allowedRoots = [
-          ...realRoots,
-          ...(Option.isSome(worktreesRealRoot) ? [worktreesRealRoot.value] : []),
-        ];
         const anchor = yield* nearestExistingAncestorRealPath("path", worktreePath);
-        if (!allowedRoots.some((root) => contains(root, anchor))) {
+        const inGrantedRoot = realRoots.some((root) => contains(root, anchor));
+        // Via the server-managed worktrees dir, only a path whose nearest EXISTING
+        // ancestor is the worktrees dir ITSELF is acceptable — i.e. a fresh sibling.
+        // "Contained in the worktrees dir" was too weak: for
+        // `<worktreesDir>/<other-worktree>/subdir` the nearest existing ancestor is
+        // the OTHER worktree, which is contained — so a plugin could plant a checkout
+        // inside a worktree it was never granted, and the grant issued at the end
+        // would then hand it that subtree.
+        const isFreshWorktreeSibling =
+          Option.isSome(worktreesRealRoot) && anchor === worktreesRealRoot.value;
+        if (!inGrantedRoot && !isFreshWorktreeSibling) {
           return yield* new PluginVcsPathError({
             field: "path",
             path: request.path,
-            reason: "outside the plugin's granted workspace roots and the worktrees directory",
+            reason:
+              "outside the plugin's granted workspace roots, and not a new entry directly under the worktrees directory",
           });
         }
         const result = yield* input.git.createWorktree({

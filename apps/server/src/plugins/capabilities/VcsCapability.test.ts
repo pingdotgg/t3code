@@ -182,6 +182,68 @@ it.layer(TestLayer)("VcsCapability", (it) => {
       ),
     );
 
+    it.effect("refuses a worktree planted inside another worktree", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const repo = yield* makeTmpDir();
+          yield* initRepoWithCommit(repo);
+          const worktreeParent = yield* makeTmpDir();
+          const gitDriver = yield* GitVcsDriver.GitVcsDriver;
+          const checkpointStore = yield* CheckpointStore.CheckpointStore;
+          const grants = yield* makePluginWorkspaceGrants;
+          const vcs = yield* makeVcs({
+            git: gitDriver,
+            checkpoints: checkpointStore,
+            grants,
+            grantedRoots: [repo],
+            worktreesDir: worktreeParent,
+          });
+
+          // Plugin A creates a worktree — which grants it to A, not to anyone else.
+          const victim = NodePath.join(worktreeParent, "victim");
+          yield* vcs.createWorktree({
+            repoRoot: repo,
+            ref: "HEAD",
+            path: victim,
+            newBranch: "feature/victim",
+          });
+
+          // Plugin B: a DIFFERENT plugin, its own grants. It never owns the victim.
+          const vcsB = yield* makeVcs({
+            git: gitDriver,
+            checkpoints: checkpointStore,
+            grants: yield* makePluginWorkspaceGrants,
+            grantedRoots: [repo],
+            worktreesDir: worktreeParent,
+          });
+
+          // `<worktreesDir>/victim/nested`: the nearest EXISTING ancestor is A's
+          // worktree, which is contained in worktreesDir — the containment check
+          // alone accepted this, letting B plant a checkout inside a worktree it was
+          // never granted, and then granting it that subtree.
+          const nested = yield* Effect.exit(
+            vcsB.createWorktree({
+              repoRoot: repo,
+              ref: "HEAD",
+              path: NodePath.join(victim, "nested"),
+              newBranch: "feature/nested",
+            }),
+          );
+          expect(nested._tag).toBe("Failure");
+          if (nested._tag === "Failure") {
+            expect(String(nested.cause)).toContain(PluginVcsPathError.name);
+          }
+          // A fresh sibling is still fine — the standard location keeps working.
+          yield* vcsB.createWorktree({
+            repoRoot: repo,
+            ref: "HEAD",
+            path: NodePath.join(worktreeParent, "fresh"),
+            newBranch: "feature/fresh",
+          });
+        }),
+      ),
+    );
+
     it.effect("creates branches, stages and commits, reads diffs, and pushes when configured", () =>
       Effect.scoped(
         Effect.gen(function* () {
