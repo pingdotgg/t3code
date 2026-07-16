@@ -52,9 +52,13 @@ struct ModelPickerMenu: View {
         }
         .popover(isPresented: $isPresented, arrowEdge: .top) {
             ModelPickerPopoverContent(
-                thread: thread,
-                model: model,
-                isPresented: $isPresented
+                models: model.models,
+                selectedInstanceID: thread.modelInstanceID,
+                selectedModelID: thread.modelID,
+                onSelect: { option in
+                    Task { await model.setModel(option) }
+                    isPresented = false
+                }
             )
         }
     }
@@ -71,10 +75,37 @@ struct ModelPickerMenu: View {
     }
 }
 
-private struct ModelPickerPopoverContent: View {
-    let thread: ChatThread
-    let model: AppModel
-    @Binding var isPresented: Bool
+/// Optional leading "clear" row for pickers that allow selecting none.
+struct ModelPickerClearRowConfig {
+    let icon: String
+    let title: String
+    let detail: String
+    let action: () -> Void
+
+    init(
+        icon: String = "slash.circle",
+        title: String,
+        detail: String,
+        action: @escaping () -> Void
+    ) {
+        self.icon = icon
+        self.title = title
+        self.detail = detail
+        self.action = action
+    }
+}
+
+/// Searchable, height-capped model browser shared by the thread model picker
+/// and the Advisor/Planner executor picker.
+struct ModelPickerPopoverContent: View {
+    let models: [ModelOption]
+    let selectedInstanceID: String?
+    let selectedModelID: String?
+    let onSelect: (ModelOption) -> Void
+    var title: String = "Choose a model"
+    var subtitle: String? = nil
+    var clearRow: ModelPickerClearRowConfig? = nil
+    var onBack: (() -> Void)? = nil
 
     @UIState private var searchText = ""
     @UIState private var providerFilter: ModelPickerProviderFilter = .all
@@ -82,9 +113,9 @@ private struct ModelPickerPopoverContent: View {
 
     private var allItems: [ModelPickerItem] {
         ModelPickerCatalog.items(
-            from: model.models,
-            selectedInstanceID: thread.modelInstanceID,
-            selectedModelID: thread.modelID
+            from: models,
+            selectedInstanceID: selectedInstanceID,
+            selectedModelID: selectedModelID
         )
     }
 
@@ -110,9 +141,17 @@ private struct ModelPickerPopoverContent: View {
     }
 
     private var selectedOptionID: String? {
-        model.models.first {
-            $0.instanceID == thread.modelInstanceID && $0.modelID == thread.modelID
+        models.first {
+            $0.instanceID == selectedInstanceID && $0.modelID == selectedModelID
         }?.id
+    }
+
+    private var isClearSelected: Bool {
+        clearRow != nil && selectedInstanceID == nil && selectedModelID == nil
+    }
+
+    private var resolvedSubtitle: String {
+        subtitle ?? "\(allItems.count) models across \(availableProviders.count) providers"
     }
 
     var body: some View {
@@ -120,8 +159,9 @@ private struct ModelPickerPopoverContent: View {
             VStack(spacing: 0) {
                 ComposerPickerHeader(
                     icon: "cpu",
-                    title: "Choose a model",
-                    subtitle: "\(allItems.count) models across \(availableProviders.count) providers"
+                    title: title,
+                    subtitle: resolvedSubtitle,
+                    onBack: onBack
                 )
                 searchField
                     .padding(.horizontal, 14)
@@ -225,7 +265,7 @@ private struct ModelPickerPopoverContent: View {
 
             Divider().opacity(0.45)
 
-            if visibleItems.isEmpty {
+            if visibleItems.isEmpty && clearRow == nil {
                 emptyState
             } else {
                 modelList
@@ -259,6 +299,16 @@ private struct ModelPickerPopoverContent: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 3, pinnedViews: [.sectionHeaders]) {
+                    if let clearRow {
+                        ComposerPickerChoiceRow(
+                            icon: clearRow.icon,
+                            title: clearRow.title,
+                            detail: clearRow.detail,
+                            isSelected: isClearSelected,
+                            action: clearRow.action
+                        )
+                        .id("model-picker-clear")
+                    }
                     ForEach(groupedVisibleItems, id: \.provider) { group in
                         Section {
                             ForEach(group.items) { item in
@@ -266,8 +316,7 @@ private struct ModelPickerPopoverContent: View {
                                     item: item,
                                     isSelected: item.option.id == selectedOptionID
                                 ) {
-                                    Task { await model.setModel(item.option) }
-                                    isPresented = false
+                                    onSelect(item.option)
                                 }
                                 .id(item.option.id)
                             }
@@ -301,6 +350,14 @@ private struct ModelPickerPopoverContent: View {
     }
 
     private func scrollToSelection(proxy: ScrollViewProxy) {
+        if isClearSelected {
+            DispatchQueue.main.async {
+                withAnimation(nil) {
+                    proxy.scrollTo("model-picker-clear", anchor: .center)
+                }
+            }
+            return
+        }
         guard let selectedOptionID else { return }
         DispatchQueue.main.async {
             withAnimation(nil) {
@@ -311,8 +368,7 @@ private struct ModelPickerPopoverContent: View {
 
     private func selectFirstVisibleMatch() {
         guard let first = visibleItems.first else { return }
-        Task { await model.setModel(first.option) }
-        isPresented = false
+        onSelect(first.option)
     }
 }
 
