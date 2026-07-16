@@ -1066,3 +1066,192 @@ it.effect("PluginInstaller cleans staging when decompression fails", () =>
     ),
   ),
 );
+
+it.effect(
+  "PluginInstaller confirmUpgrade rejects a second confirm while an upgrade is pending",
+  () => {
+    // Two upgrades staged from the SAME installed version (v1→v2 and v1→v3). Both
+    // pass installedEntry — the version never changes during pending-upgrade — so
+    // without the guard the second confirm's last-writer-wins overwrite of
+    // `staged`/state would orphan the first confirm's already-moved version dir.
+    const tarballV2 = tarballForManifest(manifest({ version: "2.0.0" }));
+    const tarballV3 = tarballForManifest(manifest({ version: "3.0.0" }));
+    const urlV2 = "https://market.test/test-plugin-2.0.0.tgz";
+    const urlV3 = "https://market.test/test-plugin-3.0.0.tgz";
+    const customMarketplace = {
+      plugins: [
+        {
+          id: pluginId,
+          name: "Test Plugin",
+          description: "Adds tests.",
+          capabilities: ["agents" as const],
+          versions: [
+            {
+              version: "2.0.0",
+              tarball: urlV2,
+              sha256: sha256(tarballV2),
+              hostApi: "^1.0.0",
+              publishedAt: "2026-07-03T00:00:00.000Z",
+            },
+            {
+              version: "3.0.0",
+              tarball: urlV3,
+              sha256: sha256(tarballV3),
+              hostApi: "^1.0.0",
+              publishedAt: "2026-07-03T00:00:00.000Z",
+            },
+          ],
+        },
+      ],
+    };
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const installer = yield* PluginInstaller;
+        const store = yield* PluginLockfileStore;
+        yield* seedSource;
+        yield* store.updatePlugin(pluginId, () =>
+          Effect.succeed({
+            version: "1.0.0",
+            sha256: "installed",
+            sourceId,
+            enabled: true,
+            state: "active" as const,
+            activation: { activatingSince: null, crashCount: 0 },
+            installedAt: "2026-07-03T00:00:00.000Z",
+            lastError: null,
+          }),
+        );
+
+        const stagedV2 = yield* installer.beginUpgrade({ pluginId, version: "2.0.0" });
+        const stagedV3 = yield* installer.beginUpgrade({ pluginId, version: "3.0.0" });
+
+        yield* installer.confirmUpgrade(stagedV2.stageToken);
+        const second = yield* Effect.result(installer.confirmUpgrade(stagedV3.stageToken));
+
+        assert.isTrue(Result.isFailure(second), "the second confirm must be rejected");
+        if (Result.isFailure(second)) assert.equal(second.failure.code, "manifest-invalid");
+        // The first confirm's staged version must survive the rejected second confirm.
+        const lockfile = yield* store.readLockfile;
+        assert.equal(lockfile.plugins[pluginId]?.state, "pending-upgrade");
+        assert.equal(lockfile.plugins[pluginId]?.staged?.version, "2.0.0");
+      }).pipe(
+        Effect.provide(
+          installerLayer({
+            tarball: tarballForManifest(),
+            responses: {
+              "https://market.test/marketplace.json": () =>
+                new Response(encodeMarketplaceJson(customMarketplace), {
+                  headers: { "content-type": "application/json" },
+                }),
+              [urlV2]: () => new Response(tarballV2),
+              [urlV3]: () => new Response(tarballV3),
+            },
+          }),
+        ),
+      ),
+    );
+  },
+);
+
+it.effect("PluginInstaller setEnabled(true) rejects a plugin pending removal", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const installer = yield* PluginInstaller;
+      const store = yield* PluginLockfileStore;
+      yield* seedSource;
+      // Mid-uninstall: the entry is already pending-remove. A late enable must not
+      // resurrect it into an active/enabled entry the reconcile still deletes.
+      yield* store.updatePlugin(pluginId, () =>
+        Effect.succeed({
+          version: "1.0.0",
+          sha256: "installed",
+          sourceId,
+          enabled: false,
+          state: "pending-remove" as const,
+          activation: { activatingSince: null, crashCount: 0 },
+          installedAt: "2026-07-03T00:00:00.000Z",
+          lastError: null,
+        }),
+      );
+
+      const result = yield* Effect.result(installer.setEnabled({ pluginId, enabled: true }));
+
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) assert.equal(result.failure.code, "manifest-invalid");
+      const lockfile = yield* store.readLockfile;
+      assert.equal(lockfile.plugins[pluginId]?.state, "pending-remove");
+    }).pipe(Effect.provide(installerLayer({ tarball: tarballForManifest() }))),
+  ),
+);
+
+it.effect(
+  "PluginInstaller uninstall and a concurrent setEnabled(true) cannot strand the plugin",
+  () => {
+    const activated: Array<string> = [];
+    const deactivated: Array<string> = [];
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const installer = yield* PluginInstaller;
+        const store = yield* PluginLockfileStore;
+        yield* seedSource;
+        yield* store.updatePlugin(pluginId, () =>
+          Effect.succeed({
+            version: "1.0.0",
+            sha256: "installed",
+            sourceId,
+            enabled: true,
+            state: "active" as const,
+            activation: { activatingSince: null, crashCount: 0 },
+            installedAt: "2026-07-03T00:00:00.000Z",
+            lastError: null,
+          }),
+        );
+
+        // Routing uninstall's pending-remove write through host.setPluginEnabled
+        // makes persist+teardown atomic with any concurrent enable. Whatever the
+        // interleaving, the lockfile and the runtime must agree: no active/enabled
+        // entry with the runtime already torn down.
+        yield* Effect.all(
+          [
+            Effect.result(installer.uninstall({ pluginId, removeData: true })),
+            Effect.result(installer.setEnabled({ pluginId, enabled: true })),
+          ],
+          { concurrency: "unbounded" },
+        );
+
+        const lockfile = yield* store.readLockfile;
+        assert.equal(lockfile.plugins[pluginId]?.state, "pending-remove");
+        assert.equal(lockfile.plugins[pluginId]?.enabled, false);
+        // The uninstall tore the runtime down; a late enable must not have left it
+        // resurrected.
+        assert.include(deactivated, pluginId);
+      }).pipe(
+        Effect.provide(installerLayer({ tarball: tarballForManifest(), activated, deactivated })),
+      ),
+    );
+  },
+);
+
+it.effect("PluginInstaller confirmInstall rejects a source removed before confirm", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const installer = yield* PluginInstaller;
+      const store = yield* PluginLockfileStore;
+      yield* seedSource;
+
+      const staged = yield* installer.beginInstall({ sourceId, pluginId, version: "1.0.0" });
+      // The source is removed in the begin→confirm window. removeSource's in-use
+      // check saw no committed plugin (the stage is in-memory only), so it
+      // succeeded — leaving this confirm about to commit a dangling sourceId.
+      yield* store.updateSources(() => Effect.succeed([]));
+
+      const result = yield* Effect.result(installer.confirmInstall(staged.stageToken));
+
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) assert.equal(result.failure.code, "source-not-found");
+      // No entry may be written for a source that no longer exists.
+      const lockfile = yield* store.readLockfile;
+      assert.isUndefined(lockfile.plugins[pluginId]);
+    }).pipe(Effect.provide(installerLayer({ tarball: tarballForManifest() }))),
+  ),
+);
