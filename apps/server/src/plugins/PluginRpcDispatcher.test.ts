@@ -38,7 +38,7 @@ const manifest = (id = pluginId): PluginManifest => ({
   version: "1.0.0",
   hostApi: "^1.0.0",
   capabilities: ["agents"],
-  entries: { server: "server.js", web: "web.js" },
+  entries: { server: "server.js", web: "web/index.js" },
 });
 
 const makeLockfilePlugin = (
@@ -80,6 +80,12 @@ const registration: PluginRegistration = {
       scope: "read",
       readiness: "always",
       handler: () => Effect.die(new Error("boom")),
+    },
+    {
+      method: "hang",
+      scope: "read",
+      readiness: "always",
+      handler: () => Effect.never,
     },
   ],
   streams: [
@@ -269,6 +275,41 @@ dispatcherTest("PluginRpcDispatcher", (it) => {
         assert.equal(defect.failure.code, "internal");
       }
       assert.deepEqual(subsequent, { pluginId, payload: "after" });
+    }),
+  );
+});
+
+const shortTimeoutDispatcherLayer = Layer.effect(
+  PluginRpcDispatcher,
+  PluginRpcDispatcherModule.make({ handlerTimeoutMs: 100 }),
+).pipe(Layer.provideMerge(PluginRuntimeRegistryModule.layer));
+
+it.layer(shortTimeoutDispatcherLayer, {
+  // Real clock: the handler deadline is a wall-clock sleep, so the default
+  // TestClock (which never auto-advances) would hang the call.
+  excludeTestServices: true,
+})("PluginRpcDispatcher handler timeout", (it) => {
+  // A hung unary handler (`Effect.never`) must not pin the WS call forever: the
+  // wall-clock deadline interrupts it and surfaces a typed internal error. The
+  // long-lived subscribe path is intentionally NOT bounded here.
+  it.effect("fails a unary handler that exceeds the wall-clock deadline", () =>
+    Effect.gen(function* () {
+      yield* putRuntime({ ready: true });
+      const dispatcher = yield* PluginRpcDispatcher;
+
+      const hung = yield* Effect.result(
+        dispatcher.call(pluginId, "hang", null, session(AuthStandardClientScopes)),
+      );
+      const fast = yield* dispatcher.call(
+        pluginId,
+        "echo",
+        "fast",
+        session(AuthStandardClientScopes),
+      );
+
+      assert.isTrue(Result.isFailure(hung));
+      if (Result.isFailure(hung)) assert.equal(hung.failure.code, "internal");
+      assert.deepEqual(fast, { pluginId, payload: "fast" });
     }),
   );
 });
