@@ -5,7 +5,8 @@ answers questions, explains how things work, reviews code and designs, weighs
 tradeoffs and recommends a course of action — and cannot change the workspace
 itself while it does so. When the user configures a per-thread **executor
 model**, the agent can also plan work and **delegate implementation to
-executor sub-agents** that run with write access.
+executor sub-agents** that inherit the thread's stored runtime mode (not the
+advisor clamp; actual write access depends on that mode).
 
 It is the third value on the interaction axis (`default | plan | advisor`); the
 wire literal remains `"advisor"`. See [runtime-modes.md](./runtime-modes.md) for
@@ -16,12 +17,12 @@ how that axis relates to permissions.
 They look similar and are easy to conflate, so the distinction is worth stating
 plainly.
 
-|             | Plan                                                  | Advisor/Planner                                                              |
-| ----------- | ----------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Goal        | A decision-complete spec another agent can implement  | An answer, a plan of action, and optionally delegated implementation         |
-| Output      | A `<proposed_plan>` artifact, rendered as a plan card | An ordinary chat reply (and optional sub-agent results)                      |
-| Ends when   | You accept the plan and implement it                  | You stop asking                                                              |
-| Enforcement | Prompt-level only — the sandbox is unchanged          | Sandbox/permission-level — the parent cannot write; executors may when set   |
+|             | Plan                                                  | Advisor/Planner                                                            |
+| ----------- | ----------------------------------------------------- | -------------------------------------------------------------------------- |
+| Goal        | A decision-complete spec another agent can implement  | An answer, a plan of action, and optionally delegated implementation       |
+| Output      | A `<proposed_plan>` artifact, rendered as a plan card | An ordinary chat reply (and optional sub-agent results)                    |
+| Ends when   | You accept the plan and implement it                  | You stop asking                                                            |
+| Enforcement | Prompt-level only — the sandbox is unchanged          | Sandbox/permission-level — the parent cannot write; executors may when set |
 
 Plan mode is a phase of doing the work that produces a handoff artifact.
 Advisor/Planner is consultative: the parent never mutates the workspace. With an
@@ -34,7 +35,7 @@ Advisor/Planner does not trust the model to honour a prompt.
 `resolveEffectiveRuntimeMode` (`packages/contracts/src/orchestration.ts`) clamps
 the permission axis for the parent session:
 
-```
+```text
 advisor + any RuntimeMode  ->  approval-required
 ```
 
@@ -53,7 +54,7 @@ Invariants:
   invariant when the user has not opted into an executor.
 - **Sub-agents with an executor model are the deliberate exception.** When
   `executorModelSelection` is set on an advisor thread, `SubAgentCoordinator`
-  spawns children on that instance/model with the parent's *stored* (unclamped)
+  spawns children on that instance/model with the parent's _stored_ (unclamped)
   `runtimeMode` and `interactionMode: "default"`. This is an explicit
   user-opted-in write path for delegated implementation.
 
@@ -72,8 +73,8 @@ When spawning from an advisor parent with a non-null executor:
 
 1. Provider comes from `executor.instanceId` (overrides the tool's
    `providerInstanceId`).
-2. Model is `executor.model` if the provider reports it, else the normal
-   resolution chain with a visible fallback note.
+2. Model is always `executor.model` verbatim (provider catalogs are advisory;
+   a stale slug surfaces as a provider session-start error).
 3. Child `runtimeMode` = parent's stored mode (unclamped).
 4. If the executor provider is not spawnable → hard `SubAgentError` (no silent
    clamped fallback).
@@ -87,12 +88,12 @@ Enforcement is uniform (the parent clamp). Steering — getting the model to _ac
 like an advisor/planner rather than merely being unable to write — is per-driver
 and best-effort.
 
-| Driver                          | Write blocking (from the clamp)                | Advisor/Planner steering                                                                 |
-| ------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| Codex, Fugu                     | `read-only` OS sandbox — a real one            | `CODEX_ADVISOR_MODE_DEVELOPER_INSTRUCTIONS`, sent on the `plan` wire mode                |
-| Claude, Claudex, ClaudeSynthero | SDK `plan` permission mode + `canUseTool` gate | `ExitPlanMode` is denied and the plan artifact suppressed; steer toward delegation       |
-| Grok (ACP)                      | Per-tool permission requests                   | **None** — Grok ignores interaction mode entirely                                        |
-| ChatGptBrowser                  | n/a (no tools)                                 | None                                                                                     |
+| Driver                          | Write blocking (from the clamp)                | Advisor/Planner steering                                                           |
+| ------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------- |
+| Codex, Fugu                     | `read-only` OS sandbox — a real one            | `CODEX_ADVISOR_MODE_DEVELOPER_INSTRUCTIONS`, sent on the `plan` wire mode          |
+| Claude, Claudex, ClaudeSynthero | SDK `plan` permission mode + `canUseTool` gate | `ExitPlanMode` is denied and the plan artifact suppressed; steer toward delegation |
+| Grok (ACP)                      | Per-tool permission requests                   | **None** — Grok ignores interaction mode entirely                                  |
+| ChatGptBrowser                  | n/a (no tools)                                 | None                                                                               |
 
 Codex only accepts `plan | default` as a collaboration mode on the wire, so
 advisor borrows the `plan` kind. The advisor developer instructions — which

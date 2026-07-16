@@ -390,6 +390,77 @@ it.effect("advisor parent with non-spawnable executor fails without creating a t
   }),
 );
 
+it.effect("advisor parent passes a stale executor model slug through verbatim", () =>
+  Effect.gen(function* () {
+    // Short slug so the title suffix stays under the cap and remains assertable.
+    const staleSlug = "missing-model";
+    const [coordinator, harness] = yield* makeCoordinator({
+      parentShell: (threadId) =>
+        makeThreadShell(threadId, {
+          runtimeMode: "full-access",
+          interactionMode: "advisor",
+          executorModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            // Catalog only reports "default-model"; executor slug is authoritative.
+            model: staleSlug,
+          },
+        }),
+    });
+
+    const result = yield* coordinator.spawn(makeScope(), {
+      providerInstanceId: ProviderInstanceId.make("claude"),
+      model: "should-not-be-used",
+      prompt: "Go.",
+    });
+
+    expect(result.providerInstanceId).toBe("codex");
+    expect(result.model).toBe(staleSlug);
+    expect(result.title).toContain(`[executor: codex/${staleSlug}]`);
+    expect(result.title).not.toContain("fell back");
+    expect(result.title.length).toBeLessThanOrEqual(__testing.DEFAULT_TITLE_MAX_LENGTH);
+
+    const create = harness.dispatched.find((command) => command.type === "thread.create");
+    expect(create?.type).toBe("thread.create");
+    if (create?.type === "thread.create") {
+      expect(create.modelSelection.model).toBe(staleSlug);
+      expect(create.modelSelection.instanceId).toBe("codex");
+      expect(create.title.length).toBeLessThanOrEqual(__testing.DEFAULT_TITLE_MAX_LENGTH);
+    }
+  }),
+);
+
+it.effect("re-truncates executor title suffix to the title cap", () =>
+  Effect.gen(function* () {
+    const [coordinator, harness] = yield* makeCoordinator({
+      parentShell: (threadId) =>
+        makeThreadShell(threadId, {
+          runtimeMode: "full-access",
+          interactionMode: "advisor",
+          executorModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "default-model",
+          },
+        }),
+    });
+
+    const longName = "x".repeat(80);
+    const result = yield* coordinator.spawn(makeScope(), {
+      providerInstanceId: ProviderInstanceId.make("claude"),
+      prompt: "Implement the plan.",
+      name: longName,
+    });
+
+    expect(result.title.length).toBe(__testing.DEFAULT_TITLE_MAX_LENGTH);
+    expect(result.title.endsWith("…")).toBe(true);
+
+    const create = harness.dispatched.find((command) => command.type === "thread.create");
+    if (create?.type === "thread.create") {
+      expect(create.title).toBe(result.title);
+      expect(create.title.length).toBe(__testing.DEFAULT_TITLE_MAX_LENGTH);
+    }
+  }),
+);
+
 it.effect("non-advisor parent ignores a stale executor model selection", () =>
   Effect.gen(function* () {
     const [coordinator, harness] = yield* makeCoordinator({

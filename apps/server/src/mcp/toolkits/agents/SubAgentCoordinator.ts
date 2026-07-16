@@ -647,20 +647,13 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
         target.models.some((candidate) => candidate.slug === parent.modelSelection.model)
           ? parent.modelSelection.model
           : undefined;
-      let model: string | undefined;
-      let modelResolutionNote: string | undefined;
-      if (executor !== null) {
-        if (target.models.some((candidate) => candidate.slug === executor.model)) {
-          model = executor.model;
-        } else {
-          model = input.model ?? inheritedModel ?? target.models[0]?.slug;
-          if (model !== undefined) {
-            modelResolutionNote = `executor model "${executor.model}" not reported by provider; fell back to "${model}"`;
-          }
-        }
-      } else {
-        model = input.model ?? inheritedModel ?? target.models[0]?.slug;
-      }
+      // Executor selection is authoritative: pass the configured slug through
+      // even when the provider catalog does not currently list it. Catalogs are
+      // advisory; a stale slug surfaces as a provider session-start error.
+      const model =
+        executor !== null
+          ? executor.model
+          : (input.model ?? inheritedModel ?? target.models[0]?.slug);
       if (model === undefined) {
         return yield* new SubAgentError({
           reason: "model-not-resolved",
@@ -677,9 +670,7 @@ const makeSubAgentCoordinator = Effect.gen(function* () {
       const baseTitle = resolveSpawnTitle(input, name);
       const title =
         executor !== null
-          ? modelResolutionNote !== undefined
-            ? `${baseTitle} [executor: ${target.instanceId}/${model}; ${modelResolutionNote}]`
-            : `${baseTitle} [executor: ${target.instanceId}/${model}]`
+          ? truncateTitle(`${baseTitle} [executor: ${target.instanceId}/${model}]`)
           : baseTitle;
       const modelSelection = resolveSpawnModelSelection(target, model);
       const effort = resolveSpawnEffort(target, modelSelection);
