@@ -1,11 +1,12 @@
 import { useNavigation } from "@react-navigation/native";
-import { SymbolView } from "expo-symbols";
 import type { ComponentProps } from "react";
 import { Pressable, View } from "react-native";
 
+import { SymbolView } from "../../../components/AppSymbol";
+
 import { AppText as Text } from "../../../components/AppText";
 import { useThemeColor } from "../../../lib/useThemeColor";
-import type { SettingsSheetTarget } from "./settings-sheet-targets";
+import type { SettingsLegalDocumentTarget, SettingsSheetTarget } from "./settings-sheet-targets";
 
 type SymbolName = ComponentProps<typeof SymbolView>["name"];
 
@@ -15,6 +16,7 @@ export function SettingsRow(props: {
   readonly label: string;
   readonly value?: string;
   readonly target?: SettingsSheetTarget;
+  readonly fullScreenTarget?: SettingsLegalDocumentTarget;
   readonly onPress?: () => void;
 }) {
   const navigation = useNavigation();
@@ -65,6 +67,20 @@ export function SettingsRow(props: {
             screen: target,
           })
         }
+      >
+        {content}
+      </Pressable>
+    );
+  }
+
+  const fullScreenTarget = props.fullScreenTarget;
+  if (fullScreenTarget) {
+    return (
+      <Pressable
+        accessibilityLabel={props.label}
+        accessibilityRole="button"
+        disabled={props.disabled}
+        onPress={() => navigation.navigate(fullScreenTarget)}
       >
         {content}
       </Pressable>
