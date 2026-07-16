@@ -87,6 +87,105 @@ it.effect("guardedOutboundHttpGet follows redirects only through validated hosts
   }),
 );
 
+it.effect("guardedOutboundHttpGet does not forward credentials across an origin", () =>
+  Effect.gen(function* () {
+    const requests: Array<PluginPinnedHttpRequest> = [];
+    yield* guardedOutboundHttpGet({
+      url: "https://public.test/file",
+      lookup: lookupFor({ "public.test": "93.184.216.34", "cdn.test": "203.0.114.9" }),
+      transport: transportFor({
+        requests,
+        responses: {
+          "https://public.test/file": () =>
+            new Response(null, { status: 302, headers: { location: "https://cdn.test/file" } }),
+          "https://cdn.test/file": () => new Response("real bytes"),
+        },
+      }),
+      // An origin-scoped credential. The first server chooses where we go next, so
+      // forwarding this would let it name any https host and be handed the token.
+      headers: { authorization: "Bearer super-secret", accept: "application/json" },
+      timeoutMs: 1000,
+    });
+
+    assert.equal(requests.length, 2);
+    assert.equal(
+      requests[0]?.headers["authorization"],
+      "Bearer super-secret",
+      "the origin the caller addressed still gets it",
+    );
+    assert.isUndefined(
+      requests[1]?.headers["authorization"],
+      "a redirect must not hand the caller's credential to a host it chose",
+    );
+    // Content negotiation is not identity, so it survives — otherwise a redirect to a
+    // CDN would silently change what we asked for.
+    assert.equal(requests[1]?.headers["accept"], "application/json");
+  }),
+);
+
+it.effect("guardedOutboundHttpGet keeps credentials stripped once the chain is hijacked", () =>
+  Effect.gen(function* () {
+    const requests: Array<PluginPinnedHttpRequest> = [];
+    yield* guardedOutboundHttpGet({
+      url: "https://public.test/file",
+      lookup: lookupFor({ "public.test": "93.184.216.34", "evil.test": "203.0.114.9" }),
+      transport: transportFor({
+        requests,
+        responses: {
+          "https://public.test/file": () =>
+            new Response(null, { status: 302, headers: { location: "https://evil.test/hop" } }),
+          // evil.test now redirects WITHIN its own origin. Judging each hop by whether
+          // it changed origin calls this one "same-origin" and hands the credential
+          // over — to a host that already hijacked the chain. Taint has to be sticky.
+          "https://evil.test/hop": () =>
+            new Response(null, { status: 302, headers: { location: "https://evil.test/final" } }),
+          "https://evil.test/final": () => new Response("bytes"),
+        },
+      }),
+      headers: { authorization: "Bearer super-secret" },
+      timeoutMs: 1000,
+    });
+
+    assert.equal(requests.length, 3);
+    assert.isUndefined(requests[1]?.headers["authorization"]);
+    assert.isUndefined(
+      requests[2]?.headers["authorization"],
+      "a same-origin hop does not un-hijack a chain that already left the caller's origin",
+    );
+  }),
+);
+
+it.effect("guardedOutboundHttpGet does not resurrect credentials on a redirect back", () =>
+  Effect.gen(function* () {
+    const requests: Array<PluginPinnedHttpRequest> = [];
+    yield* guardedOutboundHttpGet({
+      url: "https://public.test/file",
+      lookup: lookupFor({ "public.test": "93.184.216.34", "evil.test": "203.0.114.9" }),
+      transport: transportFor({
+        requests,
+        responses: {
+          "https://public.test/file": () =>
+            new Response(null, { status: 302, headers: { location: "https://evil.test/hop" } }),
+          // A -> B -> A. Comparing each hop against the PREVIOUS one would call this
+          // same-origin and hand the credential back — after evil.test chose the URL.
+          "https://evil.test/hop": () =>
+            new Response(null, { status: 302, headers: { location: "https://public.test/final" } }),
+          "https://public.test/final": () => new Response("bytes"),
+        },
+      }),
+      headers: { authorization: "Bearer super-secret" },
+      timeoutMs: 1000,
+    });
+
+    assert.equal(requests.length, 3);
+    assert.isUndefined(requests[1]?.headers["authorization"]);
+    assert.isUndefined(
+      requests[2]?.headers["authorization"],
+      "the hop back is still a URL another server chose",
+    );
+  }),
+);
+
 it.effect(
   "guardedOutboundHttpGet rejects redirects to blocked addresses without fetching them",
   () =>
