@@ -181,4 +181,43 @@ describe("IncomingShareInbox", () => {
     ).rejects.toThrow("already reserved");
     expect(persisted.get("share-stable")?.destination?.projectId).toBe("project-1");
   });
+
+  it("conditionally releases a reservation when its project is unavailable", async () => {
+    const { inbox, persisted } = createHarness();
+    const destination = { environmentId: "environment-1", projectId: "project-1" };
+    persisted.set("share-stable", { ...draft("share-stable"), destination });
+
+    await expect(inbox.releaseReservation("share-stable", destination)).resolves.toEqual([
+      draft("share-stable"),
+    ]);
+    expect(persisted.get("share-stable")?.destination).toBeUndefined();
+
+    await expect(
+      inbox.reserve("share-stable", {
+        environmentId: "environment-2",
+        projectId: "project-2",
+      }),
+    ).resolves.toEqual([
+      {
+        ...draft("share-stable"),
+        destination: { environmentId: "environment-2", projectId: "project-2" },
+      },
+    ]);
+  });
+
+  it("does not release a reservation that changed concurrently", async () => {
+    const { inbox, persisted } = createHarness();
+    persisted.set("share-stable", {
+      ...draft("share-stable"),
+      destination: { environmentId: "environment-2", projectId: "project-2" },
+    });
+
+    await expect(
+      inbox.releaseReservation("share-stable", {
+        environmentId: "environment-1",
+        projectId: "project-1",
+      }),
+    ).rejects.toThrow("reservation changed");
+    expect(persisted.get("share-stable")?.destination?.projectId).toBe("project-2");
+  });
 });

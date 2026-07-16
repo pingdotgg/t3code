@@ -28,6 +28,10 @@ type IncomingShareContextValue = {
   readonly error: Error | null;
   readonly getShare: (shareId: string) => IncomingShareDraft | null;
   readonly reserveShare: (shareId: string, destination: IncomingShareDestination) => Promise<void>;
+  readonly releaseShareReservation: (
+    shareId: string,
+    expectedDestination: IncomingShareDestination,
+  ) => Promise<void>;
   readonly consumeShare: (shareId: string) => Promise<void>;
   readonly refresh: () => Promise<void>;
 };
@@ -255,6 +259,15 @@ export function IncomingShareProvider(props: React.PropsWithChildren) {
     },
     [],
   );
+  const releaseShareReservation = useCallback(
+    async (shareId: string, expectedDestination: IncomingShareDestination) => {
+      const snapshot = await incomingShareInbox.releaseReservation(shareId, expectedDestination);
+      if (mountedRef.current) {
+        setDrafts(snapshot);
+      }
+    },
+    [],
+  );
   const getShare = useCallback(
     (shareId: string) => drafts.find((draft) => draft.id === shareId) ?? null,
     [drafts],
@@ -266,11 +279,21 @@ export function IncomingShareProvider(props: React.PropsWithChildren) {
       isLoading,
       error,
       getShare,
+      releaseShareReservation,
       reserveShare,
       consumeShare,
       refresh,
     }),
-    [consumeShare, drafts, error, getShare, isLoading, refresh, reserveShare],
+    [
+      consumeShare,
+      drafts,
+      error,
+      getShare,
+      isLoading,
+      refresh,
+      releaseShareReservation,
+      reserveShare,
+    ],
   );
 
   return (

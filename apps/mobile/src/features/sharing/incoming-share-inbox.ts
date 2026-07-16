@@ -160,4 +160,32 @@ export class IncomingShareInbox {
       );
     });
   }
+
+  releaseReservation(
+    shareId: string,
+    expectedDestination: IncomingShareDestination,
+  ): Promise<ReadonlyArray<IncomingShareDraft>> {
+    return this.runExclusive(async () => {
+      const persisted = await this.dependencies.loadDrafts();
+      const target = persisted.find((draft) => draft.id === shareId);
+      if (!target) {
+        throw new Error("The shared content is no longer available.");
+      }
+      if (!target.destination) {
+        return sortAndDedupeIncomingShares(persisted);
+      }
+      if (
+        target.destination.environmentId !== expectedDestination.environmentId ||
+        target.destination.projectId !== expectedDestination.projectId
+      ) {
+        throw new Error("The shared content reservation changed before it could be released.");
+      }
+
+      const { destination: _destination, ...unreserved } = target;
+      await this.dependencies.writeDraft(unreserved);
+      return sortAndDedupeIncomingShares(
+        persisted.map((draft) => (draft.id === shareId ? unreserved : draft)),
+      );
+    });
+  }
 }

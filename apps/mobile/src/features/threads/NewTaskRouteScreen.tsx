@@ -3,7 +3,7 @@ import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navi
 import { SymbolView } from "../../components/AppSymbol";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { useEffect, useMemo, useRef } from "react";
-import { ActivityIndicator, Platform, Pressable, ScrollView, View } from "react-native";
+import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { cn } from "../../lib/cn";
@@ -87,7 +87,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   const insets = useSafeAreaInsets();
   const chevronColor = useThemeColor("--color-chevron");
   const accentColor = useThemeColor("--color-icon-muted");
-  const { getShare } = useIncomingShare();
+  const { getShare, releaseShareReservation } = useIncomingShare();
   const routeShareId = Array.isArray(route.params?.incomingShareId)
     ? route.params.incomingShareId[0]
     : route.params?.incomingShareId;
@@ -121,6 +121,38 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   }, [repositoryGroups]);
   const projectEmptyState = deriveProjectEmptyState(catalogState);
   const resumedDestinationKeyRef = useRef<string | null>(null);
+  const reservedDestinationProject = incomingShare?.destination
+    ? (projects.find(
+        (project) =>
+          project.environmentId === incomingShare.destination?.environmentId &&
+          project.id === incomingShare.destination?.projectId,
+      ) ?? null)
+    : null;
+
+  async function selectProject(item: (typeof items)[number]): Promise<void> {
+    if (incomingShare?.destination && !reservedDestinationProject) {
+      try {
+        await releaseShareReservation(incomingShare.id, incomingShare.destination);
+      } catch (error) {
+        Alert.alert(
+          "Could not change project",
+          error instanceof Error
+            ? error.message
+            : "The shared content reservation could not be updated.",
+        );
+        return;
+      }
+    }
+    navigation.navigate("NewTaskSheet", {
+      screen: "NewTaskDraft",
+      params: {
+        environmentId: item.environmentId,
+        projectId: item.id,
+        title: item.title,
+        incomingShareId: incomingShare?.id,
+      },
+    });
+  }
 
   useEffect(() => {
     const destination = incomingShare?.destination;
@@ -135,24 +167,20 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
     if (resumedDestinationKeyRef.current === destinationKey) {
       return;
     }
-    const destinationProject = projects.find(
-      (project) =>
-        project.environmentId === destination.environmentId && project.id === destination.projectId,
-    );
-    if (!destinationProject) {
+    if (!reservedDestinationProject) {
       return;
     }
     resumedDestinationKeyRef.current = destinationKey;
     navigation.navigate("NewTaskSheet", {
       screen: "NewTaskDraft",
       params: {
-        environmentId: destinationProject.environmentId,
-        projectId: destinationProject.id,
-        title: destinationProject.title,
+        environmentId: reservedDestinationProject.environmentId,
+        projectId: reservedDestinationProject.id,
+        title: reservedDestinationProject.title,
         incomingShareId: incomingShare.id,
       },
     });
-  }, [incomingShare, isFocused, navigation, projects]);
+  }, [incomingShare, isFocused, navigation, reservedDestinationProject]);
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
@@ -250,18 +278,8 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
               return (
                 <Pressable
                   key={item.key}
-                  disabled={incomingShare?.destination !== undefined}
-                  onPress={() =>
-                    navigation.navigate("NewTaskSheet", {
-                      screen: "NewTaskDraft",
-                      params: {
-                        environmentId: item.environmentId,
-                        projectId: item.id,
-                        title: item.title,
-                        incomingShareId: incomingShare?.id,
-                      },
-                    })
-                  }
+                  disabled={reservedDestinationProject !== null}
+                  onPress={() => void selectProject(item)}
                   className={cn(
                     "bg-card px-4 py-3.5",
                     !isFirst && "border-t border-border-subtle",
