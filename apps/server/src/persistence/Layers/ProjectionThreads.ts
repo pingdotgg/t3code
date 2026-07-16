@@ -19,6 +19,7 @@ import { ModelSelection } from "@t3tools/contracts";
 const ProjectionThreadDbRow = ProjectionThread.mapFields(
   Struct.assign({
     modelSelection: Schema.fromJsonString(ModelSelection),
+    executorModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
   }),
 );
 type ProjectionThreadDbRow = typeof ProjectionThreadDbRow.Type;
@@ -37,6 +38,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           model_selection_json,
           runtime_mode,
           interaction_mode,
+          executor_model_selection,
           branch,
           worktree_path,
           latest_turn_id,
@@ -56,6 +58,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           ${JSON.stringify(row.modelSelection)},
           ${row.runtimeMode},
           ${row.interactionMode},
+          ${row.executorModelSelection !== null ? JSON.stringify(row.executorModelSelection) : null},
           ${row.branch},
           ${row.worktreePath},
           ${row.latestTurnId},
@@ -75,6 +78,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           model_selection_json = excluded.model_selection_json,
           runtime_mode = excluded.runtime_mode,
           interaction_mode = excluded.interaction_mode,
+          executor_model_selection = excluded.executor_model_selection,
           branch = excluded.branch,
           worktree_path = excluded.worktree_path,
           latest_turn_id = excluded.latest_turn_id,
@@ -101,6 +105,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
           interaction_mode AS "interactionMode",
+          executor_model_selection AS "executorModelSelection",
           branch,
           worktree_path AS "worktreePath",
           latest_turn_id AS "latestTurnId",
@@ -129,6 +134,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
           interaction_mode AS "interactionMode",
+          executor_model_selection AS "executorModelSelection",
           branch,
           worktree_path AS "worktreePath",
           latest_turn_id AS "latestTurnId",

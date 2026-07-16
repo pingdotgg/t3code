@@ -18,7 +18,7 @@ import type {
  * rides on `ItemLifecyclePayload`.
  *
  * Provider adapters each shape `data` differently:
- * - Claude / OpenCode: `{ toolName, input, result }`
+ * - Claude: `{ toolName, input, result }`
  * - Codex: the raw notification, i.e. `{ item: { type, command, server, tool, ... } }`
  * - ACP (Cursor, Grok, ...): `{ toolCallId, kind, command, rawInput, rawOutput, locations }`
  *

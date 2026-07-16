@@ -9,7 +9,6 @@ enum ProviderBrand: String, Equatable, Sendable {
     case codex
     case openAI
     case grok
-    case openCode
     case fugu
     case cursor
 
@@ -18,7 +17,6 @@ enum ProviderBrand: String, Equatable, Sendable {
             let id = modelID.lowercased()
             if id.contains("claude") { return .claude }
             if id.contains("grok") { return .grok }
-            if id.contains("opencode") { return .openCode }
             if id.contains("fugu") { return .fugu }
             if id.contains("codex") { return .codex }
             if id.contains("openai") || id.contains("gpt") || isOpenAIReasoningModel(id) {
@@ -31,7 +29,6 @@ enum ProviderBrand: String, Equatable, Sendable {
         case .claudex, .codex: .codex
         case .grok: .grok
         case .fugu: .fugu
-        case .opencode: .openCode
         case .legacyCursor: .cursor
         }
     }
@@ -46,7 +43,6 @@ enum ProviderBrand: String, Equatable, Sendable {
         case .codex: "ProviderCodex"
         case .openAI: "ProviderOpenAI"
         case .grok: "ProviderGrok"
-        case .openCode: "ProviderOpenCode"
         case .cursor: "ProviderCursor"
         case .fugu: nil
         }

@@ -15,7 +15,7 @@ import {
   spawnAndCollect,
 } from "./providerSnapshot.ts";
 
-const OPENCODE_CUSTOM_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
+const CUSTOM_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [
     {
       id: "variant",
@@ -38,17 +38,17 @@ describe("providerModelsFromSettings", () => {
   it("applies the provided capabilities to custom models", () => {
     const models = providerModelsFromSettings(
       [],
-      ProviderDriverKind.make("opencode"),
-      ["openai/gpt-5"],
-      OPENCODE_CUSTOM_MODEL_CAPABILITIES,
+      ProviderDriverKind.make("codex"),
+      ["gpt-5.4-custom"],
+      CUSTOM_MODEL_CAPABILITIES,
     );
 
     expect(models).toEqual([
       {
-        slug: "openai/gpt-5",
-        name: "openai/gpt-5",
+        slug: "gpt-5.4-custom",
+        name: "gpt-5.4-custom",
         isCustom: true,
-        capabilities: OPENCODE_CUSTOM_MODEL_CAPABILITIES,
+        capabilities: CUSTOM_MODEL_CAPABILITIES,
       },
     ]);
   });

@@ -27,6 +27,7 @@ function makeThread(
 ): OrchestrationThreadShell {
   return {
     modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+    executorModelSelection: null,
     runtimeMode: "full-access",
     interactionMode: "default",
     branch: null,

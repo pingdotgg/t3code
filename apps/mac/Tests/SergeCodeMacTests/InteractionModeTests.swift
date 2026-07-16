@@ -39,6 +39,59 @@ struct InteractionModeTests {
         #expect(!ThreadInteractionMode.normal.isNonMutating)
     }
 
+    @Test("advisor display name is Advisor/Planner")
+    func advisorDisplayName() throws {
+        #expect(ThreadInteractionMode.advisor.displayName == "Advisor/Planner")
+    }
+
+    @Test("MockBackend setExecutorModel round-trips instance and model ids")
+    func mockBackendSetExecutorModelRoundTrip() async throws {
+        let backend = MockBackend()
+        let threadID = "thread-1"
+        try await backend.setInteractionMode(threadID: threadID, mode: .advisor)
+        try await backend.setExecutorModel(
+            threadID: threadID, instanceID: "provider-codex", modelID: "gpt-5-codex")
+
+        let withExecutor = try #require(await backend.threads().first { $0.id == threadID })
+        #expect(withExecutor.executorModelInstanceID == "provider-codex")
+        #expect(withExecutor.executorModelID == "gpt-5-codex")
+        #expect(withExecutor.effectiveRuntimeMode == .approvalRequired)
+
+        try await backend.setExecutorModel(threadID: threadID, instanceID: nil, modelID: nil)
+        let cleared = try #require(await backend.threads().first { $0.id == threadID })
+        #expect(cleared.executorModelInstanceID == nil)
+        #expect(cleared.executorModelID == nil)
+    }
+
+    @Test("MockBackend setExecutorModel clears both fields on a partial selection")
+    func mockBackendSetExecutorModelClearsPartialSelection() async throws {
+        let backend = MockBackend()
+        let threadID = "thread-1"
+        try await backend.setExecutorModel(
+            threadID: threadID, instanceID: "provider-codex", modelID: "gpt-5-codex")
+
+        // LiveBackend only accepts a complete pair; partial args clear both.
+        try await backend.setExecutorModel(
+            threadID: threadID, instanceID: "provider-claude", modelID: nil)
+        let partialModel = try #require(await backend.threads().first { $0.id == threadID })
+        #expect(partialModel.executorModelInstanceID == nil)
+        #expect(partialModel.executorModelID == nil)
+
+        try await backend.setExecutorModel(
+            threadID: threadID, instanceID: "provider-codex", modelID: "gpt-5-codex")
+        try await backend.setExecutorModel(
+            threadID: threadID, instanceID: nil, modelID: "orphaned-model")
+        let partialInstance = try #require(await backend.threads().first { $0.id == threadID })
+        #expect(partialInstance.executorModelInstanceID == nil)
+        #expect(partialInstance.executorModelID == nil)
+    }
+
+    @Test("advisor helpText describes no-executor advise-only behavior")
+    func advisorHelpTextDescribesNoExecutor() throws {
+        #expect(ThreadInteractionMode.advisor.helpText.contains("otherwise it advises only"))
+        #expect(ThreadInteractionMode.advisor.helpText.contains("cannot edit the workspace itself"))
+    }
+
     private func thread(
         runtimeMode: ThreadRuntimeMode, interactionMode: ThreadInteractionMode
     ) -> ChatThread {

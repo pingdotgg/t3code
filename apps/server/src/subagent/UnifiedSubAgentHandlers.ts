@@ -37,7 +37,7 @@ export const handleList = (context: UniversalSubAgentContext) =>
     const registry = yield* SubAgentProviderRegistry;
     const concurrency = yield* ConcurrencyLimits;
 
-    // Get spawnable providers (excludes OpenCode)
+    // Get spawnable providers
     const providers = yield* registry.listSpawnableProviders({
       excludeApiCredits: true,
       requireAvailable: true,

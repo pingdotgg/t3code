@@ -133,7 +133,6 @@ const CLAUDE_SYNTHERO_DRIVER_KIND = ProviderDriverKind.make("claude-synthero");
 const CLAUDEX_DRIVER_KIND = ProviderDriverKind.make("claudex");
 const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
 const FUGU_DRIVER_KIND = ProviderDriverKind.make("fugu");
-const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
 const CHATGPT_DRIVER_KIND = ProviderDriverKind.make("chatgpt");
 
 export const DEFAULT_MODEL = "gpt-5.4";
@@ -146,7 +145,6 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
   [CLAUDEX_DRIVER_KIND]: "claudex-luna",
   [GROK_DRIVER_KIND]: "grok-4.5",
   [FUGU_DRIVER_KIND]: "fugu",
-  [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
   [CHATGPT_DRIVER_KIND]: "chatgpt",
 };
 
@@ -158,7 +156,6 @@ export const DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   [CLAUDE_DRIVER_KIND]: "claude-haiku-4-5",
   [CLAUDE_SYNTHERO_DRIVER_KIND]: "claude-haiku-4-5",
   [FUGU_DRIVER_KIND]: "fugu",
-  [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
   [CHATGPT_DRIVER_KIND]: "chatgpt",
 };
 
@@ -218,7 +215,6 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
     ultra: "fugu-ultra",
     "fugu-ultra-latest": "fugu-ultra",
   },
-  [OPENCODE_DRIVER_KIND]: {},
   [CHATGPT_DRIVER_KIND]: {},
 };
 
@@ -230,6 +226,5 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [CLAUDEX_DRIVER_KIND]: "Claudex",
   [GROK_DRIVER_KIND]: "Grok",
   [FUGU_DRIVER_KIND]: "Fugu",
-  [OPENCODE_DRIVER_KIND]: "OpenCode",
   [CHATGPT_DRIVER_KIND]: "ChatGPT",
 };

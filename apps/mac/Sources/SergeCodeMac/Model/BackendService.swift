@@ -96,6 +96,8 @@ public protocol BackendService: Sendable {
 
     func setRuntimeMode(threadID: String, mode: ThreadRuntimeMode) async throws
     func setInteractionMode(threadID: String, mode: ThreadInteractionMode) async throws
+    /// Sets or clears the Advisor/Planner executor model. Pass nil/nil to clear.
+    func setExecutorModel(threadID: String, instanceID: String?, modelID: String?) async throws
     /// Repoint the thread at a different provider instance/model.
     func setModel(threadID: String, model: ModelOption) async throws
     /// Set the thread's reasoning-effort option (a choice id from the

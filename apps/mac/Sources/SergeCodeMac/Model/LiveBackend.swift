@@ -34,10 +34,10 @@ import T3Kit
 //
 // ── Mapping decisions (wire -> UI) — best-effort, documented, never silent ────
 //  * ProviderKind: derived from ServerProvider.driver by substring match
-//    (claude/claude-synthero/codex/cursor/grok/fugu/opencode), with exact
-//    instance mappings for separately selectable profiles such as
-//    `claude-work`. Drivers with no ProviderKind equivalent are dropped from
-//    providers() — ProviderKind is a closed enum with no `.other`. See
+//    (claude/claude-synthero/codex/cursor/grok/fugu), with exact instance
+//    mappings for separately selectable profiles such as `claude-work`.
+//    Drivers with no ProviderKind equivalent are dropped from providers() —
+//    ProviderKind is a closed enum with no `.other`. See
 //    `providerKind(fromDriver:)` and `providerKind(for:)`.
 //  * A thread's ProviderKind is resolved from its modelSelection.instanceId via
 //    the ServerConfig provider table, falling back to session.providerName, then
@@ -1805,6 +1805,22 @@ public actor LiveBackend: BackendService {
         updateCachedThread(threadID) { $0.interactionMode = mode }
     }
 
+    public func setExecutorModel(threadID: String, instanceID: String?, modelID: String?) async throws {
+        guard let client = currentClient else { throw LiveBackendError.notConnected }
+        let selection: ModelSelection?
+        if let instanceID, let modelID {
+            selection = ModelSelection(instanceId: instanceID, model: modelID)
+        } else {
+            selection = nil
+        }
+        _ = try await client.setExecutorModel(
+            threadId: threadID, executorModelSelection: selection)
+        updateCachedThread(threadID) {
+            $0.executorModelInstanceID = selection?.instanceId
+            $0.executorModelID = selection?.model
+        }
+    }
+
     public func setModel(threadID: String, model: ModelOption) async throws {
         guard let client = currentClient else { throw LiveBackendError.notConnected }
         // Options deliberately dropped: effort choice ids are per-model, so a
@@ -2553,6 +2569,8 @@ public actor LiveBackend: BackendService {
             runtimeMode: Self.uiRuntimeMode(shell.runtimeMode),
             interactionMode: Self.uiInteractionMode(shell.interactionMode),
             modelInstanceID: shell.modelSelection.instanceId, modelID: shell.modelSelection.model,
+            executorModelInstanceID: shell.executorModelSelection?.instanceId,
+            executorModelID: shell.executorModelSelection?.model,
             reasoningEffort: Self.effortValue(of: shell.modelSelection),
             serviceTier: Self.serviceTierValue(of: shell.modelSelection),
             backgroundAgentCount: activeSubagentCount,
@@ -2850,7 +2868,6 @@ public actor LiveBackend: BackendService {
         if lowered.contains("codex") { return .codex }
         if lowered.contains("grok") { return .grok }
         if lowered.contains("fugu") { return .fugu }
-        if lowered.contains("opencode") { return .opencode }
         if lowered.contains("cursor") { return .legacyCursor }
         return nil
     }

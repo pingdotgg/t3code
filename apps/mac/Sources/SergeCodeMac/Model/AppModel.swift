@@ -1500,6 +1500,16 @@ public final class AppModel {
         }
     }
 
+    public func setExecutorModel(instanceID: String?, modelID: String?) async {
+        guard let threadID = selectedThreadID else { return }
+        do {
+            try await backend.setExecutorModel(
+                threadID: threadID, instanceID: instanceID, modelID: modelID)
+        } catch {
+            lastError = String(describing: error)
+        }
+    }
+
     public func setModel(_ model: ModelOption) async {
         guard let threadID = selectedThreadID else { return }
         do {

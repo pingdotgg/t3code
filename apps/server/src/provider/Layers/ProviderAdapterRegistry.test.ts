@@ -12,7 +12,7 @@ import * as Stream from "effect/Stream";
 
 import type * as ClaudeAdapter from "../Services/ClaudeAdapter.ts";
 import type * as CodexAdapter from "../Services/CodexAdapter.ts";
-import type * as OpenCodeAdapter from "../Services/OpenCodeAdapter.ts";
+import type * as GrokAdapter from "../Services/GrokAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderInstanceRegistry from "../Services/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "../ProviderDriver.ts";
@@ -23,7 +23,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
-const OPENCODE_DRIVER = ProviderDriverKind.make("opencode");
+const GROK_DRIVER = ProviderDriverKind.make("grok");
 
 const fakeCodexAdapter: CodexAdapter.CodexAdapterShape = {
   provider: CODEX_DRIVER,
@@ -61,8 +61,8 @@ const fakeClaudeAdapter: ClaudeAdapter.ClaudeAdapterShape = {
   streamEvents: Stream.empty,
 };
 
-const fakeOpenCodeAdapter: OpenCodeAdapter.OpenCodeAdapterShape = {
-  provider: OPENCODE_DRIVER,
+const fakeGrokAdapter: GrokAdapter.GrokAdapterShape = {
+  provider: GROK_DRIVER,
   capabilities: { sessionModelSwitch: "in-session" },
   startSession: vi.fn(),
   sendTurn: vi.fn(),
@@ -85,7 +85,7 @@ const fakeOpenCodeAdapter: OpenCodeAdapter.OpenCodeAdapterShape = {
 // instances whose `instanceId === defaultInstanceIdForDriver(driverKind)` so
 // they pass the default-instance filter.
 const makeFakeInstance = (
-  driverKindString: "codex" | "claudeAgent" | "opencode",
+  driverKindString: "codex" | "claudeAgent" | "grok",
   adapter: ProviderInstance["adapter"],
 ): ProviderInstance => {
   const driverKind = ProviderDriverKind.make(driverKindString);
@@ -115,7 +115,7 @@ const makeFakeInstance = (
 const fakeInstances: ReadonlyArray<ProviderInstance> = [
   makeFakeInstance("codex", fakeCodexAdapter),
   makeFakeInstance("claudeAgent", fakeClaudeAdapter),
-  makeFakeInstance("opencode", fakeOpenCodeAdapter),
+  makeFakeInstance("grok", fakeGrokAdapter),
 ];
 
 const fakeInstanceRegistryLayer = Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
@@ -163,10 +163,10 @@ it.layer(layer)("ProviderAdapterRegistryLive", (it) => {
       assert.deepStrictEqual(instances, [
         defaultInstanceIdForDriver(CODEX_DRIVER),
         claudeInstanceId,
-        defaultInstanceIdForDriver(OPENCODE_DRIVER),
+        defaultInstanceIdForDriver(GROK_DRIVER),
       ]);
 
       const providers = yield* registry.listProviders();
-      assert.deepStrictEqual(providers, [CODEX_DRIVER, CLAUDE_AGENT_DRIVER, OPENCODE_DRIVER]);
+      assert.deepStrictEqual(providers, [CODEX_DRIVER, CLAUDE_AGENT_DRIVER, GROK_DRIVER]);
     }));
 });

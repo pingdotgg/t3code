@@ -36,7 +36,6 @@ export const PROVIDER_COST_TIERS: Record<string, "free" | "subscription" | "api-
   claudex: "subscription",
   grok: "subscription",
   fugu: "subscription",
-  opencode: "api-credits", // EXCLUDED from sub-agents
   chatgpt: "subscription",
 };
 

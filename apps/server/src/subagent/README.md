@@ -17,7 +17,7 @@ Cross-provider sub-agent orchestration for SergeCode. The unified entry point is
    - Currently registered on the MCP server; provider adapters are pending
 
 3. **SubAgentProviderRegistry** - Tracks all available providers
-   - Lists spawnable providers (excludes OpenCode - API credits)
+   - Lists spawnable providers (can exclude API-credit tiers)
    - Maps provider instances to models and capabilities
    - Classifies providers by cost tier (free/subscription/api-credits)
 
@@ -135,9 +135,9 @@ Models are classified by cost to enforce appropriate concurrency limits:
 - codex, claudeAgent, claudeSynthero, claudex
 - cursor, grok, fugu, chatgpt
 
-**API Credits (excluded):**
+**API Credits (excluded when configured):**
 
-- opencode - Automatically excluded to protect API credits
+- Providers classified as `api-credits` are filtered from spawnable lists
 
 ## Differences from MCP-based SubAgentCoordinator
 
@@ -149,7 +149,7 @@ Models are classified by cost to enforce appropriate concurrency limits:
 | Provider access        | Configured spawnable providers | Configured spawnable providers                         |
 | Tool name              | agent_list, agent_spawn, etc.  | subagent (single tool)                                 |
 | Concurrency management | Coordinator lifecycle          | Atomic per-model reservations around coordinator turns |
-| OpenCode handling      | Coordinator readiness rules    | Registry additionally excludes API-credit providers    |
+| Cost-tier filtering    | Coordinator readiness rules    | Registry can exclude API-credit providers              |
 
 ## Workflow System
 

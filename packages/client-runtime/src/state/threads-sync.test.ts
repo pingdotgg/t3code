@@ -50,6 +50,7 @@ const BASE_THREAD: OrchestrationThread = {
   },
   runtimeMode: "full-access",
   interactionMode: "default",
+  executorModelSelection: null,
   branch: "main",
   worktreePath: null,
   latestTurn: null,

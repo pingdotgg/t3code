@@ -527,6 +527,8 @@ public struct OrchestrationThread: Codable, Sendable {
     public var modelSelection: ModelSelection
     public var runtimeMode: RuntimeMode
     public var interactionMode: ProviderInteractionMode
+    /// Advisor/Planner executor model; nil means advise-only (no delegated write agents).
+    public var executorModelSelection: ModelSelection?
     public var branch: String?
     public var worktreePath: String?
     public var latestTurn: OrchestrationLatestTurn?
@@ -541,9 +543,9 @@ public struct OrchestrationThread: Codable, Sendable {
     public var session: OrchestrationSession?
 
     private enum CodingKeys: String, CodingKey {
-        case id, projectId, title, modelSelection, runtimeMode, interactionMode, branch,
-            worktreePath, latestTurn, createdAt, updatedAt, archivedAt, deletedAt, messages,
-            proposedPlans, activities, checkpoints, session
+        case id, projectId, title, modelSelection, runtimeMode, interactionMode,
+            executorModelSelection, branch, worktreePath, latestTurn, createdAt, updatedAt,
+            archivedAt, deletedAt, messages, proposedPlans, activities, checkpoints, session
     }
 
     public init(from decoder: Decoder) throws {
@@ -555,6 +557,8 @@ public struct OrchestrationThread: Codable, Sendable {
         runtimeMode = try c.decode(RuntimeMode.self, forKey: .runtimeMode, default: .wireDefault)
         interactionMode = try c.decode(
             ProviderInteractionMode.self, forKey: .interactionMode, default: .wireDefault)
+        executorModelSelection = try c.decodeIfPresent(
+            ModelSelection.self, forKey: .executorModelSelection)
         branch = try c.decode(String?.self, forKey: .branch, default: nil)
         worktreePath = try c.decode(String?.self, forKey: .worktreePath, default: nil)
         latestTurn = try c.decode(OrchestrationLatestTurn?.self, forKey: .latestTurn, default: nil)
@@ -611,6 +615,7 @@ public struct OrchestrationThreadShell: Codable, Sendable {
     public var modelSelection: ModelSelection
     public var runtimeMode: RuntimeMode
     public var interactionMode: ProviderInteractionMode
+    public var executorModelSelection: ModelSelection?
     public var branch: String?
     public var worktreePath: String?
     public var latestTurn: OrchestrationLatestTurn?
@@ -624,9 +629,9 @@ public struct OrchestrationThreadShell: Codable, Sendable {
     public var hasActionableProposedPlan: Bool
 
     private enum CodingKeys: String, CodingKey {
-        case id, projectId, title, modelSelection, runtimeMode, interactionMode, branch,
-            worktreePath, latestTurn, createdAt, updatedAt, archivedAt, session,
-            latestUserMessageAt, hasPendingApprovals, hasPendingUserInput,
+        case id, projectId, title, modelSelection, runtimeMode, interactionMode,
+            executorModelSelection, branch, worktreePath, latestTurn, createdAt, updatedAt,
+            archivedAt, session, latestUserMessageAt, hasPendingApprovals, hasPendingUserInput,
             hasActionableProposedPlan
     }
 
@@ -639,6 +644,8 @@ public struct OrchestrationThreadShell: Codable, Sendable {
         runtimeMode = try c.decode(RuntimeMode.self, forKey: .runtimeMode, default: .wireDefault)
         interactionMode = try c.decode(
             ProviderInteractionMode.self, forKey: .interactionMode, default: .wireDefault)
+        executorModelSelection = try c.decodeIfPresent(
+            ModelSelection.self, forKey: .executorModelSelection)
         branch = try c.decode(String?.self, forKey: .branch, default: nil)
         worktreePath = try c.decode(String?.self, forKey: .worktreePath, default: nil)
         latestTurn = try c.decode(OrchestrationLatestTurn?.self, forKey: .latestTurn, default: nil)
@@ -1018,6 +1025,40 @@ public struct ThreadInteractionModeSetCommand: Encodable, Sendable {
     }
 }
 
+public struct ThreadExecutorModelSetCommand: Encodable, Sendable {
+    public let type: String = "thread.executor-model.set"
+    public var commandId: String
+    public var threadId: String
+    /// Null clears the per-thread executor model (advise-only advisor).
+    public var executorModelSelection: ModelSelection?
+    public var createdAt: String
+
+    public init(
+        commandId: String, threadId: String, executorModelSelection: ModelSelection?,
+        createdAt: String
+    ) {
+        self.commandId = commandId
+        self.threadId = threadId
+        self.executorModelSelection = executorModelSelection
+        self.createdAt = createdAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case type, commandId, threadId, executorModelSelection, createdAt
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(type, forKey: .type)
+        try c.encode(commandId, forKey: .commandId)
+        try c.encode(threadId, forKey: .threadId)
+        // Explicit null must be encoded to clear; omit-if-nil would leave the field
+        // unchanged server-side (command payload requires NullOr).
+        try c.encode(executorModelSelection, forKey: .executorModelSelection)
+        try c.encode(createdAt, forKey: .createdAt)
+    }
+}
+
 /// Nested in `ThreadTurnStartCommand.bootstrap`; `branch`/`worktreePath` are
 /// bare `NullOr` here too, so this also needs a manual `encode(to:)`.
 public struct ThreadTurnStartBootstrapCreateThread: Codable, Sendable {
@@ -1270,6 +1311,7 @@ public enum ClientOrchestrationCommand: Encodable, Sendable {
     case threadMetaUpdate(ThreadMetaUpdateCommand)
     case threadRuntimeModeSet(ThreadRuntimeModeSetCommand)
     case threadInteractionModeSet(ThreadInteractionModeSetCommand)
+    case threadExecutorModelSet(ThreadExecutorModelSetCommand)
     case threadTurnStart(ThreadTurnStartCommand)
     case threadTurnInterrupt(ThreadTurnInterruptCommand)
     case threadTaskStop(ThreadTaskStopCommand)
@@ -1291,6 +1333,7 @@ public enum ClientOrchestrationCommand: Encodable, Sendable {
         case .threadMetaUpdate(let c): try container.encode(c)
         case .threadRuntimeModeSet(let c): try container.encode(c)
         case .threadInteractionModeSet(let c): try container.encode(c)
+        case .threadExecutorModelSet(let c): try container.encode(c)
         case .threadTurnStart(let c): try container.encode(c)
         case .threadTurnInterrupt(let c): try container.encode(c)
         case .threadTaskStop(let c): try container.encode(c)
@@ -1412,14 +1455,15 @@ public struct ThreadCreatedPayload: Decodable, Sendable {
     public var modelSelection: ModelSelection
     public var runtimeMode: RuntimeMode
     public var interactionMode: ProviderInteractionMode
+    public var executorModelSelection: ModelSelection?
     public var branch: String?
     public var worktreePath: String?
     public var createdAt: String
     public var updatedAt: String
 
     private enum CodingKeys: String, CodingKey {
-        case threadId, projectId, title, modelSelection, runtimeMode, interactionMode, branch,
-            worktreePath, createdAt, updatedAt
+        case threadId, projectId, title, modelSelection, runtimeMode, interactionMode,
+            executorModelSelection, branch, worktreePath, createdAt, updatedAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -1431,6 +1475,8 @@ public struct ThreadCreatedPayload: Decodable, Sendable {
         runtimeMode = try c.decode(RuntimeMode.self, forKey: .runtimeMode, default: .wireDefault)
         interactionMode = try c.decode(
             ProviderInteractionMode.self, forKey: .interactionMode, default: .wireDefault)
+        executorModelSelection = try c.decodeIfPresent(
+            ModelSelection.self, forKey: .executorModelSelection)
         branch = try c.decode(String?.self, forKey: .branch, default: nil)
         worktreePath = try c.decode(String?.self, forKey: .worktreePath, default: nil)
         createdAt = try c.decode(String.self, forKey: .createdAt)
@@ -1481,6 +1527,24 @@ public struct ThreadInteractionModeSetPayload: Decodable, Sendable {
         threadId = try c.decode(String.self, forKey: .threadId)
         interactionMode = try c.decode(
             ProviderInteractionMode.self, forKey: .interactionMode, default: .wireDefault)
+        updatedAt = try c.decode(String.self, forKey: .updatedAt)
+    }
+}
+
+public struct ThreadExecutorModelSetPayload: Decodable, Sendable {
+    public var threadId: String
+    public var executorModelSelection: ModelSelection?
+    public var updatedAt: String
+
+    private enum CodingKeys: String, CodingKey {
+        case threadId, executorModelSelection, updatedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        threadId = try c.decode(String.self, forKey: .threadId)
+        executorModelSelection = try c.decodeIfPresent(
+            ModelSelection.self, forKey: .executorModelSelection)
         updatedAt = try c.decode(String.self, forKey: .updatedAt)
     }
 }
@@ -1600,6 +1664,7 @@ public enum OrchestrationEventType {
     public static let threadMetaUpdated = "thread.meta-updated"
     public static let threadRuntimeModeSet = "thread.runtime-mode-set"
     public static let threadInteractionModeSet = "thread.interaction-mode-set"
+    public static let threadExecutorModelSet = "thread.executor-model-set"
     public static let threadMessageSent = "thread.message-sent"
     public static let threadTurnStartRequested = "thread.turn-start-requested"
     public static let threadTurnInterruptRequested = "thread.turn-interrupt-requested"
@@ -1642,6 +1707,7 @@ public struct OrchestrationEvent: Decodable, Sendable {
         case threadMetaUpdated(ThreadMetaUpdatedPayload)
         case threadRuntimeModeSet(ThreadRuntimeModeSetPayload)
         case threadInteractionModeSet(ThreadInteractionModeSetPayload)
+        case threadExecutorModelSet(ThreadExecutorModelSetPayload)
         case threadMessageSent(ThreadMessageSentPayload)
         case threadTurnStartRequested(ThreadTurnStartRequestedPayload)
         case threadTurnInterruptRequested(ThreadTurnInterruptRequestedPayload)
@@ -1699,6 +1765,9 @@ public struct OrchestrationEvent: Decodable, Sendable {
         case OrchestrationEventType.threadInteractionModeSet:
             payload = .threadInteractionModeSet(
                 try c.decode(ThreadInteractionModeSetPayload.self, forKey: .payload))
+        case OrchestrationEventType.threadExecutorModelSet:
+            payload = .threadExecutorModelSet(
+                try c.decode(ThreadExecutorModelSetPayload.self, forKey: .payload))
         case OrchestrationEventType.threadMessageSent:
             payload = .threadMessageSent(try c.decode(ThreadMessageSentPayload.self, forKey: .payload))
         case OrchestrationEventType.threadTurnStartRequested:

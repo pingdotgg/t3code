@@ -1,6 +1,6 @@
 # SergeCode
 
-SergeCode is a native macOS coding-agent client with an iPhone companion. The SwiftUI desktop app supervises a customized Node.js backend that manages Codex, Claude, Grok, Fugu, and OpenCode sessions.
+SergeCode is a native macOS coding-agent client with an iPhone companion. The SwiftUI desktop app supervises a customized Node.js backend that manages Codex, Claude, Grok, and Fugu sessions.
 
 > [!IMPORTANT]
 > SergeCode is a permanent, independent hard fork of [T3 Code](https://github.com/pingdotgg/t3code). It evolves separately and will never be merged back upstream. All issues, pull requests, and releases belong to [SergeSerb2/SergeCode](https://github.com/SergeSerb2/SergeCode).

@@ -19,8 +19,7 @@ Defined in `packages/contracts/src/orchestration.ts`. Default is `full-access`.
 - **`approval-required`** — the strictest mode. Each driver maps it onto its own
   strongest policy: Codex/Fugu get a real `read-only` OS sandbox
   (`approvalPolicy: untrusted`), Claude falls back to the `canUseTool` gate,
-  OpenCode to an ask-everything ruleset, and the Grok ACP driver to
-  per-tool permission requests.
+  and the Grok ACP driver to per-tool permission requests.
 - **`auto-accept-edits`** — Codex/Fugu run `workspace-write` (`danger-full-access`
   inside a git worktree, where `workspace-write` hangs); Claude runs `acceptEdits`.
 - **`full-access`** — no approvals. Codex/Fugu run `danger-full-access`; Claude
@@ -38,15 +37,20 @@ Default is `default`.
   as a plan card. It does not implement. This is prompt-level only: plan mode
   does **not** change the sandbox, so a `full-access` plan thread can still
   write if the model ignores its instructions.
-- **`advisor`** — the agent answers, explains, reviews and recommends, and
-  cannot write to the workspace. Unlike plan, advisor is enforced, not merely
-  requested. See [advisor-mode.md](./advisor-mode.md).
+- **`advisor`** — Advisor/Planner: the agent answers, explains, reviews,
+  recommends, and cannot write to the workspace itself. When a per-thread
+  executor model is configured, it may delegate implementation to sub-agents
+  that run unclamped with the thread's stored runtime mode. Unlike plan, the
+  parent clamp is enforced, not merely requested. See
+  [advisor-mode.md](./advisor-mode.md).
 
 ## Where the two axes meet
 
-Advisor is the only place the axes interact. `resolveEffectiveRuntimeMode`
-(contracts) clamps the permission axis to `approval-required` whenever the
-interaction mode is advisor, and `ProviderCommandReactor` starts the provider
-session with that _effective_ mode rather than the thread's stored one. The
-thread keeps the user's chosen permission mode, so it comes back when they leave
-advisor.
+Advisor/Planner is the only place the axes interact.
+`resolveEffectiveRuntimeMode` (contracts) clamps the permission axis to
+`approval-required` whenever the interaction mode is advisor, and
+`ProviderCommandReactor` starts the provider session with that _effective_ mode
+rather than the thread's stored one. The thread keeps the user's chosen
+permission mode, so it comes back when they leave advisor. The deliberate
+exception: with an executor model set, sub-agents spawn with the stored
+(unclamped) runtime mode so delegated implementation can write.

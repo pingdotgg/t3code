@@ -90,6 +90,7 @@ const THREAD_SHELL = {
   modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
   runtimeMode: "full-access",
   interactionMode: "default",
+  executorModelSelection: null,
   branch: null,
   worktreePath: null,
   latestTurn: null,

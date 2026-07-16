@@ -66,6 +66,7 @@ export function applyThreadDetailEvent(
           modelSelection: event.payload.modelSelection,
           runtimeMode: event.payload.runtimeMode,
           interactionMode: event.payload.interactionMode,
+          executorModelSelection: event.payload.executorModelSelection ?? null,
           branch: event.payload.branch,
           worktreePath: event.payload.worktreePath,
           latestTurn: null,
@@ -134,6 +135,16 @@ export function applyThreadDetailEvent(
         thread: {
           ...thread,
           interactionMode: event.payload.interactionMode,
+          updatedAt: event.payload.updatedAt,
+        },
+      };
+
+    case "thread.executor-model-set":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          executorModelSelection: event.payload.executorModelSelection,
           updatedAt: event.payload.updatedAt,
         },
       };

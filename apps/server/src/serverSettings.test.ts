@@ -162,6 +162,29 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }),
   );
 
+  it.effect("loads settings that still contain a legacy providers.opencode block", () =>
+    Effect.gen(function* () {
+      // Effect Schema ignores excess struct keys by default, so a stored
+      // providers.opencode section from older installs must not fail decode.
+      const decoded = yield* decodeServerSettings({
+        providers: {
+          opencode: {
+            enabled: true,
+            binaryPath: "/opt/homebrew/bin/opencode",
+            serverUrl: "http://127.0.0.1:4096",
+            serverPassword: "secret",
+          },
+          codex: {
+            binaryPath: "/opt/homebrew/bin/codex",
+          },
+        },
+      });
+
+      assert.equal(decoded.providers.codex.binaryPath, "/opt/homebrew/bin/codex");
+      assert.equal(Object.prototype.hasOwnProperty.call(decoded.providers, "opencode"), false);
+    }),
+  );
+
   it.effect("deep merges nested settings updates without dropping siblings", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
@@ -435,10 +458,8 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           claudeAgent: {
             binaryPath: "  /opt/homebrew/bin/claude  ",
           },
-          opencode: {
-            binaryPath: "  /opt/homebrew/bin/opencode  ",
-            serverUrl: "  http://127.0.0.1:4096  ",
-            serverPassword: "  secret-password  ",
+          grok: {
+            binaryPath: "  /opt/homebrew/bin/grok  ",
           },
         },
       });
@@ -457,11 +478,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         customModels: [],
         launchArgs: "",
       });
-      assert.deepEqual(next.providers.opencode, {
+      assert.deepEqual(next.providers.grok, {
         enabled: true,
-        binaryPath: "/opt/homebrew/bin/opencode",
-        serverUrl: "http://127.0.0.1:4096",
-        serverPassword: "secret-password",
+        binaryPath: "/opt/homebrew/bin/grok",
         customModels: [],
       });
     }).pipe(Effect.provide(makeServerSettingsLayer())),
@@ -522,9 +541,8 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           codex: {
             binaryPath: "/opt/homebrew/bin/codex",
           },
-          opencode: {
-            serverUrl: "http://127.0.0.1:4096",
-            serverPassword: "secret-password",
+          grok: {
+            binaryPath: "/opt/homebrew/bin/grok",
           },
         },
         automaticGitFetchInterval: Duration.seconds(10),
@@ -544,9 +562,8 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           codex: {
             binaryPath: "/opt/homebrew/bin/codex",
           },
-          opencode: {
-            serverUrl: "http://127.0.0.1:4096",
-            serverPassword: "secret-password",
+          grok: {
+            binaryPath: "/opt/homebrew/bin/grok",
           },
         },
         automaticGitFetchInterval: 10_000,

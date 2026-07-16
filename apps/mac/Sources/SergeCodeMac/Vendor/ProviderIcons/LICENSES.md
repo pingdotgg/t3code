@@ -3,7 +3,7 @@
 The OpenAI outline icon is from [Tabler Icons](https://github.com/tabler/tabler-icons),
 copyright Paweł Kuna, and is used under the MIT License.
 
-The Claude, Codex, Grok, OpenCode, and Cursor icons are from
+The Claude, Codex, Grok, and Cursor icons are from
 [Lobe Icons](https://github.com/lobehub/lobe-icons) package
 `@lobehub/icons-static-svg` version 1.90.0 and are used under the MIT License.
 
