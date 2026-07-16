@@ -1,5 +1,6 @@
 import type { SharePayload } from "expo-sharing";
 
+import { SerializedAsyncQueue } from "../../lib/serialized-async-queue";
 import { hasIncomingShareContent, type IncomingShareDraft } from "./incoming-share-model";
 
 export interface IncomingShareInboxDependencies {
@@ -27,16 +28,13 @@ export function sortAndDedupeIncomingShares(
   drafts: ReadonlyArray<IncomingShareDraft>,
 ): ReadonlyArray<IncomingShareDraft> {
   const ids = new Set<string>();
-  const contentKeys = new Set<string>();
   return [...drafts]
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
     .filter((draft) => {
-      const contentKey = incomingShareContentKey(draft);
-      if (ids.has(draft.id) || contentKeys.has(contentKey)) {
+      if (ids.has(draft.id)) {
         return false;
       }
       ids.add(draft.id);
-      contentKeys.add(contentKey);
       return true;
     });
 }
@@ -58,17 +56,12 @@ function incomingShareContentKey(draft: IncomingShareDraft): string {
  * or a foreground refresh from restoring an item after it has been consumed.
  */
 export class IncomingShareInbox {
-  private operationTail: Promise<void> = Promise.resolve();
+  private readonly operations = new SerializedAsyncQueue();
 
   constructor(private readonly dependencies: IncomingShareInboxDependencies) {}
 
   private runExclusive<T>(operation: () => Promise<T>): Promise<T> {
-    const result = this.operationTail.then(operation, operation);
-    this.operationTail = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    return result;
+    return this.operations.run(operation);
   }
 
   private clearNativePayloads(): void {

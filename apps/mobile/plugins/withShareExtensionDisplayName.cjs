@@ -44,14 +44,14 @@ function withDisplayNamePlist(config, displayName) {
         );
       }
       const source = fs.readFileSync(plistPath, "utf8");
-      const next = source.replace(
-        /(<key>CFBundleDisplayName<\/key>\s*<string>)[^<]*(<\/string>)/,
-        `$1${escapeXml(displayName)}$2`,
-      );
-      if (next === source) {
+      const displayNamePattern = /(<key>CFBundleDisplayName<\/key>\s*<string>)[^<]*(<\/string>)/;
+      if (!displayNamePattern.test(source)) {
         throw new Error(`Could not update CFBundleDisplayName in ${plistPath}.`);
       }
-      fs.writeFileSync(plistPath, next);
+      const next = source.replace(displayNamePattern, `$1${escapeXml(displayName)}$2`);
+      if (next !== source) {
+        fs.writeFileSync(plistPath, next);
+      }
       return cfg;
     },
   ]);

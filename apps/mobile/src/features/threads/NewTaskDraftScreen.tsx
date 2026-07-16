@@ -90,9 +90,16 @@ export function NewTaskDraftScreen(props: {
   const promptInputRef = useRef<ComposerEditorHandle>(null);
   const loadedBranchesProjectKeyRef = useRef<string | null>(null);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
-  const [isImportingShare, setIsImportingShare] = useState(false);
+  const [importingShareKey, setImportingShareKey] = useState<string | null>(null);
   const [shareImportAttempt, setShareImportAttempt] = useState(0);
-  const appliedIncomingShareIdRef = useRef<string | null>(null);
+  const startedShareImportKeyRef = useRef<string | null>(null);
+  const activeShareImportTokenRef = useRef<symbol | null>(null);
+  const shareImportMountedRef = useRef(true);
+  const latestDraftKeyRef = useRef(flow.draftKey);
+  const latestIncomingShareIdRef = useRef(props.incomingShareId);
+  latestDraftKeyRef.current = flow.draftKey;
+  latestIncomingShareIdRef.current = props.incomingShareId;
+  const isImportingShare = importingShareKey !== null;
   const alertedUnavailableIncomingShareIdRef = useRef<string | null>(null);
   const incomingShare = props.incomingShareId ? getShare(props.incomingShareId) : null;
   const hasImportedIncomingShare = Boolean(
@@ -112,8 +119,14 @@ export function NewTaskDraftScreen(props: {
     isIncomingShareUnavailable;
   const appliedInitialProjectKeyRef = useRef<string | null>(null);
   useEffect(() => {
+    if (!shareImportMountedRef.current) {
+      startedShareImportKeyRef.current = null;
+    }
+    shareImportMountedRef.current = true;
     return () => {
       appliedInitialProjectKeyRef.current = null;
+      shareImportMountedRef.current = false;
+      activeShareImportTokenRef.current = null;
     };
   }, []);
 
@@ -229,31 +242,11 @@ export function NewTaskDraftScreen(props: {
   useEffect(() => {
     const shareId = props.incomingShareId;
     const draftKey = flow.draftKey;
-    if (!shareId || !draftKey || appliedIncomingShareIdRef.current === shareId) {
+    if (!shareId || !draftKey) {
       return;
     }
-
-    if (hasImportedIncomingShare) {
-      appliedIncomingShareIdRef.current = shareId;
-      if (!incomingShare) {
-        return;
-      }
-      setIsImportingShare(true);
-      void consumeShare(shareId)
-        .catch((error) => {
-          appliedIncomingShareIdRef.current = null;
-          Alert.alert(
-            "Could not finish importing shared content",
-            error instanceof Error ? error.message : "The shared content could not be removed.",
-            [
-              {
-                text: "Retry",
-                onPress: () => setShareImportAttempt((attempt) => attempt + 1),
-              },
-            ],
-          );
-        })
-        .finally(() => setIsImportingShare(false));
+    const importKey = `${shareId}:${draftKey}`;
+    if (startedShareImportKeyRef.current === importKey) {
       return;
     }
 
@@ -271,15 +264,30 @@ export function NewTaskDraftScreen(props: {
     if (alertedUnavailableIncomingShareIdRef.current === shareId) {
       alertedUnavailableIncomingShareIdRef.current = null;
     }
-    appliedIncomingShareIdRef.current = shareId;
-    setIsImportingShare(true);
+    startedShareImportKeyRef.current = importKey;
+    const importToken = Symbol(importKey);
+    activeShareImportTokenRef.current = importToken;
+    setImportingShareKey(importKey);
     void mergeComposerDraftContent(draftKey, {
       text: incomingShare.text,
       attachments: incomingShare.attachments,
       sourceShareId: shareId,
     })
       .then(async ({ skippedAttachmentCount }) => {
+        if (
+          !shareImportMountedRef.current ||
+          activeShareImportTokenRef.current !== importToken ||
+          latestDraftKeyRef.current !== draftKey ||
+          latestIncomingShareIdRef.current !== shareId
+        ) {
+          // Project/route changes do not acknowledge this inbox item. The new
+          // destination can safely retry the idempotent import by share id.
+          return;
+        }
         await consumeShare(shareId);
+        if (!shareImportMountedRef.current || activeShareImportTokenRef.current !== importToken) {
+          return;
+        }
         const warnings = [...incomingShare.warnings];
         if (skippedAttachmentCount > 0) {
           warnings.push(
@@ -291,7 +299,12 @@ export function NewTaskDraftScreen(props: {
         }
       })
       .catch((error) => {
-        appliedIncomingShareIdRef.current = null;
+        if (!shareImportMountedRef.current || activeShareImportTokenRef.current !== importToken) {
+          return;
+        }
+        if (startedShareImportKeyRef.current === importKey) {
+          startedShareImportKeyRef.current = null;
+        }
         Alert.alert(
           "Could not import shared content",
           error instanceof Error ? error.message : "The shared content could not be saved.",
@@ -303,7 +316,12 @@ export function NewTaskDraftScreen(props: {
           ],
         );
       })
-      .finally(() => setIsImportingShare(false));
+      .finally(() => {
+        if (shareImportMountedRef.current && activeShareImportTokenRef.current === importToken) {
+          activeShareImportTokenRef.current = null;
+          setImportingShareKey(null);
+        }
+      });
   }, [
     consumeShare,
     flow.draftKey,
@@ -340,10 +358,11 @@ export function NewTaskDraftScreen(props: {
       flow.environments.map((environment) => ({
         id: `environment:${environment.environmentId}`,
         title: environment.environmentLabel,
+        attributes: isImportingShare ? { disabled: true } : undefined,
         state:
           flow.selectedEnvironmentId === environment.environmentId ? ("on" as const) : undefined,
       })),
-    [flow.environments, flow.selectedEnvironmentId],
+    [flow.environments, flow.selectedEnvironmentId, isImportingShare],
   );
 
   const modelMenuActions = useMemo(
@@ -515,7 +534,7 @@ export function NewTaskDraftScreen(props: {
   }
 
   function handleEnvironmentMenuAction(event: string) {
-    if (!event.startsWith("environment:")) {
+    if (isImportingShare || !event.startsWith("environment:")) {
       return;
     }
     flow.selectEnvironment(EnvironmentId.make(event.slice("environment:".length)));
@@ -804,6 +823,7 @@ export function NewTaskDraftScreen(props: {
       >
         <ComposerToolbarTrigger
           accessibilityLabel="Environment"
+          disabled={isImportingShare}
           icon="desktopcomputer"
           label={selectedEnvironmentLabel}
         />

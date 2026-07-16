@@ -59,14 +59,42 @@ function resolvedImageFor(
   payload: SharePayload,
   index: number,
   resolvedPayloads: ReadonlyArray<ResolvedSharePayload>,
+  consumedIndexes: Set<number>,
 ): ResolvedSharePayload | undefined {
   const sameIndex = resolvedPayloads[index];
-  if (sameIndex?.shareType === payload.shareType && sameIndex.value === payload.value) {
+  if (
+    !consumedIndexes.has(index) &&
+    sameIndex?.shareType === payload.shareType &&
+    sameIndex.value === payload.value
+  ) {
+    consumedIndexes.add(index);
     return sameIndex;
   }
-  return resolvedPayloads.find(
-    (candidate) => candidate.shareType === payload.shareType && candidate.value === payload.value,
+  const matchingIndex = resolvedPayloads.findIndex(
+    (candidate, candidateIndex) =>
+      !consumedIndexes.has(candidateIndex) &&
+      candidate.shareType === payload.shareType &&
+      candidate.value === payload.value,
   );
+  if (matchingIndex < 0) {
+    return undefined;
+  }
+  consumedIndexes.add(matchingIndex);
+  return resolvedPayloads[matchingIndex];
+}
+
+async function releaseOwnedFiles(
+  fileReader: IncomingShareFileReader,
+  uris: ReadonlyArray<string | undefined>,
+): Promise<void> {
+  for (const uri of new Set(uris.filter((candidate): candidate is string => Boolean(candidate)))) {
+    try {
+      await fileReader.removeOwnedFile(uri);
+    } catch {
+      // Temporary-file cleanup is best-effort and must never discard content
+      // that was successfully converted into a durable composer attachment.
+    }
+  }
 }
 
 function fallbackName(uri: string, index: number, mimeType: string): string {
@@ -91,13 +119,19 @@ export async function buildIncomingShareDraft(input: {
 }): Promise<IncomingShareDraft> {
   const attachments: DraftComposerImageAttachment[] = [];
   const warnings: string[] = [];
+  const consumedResolvedPayloadIndexes = new Set<number>();
   let warnedAttachmentLimit = false;
 
   for (const [index, payload] of input.payloads.entries()) {
     if (payload.shareType !== "image") {
       continue;
     }
-    const resolved = resolvedImageFor(payload, index, input.resolvedPayloads);
+    const resolved = resolvedImageFor(
+      payload,
+      index,
+      input.resolvedPayloads,
+      consumedResolvedPayloadIndexes,
+    );
     const uri = resolved?.contentUri ?? payload.value;
     if (attachments.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
       if (!warnedAttachmentLimit) {
@@ -106,15 +140,14 @@ export async function buildIncomingShareDraft(input: {
         );
         warnedAttachmentLimit = true;
       }
-      if (uri) {
-        await input.fileReader.removeOwnedFile(uri);
-      }
+      await releaseOwnedFiles(input.fileReader, [uri, payload.value]);
       continue;
     }
 
     const mimeType = (resolved?.contentMimeType ?? payload.mimeType ?? "image/png").toLowerCase();
     if (!uri || !mimeType.startsWith("image/")) {
       warnings.push("One shared item was not a supported image.");
+      await releaseOwnedFiles(input.fileReader, [uri, payload.value]);
       continue;
     }
     if (
@@ -125,7 +158,7 @@ export async function buildIncomingShareDraft(input: {
       warnings.push(
         `'${resolved.originalName ?? fallbackName(uri, index, mimeType)}' exceeds the 10 MB attachment limit.`,
       );
-      await input.fileReader.removeOwnedFile(uri);
+      await releaseOwnedFiles(input.fileReader, [uri, payload.value]);
       continue;
     }
 
@@ -153,7 +186,7 @@ export async function buildIncomingShareDraft(input: {
     } catch {
       warnings.push(`Could not read '${fallbackName(uri, index, mimeType)}'.`);
     } finally {
-      await input.fileReader.removeOwnedFile(uri);
+      await releaseOwnedFiles(input.fileReader, [uri, payload.value]);
     }
   }
 

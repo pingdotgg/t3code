@@ -287,18 +287,29 @@ function RootStackLayout(props: {
   // Launcher app shortcuts: routes shortcut taps and tracks opened threads.
   useAppShortcuts(props.state);
   useEffect(() => {
+    const topRouteName = props.state.routes[props.state.index]?.name;
+    if (topRouteName === "NewTaskSheet") {
+      return;
+    }
+
+    if (presentedShareIdRef.current !== null) {
+      const previouslyPresentedShareId = presentedShareIdRef.current;
+      presentedShareIdRef.current = null;
+      // A dismissal leaves the share queued, but must not instantly trap the
+      // user in a reopened sheet. A later navigation/lifecycle update can
+      // present it again. If the old share was consumed and another is queued,
+      // continue below and present that distinct share immediately.
+      if (pendingShare?.id === previouslyPresentedShareId) {
+        return;
+      }
+    }
+
     if (!pendingShare) {
       // Allow a later, intentional share of identical text/URL content to
       // present again after the previous inbox item was fully consumed.
-      presentedShareIdRef.current = null;
       return;
     }
     if (presentedShareIdRef.current === pendingShare.id) {
-      return;
-    }
-    // Do not replace an in-progress task flow. A second queued share opens
-    // after the current sheet is sent or dismissed.
-    if (props.state.routes[props.state.index]?.name === "NewTaskSheet") {
       return;
     }
     presentedShareIdRef.current = pendingShare.id;

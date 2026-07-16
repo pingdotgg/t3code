@@ -84,14 +84,25 @@ async function removeOwnedFile(uri: string): Promise<void> {
   }
 }
 
-async function removeRawImagePayloadFiles(payloads: ReadonlyArray<SharePayload>): Promise<void> {
-  const removals: Promise<void>[] = [];
+async function removeReplayedImagePayloadFiles(
+  payloads: ReadonlyArray<SharePayload>,
+): Promise<void> {
+  const uris = new Set<string>();
   for (const payload of payloads) {
     if (payload.shareType === "image") {
-      removals.push(removeOwnedFile(payload.value));
+      uris.add(payload.value);
     }
   }
-  await Promise.all(removals);
+  if (uris.size === 0) {
+    return;
+  }
+  const resolvedPayloads = await resolvedPayloadsForImages();
+  for (const payload of resolvedPayloads) {
+    if (payload.shareType === "image" && payload.contentUri) {
+      uris.add(payload.contentUri);
+    }
+  }
+  await Promise.all([...uris].map(removeOwnedFile));
 }
 
 // Keep one operation queue across provider remounts (including development
@@ -127,7 +138,7 @@ const incomingShareInbox = new IncomingShareInbox({
       },
     };
   },
-  cleanupReplayedPayloads: removeRawImagePayloadFiles,
+  cleanupReplayedPayloads: removeReplayedImagePayloadFiles,
   idForPayloads: incomingShareIdForPayloads,
   now: () => new Date().toISOString(),
   onClearError: (error) => {

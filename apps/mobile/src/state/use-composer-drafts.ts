@@ -15,6 +15,7 @@ import { Atom } from "effect/unstable/reactivity";
 
 import { DraftComposerImageAttachmentSchema } from "../lib/composer-image-schema";
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
+import { SerializedAsyncQueue } from "../lib/serialized-async-queue";
 import { appAtomRegistry } from "./atom-registry";
 
 const COMPOSER_DRAFTS_SCHEMA_VERSION = 1;
@@ -102,6 +103,7 @@ export const composerDraftsAtom = Atom.make<Record<string, ComposerDraft>>({}).p
 
 let loadPromise: Promise<void> | null = null;
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
+const persistenceQueue = new SerializedAsyncQueue();
 
 function normalizeDraft(draft: ComposerDraft | undefined): ComposerDraft {
   if (!draft) {
@@ -202,7 +204,7 @@ async function writePersistedComposerDrafts(drafts: Record<string, ComposerDraft
 
 async function savePersistedComposerDrafts(drafts: Record<string, ComposerDraft>): Promise<void> {
   try {
-    await writePersistedComposerDrafts(drafts);
+    await persistenceQueue.run(() => writePersistedComposerDrafts(drafts));
   } catch (error) {
     console.warn("[composer-drafts] failed to persist drafts", error);
     // Draft persistence is best-effort; in-memory drafts still keep working.
@@ -450,24 +452,6 @@ export function mergeComposerDraftContentState(
   };
 }
 
-function markComposerDraftShareImportedState(
-  current: Record<string, ComposerDraft>,
-  draftKey: string,
-  shareId: string,
-): Record<string, ComposerDraft> {
-  const existing = normalizeDraft(current[draftKey]);
-  if (existing.importedShareIds?.includes(shareId)) {
-    return current;
-  }
-  return {
-    ...current,
-    [draftKey]: {
-      ...existing,
-      importedShareIds: [...(existing.importedShareIds ?? []), shareId],
-    },
-  };
-}
-
 /**
  * Atomically moves an incoming share into a project-scoped composer draft.
  * The durable write happens before the share inbox item can be acknowledged.
@@ -485,8 +469,7 @@ export async function mergeComposerDraftContent(
     persistTimer = null;
   }
   const current = appAtomRegistry.get(composerDraftsAtom);
-  const { sourceShareId, ...contentWithoutReceipt } = content;
-  const next = mergeComposerDraftContentState(current, draftKey, contentWithoutReceipt);
+  const next = mergeComposerDraftContentState(current, draftKey, content);
   const currentAttachmentIds = new Set(
     normalizeDraft(current[draftKey]).attachments.map((attachment) => attachment.id),
   );
@@ -497,27 +480,13 @@ export async function mergeComposerDraftContent(
     (attachment) =>
       !currentAttachmentIds.has(attachment.id) && !nextAttachmentIds.has(attachment.id),
   ).length;
-  // Publish the content before the filesystem await so typing that happens
-  // during persistence is applied on top of the import rather than being
-  // overwritten by an older snapshot.
+  // Publish the content and its import receipt together before the filesystem
+  // await. Typing during persistence then builds on the receipt-bearing state,
+  // and its debounced write is serialized after this transaction.
   if (next !== current) {
     appAtomRegistry.set(composerDraftsAtom, next);
   }
-
-  const latest = appAtomRegistry.get(composerDraftsAtom);
-  const durable = sourceShareId
-    ? markComposerDraftShareImportedState(latest, draftKey, sourceShareId)
-    : latest;
-  await writePersistedComposerDrafts(durable);
-
-  if (sourceShareId) {
-    // Commit the receipt against the latest in-memory draft after the durable
-    // write. This preserves edits made while the write was in flight and makes
-    // interrupted acknowledgement safe to retry without merging twice.
-    updateComposerDrafts((drafts) =>
-      markComposerDraftShareImportedState(drafts, draftKey, sourceShareId),
-    );
-  }
+  await persistenceQueue.run(() => writePersistedComposerDrafts(next));
   return { skippedAttachmentCount };
 }
 

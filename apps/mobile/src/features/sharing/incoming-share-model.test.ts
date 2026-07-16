@@ -120,4 +120,77 @@ describe("incoming native shares", () => {
     expect(readBase64).toHaveBeenCalledTimes(PROVIDER_SEND_TURN_MAX_ATTACHMENTS);
     expect(removeOwnedFile).toHaveBeenCalledTimes(payloads.length);
   });
+
+  it("maps duplicate image payloads to distinct resolved files", async () => {
+    const duplicate: SharePayload = {
+      shareType: "image",
+      value: "content://shared/screenshot",
+      mimeType: "image/png",
+    };
+    const resolvedPayloads: ResolvedSharePayload[] = [
+      {
+        ...duplicate,
+        contentUri: "file:///cache/first.png",
+        contentType: "image",
+        contentMimeType: "image/png",
+        contentSize: 3,
+        originalName: "first.png",
+      },
+      {
+        ...duplicate,
+        contentUri: "file:///cache/second.png",
+        contentType: "image",
+        contentMimeType: "image/png",
+        contentSize: 3,
+        originalName: "second.png",
+      },
+    ];
+    const readBase64 = vi.fn(async (uri: string) =>
+      uri.includes("first") ? "Zmlyc3Q=" : "c2Vjb25k",
+    );
+    const removeOwnedFile = vi.fn(async () => undefined);
+
+    const result = await buildIncomingShareDraft({
+      id: "share-duplicates",
+      createdAt: "2026-07-16T08:00:00.000Z",
+      payloads: [duplicate, duplicate],
+      resolvedPayloads,
+      fileReader: { readBase64, removeOwnedFile },
+    });
+
+    expect(readBase64.mock.calls.map(([uri]) => uri)).toEqual([
+      "file:///cache/first.png",
+      "file:///cache/second.png",
+    ]);
+    expect(result.attachments.map((attachment) => attachment.name)).toEqual([
+      "first.png",
+      "second.png",
+    ]);
+    expect(removeOwnedFile).toHaveBeenCalledWith("file:///cache/first.png");
+    expect(removeOwnedFile).toHaveBeenCalledWith("file:///cache/second.png");
+  });
+
+  it("keeps imported content when temporary-file cleanup fails", async () => {
+    const image: SharePayload = {
+      shareType: "image",
+      value: "file:///shared/screenshot.png",
+      mimeType: "image/png",
+    };
+
+    const result = await buildIncomingShareDraft({
+      id: "share-cleanup-failure",
+      createdAt: "2026-07-16T08:00:00.000Z",
+      payloads: [image],
+      resolvedPayloads: [],
+      fileReader: {
+        readBase64: async () => "YWJj",
+        removeOwnedFile: async () => {
+          throw new Error("file is busy");
+        },
+      },
+    });
+
+    expect(result.attachments).toHaveLength(1);
+    expect(result.warnings).toEqual([]);
+  });
 });
