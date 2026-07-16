@@ -326,6 +326,48 @@ describe("HttpClientCapability", () => {
     }),
   );
 
+  // A real server and the real Node transport, deliberately: the crash lived in
+  // `makeResponse` running inside Node's response callback, so a faked transport
+  // would never reach it. Before the fix this did not fail the request — the
+  // TypeError escaped the enclosing Promise and took the process down.
+  it.live("returns a 204 rather than crashing on a null-body status", () =>
+    Effect.gen(function* () {
+      const server = NodeHttp.createServer((_request, response) => {
+        response.writeHead(204);
+        response.end();
+      });
+      const port = yield* Effect.callback<number>((resume) => {
+        server.listen(0, "127.0.0.1", () => {
+          const address = server.address();
+          resume(
+            Effect.succeed(typeof address === "object" && address !== null ? address.port : 0),
+          );
+        });
+      });
+      const previous = process.env.T3_PLUGIN_DEV;
+      process.env.T3_PLUGIN_DEV = "1";
+      try {
+        const client = makeHttpClientCapability({ lookup: () => Effect.succeed(["127.0.0.1"]) });
+        const result = yield* client.request({
+          method: "GET",
+          url: `http://127.0.0.1:${port}/`,
+          timeoutMs: 2000,
+        });
+
+        assert.equal(result.status, 204);
+        assert.equal(result.body.byteLength, 0);
+      } finally {
+        if (previous === undefined) {
+          delete process.env.T3_PLUGIN_DEV;
+        } else {
+          process.env.T3_PLUGIN_DEV = previous;
+        }
+        server.closeAllConnections();
+        server.close();
+      }
+    }),
+  );
+
   it.effect("allows http loopback only under T3_PLUGIN_DEV", () =>
     Effect.gen(function* () {
       const previous = process.env.T3_PLUGIN_DEV;

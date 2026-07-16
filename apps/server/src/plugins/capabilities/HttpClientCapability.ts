@@ -132,17 +132,35 @@ function nodeHeadersToWebHeaders(headers: NodeHttp.IncomingHttpHeaders): Headers
   return webHeaders;
 }
 
+/**
+ * Statuses that MUST NOT carry a body. The `Response` constructor throws a TypeError
+ * if given one, and `makeResponse` runs inside Node's response callback — so the throw
+ * escapes the enclosing Promise entirely: neither `resolve` nor `reject` fires, and an
+ * uncaught exception takes the server down instead of failing the plugin's request.
+ * A plugin GET against any endpoint that 204s was enough.
+ */
+const NULL_BODY_STATUSES = new Set([204, 205, 304]);
+
 function makeResponse(input: {
   readonly url: URL;
   readonly method: string;
   readonly response: NodeHttp.IncomingMessage;
 }): HttpClientResponse.HttpClientResponse {
   const request = HttpClientRequest.make(input.method as "GET")(input.url.toString());
-  const body = NodeStream.Readable.toWeb(input.response) as ReadableStream<Uint8Array>;
+  const status = input.response.statusCode ?? 0;
+  let body: ReadableStream<Uint8Array> | null = null;
+  if (NULL_BODY_STATUSES.has(status)) {
+    // No body to hand over, but the socket still has to be released — an
+    // unconsumed IncomingMessage keeps the pinned connection occupied until it
+    // times out.
+    input.response.resume();
+  } else {
+    body = NodeStream.Readable.toWeb(input.response) as ReadableStream<Uint8Array>;
+  }
   return HttpClientResponse.fromWeb(
     request,
     new Response(body, {
-      status: input.response.statusCode ?? 0,
+      status,
       headers: nodeHeadersToWebHeaders(input.response.headers),
     }),
   );
@@ -278,24 +296,30 @@ export function makeHttpClientCapability(input?: {
           timeoutMs,
           address: resolved.addresses[0]!,
         });
-        const body = yield* readHttpResponseBytesCapped({
-          response,
-          maxBytes: maxResponseBytes,
-          tooLarge: (actual) =>
-            new HttpClientError({
-              host: resolved.url.hostname,
-              reason: "response body exceeded the size limit",
-              data: { limit: maxResponseBytes, actual },
-            }),
-          readFailed: (cause) =>
-            isHttpClientError(cause)
-              ? cause
-              : new HttpClientError({
+        // A null-body status has no body to read, and asking for one fails: the
+        // Response was constructed with `null` (the constructor rejects a body for
+        // these, even an empty stream), so its `.stream` errors rather than ending.
+        // Hand back zero bytes, which is what 204/205/304 mean.
+        const body = NULL_BODY_STATUSES.has(response.status)
+          ? new Uint8Array(0)
+          : yield* readHttpResponseBytesCapped({
+              response,
+              maxBytes: maxResponseBytes,
+              tooLarge: (actual) =>
+                new HttpClientError({
                   host: resolved.url.hostname,
-                  reason: "failed to read response body",
-                  data: { cause },
+                  reason: "response body exceeded the size limit",
+                  data: { limit: maxResponseBytes, actual },
                 }),
-        });
+              readFailed: (cause) =>
+                isHttpClientError(cause)
+                  ? cause
+                  : new HttpClientError({
+                      host: resolved.url.hostname,
+                      reason: "failed to read response body",
+                      data: { cause },
+                    }),
+            });
         return {
           status: response.status,
           headers: response.headers,
