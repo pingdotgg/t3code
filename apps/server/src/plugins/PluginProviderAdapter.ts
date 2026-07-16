@@ -50,6 +50,12 @@ interface SessionState {
   /** Live while a turn is running; interrupted on stop/interrupt/removal. */
   readonly turnFiber: Fiber.Fiber<void, never> | null;
   readonly activeTurnId: TurnId | null;
+  /**
+   * Set once stopSession begins tearing the session down. hasSession stays true
+   * until the final delete, so a turn racing in during the driver's stopSession
+   * await must be rejected rather than installing a fiber the delete then orphans.
+   */
+  readonly stopping: boolean;
 }
 
 export const makePluginProviderAdapter = (input: {
@@ -168,7 +174,12 @@ export const makePluginProviderAdapter = (input: {
           threadId,
         } as ProviderSession;
         yield* Ref.update(sessions, (current) =>
-          new Map(current).set(threadId, { session, turnFiber: null, activeTurnId: null }),
+          new Map(current).set(threadId, {
+            session,
+            turnFiber: null,
+            activeTurnId: null,
+            stopping: false,
+          }),
         );
         return session;
       });
@@ -192,6 +203,13 @@ export const makePluginProviderAdapter = (input: {
         const state = (yield* Ref.get(sessions)).get(threadId);
         if (state === undefined) {
           return yield* Effect.fail(new PluginProviderError("no session for thread"));
+        }
+        // A turn that races in while stopSession is awaiting the driver's teardown
+        // must be rejected: hasSession is still true (the delete comes last), so the
+        // null-state guard alone would let it install a fresh fiber that the imminent
+        // delete then orphans — dropping its deltas and losing the fiber handle.
+        if (state.stopping) {
+          return yield* Effect.fail(new PluginProviderError("session is stopping"));
         }
         // One active turn per thread. Overwriting activeTurnId/turnFiber here would
         // orphan the in-progress turn's fiber (losing the handle interrupt/stop rely
@@ -288,6 +306,16 @@ export const makePluginProviderAdapter = (input: {
       threadId: ThreadId,
     ) =>
       Effect.gen(function* () {
+        // Mark the session stopping BEFORE anything awaits, so a sendTurn racing in
+        // during the driver's stopSession await below is rejected rather than
+        // installing a fiber the final delete would orphan. Interrupting the turn
+        // fiber runs its `ensuring(endTurn)`, which spreads ...state and so preserves
+        // this flag. No-op if the session is already gone.
+        yield* Ref.update(sessions, (current) => {
+          const existing = current.get(threadId);
+          if (existing === undefined) return current;
+          return new Map(current).set(threadId, { ...existing, stopping: true });
+        });
         const state = (yield* Ref.get(sessions)).get(threadId);
         if (state?.turnFiber) yield* Fiber.interrupt(state.turnFiber).pipe(Effect.orDie);
         yield* input.driver.stopSession(threadId).pipe(
