@@ -20,6 +20,7 @@ import { TestClock } from "effect/testing";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { makeManagedServerProvider } from "./makeManagedServerProvider.ts";
+import type { ProviderMaintenanceCapabilities } from "./providerMaintenance.ts";
 
 const emptyCapabilities = createModelCapabilities({ optionDescriptors: [] });
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
@@ -150,6 +151,53 @@ const enrichedSnapshotSecond: ServerProvider = {
 };
 
 describe("makeManagedServerProvider", () => {
+  it.effect("stores version-dependent maintenance capabilities with the probed snapshot", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const releaseCheck = yield* Deferred.make<void>();
+        const enrichmentSeen = yield* Deferred.make<void>();
+        const nativeCapabilities: ProviderMaintenanceCapabilities = {
+          ...maintenanceCapabilities,
+          update: {
+            command: "codex update",
+            executable: "codex",
+            args: ["update"],
+            lockKey: "codex-native",
+          },
+        };
+        let enrichmentCapabilities: ProviderMaintenanceCapabilities = maintenanceCapabilities;
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          maintenanceCapabilities,
+          resolveMaintenanceCapabilities: (snapshot) =>
+            snapshot.version === "1.0.0" ? nativeCapabilities : maintenanceCapabilities,
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Deferred.await(releaseCheck).pipe(Effect.as(refreshedSnapshot)),
+          enrichSnapshot: ({ maintenanceCapabilities }) =>
+            Effect.sync(() => {
+              enrichmentCapabilities = maintenanceCapabilities;
+            }).pipe(Effect.andThen(Deferred.succeed(enrichmentSeen, undefined)), Effect.asVoid),
+          refreshInterval: "1 hour",
+        });
+
+        assert.strictEqual(yield* provider.getMaintenanceCapabilities, maintenanceCapabilities);
+        const updateFiber = yield* Stream.take(provider.streamChanges, 1).pipe(
+          Stream.runDrain,
+          Effect.forkChild,
+        );
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(releaseCheck, undefined);
+        yield* Fiber.join(updateFiber);
+        yield* Deferred.await(enrichmentSeen);
+
+        assert.strictEqual(yield* provider.getMaintenanceCapabilities, nativeCapabilities);
+        assert.strictEqual(enrichmentCapabilities, nativeCapabilities);
+      }),
+    ).pipe(Effect.provide(AlwaysRunTestLayer)),
+  );
+
   it.effect(
     "runs the initial provider check in the background and streams the refreshed snapshot",
     () =>

@@ -18,16 +18,21 @@ import * as Semaphore from "effect/Semaphore";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import type { ServerProviderShape } from "./Services/ServerProvider.ts";
+import type { ProviderMaintenanceCapabilities } from "./providerMaintenance.ts";
 
 interface ProviderSnapshotState {
   readonly snapshot: ServerProvider;
+  readonly maintenanceCapabilities: ProviderMaintenanceCapabilities;
   readonly enrichmentGeneration: number;
 }
 
 export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(function* <
   Settings,
 >(input: {
-  readonly maintenanceCapabilities: ServerProviderShape["maintenanceCapabilities"];
+  readonly maintenanceCapabilities: ProviderMaintenanceCapabilities;
+  readonly resolveMaintenanceCapabilities?: (
+    snapshot: ServerProvider,
+  ) => ProviderMaintenanceCapabilities;
   readonly getSettings: Effect.Effect<Settings, ServerSettingsError>;
   readonly streamSettings: Stream.Stream<Settings>;
   readonly haveSettingsChanged: (previous: Settings, next: Settings) => boolean;
@@ -36,6 +41,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   readonly enrichSnapshot?: (input: {
     readonly settings: Settings;
     readonly snapshot: ServerProvider;
+    readonly maintenanceCapabilities: ProviderMaintenanceCapabilities;
     readonly getSnapshot: Effect.Effect<ServerProvider>;
     readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
   }) => Effect.Effect<void>;
@@ -56,8 +62,11 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   );
   const initialSettings = yield* input.getSettings;
   const initialSnapshot = yield* input.initialSnapshot(initialSettings);
+  const resolveMaintenanceCapabilities =
+    input.resolveMaintenanceCapabilities ?? (() => input.maintenanceCapabilities);
   const snapshotStateRef = yield* Ref.make<ProviderSnapshotState>({
     snapshot: initialSnapshot,
+    maintenanceCapabilities: resolveMaintenanceCapabilities(initialSnapshot),
     enrichmentGeneration: 0,
   });
   const settingsRef = yield* Ref.make(initialSettings);
@@ -77,6 +86,10 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         {
           ...state,
           snapshot: nextSnapshot,
+          maintenanceCapabilities:
+            nextSnapshot.version === state.snapshot.version
+              ? state.maintenanceCapabilities
+              : resolveMaintenanceCapabilities(nextSnapshot),
         },
       ] as const;
     });
@@ -89,6 +102,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   const restartSnapshotEnrichment = Effect.fn("restartSnapshotEnrichment")(function* (
     settings: Settings,
     snapshot: ServerProvider,
+    maintenanceCapabilities: ProviderMaintenanceCapabilities,
     generation: number,
   ) {
     const previousFiber = yield* Ref.getAndSet(enrichmentFiberRef, null);
@@ -104,6 +118,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       .enrichSnapshot({
         settings,
         snapshot,
+        maintenanceCapabilities,
         getSnapshot: Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot)),
         publishSnapshot: (nextSnapshot) => publishEnrichedSnapshot(generation, nextSnapshot),
       })
@@ -134,11 +149,17 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         enrichmentGeneration: nextGeneration,
       });
       yield* Ref.set(settingsRef, nextSettings);
-      yield* restartSnapshotEnrichment(nextSettings, state.snapshot, nextGeneration);
+      yield* restartSnapshotEnrichment(
+        nextSettings,
+        state.snapshot,
+        state.maintenanceCapabilities,
+        nextGeneration,
+      );
       return state.snapshot;
     }
 
     const nextSnapshot = yield* input.checkProvider;
+    const maintenanceCapabilities = resolveMaintenanceCapabilities(nextSnapshot);
     const nextGeneration = yield* Ref.modify(snapshotStateRef, (state) => {
       const generation = input.enrichSnapshot
         ? state.enrichmentGeneration + 1
@@ -147,13 +168,19 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         generation,
         {
           snapshot: nextSnapshot,
+          maintenanceCapabilities,
           enrichmentGeneration: generation,
         },
       ] as const;
     });
     yield* Ref.set(settingsRef, nextSettings);
     yield* PubSub.publish(changesPubSub, nextSnapshot);
-    yield* restartSnapshotEnrichment(nextSettings, nextSnapshot, nextGeneration);
+    yield* restartSnapshotEnrichment(
+      nextSettings,
+      nextSnapshot,
+      maintenanceCapabilities,
+      nextGeneration,
+    );
     return nextSnapshot;
   });
   const applySnapshot = (nextSettings: Settings, options?: { readonly forceRefresh?: boolean }) =>
@@ -238,7 +265,9 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   );
 
   return {
-    maintenanceCapabilities: input.maintenanceCapabilities,
+    getMaintenanceCapabilities: Ref.get(snapshotStateRef).pipe(
+      Effect.map((state) => state.maintenanceCapabilities),
+    ),
     getSnapshot: Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot)),
     refresh: refreshSnapshot().pipe(Effect.tapError(Effect.logError), Effect.orDie),
     get streamChanges() {
