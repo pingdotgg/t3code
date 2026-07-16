@@ -248,6 +248,10 @@ const TerminalPane = React.memo(function TerminalPane({
               : history,
             scheduleRender,
           );
+        } else if (event.type === "cleared") {
+          term.reset();
+          scrollOffsetRef.current = 0;
+          scheduleRender();
         } else if (event.type === "output") {
           term.write(event.data, scheduleRender);
         } else if (event.type === "exited") {

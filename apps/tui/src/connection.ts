@@ -23,6 +23,7 @@ import {
   type GitStackedAction,
   type TerminalAttachStreamEvent,
   type TerminalMetadataStreamEvent,
+  type TerminalRestartInput,
   type ThreadTurnStartBootstrap,
   type ThreadId,
   ThreadId as ThreadIdSchema,
@@ -492,6 +493,10 @@ export interface TuiClient {
     cols: number,
     rows: number,
   ) => Promise<void>;
+  /** Clear one terminal's persisted history and visible buffer. */
+  readonly terminalClear: (threadId: ThreadId, terminalId: string) => Promise<void>;
+  /** Restart one terminal session in-place, preserving its tab identity. */
+  readonly terminalRestart: (input: TerminalRestartInput) => Promise<void>;
   /** Close one terminal session (and its history) for a thread. */
   readonly terminalClose: (threadId: ThreadId, terminalId: string) => Promise<void>;
   /**
@@ -951,6 +956,14 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
           Effect.asVoid,
         ),
       ),
+
+    terminalClear: (threadId, terminalId) =>
+      runtime.runPromise(
+        request(WS_METHODS.terminalClear, { threadId, terminalId }).pipe(Effect.asVoid),
+      ),
+
+    terminalRestart: (input) =>
+      runtime.runPromise(request(WS_METHODS.terminalRestart, input).pipe(Effect.asVoid)),
 
     terminalClose: (threadId, terminalId) =>
       runtime.runPromise(

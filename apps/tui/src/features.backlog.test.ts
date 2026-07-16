@@ -344,7 +344,6 @@ const CLIENT_UI_GAPS = [
       },
     ],
     scenarios: [
-      "Given a terminal session is selected, when the user clears or restarts it, then the TUI applies the server action to the correct tab and updates its visible buffer.",
       "Given terminal output is selected, when the user adds it to the composer, then the TUI stages a bounded terminal-context chip with its session identity.",
       "Given terminal output contains a supported URL, when the user activates it, then the TUI offers the terminal-appropriate preview or external-open action.",
     ],

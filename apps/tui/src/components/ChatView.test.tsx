@@ -76,6 +76,8 @@ function fakeClient({
   sendReply = () => Promise.resolve(),
   respondUserInput = () => Promise.resolve(),
   createThread = async () => "t-new" as never,
+  terminalClear = async () => {},
+  terminalRestart = async () => {},
   listModels = async () =>
     [
       {
@@ -92,6 +94,8 @@ function fakeClient({
   readonly sendReply?: TuiClient["sendReply"];
   readonly respondUserInput?: TuiClient["respondUserInput"];
   readonly createThread?: TuiClient["createThread"];
+  readonly terminalClear?: TuiClient["terminalClear"];
+  readonly terminalRestart?: TuiClient["terminalRestart"];
   readonly listModels?: TuiClient["listModels"];
 }): {
   readonly client: TuiClient;
@@ -117,6 +121,12 @@ function fakeClient({
     sendReply,
     respondUserInput,
     createThread,
+    subscribeTerminal: () => () => {},
+    terminalWrite: async () => {},
+    terminalResize: async () => {},
+    terminalClear,
+    terminalRestart,
+    terminalClose: async () => {},
     listModels,
     getServerConfig: async () => ({ settings: DEFAULT_SERVER_SETTINGS }) as never,
     listRefs: async () =>
@@ -230,6 +240,79 @@ describe("ChatView tmux scrolling", () => {
 });
 
 describe("ChatView acknowledged submissions", () => {
+  it("Given a terminal tab is selected, when clear and restart run from the command palette, then both target that exact session", async () => {
+    const clearCalls: Array<Parameters<TuiClient["terminalClear"]>> = [];
+    const restartCalls: Array<Parameters<TuiClient["terminalRestart"]>[0]> = [];
+    const fake = fakeClient({
+      detail: thread(),
+      terminalClear: async (...args) => {
+        clearCalls.push(args);
+      },
+      terminalRestart: async (input) => {
+        restartCalls.push(input);
+      },
+    });
+    const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
+      width: 110,
+      height: 28,
+    });
+
+    await selectThread(setup, fake.connect);
+    await React.act(async () => {
+      setup.mockInput.pressKey("e", { ctrl: true });
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("Terminal · Thread one"));
+    await React.act(async () => {
+      setup.mockInput.pressKey("p", { ctrl: true });
+      await setup.renderOnce();
+    });
+    await React.act(async () => {
+      setup.mockInput.pressKey("k", { ctrl: true });
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("Type a command"));
+    await React.act(async () => {
+      await setup.mockInput.typeText("clear terminal");
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("Clear terminal"));
+    await React.act(async () => {
+      setup.mockInput.pressEnter();
+      await setup.renderOnce();
+    });
+    await setup.waitFor(() => clearCalls.length === 1);
+
+    await React.act(async () => {
+      setup.mockInput.pressKey("k", { ctrl: true });
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("Type a command"));
+    await React.act(async () => {
+      await setup.mockInput.typeText("restart terminal");
+      await setup.renderOnce();
+    });
+    await setup.waitForFrame((frame) => frame.includes("Restart terminal"));
+    await React.act(async () => {
+      setup.mockInput.pressEnter();
+      await setup.renderOnce();
+    });
+    await setup.waitFor(() => restartCalls.length === 1);
+
+    const [threadId, terminalId] = clearCalls[0] ?? [];
+    const restart = restartCalls[0];
+    expect(String(threadId)).toBe("t1");
+    expect(typeof terminalId).toBe("string");
+    expect(terminalId?.length).toBeGreaterThan(0);
+    expect(restart?.threadId).toBe(threadId);
+    expect(restart?.terminalId).toBe(terminalId);
+    expect(restart?.cwd).toBe("/workspace/project-one");
+    expect(restart?.worktreePath).toBeNull();
+    expect(restart?.cols).toBe(106);
+    expect(restart?.rows).toBe(7);
+    setup.renderer.destroy();
+  });
+
   it("Given model and effort are changed, when the next reply is sent, then the complete selection is dispatched", async () => {
     const calls: Array<Parameters<TuiClient["sendReply"]>> = [];
     const fake = fakeClient({

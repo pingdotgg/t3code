@@ -155,3 +155,66 @@ describe("ThreadTerminalDrawer tab bar", () => {
     t.renderer.destroy();
   });
 });
+
+describe("ThreadTerminalDrawer session events", () => {
+  it("Given terminal output is visible, when the server clears the session, then the stale buffer disappears", async () => {
+    let onEvent: Parameters<TuiClient["subscribeTerminal"]>[1] = () => {
+      throw new Error("terminal subscription not ready");
+    };
+    const eventClient = {
+      subscribeTerminal: (
+        _input: Parameters<TuiClient["subscribeTerminal"]>[0],
+        next: Parameters<TuiClient["subscribeTerminal"]>[1],
+      ) => {
+        onEvent = next;
+        return () => {};
+      },
+      terminalWrite: () => Promise.resolve(),
+      terminalResize: () => Promise.resolve(),
+      terminalClose: () => Promise.resolve(),
+    } as unknown as TuiClient;
+    const copyRef = React.createRef<(() => string) | null>() as React.MutableRefObject<
+      (() => string) | null
+    >;
+    const scrollRef = React.createRef<
+      ((action: "line-up" | "line-down" | "page-up" | "page-down" | "bottom") => void) | null
+    >() as React.MutableRefObject<
+      ((action: "line-up" | "line-down" | "page-up" | "page-down" | "bottom") => void) | null
+    >;
+    const t = await testRender(
+      <ThreadTerminalDrawer
+        client={eventClient}
+        info={info}
+        cols={40}
+        rows={4}
+        focused={false}
+        copyRef={copyRef}
+        scrollRef={scrollRef}
+        tabIds={["term-1"]}
+        activeTabId="term-1"
+        onSelectTab={() => {}}
+        onNewTab={() => {}}
+        onCloseTab={() => {}}
+      />,
+      { width: 50, height: 12 },
+    );
+    await t.renderOnce();
+    await t.flush();
+
+    onEvent?.({
+      type: "output",
+      threadId: "t1",
+      terminalId: "term-1",
+      data: "visible-before-clear",
+    } as never);
+    await Bun.sleep(25);
+    await t.renderOnce();
+    expect(t.captureCharFrame()).toContain("visible-before-clear");
+
+    onEvent?.({ type: "cleared", threadId: "t1", terminalId: "term-1" } as never);
+    await Bun.sleep(25);
+    await t.renderOnce();
+    expect(t.captureCharFrame()).not.toContain("visible-before-clear");
+    t.renderer.destroy();
+  });
+});

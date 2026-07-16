@@ -1021,6 +1021,33 @@ export function ChatView({
     }
   };
 
+  const clearActiveTerminal = () => {
+    if (!activeTerminal) return;
+    store.setStatus("Clearing terminal…", "busy");
+    void client.terminalClear(activeTerminal.threadId, activeTerminal.terminalId).then(
+      () => store.setStatus("Terminal cleared.", "success"),
+      (error) => store.setStatus(`Could not clear terminal: ${String(error)}`, "error"),
+    );
+  };
+
+  const restartActiveTerminal = () => {
+    if (!activeTerminal) return;
+    store.setStatus("Restarting terminal…", "busy");
+    void client
+      .terminalRestart({
+        threadId: activeTerminal.threadId,
+        terminalId: activeTerminal.terminalId,
+        cwd: activeTerminal.cwd,
+        worktreePath: activeTerminal.worktreePath,
+        cols: termCols,
+        rows: termRows,
+      })
+      .then(
+        () => store.setStatus("Terminal restarted.", "success"),
+        (error) => store.setStatus(`Could not restart terminal: ${String(error)}`, "error"),
+      );
+  };
+
   // ── Workspace file browser ─────────────────────────────────────────────────
   // The flattened, collapse-aware tree built from the file entries (dirs inferred
   // from paths; reuses the changed-files tree machinery).
@@ -1324,6 +1351,18 @@ export function ChatView({
       });
     }
     if (terminalOpen && detailTabs) {
+      list.push({
+        id: "terminal-clear",
+        title: "Clear terminal",
+        keywords: "shell history reset",
+        run: () => runCommand(clearActiveTerminal),
+      });
+      list.push({
+        id: "terminal-restart",
+        title: "Restart terminal",
+        keywords: "shell reset relaunch",
+        run: () => runCommand(restartActiveTerminal),
+      });
       list.push({
         id: "terminal-close",
         title: "Close terminal",
